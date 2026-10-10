@@ -328,7 +328,7 @@ function UserText(props: { text: string }): JSX.Element {
   return (
     // The block around this (in `UserTurn`) is what shrinks to fit and pins right;
     // this only lays out the body and its Show more toggle inside it.
-    <div class="flex flex-col items-end gap-1 pt-1.5 pr-3.5 pb-[11px] pl-3.5">
+    <div class="flex flex-col items-end gap-1 px-3.5 py-2.5">
       <div
         ref={ref}
         class="relative w-full overflow-hidden"
@@ -419,19 +419,21 @@ function UserTurn(props: {
     // (78% cap), `raised` on the page. Its edge is drawn by borders rather than a
     // box-shadow so the geometry is exact: a 1px `line-strong` outline on the top,
     // left and bottom, and a 3px `bright` edge on the right with no grey under it.
-    // The `YOU` tag sits in the block's own header row; the stamp and the actions
-    // reveal on hover (absolutely placed, so nothing reflows) and stay shown on
-    // touch, like every other turn control.
+    // No speaker label: the stamp and the actions reveal on hover beside it
+    // (absolutely placed, so nothing reflows) and stay shown on touch, like every
+    // other turn control.
     <div class="group flex flex-col items-end gap-1 px-4 py-3">
       <div
         class={cx(
           "relative border-y border-l border-r-[3px] border-y-line-strong border-l-line-strong border-r-bright bg-raised",
           editing() ? "w-full max-w-[78%]" : "w-fit max-w-[78%]",
         )}
+        title={longTimestamp(m().createdAt)}
       >
         {/* The stamp sits outside the block, in the margin to its left and level with
-            the tag row: inside a shrink-to-fit block there is no room for it, and laid
-            over the block it ran across the outline. */}
+            the first line: inside a shrink-to-fit block there is no room for it, and
+            laid over the block it ran across the outline. The full date also rides in
+            the block's title for anyone who never hovers. */}
         <time
           class={cx(
             "pointer-events-none absolute top-2.5 right-full mr-2 font-mono text-[10px] leading-none whitespace-nowrap text-dim",
@@ -455,60 +457,54 @@ function UserTurn(props: {
             />
           </div>
         </Show>
-        <div class="relative flex items-center justify-end gap-2 px-2.5 pt-[7px]">
-          <Show when={m().queuedPending && !editing()}>
-            <Button
-              variant="ghost"
-              size="sm"
-              leading="pen"
-              aria-label="Edit queued message"
-              onClick={startEdit}
-            >
-              Edit
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              leading="close"
-              aria-label="Withdraw queued message"
-              onClick={() => props.onWithdraw?.()}
-            >
-              Withdraw
-            </Button>
-          </Show>
-          <Show when={m().queuedPending}>
-            <Text variant="label" tone="warn">
-              Queued
-            </Text>
-          </Show>
-          {/* A queue that has stopped moving says so. The hold is what makes editing
+        {/* The block names no speaker: its place on the right and its edge already
+            say whose it is, and a tag row reserved for a label left an empty band
+            over every message. The row exists only when it has state to show. */}
+        <Show
+          when={m().queuedPending || m().pinned || (m().versionCount ?? 1) > 1}
+        >
+          <div class="relative flex items-center justify-end gap-2 px-2.5 pt-[7px]">
+            <Show when={m().queuedPending && !editing()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                leading="pen"
+                aria-label="Edit queued message"
+                onClick={startEdit}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                leading="close"
+                aria-label="Withdraw queued message"
+                onClick={() => props.onWithdraw?.()}
+              >
+                Withdraw
+              </Button>
+            </Show>
+            <Show when={m().queuedPending}>
+              <Text variant="label" tone="warn">
+                Queued
+              </Text>
+            </Show>
+            {/* A queue that has stopped moving says so. The hold is what makes editing
               safe, and it is also the one state in which the run is waiting on the
               operator without having asked them for anything — silence there reads as
               the agent having stalled. */}
-          <Show when={m().queuedPending && m().queuedHeld}>
-            <Text variant="label" tone="dim">
-              Held
-            </Text>
-          </Show>
-          <PinMarker message={m()} />
-          <VersionCycler
-            message={m()}
-            onSwitchVersion={props.onSwitchVersion}
-          />
-          {/* The speaker's tag is always on; the time is the hover reveal. The
-              time is taken out of flow and set to the tag's left, so showing it
-              moves nothing. The full date also rides in the tag's title and
-              label for anyone who never hovers. */}
-          <span class="inline-flex">
-            <span
-              class="inline-flex bg-bright px-[5px] py-[3px] font-mono text-[9px] leading-none font-semibold tracking-[0.1em] text-bg"
-              title={longTimestamp(m().createdAt)}
-              aria-label={`You, ${longTimestamp(m().createdAt)}`}
-            >
-              YOU
-            </span>
-          </span>
-        </div>
+            <Show when={m().queuedPending && m().queuedHeld}>
+              <Text variant="label" tone="dim">
+                Held
+              </Text>
+            </Show>
+            <PinMarker message={m()} />
+            <VersionCycler
+              message={m()}
+              onSwitchVersion={props.onSwitchVersion}
+            />
+          </div>
+        </Show>
         <Show
           when={editing()}
           fallback={
