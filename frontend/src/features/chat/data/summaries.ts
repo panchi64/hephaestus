@@ -18,7 +18,13 @@ export function toActiveRun(
   dto: ActiveRunDTO | null | undefined,
 ): ActiveRun | null {
   return dto
-    ? { id: dto.id, kind: dto.kind, status: dto.status, lastSeq: dto.last_seq }
+    ? {
+        id: dto.id,
+        kind: dto.kind,
+        status: dto.status,
+        lastSeq: dto.last_seq,
+        promptMessageId: dto.prompt_message_id ?? null,
+      }
     : null;
 }
 

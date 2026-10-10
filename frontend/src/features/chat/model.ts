@@ -691,6 +691,10 @@ export interface ActiveRun {
   kind: string;
   status: string;
   lastSeq: number;
+  /** The persisted row this run is answering. The backend writes the operator's prompt
+   *  as the turn begins, so the streaming answer belongs directly after this row; null
+   *  for a run with no prompt (a fold) and briefly before a chat run has recorded one. */
+  promptMessageId: string | null;
 }
 
 export interface ChatSession {

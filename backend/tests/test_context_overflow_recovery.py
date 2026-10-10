@@ -179,12 +179,15 @@ async def test_an_overflow_folds_the_thread_and_the_retried_request_answers():
         assert compacted[0].summary.endswith("FOLDED AWAY")
 
         # The persistence index moved with the fold: the tree gains the checkpoint and
-        # exactly this turn's two messages — nothing re-recorded, nothing dropped.
+        # exactly this turn's two messages — nothing re-recorded, nothing dropped. The
+        # prompt went in first, so the checkpoint sits beneath it and the answer follows.
         await store._worker.join()
         store._cache.clear()
         after = _texts(await store.history(cid))
         assert len(after) == before + 3
-        assert after[-2:] == ["next question", "the answer"]
+        assert after[-3] == "next question"
+        assert after[-2].endswith("FOLDED AWAY")
+        assert after[-1] == "the answer"
 
 
 async def test_the_retry_replays_the_folded_history_not_the_original():
@@ -292,9 +295,12 @@ async def test_a_collapsed_fold_boundary_does_not_re_record_the_history():
         await store._worker.join()
         store._cache.clear()
         after = _texts(await store.history(cid))
-        # The checkpoint, the prompt, the answer — and nothing said twice.
+        # The prompt, the checkpoint, the answer — and nothing said twice. The prompt was
+        # written down as the turn began, so the checkpoint lands beneath it and the answer
+        # hangs off the checkpoint.
         assert len(after) == before + 3
-        assert after[-2:] == ["next question", "the answer"]
+        assert after[-3] == "next question"
+        assert after[-1] == "the answer"
         assert sum("FOLDED AWAY" in text for text in after) == 1
         assert after.count("dangling question") == 1
 

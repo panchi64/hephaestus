@@ -160,15 +160,17 @@ class _PersistJob:
       parents) and reseat the active leaf.
     """
 
-    kind: str  # "messages" | "active_leaf" | "delete" | "pin" | "unblock"
+    kind: str  # "messages" | "active_leaf" | "delete" | "pin" | "unblock" | "block"
     conversation_id: str
     active_leaf_id: str | None = None
     rows: list[_Row] = field(default_factory=list)
     deleted_ids: list[str] = field(default_factory=list)
     # For "pin": the message to (un)pin and the value to set. "unblock" reuses
-    # ``message_id`` — the turn whose stop marker the operator resolved.
+    # ``message_id`` — the turn whose stop marker the operator resolved — and "block"
+    # sets ``blocked_reason`` on it.
     message_id: str | None = None
     pinned: bool = False
+    blocked_reason: str | None = None
     # The active path's last-used model at queue time — written denormalized onto
     # the Conversation alongside its active_leaf_id, so the listing reads it without
     # opening a blob. Computed where the leaf moves, never in the drainer (the tree
@@ -406,6 +408,13 @@ def _opens_turn(node: _Node) -> bool:
     that is how the model reads a summary — so every walk that counts turns or extends
     one to its tail has to tell the two apart by the flag, never by the shape."""
     return _is_user_prompt(node.message) and not node.compacted
+
+
+def _awaiting_answer(path: list[_Node]) -> bool:
+    """Whether the path ends on an operator prompt nothing has answered yet — a turn that
+    has begun, or one that stopped before its first token. A compaction checkpoint is a
+    request too, and ends a path after every fold, so the flag is what tells them apart."""
+    return bool(path) and _opens_turn(path[-1])
 
 
 def _is_turn_start(path: list[_Node], index: int) -> bool:
@@ -1224,14 +1233,21 @@ class ConversationStore:
         ``len(path)``, and a regenerate replaying only the summary would be answering the
         fold instead of the operator. The same hold is why a checkpoint just appended at a
         branch point is a tip with nothing after it: the request it left standing is before
-        it on the path, and is still waiting on its answer."""
+        it on the path, and is still waiting on its answer.
+
+        A leaf that is the operator's **prompt with nothing after it** is held the same way,
+        because a turn writes its prompt down as it begins: a fold landing mid-turn (the
+        overflow recovery) finds the request that is being answered sitting at the tip, and
+        folding it into the summary would have the model answer the fold. The checkpoint is
+        appended under it and the turn's own messages hang off the checkpoint — the branch-point
+        shape exactly."""
         tree = await self._tree(conversation_id)
         leaf = tree.active_leaf_id
         if leaf is None:
             return None
         path = tree.active_path()
         checkpoint, _ = _checkpoint_split(path)
-        boundary = len(path) - 1 if tree.children.get(leaf) else len(path)
+        boundary = len(path) - 1 if tree.children.get(leaf) or _awaiting_answer(path) else len(path)
         if boundary <= checkpoint + 1:
             return None
         folded = _replay_nodes(path, stop=boundary)
@@ -1760,12 +1776,20 @@ class ConversationStore:
         persisted: list | None = None,
         blocked_reason: str | None = None,
         timings: list[ResponseTiming] | None = None,
-    ) -> None:
-        """Hot path: extend the tree off the active leaf and queue the durable write.
+        prompt_id: str | None = None,
+    ) -> list[str]:
+        """Hot path: extend the tree off the active leaf and queue the durable write,
+        returning the ids of the nodes it created (empty when it wrote nothing).
 
         Only projects and serializes here (no vault) — the drainer encrypts just
         before the write, on the lock-aware side of the queue. New messages branch
         automatically when a prior regenerate/edit moved the active leaf back.
+        ``prompt_id`` says the turn's user request is **already in the tree** — written by
+        :meth:`record_prompt` as the turn began — so ``new_messages`` is only what followed
+        it. Nothing in it is then stamped as the turn's request (the first request it holds
+        is a steering message, not the prompt), and a ``blocked_reason`` with no response to
+        carry it lands on the prompt node itself, durably, instead of being dropped with an
+        empty slice.
         ``attachment_ids``/``file_refs``/``command``/``persisted`` belong to the turn's user
         request (the first one):
         the ids are stamped on its node + row (chip rendering), and when ``persisted`` is
@@ -1780,7 +1804,9 @@ class ConversationStore:
         in the order the responses were produced — zipped onto the response nodes below,
         so the readout can total a cold thread's time the way it totals its tokens."""
         if not new_messages:
-            return
+            if prompt_id is not None and blocked_reason:
+                self._block_node(conversation_id, prompt_id, blocked_reason)
+            return []
         tree = self._cache_get(conversation_id)
         if tree is None:
             # Nothing cached: either a brand-new conversation (`create_conversation`
@@ -1797,8 +1823,13 @@ class ConversationStore:
         blocked_on_request = bool(blocked_reason) and not any(
             isinstance(n.message, ModelResponse) for n in added
         )
+        if blocked_on_request and prompt_id is not None:
+            self._block_node(conversation_id, prompt_id, blocked_reason or "")
+            blocked_on_request = False
+            blocked_reason = None
         rows: list[_Row] = []
-        stamped = False
+        # A turn whose request is already recorded has no request left to stamp.
+        stamped = prompt_id is not None
         blocked_stamped = False
         # One timing per response, consumed in the order the responses appear — the
         # order the translator produced them in. A short (or absent) list simply leaves
@@ -1881,6 +1912,59 @@ class ConversationStore:
                 active_leaf_id=tree.active_leaf_id,
                 rows=rows,
                 model=_active_path_model(tree.active_path()),
+            )
+        )
+        return [node.id for node in added]
+
+    def record_prompt(
+        self,
+        conversation_id: str,
+        prompt: ModelRequest,
+        *,
+        attachment_ids: list[str] | None = None,
+        file_refs: list[str] | None = None,
+        command: Invocation | None = None,
+        persisted: list | None = None,
+    ) -> str:
+        """Write the operator's prompt down **as the turn begins**, returning its node id.
+
+        A turn used to be recorded whole when it finished, so a thread opened mid-run had
+        no prompt for the run in flight and a cancel that captured nothing lost the
+        operator's own words. The prompt is the one part of a turn that exists before the
+        model is called, so it goes in first — as the new leaf, which makes everything the
+        turn produces afterwards a child of it (:meth:`record` with ``prompt_id``). The
+        stamps are exactly the ones :meth:`record` puts on a turn's first request."""
+        return self.record(
+            conversation_id,
+            [prompt],
+            attachment_ids=attachment_ids,
+            file_refs=file_refs,
+            command=command,
+            persisted=persisted,
+        )[0]
+
+    async def leaf_id(self, conversation_id: str) -> str | None:
+        """The active leaf — on a regenerate, the request about to be re-answered."""
+        return (await self._tree(conversation_id)).active_leaf_id
+
+    def _block_node(self, conversation_id: str, node_id: str, reason: str) -> None:
+        """Stamp a stop marker on a node that is already recorded, durably.
+
+        The prompt of a turn that stopped before producing anything is the only place its
+        marker can go; it is already in the tree and (probably) in the table, so this
+        rewrites the node and queues the matching row update. A node that already carries
+        a marker keeps it — the first stop is the one that explains the turn."""
+        tree = self._cache.get(conversation_id)
+        node = tree.nodes.get(node_id) if tree is not None else None
+        if node is None or node.blocked_reason is not None:
+            return
+        node.blocked_reason = reason
+        self._submit(
+            _PersistJob(
+                kind="block",
+                conversation_id=conversation_id,
+                message_id=node.id,
+                blocked_reason=reason,
             )
         )
 
@@ -2320,6 +2404,8 @@ class ConversationStore:
             await self._persist_pin(job)
         elif job.kind == "unblock":
             await self._persist_unblock(job)
+        elif job.kind == "block":
+            await self._persist_block(job)
         # Deliberately not in a `finally`: a raise here is retried by the worker, and
         # the conversation must stay pinned across those attempts. A job that exhausts
         # its retries releases through `_on_drop` instead.
@@ -2493,6 +2579,17 @@ class ConversationStore:
             row = session.get(Message, job.message_id) if job.message_id else None
             if row is not None:
                 row.blocked_reason = None
+
+        await in_session(self._engine, work)
+
+    async def _persist_block(self, job: _PersistJob) -> None:
+        def work(session: Session) -> None:
+            # Queued behind the prompt's own insert (the drainer is FIFO), so the row is
+            # there; like an unblock it is bookkeeping on a turn already written, and the
+            # insert it follows is what moved `updated_at`.
+            row = session.get(Message, job.message_id) if job.message_id else None
+            if row is not None:
+                row.blocked_reason = job.blocked_reason
 
         await in_session(self._engine, work)
 

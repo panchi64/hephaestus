@@ -10,6 +10,9 @@ Three things can end a turn without its own code path reaching ``finalize``:
 
 All three must persist the same thing, and at minimum the operator's own message: a turn
 that vanishes on reload — question included — is the worst outcome any of these can have.
+The prompt is written down when the turn begins (``finalize`` records only what follows
+it), so a stop before the first token leaves the prompt on record with its stop marker
+rather than depending on this module to rescue it.
 Both orchestrators (a fresh chat turn, and the resume of a parked one) had their own copy
 of all three, ~75 lines that had to stay in step by hand.
 
@@ -23,13 +26,11 @@ at flush time rather than captured at arm time.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from pydantic_ai import ModelMessage
 
 from runs import Run
-from services.commands.spec import Invocation
 
 from .history import TurnStart
 
@@ -44,23 +45,19 @@ ERRORED_DETAIL = "an unexpected error stopped this turn"
 @dataclass(frozen=True)
 class PersistContext:
     """Everything ``finalize`` needs about *where* a turn goes, as opposed to what it
-    contains. Rebuilt per flush by the chat orchestrator (whose ``start`` and attachment
-    stamps are only known once the turn is under way) and constant for a resume.
+    contains. Rebuilt per flush by the chat orchestrator (whose ``start`` is only known
+    once the turn is under way) and constant for a resume.
 
     ``start`` is a :class:`~agent.history.TurnStart` rather than a bare index because a
     mid-turn fold can leave the turn beginning *inside* a message whose first parts belong
-    to the history in front of it."""
+    to the history in front of it. It also names the operator's prompt when the turn
+    already wrote it down (``start.prompt_message_id``), which is why nothing about the
+    prompt's attachments, references or command appears here: they were stamped on that
+    write, and what is recorded now is only what followed it."""
 
     conversation_id: str | None
     start: TurnStart
     clean_drop: tuple[int, int] | None = None
-    attachment_ids: list[str] = field(default_factory=list)
-    file_refs: list[str] = field(default_factory=list)
-    #: The slash command this turn was sent with, written down so a regenerate can build
-    #: its block again. ``None`` on a regenerate's *own* turn, which re-records no user
-    #: request and so has nothing to stamp.
-    command: Invocation | None = None
-    persisted: list[Any] | None = None
 
 
 @dataclass

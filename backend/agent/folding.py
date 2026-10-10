@@ -239,11 +239,12 @@ async def compact_and_retry(
     """Fold the thread mid-turn and rebuild the history the failed request will be re-sent
     against, or ``None`` when nothing folded.
 
-    The turn's own messages are not recorded yet, so the tree's leaf is still the previous
-    tip and the checkpoint lands exactly where the prelude's fold would have put it. What
-    the model replays afterwards is the folded history *plus this turn so far* — the
-    operator's prompt, the tool calls it has already made and their results, none of which
-    is in the tree yet and all of which the retried request depends on.
+    Only the turn's prompt is recorded (it was written down as the turn began), and the
+    plan holds it out of the fold, so the checkpoint lands directly beneath it and the rest
+    of the turn will hang off the checkpoint — the branch-point shape. What the model
+    replays afterwards is the folded history *plus this turn so far* — the operator's
+    prompt, the tool calls it has already made and their results, none of which (but the
+    prompt) is in the tree yet and all of which the retried request depends on.
 
     The order below is load-bearing:
 
@@ -277,6 +278,13 @@ async def compact_and_retry(
     # one at the boundary — which is the one the index has to know about. Reading it off
     # the two shapes is exact; reading it off the lengths would mistake a merge *inside*
     # either side for a collapsed boundary.
+    if turn_start.prompt_message_id is not None:
+        # The turn wrote its prompt down as it began, so the store's replay now ends on it
+        # (the plan holds an unanswered prompt out of the fold, and the checkpoint is
+        # hoisted in front of it). The live copy — with the tail context and any inline
+        # image the stored one has shed — is the first message of `turn_slice`, so the
+        # stored copy comes off or the request would be re-sent twice.
+        folded = folded[:-1]
     head = merge_consecutive_requests(drop_dangling_tool_calls(folded))
     turn_slice = merge_consecutive_requests(
         _without_empty_tail(partial_history[turn_start.index :])

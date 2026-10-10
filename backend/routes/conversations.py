@@ -238,17 +238,24 @@ class MessageOut(BaseModel):
 
 class ActiveRun(BaseModel):
     """The in-flight run driving this conversation, when one exists. A streaming
-    turn isn't persisted until it finishes, so on a cold read (e.g. a page reload
+    answer isn't persisted until its turn finishes, so on a cold read (e.g. a page reload
     mid-stream) the messages alone show no answer — this points the client at the
     run whose events it can replay and resume from ``last_seq``.
 
     ``kind`` because not every run is an answer being written: a hand-started fold is a
-    run too, and a client reattaching to one must not seed an assistant turn for it."""
+    run too, and a client reattaching to one must not seed an assistant turn for it.
+
+    ``prompt_message_id`` names the persisted row the run is answering — the operator's
+    prompt, which is written down as the turn begins, or on a regenerate the request being
+    re-answered. The streaming answer belongs directly after that row, so a reattaching
+    client places it there instead of inventing a prompt. ``None`` for a run that answers
+    nothing (a fold), and briefly for a chat run still queued or in its setup."""
 
     id: str
     kind: str
     status: str
     last_seq: int
+    prompt_message_id: str | None = None
 
 
 class ConversationDetail(ConversationSummary):
@@ -475,7 +482,13 @@ async def _detail(
         )
     run = deps.registry(request).active_run_for(conversation_id, OPERATOR_ID)
     active_run = (
-        ActiveRun(id=run.id, kind=run.kind, status=run.status.value, last_seq=run.stream.last_seq)
+        ActiveRun(
+            id=run.id,
+            kind=run.kind,
+            status=run.status.value,
+            last_seq=run.stream.last_seq,
+            prompt_message_id=run.prompt_message_id,
+        )
         if run is not None
         else None
     )

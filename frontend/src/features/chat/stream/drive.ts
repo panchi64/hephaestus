@@ -48,18 +48,20 @@ export interface RunDriveDeps {
   setSending: (value: boolean) => void;
   setErrored: (value: boolean) => void;
   setTitlePending: (value: boolean) => void;
-  /** Clear the operator's cancel flag — a fresh run supersedes any prior cancel. */
-  clearCancelled: () => void;
   /** Hand back steering messages the run never consumed. */
   restoreUndelivered: () => void;
   /** The thread the stream is bound to, read once a turn has settled. */
   conversationId: () => string | null;
-  /** Adopt the backend's ids for the turn just recorded. Late-bound: the reconcilers
-   *  need `reattachRun`, so they are built after this and reached through a thunk. */
-  adoptServerMeta: () => Promise<void>;
-  /** Fall back to the persisted thread when a reattach folds nothing. Late-bound for
-   *  the same reason. */
+  /** Reseat the transcript from the backend's rows once the run has ended — the turn's
+   *  ids, versions and stop marker are the backend's. Late-bound: the reconcilers need
+   *  `reattachRun`, so they are built after this and reached through a thunk. */
+  reseatAfterRun: () => Promise<void>;
+  /** Render what the backend has when a reattach folds nothing. Late-bound for the
+   *  same reason. */
   recoverLostRun: () => Promise<void>;
+  /** Re-read the thread when the row a reattach needs to seat after is not in the
+   *  transcript, returning the run as the backend now describes it. Late-bound too. */
+  refetchRun: (runId: string) => Promise<ActiveRun | null>;
   onConversationStarted?: (id: string) => void;
   onTurnComplete?: () => void;
 }
@@ -72,12 +74,32 @@ export interface ReattachOptions {
   /** The last event that had already happened when the attach was decided — events up
    *  to it are history being caught up on, and fold without announcing themselves. */
   replayThrough?: number;
+  /** The persisted row the run is answering. A reattach that has no streaming bubble of
+   *  its own seats a fresh one directly after this row. */
+  promptMessageId?: string | null;
 }
 
 /** How to attach to a run the persisted detail reports as active: replay its whole
  *  buffer, and treat everything the detail already knew about as history. */
 export function attachOptions(run: ActiveRun): ReattachOptions {
-  return { fromSeq: 0, kind: run.kind, replayThrough: run.lastSeq };
+  return {
+    fromSeq: 0,
+    kind: run.kind,
+    replayThrough: run.lastSeq,
+    promptMessageId: run.promptMessageId,
+  };
+}
+
+/** Where a run's streaming answer belongs in the transcript: directly after the row it
+ *  answers, which the backend names. `null` when that row is not in the transcript (or
+ *  the run names none) — the caller re-reads the thread rather than guessing a place. */
+export function seatAfterPrompt(
+  messages: readonly ChatMessage[],
+  promptMessageId: string | null | undefined,
+): number | null {
+  if (!promptMessageId) return null;
+  const at = messages.findIndex((m) => m.id === promptMessageId);
+  return at < 0 ? null : at + 1;
 }
 
 export interface RunDrive {
@@ -140,7 +162,6 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
     // The fold listens to this drive and no other from here on.
     deps.state.epoch = myGen;
     deps.state.replayThrough = replayThrough;
-    deps.clearCancelled(); // a fresh run clears any prior cancel signal
     deps.state.activeRunId = runId;
     deps.setErrored(false); // a fresh run supersedes any prior failure
     setDetached(false); // a fresh run/reattach supersedes any prior detach
@@ -232,11 +253,11 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
         }
         pendingAdoption = null;
         deps.onTurnComplete?.();
-        // Adopt the backend's authoritative ids + version metadata for the turn
-        // just recorded — without this the live message keeps its client id and a
-        // stale version count, so the ‹k/n› cycler never appears and a later
-        // regenerate/edit/delete/pin would address an id the backend doesn't know.
-        await deps.adoptServerMeta();
+        // Take the backend's account of the turn just recorded. The live messages carry
+        // client ids and no version count, so without this the ‹k/n› cycler never
+        // appears and a later regenerate/edit/delete/pin would address an id the
+        // backend doesn't know.
+        await deps.reseatAfterRun();
       }
     }
   }
@@ -246,10 +267,16 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
    *  - resume after a stalled/dropped transport (a backgrounded tab): the
    *    assistant message still exists, so replay from `fromSeq` = the last seq we
    *    folded — only the tail re-applies (the seq guard drops the overlap).
-   *  - a cold read mid-stream (page reload): no assistant turn exists yet, so seed
-   *    an empty one bound to the run and replay the whole buffer (`fromSeq` 0).
+   *  - a cold read mid-stream (page reload): the answer has no turn yet, so seed an
+   *    empty one bound to the run and replay the whole buffer (`fromSeq` 0).
    *  Reuses `driveRun`, so the shared finally clears streaming/sending and
    *  reconciles the persisted turn once the run ends.
+   *
+   *  **The seeded turn goes after the row the backend names, and nothing else is
+   *  invented.** The operator's prompt is persisted as the turn begins, so the thread
+   *  already holds it; only the streaming answer is missing. If the named row is not in
+   *  the transcript this holds (the run began after it was loaded), the thread is
+   *  re-read once rather than a prompt-less bubble being drawn into the wrong place.
    *
    *  **A fold seeds nothing.** It writes no answer, so there is no assistant turn to
    *  find or to seed — its frames seat their own compaction turn — and a seeded one
@@ -274,6 +301,21 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
     const seeded = assistantId === undefined;
     if (assistantId === undefined) {
       assistantId = nextId("a");
+      let at = seatAfterPrompt(deps.messages, opts.promptMessageId);
+      if (at === null) {
+        // The transcript does not hold the row this run answers: read the thread once
+        // and take the backend's word for where the answer goes. Still missing after
+        // that (a run with no prompt on record yet) means the end of what it holds.
+        const boundTo = deps.conversationId();
+        const live = await deps.refetchRun(runId);
+        // The operator moved on while the read was out: this run belongs to a thread
+        // that is no longer on screen, and seating its bubble here would plant it in
+        // whichever thread is.
+        if (deps.conversationId() !== boundTo) return;
+        at =
+          seatAfterPrompt(deps.messages, live?.promptMessageId) ??
+          deps.messages.length;
+      }
       const assistantMsg: ChatMessage = {
         id: assistantId,
         role: "assistant",
@@ -283,7 +325,7 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
         runId,
         createdAt: new Date().toISOString(),
       };
-      deps.setMessages(produce((m) => m.push(assistantMsg)));
+      deps.setMessages(produce((m) => m.splice(at, 0, assistantMsg)));
     } else if (assistantId) {
       deps.patchById(assistantId, (m) => {
         m.streaming = true;

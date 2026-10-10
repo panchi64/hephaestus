@@ -88,7 +88,13 @@ from .attribution import attribute_answer, last_answer_id, tool_results
 from .code_mode import code_mode_limits
 from .compaction_context import build_compaction_context
 from .factory import NO_DORMANT, build_agent
-from .finalize import finalize, flush_recorder, parked_context, persist_parked_cancel
+from .finalize import (
+    finalize,
+    flush_recorder,
+    parked_context,
+    parked_start,
+    persist_parked_cancel,
+)
 from .flush import PersistContext, TurnFlush
 from .folding import fold
 from .history import TurnStart
@@ -101,7 +107,7 @@ from .naming import (
     settle_title,
 )
 from .parking import DEFAULT_BINDING, ParkedTurn
-from .prelude import TurnSetup, prepare_turn
+from .prelude import TurnSetup, prepare_turn, record_prompt
 from .summarize import AutoCompactPolicy, CompactionOutcome, FoldResult
 from .title import last_user_text
 from .turn import NO_CAPS, TurnResult, drive_turn, turn_deps
@@ -360,14 +366,13 @@ def build_chat_orchestrator(
         partial_history_ref: list[Callable[[], list[ModelMessage]]] = []
 
         def _turn_messages_or_prompt() -> list[ModelMessage]:
-            # The turn's own messages — its slice of the partial history — or, if the
-            # bound tripped in the pre-model setup window (before the first step landed
-            # and `partial_history_ref` is still empty), the operator's typed prompt
-            # alone. Without the fallback, a stop there would persist nothing and the
-            # turn (the operator's own message) would vanish on reload. The plain
-            # `prompt` persists, not the attachment/context-augmented `user_prompt`:
-            # attachments ride on `persisted`/`stamp_ids` and per-turn context is
-            # re-resolved fresh each turn and never persisted.
+            # The turn's own messages — its slice of the partial history, opening request
+            # included (`finalize` sets that one aside once the prompt is on record) — or,
+            # if the bound tripped in the pre-model setup window (before the first step
+            # landed and `partial_history_ref` is still empty), the operator's typed prompt
+            # alone. Without the fallback a stop there hands the flush nothing and it
+            # returns early; with it, `_flush_context` writes the prompt down and the stop
+            # marker lands on it.
             if partial_history_ref:
                 turn = setup.turn_start.slice(partial_history_ref[0]())
                 if turn:
@@ -377,18 +382,24 @@ def build_chat_orchestrator(
             return []
 
         def _flush_context() -> PersistContext:
-            # Read at flush time, not at arm time: `turn_start`, `stamp_ids` and
-            # `persisted` are only known once the turn is under way, and the hooks are armed
-            # before that (see above). A default boundary, because `_turn_messages_or_prompt`
-            # hands over an already-sliced list.
+            # Read at flush time, not at arm time: `turn_start` and the prompt's stamps are
+            # only known once the turn is under way, and the hooks are armed before that
+            # (see above). A stop that lands inside the prelude finds the prompt not yet
+            # on record, so it is written here, as far as the prelude got, and the stop
+            # marker has a node to land on. The boundary is a default one with only the
+            # prompt's id, because `_turn_messages_or_prompt` hands over an already-sliced list.
+            record_prompt(
+                setup,
+                run,
+                prompt=prompt,
+                command=stamped,
+                store=store,
+                conversation_id=conversation_id,
+            )
             return PersistContext(
                 conversation_id=conversation_id,
-                start=TurnStart(),
+                start=TurnStart(prompt_message_id=setup.turn_start.prompt_message_id),
                 clean_drop=_flush_clean_drop(),
-                attachment_ids=setup.stamp_ids,
-                file_refs=setup.file_refs,
-                command=stamped,
-                persisted=setup.persisted,
             )
 
         def _flush_clean_drop() -> tuple[int, int] | None:
@@ -450,6 +461,12 @@ def build_chat_orchestrator(
         flush.arm()
         # -----------------------------------------------------------------------------
 
+        # A regenerate has no prompt of its own to write: it answers the request the leaf
+        # was reseated onto, and that is the row the detail should name. Read before the
+        # prelude, whose fold would leave a checkpoint at the tip.
+        if prompt is None and store is not None and conversation_id is not None:
+            run.prompt_message_id = await store.leaf_id(conversation_id)
+
         # Everything the turn needs before the model is called, filled onto `setup` in
         # place. Outside the `try` below, exactly where the code it replaced ran: an
         # exception here takes the armed hooks' path, not `flush.flush_error()`.
@@ -475,6 +492,16 @@ def build_chat_orchestrator(
             title_model=title_model,
             title_settings=title_settings,
             workspace_key=workspace_key,
+        )
+        # The prompt goes into the store before the model is called, so a thread opened
+        # while this runs has it, and a stop before the first token leaves it standing.
+        record_prompt(
+            setup,
+            run,
+            prompt=prompt,
+            command=stamped,
+            store=store,
+            conversation_id=conversation_id,
         )
 
         try:
@@ -557,10 +584,6 @@ def build_chat_orchestrator(
                     conversation_id=conversation_id,
                     start=setup.turn_start,
                     clean_drop=turn.clean_drop,
-                    attachment_ids=setup.stamp_ids,
-                    file_refs=setup.file_refs,
-                    command=stamped,
-                    persisted=setup.persisted,
                 ),
             )
             # Disarm the flush hooks now the turn is recorded: a wall-clock/inactivity bound
@@ -681,7 +704,7 @@ def build_resume_orchestrator(
         # the `ParkedTurn` — so only the messages move, and the one index that can still
         # move with them is the persistence start: an overflow recovery folds the thread
         # underneath this turn and rebuilds the history in front of it.
-        turn_start = TurnStart(parked.persist_from, parked.persist_from_parts)
+        turn_start = parked_start(parked)
         flush = TurnFlush(
             run,
             messages=lambda: partial_history_ref[0]() if partial_history_ref else [],

@@ -781,12 +781,14 @@ async def test_verify_park_persists_once_on_resume(tmp_path, monkeypatch):
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
 
-    # Parked by the correction — persistence context wired, nothing written yet.
+    # Parked by the correction — persistence context wired, and only the operator's
+    # prompt (written down as the turn began) on record.
     assert run.status is RunStatus.awaiting_input
-    assert await store.history(conv) == []
+    assert [_project(m)[1] for m in await store.history(conv)] == ["do the thing"]
     parked: ParkedTurn = run.parked_payload
     assert parked.conversation_id == conv
     assert parked.persist_from == 0
+    assert parked.prompt_message_id == run.prompt_message_id is not None
 
     call_id = parked.requests.approvals[0].tool_call_id
     await reg.resume(
@@ -802,6 +804,7 @@ async def test_verify_park_persists_once_on_resume(tmp_path, monkeypatch):
     assert any("all done" in t for t in texts)
     assert not any("first answer" in t for t in texts)
     assert not any("did not fully satisfy" in t for t in texts)
+    assert texts.count("do the thing") == 1  # the prompt is not recorded a second time
     await store.stop()
 
 

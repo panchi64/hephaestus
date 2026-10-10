@@ -7,9 +7,10 @@
  * from driving a run or sending a turn, and it went wrong in three separate ways while it
  * was a paragraph inside the controller.
  *
- * **The live store is authoritative for the thread already open.** A turn's messages are
- * persisted only when it finishes, so a refetch mid-stream reads an *empty* conversation.
- * Re-seeding from that would blank a streaming thread, so a source change for the thread
+ * **The live store is authoritative for the thread already open.** A turn's prompt is
+ * persisted as it begins but its answer only when it finishes, so a refetch mid-stream
+ * reads the question and none of the reply. Re-seeding from that would blank a streaming
+ * answer, so a source change for the thread
  * we are already on is ignored outright — which also spares the freshly-created thread an
  * empty flash while its history loads, and keeps the live-only fields (preview, artifacts,
  * runId) the cold projection does not carry.

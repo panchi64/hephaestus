@@ -11,10 +11,13 @@
  * acting on a turn already recorded (`branching.ts`), and being pointed at a different
  * thread (`binding.ts`).
  *
- * **The optimistic store is authoritative for the thread it is on.** A turn's messages are
- * persisted only when it finishes, so a refetch mid-stream reads an empty conversation.
- * That rule is why `binding.ts` refuses to re-seed a live thread and why `resume.ts` adopts
- * ids rather than reseating wholesale.
+ * **The store is authoritative for the thread it is on, and the backend is authoritative
+ * for what a turn was.** The operator's prompt is persisted the moment a turn begins, but
+ * its answer only when it finishes, so a refetch mid-stream reads the prompt and none of
+ * the streaming reply. That is why `binding.ts` refuses to re-seed a live thread — and why,
+ * once the run ends, `resume.ts` reseats the transcript from the backend's rows: the
+ * optimistic echo and the streamed bubble give way to the ids the backend minted, with no
+ * positional guesswork about which is which.
  *
  * **The ops form a cycle, and it is a real one.** A run's teardown reconciles the thread,
  * reconciling can discover a live run and start a drive, and a drive hands undelivered
@@ -46,6 +49,7 @@ import { createThreadBinding } from "./binding";
 import {
   createBranchingOps,
   reseatFromDetail,
+  reseatMessagesFromDetail,
   type TranscriptStore,
 } from "./branching";
 import { attachOptions, createRunDrive } from "./drive";
@@ -156,12 +160,6 @@ export function createChatStream(
   // The last run a cold-read reattach was kicked off for, so the load effect fires
   // at most once per run even if the session resource re-emits the same value.
   let reattachedRunId: string | null = null;
-  // Set when the operator cancels the in-flight run, so the just-ended drive's
-  // `adoptServerMeta` skips its reseat: a cancelled turn persists nothing, so the
-  // backend history is *shorter* than the optimistic store, and reseating to it
-  // would discard the whole in-flight turn (and, on a brand-new conversation with
-  // no prior turns, blank the chat entirely). Reset at the start of each drive.
-  let cancelled = false;
   // The conversation this stream is currently bound to (tracked separately from
   // the screen's `key`, which only updates once a new thread is persisted).
   //
@@ -188,6 +186,8 @@ export function createChatStream(
   const store: TranscriptStore = { setMessages, setUsage, setSnapshots };
   const reseat = (detail: ConversationDetailDTO) =>
     reseatFromDetail(store, detail);
+  const reseatMessages = (detail: ConversationDetailDTO) =>
+    reseatMessagesFromDetail(store, detail);
 
   const patchById = createPatchById(messages, setMessages);
 
@@ -239,10 +239,9 @@ export function createChatStream(
     conversationId: () => activeConversationId,
     fetchDetail: (id) => api.get<ConversationDetailDTO>(`/conversations/${id}`),
     messages,
-    setMessages,
     reseat,
+    reseatMessages,
     reattachRun: (runId, opts) => drive.reattachRun(runId, opts),
-    wasCancelled: () => cancelled,
   });
 
   const drive = createRunDrive({
@@ -254,13 +253,11 @@ export function createChatStream(
     setSending,
     setErrored,
     setTitlePending,
-    clearCancelled: () => {
-      cancelled = false;
-    },
     restoreUndelivered: steering.restoreUndelivered,
     conversationId: () => activeConversationId,
-    adoptServerMeta: resume.adoptServerMeta,
+    reseatAfterRun: resume.reseatAfterRun,
     recoverLostRun: resume.recoverLostRun,
+    refetchRun: resume.refetchRun,
     onConversationStarted: (id) => options.onConversationStarted?.(id),
     onTurnComplete: () => options.onTurnComplete?.(),
   });
@@ -513,9 +510,6 @@ export function createChatStream(
    *  the streaming state. Safe to call with no active run. */
   async function cancel(): Promise<void> {
     const runId = foldState.activeRunId;
-    // Mark the cancel before the abort unwinds the drive, so its `adoptServerMeta`
-    // in `finally` keeps the in-flight turn instead of reseating it away.
-    cancelled = true;
     if (runId) {
       try {
         await api.post(`/runs/${runId}/cancel`, {});

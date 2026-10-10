@@ -34,29 +34,25 @@ def _flush(run: Run, messages, context, recorded: list) -> TurnFlush:
 
 def test_the_context_is_read_when_it_flushes_not_when_it_is_armed():
     # The chat orchestrator arms its hooks in the prelude — before the history is loaded,
-    # so before `start` and the attachment stamps exist — because a bound can trip during
+    # so before `start` and the prompt's id exist — because a bound can trip during
     # that window and the operator's message must still persist. Capturing the context at
     # arm time would record every such flush against an empty turn.
     run = _run()
     recorded: list = []
-    live: dict = {"start": TurnStart(), "ids": []}
+    live: dict = {"start": TurnStart()}
     flush = _flush(
         run,
         lambda: [_message("the question")],
-        lambda: PersistContext(
-            conversation_id="c", start=live["start"], attachment_ids=live["ids"]
-        ),
+        lambda: PersistContext(conversation_id="c", start=live["start"]),
         recorded,
     )
     flush.arm()
 
-    live["start"] = TurnStart(7)  # the turn got under way after arming
-    live["ids"] = ["upload-1"]
+    live["start"] = TurnStart(7, 0, "prompt-1")  # the turn got under way after arming
     run.on_cancel()
 
     (_messages, _detail, ctx) = recorded[0]
-    assert ctx.start == TurnStart(7)
-    assert ctx.attachment_ids == ["upload-1"]
+    assert ctx.start == TurnStart(7, 0, "prompt-1")
 
 
 def test_a_stop_before_anything_exists_records_nothing():

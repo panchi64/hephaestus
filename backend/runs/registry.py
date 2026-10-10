@@ -145,8 +145,9 @@ class RunRegistry:
         """The most-recent non-terminal run driving ``conversation_id``, if any.
 
         How a reattaching client (page reload) maps a conversation back to its
-        in-flight run: an in-flight chat turn isn't persisted until it finishes,
-        so the conversation read alone can't show a streaming answer — this points
+        in-flight run: an in-flight chat turn's answer isn't persisted until it
+        finishes (its prompt is, as it begins), so the conversation read alone
+        can't show a streaming answer — this points
         the client at the run whose events it can replay and resume.
         """
         candidates = [

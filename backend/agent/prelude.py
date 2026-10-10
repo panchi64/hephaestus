@@ -27,13 +27,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic_ai import Agent, ModelMessage
+from pydantic_ai import Agent, ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
 from core.config import Settings
 from core.container import ServiceContainer
 from runs import Run
+from services.commands.spec import Invocation
 from services.conversation_view import estimate_tokens
 from services.conversations import ConversationBinding, ConversationStore
 from services.projects import ProjectStore, WorktreeManager
@@ -87,6 +88,51 @@ class TurnSetup:
     # `finally` can always call `reap_title(setup.title_namer)`
     title_ctx: TitleContext | None = None
     title_namer: Namer | None = None
+
+
+def record_prompt(
+    setup: TurnSetup,
+    run: Run,
+    *,
+    prompt: str | None,
+    command: Invocation | None,
+    store: ConversationStore | None,
+    conversation_id: str | None,
+) -> None:
+    """Write the operator's prompt down, once, as the turn begins.
+
+    A turn used to reach the store only when it finished, which left a thread opened
+    mid-run with no prompt for the run in flight and let a stop that captured nothing take
+    the operator's own words with it. The prompt exists before the model is called, so it is
+    recorded here — with the attachments, `@` references and command the turn was sent with,
+    stamped exactly as they were when the whole turn was written at the end — and every
+    later write (:func:`~agent.finalize.finalize`, the stop-flush hooks, a resume) records
+    only what followed it. Its id goes on the turn's boundary, where all of them read it,
+    and on the run, where the conversation detail reads it.
+
+    Idempotent, because two callers reach it: the orchestrator once the prelude has settled
+    what the prompt carries, and a stop-flush that fires *before* that — which records the
+    prompt as far as it got (``setup`` still holds its defaults) rather than losing it.
+    ``prompt`` is ``None`` on a regenerate, which answers a request already in the tree:
+    nothing is written, and the run is pointed at that request instead by the caller."""
+    if (
+        prompt is None
+        or setup.turn_start.prompt_message_id is not None
+        or store is None
+        or conversation_id is None
+    ):
+        return
+    content = setup.user_prompt if setup.user_prompt is not None else prompt
+    message_id = store.record_prompt(
+        conversation_id,
+        ModelRequest(parts=[UserPromptPart(content)]),
+        attachment_ids=list(setup.stamp_ids),
+        file_refs=list(setup.file_refs),
+        command=command,
+        persisted=setup.persisted,
+    )
+    setup.turn_start.prompt_message_id = message_id
+    run.prompt_message_id = message_id
 
 
 async def prepare_turn(
