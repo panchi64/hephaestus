@@ -95,6 +95,18 @@ export interface FoldState {
    *  before it announces itself — nothing has been said since the last fold — would
    *  otherwise end in silence, which is the exact failure this surface was built to fix. */
   runKind: string | null;
+  /** Which drive the fold is currently listening to. A drive stamps every event it
+   *  hands over with the epoch it started under, and the fold drops any whose stamp is
+   *  not this one — so a chunk read just before a thread switch cannot write the old
+   *  thread's metrics, tasks or queue into the thread now bound. Bumped when a drive
+   *  starts and when one is superseded. */
+  epoch: number;
+  /** Events at or below this `seq` are a replay of what had already happened when the
+   *  stream attached — the run's `last_seq` in the detail the attach was decided from.
+   *  They fold into state like any other, but say nothing out loud: a toast announces
+   *  something that just happened, and these did not. 0 for a run followed from its
+   *  start. */
+  replayThrough: number;
 }
 
 /* Sub-agents used to be folded here, from a `subagent.*` family the blocking delegation
@@ -129,6 +141,10 @@ export interface FoldDeps {
    *  which model round-trip it is on. Optional — a caller with no header to put it in
    *  (the compare pane) leaves it out, and the fold then drops both facts. */
   setRunClock?: (next: (prev: RunClock | null) => RunClock | null) => void;
+  /** A settled fold named a boundary turn this transcript does not hold — it is behind
+   *  the backend. The fold will not guess a position; the caller re-reads the
+   *  persisted thread instead. Optional for a caller that never folds. */
+  onFoldMisplaced?: () => void;
 }
 
 /** When the streaming run began and how far it has got, both straight off the wire:
@@ -163,15 +179,27 @@ function dropLiveFolds(list: ChatMessage[]): void {
 
 export function createFolder(
   deps: FoldDeps,
-): (anchorId: string, ev: RunEvent) => void {
+): (anchorId: string, ev: RunEvent, epoch?: number) => void {
   const { state, patchById, setMessages } = deps;
+  // The checkpoints already re-read the thread for, so a backend that keeps naming a
+  // turn this client cannot find costs one refetch rather than a loop.
+  const refetchedFor = new Set<string>();
 
-  return function foldEvent(anchorId: string, ev: RunEvent): void {
+  return function foldEvent(
+    anchorId: string,
+    ev: RunEvent,
+    epoch?: number,
+  ): void {
+    // Ownership: an event stamped by a drive that is no longer the current one belongs
+    // to a run the room has since left.
+    if (epoch !== undefined && epoch !== state.epoch) return;
     // Idempotency: `seq` is monotonic per run, so an event at or below the high-
     // water mark was already folded (a reattach replay overlapping a still-live
     // reader). Skipping it stops a re-applied `answer.delta` from doubling text.
     if (ev.seq <= state.maxFoldedSeq) return;
     state.maxFoldedSeq = ev.seq;
+    // Replayed history folds into state but announces nothing — see `replayThrough`.
+    const announce = ev.seq > state.replayThrough;
     // Events land on the current fold target: the drive's placeholder until a
     // `message.injected` boundary retargets to a fresh assistant bubble.
     const assistantId = state.foldTarget ?? anchorId;
@@ -377,6 +405,18 @@ export function createFolder(
             }
           }),
         );
+        break;
+      case "compaction.failed":
+        // The fold the opening frame announced is not going to land, so the live turn it
+        // seated comes back out — an unsettled fold is not a fold, and the model's raw
+        // working must not stay on screen as though it were the summary. The thread is
+        // otherwise untouched.
+        setMessages(produce(dropLiveFolds));
+        if (announce)
+          toast.error(
+            ev.message ||
+              `Compaction (${ev.reason}) failed — the conversation was not changed.`,
+          );
         break;
       case "review.started":
         // The chassis is about to answer for the operator. The row opens now rather than
@@ -754,6 +794,7 @@ export function createFolder(
         // already in it, so an unguarded splice would seat a second identical one —
         // and re-announce a fold that happened minutes ago.
         let inserted = false;
+        let misplaced = false;
         setMessages(
           produce((list) => {
             // The live turn goes, whether or not the settled one is seated below: it is
@@ -762,29 +803,46 @@ export function createFolder(
             // `compaction.started` and nothing else would ever close it.
             dropLiveFolds(list);
             if (list.some((m) => m.id === divider.id)) return;
+            // The backend's boundary is authoritative; a null one is its own statement
+            // that the checkpoint follows everything. A boundary naming a turn this
+            // transcript does not hold is not a licence to guess — appended at the
+            // bottom the divider would claim to have folded turns it kept — so the
+            // thread is re-read instead (below).
+            if (!ev.after_message_id) {
+              list.push(divider);
+              inserted = true;
+              return;
+            }
+            const at = list.findIndex((m) => m.id === ev.after_message_id);
+            if (at < 0) {
+              misplaced = true;
+              return;
+            }
+            list.splice(at + 1, 0, divider);
             inserted = true;
-            const at = ev.after_message_id
-              ? list.findIndex((m) => m.id === ev.after_message_id)
-              : -1;
-            if (at >= 0) list.splice(at + 1, 0, divider);
-            else list.push(divider);
           }),
         );
+        if (misplaced && !refetchedFor.has(divider.id)) {
+          refetchedFor.add(divider.id);
+          deps.onFoldMisplaced?.();
+        }
         if (inserted) {
           // Take the operator to it. The live turn they were watching sat at the
           // tail; this one belongs at the fold boundary, which is usually off screen
           // above — so without this the thing they were waiting for arrives by
           // disappearing.
-          requestFoldAnchor(divider.id);
+          if (announce) requestFoldAnchor(divider.id);
           // A fold that lands mid-answer scrolls past unseen — and it changes what the
           // model can still see, which is not something to discover later by reading
-          // back. The checkpoint is the durable record; this is the notification.
+          // back. The checkpoint is the durable record; this is the notification — and
+          // only for a fold that just happened, not one a replay is catching up on.
           // `messages_compacted` counts messages, not exchanges — say messages.
-          toast.info(
-            ev.messages_compacted > 0
-              ? `Context compacted — ${ev.messages_compacted} earlier ${ev.messages_compacted === 1 ? "message is" : "messages are"} now a summary for the model.`
-              : "Context compacted — earlier messages are now a summary for the model.",
-          );
+          if (announce)
+            toast.info(
+              ev.messages_compacted > 0
+                ? `Context compacted — ${ev.messages_compacted} earlier ${ev.messages_compacted === 1 ? "message is" : "messages are"} now a summary for the model.`
+                : "Context compacted — earlier messages are now a summary for the model.",
+            );
         }
         break;
       }
@@ -812,14 +870,15 @@ export function createFolder(
         // that exists but isn't listed for another few minutes reads as work that
         // went nowhere. The toast is the account of *why* a row appeared.
         refreshSessions();
-        toast.info(
-          ev.title
-            ? `Research thread started — ${ev.title}`
-            : "Research thread started.",
-        );
+        if (announce)
+          toast.info(
+            ev.title
+              ? `Research thread started — ${ev.title}`
+              : "Research thread started.",
+          );
         break;
       case "run.error":
-        toast.error(ev.message || "The run failed.");
+        if (announce) toast.error(ev.message || "The run failed.");
         patchById(assistantId, (m) => (m.streaming = false));
         deps.setErrored(true);
         break;
@@ -827,7 +886,10 @@ export function createFolder(
         // The backend derives the window's fullness; the meter just renders it.
         // Authoritative either way: a null context (this turn ran on a windowless
         // model, or reported no usage) clears a stale reading rather than keeping it.
-        deps.setUsage(ev.context);
+        // *Absent* is not null — a frame that carries no `context` field at all says
+        // nothing about the window, and reading it as a clear would drop the meter on
+        // a frame that merely was not about it.
+        if (ev.context !== undefined) deps.setUsage(ev.context);
         deps.setStats(toStats(ev));
         break;
       case "citation.added":
@@ -872,7 +934,7 @@ export function createFolder(
         // Only where the control is actually offered, though. A turn that already folded
         // and still overran carries the after-fold marker, `BlockedFooter` withholds the
         // button, and a toast naming it would contradict the sentence it is appended to.
-        if (ev.limit !== "verify")
+        if (announce && ev.limit !== "verify")
           toast.error(
             ev.limit === "context" &&
               ev.detail !== CONTEXT_OVERFLOW_AFTER_FOLD_DETAIL
@@ -905,6 +967,7 @@ export function createFolder(
         // the single most likely way for this button to do nothing, so keying the report
         // on the abandoned turn would go quiet in exactly the case that needs a sentence.
         if (
+          announce &&
           deps.state.runKind === FOLD_RUN_KIND &&
           ev.outcome === "blocked" &&
           ev.detail

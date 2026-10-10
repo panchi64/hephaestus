@@ -23,7 +23,7 @@
  * one closure in which every part can reach every other.
  */
 
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, untrack } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 import { api, isApiError } from "~/lib/api";
 import { effectiveSelection, type ModelSelection } from "~/lib/stores/models";
@@ -48,7 +48,7 @@ import {
   reseatFromDetail,
   type TranscriptStore,
 } from "./branching";
-import { createRunDrive } from "./drive";
+import { attachOptions, createRunDrive } from "./drive";
 import { createFolder, type FoldState, type RunClock } from "./fold";
 import { createPatchById, nextId } from "./patch";
 import { createResumeOps } from "./resume";
@@ -150,6 +150,8 @@ export function createChatStream(
     planRevision: 0,
     activeRunId: null,
     runKind: null,
+    epoch: 0,
+    replayThrough: 0,
   };
   // The last run a cold-read reattach was kicked off for, so the load effect fires
   // at most once per run even if the session resource re-emits the same value.
@@ -205,6 +207,10 @@ export function createChatStream(
     setErrored,
     setTitlePending,
     setRunClock,
+    // A checkpoint that names a turn this transcript does not hold: the persisted
+    // thread is ahead of it, so take its word rather than a guessed position. Reached
+    // at call time — the resume ops are built below, and need the drive that needs this.
+    onFoldMisplaced: () => void resume.reconcileStaleDecision(),
   });
 
   // Steering: a message sent into a run that is already going, and the text handed
@@ -573,12 +579,20 @@ export function createChatStream(
   // reply-less. The source is withheld (→ undefined) while history loads, so this
   // never fires on an empty seed; it runs once per run (`reattachedRunId`) and not
   // for a run we're already driving.
+  //
+  // It is also how a run started out of sight is picked up (another tab, a scheduled
+  // task): the room re-reads the thread when the rail reports it busy, and the new
+  // `activeRun` lands here. A run this transcript already holds a settled turn for is
+  // one this stream drove to its end — the backend can still list it for a moment
+  // after — and replaying its buffer over that turn would double every delta.
   createEffect(() => {
     const ar = options.activeRun?.();
     if (!ar || ar.id === reattachedRunId || ar.id === foldState.activeRunId)
       return;
+    if (untrack(() => messages.some((m) => m.runId === ar.id && !m.streaming)))
+      return;
     reattachedRunId = ar.id;
-    void drive.reattachRun(ar.id, { fromSeq: 0, kind: ar.kind });
+    void drive.reattachRun(ar.id, attachOptions(ar));
   });
 
   return {

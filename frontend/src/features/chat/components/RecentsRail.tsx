@@ -47,6 +47,7 @@ import {
   registerAddDirectoryButton,
   useAddDirectory,
 } from "../addDirectory";
+import { settled } from "~/lib/resource";
 import type { ChatActivity } from "../model";
 import type { WorkspaceDirectory } from "../sessionGroups";
 import { SessionList, type WorkspaceStatus } from "./SessionList";
@@ -102,7 +103,9 @@ export function RecentsRail(): JSX.Element {
    *  normal way. */
   const rows = createMemo(() => {
     const list = sessions();
-    const id = currentId();
+    // `openId`, not `currentId`: a new thread's first turn is not seated until it ends,
+    // so keyed on the seat its row stayed dark for the whole of that turn.
+    const id = openId();
     if (!list || !id || !stream.sending()) return list;
     const echo: ChatActivity = stream.awaitingInput()
       ? "awaiting_input"
@@ -126,7 +129,7 @@ export function RecentsRail(): JSX.Element {
    *  a rail drawing every directory would draw headings whose threads are being
    *  filtered away underneath them. Archived projects drop out of the listing itself. */
   const visible = createMemo((): Project[] | undefined => {
-    const dto = projects.latest;
+    const dto = settled(projects);
     // Undefined means *still loading*, and the list holds its loading arm on it. An
     // errored resource never populates `latest`, so returning undefined there would
     // hold that arm forever — a rail stuck on LOADING with no error, no retry and no

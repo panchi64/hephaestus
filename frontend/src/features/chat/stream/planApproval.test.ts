@@ -27,6 +27,8 @@ function foldState(): FoldState {
     planRevision: 0,
     activeRunId: "run-1",
     runKind: null,
+    epoch: 0,
+    replayThrough: 0,
   };
 }
 

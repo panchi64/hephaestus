@@ -1,4 +1,5 @@
 import { createSignal, For, Show, Suspense, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import {
   Button,
   EmptyState,
@@ -58,10 +59,9 @@ export function SkillsDirectoryScreen(props: {
   // Reading a Solid resource accessor re-throws its error (same hazard GalleryScreen
   // documents). A 500 from /skills would otherwise trip the shell's ErrorBoundary and
   // replace the whole page with one message — InstrumentBand reads this and sits outside
-  // the Suspense. Derive from `.latest`/`.error` so a failed load degrades to an empty
+  // the Suspense. Derive from `settled` so a failed load degrades to an empty
   // library with a message, and the boundary stays the net rather than the plan.
-  const skills = (): SkillSummary[] =>
-    skillsResource.error ? [] : (skillsResource.latest ?? []);
+  const skills = (): SkillSummary[] => settled(skillsResource) ?? [];
   const loadError = (): string | null =>
     skillsResource.error
       ? skillErrorMessage(skillsResource.error, "Could not load skills.")

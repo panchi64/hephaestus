@@ -1,5 +1,20 @@
-import { For, Show, createEffect, createMemo, type JSX } from "solid-js";
-import { Button, EmptyState, ErrorBoundary } from "~/ui";
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  type JSX,
+} from "solid-js";
+import {
+  Button,
+  EmptyState,
+  ErrorBoundary,
+  ErrorState,
+  LoadingText,
+} from "~/ui";
+import type { HistoryStatus } from "../historyStatus";
 import { consumeFoldAnchor, pendingFoldAnchor } from "../foldAnchor";
 import type { ConversationActions } from "../conversationActions";
 import type { createChatStream } from "../stream/chatStream";
@@ -13,6 +28,11 @@ export interface TranscriptViewProps {
   actions: ConversationActions;
   scroll: TranscriptFollow;
   conversationId: () => string | null;
+  /** Whether the open thread's history is loading or failed — an empty transcript means
+   *  "nothing said yet" only when it is neither. */
+  history: () => HistoryStatus;
+  /** Ask for the history again, from the error state's retry. */
+  onRetryHistory: () => void;
   /** The reading measure, shared with the composer dock so the two agree. */
   measure: string;
   /** Height of what the room lays over the top of this scroll region (the title
@@ -116,11 +136,28 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
             <Show
               when={props.stream.messages.length}
               fallback={
-                <EmptyState
-                  icon="chat"
-                  message="Start a conversation"
-                  hint="Ask a question, request a summary, or describe a task to begin."
-                />
+                <Switch
+                  fallback={
+                    <EmptyState
+                      icon="chat"
+                      message="Start a conversation"
+                      hint="Ask a question, request a summary, or describe a task to begin."
+                    />
+                  }
+                >
+                  <Match when={props.history() === "loading"}>
+                    <div class="px-4 py-8 text-center">
+                      <LoadingText label="Loading conversation…" />
+                    </div>
+                  </Match>
+                  <Match when={props.history() === "error"}>
+                    <ErrorState
+                      message="This conversation could not be loaded"
+                      hint="Check the connection, then try again."
+                      onRetry={props.onRetryHistory}
+                    />
+                  </Match>
+                </Switch>
               }
             >
               <For each={props.stream.messages}>

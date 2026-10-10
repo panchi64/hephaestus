@@ -1,4 +1,5 @@
 import { createResource, type Accessor } from "solid-js";
+import { settled } from "~/lib/resource";
 import { api } from "~/lib/api";
 import { toast } from "~/ui";
 
@@ -52,7 +53,7 @@ async function pickPath(input: {
 export function usePathPicker(): Accessor<PathPicker | undefined> {
   const [availability] = createResource(fetchPickerAvailability);
   return () => {
-    if (!availability.latest?.available) return undefined;
+    if (!settled(availability)?.available) return undefined;
     return async (opts) => {
       try {
         return await pickPath(opts);

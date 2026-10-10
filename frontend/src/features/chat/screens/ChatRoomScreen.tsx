@@ -38,6 +38,7 @@ import {
 } from "~/lib/stores/sessionMode";
 import { createComposerAttachments } from "~/features/uploads/data";
 import { useProjects } from "~/lib/stores/projects";
+import { settled } from "~/lib/resource";
 import { directoryLabel, focusAddDirectory } from "../addDirectory";
 import { ChatRoomHeader } from "../components/ChatRoomHeader";
 import { ChatViewportMounts } from "../components/ChatViewportMounts";
@@ -87,6 +88,8 @@ export function ChatRoomScreen(): JSX.Element {
     currentId,
     openId,
     setCurrentId,
+    history,
+    reloadHistory,
     stream,
     warmResolved,
     markWarmResolved,
@@ -114,7 +117,9 @@ export function ChatRoomScreen(): JSX.Element {
   const stagedProject = createMemo(() => {
     if (!rooted() || openId() !== null) return undefined;
     const id = codeProjectId();
-    return id ? projects.latest?.projects.find((p) => p.id === id) : undefined;
+    return id
+      ? settled(projects)?.projects.find((p) => p.id === id)
+      : undefined;
   });
 
   /** Why SEND is unavailable, or null. The model/context gate, plus the one thing
@@ -243,7 +248,7 @@ export function ChatRoomScreen(): JSX.Element {
     if (!rooted()) return clearThread();
     if (!codeProjectId()) {
       const target =
-        currentSummary()?.projectId ?? projects.latest?.projects[0]?.id;
+        currentSummary()?.projectId ?? settled(projects)?.projects[0]?.id;
       if (!target) {
         if (focusAddDirectory()) return;
       } else setCodeProjectId(target);
@@ -524,6 +529,8 @@ export function ChatRoomScreen(): JSX.Element {
             actions={actions}
             scroll={transcript}
             conversationId={currentId}
+            history={history}
+            onRetryHistory={reloadHistory}
             measure={MEASURE}
             insetTop={overlayHeight}
           />

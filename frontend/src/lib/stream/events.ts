@@ -328,6 +328,17 @@ export interface CompactionDelta extends Base {
   text: string;
 }
 
+/** A fold that started and then did not land — the summarizer failed or wrote nothing
+ *  usable. The thread is exactly as it was: nothing was folded and nothing was deleted.
+ *  It closes the pair `compaction.started` opened, which is why the live fold turn that
+ *  event seated has to come back out; `reason` is the same trigger the opening frame
+ *  carried, and `message` is the backend's own account of what went wrong. */
+export interface CompactionFailed extends Base {
+  type: "compaction.failed";
+  reason: CompactionReason;
+  message: string;
+}
+
 /** The thread's earlier turns were folded into a summary before this turn ran,
  *  because its context footprint reached the operator's threshold. Nothing was
  *  deleted — the transcript keeps every turn; this marks where the *model's*
@@ -704,6 +715,7 @@ export type RunEvent =
   | ConversationTitled
   | CompactionStarted
   | CompactionDelta
+  | CompactionFailed
   | ConversationCompacted
   | ConversationLinked
   | ContextInjected

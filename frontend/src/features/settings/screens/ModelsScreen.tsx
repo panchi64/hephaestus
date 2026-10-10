@@ -1,4 +1,5 @@
 import { Show, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import { PageHeader, Stack, Tabs, toast } from "~/ui";
 import { isApiError } from "~/lib/api";
 import { useTabParam } from "~/lib/useTabParam";
@@ -56,7 +57,7 @@ export function ModelsScreen(): JSX.Element {
   const [tab, setTab] = useTabParam("models", TABS, "assignments");
 
   const endpointById = (id: string | undefined): ModelEndpoint | undefined =>
-    id ? (endpoints.latest ?? []).find((e) => e.id === id) : undefined;
+    id ? (settled(endpoints) ?? []).find((e) => e.id === id) : undefined;
 
   /** Re-ask the endpoints what they serve, whenever one of the pickers below is
    *  opened. This page is where an operator lands *after* starting a local engine
@@ -186,7 +187,7 @@ export function ModelsScreen(): JSX.Element {
             onOpen={rediscover}
             placeholder="No model"
             endpoint={chatEndpoint()}
-            implicit={roles.latest?.main?.implicit ?? false}
+            implicit={settled(roles)?.main?.implicit ?? false}
           />
 
           <ModelRoleCard

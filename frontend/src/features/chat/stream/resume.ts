@@ -19,7 +19,7 @@ import { produce, type SetStoreFunction } from "solid-js/store";
 import { toActiveRun } from "../data/summaries";
 import type { ConversationDetailDTO } from "../data/wire";
 import type { ChatMessage } from "../model";
-import type { ReattachOptions } from "./drive";
+import { attachOptions, type ReattachOptions } from "./drive";
 
 export interface ResumeDeps {
   /** The thread the stream is bound to *right now* — read again after every await. */
@@ -39,11 +39,6 @@ export interface ResumeDeps {
 }
 
 export interface ResumeOps {
-  /** Read `expected`'s detail and run `fn` on it, unless the operator has moved on. */
-  withFreshDetail: (
-    expected: string | null,
-    fn: (detail: ConversationDetailDTO) => void | Promise<void>,
-  ) => Promise<void>;
   adoptServerMeta: () => Promise<void>;
   reattachToLiveRun: (conversationId: string) => Promise<void>;
   reconcileStaleDecision: () => Promise<void>;
@@ -53,10 +48,10 @@ export interface ResumeOps {
 export function createResumeOps(deps: ResumeDeps): ResumeOps {
   /** Every read below goes through here. Best-effort throughout: a failed read leaves
    *  the optimistic store in place and the next navigation or turn reconciles it. */
-  const withFreshDetail: ResumeOps["withFreshDetail"] = async (
-    expected,
-    fn,
-  ) => {
+  const withFreshDetail = async (
+    expected: string | null,
+    fn: (detail: ConversationDetailDTO) => void | Promise<void>,
+  ): Promise<void> => {
     if (expected === null) return;
     let detail: ConversationDetailDTO;
     try {
@@ -118,7 +113,7 @@ export function createResumeOps(deps: ResumeDeps): ResumeOps {
   async function reattachToLiveRun(conversationId: string): Promise<void> {
     await withFreshDetail(conversationId, async (detail) => {
       const ar = toActiveRun(detail.active_run);
-      if (ar) await deps.reattachRun(ar.id, { fromSeq: 0, kind: ar.kind });
+      if (ar) await deps.reattachRun(ar.id, attachOptions(ar));
     });
   }
 
@@ -133,7 +128,7 @@ export function createResumeOps(deps: ResumeDeps): ResumeOps {
     await withFreshDetail(deps.conversationId(), async (detail) => {
       deps.reseat(detail);
       const ar = toActiveRun(detail.active_run);
-      if (ar) await deps.reattachRun(ar.id, { fromSeq: 0, kind: ar.kind });
+      if (ar) await deps.reattachRun(ar.id, attachOptions(ar));
     });
   }
 
@@ -145,7 +140,6 @@ export function createResumeOps(deps: ResumeDeps): ResumeOps {
   }
 
   return {
-    withFreshDetail,
     adoptServerMeta,
     reattachToLiveRun,
     reconcileStaleDecision,

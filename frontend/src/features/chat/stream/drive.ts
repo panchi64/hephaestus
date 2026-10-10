@@ -30,7 +30,7 @@ import { createSignal, onCleanup, type Accessor } from "solid-js";
 import { produce, type SetStoreFunction } from "solid-js/store";
 import { StreamDetachedError, streamRun, type RunEvent } from "~/lib/stream";
 import { toast } from "~/ui";
-import type { ChatMessage } from "../model";
+import type { ActiveRun, ChatMessage } from "../model";
 import { FOLD_RUN_KIND, type FoldState } from "./fold";
 import { nextId, type PatchById } from "./patch";
 
@@ -43,7 +43,8 @@ export interface RunDriveDeps {
   patchById: PatchById;
   /** The run-scoped bookkeeping, shared by reference with the folder. */
   state: FoldState;
-  foldEvent: (assistantId: string, ev: RunEvent) => void;
+  /** `epoch` is the drive's own; the fold drops an event whose epoch is not current. */
+  foldEvent: (assistantId: string, ev: RunEvent, epoch: number) => void;
   setSending: (value: boolean) => void;
   setErrored: (value: boolean) => void;
   setTitlePending: (value: boolean) => void;
@@ -68,6 +69,15 @@ export interface RunDriveDeps {
 export interface ReattachOptions {
   fromSeq: number;
   kind?: string;
+  /** The last event that had already happened when the attach was decided — events up
+   *  to it are history being caught up on, and fold without announcing themselves. */
+  replayThrough?: number;
+}
+
+/** How to attach to a run the persisted detail reports as active: replay its whole
+ *  buffer, and treat everything the detail already knew about as history. */
+export function attachOptions(run: ActiveRun): ReattachOptions {
+  return { fromSeq: 0, kind: run.kind, replayThrough: run.lastSeq };
 }
 
 export interface RunDrive {
@@ -83,6 +93,7 @@ export interface RunDrive {
     wasNew?: boolean,
     fromSeq?: number,
     onConnected?: () => void,
+    replayThrough?: number,
   ) => Promise<void>;
   reattachRun: (runId: string, opts: ReattachOptions) => Promise<void>;
   /** Take ownership away from whatever drive is running: abort its reader and
@@ -102,6 +113,13 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
   // teardown so an aborted stalled reader can't clear the state — or refetch the
   // wrong thread — out from under the drive that replaced it.
   let driveGen = 0;
+  // Whether a drive is mid-flight — started and neither settled nor superseded. Read
+  // only by `supersede`, to tell leaving a live turn from merely switching threads.
+  let inFlight = false;
+  // The conversation a brand-new thread's first turn created, until the room has
+  // adopted its id. Held here rather than in the drive that happened to start it: a
+  // reattach replaces that drive, and it is the one that sees the turn end.
+  let pendingAdoption: string | null = null;
 
   /** Drive a started run to completion: open the SSE, fold every event onto the
    *  given assistant message, and on end clear streaming/sending, fire the
@@ -114,8 +132,14 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
     wasNew = false,
     fromSeq?: number,
     onConnected?: () => void,
+    replayThrough = 0,
   ): Promise<void> {
     const myGen = ++driveGen;
+    inFlight = true;
+    if (wasNew) pendingAdoption = deps.conversationId();
+    // The fold listens to this drive and no other from here on.
+    deps.state.epoch = myGen;
+    deps.state.replayThrough = replayThrough;
     deps.clearCancelled(); // a fresh run clears any prior cancel signal
     deps.state.activeRunId = runId;
     deps.setErrored(false); // a fresh run supersedes any prior failure
@@ -137,6 +161,9 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
         signal: controller.signal,
         fromSeq,
         onEvent: (ev: RunEvent) => {
+          // Superseded between the read and here: the bubble and the fold belong to
+          // whatever took over.
+          if (myGen !== driveGen) return;
           // First event = the transport is live again; let a reattach drop its
           // "RESYNCING…" badge here, so it shows only across the reconnect latency.
           // It's also the queued→streaming transition: the backend only starts
@@ -147,7 +174,7 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
             deps.patchById(assistantId, (m) => (m.queued = false));
             onConnected?.();
           }
-          deps.foldEvent(assistantId, ev);
+          deps.foldEvent(assistantId, ev, myGen);
         },
       });
     } catch (err) {
@@ -183,6 +210,7 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
       // `sending` must keep reporting it as in-flight until it's re-attached,
       // cancelled, or superseded.
       if (myGen === driveGen && !detachedNow) {
+        inFlight = false;
         deps.state.activeRunId = null;
         deps.patchById(deps.state.foldTarget ?? assistantId, (m) => {
           m.streaming = false;
@@ -196,9 +224,13 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
         deps.setSending(false);
         deps.setTitlePending(false); // turn ended — clear even if no title landed
         const conversationId = deps.conversationId();
-        if (wasNew && conversationId) {
+        // Keyed on the id the first turn created rather than on `wasNew`: when a
+        // reattach took this turn over, the drive that sees it end is not the one that
+        // started it, and the thread's id would never have been adopted.
+        if (pendingAdoption !== null && pendingAdoption === conversationId) {
           deps.onConversationStarted?.(conversationId);
         }
+        pendingAdoption = null;
         deps.onTurnComplete?.();
         // Adopt the backend's authoritative ids + version metadata for the turn
         // just recorded — without this the live message keeps its client id and a
@@ -265,8 +297,13 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
     try {
       // Clears RESYNCING on the first folded event; the finally is the safety net
       // for a reattach that never connects (e.g. an immediate 404).
-      await driveRun(runId, assistantId, false, opts.fromSeq, () =>
-        setReattaching(false),
+      await driveRun(
+        runId,
+        assistantId,
+        false,
+        opts.fromSeq,
+        () => setReattaching(false),
+        opts.replayThrough,
       );
     } finally {
       setReattaching(false);
@@ -290,9 +327,21 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
     supersede: () => {
       controller?.abort();
       controller = null;
-      driveGen++; // orphan the in-flight drive's teardown
+      // Orphan the in-flight drive's teardown, and move the fold's epoch with it so a
+      // frame already read for that drive is dropped rather than folded into whatever
+      // the room is bound to next.
+      deps.state.epoch = ++driveGen;
       setReattaching(false);
       setDetached(false);
+      // Leaving a live turn skips its teardown (above), and the list is what would have
+      // been refreshed by it — the new thread's row has to appear, and a run still going
+      // has to show as running. The id is deliberately *not* adopted: the operator went
+      // elsewhere, and adopting would seat them back on the thread they just left.
+      pendingAdoption = null;
+      if (inFlight) {
+        inFlight = false;
+        deps.onTurnComplete?.();
+      }
     },
     stop: () => {
       controller?.abort();

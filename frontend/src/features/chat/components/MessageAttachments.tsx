@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import {
   AttachmentChip,
   Icon,
@@ -71,14 +72,12 @@ export function MessageAttachments(
   // not a linear scan on every reactive update.
   const byId = createMemo(
     () =>
-      new Map<string, Upload>(
-        (uploads.error ? [] : (uploads.latest ?? [])).map((u) => [u.id, u]),
-      ),
+      new Map<string, Upload>((settled(uploads) ?? []).map((u) => [u.id, u])),
   );
   // The shared uploads list hasn't resolved yet (no rows, still loading): hold off
   // classifying so a valid image isn't mistaken for a missing file mid-load.
   const resolving = (): boolean =>
-    uploads.loading && uploads.latest === undefined;
+    uploads.loading && settled(uploads) === undefined;
 
   // Partition by media type: images get inline thumbnails, the rest stay chips.
   const images = createMemo(() =>

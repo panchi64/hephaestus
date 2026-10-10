@@ -1,4 +1,5 @@
 import { createSignal, For, Show, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import {
   Button,
   EmptyState,
@@ -34,7 +35,7 @@ export function EndpointsSection(): JSX.Element {
   };
 
   const providerName = (id: string): string =>
-    (providers.latest ?? []).find((p) => p.id === id)?.displayName ?? id;
+    (settled(providers) ?? []).find((p) => p.id === id)?.displayName ?? id;
 
   /* TEST probes the endpoint now (the backend persists the verdict, which the
      re-read reflects on the row) and surfaces the backend's verbatim detail. The
@@ -97,9 +98,9 @@ export function EndpointsSection(): JSX.Element {
           </Button>
         }
       >
-        <Show when={endpoints.latest} fallback={<LoadingText />}>
+        <Show when={settled(endpoints)} fallback={<LoadingText />}>
           <Show
-            when={(endpoints.latest ?? []).length}
+            when={(settled(endpoints) ?? []).length}
             fallback={
               <EmptyState
                 icon="cpu"
@@ -109,7 +110,7 @@ export function EndpointsSection(): JSX.Element {
             }
           >
             <Stack gap={0}>
-              <For each={endpoints.latest ?? []}>
+              <For each={settled(endpoints) ?? []}>
                 {(ep) => (
                   <EndpointRow
                     endpoint={ep}

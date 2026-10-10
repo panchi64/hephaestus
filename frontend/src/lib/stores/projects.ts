@@ -23,6 +23,7 @@ import {
 } from "solid-js";
 import { api } from "~/lib/api";
 import { ALL_PROJECTS, setProjectScope } from "~/lib/api/projectScope";
+import { settled } from "~/lib/resource";
 import { useSession } from "~/lib/stores/session";
 
 /** The git facts, re-probed by the backend on every listing. */
@@ -93,7 +94,7 @@ const store = createRoot(() => {
   // inside a project. Worse, toggling ALL PROJECTS and back would then write that null
   // into the request header and genuinely change the scope to match the wrong label.
   createEffect(() => {
-    const dto = data.latest;
+    const dto = settled(data);
     if (!dto || unscoped()) return;
     // Not while an activation is in the air. A listing fetched before the write
     // describes the selection the operator is in the middle of leaving, and adopting
@@ -127,7 +128,7 @@ export function isUnscoped(): boolean {
 export function activeProject(): Project | null {
   const id = activeProjectId();
   if (!id) return null;
-  return store.data.latest?.projects.find((p) => p.id === id) ?? null;
+  return settled(store.data)?.projects.find((p) => p.id === id) ?? null;
 }
 
 export function refreshProjects(): void {

@@ -95,6 +95,7 @@ export function createThreadBinding(deps: BindingDeps): void {
     // A new thread starts a fresh event sequence; drop the prior run's fold/resume
     // bookkeeping so its seqs don't suppress the next run's events.
     deps.state.maxFoldedSeq = 0;
+    deps.state.replayThrough = 0;
     deps.state.activeRunId = null;
     deps.state.runKind = null;
     deps.state.foldTarget = null;

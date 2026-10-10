@@ -1,5 +1,6 @@
 import { createMemo, createSignal, Show, type JSX } from "solid-js";
 import { Select, Text, toast } from "~/ui";
+import { settled } from "~/lib/resource";
 import {
   activeProjectId,
   isUnscoped,
@@ -28,7 +29,7 @@ export function ProjectSwitcher(): JSX.Element {
   const settings = useSettingsRoute();
 
   const options = createMemo(() => {
-    const rows = (projects.latest?.projects ?? []).filter((p) => !p.archived);
+    const rows = (settled(projects)?.projects ?? []).filter((p) => !p.archived);
     return [
       { value: NONE, label: "Unfiled only" },
       { value: ALL, label: "All projects" },
@@ -84,7 +85,7 @@ export function ProjectSwitcher(): JSX.Element {
   };
 
   return (
-    <Show when={(projects.latest?.projects ?? []).length > 0}>
+    <Show when={(settled(projects)?.projects ?? []).length > 0}>
       <div class="px-3 py-2">
         {/* The busy state rides the field's own label rather than a line added
             beneath it: a note that appears and disappears under the switcher would

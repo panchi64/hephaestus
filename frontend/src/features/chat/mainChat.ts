@@ -26,10 +26,12 @@
 
 import {
   createEffect,
+  createMemo,
   createRoot,
   createSignal,
   on,
   onCleanup,
+  untrack,
   type Accessor,
 } from "solid-js";
 import {
@@ -45,14 +47,27 @@ import {
   setActiveSessionMode,
 } from "~/lib/stores/sessionMode";
 import { useChatSession } from "./data/conversations";
-import { refreshSessions } from "./data/sessions";
-import { DEFAULT_PERMISSION_LEVEL, type PermissionLevel } from "./model";
+import { refreshSessions, useChatSessions } from "./data/sessions";
+import { historyStatus, type HistoryStatus } from "./historyStatus";
+import {
+  DEFAULT_PERMISSION_LEVEL,
+  type ChatSession,
+  type PermissionLevel,
+} from "./model";
 import { seatPermission } from "./permissionSeat";
 import { createChatStream } from "./stream/chatStream";
 
 export interface MainChat {
   currentId: Accessor<string | null>;
+  /** Seat the room on a thread. Re-selecting the thread already open re-reads its
+   *  history instead of doing nothing — which is what makes a failed load recoverable
+   *  by clicking the row again. */
   setCurrentId: (id: string | null) => void;
+  /** Whether the open thread's history is loading, failed, or here. The transcript
+   *  draws a loading line or a retryable error from it rather than the empty state. */
+  history: Accessor<HistoryStatus>;
+  /** Read the open thread's history again. */
+  reloadHistory: () => void;
   /** The thread **on screen**, which is `currentId` except during the first turn of a
    *  thread the operator has just started: the backend gives that one an id the moment
    *  it accepts the turn, but the room does not seat itself on it until the run ends
@@ -90,6 +105,9 @@ export interface MainChat {
 export const chatDraftKey = (id: string | null): string =>
   `chat:${id ?? "new"}`;
 
+/** How often an open, idle thread looks at the list for a run started out of sight. */
+const IDLE_LIST_POLL_MS = 20_000;
+
 let _mainChat: MainChat | undefined;
 
 /** The app-wide chat room controller — created once, then reused across mounts. */
@@ -112,12 +130,38 @@ export function mainChat(): MainChat {
       permissionOwner = currentId();
       setLevel(level);
     };
-    const session = useChatSession(currentId);
+    // Bumped to re-read the open thread's history: the same source, so it takes a
+    // revision to make the resource ask again.
+    const [reloads, setReloads] = createSignal(0);
+    const session = useChatSession(currentId, reloads);
+    /** The loaded history, but only when it is the open thread's own. The resource still
+     *  reports the previous thread's value across a source change (Solid retains it) and
+     *  after a failed read has none to give, and feeding either to the stream would seed
+     *  the wrong thread — or throw, since reading an errored resource re-throws. So this
+     *  is the one place the stream's inputs are withheld. */
+    const loaded = (): ChatSession | undefined => {
+      if (session.state !== "ready") return undefined;
+      const read = session();
+      return read?.id === currentId() ? read : undefined;
+    };
+    const fromLoaded =
+      <T>(pick: (s: ChatSession) => T) =>
+      (): T | undefined => {
+        const s = loaded();
+        return s ? pick(s) : undefined;
+      };
+    const history = createMemo(() =>
+      historyStatus({
+        id: currentId(),
+        state: session.state,
+        holdsThisThread: loaded() !== undefined,
+      }),
+    );
+    const reloadHistory = (): void => {
+      setReloads((n) => n + 1);
+    };
     const stream = createChatStream(
-      // Withhold the source while history loads — the resource still reports the
-      // previous thread's value across a source change (Solid retains it), and
-      // feeding that to the stream would seed the wrong thread.
-      () => (session.loading ? undefined : session()?.messages),
+      fromLoaded((s) => s.messages),
       currentId,
       {
         onConversationStarted: (id) => {
@@ -140,16 +184,14 @@ export function mainChat(): MainChat {
         onTurnComplete: () => refreshSessions(),
         // Withheld in lockstep with the history above, so the meter seeds from the
         // loaded thread rather than the retained value of the one just left.
-        initialContext: () =>
-          session.loading ? undefined : session()?.context,
+        initialContext: fromLoaded((s) => s.context),
         // Same lockstep: the loaded thread's cumulative readout.
-        initialStats: () => (session.loading ? undefined : session()?.stats),
+        initialStats: fromLoaded((s) => s.stats),
         // Same lockstep: the in-flight run of the loaded thread, for a cold-read
         // reattach (a page reload mid-stream).
-        activeRun: () => (session.loading ? undefined : session()?.activeRun),
+        activeRun: fromLoaded((s) => s.activeRun),
         // Same lockstep: the loaded thread's git-style snapshot history.
-        initialSnapshots: () =>
-          session.loading ? undefined : session()?.snapshots,
+        initialSnapshots: fromLoaded((s) => s.snapshots),
         // Read only when a send creates the conversation.
         mode: activeSessionMode,
         projectId: codeProjectId,
@@ -181,18 +223,18 @@ export function mainChat(): MainChat {
       // Withheld across a source change in lockstep with everything else fed to the
       // stream — the resource retains the thread just left, and its level is the one
       // value here that would be written back to the wrong conversation.
-      const loaded = id === null || session.loading ? undefined : session();
+      const thread = loaded();
       const seat = seatPermission({
         currentId: id,
         owner: permissionOwner,
-        stored: loaded?.permission,
+        stored: thread?.permission,
       });
       if (seat) {
         permissionOwner = seat.owner;
         setLevel(seat.level);
         setPermissionPending(seat.provisional);
       }
-      if (loaded) setActiveSessionMode(loaded.mode);
+      if (thread) setActiveSessionMode(thread.mode);
     });
     // Reattach when the tab returns to the foreground or the network comes back.
     // A backgrounded tab throttles the SSE reader until it stalls; on return we
@@ -246,10 +288,54 @@ export function mainChat(): MainChat {
       const id = currentId();
       if (id) markConversationRead(id);
     });
+    // A run started somewhere this room is not watching — another tab, a scheduled
+    // task, a research launch — has no stream here to hear it on, and the history read
+    // at open said the thread was idle. The rail already knows: each row's activity
+    // edge is server-derived. So when a poll reports the open thread as busy while this
+    // room is attached to nothing, read the thread again; its `active_run` is what the
+    // stream's cold-read reattach keys on. Keyed on the list alone (everything else is
+    // read untracked) so one poll costs at most one read — tracking the history status
+    // too would make each read trigger the next.
+    const sessions = useChatSessions();
+    createEffect(
+      on(
+        sessions,
+        (list) => {
+          const id = untrack(currentId);
+          if (!id || !list) return;
+          if (!list.find((s) => s.id === id)?.activity) return;
+          if (untrack(history) !== "ready") return;
+          if (untrack(stream.sending) || untrack(stream.activeRunId)) return;
+          reloadHistory();
+        },
+        { defer: true },
+      ),
+    );
+    // The rail only polls while it already shows something running, so a run that
+    // starts out of sight would never light its row for the poll above to act on. While
+    // a thread is open and idle, look at the list now and then — slowly, and only while
+    // the tab is on screen.
+    createEffect(() => {
+      if (!currentId() || history() !== "ready" || stream.sending()) return;
+      const timer = setInterval(() => {
+        if (document.visibilityState === "visible") refreshSessions();
+      }, IDLE_LIST_POLL_MS);
+      onCleanup(() => clearInterval(timer));
+    });
     const [warmResolved, setWarmResolved] = createSignal(false);
     return {
       currentId,
-      setCurrentId,
+      setCurrentId: (id) => {
+        if (
+          id !== null &&
+          id === untrack(currentId) &&
+          !untrack(stream.sending)
+        )
+          reloadHistory();
+        else setCurrentId(id);
+      },
+      history,
+      reloadHistory,
       openId: () => currentId() ?? stream.conversationId(),
       stream,
       warmResolved,

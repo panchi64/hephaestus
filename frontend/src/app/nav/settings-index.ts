@@ -22,6 +22,7 @@
  */
 
 import { createMemo, createSignal, type Accessor } from "solid-js";
+import { settled } from "~/lib/resource";
 import {
   saveChatSettings,
   setAgentToolEnabled,
@@ -73,13 +74,12 @@ export function useSettingsIndex(): Accessor<SettingEntry[]> {
      the palette and can never mask a later fetch with a stale value. */
   const chatResource = useChatSettings();
   const [chatSaved, setChatSaved] = createSignal<ChatSettings | null>(null);
-  // `.latest` rather than the resource call: the palette isn't inside a `Suspense`, and
-  // reading a pending resource would suspend the overlay. `.latest` avoids *suspending*
-  // but still re-throws a failed fetch, so it is guarded by `.error` — the same shape
-  // `SkillsDirectoryScreen` use. A settings endpoint that is down must
-  // cost the palette its rows, not blank the whole content region.
+  // `settled` rather than the resource call: the palette isn't inside a `Suspense`, and
+  // reading a pending resource would suspend the overlay. It also reads `undefined`
+  // for a failed fetch rather than re-throwing it — a settings endpoint that is down
+  // must cost the palette its rows, not blank the whole content region.
   const chat = (): ChatSettings | undefined =>
-    chatSaved() ?? (chatResource.error ? undefined : chatResource.latest);
+    chatSaved() ?? settled(chatResource);
   const saveChat = async (patch: Partial<ChatSettings>): Promise<void> => {
     setChatSaved(await saveChatSettings(patch));
   };
@@ -293,8 +293,8 @@ export function useSettingsIndex(): Accessor<SettingEntry[]> {
    *  along as keywords, so a tool is findable by what it does as well as by the
    *  namespaced name it's offered to the agent under. */
   const toolEntries = (): SettingEntry[] =>
-    // `.error`-guarded like `chat` above: `.latest` re-throws a failed fetch.
-    (tools.error ? [] : (tools.latest ?? [])).map((tool) => ({
+    // `settled` like `chat` above: a failed fetch reads as no rows.
+    (settled(tools) ?? []).map((tool) => ({
       id: `tool.${tool.name}`,
       label: tool.name,
       keywords: ["tool", tool.category, tool.description],
@@ -308,7 +308,7 @@ export function useSettingsIndex(): Accessor<SettingEntry[]> {
    *  else about an endpoint (its key, its model, its chain position) is editing,
    *  not toggling, and belongs on the Models page. */
   const endpointEntries = (): SettingEntry[] =>
-    (endpoints.error ? [] : (endpoints.latest ?? [])).map((endpoint) => ({
+    (settled(endpoints) ?? []).map((endpoint) => ({
       id: `endpoint.${endpoint.id}`,
       label: endpoint.name,
       keywords: [

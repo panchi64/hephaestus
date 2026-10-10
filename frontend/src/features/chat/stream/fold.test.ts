@@ -3,7 +3,9 @@ import { createStore } from "solid-js/store";
 import {
   CONTEXT_OVERFLOW_AFTER_FOLD_DETAIL,
   CONTEXT_OVERFLOW_DETAIL,
+  type ContextWindow,
   type RunEvent,
+  type TaskItem,
 } from "~/lib/stream";
 import { toast } from "~/ui";
 import type { ChatMessage, CompactionProgress } from "../model";
@@ -21,7 +23,14 @@ import { createPatchById } from "./patch";
  * what is new is the reason riding across from the event onto the stored message.
  */
 
-function harness(seed: ChatMessage[] = []) {
+function harness(
+  seed: ChatMessage[] = [],
+  hooks: {
+    onFoldMisplaced?: () => void;
+    setUsage?: (usage: ContextWindow | null) => void;
+    setTasks?: (items: TaskItem[]) => void;
+  } = {},
+) {
   const [messages, setMessages] = createStore<ChatMessage[]>(seed);
   const state: FoldState = {
     maxFoldedSeq: 0,
@@ -30,22 +39,28 @@ function harness(seed: ChatMessage[] = []) {
     planRevision: 0,
     activeRunId: "run-1",
     runKind: null,
+    epoch: 0,
+    replayThrough: 0,
   };
   const fold = createFolder({
     state,
     patchById: createPatchById(messages, setMessages),
     setMessages,
     setSnapshots: () => {},
-    setTasks: () => {},
+    setTasks: hooks.setTasks ?? (() => {}),
     setPlan: () => {},
     setPermission: () => {},
-    setUsage: () => {},
+    setUsage: hooks.setUsage ?? (() => {}),
     setStats: () => {},
     setErrored: () => {},
     setTitlePending: () => {},
+    onFoldMisplaced: hooks.onFoldMisplaced,
   });
   return {
     fold: (ev: RunEvent) => fold("a1", ev),
+    /** An event stamped by the drive that owns `epoch`, as the drive stamps its own. */
+    foldFrom: (ev: RunEvent, epoch: number) => fold("a1", ev, epoch),
+    state,
     messages,
   };
 }
@@ -545,5 +560,233 @@ describe("a fold that declines still says why", () => {
     h.fold(ended("The context window is full."));
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
+  });
+});
+
+describe("an event belongs to the drive that read it", () => {
+  const tasks = (): RunEvent =>
+    ({
+      type: "tasks.updated",
+      seq: ++seq,
+      ts: "",
+      items: [{ content: "write it", status: "pending" }],
+    }) as unknown as RunEvent;
+  const queued = (): RunEvent =>
+    ({
+      type: "message.queued",
+      seq: ++seq,
+      ts: "",
+      message_id: "q1",
+      text: "and then?",
+      source: "operator",
+    }) as unknown as RunEvent;
+
+  test("a frame from a superseded drive writes nothing into the thread now bound", () => {
+    // A chunk read just before a thread switch is delivered after it. Folded, it would
+    // write the old thread's task list and queued message into the new one.
+    const seen: TaskItem[][] = [];
+    const h = harness(turn(), { setTasks: (items) => seen.push(items) });
+    h.state.epoch = 2; // the switch superseded drive 1; drive 2 now owns the fold
+    h.foldFrom(tasks(), 1);
+    h.foldFrom(queued(), 1);
+    expect(seen).toEqual([]);
+    expect(h.messages.some((m) => m.queuedMessageId === "q1")).toBe(false);
+    expect(h.state.maxFoldedSeq).toBe(0);
+  });
+
+  test("the current drive's frames fold as normal", () => {
+    const seen: TaskItem[][] = [];
+    const h = harness(turn(), { setTasks: (items) => seen.push(items) });
+    h.state.epoch = 2;
+    h.foldFrom(tasks(), 2);
+    expect(seen).toHaveLength(1);
+  });
+});
+
+describe("a replay folds into state but announces nothing", () => {
+  const runError = (): RunEvent =>
+    ({
+      type: "run.error",
+      seq: ++seq,
+      ts: "",
+      message: "the model fell over",
+      kind: null,
+    }) as RunEvent;
+  const linked = (): RunEvent =>
+    ({
+      type: "conversation.linked",
+      seq: ++seq,
+      ts: "",
+      conversation_id: "c2",
+      relation: "research",
+      title: "Tides",
+    }) as RunEvent;
+  const limit = (): RunEvent =>
+    ({
+      type: "limit.notice",
+      seq: ++seq,
+      ts: "",
+      limit: "steps",
+      message: "Step limit reached.",
+      detail: null,
+    }) as unknown as RunEvent;
+
+  test("a replayed failure toasts nothing, and the turn still stops", () => {
+    const err = spyOn(toast, "error");
+    const h = harness([
+      ...turn().slice(0, 1),
+      { ...turn()[1], streaming: true },
+    ]);
+    h.state.replayThrough = 10_000;
+    h.fold(runError());
+    expect(err).not.toHaveBeenCalled();
+    expect(h.messages[1].streaming).toBe(false);
+    err.mockRestore();
+  });
+
+  test("the same failure toasts when it is live", () => {
+    const err = spyOn(toast, "error");
+    harness(turn()).fold(runError());
+    expect(err).toHaveBeenCalledWith("the model fell over");
+    err.mockRestore();
+  });
+
+  test("a replayed limit and a replayed research launch say nothing", () => {
+    const err = spyOn(toast, "error");
+    const info = spyOn(toast, "info");
+    const h = harness(turn());
+    h.state.replayThrough = 10_000;
+    h.fold(limit());
+    h.fold(linked());
+    expect(err).not.toHaveBeenCalled();
+    expect(info).not.toHaveBeenCalled();
+    err.mockRestore();
+    info.mockRestore();
+  });
+
+  test("a replayed fold seats its checkpoint without the toast", () => {
+    const info = spyOn(toast, "info");
+    const h = harness(turn());
+    h.state.replayThrough = 10_000;
+    h.fold(compacted("chk-1", "threshold"));
+    expect(h.messages.map((m) => m.id)).toEqual(["u1", "chk-1", "a1"]);
+    expect(info).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  test("the boundary is the attach point: events past it are live", () => {
+    const err = spyOn(toast, "error");
+    const h = harness(turn());
+    const past = runError();
+    h.state.replayThrough = past.seq - 1;
+    h.fold(past);
+    expect(err).toHaveBeenCalledTimes(1);
+    err.mockRestore();
+  });
+});
+
+describe("a fold that did not land", () => {
+  const failed = (reason: "threshold" | "overflow" | "manual"): RunEvent =>
+    ({
+      type: "compaction.failed",
+      seq: ++seq,
+      ts: "",
+      reason,
+      message: "The summarizer wrote nothing.",
+    }) as RunEvent;
+
+  test("takes the in-progress fold turn back out and says why", () => {
+    const err = spyOn(toast, "error");
+    const h = harness(turn());
+    h.fold(started("manual"));
+    h.fold(delta("half a sum"));
+    expect(live(h.messages)).toHaveLength(1);
+    h.fold(failed("manual"));
+    expect(live(h.messages)).toHaveLength(0);
+    expect(h.messages.map((m) => m.id)).toEqual(["u1", "a1"]);
+    expect(err).toHaveBeenCalledWith("The summarizer wrote nothing.");
+    err.mockRestore();
+  });
+
+  test("a replayed failure removes the turn but does not toast", () => {
+    const err = spyOn(toast, "error");
+    const h = harness(turn());
+    h.state.replayThrough = 10_000;
+    h.fold(started("threshold"));
+    h.fold(failed("threshold"));
+    expect(live(h.messages)).toHaveLength(0);
+    expect(err).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+});
+
+describe("a checkpoint whose boundary this transcript does not hold", () => {
+  const orphan = (id: string): RunEvent =>
+    ({
+      ...(compacted(id, "threshold") as object),
+      after_message_id: "not-here",
+    }) as RunEvent;
+
+  test("is not appended at the bottom — the thread is re-read instead", () => {
+    let rereads = 0;
+    const h = harness(turn(), { onFoldMisplaced: () => (rereads += 1) });
+    h.fold(orphan("chk-1"));
+    expect(h.messages.map((m) => m.id)).toEqual(["u1", "a1"]);
+    expect(rereads).toBe(1);
+  });
+
+  test("asks once per checkpoint, so a backend that keeps naming it cannot loop", () => {
+    let rereads = 0;
+    const h = harness(turn(), { onFoldMisplaced: () => (rereads += 1) });
+    h.fold(orphan("chk-1"));
+    h.fold(orphan("chk-1"));
+    expect(rereads).toBe(1);
+  });
+
+  test("a null boundary is the backend's own word that the checkpoint goes last", () => {
+    const h = harness(turn());
+    h.fold({
+      ...(compacted("chk-1", "threshold") as object),
+      after_message_id: null,
+    } as RunEvent);
+    expect(h.messages.map((m) => m.id)).toEqual(["u1", "a1", "chk-1"]);
+  });
+});
+
+describe("the context meter", () => {
+  const metrics = (context?: ContextWindow | null): RunEvent =>
+    ({
+      type: "run.metrics",
+      seq: ++seq,
+      ts: "",
+      steps: 0,
+      tool_calls: 0,
+      turns: 0,
+      ...(context === undefined ? {} : { context }),
+    }) as unknown as RunEvent;
+  const window: ContextWindow = {
+    used: 10,
+    window: 100,
+    fraction: 0.1,
+    level: "nominal",
+    parts: null,
+  };
+
+  test("an explicit null clears it — the model has no window", () => {
+    const seen: (ContextWindow | null)[] = [];
+    harness(turn(), { setUsage: (u) => seen.push(u) }).fold(metrics(null));
+    expect(seen).toEqual([null]);
+  });
+
+  test("a frame that carries no context at all leaves it where it was", () => {
+    const seen: (ContextWindow | null)[] = [];
+    harness(turn(), { setUsage: (u) => seen.push(u) }).fold(metrics());
+    expect(seen).toEqual([]);
+  });
+
+  test("a reading replaces it", () => {
+    const seen: (ContextWindow | null)[] = [];
+    harness(turn(), { setUsage: (u) => seen.push(u) }).fold(metrics(window));
+    expect(seen).toEqual([window]);
   });
 });
