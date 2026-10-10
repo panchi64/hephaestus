@@ -1164,3 +1164,147 @@ async def test_the_fold_streams_the_summary_as_it_is_written(monkeypatch):
 
         deltas = [e.body for e in run.stream.replay(0) if e.body.type == "compaction.delta"]
         assert "".join(d.text for d in deltas) == "the story so far"
+
+
+# --- a fold that does not land says so; one that does leaves real metrics -------------
+
+
+async def test_a_fold_that_does_not_land_closes_the_compacting_section(monkeypatch):
+    """`compaction.started` opens a live section on the client; with no checkpoint recorded
+    nothing else ever closes it, and a reload would show a compaction the backend never
+    had. The failure frame is what ends it, and carries the cause."""
+    async with client_app() as (client, app):
+        patch_model_resolution(monkeypatch, output_text="")
+        store = app.state.conversations
+        cid = await store.create_conversation(OPERATOR_ID)
+        for i in range(4):
+            store.record(cid, _turn(f"q{i}", f"a{i}"))
+
+        run = await _fold_now(client, app, cid)
+        frames = _fold_frames(run)
+        assert frames[0] == "compaction.started"
+        assert frames[-1] == "compaction.failed"
+        failed = next(e.body for e in run.stream.replay(0) if e.body.type == "compaction.failed")
+        assert failed.conversation_id == cid
+        assert failed.reason == "manual"
+        assert failed.message == run.detail
+        # And a fold that landed nothing reports nothing: no empty metrics frame.
+        assert "run.metrics" not in _emitted(run)
+
+
+async def test_a_fold_that_raises_also_emits_compaction_failed(monkeypatch):
+    from agent import folding
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("the summarizer fell over")
+
+    monkeypatch.setattr(folding, "compact_conversation", boom)
+    async with client_app() as (client, app):
+        patch_model_resolution(monkeypatch)
+        store = app.state.conversations
+        cid = await store.create_conversation(OPERATOR_ID)
+        store.record(cid, _turn("q0", "a0"))
+
+        run = await _fold_now(client, app, cid)
+        assert run.status is RunStatus.blocked
+        failed = next(e.body for e in run.stream.replay(0) if e.body.type == "compaction.failed")
+        assert failed.reason == "manual"
+        assert "did not land" in failed.message
+
+
+async def test_a_manual_fold_leaves_the_run_with_real_metrics_and_a_matching_reload(monkeypatch):
+    """The registry closes every run with the metrics it stashed. A manual fold has no turn
+    to stash any, so it used to close with an *empty* frame the client took as authoritative
+    — the meter blanked. It now measures the folded thread, and the reload reads the same."""
+    from services.registry import ModelRegistry
+
+    async def window(self, owner_id):
+        return 200_000
+
+    monkeypatch.setattr(ModelRegistry, "main_context_window", window)
+    async with client_app() as (client, app):
+        patch_model_resolution(monkeypatch, output_text="a hand-made summary")
+        store = app.state.conversations
+        cid = await store.create_conversation(OPERATOR_ID)
+        for i in range(4):
+            store.record(cid, _turn(f"q{i}" * 400, f"a{i}" * 400))
+
+        before = (await client.get(f"/conversations/{cid}")).json()["context"]["used"]
+        run = await _fold_now(client, app, cid)
+        assert run.status is RunStatus.done, run.detail
+
+        assert run.metrics is not None
+        assert run.context_window
+        live = run.metrics.context_used
+        assert live and live < before
+        frames = [e.body for e in run.stream.replay(0) if e.body.type == "run.metrics"]
+        assert len(frames) == 1 and frames[0].context_used == live
+        assert frames[0].context_window == run.context_window
+
+        detail = (await client.get(f"/conversations/{cid}")).json()
+        assert detail["context"]["used"] == live
+
+
+async def test_a_reload_measures_the_replay_not_the_transcript_on_the_estimate_path(monkeypatch):
+    from core.config import get_settings
+    from services.conversation_view import estimate_footprint
+    from services.registry import ModelRegistry
+
+    async def window(self, owner_id):
+        return 200_000
+
+    monkeypatch.setattr(ModelRegistry, "main_context_window", window)
+    async with client_app() as (client, app):
+        store = app.state.conversations
+        cid = await store.create_conversation(OPERATOR_ID)
+        for i in range(4):
+            store.record(cid, _turn(f"q{i}" * 400, f"a{i}" * 400))
+        full = (await client.get(f"/conversations/{cid}")).json()["context"]["used"]
+        assert await _compact(store, cid) is not None
+
+        replay = await store.replay_history(cid)
+        expected = estimate_footprint(
+            replay.messages,
+            await store.get_overhead(cid),
+            fallback_overhead_tokens=get_settings().context_overhead_fallback_tokens,
+        )
+        used = (await client.get(f"/conversations/{cid}")).json()["context"]["used"]
+        assert used == expected < full
+
+
+async def test_a_reload_after_a_fold_ignores_usage_reported_before_it(monkeypatch):
+    """Every response before the fold reported its prompt against a history that no longer
+    exists. With no reply since, the reload must fall back to the estimate — and the first
+    reply after the fold is the first figure it may believe, as on the live stream."""
+    from services.conversations import context_footprint
+    from services.registry import ModelRegistry
+
+    async def window(self, owner_id):
+        return 200_000
+
+    monkeypatch.setattr(ModelRegistry, "main_context_window", window)
+
+    def reported(prompt: str, answer: str, tokens: int) -> list:
+        return [
+            ModelRequest(parts=[UserPromptPart(content=prompt)]),
+            ModelResponse(
+                parts=[TextPart(content=answer)],
+                usage=RequestUsage(input_tokens=tokens, output_tokens=10),
+            ),
+        ]
+
+    async with client_app() as (client, app):
+        store = app.state.conversations
+        cid = await store.create_conversation(OPERATOR_ID)
+        for i in range(3):
+            store.record(cid, reported(f"q{i}", f"a{i}", 90_000))
+        assert (await client.get(f"/conversations/{cid}")).json()["context"]["used"] == 90_010
+
+        assert await _compact(store, cid) is not None
+        folded = (await client.get(f"/conversations/{cid}")).json()["context"]["used"]
+        assert folded < 90_010  # the estimate over the summary, not the stale report
+
+        fresh = reported("next", "reply", 4_000)
+        store.record(cid, fresh)
+        after = (await client.get(f"/conversations/{cid}")).json()["context"]["used"]
+        assert after == context_footprint(fresh) == 4_010

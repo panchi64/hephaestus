@@ -3,7 +3,8 @@ turn's persistence boundary.
 
 ``summarize.py`` is the fold itself — what gets read and what gets written. :func:`fold`
 here is the layer above it that **every** trigger goes through: it announces the fold with
-the ``compaction.started``/``conversation.compacted`` pair and hands back what happened.
+the ``compaction.started``/``conversation.compacted`` pair (or ``compaction.failed`` when it
+does not land) and hands back what happened.
 The operator's own "compact now" reaches it from ``routes/conversations.py``; the two
 turn-shaped triggers reach it through the wrappers below.
 
@@ -32,6 +33,7 @@ from pydantic_ai import (
 
 from runs import (
     CompactionDelta,
+    CompactionFailed,
     CompactionReason,
     CompactionStarted,
     ConversationCompacted,
@@ -46,7 +48,7 @@ from .history import (
     drop_dangling_tool_calls,
     merge_consecutive_requests,
 )
-from .metrics import turn_metrics
+from .metrics import post_fold_metrics
 from .summarize import (
     CompactionOutcome,
     FoldFailed,
@@ -127,7 +129,9 @@ async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) ->
             )
     except Exception:  # noqa: BLE001 — a fold must never take its caller down with it
         logger.warning("compaction failed for %s", ctx.conversation_id, exc_info=True)
-        return FoldFailed("error")
+        return _failed(run, ctx, reason, FoldFailed("error"))
+    if isinstance(result, FoldFailed):
+        return _failed(run, ctx, reason, result)
     if isinstance(result, CompactionOutcome):
         run.emit(
             ConversationCompacted(
@@ -142,6 +146,22 @@ async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) ->
             )
         )
     return result
+
+
+def _failed(
+    run: Run, ctx: CompactionContext, reason: CompactionReason, failure: FoldFailed
+) -> FoldFailed:
+    """Close a fold that did not land with ``compaction.failed``, then hand the failure back.
+
+    The frame is what ends the client's live "compacting" section: the backend recorded no
+    checkpoint, so without it that section would sit with its streamed text until the run
+    ended and vanish on a reload, showing a compaction the backend never had."""
+    run.emit(
+        CompactionFailed(
+            conversation_id=ctx.conversation_id, reason=reason, message=failure.message
+        )
+    )
+    return failure
 
 
 async def _fold_replay(
@@ -274,9 +294,8 @@ async def compact_and_retry(
     # turn's own responses included, since they reported their prompt size before the fold.
     # So the boundary is the whole replay: the frame below reads the estimate, and the first
     # believable reported figure is the one the retry itself comes back with.
-    run.fold_boundary = len(rebuilt)
     # And it goes out *now*, not when the retry answers. A fold that frees half the thread
     # and then overruns again would otherwise leave the gauge pinned at its pre-fold figure
     # for good — the operator watching a compaction that visibly changed nothing.
-    run.emit(turn_metrics(run, rebuilt, settings=ctx.settings))
+    run.emit(post_fold_metrics(run, rebuilt, settings=ctx.settings))
     return rebuilt

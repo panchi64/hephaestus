@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from agent.attribution import attribute_answer
 from agent.engine import fold_now
-from agent.summarize import FoldFailed, FoldFailure, NothingToFold
+from agent.summarize import FoldFailed, NothingToFold, resolve_auto_compact_policy
 from agent.title import title_from_history
 from core.compaction_sections import SummarySection
 from core.config import get_settings
@@ -29,15 +29,14 @@ from core.exceptions import DegradedCapabilityError, NotFoundError
 from routes import deps
 from routes.chat import resolve_turn_models, turn_scope
 from routes.deps import OPERATOR_ID
-from runs import ContextWindow, ConversationBusyError, FoldPoint, Run, RunMetrics
+from runs import ContextWindow, ConversationBusyError, Run, RunMetrics
 from services.approval_grants import COMMAND_SCOPED_TOOLS
 from services.attributions import MessageClaims
-from services.context_budget import compose
+from services.context_meter import read_context_meter
 from services.conversation_view import MessageView, SegmentKind
 from services.conversations import (
     ConversationSummaryView,
     conversation_totals,
-    footprint_or_estimate,
     last_request_usage,
 )
 from services.modes import DEFAULT_MODE, mode_spec
@@ -441,49 +440,15 @@ async def _detail(
     switch, rewind)."""
     store = deps.store(request)
     messages = await store.messages_view(conversation_id)
-    # Seed the context meter from the last turn's footprint — or, where the endpoint
-    # reported no usage (the common local case), from the same estimate the live gauge
-    # falls back to, so reopening a thread doesn't blank a ring that was filling a moment
-    # ago. Only pay to resolve the window when there is something to measure against it.
-    # The window is the default ``main`` model's (no per-conversation endpoint is
-    # persisted, so that's what the next turn would run on).
     history = await store.history(conversation_id)
-    overhead = await store.get_overhead(conversation_id)
-    used = footprint_or_estimate(
-        history,
-        overhead,
-        fallback_overhead_tokens=get_settings().context_overhead_fallback_tokens,
+    meter = await read_context_meter(
+        conversation_id,
+        owner_id=OPERATOR_ID,
+        store=store,
+        models=deps.models(request),
+        settings_store=deps.settings_store(request),
     )
-    window: int | None = None
-    context: ContextWindow | None = None
-    if used is not None:
-        window = await deps.models(request).main_context_window(OPERATOR_ID)
-        # The fold mark, resolved the way a turn would resolve it — the operator's stored
-        # threshold with *this thread's* on/off override folded in. Read here rather than
-        # left to the client because the client only knows the global setting, and a
-        # thread whose folding the operator switched off would otherwise show an armed
-        # mark that nothing is going to act on.
-        auto = await get_auto_compact(deps.settings_store(request), OPERATOR_ID)
-        override = await store.get_compaction_override(conversation_id)
-        context = ContextWindow.from_used(
-            used,
-            window,
-            # The operator's own boundaries, not the defaults: a reloaded thread must show
-            # the gauge in the colour the live turn left it, and reading the stored pair
-            # here is what keeps a cold load from quietly re-deriving severity against
-            # 75/90.
-            await get_context_thresholds(deps.settings_store(request), OPERATOR_ID),
-            # A reload has no request to measure — neither the brief nor the tool schemas
-            # reach the message history — so the split leans on what this thread's last
-            # turn recorded. Same turn as `used` above, so both halves of the readout
-            # describe the same request. Absent for a thread that hasn't run one since
-            # this was recorded, which shows as no breakdown rather than a guessed one.
-            compose(used, overhead, history),
-            FoldPoint.of(
-                auto.threshold,
-                active=resolve_compaction_enabled(override, auto.enabled),
-            ),
-        )
+    used, window, context = meter.used, meter.window, meter.context
     # The same figures the live stream reports, rebuilt from the same messages by the
     # same function — the counts and tokens off the active path, the wall-clock off the
     # stored per-response timings (the one thing the messages don't carry). A thread
@@ -1333,23 +1298,6 @@ async def set_auto_compact_override(
 _NOTHING_TO_FOLD = "Nothing to fold — there are no new turns since the last compaction."
 
 
-#: What a fold that *had* work to do and did not land tells the operator. One sentence per
-#: cause rather than one for all three, because what they would do next differs: a
-#: summarizer that wrote nothing is worth retrying, and a leaf that moved means the fold
-#: described a path they have navigated away from.
-_FOLD_FAILED: Mapping[FoldFailure, str] = {
-    "summarizer_empty": ("The fold did not land — the model returned no summary. Try again."),
-    "tool_call": (
-        "The fold did not land — the model answered with a tool call instead of the "
-        "summary, and it was not run. Try again."
-    ),
-    "leaf_moved": (
-        "The fold did not land — the conversation moved while it ran, so the summary "
-        "described a path you are no longer on. Try again."
-    ),
-    "error": "The fold did not land. Try again, or check the logs for what failed.",
-}
-
 
 
 async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> None:
@@ -1380,7 +1328,7 @@ async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> 
     conversation_id = run.conversation_id
     assert conversation_id is not None  # noqa: S101 — set by the submit below
     try:
-        model, _, _, _, vision = await resolve_turn_models(
+        model, _, _, context_window, vision = await resolve_turn_models(
             deps.models(request), pick.endpoint_id, pick.model
         )
     except HTTPException as exc:
@@ -1389,11 +1337,20 @@ async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> 
         run.block(str(exc.detail))
         return
     scope = await turn_scope(request, conversation_id, vision=vision)
+    store = deps.store(request)
+    settings_store = deps.settings_store(request)
     result = await fold_now(
         run,
         model=model,
-        store=deps.store(request),
+        store=store,
         conversation_id=conversation_id,
+        context_window=context_window,
+        context_thresholds=await get_context_thresholds(settings_store, OPERATOR_ID),
+        auto_compact=await resolve_auto_compact_policy(
+            settings_store,
+            OPERATOR_ID,
+            override=await store.get_compaction_override(conversation_id),
+        ),
         categories=scope.categories,
         dormant=scope.dormant,
         instruction_providers=scope.instruction_providers,
@@ -1404,7 +1361,7 @@ async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> 
     if isinstance(result, NothingToFold):
         run.block(_NOTHING_TO_FOLD)
     elif isinstance(result, FoldFailed):
-        run.block(_FOLD_FAILED[result.cause])
+        run.block(result.message)
 
 
 @router.post("/{conversation_id}/compact", response_model=FoldStarted, status_code=202)

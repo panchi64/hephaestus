@@ -53,7 +53,7 @@ from .history import (
     with_tail_context,
 )
 from .injections import announce_injection, contributor_id
-from .metrics import turn_metrics
+from .metrics import post_fold_metrics
 from .naming import Namer, TitleContext, start_title
 from .summarize import AutoCompactPolicy, build_auto_compact_policy
 from .turn import turn_deps
@@ -353,8 +353,7 @@ async def prepare_turn(
         # estimate instead — which is the point of emitting one at all: the operator
         # asked for a fold and must see the gauge fall, not sit at its old figure until
         # the answer lands.
-        run.fold_boundary = setup.turn_start.index
-        run.emit(turn_metrics(run, history or [], settings=settings))
+        run.emit(post_fold_metrics(run, history or [], settings=settings))
     # What the model replays — `history` plus, on a regenerate, the per-turn prompt
     # context. `history` itself stays the persistence baseline.
     setup.model_history = history

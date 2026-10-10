@@ -460,6 +460,33 @@ def _replay_nodes(path: list[_Node], stop: int | None = None) -> list[_Node]:
     return head + [path[i] for i in range(through + 1, end) if i != checkpoint]
 
 
+def _replay_boundary(path: list[_Node]) -> int:
+    """How many nodes at the head of :func:`_replay_nodes` predate the newest checkpoint —
+    the stored counterpart of ``Run.fold_boundary``.
+
+    The checkpoint itself and every verbatim node recorded before it are counted: they were
+    sized against the history the fold folded away, so a response among them reported a
+    prompt that no longer exists. Only what was recorded *after* the checkpoint — the first
+    request that actually saw the folded thread — may be believed. ``0`` for a thread that
+    never folded."""
+    checkpoint, through = _checkpoint_split(path)
+    if checkpoint < 0:
+        return 0
+    return 1 + max(0, checkpoint - through - 1)
+
+
+class ReplayHistory(NamedTuple):
+    """The history the next request carries, and where the part that was measured against
+    it begins.
+
+    ``boundary`` is ``Run.fold_boundary`` read off the stored tree: messages before it
+    predate the newest fold, so a provider-reported footprint may be read only from
+    ``messages[boundary:]``, while an estimate covers all of ``messages``."""
+
+    messages: list[ModelMessage]
+    boundary: int
+
+
 def _view_nodes(path: list[_Node]) -> list[_Node]:
     """The nodes the **operator** sees, in transcript order: each compaction checkpoint
     moved back to sit immediately after the node its summary covers.
@@ -1075,12 +1102,28 @@ class ConversationStore:
     async def history(self, conversation_id: str) -> list[ModelMessage]:
         """The active path's messages — the full transcript, compaction and all.
 
-        This is what the operator's own surfaces read (titling, retitling, the context
-        meter). The **model's** view is :meth:`model_history`, which is narrower once a
-        thread has been compacted; the two are deliberately separate methods rather than
-        one with a flag, because every caller here wants the whole thread."""
+        This is what the operator's own surfaces read (titling, retitling, the counts and
+        timings of the readout). The **model's** view is :meth:`model_history`, which is
+        narrower once a thread has been compacted, and the context meter measures that
+        view through :meth:`replay_history` — a window sized over the transcript would sit
+        far above what the next request actually carries. The two are deliberately separate
+        methods rather than one with a flag, because every caller here wants the whole
+        thread."""
         tree = await self._tree(conversation_id)
         return [node.message for node in tree.active_path()]
+
+    async def replay_history(self, conversation_id: str) -> ReplayHistory:
+        """What the next request replays, with the fold boundary the live gauge would use.
+
+        The same nodes as :meth:`model_history`, plus the index a live turn keeps on
+        ``Run.fold_boundary`` — so a cold read measures the context exactly as the stream
+        did: the footprint from responses recorded since the newest fold, and an estimate
+        over the whole replay when none has landed yet."""
+        tree = await self._tree(conversation_id)
+        path = tree.active_path()
+        return ReplayHistory(
+            [node.message for node in _replay_nodes(path)], _replay_boundary(path)
+        )
 
     async def timings(self, conversation_id: str) -> TimingTotals:
         """The active path's wall-clock, summed — the one figure in the readout that

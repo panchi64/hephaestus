@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from runs import ConversationBusyError, LaneLimits, RunRegistry, RunStatus
-from runs.events import AnswerDelta
+from runs.events import AnswerDelta, RunMetrics
 
 
 def _types(run):
@@ -24,9 +24,60 @@ async def test_run_completes_done():
     await run.wait()
 
     assert run.status is RunStatus.done
-    assert _types(run) == ["run.started", "answer.delta", "run.metrics", "run.ended"]
+    # A run that measured nothing reports nothing: an empty metrics frame would read as
+    # the authoritative state of the thread and blank its meter.
+    assert _types(run) == ["run.started", "answer.delta", "run.ended"]
     ended = run.stream.replay()[-1].body
     assert ended.outcome == "done"
+
+
+async def test_metrics_the_run_measured_precede_the_closing_frame_on_every_path():
+    # A stopped or failed turn still spent the tokens it spent.
+    reg = RunRegistry()
+
+    async def done(run):
+        run.set_metrics(RunMetrics(steps=2))
+
+    async def failed(run):
+        run.set_metrics(RunMetrics(steps=2))
+        raise ValueError("boom")
+
+    async def stopped(run):
+        run.set_metrics(RunMetrics(steps=2))
+        await asyncio.Event().wait()
+
+    for orch, closing in ((done, "run.ended"), (failed, "run.error"), (stopped, "run.ended")):
+        run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
+        await asyncio.sleep(0)
+        if orch is stopped:
+            await reg.cancel(run.id)
+        await run.wait()
+        types = _types(run)
+        assert types[-2:] == ["run.metrics", closing]
+        metrics = next(e.body for e in run.stream.replay() if e.body.type == "run.metrics")
+        assert metrics.steps == 2
+
+
+async def test_a_cancelled_or_errored_run_with_no_metrics_emits_no_metrics_frame():
+    reg = RunRegistry()
+
+    async def failed(run):
+        raise ValueError("boom")
+
+    async def stopped(run):
+        await asyncio.Event().wait()
+
+    errored = reg.submit(kind="chat", owner_id="operator", orchestrator=failed)
+    cancelled = reg.submit(kind="chat", owner_id="operator", orchestrator=stopped)
+    await asyncio.sleep(0)
+    await reg.cancel(cancelled.id)
+    await errored.wait()
+    await cancelled.wait()
+
+    assert "run.metrics" not in _types(errored)
+    assert "run.metrics" not in _types(cancelled)
+    assert _types(errored)[-1] == "run.error"
+    assert _types(cancelled)[-1] == "run.ended"
 
 
 async def test_run_error_is_terminal_not_fatal():

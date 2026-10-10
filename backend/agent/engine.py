@@ -93,6 +93,7 @@ from .flush import PersistContext, TurnFlush
 from .folding import fold
 from .history import TurnStart
 from .meta import Judge, make_utility_judge
+from .metrics import post_fold_metrics
 from .naming import (
     discard_title,
     maybe_title,
@@ -101,7 +102,7 @@ from .naming import (
 )
 from .parking import DEFAULT_BINDING, ParkedTurn
 from .prelude import TurnSetup, prepare_turn
-from .summarize import AutoCompactPolicy, FoldResult
+from .summarize import AutoCompactPolicy, CompactionOutcome, FoldResult
 from .title import last_user_text
 from .turn import NO_CAPS, TurnResult, drive_turn, turn_deps
 from .verify import should_verify, verify_and_correct
@@ -145,11 +146,28 @@ async def fold_now(
     disabled_tools: frozenset[str] = frozenset(),
     binding: ConversationBinding = DEFAULT_BINDING,
     workspace_key: str = "",
+    context_window: int | None = None,
+    context_thresholds: ContextThresholds = DEFAULT_CONTEXT_THRESHOLDS,
+    auto_compact: AutoCompactPolicy | None = None,
 ) -> FoldResult:
     """The operator's own fold, on the agent and deps a chat turn on this thread would run
     with — so the summary is written by the thread's main model, exactly as an automatic
-    fold's is. No policy: nothing here is a trigger, so there is nothing to decide."""
+    fold's is. No policy: nothing here is a trigger, so there is nothing to decide.
+
+    **A fold that lands leaves the run with real metrics.** The run has no turn to take a
+    gauge reading from, and the registry closes every run with its stashed metrics — so
+    without this the closing frame was an empty one, which a client reads as the
+    authoritative state of the thread and blanks the meter on. ``context_window``,
+    ``context_thresholds`` and ``auto_compact`` are what a chat turn's orchestrator would
+    have put on the run; they only shape the frame (severity level, fold mark)."""
     settings = get_settings()
+    run.context_window = context_window
+    run.context_thresholds = context_thresholds
+    run.context_fold = (
+        FoldPoint.of(auto_compact.threshold, active=auto_compact.enabled)
+        if auto_compact is not None
+        else None
+    )
     agent = turn_agent(
         model,
         categories=categories,
@@ -172,7 +190,14 @@ async def fold_now(
         settings=settings,
     )
     assert ctx is not None  # noqa: S101 — a store and a conversation always make one
-    return await fold(run, ctx, reason="manual")
+    result = await fold(run, ctx, reason="manual")
+    if isinstance(result, CompactionOutcome):
+        run.prior_timings = await store.timings(conversation_id)
+        run.context_overhead = await store.get_overhead(conversation_id)
+        run.set_metrics(
+            post_fold_metrics(run, await store.model_history(conversation_id), settings=settings)
+        )
+    return result
 
 
 def build_chat_orchestrator(

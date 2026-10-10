@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from .events import LimitNotice, RunEnded, RunError, RunMetrics, RunStarted, now_utc
+from .events import LimitNotice, RunEnded, RunError, RunStarted, now_utc
 from .lanes import LaneGate, LaneLimits
 from .run import Orchestrator, Run, RunStatus
 from .stream import RunStream
@@ -351,7 +351,7 @@ class RunRegistry:
                     return
                 if not run.is_terminal:
                     run.status = RunStatus.done
-                self._emit(run, run.metrics or RunMetrics())
+                self._emit_metrics(run)
                 self._emit(run, RunEnded(outcome=run.status.value, detail=run.detail))
         except RunTimeout as timeout:
             # Terminate the same way a usage-limit stop does (LimitNotice + a
@@ -368,21 +368,18 @@ class RunRegistry:
                 # `on_timeout` was already disarmed at the park — so without this the
                 # whole turn (the operator's own prompt included) is silently dropped.
                 self._flush_park_cancel(run)
-            self._emit(run, run.metrics or RunMetrics())
+            self._emit_metrics(run)
             self._emit(run, RunEnded(outcome=run.status.value, detail=run.detail))
         except asyncio.CancelledError:
             # The Run's own top-level handler turns cancellation into a recorded
             # terminal state rather than propagating it — intentional.
             run.status = RunStatus.cancelled
-            # Metrics precede every closing frame, on every path. A stopped or failed
-            # turn still spent the tokens it spent, and a usage view that silently
-            # omits exactly the runs that went wrong is worse than no view.
-            self._emit(run, run.metrics or RunMetrics())
+            self._emit_metrics(run)
             self._emit(run, RunEnded(outcome="cancelled"))
         except Exception as exc:  # noqa: BLE001 — orchestrator failures are terminal, not fatal
             run.status = RunStatus.error
             run.error = str(exc)
-            self._emit(run, run.metrics or RunMetrics())
+            self._emit_metrics(run)
             self._emit(run, RunError(message=str(exc), kind=type(exc).__name__))
         finally:
             # Only finalize on a terminal outcome — a parked run keeps its
@@ -393,6 +390,20 @@ class RunRegistry:
                 run.ended_at = run.ended_at or now_utc()
                 self._fire_terminal(run)
                 run.stream.close()
+
+    @classmethod
+    def _emit_metrics(cls, run: Run) -> None:
+        """The metrics frame that precedes a closing frame — when the run has any.
+
+        On every terminal path a run that measured something reports it: a stopped or
+        failed turn still spent the tokens it spent, and a usage view that silently omits
+        exactly the runs that went wrong is worse than no view. A run that measured
+        *nothing* (cancelled before its first response, a fold that declined, a failure
+        before the model) emits no frame at all. An empty one is not "no data": the client
+        reads a metrics frame as the authoritative state of the thread, so it blanked the
+        meter and zeroed the stats of a thread that had neither changed nor been measured."""
+        if run.metrics is not None:
+            cls._emit(run, run.metrics)
 
     @staticmethod
     def _emit(run: Run, body: BaseModel) -> None:
