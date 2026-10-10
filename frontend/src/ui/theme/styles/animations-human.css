@@ -1,0 +1,159 @@
+/* ==========================================================================
+   HUMAN-REGISTER ANIMATIONS. Eased, short, decelerating.
+   ========================================================================== */
+
+/* THE REVEAL — one way for anything in the human voice to arrive.
+   `Reveal` is the component surface; these classes are for the cases that
+   cannot take a wrapper (a portal's own root, a DOM node built by hand).
+
+   It is a BLUR fade: content resolves into focus as it arrives rather than
+   simply becoming visible. Opacity alone reads as a light being turned up; a
+   blur reads as something coming into being, which is what the interface is
+   actually doing, and it is the single cheapest way to make an arrival feel
+   considered rather than switched on.
+
+   Two keyframes, not four. Every reveal in the system is "fade" or "fade plus a
+   short glide up", and the rest was distance and duration — so those are custom
+   properties (`--reveal-y`, `--reveal-ms`, `--reveal-blur`) and the presets
+   below only set them. The two are kept separate rather than collapsed into one
+   with `--reveal-y: 0` because `animation-fill-mode: both` would then leave a
+   `translateY(0)` on every faded element forever, and a transform makes the
+   element a containing block for its absolutely-positioned children. A fade
+   should not change layout semantics.
+
+   Which is also why both land on `filter: none` rather than `blur(0)`: the two
+   render identically, but `none` leaves no filter on the element afterwards, and
+   so no lingering containing block or stacking context. (Interpolating a filter
+   list against `none` is defined as interpolating against its no-op, so the
+   animation is still smooth.) The containing block does exist for the ~200ms the
+   animation runs — worth knowing if a reveal wraps absolutely-positioned
+   children. */
+@keyframes ody-reveal-fade {
+  from {
+    opacity: 0;
+    filter: blur(var(--reveal-blur, 3px));
+  }
+  to {
+    opacity: 1;
+    filter: none;
+  }
+}
+@keyframes ody-reveal-rise {
+  from {
+    opacity: 0;
+    filter: blur(var(--reveal-blur, 3px));
+    transform: translateY(var(--reveal-y, 4px));
+  }
+  to {
+    opacity: 1;
+    filter: none;
+    transform: translateY(0);
+  }
+}
+
+.ody-fade-in,
+.ody-token-in {
+  animation: ody-reveal-fade var(--reveal-ms, var(--motion-base)) var(--ease)
+    both;
+}
+/* Overlay entry — modals, popovers, menus, toasts. Settles, never bounces. */
+.ody-rise,
+.ody-message-in {
+  animation: ody-reveal-rise var(--reveal-ms, var(--motion-base)) var(--ease)
+    both;
+}
+
+/* LEAVING. Only a *gated* reveal ever does this — one whose caller says when the
+   content should be there — and it is the same motion run backwards, so the
+   region dissolves the way it resolved.
+
+   Swapping the animation NAME rather than adding a competing rule is what lets
+   the exit start cleanly from wherever the entry left off; two animations on one
+   element would be settled by fill-mode instead of by intent. */
+@keyframes ody-reveal-fade-out {
+  from {
+    opacity: 1;
+    filter: none;
+  }
+  to {
+    opacity: 0;
+    filter: blur(var(--reveal-blur, 3px));
+  }
+}
+@keyframes ody-reveal-rise-out {
+  from {
+    opacity: 1;
+    filter: none;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    filter: blur(var(--reveal-blur, 3px));
+    transform: translateY(var(--reveal-y, 4px));
+  }
+}
+.ody-fade-in[data-closed] {
+  animation-name: ody-reveal-fade-out;
+}
+.ody-rise[data-closed] {
+  animation-name: ody-reveal-rise-out;
+}
+/* Held before its entry plays: mounted, laid out, and invisible.
+   A gated reveal starts its animation a frame AFTER mount rather than at mount,
+   and this is the state it waits in. Starting at mount is only safe when
+   whatever is being revealed renders cheaply: a region whose first render builds
+   an iframe, a highlighter or a document viewer can spend the animation's whole
+   duration blocked on the main thread, so the first frame that actually paints
+   is the last one — the region appears fully formed and the fade is spent on
+   nothing. Starting late costs nothing, because an animation carries its own
+   start value and plays in full whenever it begins. */
+.ody-reveal-hold {
+  opacity: 0;
+}
+
+/* A region on its way out must stop taking clicks the moment it is dismissed,
+   not when it finishes leaving. Otherwise a full-screen overlay keeps swallowing
+   input for the length of its own exit — the operator dismisses it, clicks what
+   was behind it, and hits the ghost instead. */
+.ody-fade-in[data-closed],
+.ody-rise[data-closed],
+.ody-collapse[data-closed] > * {
+  pointer-events: none;
+}
+
+/* A turn arriving in the transcript — the operator's message on send, and the
+   assistant's block as it opens. Travels further than an overlay and moves
+   faster, so it reads as a response rather than as a reveal. Fires once, on
+   mount, so a streaming turn does not re-animate on every delta. */
+.ody-message-in {
+  --reveal-y: 10px;
+  --reveal-ms: 200ms;
+  --reveal-blur: 4px;
+}
+
+/* Per-token arrival in the ANSWER. The answer is the interface speaking, so it
+   belongs to the human register (§8) and each newly-streamed run of text eases
+   in rather than snapping. This is the deliberate counterpart to the reasoning
+   wall above it, which is mono and therefore lands hard: you can see, without
+   reading a word, which of the two is the machine and which is the reply.
+
+   Which is also why it must never reach mono. The walker that applies this class
+   refuses to enter machine text, and the rule below makes that structural rather
+   than a property of one function — a fade on a code block would erase the one
+   contrast the transcript is built on. */
+.ody-token-in {
+  /* Softer than the default: a per-character run is a few pixels wide, and the
+     full blur on 13px text resolves as a smear rather than as a word arriving.
+     Inline spans can't carry the glide either — `transform` does not apply to a
+     non-replaced inline box — so the blur is doing all the materializing here,
+     which is another reason to keep it legible. */
+  --reveal-blur: 2.5px;
+  /* NO `--reveal-ms` here on purpose. The reveal is scheduled in absolute time
+     (`streamReveal.ts`), so the schedule has to know the duration to decide when
+     a character is finished — it owns the number and writes it inline, per span,
+     alongside that character's delay. A second copy here would drift, and the
+     symptom would be characters that never settle or settle early. */
+}
+:where(code, pre, kbd, samp, table, .font-mono) .ody-token-in {
+  animation: none;
+}

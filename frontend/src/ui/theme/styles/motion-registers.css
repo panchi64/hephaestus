@@ -1,0 +1,56 @@
+/* ==========================================================================
+   MOTION — THE TWO REGISTERS (§8).
+
+   1. HUMAN. Anything the interface does on the operator's behalf eases: short,
+      decelerating, well-damped. This is the default for interactive elements.
+   ========================================================================== */
+:where(button, a, [role="button"], input, select, textarea, summary) {
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease);
+}
+
+/* Shared utility for non-interactive elements that need the human register but
+   sit outside the selector list above. Pair with a `transition-*` property
+   utility (e.g. `transition-colors`). */
+.transition-human {
+  transition-duration: var(--motion-base);
+  transition-timing-function: var(--ease);
+}
+
+/* 2. MACHINE. Anything rendered in mono snaps — no transition, no fade, no
+      interpolation. A run state flipping QUEUED -> RUNNING, a token counter
+      ticking, a latency figure updating: the computer does not ease.
+
+      `:where()` keeps specificity at 0, and this rule is declared AFTER the
+      human-register rule above, so at equal specificity it wins for any mono
+      element — no !important needed. This contrast IS the effect: a mono value
+      that eases into place reads as decoration and undercuts the premise. */
+:where(.font-mono),
+:where(.font-mono) :where(*) {
+  transition-duration: var(--motion-machine);
+  transition-timing-function: var(--ease-machine);
+}
+
+/* Reduced motion collapses the human register. The machine register is already
+   0ms and so is unaffected; the braille throbber is retained deliberately as a
+   functional "working now" indicator. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    /* DELAY, not just duration. Zeroing the duration alone leaves a
+       delay-phased animation intact — each step still waits its turn and then
+       snaps, so a sequence that was supposed to collapse to nothing plays out
+       as a stutter over its full timeline instead. Every phase of the
+       construction reveal is scheduled by delay, so without this line reduced
+       motion would be the *worst* the panel looks rather than the calmest. */
+    animation-delay: 0ms !important;
+  }
+  .ody-frames {
+    animation-iteration-count: infinite !important;
+    animation-duration: 800ms !important;
+  }
+}

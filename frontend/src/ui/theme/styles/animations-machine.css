@@ -1,0 +1,154 @@
+/* ==========================================================================
+   MACHINE-REGISTER ANIMATIONS. All hard-stepped — these belong to the mono
+   voice and must not be eased (§8).
+   ========================================================================== */
+
+/* Terminal cursor blink. */
+@keyframes ody-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.ody-caret {
+  animation: ody-blink 1s steps(1, end) infinite;
+}
+
+/* Search "found-it" flash on the located nav row when a query resolves to a
+   single match. Hard-stepped brightness, not a decorative fade. */
+@keyframes ody-flash {
+  0%,
+  100% {
+    background: transparent;
+  }
+  50% {
+    background: var(--surface-raised);
+  }
+}
+.ody-flash {
+  animation: ody-flash 0.5s steps(1, end) 6;
+}
+
+/* Live-activity pulse — a stepped blink on a state dot while a stream is in
+   flight. Functional (signals "live"), hard-stepped like the caret. */
+@keyframes ody-pulse {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.3;
+  }
+}
+.ody-pulse {
+  animation: ody-pulse 1s steps(1, end) infinite;
+}
+
+/* The caution & warning matrix (§10.15). The column count is the COMPONENT's, passed
+   in as `--ann-cols-*` per breakpoint, because the only way to avoid a ragged last row
+   is to choose the columns from how many cells there are — a fixed count leaves seven
+   capabilities sitting 5 + 2, with three dead positions the eye reads as an unfinished
+   row. The tiers are capped rather than free: past the cap a cell gets narrower than
+   its own legend, and a matrix of truncated names is worse than one blank position.
+
+   A media query cannot do this arithmetic and Tailwind cannot emit a class per count,
+   so the breakpoints live here and the integers arrive as custom properties. */
+.ody-annunciator {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 40rem) {
+  .ody-annunciator {
+    grid-template-columns: repeat(var(--ann-cols-sm, 3), minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 64rem) {
+  .ody-annunciator {
+    grid-template-columns: repeat(var(--ann-cols-lg, 5), minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 80rem) {
+  .ody-annunciator {
+    grid-template-columns: repeat(var(--ann-cols-xl, 5), minmax(0, 1fr));
+  }
+}
+
+/* The licensed moment (§11.1) — the deep field behind a whole page. One per
+   screen, and it must stay under whatever it sits behind.
+
+   The whole figure is drawn in `currentColor` plus `--accent`, so it inverts with
+   the theme for free: on Ink it is faint light against black, on Paper it is faint
+   ink on white, which reads as a printed plate rather than as a photograph of
+   space. What does NOT carry over is the alpha — the same opacity that is barely
+   there in white-on-black is plainly visible in black-on-white, because the eye
+   resolves dark marks on a light ground far more readily. Paper therefore runs the
+   whole figure at roughly half strength; without this the moment stops being
+   ambient in exactly one of the two modes. */
+.ody-deep-field {
+  position: absolute;
+  inset: 0;
+  /* Explicit, and NOT redundant with `inset: 0`. An `<svg>` is a replaced
+     element with an intrinsic ratio — its viewBox, 4:3 — so four zero offsets
+     leave it over-constrained and the ratio wins: it took 100% of the column's
+     width and three quarters of that for its height, leaving the bottom of the
+     page bare. `slice` is what handles the crop once the box is the page's. */
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 1;
+}
+
+[data-theme="paper"] .ody-deep-field {
+  opacity: 0.55;
+}
+
+/* A page carrying the field, and the rule that makes a page-wide field safe.
+
+   The field is the page's ground now, not a region's, so it runs under content
+   the operator is meant to READ — which is the one thing §11 forbids. What makes
+   it not that failure is this pair: nothing readable sits *on* the field, only in
+   front of a frosted copy of it. Every framed shell on such a page trades its
+   opaque `bg-surface` for the same glass the View and the park dock use, so the
+   graticule behind a console group arrives as a blur rather than as lines running
+   under a column of numbers.
+
+   Scoped to the host rather than baked into the shells: off a field page there is
+   nothing behind a panel but flat ground, and `backdrop-filter` over a uniform
+   field returns that field — it would cost a compositor layer per panel to change
+   nothing. `.ody-framed` is the opt-in marker the shells carry (Panel,
+   ConsoleGroup, Composer, InstrumentBand); a shell with no surface of its own
+   (a bare panel, the system strip) deliberately does not.
+
+   NOTE the backdrop-root trap documented on `.ody-glass` below applies here in
+   full: nothing between the field and a framed shell may set `opacity`, `filter`,
+   `mask` or `isolation`, or the blur silently samples nothing. */
+.ody-field-page .ody-framed {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-filter);
+}
+
+/* Marquee — a FUNCTIONAL reveal of clipped content (e.g. a long status message
+   in a dense row), not decoration. It ping-pongs the overflow distance set in
+   --mq-shift, pausing at each end. Only applied when the content actually
+   overflows; reduced-motion users get a static clip. */
+@keyframes ody-marquee {
+  0%,
+  8% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(var(--mq-shift, 0));
+  }
+  92%,
+  100% {
+    transform: translateX(0);
+  }
+}

@@ -1,0 +1,239 @@
+/* ==========================================================================
+   RENDERED PROSE (markdown) — assistant messages, reports, documents.
+   This is the interface speaking to the operator, so it is SANS; mono appears
+   only for code, which is machine output.
+
+   PROSE RUNS ON ITS OWN SCALE (`--prose-*`), not the chrome scale. Everything
+   here is READ rather than scanned, so it is anchored on 16px/1.5 while the
+   surrounding interface stays at its 13px instrument density. Do not reach for
+   `--type-*` in this block — that is what re-couples the two.
+   ========================================================================== */
+.ody-prose {
+  font-family: var(--font-sans);
+  font-size: var(--prose-size);
+  line-height: var(--prose-lh);
+  /* The reading register, not the chrome one — see `--text-reading`. */
+  color: var(--text-reading);
+  /* Nothing forces the operator to track a line across a 2560px display. */
+  max-width: 72ch;
+}
+/* Default rhythm between blocks. The heading-aware overrides that make a section
+   read as a section are further down, beside the heading type itself. */
+.ody-prose > * + * {
+  margin-top: var(--space-4);
+}
+.ody-prose > :first-child {
+  margin-top: 0;
+}
+/* The rhythm is *between* blocks, so it must not become trailing space under the
+   last one — a quote ending an answer would otherwise pad the turn beneath it. */
+.ody-prose > :last-child {
+  margin-bottom: 0;
+}
+.ody-prose h1,
+.ody-prose h2,
+.ody-prose h3,
+.ody-prose h4,
+.ody-prose h5,
+.ody-prose h6 {
+  color: var(--text-bright);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  /* Sentence case. Uppercase is now a signal that means "machine" (§4), and a
+     heading is the interface talking. */
+  text-transform: none;
+  letter-spacing: 0;
+}
+/* Four levels, four steps — 28 / 24 / 20 / 16 over a 16px reading size. h3 and
+   h4 used to both land on body size, which left a heading distinguished from its
+   own paragraph by weight alone; in a long assistant answer that reads as a
+   bolded sentence, not as structure. Every level now separates by SIZE first,
+   weight second, brightness third (§4). */
+.ody-prose h1 {
+  font-size: var(--prose-h1-size);
+  line-height: var(--prose-h1-lh);
+  letter-spacing: var(--tracking-tight);
+}
+.ody-prose h2 {
+  font-size: var(--prose-h2-size);
+  line-height: var(--prose-h2-lh);
+  letter-spacing: var(--tracking-tight);
+}
+.ody-prose h3 {
+  font-size: var(--prose-h3-size);
+  line-height: var(--prose-h3-lh);
+}
+/* The bottom rungs sit at body size, and so carry their level on weight and
+   brightness — which is legitimate here because the step above them is 20px.
+   Going smaller than body for a heading would put a *heading* under the reading
+   size, which is the one direction the ladder must not go.
+
+   h5/h6 are in the ladder because markdown emits them and an unstyled `h6`
+   falls to the browser default of ~10.7px, in the one place the operator does
+   not control the source. */
+.ody-prose h4 {
+  font-size: var(--prose-h4-size);
+  line-height: var(--prose-h4-lh);
+}
+.ody-prose h5,
+.ody-prose h6 {
+  font-size: var(--prose-h4-size);
+  line-height: var(--prose-h4-lh);
+  color: var(--text);
+}
+/* Dense prose (`Markdown dense`): the top three headings step down one rung, for a
+   document read in a pane rather than a column — a 28px h1 in a 320px pane is as
+   loud as the pane's own title. The scale itself is untouched; each level borrows
+   the next one's pair. Set per heading rather than by redefining `--prose-h*` on
+   the element, because a variable defined in terms of its neighbour on the same
+   element resolves the whole chain (h1 → h2 → h3) instead of one step. */
+.ody-prose.ody-prose-dense h1 {
+  font-size: var(--prose-h2-size);
+  line-height: var(--prose-h2-lh);
+}
+.ody-prose.ody-prose-dense h2 {
+  font-size: var(--prose-h3-size);
+  line-height: var(--prose-h3-lh);
+}
+.ody-prose.ody-prose-dense h3 {
+  font-size: var(--prose-h4-size);
+  line-height: var(--prose-h4-lh);
+}
+/* Headings are section breaks: extra space above, tight to the content below.
+   Space above scales with the level, so the eye reads the gap as depth. */
+.ody-prose :is(h1, h2, h3, h4, h5, h6) + * {
+  margin-top: var(--space-2);
+}
+.ody-prose * + h1 {
+  margin-top: var(--space-8);
+}
+.ody-prose * + h2 {
+  margin-top: var(--space-6);
+}
+.ody-prose * + h3 {
+  margin-top: var(--space-6);
+}
+.ody-prose * + :is(h4, h5, h6) {
+  margin-top: var(--space-5);
+}
+.ody-prose strong {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+.ody-prose em {
+  font-style: italic;
+}
+/* A link the model wrote into its prose. Info is the one accent the resting
+   palette spends here (§1.4), and it is spent because a link is a place the
+   operator can go — the only element in an answer that is. */
+.ody-prose a {
+  color: var(--accent-info);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* An outbound link says so. The glyph is the affordance that separates "this
+   leaves the workspace, in a new tab" from in-app navigation, and it is the
+   quiet half of a pair: this marks *that* a link is outbound, and the anchor's
+   `title` — its base domain, set in markdownLinks.ts — names *where*.
+
+   A pseudo-element rather than markup, which settles three things at once: it is
+   not a text node, so the answer's reveal cascade (AnswerText) has nothing to
+   animate and the glyph is simply there from the frame its link is; it is not in
+   the selection, so copying an answer yields the prose without it; and it cannot
+   be broken onto a line of its own, because the leading non-breaking space binds
+   it to the link's last word (an inline-block would un-underline it, at the cost
+   of a break opportunity right before it — the trade runs the wrong way).
+
+   It therefore carries the link's underline, which is correct: the glyph is part
+   of the link, not an annotation floating beside it. Dim keeps it quiet next to
+   the accented text. */
+.ody-prose a[data-link-external]::after {
+  content: "\a0↗";
+  font-size: 0.85em;
+  color: var(--text-dim);
+}
+/* A file the answer pointed at, which opens on the operator's own machine. It is
+   a `<button>` and not an anchor (markdownLinks.ts says why), so it inherits none
+   of the link rules above and states its own.
+
+   Mono, because it is a path: the machine voice is how this interface says "this
+   is a literal string the machine will act on" (§2), and it is what separates a
+   file from the prose around it without spending a second accent. The dotted
+   underline is the pair to the outbound `↗` — both mark *what kind* of departure
+   a click is, one leaving for the web, one leaving the browser entirely — and it
+   reads as an affordance without imitating a link it isn't.
+
+   The mono size and leading are the *inline code* tokens, not a third pair: a
+   path set beside `a path in backticks` has to read as the same kind of thing,
+   because it is. What it does not take is the code span's box — the frame and
+   raised fill are what say "a fragment quoted verbatim", and this is a control.
+
+   A button is an inline-block whose contents cannot break across lines, so a long
+   absolute path is held to the column width and wraps *inside* the control rather
+   than pushing the answer sideways. */
+.ody-prose .ody-open-path {
+  font-family: var(--font-mono);
+  font-size: var(--prose-code-size);
+  line-height: var(--prose-code-lh);
+  color: var(--accent-info);
+  background: none;
+  border: 0;
+  padding: 0;
+  max-width: 100%;
+  text-align: left;
+  vertical-align: baseline;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+.ody-prose .ody-open-path:hover {
+  text-decoration-style: solid;
+}
+/* An image the answer embedded. It arrives with no `src` (markdownLinks parks the
+   address; remoteImages.ts resolves it through the backend proxy), so the resting
+   state here is an element with nothing in it — `min-height` reserves a little of
+   the line so the paragraph doesn't jolt when the bytes land, and the hairline
+   frame reads as a held slot rather than a rendering fault. Square corners: this is
+   captured content, the same family as a data panel (§7). */
+.ody-prose img.ody-remote-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+}
+.ody-prose img.ody-remote-image[data-remote-state="loading"] {
+  min-height: var(--space-8);
+}
+/* The stand-in for an image that would not load. Dim and mono — a failure to fetch
+   is the machine reporting, not the interface speaking (§2), and it says which host
+   it could not reach so the operator can judge whether that matters. */
+.ody-prose .ody-remote-image-error {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--type-meta-size);
+  color: var(--text-dim);
+  border: 1px solid var(--line);
+  padding: var(--space-2) var(--space-3);
+}
+.ody-prose ul,
+.ody-prose ol {
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ody-prose li {
+  padding-left: var(--space-1);
+}
+.ody-prose ul {
+  list-style: square;
+}
+.ody-prose ol {
+  list-style: decimal;
+}
+.ody-prose li::marker {
+  color: var(--text-dim);
+}

@@ -1,0 +1,105 @@
+/* Code is machine output: mono, and it snaps rather than eases. */
+.ody-prose code {
+  font-family: var(--font-mono);
+  font-size: var(--prose-code-size);
+  line-height: var(--prose-code-lh);
+  background: var(--surface-raised);
+  border: var(--line-w) solid var(--line);
+  padding: 1px var(--space-1);
+  color: var(--text-bright);
+}
+.ody-prose pre {
+  background: var(--surface-raised);
+  border: var(--line-w) solid var(--line);
+  padding: var(--space-3);
+  overflow-x: auto;
+}
+.ody-prose pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+/* A quote sits further from its neighbours than an ordinary block does — flush at
+   the rhythm's own `space-4` it reads as a paragraph someone drew a line beside,
+   rather than as a passage set aside.
+
+   **Margin, not padding**, and the difference is what the spine says. The rule
+   marks the lines that are quoted; padding stretches it past the last of them, so
+   it stops naming the quote and starts bracketing empty space. The room belongs
+   *around* the quote, which is the block rhythm's job — one step up from it
+   (`space-4` → `space-6`), overriding the rule above rather than adding to it.
+   Sibling margins collapse here, so the next block's own `space-4` disappears
+   into this one and the gap stays symmetrical. */
+.ody-prose blockquote {
+  border-left: var(--line-emphasis) solid var(--line-strong);
+  padding-left: var(--space-3);
+  margin: var(--space-6) 0;
+  color: var(--text-dim);
+}
+/* The rhythm rule above is direct-child only, so a quote holding more than one
+   paragraph ran them together — the same defect one level down. */
+.ody-prose blockquote > * + * {
+  margin-top: var(--space-4);
+}
+
+/* Rendered math (KaTeX). Math is the one place neither voice applies: real
+   typesetting (radicals, large operators, stretchy delimiters) needs KaTeX's
+   bundled glyph metrics. Everything else is held to the system — monochrome,
+   errors in the alert token, spacing on the 4px grid.
+
+   Display math sits on its own line and scrolls horizontally instead of
+   bursting the message bubble; its block rhythm comes from the prose `* + *`
+   rule, so KaTeX's own 1em margin is dropped. */
+.ody-prose .ody-math-block {
+  overflow-x: auto;
+  overflow-y: hidden;
+  color: var(--text-bright);
+}
+.ody-prose .katex-display {
+  margin: 0;
+}
+.ody-prose .katex-error {
+  color: var(--accent-alert);
+}
+
+/* Tables read as dense data panels: a hairline grid, SQUARE corners (§7 — a
+   rounded cell breaks the ruled structure that makes tabular data scannable),
+   tabular figures, and a mono uppercase header band, because a column header
+   names a machine field. No zebra striping or accent fills. */
+.ody-prose [data-table-host] {
+  overflow-x: auto;
+}
+.ody-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  border: var(--line-w) solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.ody-prose th,
+.ody-prose td {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  vertical-align: baseline;
+}
+/* Hairline grid: cell separators on every internal edge. */
+.ody-prose th + th,
+.ody-prose td + td {
+  border-left: var(--line-w) solid var(--line);
+}
+.ody-prose tbody tr {
+  border-top: var(--line-w) solid var(--line);
+}
+.ody-prose thead th {
+  font-family: var(--font-mono);
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-lh);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-dim);
+  background: var(--surface-raised);
+  border-bottom: var(--line-w) solid var(--line);
+}
+.ody-prose tbody td {
+  color: var(--text);
+}

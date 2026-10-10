@@ -1,0 +1,30 @@
+/* ==========================================================================
+   RESTING-STATE DEFAULTS. The interface speaks in sans; the machine speaks in
+   mono, and only where mono is asked for explicitly (§2).
+   ========================================================================== */
+html {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  /* tabular + lining figures so every number aligns in columns, in both voices */
+  font-feature-settings:
+    "tnum" 1,
+    "lnum" 1,
+    "kern" 1;
+  font-variant-numeric: tabular-nums lining-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+}
+
+/* Text selection. Neutral and quiet: a low-opacity knock-out of the bright
+   token rather than the browser's blue or the old inverted terminal block. */
+::selection {
+  background: color-mix(in oklab, var(--text-bright) 22%, transparent);
+  color: var(--text-bright);
+}
