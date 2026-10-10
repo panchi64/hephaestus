@@ -11,7 +11,7 @@ export interface RegistrationFrameProps {
    *  inside it would sit on its content. */
   marks?: "cross" | "tick";
   /** The marks' tone. `dim` at rest; `info` while the framed thing is live — the same
-   *  blue the LED strips use for a streaming run, so the frame joins that state rather
+   *  blue the live rail uses for a streaming run, so the frame joins that state rather
    *  than announcing a second vocabulary for it. Default `dim`. */
   tone?: "dim" | "info";
   /** Optional diegetic ID printed bottom-left (e.g. "RCM-OB-01.3"). */

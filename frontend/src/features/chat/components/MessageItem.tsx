@@ -8,7 +8,17 @@ import {
   onMount,
   type JSX,
 } from "solid-js";
-import { Button, Chip, Icon, Markdown, Stack, Text, Textarea, cx } from "~/ui";
+import {
+  Button,
+  Chip,
+  Icon,
+  Markdown,
+  ScrollFade,
+  Stack,
+  Text,
+  Textarea,
+  cx,
+} from "~/ui";
 import { hostLabel, longTimestamp } from "~/lib/format";
 import { CONTEXT_OVERFLOW_DETAIL } from "~/lib/stream";
 import type { ApprovalDecision, ChatMessage, Citation } from "../model";
@@ -350,7 +360,7 @@ function UserText(props: { text: string }): JSX.Element {
         <Markdown class="text-left break-words">{props.text}</Markdown>
         {/* Only while clamped, and only when there is genuinely more below. */}
         <Show when={clampable() && !expanded()}>
-          <div class="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-sunken to-transparent" />
+          <ScrollFade variant="clamp" edge="bottom" ground="sunken" />
         </Show>
       </div>
       <Show when={clampable()}>

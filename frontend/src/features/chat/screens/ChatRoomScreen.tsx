@@ -586,13 +586,12 @@ export function ChatRoomScreen(): JSX.Element {
 
         {/* The composer docks on the page background, and the transcript dissolves
             into it through the same `ScrollFade` the title uses at the top — one
-            edge treatment for both ends of the conversation, the LED strip on the
-            composer's own top edge still doing the separating with light.
+            edge treatment for both ends of the conversation, the composer's own
+            opaque fill and ruled frame doing the separating.
             **No top padding**: the fade reaches up over the transcript's last band
             on its own, and the transcript keeps exactly that band as its bottom
             inset, so the last turn at rest clears it. A pad here would add a strip
-            of bare page between the fade and the light. The glow costs no layout
-            (it is a shadow, and nothing between here and the viewport clips it). */}
+            of bare page between the fade and the frame. */}
         {/* The dock's own background spans the full width — it is what the
             transcript scrolls out of sight behind — while its contents take the
             same measure as the transcript above. */}
@@ -638,7 +637,6 @@ export function ChatRoomScreen(): JSX.Element {
             </Show>
             <Show when={!stream.park()}>
               <Composer
-                edge="led"
                 autofocus
                 streaming={stream.sending()}
                 onStop={(correction) => void stopRun(correction)}

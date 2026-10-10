@@ -24,7 +24,7 @@ import {
   Text,
 } from "~/ui";
 import { rememberScroll } from "../../scrollMemory";
-import { fontStepMetrics } from "./fontStep";
+import { fontStepMetrics, fontStepStyle } from "./fontStep";
 import { settled } from "~/lib/resource";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -116,7 +116,7 @@ export function RawTextViewer(props: {
   };
 
   // ── virtualization (non-wrap arm) ──────────────────────────────────────
-  let containerEl: HTMLDivElement | undefined;
+  let containerEl: HTMLElement | undefined;
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewportH, setViewportH] = createSignal(0);
 
@@ -154,7 +154,7 @@ export function RawTextViewer(props: {
   });
 
   let resizeObserver: ResizeObserver | undefined;
-  const attachContainer = (el: HTMLDivElement): void => {
+  const attachContainer = (el: HTMLElement): void => {
     // softWrap toggling swaps `<Show>` branches and calls this a second time on
     // the same live component instance — disconnect any prior observer first so
     // it isn't leaked.
@@ -253,14 +253,14 @@ export function RawTextViewer(props: {
             <Show
               when={!props.softWrap}
               fallback={
-                <div
+                <Text
+                  as="div"
+                  variant="code"
                   ref={attachContainer}
-                  class="h-full min-h-0 overflow-auto font-mono"
+                  class="block h-full min-h-0 overflow-auto"
+                  style={fontStepStyle(props.fontStep)}
                 >
-                  <table
-                    class="w-full border-collapse"
-                    style={{ "font-size": `${font().size}px` }}
-                  >
+                  <table class="w-full border-collapse">
                     <tbody>
                       <For each={renderLines()}>
                         {(line, i) => (
@@ -285,13 +285,15 @@ export function RawTextViewer(props: {
                       </For>
                     </tbody>
                   </table>
-                </div>
+                </Text>
               }
             >
-              <div
+              <Text
+                as="div"
+                variant="code"
                 ref={attachContainer}
-                class="relative h-full min-h-0 overflow-auto font-mono"
-                style={{ "font-size": `${font().size}px` }}
+                class="relative block h-full min-h-0 overflow-auto"
+                style={fontStepStyle(props.fontStep)}
                 onScroll={onScroll}
               >
                 <div
@@ -328,7 +330,7 @@ export function RawTextViewer(props: {
                     )}
                   </For>
                 </div>
-              </div>
+              </Text>
             </Show>
           </Show>
         </div>

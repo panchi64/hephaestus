@@ -95,10 +95,7 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
         ref={props.scroll.ref}
         tabindex={-1}
         onScroll={props.scroll.onScroll}
-        /* `px-4` is not cosmetic: a scroll container clips at its padding
-           box, so this is the room the live rail's LED bloom spills into.
-           Without it the glow is cut off a few pixels from the rule and
-           reads as a hard-edged coloured border again.
+        /* `px-4` is the transcript's gutter inside the scroll container.
 
            The bright focus outline is gone — the shell's neutral focus halo
            covers this, and a white rule around the transcript was exactly
@@ -122,8 +119,7 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
       >
         {/* The measure goes on the CONTENT, not on the scroll container:
             the container has to keep its full width so its scrollbar sits
-            at the edge of the pane and its `px-4` still gives the live
-            rail's LED bloom somewhere to spill. */}
+            at the edge of the pane. */}
         <div class={props.measure}>
           {/* One malformed block must not cost the operator the composer,
               the thread list, or the text they were typing — scope a throw

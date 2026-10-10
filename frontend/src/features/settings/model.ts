@@ -132,14 +132,11 @@ export const DEFAULT_SUBAGENT_LIMIT = 3;
 
 /** What `wallClockTimeoutS` seeds to when it is switched on and nothing was stored — the
  *  frontend's own starting suggestion, not a backend default (there isn't one: the bound
- *  is absent until an operator asks for it). Shared so the Chat panel and the settings
- *  palette can't seed the switch to two different durations. */
+ *  is absent until an operator asks for it). */
 export const DEFAULT_WALL_CLOCK_S = 1800;
 
-/** `wallClockTimeoutS` as the whole minutes both editing surfaces offer. Shared for the
- *  same reason as the seed above: the panel and the palette must round one stored bound
- *  to the same number. Each caller keeps its own policy for "there is no bound" — the
- *  panel seeds the field, the palette shows nothing — so this takes a real duration. */
+/** `wallClockTimeoutS` as the whole minutes the Chat panel offers. The caller keeps its
+ *  own policy for "there is no bound", so this takes a real duration. */
 export function wallClockMinutes(seconds: number): number {
   return Math.max(1, Math.round(seconds / 60));
 }

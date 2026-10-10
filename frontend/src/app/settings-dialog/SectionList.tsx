@@ -44,7 +44,7 @@ export function SectionList(props: {
   const hits = () => searchSettingsSections(query());
   const searching = () => query().trim() !== "";
 
-  // A deep link (or a palette jump) can land on a section inside a group the
+  // A deep link can land on a section inside a group the
   // operator folded away — the row has to be visible where it says it is, so the
   // group unfolds rather than the selection hiding inside it.
   //

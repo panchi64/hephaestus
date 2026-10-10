@@ -42,7 +42,6 @@ import type { ChatMessage, TextBlock } from "~/features/chat/model";
  *   &cv=1          content-visibility on every turn but the last two
  *   &auto=1        run `compare()` as soon as the page is actually on screen
  *   &cps=300       characters per second the timed driver streams at
- *   &led=0         kill the rail LED's four-layer glow
  *   &legibility=0  drop `text-rendering: optimizeLegibility`
  *
  * Driven from the console (or a devtools protocol client) via `window.__bench`.
@@ -256,7 +255,6 @@ export default function Bench(): JSX.Element {
   // two numbers get compared without a reload in between, and a reload is the largest
   // source of variance in a measurement this small.
   const [cv, setCv] = createSignal(flag(params, "cv", false));
-  const led = flag(params, "led", true);
   const legibility = flag(params, "legibility", true);
   const cps = Math.max(
     10,
@@ -611,7 +609,7 @@ export default function Bench(): JSX.Element {
     <div class="flex h-screen flex-col bg-bg text-text">
       {/* Injected rather than authored into theme.css: these are experiments, and an
           experiment that lives in the design system is a rule nobody meant to write. */}
-      <style>{`${cv() ? DEFER_CSS : ""}${led ? "" : ".ody-led::before{box-shadow:none!important}"}`}</style>
+      <style>{cv() ? DEFER_CSS : ""}</style>
       <Show when={status() !== "idle"}>
         <div class="pointer-events-none fixed bottom-3 right-3 z-50 border border-line bg-raised px-3 py-2 font-mono text-micro text-dim">
           <Show

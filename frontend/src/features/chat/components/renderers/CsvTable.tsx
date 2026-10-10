@@ -24,7 +24,7 @@ import {
 } from "~/ui";
 import { rememberScroll } from "../../scrollMemory";
 import { downloadBlob } from "../../viewport/downloadRegistry";
-import { fontStepClass } from "./fontStep";
+import { fontStepStyle } from "./fontStep";
 import { settled } from "~/lib/resource";
 
 const ROW_CAP = 5_000;
@@ -182,12 +182,12 @@ export function CsvTable(props: {
             when={header().length > 0}
             fallback={<EmptyState message="No data" />}
           >
-            <div
-              ref={(el) => rememberScroll(el, scrollKey)}
-              class={cx(
-                "min-h-0 flex-1 overflow-auto bg-surface font-mono",
-                fontStepClass(props.fontStep),
-              )}
+            <Text
+              as="div"
+              variant="code"
+              ref={(el: HTMLElement) => rememberScroll(el, scrollKey)}
+              class="min-h-0 flex-1 overflow-auto bg-surface"
+              style={fontStepStyle(props.fontStep)}
             >
               <table class="w-full border-collapse">
                 <thead>
@@ -244,7 +244,7 @@ export function CsvTable(props: {
                   </For>
                 </tbody>
               </table>
-            </div>
+            </Text>
           </Show>
         </div>
       </Show>

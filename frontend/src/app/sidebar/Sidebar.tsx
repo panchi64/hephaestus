@@ -8,7 +8,6 @@ import { RecentsRail } from "~/features/chat/components/RecentsRail";
 import { SessionModeSwitch } from "~/features/chat/components/SessionModeSwitch";
 import { AREAS, areaForPath, railRows, type NavItem } from "../nav";
 import { AreaSection } from "./AreaSection";
-import { NavPalette, openNavPalette } from "./NavPalette";
 import { navMeta } from "./navMeta";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 
@@ -107,15 +106,6 @@ export function Sidebar(): JSX.Element {
               ODY-WORKSPACE-02.1
             </Text>
           </a>
-          <Tooltip side="right" label="Go to… (⌘K)">
-            <Button
-              variant="ghost"
-              size="sm"
-              leading="search"
-              aria-label="Go to page"
-              onClick={openNavPalette}
-            />
-          </Tooltip>
         </div>
 
         {/* What kind of work you are looking at — and, since the Chat row went,
@@ -197,8 +187,6 @@ export function Sidebar(): JSX.Element {
           </Button>
         </div>
       </div>
-
-      <NavPalette />
     </nav>
   );
 }

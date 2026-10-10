@@ -24,7 +24,6 @@ import {
 import { loadDraft, saveDraft } from "./composerDraft";
 import { createComposerMenuController } from "./composerMenuController";
 import { tokenSpans, type ComposerTrigger } from "./composerToken";
-import { LedEdge } from "./LedEdge";
 import { RegistrationFrame } from "./RegistrationFrame";
 import { StatusBar, StatusCell } from "./StatusBar";
 import { Tooltip } from "./Tooltip";
@@ -64,16 +63,6 @@ function KeyHint(props: { children: string }): JSX.Element {
  *  send (or pick) half a word. `keyCode` 229 is the only signal some engines give. */
 const composing = (e: KeyboardEvent): boolean =>
   e.isComposing || e.keyCode === 229;
-
-/* The strip light's two dials, for `edge="led"` only (§10.9). They live here,
-   named, because this is the one surface that wants a stronger LED than the
-   system default and the pair is meant to be tuned by eye — turning them up in
-   `theme.css` instead would brighten every rail in the product.
-     INTENSITY multiplies the opacity curve; REACH multiplies how far the light
-   throws (1 ~= 90px). The composer sits under a whole transcript, so both run
-   above 1: at the default the glow dies inside the card's own top padding. */
-const LED_INTENSITY = 1.35;
-const LED_REACH = 1.7;
 
 /**
  * Attachment controller injected by the feature layer. The design system can't
@@ -258,21 +247,12 @@ export interface ComposerProps {
    *  the bar wraps the trailing group keeps its edge rather than trailing the leading
    *  one. */
   trailing?: JSX.Element;
-  /** Drop the card's fill and the registration marks — **the frame and the edge light
-   *  are kept**. For a composer nested inside another surface (the approval dock): a
-   *  fill on a fill is the box-in-a-box §7 exists to stop, and corner marks set outside
-   *  a unit that is itself inside a panel frame the panel's content rather than the
-   *  page's point of action. */
+  /** Drop the card's fill and the registration marks — **the frame is kept**. For a
+   *  composer nested inside another surface (the approval dock): a fill on a fill is
+   *  the box-in-a-box §7 exists to stop, and corner marks set outside a unit that is
+   *  itself inside a panel frame the panel's content rather than the page's point of
+   *  action. */
   bare?: boolean;
-  /** How the composer marks itself as the point of action.
-   *
-   *  `bloom` (default) is the wide ambient aura — right where the composer is
-   *  the whole screen, floating in space (the home launchpad). `led` swaps it
-   *  for a lit strip across the **top** edge: inside a
-   *  live conversation the aura had ~90px of upward reach and washed over the
-   *  last thing the model said, and a rail says "the input starts here" without
-   *  spilling onto the transcript. */
-  edge?: "bloom" | "led";
   /** File-attachment controller. When supplied, the Composer shows an attach
    *  button + drag-drop and renders the attachment chips; omit to hide them. */
   attachments?: ComposerAttachmentsApi;
@@ -623,11 +603,10 @@ export function Composer(props: ComposerProps): JSX.Element {
   };
 
   const lg = () => props.size === "lg";
-  const led = () => props.edge === "led";
 
   // Grow the field to fit what it shows — a recall swapping a message in included.
-  // Both sizes grow: the hero is told apart by its glow, width and padding, not by
-  // empty rows.
+  // Both sizes grow: the hero is told apart by its width and padding, not by empty
+  // rows.
   useAutosize(() => field, value, {
     maxRows: MAX_ROWS,
     maxViewportShare: MAX_VIEWPORT_SHARE,
@@ -960,11 +939,11 @@ export function Composer(props: ComposerProps): JSX.Element {
 
      The unit is marked as the point of action AT REST, not on hover or focus (§6):
      the composer is the point of the screen whether or not the cursor is in it.
-     Two marks, whatever the edge: registration ticks outside the four corners —
-     dim at rest, info while a run streams, the same blue as everything else live —
-     and the edge light (`edge`). `bloom` is the wide ambient aura for a composer
-     that *is* the screen; `led` is a lit strip along the top edge for the docked
-     case, where the aura's reach would wash over the transcript above it. */
+     It is marked by its `line-strong` frame and by registration ticks outside the
+     four corners — dim at rest, info while a run streams, the same blue as
+     everything else live. No shadow and no light: its separation from the
+     transcript is its opaque fill and its ruled edge (§13 — shadows are for things
+     that float). */
   // Portalled to the body by `FloatingPanel`, so it sits outside the composer's own
   // stacking context and outside the transcript's `overflow-auto` — the two things that
   // would otherwise clip it. Mounted inside the card only so it shares the card's
@@ -1108,43 +1087,12 @@ export function Composer(props: ComposerProps): JSX.Element {
     </div>
   );
 
-  /* The frame. Its top edge is the LED strip when docked — the strip reports the
-     run: neutral white at rest (it claims nothing is happening, only marks where the
-     operator acts, which §6 draws with luminance rather than hue), fading to `info`
-     while the model works, the same blue the live rail uses beside a streaming block.
-     The fade itself is in `.ody-led::before` (§8, ambient). The other three sides are
-     `line-strong` per side, so they never contend with the strip's own `border-line`
-     for the one border colour. */
+  // The frame: one square `line-strong` rule around the card and its status bar.
   const unit = (
-    <Show
-      when={led()}
-      fallback={
-        <div
-          class={cx(
-            "relative flex flex-col border border-line-strong",
-            !props.bare && "shadow-bloom",
-          )}
-        >
-          {card}
-          {statusBar}
-        </div>
-      }
-    >
-      <LedEdge
-        lit
-        side="top"
-        // Tapered: the strip is a light hung over the transcript, brightest where
-        // the eye lands, not a rule the width of the card.
-        taper
-        tone={props.streaming ? "info" : "neutral"}
-        intensity={LED_INTENSITY}
-        reach={LED_REACH}
-        class="flex flex-col border-x border-b border-x-line-strong border-b-line-strong"
-      >
-        {card}
-        {statusBar}
-      </LedEdge>
-    </Show>
+    <div class="relative flex flex-col border border-line-strong">
+      {card}
+      {statusBar}
+    </div>
   );
 
   // `class` lands on the outer wrapper — it is layout glue, and the thing being

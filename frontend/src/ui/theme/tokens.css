@@ -11,7 +11,6 @@
 
 :root {
   /* ---- grid & spacing (4px base) ---- */
-  --space-0: 0;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -19,11 +18,10 @@
   --space-5: 20px;
   --space-6: 24px;
   --space-8: 32px;
-  --space-12: 48px;
 
-  /* ---- corners (§7) — smoothed, not rounded. The hairline data grid stays
-         square: radius-0 is still the default for anything in a ruled grid. ---- */
-  --radius-0: 0;
+  /* ---- corners (§7) — smoothed, not rounded. The console register is square:
+         anything in a ruled grid, a console frame or the action tier takes no
+         radius at all, so there is no token for it. ---- */
   --radius-1: 3px; /* controls: button, input, chip, tab */
   --radius-2: 6px; /* containers: panel, card, modal, popover */
   --radius-full: 9999px; /* status dots + count pills only */
@@ -62,8 +60,8 @@
   --font-sans: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
   /* There is no separate display face. Oswald is retired — a heavy condensed
-     grotesque was the loudest thing on every screen it appeared on. */
-  --font-display: var(--font-sans);
+     grotesque was the loudest thing on every screen it appeared on — and the
+     display size is set in sans like everything else the interface says. */
 
   /* ---- INTERFACE type scale (size / line-height, snapped to the 4px grid) ----
      This is the CHROME scale, and it stays dense on purpose: rails, labels,
@@ -239,28 +237,6 @@
      distinct objects (§7). */
   --shadow-1: 0 0 0 1px rgb(255 255 255 / 0.05), 0 1px 2px rgb(0 0 0 / 0.6);
   --shadow-2: 0 0 0 1px rgb(255 255 255 / 0.07), 0 8px 32px rgb(0 0 0 / 0.8);
-
-  /* ---- the AMBIENT BLOOM — a wide, soft aura marking the screen's primary
-     surface (the composer). Three decisions are load-bearing:
-
-     1. It is NEUTRAL — white here, dark in Paper. Drawing the eye is a job for
-        LUMINANCE, which is what §1.3 and §5 already say: hierarchy comes from
-        brightness, and hue is reserved for meaning. A colored bloom grabs
-        attention with the one channel that is supposed to mean something, and
-        it competes with every semantic accent on the same screen. Neutral pulls
-        the eye just as hard and costs the palette nothing.
-     2. It is WIDE and FAINT — blur ramps 24 -> 220px while opacity falls to 3%,
-        and the outer layers carry POSITIVE spread so the aura grows outward
-        instead of being pulled back in. Tight and strong reads as an edge cutout
-        around the card; wide and barely-there reads as light.
-     3. It carries its own hairline ring, so the surface stays defined without a
-        border and without needing `shadow-1` stacked underneath (a second
-        shadow utility would simply overwrite the first). */
-  --shadow-bloom:
-    0 0 0 1px rgb(255 255 255 / 0.06), 0 2px 24px -8px rgb(255 255 255 / 0.1),
-    0 12px 60px -12px rgb(255 255 255 / 0.08),
-    0 24px 120px 8px rgb(255 255 255 / 0.05),
-    0 40px 220px 40px rgb(255 255 255 / 0.03);
 }
 
 /* ==========================================================================
@@ -332,14 +308,6 @@
   --shadow-2:
     0 0 0 1px rgb(0 0 0 / 0.08), 0 12px 32px -8px rgb(0 0 0 / 0.16),
     0 2px 6px rgb(0 0 0 / 0.06);
-
-  /* The bloom, inverted for a light substrate: a white aura on white is nothing,
-     so Paper blooms DARK. Same three decisions as the Ink note above — neutral,
-     wide and faint, carrying its own hairline. */
-  --shadow-bloom:
-    0 0 0 1px rgb(0 0 0 / 0.07), 0 2px 24px -8px rgb(0 0 0 / 0.07),
-    0 12px 60px -12px rgb(0 0 0 / 0.06), 0 24px 120px 8px rgb(0 0 0 / 0.04),
-    0 40px 220px 40px rgb(0 0 0 / 0.03);
 }
 
 /* ==========================================================================
@@ -428,8 +396,4 @@
   --shadow-alert:
     0 2px 12px -2px color-mix(in oklab, var(--accent-alert) 50%, transparent),
     0 10px 36px -10px color-mix(in oklab, var(--accent-alert) 34%, transparent);
-
-  /* NOTE: `--shadow-bloom` — the wide ambient aura that marks the screen's
-     primary surface — is NEUTRAL, not accented, and is therefore defined per
-     mode below rather than here. See the note on the Ink definition. */
 }

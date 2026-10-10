@@ -142,10 +142,14 @@ function FileRow(props: {
               </Text>
             }
           >
-            <span class="shrink-0 font-mono text-meta tabular-nums">
-              <span class="text-nominal">+{props.file.insertions}</span>{" "}
-              <span class="text-alert">−{props.file.deletions}</span>
-            </span>
+            <Text variant="code" class="shrink-0 tabular-nums">
+              <Text variant="code" tone="nominal">
+                +{props.file.insertions}
+              </Text>{" "}
+              <Text variant="code" tone="alert">
+                −{props.file.deletions}
+              </Text>
+            </Text>
           </Show>
           <Icon
             name={open() ? "chevron-down" : "chevron-right"}

@@ -3,7 +3,6 @@ import {
   Button,
   Frames,
   Icon,
-  LedEdge,
   MetClock,
   REVEAL_ON_GROUP_HOVER,
   StatusDot,
@@ -11,6 +10,7 @@ import {
   TypewriterText,
   cx,
   type ContextMenuTriggerProps,
+  type Status,
 } from "~/ui";
 import { REVEAL_SPEED_MS } from "../data";
 import type { ChatActivity, ChatOutcome } from "../model";
@@ -27,8 +27,8 @@ export interface SessionRowProps {
    *  header shows, on the row the retitle was started from. Without it, REGENERATE
    *  TITLE from the rail's menu reports nothing at all until the new name lands. */
   retitling?: boolean;
-  /** The backend's status for this thread's live run, when it has one. Lights the
-   *  accent edge; absent leaves the row at rest. */
+  /** The backend's status for this thread's live run, when it has one. Colours the
+   *  leading edge; absent leaves the row at rest. */
   activity?: ChatActivity;
   /** How the last terminal run ended, when the backend still remembers. Read only at
    *  rest — `activity` is the live truth and both can be set at once. */
@@ -47,10 +47,16 @@ export interface SessionRowProps {
   menuOpen?: boolean;
 }
 
-/* The row is short and its light spills inward, so the reach is pulled well in:
-   at full reach the bloom would wash the whole row flat instead of falling off
-   across it, and `overflow-hidden` would be doing all the shaping. */
-const LED_REACH = 0.6;
+/* The leading edge's colour per state. `idle` and `live` never reach it — only a
+   `loud` state colours the edge — but the map is total so the type says so. */
+const EDGE: Record<Status, string> = {
+  idle: "border-l-transparent",
+  live: "border-l-info",
+  info: "border-l-info",
+  nominal: "border-l-nominal",
+  warn: "border-l-warn",
+  alert: "border-l-alert",
+};
 
 /**
  * A selectable session row with its own actions menu.
@@ -71,21 +77,18 @@ const LED_REACH = 0.6;
  * The label and the "···" are sibling buttons (not nested) so neither swallows the
  * other's click.
  *
- * A thread whose run is live lights its leading edge, and the light falls
- * *inward* — across the row, under the title — so the row itself reads as the
- * thing that is running rather than as a row wearing a coloured border. Every
- * row reserves the rule (transparent at rest) so lighting one can't shift the
- * list.
+ * A thread whose run is live colours its leading edge. Every row reserves the rule
+ * (transparent at rest) so marking one can't shift the list.
  *
  * **A finished run is no longer indistinguishable from a thread that never ran.** The
  * row reports two backend facts through one table (`runState.ts`), and it reports them
  * with two different devices on purpose:
  *
  * - **The edge is for what needs you.** Live work, and the two endings that mean the
- *   operator is wanted — a failure and a limit — light it. Lighting it for every
+ *   operator is wanted — a failure and a limit — colour it. Colouring it for every
  *   `done` was the obvious version and the wrong one: §5 rule 1 is that a screen at
- *   rest is grayscale, and a rail where thirty finished threads each glow green is a
- *   rail nobody scans for the lit one. That is the whole mechanism, spent.
+ *   rest is grayscale, and a rail where thirty finished threads are each edged green is
+ *   a rail nobody scans for the marked one. That is the whole mechanism, spent.
  * - **The dot is for what happened.** Every terminal outcome gets a 6px `StatusDot` at
  *   rest, which is exactly the trade `StatusFlag` documents: confining the hue to a
  *   mark keeps the state legible from across the room and keeps the accent budget
@@ -104,14 +107,13 @@ export function SessionRow(props: SessionRowProps): JSX.Element {
     const s = state();
     return s ? runStateSpec(s) : undefined;
   });
+  const edge = (): string => {
+    const s = spec();
+    return EDGE[s?.loud ? s.status : "idle"];
+  };
 
   return (
-    <LedEdge
-      lit={spec()?.loud ?? false}
-      tone={spec()?.tone}
-      spill="in"
-      unlit="clear"
-      reach={LED_REACH}
+    <div
       // On the row's own element, not the label button: the target is the whole row,
       // including the strip the "···" sits on and the padding around it. A right-click
       // that lands two pixels off the label and does nothing reads as the menu being
@@ -121,11 +123,8 @@ export function SessionRow(props: SessionRowProps): JSX.Element {
         // No rule between rows (§7) — the hover fill and the rhythm are what
         // make this read as a list, and the leading edge shows only when there
         // is something to report.
-        //
-        // `overflow-hidden` is load-bearing, not tidiness: an inward glow blooms
-        // on every axis, so unclipped it would bleed onto the rows above and
-        // below and the list would look smudged rather than lit.
-        "group flex items-center overflow-hidden rounded-ctl transition-colors hover:bg-raised",
+        "group flex items-center overflow-hidden rounded-ctl border-l transition-colors hover:bg-raised",
+        edge(),
         props.selected && "bg-raised",
       )}
     >
@@ -217,6 +216,6 @@ export function SessionRow(props: SessionRowProps): JSX.Element {
       >
         ···
       </Button>
-    </LedEdge>
+    </div>
   );
 }

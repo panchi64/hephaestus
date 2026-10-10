@@ -53,8 +53,7 @@ export interface ComposerMenuProps {
  * to `document.body` (`FloatingPanel`), which puts it outside the field's subtree, so
  * nothing typed there bubbles here. Arrow keys, Enter, Tab and Escape are handled on the
  * *field*, and the menu is told which row is active through `activeId`. A container-level
- * keydown of the kind `NavPalette` uses would simply never fire, because the palette owns
- * its own input and this owns nothing.
+ * keydown would simply never fire, because this owns no input of its own.
  *
  * **It docks to the field, not to the caret.** A caret-anchored menu needs the mirror-div
  * measurement trick — a hidden copy of the textarea, restyled and re-measured on every
@@ -63,8 +62,7 @@ export interface ComposerMenuProps {
  * an extension of it.
  *
  * Rows are `option`s under a `listbox`, with the field carrying `aria-activedescendant` —
- * the same arrangement the palette uses, and the reason the ids have to be unique across
- * groups rather than per group.
+ * the reason the ids have to be unique across groups rather than per group.
  */
 export function ComposerMenu(props: ComposerMenuProps): JSX.Element {
   const empty = () => props.groups.every((group) => group.items.length === 0);

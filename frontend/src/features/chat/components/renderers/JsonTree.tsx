@@ -13,7 +13,7 @@ import {
 } from "solid-js";
 import { cx, ErrorState, Icon, LoadingText, Text } from "~/ui";
 import { rememberScroll } from "../../scrollMemory";
-import { fontStepClass } from "./fontStep";
+import { fontStepStyle } from "./fontStep";
 import { settled } from "~/lib/resource";
 
 type JsonValue =
@@ -214,12 +214,12 @@ export function JsonTree(props: {
     >
       <Show when={parsed()} fallback={<LoadingText />}>
         {(p) => (
-          <div
-            ref={(el) => rememberScroll(el, scrollKey)}
-            class={cx(
-              "h-full overflow-auto bg-surface p-3 font-mono",
-              fontStepClass(props.fontStep),
-            )}
+          <Text
+            as="div"
+            variant="code"
+            ref={(el: HTMLElement) => rememberScroll(el, scrollKey)}
+            class="block h-full overflow-auto bg-surface p-3"
+            style={fontStepStyle(props.fontStep)}
           >
             <Show
               when={p().ok}
@@ -247,7 +247,7 @@ export function JsonTree(props: {
                 trailingComma={false}
               />
             </Show>
-          </div>
+          </Text>
         )}
       </Show>
     </Show>

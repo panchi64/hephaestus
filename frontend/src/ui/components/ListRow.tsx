@@ -21,16 +21,7 @@ export interface ListRowProps {
   /** Render a leading selection checkbox (driven by `selected`). The row's
    *  `onClick` should toggle selection. Replaces the `leading` icon. */
   selectable?: boolean;
-  /** Listbox semantics, for a row inside a keyboard-driven result list whose
-   *  focus lives on a search field (a command palette). The row becomes
-   *  `role="option"` with `aria-selected` from `selected`, and is deliberately
-   *  **not** tab-focusable: the field keeps focus and points here via
-   *  `aria-activedescendant`, so pass `id` too. Clicks still work. */
-  option?: boolean;
-  /** For an `option` row that carries a two-state value rather than a
-   *  destination — it announces as checked/unchecked instead of as a link. */
-  checked?: boolean;
-  /** DOM id — the handle `aria-activedescendant` needs. */
+  /** DOM id. */
   id?: string;
   locked?: boolean;
   href?: string;
@@ -54,8 +45,6 @@ export function ListRow(props: ListRowProps): JSX.Element {
     "description",
     "selected",
     "selectable",
-    "option",
-    "checked",
     "id",
     "locked",
     "href",
@@ -64,12 +53,11 @@ export function ListRow(props: ListRowProps): JSX.Element {
     "class",
   ]);
   const interactive = () => !local.locked && (local.href || local.onClick);
-  // Selectable and option rows stay a <div> (with the matching semantics) so
-  // their `right` slot can hold real interactive content — a Menu, a copy
-  // button, a palette row's inline field — without nesting a <button> inside a
-  // <button> (invalid HTML / hydration warnings).
+  // Selectable rows stay a <div> (with the matching semantics) so their `right`
+  // slot can hold real interactive content — a Menu, a copy button — without
+  // nesting a <button> inside a <button> (invalid HTML / hydration warnings).
   const tag = () =>
-    local.locked || local.selectable || local.option
+    local.locked || local.selectable
       ? "div"
       : local.href
         ? "a"
@@ -80,13 +68,9 @@ export function ListRow(props: ListRowProps): JSX.Element {
     <Dynamic
       component={tag()}
       id={local.id}
-      href={!local.locked && !local.option ? local.href : undefined}
+      href={!local.locked ? local.href : undefined}
       onClick={!local.locked ? local.onClick : undefined}
-      role={local.option ? "option" : local.selectable ? "button" : undefined}
-      aria-selected={local.option ? local.selected || false : undefined}
-      aria-checked={
-        local.option && local.checked !== undefined ? local.checked : undefined
-      }
+      role={local.selectable ? "button" : undefined}
       aria-pressed={local.selectable ? local.selected || false : undefined}
       tabindex={local.selectable && !local.locked ? 0 : undefined}
       onKeyDown={
@@ -108,7 +92,7 @@ export function ListRow(props: ListRowProps): JSX.Element {
         local.divided && "border-b border-line",
         local.selected && "bg-raised",
         interactive() && "hover:bg-raised",
-        (local.selectable || local.option) && !local.locked && "cursor-pointer",
+        local.selectable && !local.locked && "cursor-pointer",
         local.locked && "cursor-not-allowed",
         local.class,
       )}
