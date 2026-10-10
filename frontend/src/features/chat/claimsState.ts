@@ -49,6 +49,7 @@ export interface ClaimsStateApi {
 export function createClaimsState(
   conversationId: () => string | null,
   revision: () => number,
+  enabled: () => boolean,
 ): ClaimsStateApi {
   // The fetched rows carry their conversation, the way the compaction toggle's do: a
   // resource keeps handing back its last value across a key change, and these rows are
@@ -57,7 +58,9 @@ export function createClaimsState(
   const [rows, { mutate, refetch }] = createResource(
     () => {
       const id = conversationId();
-      return id === null ? undefined : ([id, revision()] as const);
+      return id === null || !enabled()
+        ? undefined
+        : ([id, revision()] as const);
     },
     async ([id]) => ({ id, rows: await fetchAttributions(id) }),
   );

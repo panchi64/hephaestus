@@ -38,6 +38,7 @@ import {
   setChatBusy,
   setRunErrored,
 } from "~/lib/stores/chatActivity";
+import type { SessionMode } from "~/lib/modes";
 import { markConversationRead } from "~/lib/stores/notifications";
 import { moveDraft } from "~/ui";
 import {
@@ -76,6 +77,11 @@ export interface MainChat {
    *  the thread still uses `currentId`; this is a read-side answer to "which thread am
    *  I looking at", not a second seat. */
   openId: Accessor<string | null>;
+  /** The mode of the thread the room last loaded, tagged with that thread's id — what
+   *  the thread *is*, as opposed to the app-wide mode the operator has staged. Held
+   *  across a re-read of the same thread, so a reload does not look like a different
+   *  kind of thread for a moment. */
+  loadedMode: Accessor<{ id: string; mode: SessionMode } | null>;
   stream: ReturnType<typeof createChatStream>;
   /** Whether the one-time warm-resume entry intent has run this app session. The
    *  flag is part of the singleton so it survives navigation — see the screen. */
@@ -107,6 +113,10 @@ export function mainChat(): MainChat {
   if (_mainChat) return _mainChat;
   return (_mainChat = createRoot(() => {
     const [currentId, setCurrentId] = createSignal<string | null>(null);
+    const [loadedMode, setLoadedMode] = createSignal<{
+      id: string;
+      mode: SessionMode;
+    } | null>(null);
     const [permission, setLevel] = createSignal<PermissionLevel>(
       DEFAULT_PERMISSION_LEVEL,
     );
@@ -198,7 +208,10 @@ export function mainChat(): MainChat {
         setLevel(seat.level);
         setPermissionPending(seat.provisional);
       }
-      if (thread) setActiveSessionMode(thread.mode);
+      if (thread) {
+        setActiveSessionMode(thread.mode);
+        if (id) setLoadedMode({ id, mode: thread.mode });
+      }
     });
     // Reattach when the tab returns to the foreground or the network comes back.
     // A backgrounded tab throttles the SSE reader until it stalls; on return we
@@ -276,6 +289,7 @@ export function mainChat(): MainChat {
       history,
       reloadHistory,
       openId: () => currentId() ?? stream.conversationId(),
+      loadedMode,
       stream,
       warmResolved,
       markWarmResolved: () => setWarmResolved(true),

@@ -35,6 +35,7 @@ import type { SessionMode } from "~/lib/modes";
 import type { PlanDocument } from "../model";
 import { toast } from "~/ui";
 import { CONTINUE_PROMPT } from "../data/constants";
+import { refreshSessions } from "../data/sessions";
 import type { ChatCreatedDTO, ConversationDetailDTO } from "../data/wire";
 import type {
   ActiveRun,
@@ -444,6 +445,11 @@ export function createChatStream(
       return false;
     }
     bindConversation(created.conversation_id);
+    // A brand-new thread exists the moment the backend accepts the send. The list read
+    // fired when `sending` flipped went out before this id did, so it cannot have
+    // listed the thread; read it again now so the row (and its running echo) appears
+    // for the length of the first turn instead of at its end.
+    if (wasNew && !options.ephemeral) refreshSessions();
     // Accepted — so the backend has retired the stop marker this turn resumes.
     // Echo that now rather than waiting for the run to finish: the warning is about
     // a turn the operator has visibly just resumed, and leaving it up for the length

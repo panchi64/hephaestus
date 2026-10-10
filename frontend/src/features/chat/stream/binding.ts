@@ -123,6 +123,11 @@ export function createThreadBinding(deps: BindingDeps): void {
     deps.setTasks([]);
     deps.setPlan(null);
     if (k === null) return;
+    // A thread whose history is still in flight is bound twice — once on the switch,
+    // once when its messages land — and both passes clear the lists above. Asking on
+    // the first would be answered, dropped as stale by the second's clear, and asked
+    // again; the pass that has the thread's messages is the one that asks.
+    if (source === undefined) return;
     backfill(deps, k, "tasksRevision", fetchTasks, deps.setTasks);
     backfill(deps, k, "planRevision", fetchPlan, deps.setPlan);
   }

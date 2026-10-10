@@ -12,8 +12,10 @@
  * ordinary case and its transcript must not become unreadable when the answer is 404.
  */
 
-import { createResource } from "solid-js";
+import { createMemo, createResource } from "solid-js";
+import type { SessionMode } from "~/lib/modes";
 import { settled } from "~/lib/resource";
+import { branchWanted } from "./branchWanted";
 import { fetchBranch, type BranchState } from "./data";
 
 export interface BranchStateApi {
@@ -42,10 +44,16 @@ export interface BranchStateApi {
 export function createBranchState(
   conversationId: () => string | null,
   revision: () => number,
+  loadedMode: () => { id: string; mode: SessionMode } | null,
 ): BranchStateApi {
+  // Only a thread loaded in a worktree mode owns a branch to ask about. Asking for a
+  // sandbox thread's is a request the backend can only answer 404, three times per open.
+  // The mode is the *loaded* thread's, tagged with its id, so a thread switch asks
+  // nothing until the new thread says what it is.
+  const wanted = createMemo(() => branchWanted(conversationId(), loadedMode()));
   const [branch, { refetch }] = createResource(
     () => {
-      const id = conversationId();
+      const id = wanted();
       return id === null ? undefined : ([id, revision()] as const);
     },
     async ([id]) => ({ id, branch: await fetchBranch(id) }),
@@ -53,8 +61,10 @@ export function createBranchState(
   return {
     latest: () => {
       const read = settled(branch);
-      return read && read.id === conversationId() ? read.branch : undefined;
+      return read && read.id === wanted() ? read.branch : undefined;
     },
-    refetch: () => void refetch(),
+    refetch: () => {
+      if (wanted() !== null) void refetch();
+    },
   };
 }

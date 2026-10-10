@@ -100,8 +100,19 @@ export function createSubagentsState(
     if (read === undefined) return;
     const live = read.ok ? read.subagents : latest();
     if (!live.some(isLive)) return;
-    const timer = setTimeout(() => void refetch(), POLL_MS);
-    onCleanup(() => clearTimeout(timer));
+    // A hidden tab waits for the operator to come back instead of polling for no one;
+    // the visibility listener takes the read the timer would have made.
+    const timer = setTimeout(() => {
+      if (document.visibilityState === "visible") void refetch();
+    }, POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refetch();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    onCleanup(() => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    });
   });
 
   return { latest, refetch: () => void refetch() };

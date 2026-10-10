@@ -170,7 +170,9 @@ export function useActiveRuns(): UseActiveRunsResult {
   window.addEventListener("focus", onFocus);
   onCleanup(() => window.removeEventListener("focus", onFocus));
 
-  const interval = window.setInterval(() => refetch(), POLL_INTERVAL_MS);
+  const interval = window.setInterval(() => {
+    if (document.visibilityState === "visible") void refetch();
+  }, POLL_INTERVAL_MS);
   onCleanup(() => window.clearInterval(interval));
 
   // `items` is a fresh array on every created/updated notification (the store's

@@ -87,6 +87,7 @@ export function ChatRoomScreen(): JSX.Element {
   const {
     currentId,
     openId,
+    loadedMode,
     setCurrentId,
     history,
     reloadHistory,
@@ -292,7 +293,11 @@ export function ChatRoomScreen(): JSX.Element {
   // the Diff surface are two views of one fetch, and two resources over the same
   // endpoint would disagree for as long as either was in flight. Re-reads when a turn
   // settles, since that is when the agent has just changed something.
-  const branch = createBranchState(currentId, () => (stream.sending() ? 0 : 1));
+  const branch = createBranchState(
+    currentId,
+    () => (stream.sending() ? 0 : 1),
+    loadedMode,
+  );
 
   // The thread's sub-agents. Re-read when a turn settles for the same reason as the
   // branch — that is the moment a launch has most likely just happened — and it keeps
@@ -307,6 +312,7 @@ export function ChatRoomScreen(): JSX.Element {
   const viewport = useChatViewport(currentId, {
     ...stream,
     mode,
+    loadedMode,
     branch: branch.latest,
     refetchBranch: branch.refetch,
     subagents: subagents.latest,

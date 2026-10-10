@@ -94,6 +94,10 @@ export interface ViewportSource {
    *  read of the global would be a second answer to the same question, and would be the
    *  wrong one in any pane whose thread is not the window's current mode. */
   mode: Accessor<SessionMode>;
+  /** The mode of the thread the room last loaded, tagged with its id — see `MainChat`. */
+  loadedMode: Accessor<{ id: string; mode: SessionMode } | null>;
+  /** Whether a run is streaming into the thread. */
+  sending: Accessor<boolean>;
   snapshots: Accessor<ViewSnapshotRef[]>;
   tasks: Accessor<TaskItem[]>;
   plan: Accessor<PlanDocument | null>;
@@ -253,9 +257,22 @@ export function useChatViewport(
   );
   // The thread's claim-level reading. Re-read when the transcript grows, since that is
   // when a turn — and with it the post-answer pass — has just finished.
+  // Asked only of a loaded thread whose mode reads its answers back — everywhere else the
+  // answer is the same empty list — and only between runs: the transcript grows with
+  // every delta, and a reading of an answer still being written is not worth a request.
   const claimsState = createClaimsState(
     currentId,
     () => source.messages.length,
+    () => {
+      const loaded = source.loadedMode();
+      return (
+        !source.sending() &&
+        source.messages.length > 0 &&
+        loaded !== null &&
+        loaded.id === currentId() &&
+        sessionModeSpec(loaded.mode).attributesClaims
+      );
+    },
   );
   // Offered only where asking can produce an answer: a mode that reads its answers back
   // against their sources, a thread with sources to read them against, and no reading

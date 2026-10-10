@@ -166,8 +166,19 @@ export function RecentsRail(): JSX.Element {
   const anyActive = createMemo(() => rows()?.some((s) => s.activity) ?? false);
   createEffect(() => {
     if (!anyActive()) return;
-    const timer = setInterval(refreshSessions, ACTIVITY_POLL_MS);
-    onCleanup(() => clearInterval(timer));
+    // Nobody is looking at a hidden tab's rail, so it asks nothing; coming back to the
+    // tab reads once straight away rather than waiting out the interval.
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") refreshSessions();
+    }, ACTIVITY_POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshSessions();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    onCleanup(() => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    });
   });
 
   const toChat = () => {
