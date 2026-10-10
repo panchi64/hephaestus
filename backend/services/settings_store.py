@@ -39,7 +39,7 @@ WORK_SUMMARY_IDLE_MINUTES_KEY = "chat.work_summary_idle_minutes"
 # is for. A day is comfortably past any real "I stepped away" pause.
 WORK_SUMMARY_IDLE_MINUTES_MAX = 1440
 
-# The context gauge's severity boundaries (runs/events.py `ContextThresholds`): the two
+# The context gauge's severity boundaries (runs/events/ `ContextThresholds`): the two
 # fullness fractions at which the ring under the composer turns amber and then red.
 # Presentation, but not only presentation — the same `level` is what any overflow warning
 # keys off — so it is stored and validated here rather than as a client-side constant.

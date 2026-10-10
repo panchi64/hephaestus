@@ -3,7 +3,7 @@
 The backend chassis's cross-cutting attention surface: something happened while the
 operator wasn't watching (a sensitive action needs approval, a run finished or failed
 unattended, later a scheduled task's outcome) and it needs to land somewhere durable and
-actionable — distinct from the frozen per-run event stream (`runs/events.py`), which
+actionable — distinct from the frozen per-run event stream (`runs/events/`), which
 dies with its run.
 
 At-rest posture mirrors documents/memory: the content the notification *is* — its
