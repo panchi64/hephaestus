@@ -416,16 +416,15 @@ function UserTurn(props: {
 
   return (
     // The turn is a square block pinned to the right that shrinks to its content
-    // (78% cap), `raised` on the page. Its edge is drawn by borders rather than a
-    // box-shadow so the geometry is exact: a 1px `line-strong` outline on the top,
-    // left and bottom, and a 3px `bright` edge on the right with no grey under it.
+    // (78% cap), `raised` on the page, ruled by one 1px `line-strong` border on all
+    // four sides — the console's ordinary cell.
     // No speaker label: the stamp and the actions reveal on hover beside it
     // (absolutely placed, so nothing reflows) and stay shown on touch, like every
     // other turn control.
     <div class="group flex flex-col items-end gap-1 px-4 py-3">
       <div
         class={cx(
-          "relative border-y border-l border-r-[3px] border-y-line-strong border-l-line-strong border-r-bright bg-raised",
+          "relative border border-line-strong bg-raised",
           editing() ? "w-full max-w-[78%]" : "w-fit max-w-[78%]",
         )}
         title={longTimestamp(m().createdAt)}
