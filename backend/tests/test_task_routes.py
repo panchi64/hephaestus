@@ -285,7 +285,9 @@ async def test_run_now_outcome_mapping_error_and_blocked(monkeypatch):
         async def error_orch(run):
             raise RuntimeError("boom")
 
-        monkeypatch.setattr("routes.chat.build_chat_orchestrator", lambda prompt, **kw: error_orch)
+        monkeypatch.setattr(
+            "routes.chat.turn.build_chat_orchestrator", lambda prompt, **kw: error_orch
+        )
         created = await _create_task(client)
         run_now = await client.post(f"/tasks/{created['id']}/run_now")
         row = await _await_task_run_finalized(client, created["id"], run_now.json()["taskRunId"])
@@ -296,7 +298,7 @@ async def test_run_now_outcome_mapping_error_and_blocked(monkeypatch):
             run.block("hit a limit")
 
         monkeypatch.setattr(
-            "routes.chat.build_chat_orchestrator", lambda prompt, **kw: blocked_orch
+            "routes.chat.turn.build_chat_orchestrator", lambda prompt, **kw: blocked_orch
         )
         created2 = await _create_task(client)
         run_now2 = await client.post(f"/tasks/{created2['id']}/run_now")

@@ -17,7 +17,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 import harness.manifests.tasks as tasks_manifest
-import routes.chat as chat_routes
+import routes.chat.submit as chat_routes
 import routes.runs as runs_routes
 from core.db import init_db, make_engine
 from runs import Run, RunStream
