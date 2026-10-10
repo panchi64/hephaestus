@@ -332,7 +332,7 @@ async def test_a_turn_that_fails_to_submit_leaves_the_stop_marker_alone(monkeypa
         stopped = (await store.messages_view(conv))[-1]
         store._cache_get(conv).nodes[stopped.id].blocked_reason = "cancelled by the operator"
 
-        import routes.chat as chat_routes
+        import routes.chat.submit as chat_routes
 
         def busy(**_kwargs):
             raise HTTPException(status_code=409, detail="lost the race")
