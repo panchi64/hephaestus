@@ -16,7 +16,8 @@ from core.config import Settings
 from core.db import init_db, make_engine
 from core.vault import Vault
 from runs import RunRegistry, RunStatus
-from services.conversations import ConversationStore, _project
+from services.conversations import ConversationStore
+from services.conversations.projection import _project
 from tools import RunDeps
 
 from ._helpers import (
