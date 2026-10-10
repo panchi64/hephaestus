@@ -636,9 +636,6 @@ export function Composer(props: ComposerProps): JSX.Element {
          grows from there, so an empty composer is one line of text. */
       "block w-full resize-none border-0 bg-transparent text-prose font-sans text-bright placeholder:text-dim outline-none disabled:opacity-40",
       lg() ? "px-4 py-3" : "px-3 py-2.5",
-      /* Wider spaces, so a boxed token's edge clears the word beside it — on both
-         the field and the accent layer, which share this class list. */
-      props.menu && "ody-composer-field",
     );
 
   /** The field's text split into plain runs and tokens (`Token`, `.ody-tok`).

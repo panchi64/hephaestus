@@ -4,6 +4,7 @@ import { streamRun, type RunEvent } from "~/lib/stream";
 import { ActionButtons, ActionFrame, LoadingText, toast } from "~/ui";
 import type { Approval, ApprovalDecision } from "../model";
 import type { Subagent } from "../data";
+import { isOneClickPark } from "../approvalDecisions";
 import { ApprovalPanel } from "./ApprovalPanel";
 
 /**
@@ -75,11 +76,12 @@ export function SubagentApproval(props: {
     // sub-agent is blocked, and the next poll re-opens this.
   });
 
-  const submit = async (): Promise<void> => {
+  const submit = async (settled?: ApprovalDecision[]): Promise<void> => {
+    if (busy()) return;
     setBusy(true);
     try {
       await api.post(`/runs/${props.subagent.runId}/approve`, {
-        decisions: decisions(),
+        decisions: settled ?? decisions(),
         answers: [],
       });
       props.onSettled();
@@ -109,23 +111,37 @@ export function SubagentApproval(props: {
       >
         <ApprovalPanel
           approvals={approvals()}
+          // One call is one click: the verdict is sent on the spot and there is no
+          // second button to press. Several keep the pick-then-send flow.
+          onSettle={
+            isOneClickPark(approvals().length, 0)
+              ? (given) => submit(given)
+              : undefined
+          }
           onChange={(next, allDecided) => {
             setDecisions(next);
             setReady(allDecided);
           }}
         />
-        <div class="flex justify-end border-t border-line">
-          <ActionButtons
-            buttons={[
-              {
-                label: busy() ? "Sending…" : "Send decision",
-                primary: true,
-                disabled: !ready() || busy(),
-                onClick: () => void submit(),
-              },
-            ]}
-          />
-        </div>
+        <Show
+          when={
+            !isOneClickPark(approvals().length, 0) ||
+            decisions().some((d) => d.intent === "revise")
+          }
+        >
+          <div class="flex justify-end border-t border-line">
+            <ActionButtons
+              buttons={[
+                {
+                  label: busy() ? "Sending…" : "Send decision",
+                  primary: true,
+                  disabled: !ready() || busy(),
+                  onClick: () => void submit(),
+                },
+              ]}
+            />
+          </div>
+        </Show>
       </Show>
     </ActionFrame>
   );

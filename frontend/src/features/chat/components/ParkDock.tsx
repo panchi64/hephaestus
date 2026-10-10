@@ -3,10 +3,10 @@ import {
   ActionButtons,
   ActionFrame,
   Composer,
-  ConstructionReveal,
   Text,
   type ActionButtonSpec,
 } from "~/ui";
+import { isOneClickPark } from "../approvalDecisions";
 import {
   PLAN_SUBMIT_TOOL,
   type Park,
@@ -66,7 +66,7 @@ import { QuestionPanel } from "./QuestionPanel";
  * Without it, a park the operator does not want to answer would be a trap.
  *
  * ── The glass, and three ways to lose it silently ──
- * The surface is `ConstructionReveal`'s (`ody-glass`), and it frosts the transcript
+ * The surface is plain `ody-glass` on the wrapper, and it frosts the transcript
  * scrolling behind it. All three failures below render a slightly lighter panel rather
  * than an error, which is why they are written down; `FramedOverlay` carries the long
  * version of the same warnings.
@@ -78,13 +78,15 @@ import { QuestionPanel } from "./QuestionPanel";
  *      `bg-*` stacks another surface over the frosted one.
  *
  * ── The action tier ──
- * Inside the reveal the dock is an `ActionFrame` (design §10.18): a solid band naming
+ * The dock is an `ActionFrame` (design §10.18): a solid band naming
  * the ask (amber for approvals and a plan, blue for a question), a tinted body, and one
  * footer per page. A question page's footer is `ChoiceList`'s own — the dock hands it
  * Stop and Back so the card never stacks a second footer under the first; the approvals
- * page carries the same cells and the settling submit. The construction reveal is kept
- * (design §8 lists the dock among the places it is rationed to): the frame is still
- * built before it fills, and the band then says what kind of place it is.
+ * page carries the same cells and the settling submit — or, for a park holding one
+ * call and nothing else, no submit at all: APPROVE and DENY settle on the click.
+ * **No corner marks and no construction reveal:** the action tier's own band and tinted
+ * edge say what kind of place this is, and a registration frame around a frame is two
+ * frames.
  */
 export function ParkDock(props: {
   park: Park;
@@ -150,6 +152,11 @@ export function ParkDock(props: {
     page() !== undefined &&
     pageAnswered(page(), props.draft.replies, props.draft.allDecided);
 
+  /** A single call with nothing else to answer: a verdict is the whole decision, so
+   *  APPROVE and DENY submit on the click and the submit button is not shown. */
+  const oneClick = () =>
+    isOneClickPark(props.park.approvals.length, props.park.questions.length);
+
   const label = () =>
     props.park.questions.length > 0 && props.park.approvals.length > 0
       ? "Answer and decide"
@@ -178,14 +185,17 @@ export function ParkDock(props: {
   /** Settle the whole park in one body. `note` is what the operator wrote in the
    *  composer, and it rides on every call they asked for changes to — the one kind of no
    *  that is a request rather than a refusal. */
-  async function submit(note?: string): Promise<void> {
-    if (!ready() || submitting()) return;
+  async function submit(
+    note?: string,
+    settled?: ApprovalDecision[],
+  ): Promise<void> {
+    if ((!settled && !ready()) || submitting()) return;
     setSubmitting(true);
     try {
       await props.onSubmit({
         decisions:
           props.park.approvals.length > 0
-            ? props.draft.decisions.map((d) =>
+            ? (settled ?? props.draft.decisions).map((d) =>
                 !d.approved && d.intent === "revise" && note
                   ? { ...d, message: note }
                   : d,
@@ -222,7 +232,7 @@ export function ParkDock(props: {
   ];
 
   return (
-    <ConstructionReveal when origin="top-left" contentClass="flex flex-col">
+    <div class="ody-glass flex flex-col">
       <ActionFrame
         tone={asking() ? "question" : "approval"}
         title={title()}
@@ -297,6 +307,10 @@ export function ParkDock(props: {
               <ApprovalPanel
                 approvals={props.park.approvals}
                 named={props.park.approvals.length === 1}
+                keys={oneClick()}
+                onSettle={
+                  oneClick() ? (given) => submit(undefined, given) : undefined
+                }
                 onReadPlan={props.onReadPlan}
                 onChange={(given, decided) =>
                   props.onDraft({ decisions: given, allDecided: decided })
@@ -342,7 +356,7 @@ export function ParkDock(props: {
               <ActionButtons
                 buttons={[
                   ...secondary(),
-                  ...(revising()
+                  ...(revising() || oneClick()
                     ? []
                     : [
                         {
@@ -358,6 +372,6 @@ export function ParkDock(props: {
           </Show>
         </Show>
       </ActionFrame>
-    </ConstructionReveal>
+    </div>
   );
 }

@@ -3,6 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { SESSION_MODES, type SessionMode } from "~/lib/modes";
 import { Segmented, type SegmentedOption } from "~/ui";
 import { isMac, registerKeymap } from "~/lib/keymap";
+import { modeShortcutCombo, modeShortcutLabel } from "../modeShortcuts";
 import {
   activeSessionMode,
   setActiveSessionMode,
@@ -11,7 +12,6 @@ import {
 /** The registry's modes as the control's options — built once, since the set is
  *  static and rebuilding it per render would remake the array every time the
  *  mode changed. */
-const MOD = isMac() ? "⌘" : "Ctrl+";
 const OPTIONS: SegmentedOption<SessionMode>[] = SESSION_MODES.map(
   (spec, i) => ({
     value: spec.id,
@@ -20,7 +20,7 @@ const OPTIONS: SegmentedOption<SessionMode>[] = SESSION_MODES.map(
     description: spec.description,
     // The shortcut lives in the tooltip only: the bar is three words, and a key
     // printed in each cell would crowd the one strong element at the rail's head.
-    hint: `${spec.description} (${MOD}${i + 1})`,
+    hint: `${spec.description} (${modeShortcutLabel(i, isMac())})`,
   }),
 );
 
@@ -62,7 +62,7 @@ export function SessionModeSwitch(): JSX.Element {
 
   registerKeymap(() =>
     OPTIONS.map((option, i) => ({
-      combo: `mod+${i + 1}`,
+      combo: modeShortcutCombo(i),
       run: () => setMode(option.value),
     })),
   );

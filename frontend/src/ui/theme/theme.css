@@ -1350,63 +1350,51 @@ body {
 
 /* --- Composer tokens ----------------------------------------------------
    A `/command` or `@file` in the field is a sigil cell welded to a raised name
-   cell. A command's sigil is solid inverse inside a bright border; a file's is
+   cell. A command's sigil is solid inverse inside a bright outline; a file's is
    outlined, its directory dim and its basename bright. No accent is spent.
 
-   **Nothing here may change a glyph's position.** The token is painted on the
-   layer *behind* a transparent textarea, and any padding, border or margin
-   would push the colours off the words the caret is moving through. So each
-   cell is a pseudo-element laid *around* its text (absolute, so it takes no
-   layout). The sigil's box reaches left and the name's right, and the two
-   meet exactly at the glyph boundary — that is the weld. The reach eats into
-   the space beside the token, so the field and its layer both carry
-   `.ody-composer-field`'s extra word spacing.
-
-   Each box sits behind its text at `z-index: -1`, which needs a stacking
-   context to stay inside — the layer carrying these tokens is `isolate` for
-   that, or the box would drop behind the unit's own fill. */
+   **Nothing here may change a glyph's position, or reach past its advance.**
+   The token is painted on the layer *behind* a transparent textarea, and any
+   padding, border or margin would push the colours off the words the caret is
+   moving through. So the box is drawn entirely with fills and inset shadows,
+   which occupy no layout and stay inside the glyphs' own cells: the sigil
+   draws its top, bottom and left edges, the name its top, bottom and right,
+   and the two meet at the glyph boundary — that is the weld. Inline
+   `box-decoration-break: clone` keeps the edges whole when a long path wraps. */
+.ody-tok {
+  --tok-line: var(--line-strong);
+}
+.ody-tok[data-trigger="/"] {
+  --tok-line: var(--text-bright);
+}
 .ody-tok-sigil,
 .ody-tok-name {
-  position: relative;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
-.ody-tok-sigil::before,
-.ody-tok-name::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  border: var(--line-w) solid var(--line-strong);
-}
-.ody-tok-sigil::before {
-  inset: -2px 0 -2px -4px;
-}
-.ody-tok-name::before {
-  inset: -2px -4px -2px 0;
-  border-left-width: 0;
-  background: var(--surface-raised);
+.ody-tok-sigil {
+  box-shadow:
+    inset 0 var(--line-w) 0 var(--tok-line),
+    inset 0 calc(-1 * var(--line-w)) 0 var(--tok-line),
+    inset var(--line-w) 0 0 var(--tok-line);
 }
 .ody-tok-name {
   color: var(--text-bright);
+  background: var(--surface-raised);
+  box-shadow:
+    inset 0 var(--line-w) 0 var(--tok-line),
+    inset 0 calc(-1 * var(--line-w)) 0 var(--tok-line),
+    inset calc(-1 * var(--line-w)) 0 0 var(--tok-line);
 }
 .ody-tok[data-trigger="/"] .ody-tok-sigil {
   color: var(--bg);
-}
-.ody-tok[data-trigger="/"] .ody-tok-sigil::before {
   background: var(--text-bright);
-  border-color: var(--text-bright);
-}
-.ody-tok[data-trigger="/"] .ody-tok-name::before {
-  border-color: var(--text-bright);
 }
 .ody-tok[data-trigger="@"] .ody-tok-sigil {
   color: var(--text);
 }
 .ody-tok-dir {
   color: var(--text-dim);
-}
-/* On the field AND the layer behind it — any metric set on one and not the
-   other walks the colours off the words. */
-.ody-composer-field {
-  word-spacing: 0.2em;
 }
 
 /* --- The receded strip ---------------------------------------------------
