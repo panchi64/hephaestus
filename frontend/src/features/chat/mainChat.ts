@@ -26,7 +26,6 @@
 
 import {
   createEffect,
-  createMemo,
   createRoot,
   createSignal,
   on,
@@ -46,14 +45,10 @@ import {
   codeProjectId,
   setActiveSessionMode,
 } from "~/lib/stores/sessionMode";
-import { useChatSession } from "./data/conversations";
-import { refreshSessions, useChatSessions } from "./data/sessions";
-import { historyStatus, type HistoryStatus } from "./historyStatus";
-import {
-  DEFAULT_PERMISSION_LEVEL,
-  type ChatSession,
-  type PermissionLevel,
-} from "./model";
+import { refreshSessions } from "./data/sessions";
+import { createHistoryLoad, watchLateRuns } from "./historyLoad";
+import type { HistoryStatus } from "./historyStatus";
+import { DEFAULT_PERMISSION_LEVEL, type PermissionLevel } from "./model";
 import { seatPermission } from "./permissionSeat";
 import { createChatStream } from "./stream/chatStream";
 
@@ -105,9 +100,6 @@ export interface MainChat {
 export const chatDraftKey = (id: string | null): string =>
   `chat:${id ?? "new"}`;
 
-/** How often an open, idle thread looks at the list for a run started out of sight. */
-const IDLE_LIST_POLL_MS = 20_000;
-
 let _mainChat: MainChat | undefined;
 
 /** The app-wide chat room controller — created once, then reused across mounts. */
@@ -130,36 +122,8 @@ export function mainChat(): MainChat {
       permissionOwner = currentId();
       setLevel(level);
     };
-    // Bumped to re-read the open thread's history: the same source, so it takes a
-    // revision to make the resource ask again.
-    const [reloads, setReloads] = createSignal(0);
-    const session = useChatSession(currentId, reloads);
-    /** The loaded history, but only when it is the open thread's own. The resource still
-     *  reports the previous thread's value across a source change (Solid retains it) and
-     *  after a failed read has none to give, and feeding either to the stream would seed
-     *  the wrong thread — or throw, since reading an errored resource re-throws. So this
-     *  is the one place the stream's inputs are withheld. */
-    const loaded = (): ChatSession | undefined => {
-      if (session.state !== "ready") return undefined;
-      const read = session();
-      return read?.id === currentId() ? read : undefined;
-    };
-    const fromLoaded =
-      <T>(pick: (s: ChatSession) => T) =>
-      (): T | undefined => {
-        const s = loaded();
-        return s ? pick(s) : undefined;
-      };
-    const history = createMemo(() =>
-      historyStatus({
-        id: currentId(),
-        state: session.state,
-        holdsThisThread: loaded() !== undefined,
-      }),
-    );
-    const reloadHistory = (): void => {
-      setReloads((n) => n + 1);
-    };
+    const { loaded, fromLoaded, history, reloadHistory } =
+      createHistoryLoad(currentId);
     const stream = createChatStream(
       fromLoaded((s) => s.messages),
       currentId,
@@ -288,39 +252,14 @@ export function mainChat(): MainChat {
       const id = currentId();
       if (id) markConversationRead(id);
     });
-    // A run started somewhere this room is not watching — another tab, a scheduled
-    // task, a research launch — has no stream here to hear it on, and the history read
-    // at open said the thread was idle. The rail already knows: each row's activity
-    // edge is server-derived. So when a poll reports the open thread as busy while this
-    // room is attached to nothing, read the thread again; its `active_run` is what the
-    // stream's cold-read reattach keys on. Keyed on the list alone (everything else is
-    // read untracked) so one poll costs at most one read — tracking the history status
-    // too would make each read trigger the next.
-    const sessions = useChatSessions();
-    createEffect(
-      on(
-        sessions,
-        (list) => {
-          const id = untrack(currentId);
-          if (!id || !list) return;
-          if (!list.find((s) => s.id === id)?.activity) return;
-          if (untrack(history) !== "ready") return;
-          if (untrack(stream.sending) || untrack(stream.activeRunId)) return;
-          reloadHistory();
-        },
-        { defer: true },
-      ),
-    );
-    // The rail only polls while it already shows something running, so a run that
-    // starts out of sight would never light its row for the poll above to act on. While
-    // a thread is open and idle, look at the list now and then — slowly, and only while
-    // the tab is on screen.
-    createEffect(() => {
-      if (!currentId() || history() !== "ready" || stream.sending()) return;
-      const timer = setInterval(() => {
-        if (document.visibilityState === "visible") refreshSessions();
-      }, IDLE_LIST_POLL_MS);
-      onCleanup(() => clearInterval(timer));
+    // Runs begun out of sight (another tab, a scheduled task, a research launch) are
+    // found by re-reading the open thread — see `watchLateRuns`.
+    watchLateRuns({
+      currentId,
+      history,
+      reloadHistory,
+      sending: stream.sending,
+      activeRunId: stream.activeRunId,
     });
     const [warmResolved, setWarmResolved] = createSignal(false);
     return {
