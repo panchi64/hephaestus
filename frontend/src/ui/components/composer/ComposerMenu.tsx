@@ -1,9 +1,9 @@
 import { For, Show, type JSX } from "solid-js";
-import { cx } from "../cx";
-import { Text } from "../primitives/Text";
-import { ListGroupHeader } from "./ListGroupHeader";
-import { FloatingPanel } from "./Popover";
-import { type Rect } from "./popoverPlacement";
+import { cx } from "../../cx";
+import { Text } from "../../primitives/Text";
+import { ListGroupHeader } from "../ListGroupHeader";
+import { FloatingPanel } from "../Popover";
+import { type Rect } from "../popoverPlacement";
 
 export interface ComposerMenuItem {
   /** Unique across the whole menu — it is the row's DOM id, which is what

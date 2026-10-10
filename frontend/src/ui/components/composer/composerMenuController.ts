@@ -1,9 +1,9 @@
 import { createEffect, createSignal, type Accessor } from "solid-js";
-import type { ComposerMenuApi } from "./Composer";
+import type { ComposerMenuApi } from "./types";
 import type { ComposerMenuGroup, ComposerMenuItem } from "./ComposerMenu";
 import { replaceToken, tokenAt, type ComposerToken } from "./composerToken";
-import { cursorStep } from "./listCursor";
-import { type Rect } from "./popoverPlacement";
+import { cursorStep } from "../listCursor";
+import { type Rect } from "../popoverPlacement";
 
 export interface ComposerMenuControllerDeps {
   /** The feature's menu, or undefined when this Composer has none. */
