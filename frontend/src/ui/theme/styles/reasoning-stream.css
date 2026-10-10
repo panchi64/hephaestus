@@ -1,0 +1,132 @@
+/* ==========================================================================
+   THE REASONING STREAM (§10.9). While the model reasons, its trace streams as
+   mono text CLIPPED INTO THE BACKGROUND of the response area — the machine
+   working behind the message, not a message itself. It is barely tinted, sits
+   under the content, and never eases (machine register). When the turn resolves
+   it fades out (human register — that is the interface clearing the stage) and
+   the full trace collapses into a disclosure.
+   ========================================================================== */
+.ody-reasoning {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-lh);
+  /* The SUBTLETY IS THE COLOR, not a fade. A uniform, barely-there tint — the
+     accent mixed low into the dim token — held at one value across the whole
+     block, so it reads as a flat wall of machine text sitting behind the
+     response rather than as a decorated panel. No gradient, no mask: a gradient
+     would make it an effect, and this is meant to be a surface. */
+  color: color-mix(in oklab, var(--accent) 25%, var(--text-dim));
+  opacity: 0.3;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Dense, wall-like setting: the lines pack tighter than normal mono so the
+     block reads as texture at a glance and as text only on inspection. */
+  letter-spacing: 0.01em;
+}
+
+/* The trace cascades: it is bottom-anchored inside the clip, so new tokens push
+   older lines up and out of frame. The wall stays full — the block is always
+   filled to its top edge with older reasoning — and the newest line sits at the
+   bottom, where the eye already is. */
+.ody-reasoning-tail {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+}
+
+/* COLLAPSE — a region that closes to nothing and back without anyone having to
+   know its height.
+
+   The grid row is the whole trick: `1fr` -> `0fr` is animatable where the
+   `auto` -> `0` everyone reaches for first is not. The child clips, so its
+   content is revealed rather than squashed on the way through.
+
+   Transitions do not run on initial render, so a region that mounts already open
+   simply is open — no animation on load, which is what keeps a long transcript
+   still. */
+.ody-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--motion-stage) var(--ease);
+}
+.ody-collapse[data-closed] {
+  grid-template-rows: 0fr;
+}
+.ody-collapse > * {
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+  /* The content dissolves as the region closes rather than being squashed into
+     a slit — the same blur fade everything else in the human voice arrives
+     with, run backwards (§8). Without it the collapse reads as the content
+     being crushed, which is a different and worse idea. */
+  opacity: 1;
+  filter: none;
+  transition:
+    opacity var(--motion-stage) var(--ease),
+    filter var(--motion-stage) var(--ease);
+}
+.ody-collapse[data-closed] > * {
+  opacity: 0;
+  filter: blur(var(--reveal-blur, 3px));
+}
+/* The clip is scaffolding for the travel, not for the open state. Once the row
+   has landed the track is exactly the content's height, and the clip's only
+   remaining effect is to cut the 1px ring `--shadow-1` paints OUTSIDE each
+   card's border box: every card loses its right edge against the flush
+   container, and the last one loses its bottom. `Collapse` marks arrival with
+   `data-settled` (set on transition end, and from the start for a region that
+   mounts open, which never transitions) — the clip lifts only then, and comes
+   straight back on the way closed. */
+.ody-collapse[data-settled] > * {
+  overflow: visible;
+}
+
+/* THE STAGE the wall plays on, and the two states it moves between.
+
+   Height is `--reasoning-h` and the region *travels* that distance rather than
+   appearing and vanishing at it: opening, the transcript makes room; clearing,
+   it closes the space back up as the wall fades. A region this large popping in
+   and out is a jump the reader has to absorb twice per turn.
+
+   Both directions are one token each — `--reasoning-h` for the distance and
+   `--motion-stage` for the time — so retiming or resizing the state change is a
+   token edit, and nothing has to be kept in sync with it. In particular the
+   component does NOT hold a matching duration: it waits for `animationend`, so
+   there is no second copy of this number to drift. */
+.ody-reasoning-stage {
+  position: relative;
+  height: var(--reasoning-h);
+  overflow: hidden;
+  animation: ody-stage-open var(--motion-stage) var(--ease) both;
+}
+/* Swapping the NAME (rather than adding a class with its own animation) is what
+   lets the close start cleanly from the open state's end. */
+.ody-reasoning-stage[data-clearing] {
+  animation-name: ody-stage-clear;
+}
+@keyframes ody-stage-open {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--reasoning-h);
+    opacity: 1;
+  }
+}
+@keyframes ody-stage-clear {
+  from {
+    height: var(--reasoning-h);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}

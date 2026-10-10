@@ -1,0 +1,53 @@
+/* "This device cannot hover" — i.e. touch.
+
+   A control revealed on hover does not merely hide on a phone, it ceases to
+   exist: there is no state between "not touching" and "tapped", so the reveal
+   never fires. Copy, the turn's overflow menu, and Expand all behind it were all
+   unreachable on a narrow viewport for exactly this reason. `no-hover:` is how a
+   reveal puts its control back there — see `ui/reveal.ts`, which is the only
+   thing that should be using this.
+
+   Two decisions worth keeping written down.
+
+   It is a VARIANT, not a self-contained `@utility`, because a utility would have
+   to name the triggering group itself (`.group:hover &`) and would therefore
+   reach only the *unnamed* group. The turn wrapper in `MessageItem` is an
+   unnamed `group`, which is precisely why the tool card uses `group/tool`;
+   folding those call sites onto the unnamed group would make hovering anywhere
+   in a turn light up every copy button inside it.
+
+   And it is phrased as `hover: none` rather than the more natural `hover: hover`
+   because Tailwind emits media-query variants AFTER pseudo-class ones. A
+   `can-hover:opacity-0` lands below `group-hover/tool:opacity-100` and wins at
+   equal specificity, so the control never appears at all. Putting the media
+   query on the override side makes that ordering work for the rule. */
+@custom-variant no-hover (@media (hover: none));
+
+/* The house scroll affordance for a strip or panel that scrolls inside the
+   layout rather than being the page. The platform default is a chunky bar that
+   reads as chrome from another application; this is a thin, token-backed one
+   that re-colors with the theme. Reach for it instead of hiding overflow: a
+   strip that scrolls with no visible bar tells the operator nothing. */
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
+    border-radius: var(--radius-full);
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: var(--text-dim);
+  }
+  /* Without this the two bars of a both-axes scroller meet in an opaque square. */
+  &::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}

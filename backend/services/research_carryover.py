@@ -37,7 +37,7 @@ from models.conversation import Conversation, Message
 # projection the listing and the search read, and the blob a cold load rehydrates the tree
 # from. Re-deriving either here would be a second answer to a question the store already
 # answers, and the one that drifts is the one nobody is looking at.
-from services.conversations import _MESSAGE, _project
+from services.conversations.projection import _MESSAGE, _project
 from services.modes import mode_spec
 
 logger = logging.getLogger(__name__)

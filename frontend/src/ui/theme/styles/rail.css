@@ -1,0 +1,284 @@
+/* ==========================================================================
+   THE RAIL (direction C). The mode bar is the one strong element; search and
+   New recede into the strip under it; the list is square ruled rows whose
+   glyph column carries each thread's state, and a thread waiting on the
+   operator takes the action tier's echo — an inset amber edge, a tint, a tag.
+   ========================================================================== */
+.ody-rail-modes {
+  display: grid;
+  grid-template-columns: repeat(var(--rail-modes, 3), minmax(0, 1fr));
+  border-top: var(--line-w) solid var(--line-strong);
+}
+/* The rail is a size container, so at its 208px minimum a part can shed a word
+   rather than overflow: the project filter collapses to its funnel, the strip's
+   key hints go, and the workspace id stacks under the brand. */
+.ody-rail {
+  container-type: inline-size;
+}
+.ody-rail-narrow {
+  display: none;
+}
+.ody-rail-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px var(--space-3) var(--space-3);
+}
+.ody-rail-wordmark {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-size);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: var(--tracking-plate);
+  text-transform: uppercase;
+  color: var(--text-bright);
+}
+.ody-rail-brand > :last-child {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@container (max-width: 230px) {
+  .ody-rail-wide,
+  .ody-rail .ody-status-recede kbd {
+    display: none;
+  }
+  .ody-rail-narrow {
+    display: inline-flex;
+  }
+  .ody-rail-brand {
+    display: grid;
+    gap: 5px;
+  }
+  .ody-rail-brand > :last-child {
+    margin-left: 0;
+  }
+}
+.ody-rail-modes > * {
+  display: grid;
+  min-width: 0;
+}
+.ody-rail-modes > * + * {
+  border-left: var(--line-w) solid var(--line);
+}
+.ody-rail-mode {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 11px 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-meta-size);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ody-rail-mode[aria-checked="true"] {
+  background: var(--text-bright);
+  color: var(--bg);
+}
+.ody-rail-mode:hover:not([aria-checked="true"]) {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.ody-rail-mode:focus-visible {
+  outline: 2px solid var(--accent-info);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+/* A plate naming a run of rows: mono uppercase, a count, and — for a group
+   heading — a hairline running out to the edge. */
+.ody-list-plate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-3) 6px;
+  font-family: var(--font-mono);
+  font-size: var(--type-plate-size);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: var(--tracking-plate);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ody-list-plate[data-rule]::after {
+  content: "";
+  order: 2;
+  flex: 1;
+  height: var(--line-w);
+  background: var(--line);
+}
+.ody-list-plate-count {
+  order: 3;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.ody-list-plate-aside {
+  order: 4;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.ody-list-plate[data-rule] .ody-list-plate-aside {
+  margin-left: 0;
+}
+.ody-list-plate[data-tone="section"] {
+  font-size: var(--type-meta-size);
+  padding-top: var(--space-3);
+}
+.ody-list-plate[data-tone="section"] .ody-list-plate-label {
+  color: var(--text);
+}
+.ody-list-plate[data-tone="section"] .ody-list-plate-count {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* A thread row: an 8px glyph column, the title, a readout. */
+.ody-rail-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  color: var(--text);
+  cursor: pointer;
+}
+.ody-rail-row:hover {
+  background: var(--surface-raised);
+}
+.ody-rail-row[data-selected] {
+  background: var(--surface-raised);
+  color: var(--text-bright);
+}
+/* The console's selection edge: a 2px bright inset bar on the leading side (`-b`:
+   under the cell, for a tab), which costs no layout. Paired with a raised fill by
+   whoever wears it. */
+.ody-selected-edge,
+.ody-rail-row[data-selected],
+.ody-rail-nav[data-selected] {
+  box-shadow: inset 2px 0 0 var(--text-bright);
+}
+.ody-selected-edge-b {
+  box-shadow: inset 0 -2px 0 var(--text-bright);
+}
+.ody-rail-glyph {
+  width: 7px;
+  height: 7px;
+  background: var(--text-dim);
+}
+.ody-rail-readout {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--type-micro-size);
+  line-height: 1;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ody-rail-row[data-unread] .ody-rail-title {
+  color: var(--text-bright);
+  font-weight: 500;
+}
+.ody-rail-row[data-unread] .ody-rail-glyph {
+  background: var(--text-bright);
+}
+.ody-rail-row[data-state="running"] .ody-rail-glyph {
+  background: var(--accent);
+}
+.ody-rail-row[data-state="running"] .ody-rail-readout {
+  color: var(--accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ody-rail-row[data-state="running"] .ody-rail-glyph {
+    animation: ody-action-blink 1s steps(2, jump-none) infinite;
+  }
+}
+.ody-rail-row[data-state="failed"] .ody-rail-glyph {
+  background: var(--accent-alert);
+}
+.ody-rail-row[data-state="failed"] .ody-rail-readout {
+  color: var(--accent-alert);
+}
+.ody-rail-row[data-state="waiting"] {
+  background: color-mix(in srgb, var(--accent-warn) 7%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent-warn);
+  color: var(--text-bright);
+}
+/* Hover on a waiting row raises the fill under the amber tint, so the tint keeps
+   its meaning and the row still answers the pointer. */
+.ody-rail-row[data-state="waiting"]:hover {
+  background: color-mix(in srgb, var(--accent-warn) 7%, var(--surface-raised));
+}
+.ody-rail-row[data-state="waiting"][data-selected] {
+  box-shadow:
+    inset 3px 0 0 var(--accent-warn),
+    inset 0 0 0 var(--line-w)
+      color-mix(in srgb, var(--accent-warn) 35%, transparent);
+}
+.ody-rail-row[data-state="waiting"] .ody-rail-glyph {
+  background: var(--accent-warn);
+}
+.ody-rail-tag {
+  padding: 3px 5px;
+  background: var(--accent-warn);
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+/* The age gives way to the row's menu under the pointer, in the same slot. */
+.ody-rail-row .ody-rail-more {
+  display: none;
+}
+.ody-rail-row:is(:hover, :focus-within, [data-menu-open]) .ody-rail-more {
+  display: inline-flex;
+}
+.ody-rail-row:is(:hover, :focus-within, [data-menu-open]) .ody-rail-age {
+  display: none;
+}
+
+/* A destination in the rail's footer: a 16px icon, the label, its meta.
+   Selected is the raised fill plus the 2px bright inset edge the thread rows
+   use, so "you are here" reads the same everywhere in the rail. */
+.ody-rail-nav {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px var(--space-3);
+  color: var(--text);
+}
+.ody-rail-nav:hover {
+  background: var(--surface-raised);
+}
+.ody-rail-nav[data-selected] {
+  background: var(--surface-raised);
+  color: var(--text-bright);
+}
+.ody-rail-nav > svg {
+  color: var(--text-dim);
+}
+.ody-rail-nav:is(:hover, [data-selected]) > svg {
+  color: var(--text);
+}

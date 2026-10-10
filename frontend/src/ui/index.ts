@@ -182,26 +182,26 @@ export {
   ExternalLink,
   type ExternalLinkProps,
 } from "./components/ExternalLink";
-export {
-  Composer,
-  type ComposerProps,
-  type ComposerAttachmentsApi,
-  type ComposerMenuApi,
-  type ComposerRecallApi,
-} from "./components/Composer";
-export { moveDraft } from "./components/composerDraft";
+export { Composer } from "./components/composer/Composer";
+export type {
+  ComposerProps,
+  ComposerAttachmentsApi,
+  ComposerMenuApi,
+  ComposerRecallApi,
+} from "./components/composer/types";
+export { moveDraft } from "./components/composer/composerDraft";
 export {
   ComposerMenu,
   type ComposerMenuProps,
   type ComposerMenuGroup,
   type ComposerMenuItem,
-} from "./components/ComposerMenu";
+} from "./components/composer/ComposerMenu";
 export {
   tokenAt,
   replaceToken,
   type ComposerToken,
   type ComposerTrigger,
-} from "./components/composerToken";
+} from "./components/composer/composerToken";
 export {
   Markdown,
   markdownBlocks,

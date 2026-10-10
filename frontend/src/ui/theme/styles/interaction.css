@@ -1,0 +1,26 @@
+/* Clickable affordance. Tailwind v4's preflight drops the legacy
+   `cursor: pointer` on buttons (browser default is now the arrow), so restore it
+   for every interactive control. Disabled controls fall back to `not-allowed`. */
+:where(button, [role="button"], select, summary, label[for]):not(:disabled) {
+  cursor: pointer;
+}
+:where(button, [role="button"], select):disabled,
+:where(button, [role="button"])[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+/* Keyboard focus: a soft neutral halo, never an outline (§6.1).
+
+   TEXT-ENTRY FIELDS ARE DELIBERATELY EXCLUDED. `input` and `textarea` announce
+   their own focus with a blinking caret — an unambiguous, native indicator that
+   no other control has — so any shadow we add on top is pure decoration around
+   the thing the operator is already looking at. A ring reads as a border drawn
+   on them; a halo reads worse. The caret is the affordance.
+
+   Everything else still needs one: a focused button or link has no caret, and a
+   keyboard user who cannot see where they are is the accessibility failure this
+   rule exists to prevent. */
+:where(button, a, [role="button"], select, summary, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}

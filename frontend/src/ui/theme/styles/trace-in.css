@@ -1,0 +1,147 @@
+/* ==========================================================================
+   THE TRACE-IN — a sub-row branching off the row above it (§8).
+   The construction reveal's sentence at the size of one line: the elbow that
+   hangs the row off its parent draws itself first — down, then across, the
+   two strokes overlapping so they read as one L — and the row resolves out of
+   the ordinary blur-fade as the stroke reaches it. ~220ms end to end, under
+   the ceiling; nothing waits on it. Keyed by the caller, so each new step
+   replays it and a re-render of the same step does not. The existing
+   `ody-frame-close` / `ody-frame-draw` keyframes are the strokes; reduced
+   motion is covered by the global rule, delays included.
+   ========================================================================== */
+.ody-trace-down {
+  transform-origin: top;
+  animation: ody-frame-close 110ms var(--ease) both;
+}
+.ody-trace-across {
+  transform-origin: left;
+  animation: ody-frame-draw 90ms var(--ease) 70ms both;
+}
+.ody-trace-body {
+  animation: ody-reveal-fade var(--motion-base) var(--ease) 40ms both;
+}
+/* The socket the trace lands on: lit the instant the stroke arrives, dark again
+   a beat later. Stepped, not eased — contact is a machine event, so it snaps. */
+.ody-trace-pin {
+  animation: ody-trace-contact 320ms var(--ease-machine);
+}
+/* Dark for the first half (the implicit 0% is the socket's own colour) while
+   the stroke travels — `ody-trace-across` lands at 160ms — lit for the second,
+   and no fill, so it drops back to its own colour when the blip ends. */
+@keyframes ody-trace-contact {
+  50%,
+  100% {
+    border-color: var(--color-info);
+    color: var(--color-info);
+  }
+}
+
+/* GLASS — a translucent surface over whatever is behind it. `isolation` gives
+   the panel its own stacking context so the frame marks can sit above the
+   surface without escaping into the page; the two tokens are per mode. */
+/* The frosted surface. NOTE what is NOT here: no radius and no shadow. This is
+   the fill of a region something else has already drawn the edges of, not a
+   card — give it corners and elevation and it becomes a second container
+   wrapped around the frame instead of the thing the frame encloses.
+
+   Nor is there `isolation: isolate`. That was here to tidy the stacking and it
+   quietly broke the effect: `isolation: isolate` makes an element a BACKDROP
+   ROOT, and `backdrop-filter` only blurs what is painted inside its backdrop
+   root — so an isolated ancestor leaves the glass blurring nothing at all. The
+   failure is invisible rather than obvious, because the translucent fill still
+   tints: it just looks like a slightly lighter surface. Anything that creates a
+   backdrop root above this element has the same effect, which is why the
+   lifecycle span above animates `outline-color` and not `opacity`. */
+.ody-glass {
+  background: var(--glass-bg);
+  /* Unprefixed only — Lightning CSS adds `-webkit-backdrop-filter` from the
+     build's browser targets. Writing the prefix by hand here made it drop the
+     STANDARD property and ship the `-webkit-` one alone, which would have left
+     the panel opaque everywhere except Safari. */
+  backdrop-filter: var(--glass-filter);
+}
+
+/* SCROLL FADE — where a scroll region dissolves under an edge laid over it.
+
+   The box fills its positioned parent (the overlaid header, the docked
+   composer) and reaches one `--scroll-fade-band` PAST the edge that faces the
+   content, so text scrolling under the overlay softens before it reaches the
+   words on top of it instead of being cut at a line.
+
+   Two effects, stacked, because either alone fails. A colour gradient alone is
+   a smear: text scrolled under the title is still crisp, just greyer, and reads
+   as two lines printed over each other. A blur alone leaves the title's contrast
+   at the mercy of whatever scrolls under it. So: a PROGRESSIVE blur — three
+   layers, each masked to a shorter reach from the edge and each blurring harder
+   than the last, so the blur is strongest at the edge and exactly nothing at
+   the band's far end, with no seam where one layer stops — and over it a tint
+   of the ground colour on the same falloff.
+
+   `backdrop-filter` blurs only what is painted inside its backdrop root, so the
+   backdrop-root trap on `.ody-glass` applies in full: nothing between the
+   scroller and this box may carry `opacity`, `filter`, `mask`, `isolation` or a
+   `will-change` of them, or the layers blur nothing and only the tint shows.
+   `pointer-events: none` — the band lies over live transcript. */
+.ody-scroll-fade {
+  --fade-dir: to bottom;
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  bottom: calc(-1 * var(--scroll-fade-band));
+  pointer-events: none;
+}
+.ody-scroll-fade[data-edge="bottom"] {
+  --fade-dir: to top;
+  top: calc(-1 * var(--scroll-fade-band));
+  bottom: 0;
+}
+.ody-scroll-fade > * {
+  position: absolute;
+  inset: 0;
+}
+.ody-scroll-fade-blur-1 {
+  backdrop-filter: blur(calc(var(--scroll-fade-blur) / 4));
+  mask-image: linear-gradient(var(--fade-dir), black, transparent);
+}
+.ody-scroll-fade-blur-2 {
+  backdrop-filter: blur(calc(var(--scroll-fade-blur) / 2));
+  mask-image: linear-gradient(var(--fade-dir), black, transparent 66%);
+}
+.ody-scroll-fade-blur-3 {
+  backdrop-filter: blur(var(--scroll-fade-blur));
+  mask-image: linear-gradient(var(--fade-dir), black, transparent 33%);
+}
+.ody-scroll-fade-tint {
+  background: linear-gradient(
+    var(--fade-dir),
+    color-mix(in oklab, var(--bg) var(--scroll-fade-tint), transparent),
+    transparent
+  );
+}
+
+/* The clamp fade (`ScrollFade variant="clamp"`): "there is more below" over the
+   foot of a clamped block. Inside the block, from the block's own ground, no
+   blur — a clamped block is not a scroll region with something laid over it. */
+.ody-clamp-fade {
+  --fade-ground: var(--bg);
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: var(--space-6);
+  pointer-events: none;
+  background: linear-gradient(to top, var(--fade-ground), transparent);
+}
+.ody-clamp-fade[data-edge="top"] {
+  top: 0;
+  bottom: auto;
+  background: linear-gradient(to bottom, var(--fade-ground), transparent);
+}
+.ody-clamp-fade[data-ground="surface"] {
+  --fade-ground: var(--surface);
+}
+.ody-clamp-fade[data-ground="sunken"] {
+  --fade-ground: var(--surface-sunken);
+}
+.ody-clamp-fade[data-ground="raised"] {
+  --fade-ground: var(--surface-raised);
+}

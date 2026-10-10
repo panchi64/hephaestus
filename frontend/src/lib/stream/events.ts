@@ -1,5 +1,5 @@
 /**
- * The run event protocol — the client mirror of `backend/runs/events.py` (v1).
+ * The run event protocol — the client mirror of `backend/runs/events/` (v1).
  *
  * Every frame on a run's SSE stream is one of these, a flat envelope
  * `{ type, seq, ts, ...payload }`. This is the frozen contract the chat/run
@@ -91,7 +91,7 @@ export interface ContextWindow {
   fold?: FoldPoint | null;
 }
 
-/** See `ContextWindow.fold`. Mirrors `FoldPoint` in `backend/runs/events.py`. */
+/** See `ContextWindow.fold`. Mirrors `FoldPoint` in `backend/runs/events/`. */
 export interface FoldPoint {
   /** The share of the window at which the fold fires, 0–1. */
   fraction: number;
@@ -103,7 +103,7 @@ export interface FoldPoint {
  *  run. The backend counts the active path and measures its own wall-clock; every
  *  derived figure below (the ratio, the average, the rate) is computed server-side.
  *  Null means unmeasured and is never interchangeable with 0 — see `RunMetrics` in
- *  `backend/runs/events.py`. */
+ *  `backend/runs/events/`. */
 /** What the thread's most recent model request cost, on its own — everything else on
  *  `RunMetrics` is cumulative over the conversation.
  *
@@ -270,7 +270,7 @@ export interface ConversationTitled extends Base {
  *  path: the provider refused the request as too large, so the chassis folded and
  *  retried inside the same turn. `manual` is COMPACT NOW. The operator reads a very
  *  different story into each, so the wire carries which rather than leaving the UI to
- *  infer it from timing. Mirrors backend/runs/events.py. */
+ *  infer it from timing. Mirrors backend/runs/events/. */
 export type CompactionReason = "threshold" | "overflow" | "manual";
 
 /** One section of a compaction summary, parsed by the backend rather than here.
@@ -656,13 +656,13 @@ export interface PermissionChanged extends Base {
 /* The `subagent.*` family is gone with the blocking delegation that emitted it. A
    sub-agent is a run of its own now — the panel reads its register row, its transcript
    and its own event stream, none of which a parent turn's stream could carry past the end
-   of that turn. Mirrors backend/runs/events.py. */
+   of that turn. Mirrors backend/runs/events/. */
 export interface LimitNotice extends Base {
   type: "limit.notice";
   /** "context" = the model's context window was exceeded; the run stops (it isn't
    *  silently degraded). "search" was the deep-research pipeline's two-empty-rounds
    *  abort — nothing emits it now that research is an ordinary thread, and it stays
-   *  handled because the wire never narrows. Mirrors backend/runs/events.py. */
+   *  handled because the wire never narrows. Mirrors backend/runs/events/. */
   limit:
     | "steps"
     | "tool_calls"

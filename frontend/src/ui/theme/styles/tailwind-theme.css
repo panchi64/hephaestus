@@ -1,0 +1,84 @@
+/* ============================================================================
+   TAILWIND v4 THEME MAPPING.
+
+   `@theme inline` makes each generated utility reference our own token variable
+   (e.g. `bg-surface` -> `background: var(--surface)`) instead of freezing the
+   value at build time. That is what lets a single [data-theme] swap on <html>
+   re-color the entire app at runtime — the utilities resolve the live token.
+
+   tokens.css owns the values; this file only wires them to utility names and
+   sets the resting defaults.
+   ========================================================================== */
+
+@theme inline {
+  /* ---- colors -> bg-*, text-*, border-* ---- */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--surface-raised);
+  --color-sunken: var(--surface-sunken);
+  --color-annunciator-dark: var(--annunciator-dark);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-dim: var(--text-dim);
+  --color-text: var(--text);
+  /* Prose's own step. Mapped for the sake of conversation content that isn't
+     markdown — the operator's turn beside the answer — and for nothing else; the
+     chrome voice stays `text-text`/`text-dim`. */
+  --color-reading: var(--text-reading);
+  --color-bright: var(--text-bright);
+  --color-accent: var(--accent);
+  --color-nominal: var(--accent-nominal);
+  --color-warn: var(--accent-warn);
+  --color-alert: var(--accent-alert);
+  --color-info: var(--accent-info);
+
+  /* ---- spacing base (p-1=4px, p-2=8px, p-4=16px, p-6=24px, p-8=32px) ---- */
+  --spacing: var(--space-1);
+
+  /* ---- fonts -> font-sans / font-mono ---- */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  /* ---- letter spacing -> tracking-label (mono uppercase) / tracking-plate
+         (engraved panel legends) / tracking-tight ---- */
+  --tracking-label: var(--tracking-label);
+  --tracking-plate: var(--tracking-plate);
+  --tracking-tight: var(--tracking-tight);
+
+  /* ---- type scale -> text-micro / text-meta / text-label / ... ---- */
+  --text-micro: var(--type-micro-size);
+  --text-micro--line-height: var(--type-micro-lh);
+  --text-plate: var(--type-plate-size);
+  --text-plate--line-height: var(--type-plate-lh);
+  --text-meta: var(--type-meta-size);
+  --text-meta--line-height: var(--type-meta-lh);
+  --text-label: var(--type-label-size);
+  --text-label--line-height: var(--type-label-lh);
+  --text-body: var(--type-body-size);
+  --text-body--line-height: var(--type-body-lh);
+  --text-code: var(--type-code-size);
+  --text-code--line-height: var(--type-code-lh);
+  /* The reading scale's base, as a utility. This is the ONE step of the prose
+     scale chrome may reach for, and only for conversation CONTENT that isn't
+     markdown — the operator's own turn, and the composer that produces it. Those
+     sit inches from a rendered answer and have to match it; everything else in
+     the interface stays on the chrome scale above. */
+  --text-prose: var(--prose-size);
+  --text-prose--line-height: var(--prose-lh);
+  --text-readout: var(--type-readout-size);
+  --text-readout--line-height: var(--type-readout-lh);
+  --text-readout-lg: var(--type-readout-lg-size);
+  --text-readout-lg--line-height: var(--type-readout-lg-lh);
+  --text-display: var(--type-display-size);
+  --text-display--line-height: var(--type-display-lh);
+
+  /* ---- elevation -> shadow-1 / shadow-2 / shadow-focus / shadow-accent ---- */
+  --shadow-1: var(--shadow-1);
+  --shadow-2: var(--shadow-2);
+  --shadow-focus: var(--shadow-focus);
+  --shadow-accent: var(--shadow-accent);
+  --shadow-alert: var(--shadow-alert);
+
+  /* ---- motion -> ease-out-ody / duration-* ---- */
+  --ease-ody: var(--ease);
+}

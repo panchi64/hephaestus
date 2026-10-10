@@ -132,7 +132,7 @@ def prompt_context_providers(request: Request):
     return request.app.state.prompt_context_providers
 
 
-_CONVERSATION_BUSY_DETAIL = "A response is already in progress in this conversation"
+CONVERSATION_BUSY_DETAIL = "A response is already in progress in this conversation"
 
 
 def claim_conversation(request: Request, conversation_id: str) -> None:
@@ -150,7 +150,7 @@ def claim_conversation(request: Request, conversation_id: str) -> None:
     try:
         registry(request).claim(conversation_id, OPERATOR_ID)
     except ConversationBusyError as exc:
-        raise HTTPException(status_code=409, detail=_CONVERSATION_BUSY_DETAIL) from exc
+        raise HTTPException(status_code=409, detail=CONVERSATION_BUSY_DETAIL) from exc
 
 
 def release_conversation(request: Request, conversation_id: str) -> None:

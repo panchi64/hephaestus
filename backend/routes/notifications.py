@@ -1,5 +1,5 @@
 """The attention/notification surface — a durable record of what needs the operator's
-notice, separate from the frozen per-run event stream (`runs/events.py`), which dies
+notice, separate from the frozen per-run event stream (`runs/events/`), which dies
 with its run. REST for backfill/read-state; its own SSE stream (the same framing as the
 run transport — `id:` seq, flat JSON `data:`, ~15s keepalive comments, `Last-Event-ID`
 resume) for live updates. Out-shapes are camelCase, like the app's other newer surfaces
