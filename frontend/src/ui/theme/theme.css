@@ -35,12 +35,6 @@
   /* ---- spacing base (p-1=4px, p-2=8px, p-4=16px, p-6=24px, p-8=32px) ---- */
   --spacing: var(--space-1);
 
-  /* ---- radius -> rounded-ctl (3px controls) / rounded-panel (6px containers).
-         The hairline data grid stays square — no radius utility on a table
-         cell, an instrument band, or a list row (§7). ---- */
-  --radius-ctl: var(--radius-1);
-  --radius-panel: var(--radius-2);
-
   /* ---- fonts -> font-sans / font-mono ---- */
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
@@ -1607,7 +1601,17 @@ body {
 .ody-rail-row[data-selected] {
   background: var(--surface-raised);
   color: var(--text-bright);
+}
+/* The console's selection edge: a 2px bright inset bar on the leading side (`-b`:
+   under the cell, for a tab), which costs no layout. Paired with a raised fill by
+   whoever wears it. */
+.ody-selected-edge,
+.ody-rail-row[data-selected],
+.ody-rail-nav[data-selected] {
   box-shadow: inset 2px 0 0 var(--text-bright);
+}
+.ody-selected-edge-b {
+  box-shadow: inset 0 -2px 0 var(--text-bright);
 }
 .ody-rail-glyph {
   width: 7px;
@@ -1652,6 +1656,11 @@ body {
   background: color-mix(in srgb, var(--accent-warn) 7%, transparent);
   box-shadow: inset 3px 0 0 var(--accent-warn);
   color: var(--text-bright);
+}
+/* Hover on a waiting row raises the fill under the amber tint, so the tint keeps
+   its meaning and the row still answers the pointer. */
+.ody-rail-row[data-state="waiting"]:hover {
+  background: color-mix(in srgb, var(--accent-warn) 7%, var(--surface-raised));
 }
 .ody-rail-row[data-state="waiting"][data-selected] {
   box-shadow:
@@ -1701,7 +1710,6 @@ body {
 .ody-rail-nav[data-selected] {
   background: var(--surface-raised);
   color: var(--text-bright);
-  box-shadow: inset 2px 0 0 var(--text-bright);
 }
 .ody-rail-nav > svg {
   color: var(--text-dim);
@@ -2089,21 +2097,18 @@ body {
   line-height: var(--prose-code-lh);
   background: var(--surface-raised);
   border: var(--line-w) solid var(--line);
-  border-radius: var(--radius-1);
   padding: 1px var(--space-1);
   color: var(--text-bright);
 }
 .ody-prose pre {
   background: var(--surface-raised);
   border: var(--line-w) solid var(--line);
-  border-radius: var(--radius-2);
   padding: var(--space-3);
   overflow-x: auto;
 }
 .ody-prose pre code {
   background: transparent;
   border: 0;
-  border-radius: 0;
   padding: 0;
 }
 /* A quote sits further from its neighbours than an ordinary block does — flush at

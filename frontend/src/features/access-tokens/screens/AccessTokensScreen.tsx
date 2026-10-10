@@ -244,7 +244,7 @@ export function AccessTokensScreen(): JSX.Element {
           <Text
             variant="micro"
             tone="bright"
-            class="rounded-ctl bg-raised p-3 break-all select-all"
+            class="bg-raised p-3 break-all select-all"
           >
             {revealed()?.token}
           </Text>

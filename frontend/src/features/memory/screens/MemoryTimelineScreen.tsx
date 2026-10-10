@@ -390,7 +390,7 @@ export function MemoryTimelineScreen(): JSX.Element {
               <Stack gap={2}>
                 <For each={recallHits()!}>
                   {(hit) => (
-                    <div class="rounded-panel bg-surface p-3 shadow-1">
+                    <div class="border border-line bg-surface p-3">
                       <Row justify="between" align="center">
                         <StatusFlag status="info">
                           {hit.matchedBy.toUpperCase()}
@@ -448,7 +448,7 @@ export function MemoryTimelineScreen(): JSX.Element {
               </Text>
               <For each={groups() ?? []}>
                 {(group) => (
-                  <div class="overflow-hidden rounded-panel bg-surface shadow-1">
+                  <div class="overflow-hidden border border-line bg-surface">
                     <div class="flex items-center justify-between bg-raised px-4 py-2">
                       <Text variant="label" tone="dim">
                         Similarity

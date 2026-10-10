@@ -37,8 +37,8 @@ function markerName(
 }
 
 export interface DisclosureProps {
-  /** Sentence-case label shown beside the marker — this is the interface
-   *  naming a section, so it takes the sans voice (§2), not the old uppercase. */
+  /** Label shown beside the marker. It names a region, so it is set as a plate
+   *  (mono uppercase, engraved tracking) — and stays the accessible name. */
   label: string;
   /** Controlled open state. Omit to let the component own it. */
   open?: boolean;
@@ -155,7 +155,7 @@ export function Disclosure(props: DisclosureProps): JSX.Element {
           <Show
             when={label()}
             fallback={
-              <Text variant="label" tone="dim" class="min-w-0 truncate">
+              <Text variant="plate" tone="dim" class="min-w-0 truncate">
                 {props.label}
               </Text>
             }

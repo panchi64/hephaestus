@@ -139,7 +139,7 @@ export function MessageActions(props: {
           align="left"
           trigger={
             <span
-              class="inline-flex h-6 items-center gap-1 rounded-ctl border border-transparent px-2 text-dim transition-colors hover:text-bright"
+              class="inline-flex h-6 items-center gap-1 border border-transparent px-2 text-dim transition-colors hover:bg-raised hover:text-bright"
               aria-label="Copy message"
             >
               <Icon name="copy" size={12} />

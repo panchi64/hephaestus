@@ -1,5 +1,5 @@
 import { createEffect, createSignal, For, on, Show, type JSX } from "solid-js";
-import { Disclosure, Input, ListRow, Text, Tooltip, cx } from "~/ui";
+import { Disclosure, Input, ListRow, Text, Tooltip } from "~/ui";
 import { SETTINGS_GROUPS, type SettingsSection } from "./sections";
 import { searchSettingsSections } from "./sections-search";
 
@@ -83,7 +83,6 @@ export function SectionList(props: {
           ) : undefined
         }
         onClick={() => props.onSelect(section.id)}
-        class={cx("rounded-ctl", section.id === props.active.id && "bg-raised")}
       />
     </Tooltip>
   );

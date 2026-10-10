@@ -31,7 +31,7 @@ Instrument keeps the skeleton and changes the voice:
 | Color | Green-tinted near-blacks, off-whites | **Pure `#000` / pure `#FFF`**, true neutral grays |
 | Accent | Phosphor green, both modes | Green in Ink, **instrument blue in Paper** — and rationed harder |
 | Elevation | Forbidden (no shadows) | **Subtle shadow**, plus an accent shadow for primary focus |
-| Corners | Square, always | Square for data grids; **3px controls, 6px panels** |
+| Corners | Square, always | **Square, everywhere** (1.2 console register; the 3px/6px radii of 1.0 are retired) |
 | Borders | "Free ink" — everywhere | **The exception** (§7); space and surface value separate first |
 | Motion | Hard-cut steps only | **Two registers** — eased for the interface, instant for the machine (§8) |
 
@@ -321,7 +321,7 @@ The base is pure neutral. Both modes are built on true black and true white — 
 
 Terminal-HUD banned shadows outright. Instrument uses them, sparingly, and for one purpose: **saying what is on top.** Never for mood, never for a card that is merely present.
 
-**Shadows are for things that float over content** — menus, popovers, tooltips, toasts, modals, drawers. Nothing that sits in the flow of a page carries one: not the composer, not a transcript row, not the action tier (§10.18). The composer is separated from the transcript by its opaque `surface` fill and its `line-strong` frame, and the transcript ends above it in the `ScrollFade` band (§10.17). The resting `shadow-1` still on `Panel` and `Tile` belongs to the document pages and is on its way out of the chat surfaces with their cards.
+**Shadows are for things that float over content** — menus, popovers, tooltips, toasts, modals, drawers. Nothing that sits in the flow of a page carries one: not the composer, not a transcript row, not the action tier (§10.18). The composer is separated from the transcript by its opaque `surface` fill and its `line-strong` frame, and the transcript ends above it in the `ScrollFade` band (§10.17). `Panel` and `Tile` carry no resting shadow either: they are a `surface` fill inside a 1px `line` rule, and a state recolours the rule (`active` → `info`, `alert` → `alert`) rather than glowing.
 
 The two modes model elevation differently, because they physically must:
 
@@ -362,16 +362,9 @@ Hierarchy comes from brightness, and hue is reserved for meaning (§1.3, §5). T
 
 ## 7. Corners & borders
 
-Corners are **smoothed, not rounded.** The intent is a machined edge — a chamfer — not a soft pill.
+Corners are **square.** The 1.0 system rounded controls to 3px and containers to 6px; the console register (1.2) resolved that contradiction in favour of the machined edge, and the two radius tokens are gone. Nothing takes a radius: buttons, inputs, chips, checkboxes, tabs, menus, panels, modals, popovers, toasts, rows, cells, state marks (square, not round dots) and count badges. Square is the absence of a radius, so it has no token. The one curve left in the product is the scrollbar thumb.
 
-| Token | px | Applies to |
-|---|---|---|
-| *(none)* | 0 | Table cells, instrument bands, list rows, full-bleed regions, anything in a hairline grid — and every console-register surface: the composer frame, console groups, the action tier. Square is the absence of a radius, so it has no token. |
-| `radius-1` | 3 | Controls: buttons, inputs, chips, checkboxes, tabs, menu items |
-| `radius-2` | 6 | Containers: panels, cards, modals, drawers, popovers, toasts |
-| `radius-full` | 9999 | Status dots and count pills only |
-
-**The grid stays square.** Anything that participates in a shared hairline grid takes no radius — rounding a table cell breaks the ruled structure that makes tabular data scannable, and that structure is a keeper.
+**Selection and hover are fills, not shapes.** Hover is the `surface-raised` fill and nothing else — no outline box, no radius, no accent. A selected row is `surface-raised` plus a 2px bright inset edge on its leading side (a tab: under it); a selected segmented cell is inverted. The edge is an inset shadow, so it costs no layout.
 
 ### Borders — the exception, not the default
 
@@ -553,7 +546,7 @@ QWEN3-30B-A3B-Q4 · 18.2 GB    ← meta,    mono 11, dim, uppercase
 
 ### 10.2 Panel
 
-`surface` fill, `radius-2`, `space-4` padding, `shadow-1` (which carries its own hairline ring). No border. Optional header: sans `label` left, meta/status right. Selected state lifts to `surface-raised` — never a 2px border.
+`surface` fill, square, `space-4` padding, inside a 1px `line` rule. No shadow. Optional header: a `plate` left, meta/status right. A state recolours the rule (`active` info, `alert` alert). Selected state lifts to `surface-raised`.
 
 `Composer` takes a `bare` prop too, but it means something narrower: **it drops the fill and keeps the frame.** For a composer sitting inside another surface (nested in a `Panel`, the approval dock), a fill on a fill is the box-in-a-box §7 exists to stop, and it reads as a grey slab. The `line-strong` frame is what still says "type here".
 
@@ -585,7 +578,7 @@ The exception is `warn` and `alert`, which keep the accent on the label too. Tho
 
 ### 10.6 Tile / nav card
 
-`surface`, `radius-2`, `shadow-1`, a geometric glyph and a sans `label`. Hover lifts to `surface-raised` with an eased transition. Selected adds `text-bright` and `shadow-focus`.
+`surface`, square, a 1px `line` rule, a geometric glyph and a sans `label`. Hover is the `surface-raised` fill. Selected adds `text-bright` and the 2px inset edge.
 
 ### 10.7 List row
 
@@ -593,7 +586,7 @@ Single line, square, hairline beneath, sans label left, mono meta right. Hover f
 
 ### 10.8 Controls (button, input, select, chip, toggle)
 
-`radius-1`, hairline border, `space-2`/`space-3` padding, sans label. Focus is `shadow-focus`, always neutral. A **primary** button — one per view — is the sole carrier of `shadow-accent`.
+Square, hairline border, `space-2`/`space-3` padding, sans label. Focus is `shadow-focus`, always neutral. A **primary** button — one per view — is the sole carrier of `shadow-accent`.
 
 ### 10.9 Live edge — a coloured rule, not light
 
@@ -834,7 +827,7 @@ A licensed moment is a single expressive device — the `DeepField`'s graticule,
   --space-5: 20px; --space-6: 24px;  --space-8: 32px;
 
   /* ---- corners & borders (square = no radius, no token) ---- */
-  --radius-1: 3px;  --radius-2: 6px;  --radius-full: 9999px;
+  --radius-full: 9999px;  /* the scrollbar thumb, and nothing else */
   --line-w: 1px;
 
   /* ---- the two voices ---- */

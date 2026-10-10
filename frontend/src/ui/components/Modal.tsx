@@ -44,7 +44,7 @@ export function Modal(props: ModalProps): JSX.Element {
             role="dialog"
             aria-modal="true"
             class={cx(
-              "ody-rise flex max-h-[85vh] w-full max-w-md flex-col rounded-panel bg-surface shadow-2",
+              "ody-rise flex max-h-[85vh] w-full max-w-md flex-col bg-surface shadow-2",
               local.class,
             )}
             onClick={(e) => e.stopPropagation()}

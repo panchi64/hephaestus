@@ -111,7 +111,7 @@ export function Button(props: ButtonProps): JSX.Element {
       aria-disabled={local.href && disabled() ? "true" : undefined}
       aria-busy={local.pending || undefined}
       class={cx(
-        "inline-flex items-center justify-center rounded-ctl whitespace-nowrap transition-colors",
+        "inline-flex items-center justify-center whitespace-nowrap transition-colors",
         "disabled:cursor-not-allowed disabled:opacity-40",
         local.active && variant === "ghost"
           ? GHOST_ACTIVE_CLASS

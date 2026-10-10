@@ -182,7 +182,7 @@ export function Select(props: SelectProps): JSX.Element {
                     // Matches Input/Combobox: a filled control, no bright edge on
                     // focus or open. Only `invalid` draws a border, because that is
                     // the one state that has to interrupt.
-                    "flex w-full items-center rounded-ctl border bg-raised text-left outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                    "flex w-full items-center border bg-raised text-left outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-40",
                     props.size === "sm" ? "h-6 gap-1.5 px-2" : "h-8 gap-2 px-3",
                     props.invalid ? "border-alert" : "border-transparent",
                   )
@@ -247,6 +247,7 @@ export function Select(props: SelectProps): JSX.Element {
                         "grid w-full grid-cols-[8px_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-0.5 border-b border-line px-2.5 py-2 text-left last:border-b-0 hover:bg-raised",
                         (opt.value === props.value || i() === active()) &&
                           "bg-raised",
+                        opt.value === props.value && "ody-selected-edge",
                       )}
                     >
                       <Swatch class={opt.swatch ?? "bg-dim"} />
@@ -281,6 +282,7 @@ export function Select(props: SelectProps): JSX.Element {
                         "flex w-full flex-col gap-0.5 px-2 py-1.5 text-left transition-colors hover:bg-raised",
                         (opt.value === props.value || i() === active()) &&
                           "bg-raised",
+                        opt.value === props.value && "ody-selected-edge",
                       )}
                     >
                       <span class="flex items-center gap-2">

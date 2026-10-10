@@ -18,11 +18,9 @@ export interface TileProps {
   class?: string;
 }
 
-/** Square nav card with a large glyph and a label (§10.6). Borderless — it
- *  reads as an object through its surface and the hairline ring folded into
- *  `shadow-1`, so a grid of tiles is a grid of *cards*, not of boxes. Selected
- *  lifts to the raised surface and takes the neutral focus ring, which shifts
- *  no layout the way the old 2px border did. Locked = dim, non-interactive. */
+/** Square nav cell with a large glyph and a label (§10.6): a surface fill inside a
+ *  1px `line` rule, no radius, no shadow. Hover is the raised fill; selected is the
+ *  raised fill plus the 2px bright inset edge. Locked = dim, non-interactive. */
 export function Tile(props: TileProps): JSX.Element {
   const [local] = splitProps(props, [
     "glyph",
@@ -42,8 +40,8 @@ export function Tile(props: TileProps): JSX.Element {
       onClick={!local.locked ? local.onClick : undefined}
       aria-disabled={local.locked || undefined}
       class={cx(
-        "group flex aspect-square flex-col justify-between rounded-panel bg-surface p-3 text-left transition-colors",
-        local.selected ? "bg-raised shadow-focus" : "shadow-1",
+        "group flex aspect-square flex-col justify-between border border-line bg-surface p-3 text-left transition-colors",
+        local.selected && "ody-selected-edge bg-raised",
         local.locked ? "cursor-not-allowed text-dim" : "hover:bg-raised",
         local.class,
       )}

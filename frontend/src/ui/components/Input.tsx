@@ -20,7 +20,7 @@ const fieldClass =
      the old mono made every form read as a terminal prompt. The resting look is
      a filled surface with a hairline; focus is the neutral ring from theme.css,
      which sits outside the box and so shifts nothing. */
-  "w-full bg-raised border px-3 h-8 rounded-ctl text-body font-sans text-bright placeholder:text-dim outline-none transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+  "w-full bg-raised border px-3 h-8 text-body font-sans text-bright placeholder:text-dim outline-none transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 
 /** Single-line text control. */
 export function Input(props: InputProps): JSX.Element {

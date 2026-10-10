@@ -269,7 +269,7 @@ export function TasksScreen(): JSX.Element {
                     </div>
 
                     <Show when={expanded()}>
-                      <div class="rounded-panel bg-raised px-4 py-3">
+                      <div class="bg-raised px-4 py-3">
                         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                           <Stack gap={3}>
                             <Field

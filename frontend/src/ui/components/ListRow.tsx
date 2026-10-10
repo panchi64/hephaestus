@@ -120,6 +120,7 @@ export function ListRow(props: ListRowProps): JSX.Element {
         "flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors",
         local.divided && "border-b border-line",
         local.selected && "bg-raised",
+        local.selected && !local.selectable && "ody-selected-edge",
         interactive() && "hover:bg-raised",
         local.selectable && !local.locked && "cursor-pointer",
         local.locked && "cursor-not-allowed",
@@ -130,7 +131,7 @@ export function ListRow(props: ListRowProps): JSX.Element {
         <Show when={local.selectable}>
           <span
             class={cx(
-              "flex size-4 shrink-0 items-center justify-center rounded-ctl border transition-colors",
+              "flex size-4 shrink-0 items-center justify-center border transition-colors",
               local.selected
                 ? "border-bright text-bright"
                 : "border-line text-transparent",

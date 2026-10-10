@@ -25,7 +25,7 @@ export function ThemeToggle(): JSX.Element {
       onClick={() => theme.toggle()}
       aria-label={`Theme: ${LABEL[theme.preference]}. Click to change.`}
       title={LABEL[theme.preference]}
-      class="inline-flex items-center justify-center rounded-ctl border border-line w-6 h-6 text-dim transition-colors hover:text-bright hover:border-dim"
+      class="inline-flex items-center justify-center border border-line w-6 h-6 text-dim transition-colors hover:bg-raised hover:text-bright"
     >
       <Icon name={ICON[theme.preference]} size={12} />
     </button>

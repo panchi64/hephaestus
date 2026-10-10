@@ -368,7 +368,7 @@ export function VaultScreen(): JSX.Element {
                     </Stack>
                     <Row gap={2} align="center" class="shrink-0">
                       {/* Password field — copy-only; no plaintext render in DOM */}
-                      <div class="flex items-center gap-2 rounded-ctl bg-raised px-2 py-1">
+                      <div class="flex items-center gap-2 bg-raised px-2 py-1">
                         <Text
                           variant="micro"
                           tone="dim"

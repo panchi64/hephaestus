@@ -12,23 +12,21 @@ export interface RecentThreadCardProps {
   onOpen: () => void;
 }
 
-/** A recent-conversation preview tile for the overview launchpad. The warm
- *  thread — "where was I" — is marked by a faint raised fill and a RESUME flag,
- *  never by an outline: a bright border on one card in a grid of transparent
- *  ones was the loudest thing under the composer. */
+/** A recent-conversation row for the overview launchpad: square, bare at rest, a
+ *  flat raised fill on hover. The warm thread — "where was I" — takes the
+ *  console's selection (raised fill plus a 2px bright inset edge, as a selected
+ *  rail row) and a RESUME flag. */
 export function RecentThreadCard(props: RecentThreadCardProps): JSX.Element {
   return (
     <button
       type="button"
       onClick={() => props.onOpen()}
-      /* No border and no fill at rest — these sit *behind* the interface, on the
-         page itself, and a grid of bordered boxes under the composer was the
-         launchpad's whole clutter problem. The row only materializes on hover,
-         which is the moment it stops being ambient. `warm` (the resumable
-         thread) is marked by brightness, not by an outline. */
+      /* Square, no border and no fill at rest — these sit *behind* the interface.
+         Hover is a flat raised fill and nothing else (no radius, outline or
+         tint). `warm` (the resumable thread) is the console's selection. */
       class={cx(
-        "flex w-full flex-col gap-1 rounded-panel p-3 text-left transition-colors hover:bg-raised",
-        props.warm && "bg-raised/40",
+        "flex w-full flex-col gap-1 p-3 text-left outline-none hover:bg-raised focus-visible:bg-raised",
+        props.warm && "ody-selected-edge bg-raised",
       )}
     >
       <div class="flex items-center justify-between gap-2">

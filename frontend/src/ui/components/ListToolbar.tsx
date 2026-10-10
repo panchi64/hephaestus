@@ -108,7 +108,7 @@ export function ListToolbar(props: ListToolbarProps): JSX.Element {
                   local.dir === "asc" ? "Sort ascending" : "Sort descending"
                 }
                 title={local.dir === "asc" ? "Ascending" : "Descending"}
-                class="flex size-8 items-center justify-center rounded-ctl text-dim transition-colors hover:bg-raised hover:text-bright"
+                class="flex size-8 items-center justify-center text-dim transition-colors hover:bg-raised hover:text-bright"
               >
                 <Icon
                   name="chevron-down"

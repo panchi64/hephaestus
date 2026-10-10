@@ -19,12 +19,10 @@
   --space-6: 24px;
   --space-8: 32px;
 
-  /* ---- corners (§7) — smoothed, not rounded. The console register is square:
-         anything in a ruled grid, a console frame or the action tier takes no
-         radius at all, so there is no token for it. ---- */
-  --radius-1: 3px; /* controls: button, input, chip, tab */
-  --radius-2: 6px; /* containers: panel, card, modal, popover */
-  --radius-full: 9999px; /* status dots + count pills only */
+  /* ---- corners (§7) — the console register is square. Controls, containers,
+         menus, frames and rows all take no radius, so there is no token for it.
+         The one curve left is the scrollbar thumb. ---- */
+  --radius-full: 9999px;
 
   /* ---- borders ---- */
   --line-w: 1px;

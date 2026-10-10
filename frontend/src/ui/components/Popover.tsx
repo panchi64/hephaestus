@@ -17,7 +17,7 @@ import {
 export type PanelVariant = "default" | "console";
 
 const PANEL_SURFACE: Record<PanelVariant, string> = {
-  default: "ody-rise rounded-panel bg-surface shadow-2",
+  default: "ody-rise bg-surface shadow-2",
   console: "ody-rise border border-line-strong bg-surface shadow-2",
 };
 
