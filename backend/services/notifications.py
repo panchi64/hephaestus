@@ -36,7 +36,6 @@ import asyncio
 import logging
 from collections import deque
 from collections.abc import AsyncIterator, Callable
-from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
@@ -46,6 +45,8 @@ from sqlmodel import Session, select
 
 from core.db import in_session
 from core.serde import as_utc
+from core.shutdown import STOPPED, get_unless_shutdown
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from core.vault import Vault
 from core.worker import WriteBehindWorker
 from models._fields import new_id, utcnow
@@ -176,10 +177,7 @@ class NotificationService:
         )
 
     async def stop(self) -> None:
-        if self._rehydrate_task is not None and not self._rehydrate_task.done():
-            self._rehydrate_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._rehydrate_task
+        await cancel_and_wait(self._rehydrate_task, STOP_TIMEOUT_S)
         await self._deliveries.stop()
         await self._worker.stop()
         # Channels last: the delivery drainer above may still have been using one. A
@@ -308,7 +306,7 @@ class NotificationService:
         """Replay ring-buffered events after ``after_seq`` then stream live ones. Never
         ends on its own — this surface is process-lifetime, not tied to one run's
         terminal state — so iteration only stops when the caller does (a client
-        disconnect cancelling the pump task, in the SSE route)."""
+        disconnect cancelling the pump task, in the SSE route) or the app begins shutting down."""
         queue: asyncio.Queue[NotificationEvent | None] = asyncio.Queue(
             maxsize=_SUBSCRIBER_QUEUE_MAX
         )
@@ -322,9 +320,9 @@ class NotificationService:
             for event in backlog:
                 yield event
             while True:
-                event = await queue.get()
-                if event is None:  # never sent in practice (no process-wide "close"),
-                    return  # kept symmetric with RunStream for a future graceful-stop.
+                event = await get_unless_shutdown(queue)
+                if event is None or event is STOPPED:  # evicted as slow, or the app is stopping
+                    return
                 yield event
         finally:
             self._subscribers.discard(queue)

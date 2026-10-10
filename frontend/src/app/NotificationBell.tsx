@@ -142,7 +142,7 @@ export function NotificationBell(): JSX.Element {
                 status dots and count pills, and this is the second of the two.
                 At 16px a 3px corner is a fifth of the box — neither a chamfer
                 nor a pill, just a square that lost its corners. */}
-            <span class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-alert px-0.5 text-micro font-mono font-bold text-bg">
+            <span class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center bg-alert px-0.5 text-micro font-mono font-bold text-bg">
               {badge()}
             </span>
           </Show>

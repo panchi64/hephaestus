@@ -1,4 +1,5 @@
 import { createSignal, For, Show, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import { date, relativeTime } from "~/lib/format";
 import {
   Button,
@@ -93,7 +94,7 @@ export function AccessTokensScreen(): JSX.Element {
 
   /** The scope's declared label, falling back to its id if the catalog is still loading. */
   const scopeLabel = (id: string) =>
-    scopes.latest?.find((scope) => scope.id === id)?.label ?? id;
+    settled(scopes)?.find((scope) => scope.id === id)?.label ?? id;
 
   return (
     <Stack gap={6}>
@@ -111,7 +112,7 @@ export function AccessTokensScreen(): JSX.Element {
 
       <Panel label="Issued tokens" flush>
         <Show
-          when={tokens.latest}
+          when={settled(tokens)}
           fallback={
             <div class="p-3">
               <LoadingText />
@@ -119,7 +120,7 @@ export function AccessTokensScreen(): JSX.Element {
           }
         >
           <Show
-            when={(tokens.latest ?? []).length > 0}
+            when={(settled(tokens) ?? []).length > 0}
             fallback={
               <EmptyState
                 message="No tokens issued"
@@ -128,7 +129,7 @@ export function AccessTokensScreen(): JSX.Element {
               />
             }
           >
-            <For each={tokens.latest ?? []}>
+            <For each={settled(tokens) ?? []}>
               {(token) => (
                 <Row align="center" justify="between" gap={3} class="px-3 py-3">
                   <Stack gap={1} class="min-w-0">
@@ -196,8 +197,8 @@ export function AccessTokensScreen(): JSX.Element {
               scopes is refused — including issuing tokens, the vault, backups,
               and the host shell, which no token can ever reach.
             </Text>
-            <Show when={scopes.latest} fallback={<LoadingText />}>
-              <For each={scopes.latest ?? []}>
+            <Show when={settled(scopes)} fallback={<LoadingText />}>
+              <For each={settled(scopes) ?? []}>
                 {(scope) => (
                   <Stack gap={0}>
                     <Checkbox
@@ -243,7 +244,7 @@ export function AccessTokensScreen(): JSX.Element {
           <Text
             variant="micro"
             tone="bright"
-            class="rounded-ctl bg-raised p-3 break-all select-all"
+            class="bg-raised p-3 break-all select-all"
           >
             {revealed()?.token}
           </Text>

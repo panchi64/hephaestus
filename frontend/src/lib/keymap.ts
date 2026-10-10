@@ -27,7 +27,8 @@ type NavigatorWithUAData = Navigator & {
   userAgentData?: { platform?: string };
 };
 
-function isMac(): boolean {
+/** Whether `mod` is ⌘ here — for a hint that prints the chord. */
+export function isMac(): boolean {
   if (typeof navigator === "undefined") return false;
   const uaPlatform = (navigator as NavigatorWithUAData).userAgentData?.platform;
   if (uaPlatform !== undefined) return /mac/i.test(uaPlatform);
@@ -36,17 +37,37 @@ function isMac(): boolean {
 
 const NON_TRIGGER_KEYS = new Set(["meta", "control", "shift", "alt"]);
 
-/** Normalizes a keydown event to the same combo format bindings are registered
- *  with. */
-function comboFor(e: KeyboardEvent): string {
-  const parts: string[] = [];
-  const mod = isMac() ? e.metaKey : e.ctrlKey;
-  if (mod) parts.push("mod");
-  if (e.shiftKey) parts.push("shift");
-  if (e.altKey) parts.push("alt");
+/** The fields of a keydown the combo derivation reads — a structural subset, so the
+ *  pure derivation is testable without a DOM. */
+export type KeyEventLike = Pick<
+  KeyboardEvent,
+  "key" | "code" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey"
+>;
+
+/** Every spelling of a keydown a binding may have been registered with.
+ *
+ *  `mod+shift+v` matches on the produced key (`event.key`). A combo whose last part is
+ *  `code:digit1` matches the *physical* key instead (`event.code`), which is what a
+ *  chord with Shift needs — Shift turns `1` into `!`, so `key` no longer names it. A
+ *  literal `ctrl` is the Control key on every platform, where `mod` is ⌘ on macOS and
+ *  Control elsewhere; off macOS the two are the same key and both spellings match. */
+export function combosFor(e: KeyEventLike, mac: boolean): string[] {
   const key = e.key.toLowerCase();
-  if (!NON_TRIGGER_KEYS.has(key)) parts.push(key);
-  return parts.join("+");
+  if (NON_TRIGGER_KEYS.has(key)) return [""];
+  const spell = (modifiers: string[], last: string) =>
+    [...modifiers, last].join("+");
+  const rest: string[] = [];
+  if (e.shiftKey) rest.push("shift");
+  if (e.altKey) rest.push("alt");
+  const mods: string[][] = [];
+  if (mac) {
+    mods.push([...(e.metaKey ? ["mod"] : []), ...(e.ctrlKey ? ["ctrl"] : [])]);
+  } else {
+    mods.push(e.ctrlKey ? ["mod"] : []);
+    if (e.ctrlKey) mods.push(["ctrl"]);
+  }
+  const lasts = [key, `code:${e.code.toLowerCase()}`];
+  return mods.flatMap((m) => lasts.map((last) => spell([...m, ...rest], last)));
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -61,14 +82,17 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 function handleKeydown(e: KeyboardEvent): void {
-  const combo = comboFor(e);
+  // An IME mid-composition owns the keystroke; `keyCode` 229 is the only signal some
+  // engines give.
+  if (e.isComposing || e.keyCode === 229) return;
+  const combos = combosFor(e, isMac());
   // A combo with no "+" carries no modifier — ignored while typing.
-  const isModifierless = !combo.includes("+");
+  const isModifierless = !combos[0].includes("+");
   if (isModifierless && isEditableTarget(e.target)) return;
 
   for (const entry of registry) {
     for (const binding of entry.bindings()) {
-      if (binding.combo !== combo) continue;
+      if (!combos.includes(binding.combo)) continue;
       if (binding.when && !binding.when()) continue;
       e.preventDefault();
       binding.run();

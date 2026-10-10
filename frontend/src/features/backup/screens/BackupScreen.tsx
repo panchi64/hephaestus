@@ -345,7 +345,7 @@ export function BackupScreen(): JSX.Element {
               <input
                 type="file"
                 accept=".json"
-                class="block w-full cursor-pointer rounded-ctl bg-raised px-2 py-1.5 text-label font-sans text-bright file:mr-3 file:border-0 file:bg-raised file:px-2 file:py-1 file:text-label file:font-sans file:text-dim"
+                class="block w-full cursor-pointer bg-raised px-2 py-1.5 text-label font-sans text-bright file:mr-3 file:border-0 file:bg-raised file:px-2 file:py-1 file:text-label file:font-sans file:text-dim"
                 onChange={(e) => {
                   setImportFile(e.currentTarget.files?.[0] ?? null);
                   setImportError(null);

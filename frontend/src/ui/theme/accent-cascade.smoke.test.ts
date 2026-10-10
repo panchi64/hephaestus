@@ -22,10 +22,6 @@
  * turn — which is what lets a session mode repaint the signature accent with no
  * code running, and what lets an operator retune it per mode.
  *
- * Also covers the requirement that made this feature worth having: that
- * `LedEdge`'s tones follow the operator's choice without `LedEdge` knowing the
- * feature exists.
- *
  * Excluded from `bun run test`; `bun run test:smoke` runs it.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -87,7 +83,7 @@ afterAll(() => {
   dev?.kill();
 });
 
-test("an accent override beats the token definitions, and the LED follows", async () => {
+test("an accent override beats the token definitions", async () => {
   const wv = new Bun.WebView({ headless: true });
   try {
     await wv.navigate(`${ORIGIN}/`);
@@ -126,22 +122,6 @@ test("an accent override beats the token definitions, and the LED follows", asyn
     })()`);
 
     expect(await readVar("--accent")).toBe(INK_OVERRIDE);
-
-    // `LedEdge tone="accent"` resolves `--led` from `--accent`, so the strip
-    // light has to follow the operator's choice with no change of its own.
-    // This is the requirement the feature was asked for, not an implementation
-    // detail.
-    const led = String(
-      await wv.evaluate(`(function(){
-        var d = document.createElement('div');
-        d.className = 'ody-led ody-led-accent';
-        document.body.appendChild(d);
-        var v = getComputedStyle(d).getPropertyValue('--led').trim();
-        d.remove();
-        return v;
-      })()`),
-    );
-    expect(led).toBe(INK_OVERRIDE);
 
     // Flipping the theme must select the other rule on its own — this is what
     // buys `applyTheme` its ignorance of accents entirely.

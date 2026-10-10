@@ -128,19 +128,35 @@ export {
   type ComposerAttachment,
   type AttachmentStatus,
 } from "./components/AttachmentChip";
+// The action tier: anything waiting on the operator (an approval, a question, a
+// conflict) gets a filled plate band, a tinted body and a filled primary.
 export {
-  LedEdge,
-  type LedEdgeProps,
-  type LedTone,
-  type LedSide,
-  type LedSpill,
-} from "./components/LedEdge";
+  ActionFrame,
+  ActionButtons,
+  type ActionFrameProps,
+  type ActionTone,
+  type ActionButtonsProps,
+  type ActionButtonSpec,
+} from "./components/ActionFrame";
+export {
+  ChoiceList,
+  type ChoiceListProps,
+  type ChoiceOption,
+} from "./components/ChoiceList";
 export {
   ScrollFade,
   type ScrollFadeProps,
   type ScrollFadeEdge,
+  type ScrollFadeVariant,
+  type ScrollFadeGround,
 } from "./components/ScrollFade";
 export { ListRow, type ListRowProps } from "./components/ListRow";
+export {
+  RailRow,
+  RailTag,
+  type RailRowProps,
+  type RailRowState,
+} from "./components/RailRow";
 export {
   ListGroupHeader,
   type ListGroupHeaderProps,
@@ -260,8 +276,10 @@ export { MetaAction, type MetaActionProps } from "./components/MetaAction";
 export {
   StatusBar,
   StatusCell,
+  StatusField,
   type StatusBarProps,
   type StatusCellProps,
+  type StatusFieldProps,
 } from "./components/StatusBar";
 export {
   Popover,

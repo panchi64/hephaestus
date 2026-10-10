@@ -8,14 +8,20 @@ import {
 } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import {
-  Button,
   ContextMenu,
-  Text,
+  Icon,
+  ListGroupHeader,
+  StatusBar,
+  StatusCell,
+  StatusField,
+  Tooltip,
   confirm,
   createContextMenu,
   toast,
   type MenuItem,
 } from "~/ui";
+import { registerKeymap } from "~/lib/keymap";
+import { useNotifications } from "~/lib/stores/notifications";
 import { sessionModeSpec } from "~/lib/modes";
 import {
   activeProjectId,
@@ -47,6 +53,7 @@ import {
   registerAddDirectoryButton,
   useAddDirectory,
 } from "../addDirectory";
+import { settled } from "~/lib/resource";
 import type { ChatActivity } from "../model";
 import type { WorkspaceDirectory } from "../sessionGroups";
 import { SessionList, type WorkspaceStatus } from "./SessionList";
@@ -73,7 +80,11 @@ const ACTIVITY_POLL_MS = 3000;
  *  the same position in every mode and it makes two different things, which is the one
  *  risk in the arrangement, so it does not also share a glyph: a folder here, a bare
  *  plus on the row. */
-export function RecentsRail(): JSX.Element {
+export function RecentsRail(props: {
+  /** The project filter, at the right end of the list's heading. The shell's to
+   *  supply — the project scope is app-wide, not chat's. */
+  filter?: JSX.Element;
+}): JSX.Element {
   const sessions = useChatSessions();
   const projects = useProjects();
   const { currentId, openId, setCurrentId, stream } = mainChat();
@@ -102,7 +113,9 @@ export function RecentsRail(): JSX.Element {
    *  normal way. */
   const rows = createMemo(() => {
     const list = sessions();
-    const id = currentId();
+    // `openId`, not `currentId`: a new thread's first turn is not seated until it ends,
+    // so keyed on the seat its row stayed dark for the whole of that turn.
+    const id = openId();
     if (!list || !id || !stream.sending()) return list;
     const echo: ChatActivity = stream.awaitingInput()
       ? "awaiting_input"
@@ -126,7 +139,7 @@ export function RecentsRail(): JSX.Element {
    *  a rail drawing every directory would draw headings whose threads are being
    *  filtered away underneath them. Archived projects drop out of the listing itself. */
   const visible = createMemo((): Project[] | undefined => {
-    const dto = projects.latest;
+    const dto = settled(projects);
     // Undefined means *still loading*, and the list holds its loading arm on it. An
     // errored resource never populates `latest`, so returning undefined there would
     // hold that arm forever — a rail stuck on LOADING with no error, no retry and no
@@ -163,8 +176,19 @@ export function RecentsRail(): JSX.Element {
   const anyActive = createMemo(() => rows()?.some((s) => s.activity) ?? false);
   createEffect(() => {
     if (!anyActive()) return;
-    const timer = setInterval(refreshSessions, ACTIVITY_POLL_MS);
-    onCleanup(() => clearInterval(timer));
+    // Nobody is looking at a hidden tab's rail, so it asks nothing; coming back to the
+    // tab reads once straight away rather than waiting out the interval.
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") refreshSessions();
+    }, ACTIVITY_POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshSessions();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    onCleanup(() => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    });
   });
 
   const toChat = () => {
@@ -347,32 +371,83 @@ export function RecentsRail(): JSX.Element {
     }
   };
 
+  // The rail's search, in the command strip above the list. `/` focuses it from
+  // anywhere a bare key is not typing.
+  const [query, setQuery] = createSignal("");
+  let searchField: HTMLInputElement | undefined;
+  registerKeymap(() => [{ combo: "/", run: () => searchField?.focus() }]);
+
+  const count = () =>
+    rooted() ? (directories()?.length ?? 0) : (inMode()?.length ?? 0);
+
+  // The unread set, from the backend's own notification read state: a thread with an
+  // unread notification has something the operator has not seen.
+  const notifications = useNotifications();
+  const unreadIds = createMemo(
+    () =>
+      new Set(
+        notifications.items
+          .filter((n) => !n.readAt && n.conversationId)
+          .map((n) => n.conversationId!),
+      ),
+  );
+
   return (
-    <div class="flex min-h-0 flex-1 flex-col pb-2">
-      <div class="flex items-center justify-between px-3 py-1">
-        <Text variant="label" tone="dim">
-          Recents
-        </Text>
-        <Show
-          when={rooted()}
-          fallback={
-            <Button variant="ghost" size="sm" leading="plus" onClick={startNew}>
-              New
-            </Button>
-          }
-        >
-          <Button
-            ref={registerAddDirectoryButton}
-            variant="ghost"
-            size="sm"
-            leading="library"
-            disabled={addDirectory.busy()}
-            onClick={() => void addDirectory.add()}
+    <div class="flex min-h-0 flex-1 flex-col">
+      {/* The command strip: the composer's own receded strip turned upside down —
+          dim mono cells, no dividers, brightening only under the pointer or focus. In
+          a worktree mode the button adds a directory rather than a thread, and says
+          so with a different glyph. */}
+      <StatusBar
+        variant="recede"
+        edge="block"
+        start={
+          <StatusField
+            ref={(el) => {
+              searchField = el;
+            }}
+            leading="search"
+            placeholder="Search"
+            aria-label="Search threads"
+            kbd="/"
+            value={query()}
+            onInput={setQuery}
+            onEscape={() => {
+              setQuery("");
+              searchField?.blur();
+            }}
+          />
+        }
+        end={
+          <Show
+            when={rooted()}
+            fallback={
+              <Tooltip label="New thread (⌘⇧O)" side="bottom" delay={600}>
+                <StatusCell onClick={startNew} class="px-3">
+                  <Icon name="plus" size={16} />
+                  new
+                </StatusCell>
+              </Tooltip>
+            }
           >
-            Add directory
-          </Button>
-        </Show>
-      </div>
+            <StatusCell
+              ref={registerAddDirectoryButton}
+              disabled={addDirectory.busy()}
+              onClick={() => void addDirectory.add()}
+              class="px-3"
+            >
+              <Icon name="library" size={16} />
+              add directory
+            </StatusCell>
+          </Show>
+        }
+      />
+      <ListGroupHeader
+        variant="section"
+        label={rooted() ? "Directories" : "Recents"}
+        count={count()}
+        aside={props.filter}
+      />
       {/* The list takes whatever height is left rather than a fixed cap. The cap
           was right when six area sections sat beneath it and a long history would
           have pushed them off-screen; the rail is the thread list now, so a cap
@@ -403,6 +478,8 @@ export function RecentsRail(): JSX.Element {
           stagedProjectId={
             rooted() && openId() === null ? (codeProjectId() ?? null) : null
           }
+          query={query}
+          unread={(id) => unreadIds().has(id)}
         />
       </div>
       {/* Both render nothing where they sit — the panel is portalled and the modal

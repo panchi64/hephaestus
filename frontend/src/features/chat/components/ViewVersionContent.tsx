@@ -14,7 +14,7 @@ import type { ViewPreviewRef } from "../model";
 import { detectContentKind, extensionOf } from "../viewport/viewItems";
 import { createDownloadSlot, downloadBlob } from "../viewport/downloadRegistry";
 import { CsvTable } from "./renderers/CsvTable";
-import { fontStepMetrics } from "./renderers/fontStep";
+import { fontStepStyle } from "./renderers/fontStep";
 import { JsonTree } from "./renderers/JsonTree";
 import { MediaPlayer } from "./renderers/MediaPlayer";
 import { PdfViewer } from "./renderers/PdfViewer";
@@ -201,14 +201,14 @@ export function ViewVersionContent(props: {
             <Show
               when={kind() === "code"}
               fallback={
-                <pre
-                  class="h-full overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-text"
-                  style={{
-                    "font-size": `${fontStepMetrics(props.fontStep).size}px`,
-                  }}
+                <Text
+                  as="pre"
+                  variant="code"
+                  class="block h-full overflow-auto whitespace-pre-wrap break-words p-3"
+                  style={fontStepStyle(props.fontStep)}
                 >
                   {settled(text)}
-                </pre>
+                </Text>
               }
             >
               <CodeBlock

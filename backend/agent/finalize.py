@@ -24,7 +24,7 @@ from runs import Run, RunStatus
 from services.conversations import ConversationStore
 
 from .flush import CANCELLED_DETAIL, PersistContext
-from .history import TurnStart, split_injected_requests
+from .history import TurnStart, after_recorded_prompt, split_injected_requests
 from .parking import ParkedTurn
 from .turn import TurnResult
 
@@ -42,10 +42,10 @@ def finalize(
     are applied *after* the verifier too (a corrective re-attempt can itself park
     or hit a bound). ``context`` is where the turn goes — see :class:`PersistContext`;
     its ``clean_drop`` is a verifier correction's message range to drop from the persisted
-    history, and its ``attachment_ids``/``persisted`` carry a turn's attached files (the
-    ids are stamped on the persisted request for chip rendering, and ``persisted`` is the
-    durable content — the attachment markers, plus any retained image — that replaces the
-    live payload in history)."""
+    history, and its ``start.prompt_message_id`` names the operator's prompt when the turn
+    already wrote it down as it began (see :func:`~agent.prelude.record_prompt`), in which
+    case this records only what followed it — the prompt's attachments, references and
+    command were stamped on that write."""
     conversation_id = context.conversation_id
     if run.status is RunStatus.awaiting_input:
         # Parked: hand the resume the context to persist the parked turn too.
@@ -53,33 +53,31 @@ def finalize(
             run.parked_payload.conversation_id = conversation_id
             run.parked_payload.persist_from = context.start.index
             run.parked_payload.persist_from_parts = context.start.parts
+            run.parked_payload.prompt_message_id = context.start.prompt_message_id
             if context.clean_drop is not None:  # re-park: carry the drop range forward
                 run.parked_payload.clean_drop = context.clean_drop
-            run.parked_payload.attachment_ids = list(context.attachment_ids)
-            run.parked_payload.file_refs = list(context.file_refs)
-            run.parked_payload.command = context.command
-            run.parked_payload.persisted = context.persisted
         return
     if turn.answer is None and not turn.blocked_reason:
-        return  # hit a bound with nothing captured, or a cancel — nothing to persist
+        return  # a bound with nothing to say, or a cancel — the prompt is already on record
     if store is not None and conversation_id is not None:
         messages = turn.messages
         if context.clean_drop is not None:
             reject_idx, nudge_idx = context.clean_drop
             messages = messages[:reject_idx] + messages[nudge_idx + 1 :]
-        # The store installs the durable `persisted` content and stamps `attachment_ids`
-        # on the turn's user request as it serializes — what the durable blob contains is
-        # the store's concern, not the engine's.
+        # The drop range is applied to the whole list and the turn is sliced out after, so
+        # the indices keep meaning what they did when the verifier took them: the opening
+        # request is only set aside once the slice exists.
+        recorded = context.start.prompt_message_id
+        turn_messages = context.start.slice(messages)
+        if recorded is not None:
+            turn_messages = after_recorded_prompt(turn_messages)
         # `blocked_reason` stamps the turn's branch node so a reload shows the same
-        # persistent stop marker the live stream rendered (`record` is a no-op for an
-        # empty slice, e.g. a bound hit before any new message accumulated).
+        # persistent stop marker the live stream rendered. With nothing after the prompt
+        # (a stop before the first token) the prompt itself carries it.
         store.record(
             conversation_id,
-            split_injected_requests(context.start.slice(messages)),
-            attachment_ids=list(context.attachment_ids),
-            file_refs=list(context.file_refs),
-            command=context.command,
-            persisted=context.persisted,
+            split_injected_requests(turn_messages),
+            prompt_id=recorded,
             blocked_reason=turn.blocked_reason,
             # The run's stopwatch, one entry per response it streamed, in the order the
             # store will meet them. Recorded on the same call as the messages so a
@@ -132,14 +130,12 @@ def parked_context(parked: ParkedTurn, turn_start: TurnStart | None = None) -> P
     passes nothing, because nothing has folded — the payload's own boundary is the answer."""
     return PersistContext(
         conversation_id=parked.conversation_id,
-        start=(
-            TurnStart(parked.persist_from, parked.persist_from_parts)
-            if turn_start is None
-            else turn_start
-        ),
+        start=parked_start(parked) if turn_start is None else turn_start,
         clean_drop=parked.clean_drop,
-        attachment_ids=parked.attachment_ids,
-        file_refs=parked.file_refs,
-        command=parked.command,
-        persisted=parked.persisted,
     )
+
+
+def parked_start(parked: ParkedTurn) -> TurnStart:
+    """The boundary a parked turn parked with — where it begins, and which stored node is
+    its already-recorded prompt."""
+    return TurnStart(parked.persist_from, parked.persist_from_parts, parked.prompt_message_id)

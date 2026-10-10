@@ -1,4 +1,5 @@
 import { createSignal, For, Show, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import {
   Button,
   EmptyState,
@@ -175,9 +176,9 @@ export function SearchProvidersPanel(): JSX.Element {
           provider is used; the rest stay configured as alternates. Requires the
           instance's JSON output format to be enabled.
         </Text>
-        <Show when={providers.latest} fallback={<LoadingText />}>
+        <Show when={settled(providers)} fallback={<LoadingText />}>
           <Show
-            when={(providers.latest ?? []).length}
+            when={(settled(providers) ?? []).length}
             fallback={
               <EmptyState
                 icon="search"
@@ -187,7 +188,7 @@ export function SearchProvidersPanel(): JSX.Element {
             }
           >
             <Stack gap={0}>
-              <For each={providers.latest ?? []}>
+              <For each={settled(providers) ?? []}>
                 {(p) => (
                   <Row align="center" justify="between" gap={3} class="py-2">
                     <Stack gap={1} class="min-w-0">

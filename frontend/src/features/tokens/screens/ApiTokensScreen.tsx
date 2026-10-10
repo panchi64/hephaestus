@@ -1,4 +1,5 @@
 import { createSignal, For, Show, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import {
   Button,
   confirm,
@@ -82,14 +83,14 @@ export function ApiTokensScreen(): JSX.Element {
 
       <Panel label="Service credentials" flush>
         <Show
-          when={credentials.latest}
+          when={settled(credentials)}
           fallback={
             <div class="p-3">
               <LoadingText />
             </div>
           }
         >
-          <For each={credentials.latest ?? []}>
+          <For each={settled(credentials) ?? []}>
             {(credential) => (
               <Row align="center" justify="between" gap={3} class="px-3 py-3">
                 <Stack gap={1} class="min-w-0">

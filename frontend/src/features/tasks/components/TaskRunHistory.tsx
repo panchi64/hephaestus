@@ -187,7 +187,7 @@ export function TaskRunHistory(props: { taskId: string }): JSX.Element {
                 </Text>
               </Row>
               <div
-                class="overflow-auto rounded-panel bg-raised p-3 font-mono"
+                class="overflow-auto bg-raised p-3 font-mono"
                 style={{ "max-height": "60vh" }}
               >
                 <Text variant="body" tone="dim" class="whitespace-pre-wrap">

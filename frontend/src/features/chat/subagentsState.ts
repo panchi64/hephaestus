@@ -24,8 +24,8 @@ import {
   createSignal,
   createResource,
   onCleanup,
-  type Resource,
 } from "solid-js";
+import { settled } from "~/lib/resource";
 import {
   fetchSubagents,
   isLive,
@@ -39,8 +39,7 @@ import {
 const POLL_MS = 3000;
 
 export interface SubagentsApi {
-  subagents: Resource<SubagentsRead>;
-  /** What consumers read: the last answer that actually came back. */
+  /** What consumers read: the last answer that actually came back *for this thread*. */
   latest: () => Subagent[];
   refetch: () => void;
 }
@@ -54,7 +53,9 @@ export interface SubagentsApi {
  * refilling continuously while the operator is reading it — and a read that *failed* must
  * not empty it either, since a dropped request says nothing about what the thread has
  * running. So the last answer that actually came back is held here, and a failure leaves
- * it standing.
+ * it standing — but only for the thread it was read for: each answer is tagged with its
+ * thread, and a switch reads empty until the new thread's own answer lands, rather than
+ * showing the cards of the one just left.
  */
 export function createSubagentsState(
   conversationId: () => string | null,
@@ -65,14 +66,29 @@ export function createSubagentsState(
       const id = conversationId();
       return id === null ? undefined : ([id, revision()] as const);
     },
-    ([id]) => fetchSubagents(id),
+    async ([id]) => ({ id, read: await fetchSubagents(id) }),
   );
-  const [known, setKnown] = createSignal<Subagent[]>([]);
+  const [known, setKnown] = createSignal<{
+    id: string;
+    list: Subagent[];
+  } | null>(null);
+
+  /** The latest answer, if it is for the thread on screen. */
+  const current = (): SubagentsRead | undefined => {
+    const held = settled(subagents);
+    return held && held.id === conversationId() ? held.read : undefined;
+  };
 
   createEffect(() => {
-    const read = subagents.latest;
-    if (read?.ok) setKnown(read.subagents);
+    const read = current();
+    const id = conversationId();
+    if (read?.ok && id) setKnown({ id, list: read.subagents });
   });
+
+  const latest = (): Subagent[] => {
+    const held = known();
+    return held && held.id === conversationId() ? held.list : [];
+  };
 
   createEffect(() => {
     // Reading the resource here is what makes this self-sustaining: every settled read —
@@ -80,13 +96,24 @@ export function createSubagentsState(
     // re-arms the timer, so long as something is still working. A read that failed keeps
     // the poll going against what was last known, because giving up on the one request
     // that could correct it is the last thing to do about a dropped request.
-    const read = subagents.latest;
+    const read = current();
     if (read === undefined) return;
-    const current = read.ok ? read.subagents : known();
-    if (!current.some(isLive)) return;
-    const timer = setTimeout(() => void refetch(), POLL_MS);
-    onCleanup(() => clearTimeout(timer));
+    const live = read.ok ? read.subagents : latest();
+    if (!live.some(isLive)) return;
+    // A hidden tab waits for the operator to come back instead of polling for no one;
+    // the visibility listener takes the read the timer would have made.
+    const timer = setTimeout(() => {
+      if (document.visibilityState === "visible") void refetch();
+    }, POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refetch();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    onCleanup(() => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    });
   });
 
-  return { subagents, latest: known, refetch: () => void refetch() };
+  return { latest, refetch: () => void refetch() };
 }

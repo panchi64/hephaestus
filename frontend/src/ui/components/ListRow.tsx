@@ -21,16 +21,7 @@ export interface ListRowProps {
   /** Render a leading selection checkbox (driven by `selected`). The row's
    *  `onClick` should toggle selection. Replaces the `leading` icon. */
   selectable?: boolean;
-  /** Listbox semantics, for a row inside a keyboard-driven result list whose
-   *  focus lives on a search field (a command palette). The row becomes
-   *  `role="option"` with `aria-selected` from `selected`, and is deliberately
-   *  **not** tab-focusable: the field keeps focus and points here via
-   *  `aria-activedescendant`, so pass `id` too. Clicks still work. */
-  option?: boolean;
-  /** For an `option` row that carries a two-state value rather than a
-   *  destination — it announces as checked/unchecked instead of as a link. */
-  checked?: boolean;
-  /** DOM id — the handle `aria-activedescendant` needs. */
+  /** DOM id. */
   id?: string;
   locked?: boolean;
   href?: string;
@@ -40,6 +31,8 @@ export interface ListRowProps {
    *  single largest source of line-noise in a dense screen. Turn it on only for
    *  a genuine ruled data grid, where the rule aligns columns across rows. */
   divided?: boolean;
+  /** `nav`: the rail's footer destination (see the branch below). */
+  variant?: "default" | "nav";
   class?: string;
 }
 
@@ -54,22 +47,46 @@ export function ListRow(props: ListRowProps): JSX.Element {
     "description",
     "selected",
     "selectable",
-    "option",
-    "checked",
     "id",
     "locked",
     "href",
     "onClick",
     "divided",
+    "variant",
     "class",
   ]);
   const interactive = () => !local.locked && (local.href || local.onClick);
-  // Selectable and option rows stay a <div> (with the matching semantics) so
-  // their `right` slot can hold real interactive content — a Menu, a copy
-  // button, a palette row's inline field — without nesting a <button> inside a
-  // <button> (invalid HTML / hydration warnings).
+  // The rail's footer destination: a 16px icon, the label, its meta, on a ruled row
+  // whose selection is the raised fill plus a 2px bright inset edge (`.ody-rail-nav`).
+  if (local.variant === "nav")
+    return (
+      <Dynamic
+        component={local.href ? "a" : local.onClick ? "button" : "div"}
+        id={local.id}
+        href={local.href}
+        onClick={local.onClick}
+        aria-current={local.selected && local.href ? "page" : undefined}
+        data-selected={local.selected ? "" : undefined}
+        class={cx("ody-rail-nav w-full text-left", local.class)}
+      >
+        <Show when={local.leading} fallback={<span />}>
+          <Icon name={local.leading!} size={16} />
+        </Show>
+        <Text
+          variant="body"
+          tone={local.selected ? "bright" : "default"}
+          class="truncate"
+        >
+          {local.label}
+        </Text>
+        <span class="flex shrink-0 items-center gap-2">{local.right}</span>
+      </Dynamic>
+    );
+  // Selectable rows stay a <div> (with the matching semantics) so their `right`
+  // slot can hold real interactive content — a Menu, a copy button — without
+  // nesting a <button> inside a <button> (invalid HTML / hydration warnings).
   const tag = () =>
-    local.locked || local.selectable || local.option
+    local.locked || local.selectable
       ? "div"
       : local.href
         ? "a"
@@ -80,13 +97,9 @@ export function ListRow(props: ListRowProps): JSX.Element {
     <Dynamic
       component={tag()}
       id={local.id}
-      href={!local.locked && !local.option ? local.href : undefined}
+      href={!local.locked ? local.href : undefined}
       onClick={!local.locked ? local.onClick : undefined}
-      role={local.option ? "option" : local.selectable ? "button" : undefined}
-      aria-selected={local.option ? local.selected || false : undefined}
-      aria-checked={
-        local.option && local.checked !== undefined ? local.checked : undefined
-      }
+      role={local.selectable ? "button" : undefined}
       aria-pressed={local.selectable ? local.selected || false : undefined}
       tabindex={local.selectable && !local.locked ? 0 : undefined}
       onKeyDown={
@@ -107,8 +120,9 @@ export function ListRow(props: ListRowProps): JSX.Element {
         "flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors",
         local.divided && "border-b border-line",
         local.selected && "bg-raised",
+        local.selected && !local.selectable && "ody-selected-edge",
         interactive() && "hover:bg-raised",
-        (local.selectable || local.option) && !local.locked && "cursor-pointer",
+        local.selectable && !local.locked && "cursor-pointer",
         local.locked && "cursor-not-allowed",
         local.class,
       )}
@@ -117,7 +131,7 @@ export function ListRow(props: ListRowProps): JSX.Element {
         <Show when={local.selectable}>
           <span
             class={cx(
-              "flex size-4 shrink-0 items-center justify-center rounded-ctl border transition-colors",
+              "flex size-4 shrink-0 items-center justify-center border transition-colors",
               local.selected
                 ? "border-bright text-bright"
                 : "border-line text-transparent",

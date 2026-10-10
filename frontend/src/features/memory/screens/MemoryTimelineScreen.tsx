@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import {
   Button,
   Checkbox,
@@ -41,7 +42,7 @@ export function MemoryTimelineScreen(): JSX.Element {
   // suspending read would bubble to the app's fallback-less root <Suspense> and
   // blank the whole page on initial load. `.latest` never suspends.
   const view = createListView<Memory>({
-    source: () => memories.latest ?? [],
+    source: () => settled(memories) ?? [],
     search: (m) => m.content,
     sorts: {
       recent: {
@@ -54,7 +55,7 @@ export function MemoryTimelineScreen(): JSX.Element {
   });
 
   const counts = createMemo(() => {
-    const all = memories.latest ?? [];
+    const all = settled(memories) ?? [];
     let pinned = 0;
     let embedded = 0;
     for (const m of all) {
@@ -159,7 +160,7 @@ export function MemoryTimelineScreen(): JSX.Element {
     setDedupOpen(true);
     setAuditing(true);
     try {
-      setGroups(await auditDuplicates(memories.latest ?? []));
+      setGroups(await auditDuplicates(settled(memories) ?? []));
     } catch {
       toast.error("Audit failed.");
       setGroups([]);
@@ -389,7 +390,7 @@ export function MemoryTimelineScreen(): JSX.Element {
               <Stack gap={2}>
                 <For each={recallHits()!}>
                   {(hit) => (
-                    <div class="rounded-panel bg-surface p-3 shadow-1">
+                    <div class="border border-line bg-surface p-3">
                       <Row justify="between" align="center">
                         <StatusFlag status="info">
                           {hit.matchedBy.toUpperCase()}
@@ -447,7 +448,7 @@ export function MemoryTimelineScreen(): JSX.Element {
               </Text>
               <For each={groups() ?? []}>
                 {(group) => (
-                  <div class="overflow-hidden rounded-panel bg-surface shadow-1">
+                  <div class="overflow-hidden border border-line bg-surface">
                     <div class="flex items-center justify-between bg-raised px-4 py-2">
                       <Text variant="label" tone="dim">
                         Similarity

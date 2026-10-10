@@ -11,7 +11,8 @@ import type { IconName } from "~/ui";
  * declaring the union twice would be worse: the two copies would drift the first time a
  * fourth mode arrives, and nothing would fail.
  *
- * `normal` and `research` work in the conversation's own sandbox container; `code` works
+ * `normal` (shown to the operator as "Chat" — the wire value never changes) and
+ * `research` work in the conversation's own sandbox container; `code` works
  * in a git worktree of a project's repository on the operator's machine.
  */
 export type SessionMode = "normal" | "research" | "code";
@@ -51,7 +52,7 @@ export interface SessionModeSpec {
 const SPECS = {
   normal: {
     id: "normal",
-    label: "Normal",
+    label: "Chat",
     description: "General work in this thread's own sandbox.",
     icon: "chat",
     workspace: "sandbox",

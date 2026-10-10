@@ -5,6 +5,8 @@ import type { RunClock } from "../stream/fold";
 import { resolveRunState, runStateSpec } from "../runState";
 
 export interface ComposerHeaderStatusProps {
+  /** The thread's name, or null for one not yet created. */
+  title: () => string | null;
   /** The room's stream is driving a run — a turn, or a hand-started fold. */
   streaming: () => boolean;
   /** That run is a fold rather than a turn. */
@@ -19,8 +21,8 @@ export interface ComposerHeaderStatusProps {
   lastOutcome: () => ChatOutcome | undefined;
 }
 
-/* One Status → text colour, as the header line's pieces carry their own tone. The line
-   is `plate` type already, so a `Text` here would restate a size it cannot change. */
+/* One Status → text colour, as the plate's pieces carry their own tone. The plate is
+   mono already, so a `Text` here would restate a size it cannot change. */
 const STATUS_CLASS: Record<Status, string> = {
   idle: "",
   live: "text-nominal",
@@ -31,26 +33,20 @@ const STATUS_CLASS: Record<Status, string> = {
 };
 
 /**
- * The left of the composer's header line: what the input — and the thread behind it —
- * is doing. `Input` when there is nothing to report, which is most of the time.
- *
- * **This is where the thread's state is said now.** It used to fly as a flag in an
- * eyebrow above the title, beside the model name and a clock of the thread's age; the
- * model moved to the status bar and the rest was clutter over a title. What could not
- * be dropped is a state that needs the operator — a failed run, one stopped at a limit —
- * so it lands here, in the line the operator reads before they type the next message.
+ * The left of the composer's plate: what the thread is doing, said where the operator
+ * is about to type. At rest it names the thread — `New thread · ready` before one
+ * exists — so the unit says which conversation the next message goes into.
  *
  * **Precedence, highest first**, and each rung says why it outranks the next:
  * - `Disconnected` — a run whose transport gave up is still guarded as in flight, so the
- *   run marker and its clock would go on ticking over a run nothing is listening to.
- * - The live run: `● Run` (or `● Folding` for a hand-started fold, which is a run of
- *   its own), its clock from the backend's `run.started` instant and the step it is on.
- *   A piece the stream has not reported is left out, never estimated.
+ *   plate would otherwise go on claiming a run nothing is listening to.
+ * - The live run: `Streaming` (or `Folding` for a hand-started fold, which is a run of
+ *   its own) and the step it is on, once the stream has reported one. The plate turns
+ *   info with a blinking square around it; the clock is the plate's aside.
  * - The resolved run state from the same `runState.ts` table the rail reads — except
- *   `done`, which is the ordinary ending and says nothing `Input` does not. So a
+ *   `done`, which is the ordinary ending and says nothing `ready` does not. So a
  *   failed, blocked or cancelled run, and one the backend reports live that this room
- *   is not driving, are named in their own tone; two surfaces wording one fact
- *   differently is how a room calls a run finished while its rail row is lit amber.
+ *   is not driving, are named in their own tone beside the thread's name.
  */
 export function ComposerHeaderStatus(
   props: ComposerHeaderStatusProps,
@@ -59,28 +55,64 @@ export function ComposerHeaderStatus(
     const s = resolveRunState(props.activity(), props.lastOutcome());
     return s && s !== "done" ? runStateSpec(s) : undefined;
   });
+  const name = () => props.title() ?? "New thread";
 
   return (
-    <Switch fallback="Input">
+    <Switch fallback={`${name()} · ready`}>
       <Match when={props.detached()}>
         <span class="text-alert">Disconnected</span>
       </Match>
       <Match when={props.streaming()}>
-        <span class="text-info">
-          ● {props.compacting() ? "Folding" : "Run"}
-        </span>
-        <Show when={props.runClock()}>
-          {(clock) => (
-            <>
-              {" · "}
-              <MetClock variant="plate" startedAt={clock().startedAt} />
-              <Show when={clock().step}>{(step) => ` · Step ${step()}`}</Show>
-            </>
-          )}
+        {props.compacting() ? "Folding" : "Streaming"}
+        <Show when={props.runClock()?.step}>
+          {(step) => ` · step ${step()}`}
         </Show>
       </Match>
       <Match when={atRest()}>
-        {(s) => <span class={STATUS_CLASS[s().status]}>● {s().readout}</span>}
+        {(s) => (
+          <>
+            {name()} ·{" "}
+            <span class={STATUS_CLASS[s().status]}>{s().readout}</span>
+          </>
+        )}
+      </Match>
+    </Switch>
+  );
+}
+
+export interface ComposerHeaderAsideProps {
+  streaming: () => boolean;
+  runClock: () => RunClock | null;
+  /** Operator messages waiting in the run. */
+  queued: () => number;
+  /** A code thread's branch, when it has one. */
+  branch: () => string | undefined;
+}
+
+/**
+ * The right of the composer's plate: the run's clock while one streams (from the
+ * backend's own `run.started` instant — never estimated), queued messages waiting on
+ * the operator's say-so, and otherwise the branch a code thread writes to.
+ */
+export function ComposerHeaderAside(
+  props: ComposerHeaderAsideProps,
+): JSX.Element {
+  return (
+    <Switch>
+      <Match when={props.queued()}>
+        {(count) => <span class="text-warn">Queued {count()} · ↑ to edit</span>}
+      </Match>
+      <Match when={props.streaming() && props.runClock()}>
+        {(clock) => (
+          <MetClock
+            variant="meta"
+            startedAt={clock().startedAt}
+            prefix={false}
+          />
+        )}
+      </Match>
+      <Match when={!props.streaming() && props.branch()}>
+        {(branch) => <span class="normal-case">{branch()}</span>}
       </Match>
     </Switch>
   );

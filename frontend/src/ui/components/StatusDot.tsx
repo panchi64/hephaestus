@@ -22,7 +22,7 @@ export interface StatusDotProps {
   status?: Status;
   /** Hard-stepped pulse to signal live activity (cursor-blink family, §8). */
   pulse?: boolean;
-  /** Mark form. `dot` is the inline 6px disc that sits beside a label; `square`
+  /** Mark form. `dot` is the inline 6px square that sits beside a label; `square`
    *  is the 8px block the nav rail uses to flag ambient activity on a row you
    *  aren't reading — square by default per §2, and larger because it has to be
    *  legible on its own, with no adjacent text to anchor it. */
@@ -42,7 +42,7 @@ export function StatusDot(props: StatusDotProps): JSX.Element {
     <span
       class={cx(
         "inline-block shrink-0 bg-current",
-        props.shape === "square" ? "size-2" : "size-1.5 rounded-full",
+        props.shape === "square" ? "size-2" : "size-1.5",
         `text-${statusTone[props.status ?? "idle"]}`,
         props.pulse && "ody-pulse",
         props.class,

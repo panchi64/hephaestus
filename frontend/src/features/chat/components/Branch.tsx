@@ -1,5 +1,5 @@
 import type { JSX } from "solid-js";
-import { LedEdge, cx } from "~/ui";
+import { cx } from "~/ui";
 
 /** Where a branch sits in its trunk: whether it is the first row hung off it (a
  *  nested one then reaches up to its parent's socket) and the last (the trunk then
@@ -48,9 +48,8 @@ function trunkSpan(g: Geometry, edge: BranchEdge): string {
  *  half the 16px socket), so it meets the glyph's socket edge-on. A row that is
  *  not a `ProcessRow` (a host terminal) takes the elbow on its own edge instead.
  *
- *  `lit` is the old rail's LED, kept: the running row's length of trunk is a
- *  `LedEdge`, so it emits rather than merely turning blue, and its elbow takes the
- *  same tone. `chassis` dashes the elbow — the trace for a row the chassis put
+ *  `lit` marks the running row: its length of trunk and its elbow turn `info`.
+ *  `chassis` dashes the elbow — the trace for a row the chassis put
  *  there (injected context, a review) rather than one the model did, which the
  *  row's own dashed socket repeats; bare rows no longer have a card to refuse, so
  *  this is what tells the two apart at a glance. `trace` draws the strokes in
@@ -75,7 +74,12 @@ export function Branch(props: {
           props.trace && "ody-trace-down",
         )}
       >
-        <LedEdge lit={props.lit}>{null}</LedEdge>
+        <span
+          class={cx(
+            "border-l transition-colors",
+            props.lit ? "border-info" : "border-line",
+          )}
+        />
       </span>
       <span
         aria-hidden="true"

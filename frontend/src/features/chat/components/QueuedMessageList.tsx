@@ -26,9 +26,11 @@ export function QueuedMessageList(props: {
   onHold?: (queuedMessageId: string, held: boolean) => void;
 }): JSX.Element {
   return (
-    <Stack gap={2}>
-      <Text variant="label" tone="dim">
-        Waiting to send
+    // Flush ruled rows under a plate: it sits at the top of the dock's body, which pads
+    // nothing (design §10.18), and the rows rule themselves off the ask below.
+    <div class="flex flex-col border-b border-line">
+      <Text variant="plate" tone="dim" class="px-3 pt-3 pb-2">
+        Waiting to send · {props.messages.length}
       </Text>
       <For each={props.messages}>
         {(message) => (
@@ -40,7 +42,7 @@ export function QueuedMessageList(props: {
           />
         )}
       </For>
-    </Stack>
+    </div>
   );
 }
 
@@ -70,7 +72,7 @@ function QueuedMessageRow(props: {
   });
 
   return (
-    <Stack gap={1} class="rounded-ctl border border-line px-2.5 py-2">
+    <Stack gap={1} class="border-t border-line px-3 py-2">
       <Show
         when={edit.editing()}
         fallback={
@@ -80,7 +82,7 @@ function QueuedMessageRow(props: {
             </Text>
             <Row gap={1} align="center">
               <Show when={m().queuedHeld}>
-                <Text variant="label" tone="dim">
+                <Text variant="meta" tone="dim">
                   Held
                 </Text>
               </Show>

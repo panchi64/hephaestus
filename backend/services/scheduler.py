@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -44,7 +43,9 @@ from sqlmodel import Session, select
 
 from core.db import in_session
 from core.serde import as_utc
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from core.vault import Vault, VaultLocked
+from core.worker import wait_unlocked_or_stop
 from models._fields import new_id, utcnow
 from models.task import ScheduledTask, ScheduleType, TaskKind, TaskOutcome, TaskRun
 
@@ -177,11 +178,8 @@ class SchedulerService:
         would strand a row `finished_at`-less forever."""
         self._stopping.set()
         self._wake.set()  # unstick a park on `_wait_unlocked`/`_wait_for`
-        if self._task is not None:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+        await cancel_and_wait(self._task, STOP_TIMEOUT_S)
+        self._task = None
         if self._running:
             # Bounded: an execution that will not settle must not take the whole shutdown
             # with it. Letting one finalize its own `TaskRun` row is worth waiting for;
@@ -218,19 +216,10 @@ class SchedulerService:
             await self._wait_for(sleep_for)
 
     async def _wait_unlocked(self) -> bool:
-        """Park while the vault is locked (task prompts are encrypted), mirroring
-        `WriteBehindWorker._ready`. Returns False only if stopping while still
-        locked — the loop should simply exit, not tick against an unreadable vault."""
-        if self._vault.unlocked_event.is_set():
-            return True
-        stop_wait = asyncio.ensure_future(self._stopping.wait())
-        unlock_wait = asyncio.ensure_future(self._vault.unlocked_event.wait())
-        try:
-            await asyncio.wait({stop_wait, unlock_wait}, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            stop_wait.cancel()
-            unlock_wait.cancel()
-        return self._vault.unlocked_event.is_set()
+        """Park while the vault is locked (task prompts are encrypted). Returns False only
+        if stopping while still locked — the loop should simply exit, not tick against an
+        unreadable vault."""
+        return await wait_unlocked_or_stop(self._vault.unlocked_event, self._stopping)
 
     async def _wait_for(self, seconds: float | None) -> None:
         """Sleep until the earliest due task, a wake, or a stop — whichever first.

@@ -11,7 +11,7 @@ import { Text } from "../primitives/Text";
 export function NotConnectedOverlay(): JSX.Element {
   return (
     <div class="pointer-events-auto absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 border-2 border-alert bg-bg/70">
-      <Text variant="display" tone="alert" class="font-display">
+      <Text variant="display" tone="alert">
         Not connected
       </Text>
       <Text variant="micro" tone="dim">

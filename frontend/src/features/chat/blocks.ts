@@ -280,9 +280,9 @@ function hasRefusal(group: BlockGroup): boolean {
  *
  *  Failure is here and deliberately NOT in `hasLiveTool`, because the two mean
  *  different things and only one of them lights the rail. `liveToolGroupIds`
- *  drives the `LedEdge`, whose whole claim is "this is running *now*" — lighting
- *  it for a call that failed a minute ago would be a lie in the one place the
- *  interface speaks in light rather than words.
+ *  drives the trunk's `info` mark, whose whole claim is "this is running *now*" —
+ *  marking it for a call that failed a minute ago would be a lie in the one place
+ *  the interface speaks in a stroke rather than words.
  *
  *  Without this, a failure was the single most hidden thing in a turn: the card
  *  auto-expands on error, but the work log folded shut around it, so the one

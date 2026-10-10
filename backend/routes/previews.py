@@ -29,6 +29,7 @@ from starlette.websockets import WebSocketDisconnect
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake
 
+from core.shutdown import ends_on_shutdown, wait_shutdown
 from routes import deps
 from services.sandbox import PreviewHandle
 
@@ -140,7 +141,7 @@ async def proxy_http(token: str, path: str, request: Request) -> Response:
         # generator on disconnect, whereas a background task only runs on a clean
         # finish, so without it a navigated-away stream would leak a connection.
         try:
-            async for chunk in response.aiter_raw():
+            async for chunk in ends_on_shutdown(response.aiter_raw()):
                 yield chunk
         finally:
             await response.aclose()
@@ -201,7 +202,12 @@ async def _bridge(client_ws: WebSocket, upstream) -> None:
         except (WebSocketDisconnect, ConnectionClosed):
             return
 
-    tasks = [asyncio.create_task(client_to_upstream()), asyncio.create_task(upstream_to_client())]
+    tasks = [
+        asyncio.create_task(client_to_upstream()),
+        asyncio.create_task(upstream_to_client()),
+        # A hot-reload socket never closes on its own; shutdown is what ends it.
+        asyncio.create_task(wait_shutdown()),
+    ]
     _done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()

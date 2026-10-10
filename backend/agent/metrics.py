@@ -101,6 +101,21 @@ def turn_metrics(run: Run, messages: list[ModelMessage], *, settings: Settings) 
     )
 
 
+def post_fold_metrics(
+    run: Run, replay: list[ModelMessage], *, settings: Settings
+) -> RunMetrics:
+    """The readout for a thread that has just been folded: ``replay`` is the whole history
+    the next request carries, and none of it was measured against the thread as it now
+    stands, so the boundary is the whole replay and the footprint reads the estimate.
+
+    The one place that rule is applied, because three callers need it identically — the
+    prelude's threshold fold, the in-turn overflow recovery, and the operator's own fold,
+    which has no turn to take the figure from but must still leave the run with a real
+    terminal frame rather than an empty one."""
+    run.fold_boundary = len(replay)
+    return turn_metrics(run, replay, settings=settings)
+
+
 def _with_prefill(
     last_request: LastRequestUsage | None, run: Run, footprint: int | None
 ) -> LastRequestUsage | None:

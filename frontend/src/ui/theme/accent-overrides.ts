@@ -40,9 +40,8 @@ import type { ThemeMode } from "./theme-store";
  * Because theme.css maps the tokens with Tailwind's `@theme inline`, overriding
  * the raw `--accent*` custom property is enough to move everything downstream:
  * every `text-*`/`bg-*` utility, `--shadow-accent`/`--shadow-alert` (which are
- * `color-mix`es of `--accent`), the reasoning wall's tint, and every `LedEdge`
- * tone, whose `--led` resolves from these same properties. Nothing else needs
- * to know this feature exists.
+ * `color-mix`es of `--accent`), the reasoning wall's tint, and the action tier's
+ * band and tint. Nothing else needs to know this feature exists.
  *
  * The per-axis accessors live next door — `accent-store.ts` for the five accent
  * meanings, `session-accent-store.ts` for the signature per session mode. Both

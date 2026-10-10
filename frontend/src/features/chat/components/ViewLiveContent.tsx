@@ -126,7 +126,7 @@ export function ViewLiveContent(props: {
           {(t) => (
             <div class="shrink-0 px-2 py-1">
               <Text variant="micro" tone="dim">
-                LIVE PREVIEW UNREACHABLE — LAST CHECKED {t()}
+                Live preview unreachable — last checked {t()}
               </Text>
             </div>
           )}

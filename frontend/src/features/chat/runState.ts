@@ -3,7 +3,7 @@
  * surface that asks.
  *
  * **Why this is a module and not a table inside `SessionRow`.** Three surfaces report
- * the same fact: the rail's row lights its edge, the composer's header line names it, and
+ * the same fact: the rail's row marks its edge, the composer's header line names it, and
  * a cold thread's recap prints it in a cell. A table per surface is three tables that
  * agree until the day one of them gains a state, and the failure is silent — the rail
  * calls a run `BLOCKED` in amber while the room three inches away still calls it
@@ -16,7 +16,7 @@
  * outcome is what it falls back to at rest.
  */
 
-import type { LedTone, Status } from "~/ui";
+import type { Status } from "~/ui";
 import type { ChatActivity, ChatOutcome } from "./model";
 
 /** Either half of the pair, resolved to the one state a surface renders. */
@@ -30,22 +30,19 @@ export interface RunStateSpec {
    *  State carried by a coloured edge alone is state an operator can't read (§12), so
    *  every surface that lights something also says this. */
   spoken: string;
-  /** Which accent, when the state is worth spending one on. */
-  tone: LedTone;
-  /** The `StatusDot`/`StatusFlag` equivalent, for the surfaces that mark rather than
-   *  glow. Kept beside the LED tone rather than derived from it: they are two different
-   *  vocabularies and `neutral` has no status twin. */
+  /** The accent the state is reported in — `StatusDot`/`StatusFlag`'s vocabulary, and
+   *  the colour of the rail row's edge when the state is `loud`. */
   status: Status;
   /** Work is still in flight — the clock should tick and the dot should pulse. */
   live: boolean;
   /**
-   * Worth lighting a whole row from across the room.
+   * Worth marking a whole row's edge from across the room.
    *
    * **This is the accent budget, written down.** §5 rule 1 says a screen at rest is
-   * grayscale, and a rail that glows green on every thread that ever finished reports
-   * nothing at all — the eye stops finding the lit one, which is the entire mechanism
-   * (§10.15). So the edge lights for live work and for the two endings that mean the
-   * operator is needed; a plain `done` and a `cancelled` are marked, not lit.
+   * grayscale, and a rail that marks green on every thread that ever finished reports
+   * nothing at all — the eye stops finding the marked one, which is the entire mechanism
+   * (§10.15). So the edge is coloured for live work and for the two endings that mean
+   * the operator is needed; a plain `done` and a `cancelled` get only the dot.
    */
   loud: boolean;
 }
@@ -54,7 +51,6 @@ const SPECS = {
   queued: {
     readout: "QUEUED",
     spoken: "queued",
-    tone: "info",
     status: "info",
     live: true,
     loud: true,
@@ -62,7 +58,6 @@ const SPECS = {
   running: {
     readout: "RUNNING",
     spoken: "running",
-    tone: "info",
     status: "info",
     live: true,
     loud: true,
@@ -70,7 +65,6 @@ const SPECS = {
   awaiting_input: {
     readout: "AWAITING YOU",
     spoken: "awaiting approval",
-    tone: "warn",
     status: "warn",
     live: true,
     loud: true,
@@ -78,7 +72,6 @@ const SPECS = {
   done: {
     readout: "DONE",
     spoken: "finished",
-    tone: "nominal",
     status: "nominal",
     live: false,
     loud: false,
@@ -88,7 +81,6 @@ const SPECS = {
     // verb. `error` is the backend's word for the record it kept.
     readout: "FAILED",
     spoken: "ended in an error",
-    tone: "alert",
     status: "alert",
     live: false,
     loud: true,
@@ -96,17 +88,15 @@ const SPECS = {
   blocked: {
     readout: "BLOCKED",
     spoken: "stopped at a limit",
-    tone: "warn",
     status: "warn",
     live: false,
     loud: true,
   },
   cancelled: {
-    // Neutral light and an idle dot, because nothing went wrong and nobody needs to
-    // act: the operator stopped it, and they already know.
+    // An idle dot, because nothing went wrong and nobody needs to act: the operator
+    // stopped it, and they already know.
     readout: "CANCELLED",
     spoken: "cancelled",
-    tone: "neutral",
     status: "idle",
     live: false,
     loud: false,

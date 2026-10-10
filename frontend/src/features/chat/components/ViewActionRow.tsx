@@ -144,7 +144,7 @@ export function ViewActionRow(props: {
         <Menu
           items={menuItems()}
           trigger={
-            <span class="inline-flex h-6 items-center rounded-ctl px-2 text-label text-dim transition-colors hover:text-bright">
+            <span class="inline-flex h-6 items-center px-2 text-label text-dim transition-colors hover:text-bright">
               <span aria-hidden="true">···</span>
               <span class="sr-only">View actions</span>
             </span>

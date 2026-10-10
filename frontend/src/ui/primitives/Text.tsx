@@ -22,7 +22,10 @@ export type TextTone =
   | "nominal"
   | "warn"
   | "alert"
-  | "info";
+  | "info"
+  /** The ground colour, for text set ON a filled accent — the action tier's
+   *  band. Never on the page's own ground, where it is invisible. */
+  | "inverse";
 
 /* The ONLY place the type scale is written, and the place the two voices (§2)
    are encoded.
@@ -74,9 +77,16 @@ const toneClass: Record<TextTone, string> = {
   warn: "text-warn",
   alert: "text-alert",
   info: "text-info",
+  inverse: "text-bg",
 };
 
-export interface TextProps {
+/** Element attributes pass through to the rendered element — an `id`, a `ref`, a
+ *  scroll handler, an inline `style` for a size the caller computes (a viewer's zoom
+ *  step). Colour and type still come from `variant`/`tone`. */
+export interface TextProps extends Omit<
+  JSX.HTMLAttributes<HTMLElement>,
+  "children" | "class"
+> {
   variant?: TextVariant;
   tone?: TextTone;
   /** Element to render. Defaults to <span>. */

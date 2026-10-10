@@ -132,10 +132,19 @@ class TurnStart:
     be counted. ``parts`` is zero for every turn that never folded (nearly all of them) and
     :meth:`slice` is then exactly the plain list slice it always was. Mutable, because an
     in-turn fold moves it and every reader holds this one object.
+
+    ``prompt_message_id`` is the store's id for the operator's prompt when the turn wrote it
+    down as it started — the first message :meth:`slice` yields is then already persisted,
+    and everything that records the turn records only what follows it
+    (:func:`after_recorded_prompt`). It rides the boundary rather than the persistence
+    context because the two are one fact: *where the turn begins* and *how much of it is
+    already on record* are both questions about its opening message. ``None`` for a turn
+    that opens on a request already in the tree (a regenerate) or has nowhere to persist.
     """
 
     index: int = 0
     parts: int = 0
+    prompt_message_id: str | None = None
 
     def slice(self, messages: list[ModelMessage]) -> list[ModelMessage]:
         """``messages`` from this boundary on — the turn's own messages, with anything in
@@ -145,6 +154,26 @@ class TurnStart:
             return turn
         kept = turn[0].parts[-self.parts :]
         return [replace(turn[0], parts=kept), *turn[1:]]
+
+
+def after_recorded_prompt(turn: list[ModelMessage]) -> list[ModelMessage]:
+    """``turn`` — a :meth:`TurnStart.slice` — without its opening request, which the store
+    already holds from the moment the turn began.
+
+    Not a plain ``turn[1:]``. Steering queued before the model's first request is amended
+    onto *that* request (`drive_turn`'s ``_inject_queued`` rebinds its parts), so the
+    opening message can carry user parts the early write never saw. Each one past the
+    prompt's own part is handed back as a request of its own — the shape
+    :func:`split_injected_requests` gives a mid-run aside — so a message the operator typed
+    while the turn was starting is recorded exactly once, right behind the prompt it
+    followed."""
+    if not turn:
+        return turn
+    opening, rest = turn[0], turn[1:]
+    if not isinstance(opening, ModelRequest):
+        return rest
+    parts = [p for p in opening.parts if isinstance(p, UserPromptPart)]
+    return [*(ModelRequest(parts=[part]) for part in parts[1:]), *rest]
 
 
 def split_injected_requests(messages: list[ModelMessage]) -> list[ModelMessage]:

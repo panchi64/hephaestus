@@ -15,9 +15,11 @@ import { Show, type JSX } from "solid-js";
 import { Collapse, Text, cx, type IconName } from "~/ui";
 import { ProcessRow, Sep } from "./ProcessRow";
 
-/** The card treatment every surface row sits on. Exported for the one card that is a
- *  way in rather than a disclosure (`SubagentCard`), so it still reads as a sibling. */
-export const SURFACE_CARD = "overflow-hidden rounded-panel bg-surface shadow-1";
+/** The frame a surface row sits in: square, one hairline, no fill and no shadow — the
+ *  console register's ruled cell (design §6, §7). Contents of a framed region are bare,
+ *  so a rounded, lifted card inside the pane's own frame was a container in a
+ *  container. Exported for the coverage surface's plain blocks. */
+export const SURFACE_CARD = "overflow-hidden border border-line";
 
 /** Surfaces respond to the pane, never the viewport: the operator drags the pane from
  *  320 to 1200px on one screen, so a list goes to two columns where the *pane* has room
@@ -175,7 +177,10 @@ export function SurfaceCard(props: {
       {/* `Collapse`, one animation vocabulary for "a row opening in a panel". */}
       <Collapse open={props.open && props.hasBody !== false}>
         <div
-          class={cx("flex flex-col bg-bg px-2 py-1.5", GAP[props.gap ?? 1.5])}
+          class={cx(
+            "flex flex-col border-t border-line px-2 py-2",
+            GAP[props.gap ?? 1.5],
+          )}
         >
           {props.children}
         </div>

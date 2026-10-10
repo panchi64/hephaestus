@@ -7,9 +7,10 @@
  * from driving a run or sending a turn, and it went wrong in three separate ways while it
  * was a paragraph inside the controller.
  *
- * **The live store is authoritative for the thread already open.** A turn's messages are
- * persisted only when it finishes, so a refetch mid-stream reads an *empty* conversation.
- * Re-seeding from that would blank a streaming thread, so a source change for the thread
+ * **The live store is authoritative for the thread already open.** A turn's prompt is
+ * persisted as it begins but its answer only when it finishes, so a refetch mid-stream
+ * reads the question and none of the reply. Re-seeding from that would blank a streaming
+ * answer, so a source change for the thread
  * we are already on is ignored outright — which also spares the freshly-created thread an
  * empty flash while its history loads, and keeps the live-only fields (preview, artifacts,
  * runId) the cold projection does not carry.
@@ -95,6 +96,7 @@ export function createThreadBinding(deps: BindingDeps): void {
     // A new thread starts a fresh event sequence; drop the prior run's fold/resume
     // bookkeeping so its seqs don't suppress the next run's events.
     deps.state.maxFoldedSeq = 0;
+    deps.state.replayThrough = 0;
     deps.state.activeRunId = null;
     deps.state.runKind = null;
     deps.state.foldTarget = null;
@@ -121,6 +123,11 @@ export function createThreadBinding(deps: BindingDeps): void {
     deps.setTasks([]);
     deps.setPlan(null);
     if (k === null) return;
+    // A thread whose history is still in flight is bound twice — once on the switch,
+    // once when its messages land — and both passes clear the lists above. Asking on
+    // the first would be answered, dropped as stale by the second's clear, and asked
+    // again; the pass that has the thread's messages is the one that asks.
+    if (source === undefined) return;
     backfill(deps, k, "tasksRevision", fetchTasks, deps.setTasks);
     backfill(deps, k, "planRevision", fetchPlan, deps.setPlan);
   }

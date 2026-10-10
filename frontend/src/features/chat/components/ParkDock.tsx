@@ -1,6 +1,17 @@
 import { createMemo, createSignal, Show, type JSX } from "solid-js";
-import { Button, Composer, ConstructionReveal, Row, Stack, Text } from "~/ui";
-import type { Park, ParkDraft } from "../stream/approvals";
+import {
+  ActionButtons,
+  ActionFrame,
+  Composer,
+  Text,
+  type ActionButtonSpec,
+} from "~/ui";
+import { isOneClickPark } from "../approvalDecisions";
+import {
+  PLAN_SUBMIT_TOOL,
+  type Park,
+  type ParkDraft,
+} from "../stream/approvals";
 import type {
   ApprovalDecision,
   ChatMessage,
@@ -55,7 +66,7 @@ import { QuestionPanel } from "./QuestionPanel";
  * Without it, a park the operator does not want to answer would be a trap.
  *
  * ── The glass, and three ways to lose it silently ──
- * The surface is `ConstructionReveal`'s (`ody-glass`), and it frosts the transcript
+ * The surface is plain `ody-glass` on the wrapper, and it frosts the transcript
  * scrolling behind it. All three failures below render a slightly lighter panel rather
  * than an error, which is why they are written down; `FramedOverlay` carries the long
  * version of the same warnings.
@@ -63,8 +74,19 @@ import { QuestionPanel } from "./QuestionPanel";
  *      dock background is on the composer's branch only, not around this one.
  *   2. `backdrop-filter` only blurs within its backdrop root, and `opacity < 1` on ANY
  *      ancestor creates one. Nothing between here and the viewport may fade.
- *   3. The content carries no fill of its own; a `bg-*` inside stacks a second surface
- *      over the frosted one and paints the page out from behind it.
+ *   3. Nothing inside adds a fill of its own beyond the action tier's: a further
+ *      `bg-*` stacks another surface over the frosted one.
+ *
+ * ── The action tier ──
+ * The dock is an `ActionFrame` (design §10.18): a solid band naming
+ * the ask (amber for approvals and a plan, blue for a question), a tinted body, and one
+ * footer per page. A question page's footer is `ChoiceList`'s own — the dock hands it
+ * Stop and Back so the card never stacks a second footer under the first; the approvals
+ * page carries the same cells and the settling submit — or, for a park holding one
+ * call and nothing else, no submit at all: APPROVE and DENY settle on the click.
+ * **No corner marks and no construction reveal:** the action tier's own band and tinted
+ * edge say what kind of place this is, and a registration frame around a frame is two
+ * frames.
  */
 export function ParkDock(props: {
   park: Park;
@@ -130,6 +152,11 @@ export function ParkDock(props: {
     page() !== undefined &&
     pageAnswered(page(), props.draft.replies, props.draft.allDecided);
 
+  /** A single call with nothing else to answer: a verdict is the whole decision, so
+   *  APPROVE and DENY submit on the click and the submit button is not shown. */
+  const oneClick = () =>
+    isOneClickPark(props.park.approvals.length, props.park.questions.length);
+
   const label = () =>
     props.park.questions.length > 0 && props.park.approvals.length > 0
       ? "Answer and decide"
@@ -158,14 +185,17 @@ export function ParkDock(props: {
   /** Settle the whole park in one body. `note` is what the operator wrote in the
    *  composer, and it rides on every call they asked for changes to — the one kind of no
    *  that is a request rather than a refusal. */
-  async function submit(note?: string): Promise<void> {
-    if (!ready() || submitting()) return;
+  async function submit(
+    note?: string,
+    settled?: ApprovalDecision[],
+  ): Promise<void> {
+    if ((!settled && !ready()) || submitting()) return;
     setSubmitting(true);
     try {
       await props.onSubmit({
         decisions:
           props.park.approvals.length > 0
-            ? props.draft.decisions.map((d) =>
+            ? (settled ?? props.draft.decisions).map((d) =>
                 !d.approved && d.intent === "revise" && note
                   ? { ...d, message: note }
                   : d,
@@ -178,15 +208,49 @@ export function ParkDock(props: {
     }
   }
 
+  /** The band's legend: what kind of ask this page is, in a few words. */
+  const title = (): string => {
+    if (props.park.stale) return "Answered elsewhere";
+    if (page()?.kind === "question") return "Question · agent is waiting";
+    const approvals = props.park.approvals;
+    if (approvals.length === 1)
+      return approvals[0].name === PLAN_SUBMIT_TOOL
+        ? "Plan · approve to build"
+        : `Approval needed · ${approvals[0].name}`;
+    return `Approval needed · ${approvals.length} actions`;
+  };
+
+  /** The dock's own cells, sharing whichever footer the page has: the way out, and
+   *  the way back a page. */
+  const secondary = (): ActionButtonSpec[] => [
+    // The way out. See the note above — this is the operator's only interrupt
+    // while the dock holds the composer's slot.
+    { label: "Stop", onClick: props.onStop },
+    ...(index() > 0
+      ? [{ label: "Back", onClick: () => props.onDraft({ page: index() - 1 }) }]
+      : []),
+  ];
+
   return (
-    <ConstructionReveal when origin="top-left" contentClass="flex flex-col">
-      <Stack gap={3} class="p-4">
+    <div class="ody-glass flex flex-col">
+      <ActionFrame
+        tone={asking() ? "question" : "approval"}
+        title={title()}
+        live={!props.park.stale}
+        aside={
+          // Where the operator is, when there is more than one place to be. A single
+          // page says nothing — a position readout over one item is furniture.
+          pages().length > 1 && !props.park.stale
+            ? `${index() + 1} / ${pages().length}`
+            : undefined
+        }
+      >
         <Show
           when={!props.park.stale}
           fallback={
-            <Text variant="micro" tone="dim">
-              ANSWERED ELSEWHERE — this was settled from another session; the
-              transcript will catch up shortly.
+            <Text as="p" variant="body" tone="dim" class="px-3 py-3">
+              This was settled from another session; the transcript will catch
+              up shortly.
             </Text>
           }
         >
@@ -205,44 +269,27 @@ export function ParkDock(props: {
             />
           </Show>
 
-          {/* Where the operator is, when there is more than one place to be. A single
-              question says nothing — a position readout over one item is furniture. */}
-          <Show when={pages().length > 1}>
-            <Row justify="between" align="center">
-              <Text variant="micro" tone="dim">
-                {page()?.kind === "approvals"
-                  ? `Step ${index() + 1} of ${pages().length} — permissions`
-                  : `Question ${index() + 1} of ${pages().length}`}
-              </Text>
-              <Row gap={1} align="center">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  leading="chevron-left"
-                  disabled={index() === 0}
-                  onClick={() => props.onDraft({ page: index() - 1 })}
-                >
-                  Back
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  trailing="chevron-right"
-                  disabled={isLast() || !canAdvance()}
-                  onClick={() => props.onDraft({ page: index() + 1 })}
-                >
-                  Next
-                </Button>
-              </Row>
-            </Row>
-          </Show>
-
+          {/* A question page's footer is the choice list's own: its primary is Next
+              until the last page, where it settles the whole park. The page position
+              rides the band's aside. */}
           <Show when={asking()}>
             {(at) => (
               <QuestionPanel
                 question={at().question}
                 reply={props.draft.replies[at().callId]?.[at().index]}
                 onChange={(reply) => setReply(at().callId, at().index, reply)}
+                secondary={secondary()}
+                submitLabel={
+                  isLast() ? (submitting() ? "Sending…" : undefined) : "Next"
+                }
+                submitDisabled={
+                  isLast() ? !ready() || submitting() : !canAdvance()
+                }
+                onSubmit={() =>
+                  isLast()
+                    ? void submit()
+                    : props.onDraft({ page: index() + 1 })
+                }
               />
             )}
           </Show>
@@ -259,6 +306,11 @@ export function ParkDock(props: {
             <div classList={{ hidden: page()?.kind !== "approvals" }}>
               <ApprovalPanel
                 approvals={props.park.approvals}
+                named={props.park.approvals.length === 1}
+                keys={oneClick()}
+                onSettle={
+                  oneClick() ? (given) => submit(undefined, given) : undefined
+                }
                 onReadPlan={props.onReadPlan}
                 onChange={(given, decided) =>
                   props.onDraft({ decisions: given, allDecided: decided })
@@ -281,47 +333,45 @@ export function ParkDock(props: {
               message. So the card that used to carry a textarea for both answers now
               stops the operator for the one that cannot wait. */}
           <Show when={revising() && isLast()}>
-            <Composer
-              bare
-              autofocus
-              sendLabel="Revise"
-              placeholder="What should change about this plan?"
-              sendBlocked={sendBlocked()}
-              onSend={(text) => void submit(text)}
-            />
+            <div class="border-t border-line px-3 py-3">
+              <Composer
+                bare
+                autofocus
+                sendLabel="Revise"
+                placeholder="What should change about this plan?"
+                sendBlocked={sendBlocked()}
+                onSend={(text) => void submit(text)}
+              />
+            </div>
           </Show>
 
-          <Row justify="between" align="center">
-            {/* The way out. See the note above — this is the operator's only
-                interrupt while the dock holds the composer's slot. */}
-            <Button
-              variant="ghost"
-              size="sm"
-              leading="close"
-              onClick={props.onStop}
-            >
-              Stop
-            </Button>
-            {/* While the note is being written, SEND is the composer's own — a second
-                submit beside it would be two buttons doing one thing, one of which
-                would post an empty request for changes. It carries the same refusal the
-                button would have (`sendBlocked`), so hiding the button hides no state.
-
-                The submit only appears on the last page: offering it earlier would put
-                a disabled primary button under every question, which reads as the form
-                being broken rather than as unfinished. */}
-            <Show when={!revising() && isLast()}>
-              <Button
-                variant="primary"
-                disabled={!ready() || submitting()}
-                onClick={() => void submit()}
-              >
-                {submitting() ? "Sending…" : label()}
-              </Button>
-            </Show>
-          </Row>
+          {/* The approvals page's footer. While the note is being written, SEND is the
+              composer's own — a second submit beside it would be two buttons doing one
+              thing, one of which would post an empty request for changes. It carries
+              the same refusal the button would have (`sendBlocked`), so hiding the
+              button hides no state. The approvals are always the last page, so the
+              submit here is always the settling one. */}
+          <Show when={!asking()}>
+            <div class="flex justify-end border-t border-line">
+              <ActionButtons
+                buttons={[
+                  ...secondary(),
+                  ...(revising() || oneClick()
+                    ? []
+                    : [
+                        {
+                          label: submitting() ? "Sending…" : label(),
+                          primary: true,
+                          disabled: !ready() || submitting(),
+                          onClick: () => void submit(),
+                        },
+                      ]),
+                ]}
+              />
+            </div>
+          </Show>
         </Show>
-      </Stack>
-    </ConstructionReveal>
+      </ActionFrame>
+    </div>
   );
 }

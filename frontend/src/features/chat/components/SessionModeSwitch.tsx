@@ -2,6 +2,8 @@ import { type JSX } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { SESSION_MODES, type SessionMode } from "~/lib/modes";
 import { Segmented, type SegmentedOption } from "~/ui";
+import { isMac, registerKeymap } from "~/lib/keymap";
+import { modeShortcutCombo, modeShortcutLabel } from "../modeShortcuts";
 import {
   activeSessionMode,
   setActiveSessionMode,
@@ -10,12 +12,17 @@ import {
 /** The registry's modes as the control's options — built once, since the set is
  *  static and rebuilding it per render would remake the array every time the
  *  mode changed. */
-const OPTIONS: SegmentedOption<SessionMode>[] = SESSION_MODES.map((spec) => ({
-  value: spec.id,
-  label: spec.label,
-  icon: spec.icon,
-  description: spec.description,
-}));
+const OPTIONS: SegmentedOption<SessionMode>[] = SESSION_MODES.map(
+  (spec, i) => ({
+    value: spec.id,
+    label: spec.label,
+    icon: spec.icon,
+    description: spec.description,
+    // The shortcut lives in the tooltip only: the bar is three words, and a key
+    // printed in each cell would crowd the one strong element at the rail's head.
+    hint: `${spec.description} (${modeShortcutLabel(i, isMac())})`,
+  }),
+);
 
 /**
  * **Which kind of work you are looking at** — the rail's first control, above the
@@ -53,14 +60,20 @@ export function SessionModeSwitch(): JSX.Element {
     navigate("/chat");
   };
 
+  registerKeymap(() =>
+    OPTIONS.map((option, i) => ({
+      combo: modeShortcutCombo(i),
+      run: () => setMode(option.value),
+    })),
+  );
+
   return (
-    <div class="px-2 pb-1">
-      <Segmented
-        aria-label="Session mode"
-        options={OPTIONS}
-        value={mode()}
-        onChange={setMode}
-      />
-    </div>
+    <Segmented
+      variant="ruled"
+      aria-label="Session mode"
+      options={OPTIONS}
+      value={mode()}
+      onChange={setMode}
+    />
   );
 }

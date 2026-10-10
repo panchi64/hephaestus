@@ -37,7 +37,7 @@ export function Checkbox(props: CheckboxProps): JSX.Element {
       />
       <span
         class={cx(
-          "flex size-4 items-center justify-center rounded-ctl border transition-colors",
+          "flex size-4 items-center justify-center border transition-colors",
           local.checked
             ? "border-bright text-bright"
             : "border-line text-transparent",

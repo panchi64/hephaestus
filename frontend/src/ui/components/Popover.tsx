@@ -14,6 +14,13 @@ import {
   type Rect,
 } from "./popoverPlacement";
 
+export type PanelVariant = "default" | "console";
+
+const PANEL_SURFACE: Record<PanelVariant, string> = {
+  default: "ody-rise bg-surface shadow-2",
+  console: "ody-rise border border-line-strong bg-surface shadow-2",
+};
+
 export interface PopoverApi {
   /** Reactive open-state accessor — call it (`open()`) in the trigger. */
   open: () => boolean;
@@ -38,6 +45,11 @@ export interface PopoverProps {
    *  region a `ConstructionReveal` draws): a card *around* that frame is the
    *  box-in-a-box the frame exists to avoid, and its shadow would sit on the glass. */
   bare?: boolean;
+  /** The panel's own surface. `console` is the square, ruled menu of the console
+   *  register — a `line-strong` frame and no radius — for a menu opened from a ruled
+   *  strip (the composer's pickers), so it reads as the strip's own. It keeps the
+   *  shadow: it floats. */
+  variant?: PanelVariant;
   /** Fired on the closed→open edge only, so a caller can refresh what the panel is
    *  about to show. Not fired on close, and never twice for one opening. */
   onOpen?: () => void;
@@ -80,6 +92,7 @@ export interface FloatingPanelProps {
   block?: boolean;
   panelClass?: string;
   bare?: boolean;
+  variant?: PanelVariant;
   /** Right-click on the backdrop. Left unset it does nothing, which is what the
    *  dropdowns want; a context menu passes a handler that closes, so the operator's
    *  next right-click reaches the row underneath instead of the backdrop. */
@@ -213,6 +226,7 @@ export function FloatingPanel(props: FloatingPanelProps): JSX.Element {
           placement={placement()}
           panelClass={props.panelClass}
           bare={props.bare}
+          variant={props.variant}
           onMeasure={measure}
         >
           {props.panel()}
@@ -259,6 +273,7 @@ export function Popover(props: PopoverProps): JSX.Element {
         block={props.block}
         panelClass={props.panelClass}
         bare={props.bare}
+        variant={props.variant}
         panel={() => props.panel({ close })}
       />
     </div>
@@ -276,6 +291,7 @@ function PopoverPanel(props: {
   placement: Placement | null;
   panelClass?: string;
   bare?: boolean;
+  variant?: PanelVariant;
   onMeasure: () => void;
   children: JSX.Element;
 }): JSX.Element {
@@ -300,7 +316,7 @@ function PopoverPanel(props: {
         "fixed z-50",
         // A bare panel also drops the rise: it brings its own arrival, and two
         // entrance animations on nested elements read as a bounce.
-        !props.bare && "ody-rise rounded-panel bg-surface shadow-2",
+        !props.bare && PANEL_SURFACE[props.variant ?? "default"],
         // Scrolling is added only when we actually clamp; Select already scrolls
         // itself and Combobox scrolls an inner element, and nesting a second
         // overflow-auto around either gives the panel two scrollbars.

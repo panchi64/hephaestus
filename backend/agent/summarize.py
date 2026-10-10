@@ -104,11 +104,35 @@ class NothingToFold:
 type FoldFailure = Literal["summarizer_empty", "tool_call", "leaf_moved", "error"]
 
 
+#: What a fold that *had* work to do and did not land tells the operator. One sentence per
+#: cause rather than one for all of them, because what they would do next differs: a
+#: summarizer that wrote nothing is worth retrying, and a leaf that moved means the fold
+#: described a path they have navigated away from.
+_FOLD_FAILURE_MESSAGES: dict[FoldFailure, str] = {
+    "summarizer_empty": "The fold did not land — the model returned no summary. Try again.",
+    "tool_call": (
+        "The fold did not land — the model answered with a tool call instead of the "
+        "summary, and it was not run. Try again."
+    ),
+    "leaf_moved": (
+        "The fold did not land — the conversation moved while it ran, so the summary "
+        "described a path you are no longer on. Try again."
+    ),
+    "error": "The fold did not land. Try again, or check the logs for what failed.",
+}
+
+
 @dataclass(frozen=True)
 class FoldFailed:
     """A fold that had something to do and did not land."""
 
     cause: FoldFailure
+
+    @property
+    def message(self) -> str:
+        """The operator-readable sentence for ``cause`` — what the run's blocked detail and
+        the ``compaction.failed`` frame both say, so the two never word it differently."""
+        return _FOLD_FAILURE_MESSAGES[self.cause]
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,15 @@
-import { createSignal, For, type JSX } from "solid-js";
+import { createSignal, For, Show, type JSX } from "solid-js";
 import { useLocation } from "@solidjs/router";
-import { Button, ListRow, Text, Tooltip, cx, toast } from "~/ui";
+import {
+  Frames,
+  Icon,
+  ListRow,
+  StatusBar,
+  StatusCell,
+  Text,
+  Tooltip,
+  toast,
+} from "~/ui";
 import { createInFlight } from "~/lib/inFlight";
 import { useSession } from "~/lib/stores/session";
 import { useSettingsRoute } from "~/app/settings-dialog";
@@ -8,7 +17,6 @@ import { RecentsRail } from "~/features/chat/components/RecentsRail";
 import { SessionModeSwitch } from "~/features/chat/components/SessionModeSwitch";
 import { AREAS, areaForPath, railRows, type NavItem } from "../nav";
 import { AreaSection } from "./AreaSection";
-import { NavPalette, openNavPalette } from "./NavPalette";
 import { navMeta } from "./navMeta";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 
@@ -22,15 +30,12 @@ function PinRow(props: { item: NavItem; active: boolean }): JSX.Element {
       class="block w-full"
     >
       <ListRow
+        variant="nav"
         label={props.item.label}
         leading={props.item.icon}
         href={props.item.href}
         selected={props.active}
         right={navMeta(props.item)}
-        // Selection is a raised fill on a smoothed corner (§10 States), not the
-        // old 2px left rule — a rail of vertical bars was reading as chrome, and
-        // the fill says "you are here" without adding a line to the page.
-        class={cx("rounded-ctl", props.active && "bg-raised")}
       />
     </Tooltip>
   );
@@ -90,33 +95,18 @@ export function Sidebar(): JSX.Element {
   };
 
   return (
-    <nav class="flex h-full min-h-0 flex-col bg-surface">
+    <nav class="ody-rail flex h-full min-h-0 flex-col bg-surface">
       <div class="sticky top-0 z-30 bg-surface">
-        <div class="flex items-center justify-between gap-2 pr-2">
-          <a
-            href="/"
-            class="mx-1 flex min-w-0 flex-1 flex-col gap-1 rounded-ctl px-2 py-3 transition-colors hover:bg-raised"
-          >
-            {/* A wordmark is neither the interface talking nor the machine
-                reporting — it is a name. Sans with the display tracking reads
-                as a logotype; the old uppercase read as one more HUD label. */}
-            <Text variant="readout" tone="bright" class="tracking-tight">
-              Odysseus
-            </Text>
-            <Text variant="micro" tone="dim">
-              ODY-WORKSPACE-02.1
-            </Text>
-          </a>
-          <Tooltip side="right" label="Go to… (⌘K)">
-            <Button
-              variant="ghost"
-              size="sm"
-              leading="search"
-              aria-label="Go to page"
-              onClick={openNavPalette}
-            />
-          </Tooltip>
-        </div>
+        {/* The wordmark in the machine's voice, wide-tracked, with the workspace id
+            dim beside it — a quiet line over the mode bar, which is the one strong
+            element at the rail's head. It stacks under the brand at the rail's
+            narrowest. */}
+        <a href="/" class="ody-rail-brand hover:bg-raised">
+          <span class="ody-rail-wordmark">Odysseus</span>
+          <Text variant="micro" tone="dim">
+            ody-workspace-02.1
+          </Text>
+        </a>
 
         {/* What kind of work you are looking at — and, since the Chat row went,
             the way into it. It sits directly under the wordmark because it is
@@ -132,14 +122,13 @@ export function Sidebar(): JSX.Element {
         <SessionModeSwitch />
       </div>
 
-      <ProjectSwitcher />
+      {/* The threads, with the search strip over them and the project filter at
+          the right end of their heading. Mounted on every route, not only `/chat` —
+          the rail used to host this through a route-matched slot, which made the
+          conversation list disappear the moment you looked at anything else. */}
+      <RecentsRail filter={<ProjectSwitcher />} />
 
-      {/* The threads. Mounted on every route, not only `/chat` — the rail used
-          to host this through a route-matched slot, which made the conversation
-          list disappear the moment you looked at anything else. */}
-      <RecentsRail />
-
-      <div class="sticky bottom-0 mt-2 bg-surface pt-2">
+      <div class="sticky bottom-0 border-t border-line-strong bg-surface">
         {/* The corpus and the compare bench, on the same footing as COMMS and for
             the same reason: they are things you go and check, not the thing you
             are doing. Above the threads they read as peers of chat and competed
@@ -167,38 +156,47 @@ export function Sidebar(): JSX.Element {
             the strip two controls that both act on the session.
 
             Settings still opens the dialog rather than navigating, which is why
-            it is a button and not a `ListRow` with an `href`: a row that looks
-            like every other destination but changes no route would be a lie
-            about what clicking it does. */}
-        <div class="flex items-center justify-between gap-2 px-1 py-2">
-          <Tooltip
-            delay={1000}
-            side="right"
-            label="Preferences, connections, and the state of the machine"
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              leading="settings"
-              active={settings.open()}
-              onClick={() => settings.show()}
+            it is a button and not a destination row: a row that looks like every
+            other destination but changes no route would be a lie about what
+            clicking it does. It recedes, like the composer's strip — the rail's
+            last line is the one read least. Lock has no keyboard shortcut, on
+            purpose: ending the session is never a chord away. */}
+        <StatusBar
+          variant="recede"
+          start={
+            <Tooltip
+              delay={1000}
+              side="right"
+              label="Preferences, connections, and the state of the machine"
+              class="flex flex-1"
             >
-              Settings
-            </Button>
-          </Tooltip>
-          <Button
-            variant="ghost"
-            size="sm"
-            leading="lock"
-            pending={locking.has("lock")}
-            onClick={onLock}
-          >
-            {locking.has("lock") ? "Locking…" : "Lock"}
-          </Button>
-        </div>
+              <StatusCell
+                active={settings.open()}
+                onClick={() => settings.show()}
+                class="flex-1 px-3"
+              >
+                <Icon name="settings" size={16} />
+                settings
+              </StatusCell>
+            </Tooltip>
+          }
+          end={
+            <StatusCell
+              disabled={locking.has("lock")}
+              onClick={onLock}
+              class="border-l border-line px-3"
+            >
+              <Show
+                when={locking.has("lock")}
+                fallback={<Icon name="lock" size={16} />}
+              >
+                <Frames />
+              </Show>
+              {locking.has("lock") ? "locking…" : "lock"}
+            </StatusCell>
+          }
+        />
       </div>
-
-      <NavPalette />
     </nav>
   );
 }

@@ -1,5 +1,6 @@
 import { createMemo, createSignal, Show, type JSX } from "solid-js";
-import { Select, Text, toast } from "~/ui";
+import { Icon, Menu, Tooltip, toast } from "~/ui";
+import { settled } from "~/lib/resource";
 import {
   activeProjectId,
   isUnscoped,
@@ -14,11 +15,9 @@ const ALL = "__all__";
 const NONE = "__none__";
 const MANAGE = "__manage__";
 
-/** The project scope, above the area switcher.
- *
- *  Deliberately a third, quieter tier rather than a rail slot: `railSlots` is
- *  path-matched (RECENTS only exists on /chat), and the scope has to be readable and
- *  changeable from every surface it affects — which is most of them.
+/** The project scope, as a dim filter at the right end of the rail's list heading
+ *  (`RECENTS · 24   All projects ▾`). It is mounted on every route with the rail, so
+ *  the scope is readable and changeable from every surface it affects.
  *
  *  It renders nothing until the operator has at least one project. A control that
  *  scopes nothing is just a row of vertical space explaining a feature they haven't
@@ -28,11 +27,11 @@ export function ProjectSwitcher(): JSX.Element {
   const settings = useSettingsRoute();
 
   const options = createMemo(() => {
-    const rows = (projects.latest?.projects ?? []).filter((p) => !p.archived);
+    const rows = (settled(projects)?.projects ?? []).filter((p) => !p.archived);
     return [
       { value: NONE, label: "Unfiled only" },
       { value: ALL, label: "All projects" },
-      ...rows.map((p) => ({ value: p.id, label: p.name.toUpperCase() })),
+      ...rows.map((p) => ({ value: p.id, label: p.name })),
       { value: MANAGE, label: "Manage projects…" },
     ];
   });
@@ -83,25 +82,38 @@ export function ProjectSwitcher(): JSX.Element {
       });
   };
 
+  const current = () =>
+    options().find((o) => o.value === value())?.label ?? "All projects";
+  const label = () => (picking() ? `${current()} · switching…` : current());
+
+  // A dim trigger at the right end of the list's heading, not a field of its own:
+  // the scope is a quiet qualifier on the list, and a full select above the threads
+  // spent a row on it. At the rail's narrowest it is a funnel, its name in the
+  // tooltip. The control stays live throughout a switch — a second pick supersedes
+  // the first cleanly, and a switcher disabled on a hung request would be dead with
+  // no way back.
   return (
-    <Show when={(projects.latest?.projects ?? []).length > 0}>
-      <div class="px-3 py-2">
-        {/* The busy state rides the field's own label rather than a line added
-            beneath it: a note that appears and disappears under the switcher would
-            shove the whole rail down for the length of a round trip, which is a
-            worse read than the thing it is reporting. The control stays live
-            throughout — a second pick now supersedes the first cleanly, and a
-            switcher disabled on a hung request would be dead with no way back. */}
-        <Text variant="label" tone="dim">
-          {picking() ? "Project · switching…" : "Project"}
-        </Text>
-        <Select
-          options={options()}
-          value={value()}
-          onChange={onChange}
-          class="mt-1"
+    <Show when={(settled(projects)?.projects ?? []).length > 0}>
+      <Tooltip label={`Project filter: ${label()}`} side="bottom" delay={600}>
+        <Menu
+          align="right"
+          items={options().map((o) => ({
+            label: o.value === value() ? `${o.label} ✓` : o.label,
+            separated: o.value === MANAGE,
+            onSelect: () => onChange(o.value),
+          }))}
+          trigger={
+            <span
+              aria-label={`Project filter: ${label()}`}
+              class="flex min-w-0 items-center gap-1 font-mono text-meta text-dim hover:text-text"
+            >
+              <Icon name="filter" size={16} class="ody-rail-narrow" />
+              <span class="ody-rail-wide min-w-0 truncate">{label()}</span>
+              <Icon name="chevron-down" size={12} class="ody-rail-wide" />
+            </span>
+          }
         />
-      </div>
+      </Tooltip>
     </Show>
   );
 }

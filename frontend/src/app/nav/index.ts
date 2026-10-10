@@ -1,12 +1,5 @@
 import { AREAS, LOOSE_SURFACES, RAIL_ROWS } from "./areas";
-import { searchSettings } from "./settings-search";
-import type {
-  NavArea,
-  NavItem,
-  NavMatch,
-  PaletteHit,
-  SettingEntry,
-} from "./types";
+import type { NavArea, NavItem, NavMatch } from "./types";
 
 export { AREAS, LOOSE_SURFACES, RAIL_ROWS };
 export type {
@@ -14,34 +7,17 @@ export type {
   NavIndicator,
   NavItem,
   NavMatch,
-  PaletteHit,
   RailRow,
-  SettingEntry,
-  SettingChoice,
-  SettingKind,
-  SettingValue,
-  ChoiceSetting,
-  NumberSetting,
-  ToggleSetting,
 } from "./types";
-export {
-  searchSettings,
-  formatSettingValue,
-  nextChoiceValue,
-  parseSettingNumber,
-  isChoiceSetting,
-  isNumberSetting,
-} from "./settings-search";
 
 /** The rail's rows for one slot, in declaration order. Placement only — a
  *  surface missing from every slot still exists (see `areas.ts`). */
 export const railRows = (slot: "top" | "footer"): NavItem[] =>
   RAIL_ROWS.filter((r) => r.slot === slot).map((r) => r.item);
 
-/** Every page in the nav, area-owned or not — the map the shell, the titles and
- *  the palette all read. A loose surface an area already owns is skipped: its
- *  page is here under its own label, and listing it twice would give search two
- *  rows for one destination.
+/** Every page in the nav, area-owned or not — the map the shell and the titles
+ *  read. A loose surface an area already owns is skipped: its page is here under
+ *  its own label, and listing it twice would give a route two answers.
  *
  *  Note this reads the *surfaces*, never the rail rows. A page's existence does
  *  not depend on the rail drawing it. */
@@ -187,93 +163,4 @@ export function isDeepFieldRoute(
   routes: string[] = DEEP_FIELD_ROUTES,
 ): boolean {
   return routes.includes(pathname);
-}
-
-/** Search across every area — label first, then description, so a surface is
- *  findable by what it does. The fast jump: a keystroke beats expanding a
- *  section and scanning its rows. */
-export function searchNav(query: string, areas: NavArea[] = AREAS): NavMatch[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
-  const byLabel: NavMatch[] = [];
-  const byDescription: NavMatch[] = [];
-  for (const match of flattenNav(areas)) {
-    if (match.item.label.toLowerCase().includes(q)) byLabel.push(match);
-    else if (match.item.description.toLowerCase().includes(q))
-      byDescription.push(match);
-  }
-  return [...byLabel, ...byDescription];
-}
-
-/* ── The palette's two-kind result list ─────────────────────────────────────── */
-
-/** What the palette is looking through. Both sides are injectable for the same
- *  reason `areas` is: the rules below are exercised against fixtures. */
-export interface PaletteSources {
-  areas?: NavArea[];
-  settings?: SettingEntry[];
-}
-
-/** One row, with the flat index its section can't work out on its own. The
- *  cursor keys move through the flat list while the eye reads sections, so the
- *  index has to survive the grouping. */
-export interface PaletteRow {
-  hit: PaletteHit;
-  index: number;
-}
-
-export interface PaletteSection {
-  label: string;
-  rows: PaletteRow[];
-}
-
-/** The heading pages file under. Settings file under their own group names, so
- *  a settings row can never be mistaken for somewhere to navigate. */
-export const PAGES_SECTION = "PAGES";
-
-function toHits(nav: NavMatch[], settings: SettingEntry[] = []): PaletteHit[] {
-  return [
-    ...nav.map((m): PaletteHit => ({ kind: "nav", nav: m })),
-    ...settings.map((s): PaletteHit => ({ kind: "setting", setting: s })),
-  ];
-}
-
-/** Search both kinds at once. Pages come first as a block: navigating is still
- *  what the palette is mostly for, and a settings row that jumped above the page
- *  you were reaching for would change what `Enter` does out from under you. */
-export function searchPalette(
-  query: string,
-  sources: PaletteSources = {},
-): PaletteHit[] {
-  return toHits(
-    searchNav(query, sources.areas ?? AREAS),
-    searchSettings(query, sources.settings ?? []),
-  );
-}
-
-/** The empty-query listing — every page, then every setting. The palette opens
- *  onto a directory rather than a blank overlay, and now that it holds two kinds
- *  of thing the directory is what teaches that the settings are in here at all. */
-export function paletteDirectory(sources: PaletteSources = {}): PaletteHit[] {
-  return toHits(flattenNav(sources.areas ?? AREAS), sources.settings ?? []);
-}
-
-/** Fold a flat result list into labelled sections, preserving order and carrying
- *  each row's flat index through. Sections appear in first-appearance order —
- *  the registry's declaration order is the operator-facing order, so grouping
- *  must not re-sort it. */
-export function paletteSections(hits: PaletteHit[]): PaletteSection[] {
-  const sections: PaletteSection[] = [];
-  const byLabel = new Map<string, PaletteSection>();
-  hits.forEach((hit, index) => {
-    const label = hit.kind === "nav" ? PAGES_SECTION : hit.setting.group;
-    let section = byLabel.get(label);
-    if (!section) {
-      section = { label, rows: [] };
-      byLabel.set(label, section);
-      sections.push(section);
-    }
-    section.rows.push({ hit, index });
-  });
-  return sections;
 }

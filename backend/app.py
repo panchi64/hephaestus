@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import sys
 from contextlib import asynccontextmanager
+from functools import partial
 
 import httpx
 from fastapi import FastAPI
@@ -24,6 +25,7 @@ from core.config import Settings, get_settings
 from core.db import init_db, make_engine
 from core.devserver import UNGUARDED_RELOAD_WARNING, reload_watches_runtime_state
 from core.http_errors import install_error_handlers
+from core.shutdown import begin_shutdown, reset_shutdown
 from core.vault import Vault
 from harness import LifecycleRegistry
 from harness.discovery import discover_manifests
@@ -55,7 +57,12 @@ from services.egress import EgressPolicy
 from services.embeddings import RegistryEmbedder
 from services.plan_mode import PlanMode
 from services.registry import ModelRegistry
-from services.sandbox import SandboxSessionManager, detect_sandbox, shutdown_confinement
+from services.sandbox import (
+    SandboxSessionManager,
+    detect_sandbox,
+    shutdown_confinement,
+    stop_all_groups,
+)
 from services.sandbox.names import ContainerNames
 from services.sealing import seal_legacy_column
 from services.settings_store import SettingsStore
@@ -127,7 +134,17 @@ async def lifespan(app: FastAPI):
         await _wire(app, settings, lifecycle)
         yield
     finally:
-        await lifecycle.stop_all()
+        # First, before anything is stopped: every long-lived response (the notification
+        # feed, a parked run's stream, a proxied preview) ends on this, and a server that
+        # reached here by a signal has already raised it from `core.server` — this covers
+        # the paths that have no signal (a test client, a failed boot). Then the units
+        # unwind in reverse registration order, each bounded; the flag is cleared last so
+        # the next app in this process starts clear.
+        begin_shutdown()
+        try:
+            await lifecycle.stop_all()
+        finally:
+            reset_shutdown()
 
 
 async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) -> None:
@@ -220,6 +237,9 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # and starts proxy listeners doing so. Registered here so they stop with the app —
     # under the reloading dev server they would otherwise accumulate per restart.
     lifecycle.on_stop("host-confinement", shutdown_confinement)
+    # A command that backgrounded a server leaves a process group nothing else remembers;
+    # stopped after the runs (which kill their own commands), so it only catches strays.
+    lifecycle.on_stop("host-process-groups", stop_all_groups)
     # The model registry — role→endpoint resolution + the endpoint catalog.
     registry = ModelRegistry(engine, vault, http_client=discovery_client)
     app.state.models = registry
@@ -423,7 +443,9 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # — and given their own pre-cancel flush — while those are still running. Without
     # this a turn in flight at shutdown submits onto an already-stopped write-behind
     # drainer, which discards it with no error.
-    lifecycle.on_stop("runs", app.state.runs.shutdown)
+    lifecycle.on_stop(
+        "runs", partial(app.state.runs.shutdown, settings.shutdown_drain_timeout_s)
+    )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

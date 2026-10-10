@@ -6,7 +6,7 @@ import {
   on,
   type JSX,
 } from "solid-js";
-import { Collapse, LedEdge, Text } from "~/ui";
+import { Collapse, Text, cx } from "~/ui";
 import { THINK_ICON } from "../workShape";
 import { ProcessRow, Sep, createAdoptedOpen } from "./ProcessRow";
 
@@ -132,15 +132,20 @@ export function ReasoningBlock(props: {
 
           Nothing sits in the foreground. The wall is its own indicator: text
           arriving is the most direct signal there is that the model is working,
-          and the lit edge beside it already says so in light. A label and a
-          throbber on top were both restating it.
+          and the `info` edge beside it already says so. A label and a throbber
+          on top were both restating it.
 
-          That edge is the wall's own `LedEdge`, not the trunk's. The wall has no
+          That edge is the wall's own border, not the trunk's. The wall has no
           socket for its branch's elbow to land on, so the elbow lands on this
-          border instead: trunk, elbow and edge light together as one path into
-          the wall. It goes dark as the stage clears, and grows and shrinks with
-          it, since it is the stage's own box. */}
-      <LedEdge lit={live()} class="pl-3">
+          border instead: trunk, elbow and edge together as one path into the
+          wall. It returns to a hairline as the stage clears, and grows and
+          shrinks with it, since it is the stage's own box. */}
+      <div
+        class={cx(
+          "border-l pl-3 transition-colors",
+          live() ? "border-info" : "border-line",
+        )}
+      >
         <div
           class="ody-reasoning-stage"
           data-clearing={fading() ? "" : undefined}
@@ -153,7 +158,7 @@ export function ReasoningBlock(props: {
             <div class="ody-reasoning-tail">{props.reasoning}</div>
           </div>
         </div>
-      </LedEdge>
+      </div>
       {/* The live layer is decorative texture, so it is aria-hidden above; the
           trace stays reachable to assistive tech through this live region. */}
       <span class="sr-only" aria-live="polite">

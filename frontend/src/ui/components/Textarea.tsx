@@ -25,7 +25,7 @@ export function Textarea(props: TextareaProps): JSX.Element {
       </Show>
       <textarea
         class={cx(
-          "w-full resize-y bg-raised border border-transparent px-3 py-2 rounded-ctl text-body font-sans text-bright placeholder:text-dim outline-none transition-colors disabled:opacity-40",
+          "w-full resize-y bg-raised border border-transparent px-3 py-2 text-body font-sans text-bright placeholder:text-dim outline-none transition-colors disabled:opacity-40",
           local.invalid ? "border-alert" : "border-line",
           local.class,
         )}

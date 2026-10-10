@@ -34,6 +34,7 @@ import type {
   ProviderViewDTO,
   RoleViewDTO,
 } from "~/lib/api/models-types";
+import { settled } from "~/lib/resource";
 import { useSession } from "~/lib/stores/session";
 import { sendBlocker } from "./sendGate";
 
@@ -357,7 +358,7 @@ const store = createRoot(() => {
   // update), so that re-fires discovery as intended.
   const liveEndpoints = createMemo<ModelEndpoint[] | false>(
     () => {
-      const all = endpoints.latest;
+      const all = settled(endpoints);
       return all ? all.filter((e) => e.enabled) : false;
     },
     false,
@@ -399,7 +400,7 @@ const store = createRoot(() => {
     fetchDiscovery(live),
   );
 
-  const results = createMemo<EndpointResult[]>(() => discovery.latest ?? []);
+  const results = createMemo<EndpointResult[]>(() => settled(discovery) ?? []);
   const groups = createMemo<ModelGroup[]>(() =>
     results()
       .filter((r) => r.choices.length > 0)
@@ -430,7 +431,7 @@ const store = createRoot(() => {
     if (!sel) return out;
     const value = encodeChoice(sel.endpointId, sel.model);
     if (out.some((g) => g.options.some((o) => o.value === value))) return out;
-    const endpoint = (endpoints.latest ?? []).find(
+    const endpoint = (settled(endpoints) ?? []).find(
       (e) => e.id === sel.endpointId,
     );
     const group = out.find((g) => g.label === endpoint?.name);
@@ -476,7 +477,7 @@ const store = createRoot(() => {
     const sel = effective();
     if (!sel) return null;
     return (
-      (endpoints.latest ?? []).find((e) => e.id === sel.endpointId) ?? null
+      (settled(endpoints) ?? []).find((e) => e.id === sel.endpointId) ?? null
     );
   });
 
@@ -723,7 +724,7 @@ export function selectedModelLabel(): string {
  *  reactive value without the suspense registration, so the gate re-reads the new
  *  window when it lands and nothing unmounts in between. */
 export function effectiveContextWindow(): number | null {
-  return store.roles.latest?.main?.contextWindow ?? null;
+  return settled(store.roles)?.main?.contextWindow ?? null;
 }
 
 /** `sendBlocker` applied to the live selection — the accessor a composer binds to. The

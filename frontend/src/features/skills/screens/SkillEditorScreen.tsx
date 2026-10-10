@@ -7,6 +7,7 @@ import {
   type JSX,
 } from "solid-js";
 import { createStore } from "solid-js/store";
+import { settled } from "~/lib/resource";
 import {
   Button,
   EditorShell,
@@ -69,10 +70,9 @@ export function SkillEditorScreen(props: {
   const skillResource = useSkillDetail(() => props.id);
   // Reading the accessor re-throws a load failure — a 500 would otherwise trip the
   // shell's ErrorBoundary and replace the editor with a generic message.
-  // `.latest`/`.error` degrade it to the not-found panel, which carries the backend's
+  // `settled` degrades it to the not-found panel, which carries the backend's
   // own message.
-  const skill = () =>
-    skillResource.error ? undefined : (skillResource.latest ?? undefined);
+  const skill = () => settled(skillResource) ?? undefined;
   const loadError = (): string | null =>
     skillResource.error
       ? skillErrorMessage(skillResource.error, "Could not load this skill.")

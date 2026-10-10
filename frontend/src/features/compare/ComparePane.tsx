@@ -103,7 +103,7 @@ export function ComparePaneView(props: {
   const [wide, setWide] = createSignal(false);
 
   return (
-    <div class="flex min-h-0 min-w-0 flex-1 flex-col rounded-panel bg-surface shadow-1">
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col border border-line bg-surface">
       <header class="flex items-center justify-between gap-2 p-2">
         <div class="flex min-w-0 items-center gap-2">
           <Text variant="label" tone="dim">

@@ -20,19 +20,18 @@ import {
   isDeepFieldRoute,
   isFlushRoute,
   itemForPath,
-  searchNav,
 } from "./index";
 import type { NavArea } from "./types";
 
 const item = (
   label: string,
   href: string,
-  opts: { connected?: boolean; description?: string } = {},
+  opts: { connected?: boolean } = {},
 ) => ({
   label,
   href,
   icon: "file" as const,
-  description: opts.description ?? `${label} description`,
+  description: `${label} description`,
   ...(opts.connected === undefined ? {} : { connected: opts.connected }),
 });
 
@@ -62,12 +61,7 @@ const FIXTURE: NavArea[] = [
     description: "beta area",
     items: [
       item("Other", "/other", { connected: true }),
-      // No "drafts" in the label, "drafts" in the description — the pair that
-      // makes label-before-description ranking observable.
-      item("Archive", "/archive", {
-        connected: true,
-        description: "Where drafts go to rest",
-      }),
+      item("Archive", "/archive", { connected: true }),
       // Nothing owns the bare /group segment, mirroring how /settings is only
       // ever a redirect into its first section. The parent-of-connected-children
       // branch is the ONLY thing that can resolve it.
@@ -210,43 +204,6 @@ describe("isConnectedRoute", () => {
       .toBe(false);
     expect(isConnectedRoute("/settings")).toBe(false);
     expect(isConnectedRoute("/vault")).toBe(false);
-  });
-});
-
-describe("searchNav", () => {
-  test("an empty query returns nothing", () => {
-    expect(searchNav("", FIXTURE)).toEqual([]);
-    expect(searchNav("   ", FIXTURE)).toEqual([]);
-  });
-
-  test("label matches rank ahead of description matches", () => {
-    // "drafts" is Drafts' label and Archive's description. Both must come back,
-    // label hit first — otherwise typing a page's name surfaces some other page.
-    const results = searchNav("drafts", FIXTURE);
-    expect(results.map((m) => m.item.href)).toEqual([
-      "/docs/drafts",
-      "/archive",
-    ]);
-  });
-
-  test("an item is counted once, by its label, even when both fields match", () => {
-    // Drafts' generated description contains "drafts" too; the else-if must not
-    // let it land in both buckets.
-    expect(
-      searchNav("drafts", FIXTURE).filter(
-        (m) => m.item.href === "/docs/drafts",
-      ),
-    ).toHaveLength(1);
-  });
-
-  test("matches descriptions, so a surface is findable by what it does", () => {
-    expect(searchNav("description", FIXTURE).length).toBeGreaterThan(0);
-  });
-
-  test("is case-insensitive", () => {
-    expect(searchNav("DOCS", FIXTURE).map((m) => m.item.href)).toContain(
-      "/docs",
-    );
   });
 });
 

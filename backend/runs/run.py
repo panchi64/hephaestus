@@ -94,6 +94,12 @@ class Run:
     # has only a conversation id (e.g. after a page reload) find the in-flight run
     # to reattach to — see ``RunRegistry.active_run_for``.
     conversation_id: str | None = None
+    # The stored id of the operator's prompt this run is answering — written down by the
+    # orchestrator as the turn begins (or, for a regenerate, the request it re-answers).
+    # What lets a client that opens the thread mid-run find the row its streaming answer
+    # belongs after, instead of inventing one. None until the orchestrator has it, and for
+    # a run that answers no prompt (a hand-started fold).
+    prompt_message_id: str | None = None
     status: RunStatus = RunStatus.queued
     detail: str | None = None
     error: str | None = None

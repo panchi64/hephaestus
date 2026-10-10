@@ -20,6 +20,7 @@ import {
 } from "solid-js";
 import { api } from "~/lib/api";
 import { parseInstant } from "~/lib/format";
+import { settled } from "~/lib/resource";
 import { readLS, writeLS } from "~/lib/storage";
 import type { ChatSummary } from "../model";
 import { toSummary } from "./summaries";
@@ -98,13 +99,14 @@ export function useChatSessions(): Accessor<ChatSummary[] | undefined> {
   return (sessionsAccessor = createRoot(() => {
     const [data, { refetch }] = createResource(fetchSessions);
     refetchSessions = refetch;
-    // Read `.latest`, not the resource itself. `refreshSessions()` runs after every
+    // Read `settled`, not the resource itself. `refreshSessions()` runs after every
     // turn and refetches in place; reading the resource under the app's
     // fallback-less root <Suspense> would re-suspend it for the duration of each
-    // refetch, blanking the whole page for a frame. `.latest` keeps the prior list
+    // refetch, blanking the whole page for a frame. `settled` keeps the prior list
     // on screen while the refetch is in flight, so a finishing stream no longer
-    // flickers the page.
-    return () => data.latest;
+    // flickers the page — and before the first read it is `undefined` rather than a
+    // suspension, which is what the rail's loading arm is for.
+    return () => settled(data);
   }));
 }
 

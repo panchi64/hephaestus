@@ -6,7 +6,7 @@ import {
   onMount,
   type JSX,
 } from "solid-js";
-import { Stack, Text, cx } from "~/ui";
+import { ScrollFade, Stack, Text, cx } from "~/ui";
 import type { SummarySection } from "~/lib/stream";
 import { CompactionRow as Row } from "./CompactionRow";
 
@@ -65,7 +65,7 @@ export function CompactionSummary(props: {
                 *above* the quote, not run into its first line. */}
             <Stack gap={1} class="border-line border-l pl-2">
               <Text variant="micro" tone="dim">
-                QUOTED FROM TOOL OUTPUT — NOT THIS WORKSPACE'S OWN WORDS
+                Quoted from tool output — not this workspace's own words
               </Text>
               <SectionBody section={section} />
             </Stack>
@@ -129,16 +129,18 @@ function SectionBody(props: { section: SummarySection }): JSX.Element {
         {/* Says there is more below without spending a second control on saying it —
             the toggle underneath is already the answer to how much more. */}
         <Show when={!open() && overflows()}>
-          <div class="from-surface pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t to-transparent" />
+          <ScrollFade variant="clamp" edge="bottom" ground="surface" />
         </Show>
       </div>
       <Show when={overflows()}>
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          class="text-micro text-dim hover:text-bright mt-1 font-mono tracking-[0.08em] uppercase transition-colors"
+          class="group mt-1"
         >
-          {open() ? "Show less" : "Show more"}
+          <Text variant="meta" tone="dim" class="group-hover:text-bright">
+            {open() ? "Show less" : "Show more"}
+          </Text>
         </button>
       </Show>
     </div>

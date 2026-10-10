@@ -1,4 +1,5 @@
 import { createMemo, For, Show, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import {
   EmptyState,
   LoadingText,
@@ -26,7 +27,7 @@ export function AgentToolsPanel(): JSX.Element {
   /** Category → its tools, in the order the backend listed them. */
   const grouped = createMemo(() => {
     const groups = new Map<string, AgentTool[]>();
-    for (const tool of tools.latest ?? []) {
+    for (const tool of settled(tools) ?? []) {
       const bucket = groups.get(tool.category);
       if (bucket) bucket.push(tool);
       else groups.set(tool.category, [tool]);
@@ -35,14 +36,14 @@ export function AgentToolsPanel(): JSX.Element {
   });
 
   const offCount = createMemo(
-    () => (tools.latest ?? []).filter((t) => !t.enabled).length,
+    () => (settled(tools) ?? []).filter((t) => !t.enabled).length,
   );
 
   /* The hint below is worth its line only where a badge actually appears, and which
      groups start dormant is the backend's call — so ask the catalog rather than
      naming the groups here. */
   const hasDormant = createMemo(() =>
-    (tools.latest ?? []).some((t) => t.dormant),
+    (settled(tools) ?? []).some((t) => t.dormant),
   );
 
   const toggle = async (tool: AgentTool) => {
@@ -64,9 +65,9 @@ export function AgentToolsPanel(): JSX.Element {
         </Show>
       }
     >
-      <Show when={tools.latest} fallback={<LoadingText />}>
+      <Show when={settled(tools)} fallback={<LoadingText />}>
         <Show
-          when={(tools.latest ?? []).length}
+          when={(settled(tools) ?? []).length}
           fallback={<EmptyState icon="cpu" message="No tools registered" />}
         >
           <Stack gap={4}>

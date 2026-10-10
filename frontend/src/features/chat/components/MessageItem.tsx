@@ -8,7 +8,17 @@ import {
   onMount,
   type JSX,
 } from "solid-js";
-import { Button, Chip, Icon, Markdown, Stack, Text, Textarea, cx } from "~/ui";
+import {
+  Button,
+  Chip,
+  Icon,
+  Markdown,
+  ScrollFade,
+  Stack,
+  Text,
+  Textarea,
+  cx,
+} from "~/ui";
 import { hostLabel, longTimestamp } from "~/lib/format";
 import { CONTEXT_OVERFLOW_DETAIL } from "~/lib/stream";
 import type { ApprovalDecision, ChatMessage, Citation } from "../model";
@@ -174,7 +184,7 @@ function VersionCycler(props: {
           answer settles — the cycler would otherwise pop into a header the
           operator has already started reading. On a turn that mounts with
           siblings it just runs alongside the turn's own entry. */}
-      <span class="ody-fade-in flex items-center gap-0.5">
+      <span class="ody-fade-in flex items-center gap-1">
         <Button
           variant="ghost"
           size="sm"
@@ -236,7 +246,7 @@ function BlockedFooter(props: {
 }): JSX.Element {
   const overflowed = () => props.detail === CONTEXT_OVERFLOW_DETAIL;
   return (
-    <div class="flex flex-wrap items-center gap-1.5 text-warn">
+    <div class="flex flex-wrap items-center gap-2 text-warn">
       <Icon name="warning" size={12} />
       <Text variant="micro" tone="warn">
         Stopped: {props.detail ?? "a run limit was reached"}
@@ -316,11 +326,9 @@ function UserText(props: { text: string }): JSX.Element {
   });
 
   return (
-    // `w-fit`, not `w-full`: the bubble shrinks to its content and only stops at
-    // the 80% cap. With `w-full` a three-word prompt still reserved 80% of the
-    // column, so short turns read as text floating in the middle of an empty
-    // block instead of as a compact message pinned to the right.
-    <div class="flex w-fit max-w-[80%] flex-col items-end gap-1 self-end">
+    // The block around this (in `UserTurn`) is what shrinks to fit and pins right;
+    // this only lays out the body and its Show more toggle inside it.
+    <div class="flex flex-col items-end gap-1 px-3.5 py-2.5">
       <div
         ref={ref}
         class="relative w-full overflow-hidden"
@@ -347,10 +355,12 @@ function UserText(props: { text: string }): JSX.Element {
             speakers then render identically, which is the point, and the sunken
             ground under the bubble is already what marks the turn as theirs (§5.1
             names it for exactly this). */}
-        <Markdown class="text-left break-words">{props.text}</Markdown>
+        <Markdown class="text-left break-words text-bright!">
+          {props.text}
+        </Markdown>
         {/* Only while clamped, and only when there is genuinely more below. */}
         <Show when={clampable() && !expanded()}>
-          <div class="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-sunken to-transparent" />
+          <ScrollFade variant="clamp" edge="bottom" ground="raised" />
         </Show>
       </div>
       <Show when={clampable()}>
@@ -405,23 +415,38 @@ function UserTurn(props: {
   const save = edit.save;
 
   return (
-    // `bg-sunken`, not `bg-surface`. The operator's turn is told apart from the
-    // model's by its fill, and `surface` is pure white on Paper — the same value
-    // as the page — so on light the two voices were indistinguishable while on
-    // dark they read fine. `sunken` is the token that carries a *transcript
-    // fill* in both modes rather than a panel's.
-    //
-    // `py-1.5` / `gap-0.5`: the identity row is already 24px (its actions are),
-    // with its 12px label sitting in the middle of it, so the row brings its own
-    // air — padding on top of that made a one-line prompt a 76px block.
-    <div class="group flex flex-col items-end gap-0.5 bg-sunken px-4 py-1.5">
-      <div class="flex w-full items-center justify-between gap-2">
-        {/* Left: actions reveal on hover. Right: identity + metadata. */}
-        <div class="flex items-center gap-2">
-          {/* A queued (not-yet-delivered) steering message isn't a real turn yet:
-              no delete/pin/version actions — only the edit + withdraw
-              affordances on the right. */}
-          <Show when={!editing() && !m().queuedPending}>
+    // The turn is a square block pinned to the right that shrinks to its content
+    // (78% cap), `raised` on the page, ruled by one 1px `line-strong` border on all
+    // four sides — the console's ordinary cell.
+    // No speaker label: the stamp and the actions reveal on hover beside it
+    // (absolutely placed, so nothing reflows) and stay shown on touch, like every
+    // other turn control.
+    <div class="group flex flex-col items-end gap-1 px-4 py-3">
+      <div
+        class={cx(
+          "relative border border-line-strong bg-raised",
+          editing() ? "w-full max-w-[78%]" : "w-fit max-w-[78%]",
+        )}
+        title={longTimestamp(m().createdAt)}
+      >
+        {/* The stamp sits outside the block, in the margin to its left and level with
+            the first line: inside a shrink-to-fit block there is no room for it, and
+            laid over the block it ran across the outline. The full date also rides in
+            the block's title for anyone who never hovers. */}
+        <time
+          class={cx(
+            "pointer-events-none absolute top-2.5 right-full mr-2 font-mono text-[10px] leading-none whitespace-nowrap text-dim",
+            TURN_REVEAL_CLASS,
+            "group-focus-within:opacity-100",
+          )}
+          dateTime={m().createdAt}
+        >
+          {longTimestamp(m().createdAt)}
+        </time>
+        {/* The actions sit outside the block too, in the same margin but level with
+            its foot, so the stamp (top) and they never meet. */}
+        <Show when={!editing() && !m().queuedPending}>
+          <div class="absolute right-full bottom-0 mr-2">
             <MessageActions
               message={m()}
               onEdit={startEdit}
@@ -429,127 +454,118 @@ function UserTurn(props: {
               onDelete={props.onDelete}
               onTogglePin={props.onTogglePin}
             />
-          </Show>
-        </div>
-        <div class="flex items-center gap-2">
-          <Show when={m().queuedPending && !editing()}>
-            <Button
-              variant="ghost"
-              size="sm"
-              leading="pen"
-              aria-label="Edit queued message"
-              onClick={startEdit}
-            >
-              Edit
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              leading="close"
-              aria-label="Withdraw queued message"
-              onClick={() => props.onWithdraw?.()}
-            >
-              Withdraw
-            </Button>
-          </Show>
-          <Show when={m().queuedPending}>
-            <Text variant="label" tone="warn">
-              Queued
-            </Text>
-          </Show>
-          {/* A queue that has stopped moving says so. The hold is what makes editing
+          </div>
+        </Show>
+        {/* The block names no speaker: its place on the right and its edge already
+            say whose it is, and a tag row reserved for a label left an empty band
+            over every message. The row exists only when it has state to show. */}
+        <Show
+          when={m().queuedPending || m().pinned || (m().versionCount ?? 1) > 1}
+        >
+          <div class="relative flex items-center justify-end gap-2 px-2.5 pt-[7px]">
+            <Show when={m().queuedPending && !editing()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                leading="pen"
+                aria-label="Edit queued message"
+                onClick={startEdit}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                leading="close"
+                aria-label="Withdraw queued message"
+                onClick={() => props.onWithdraw?.()}
+              >
+                Withdraw
+              </Button>
+            </Show>
+            <Show when={m().queuedPending}>
+              <Text variant="label" tone="warn">
+                Queued
+              </Text>
+            </Show>
+            {/* A queue that has stopped moving says so. The hold is what makes editing
               safe, and it is also the one state in which the run is waiting on the
               operator without having asked them for anything — silence there reads as
               the agent having stalled. */}
-          <Show when={m().queuedPending && m().queuedHeld}>
-            <Text variant="label" tone="dim">
-              Held
-            </Text>
-          </Show>
-          <PinMarker message={m()} />
-          <VersionCycler
-            message={m()}
-            onSwitchVersion={props.onSwitchVersion}
-          />
-          {/* The TIME reveals; the NAME stays. The row is already there holding
-              the state markers, so hiding the name buys back no space — it just
-              makes the operator hover to learn who said what. It is set `dim` at
-              `label` size so it labels the turn without competing with it.
-
-              The stamp itself is the same written-out form the assistant's turn
-              shows permanently. It reveals here only because this row already
-              has something holding it at rest; two *formats* for one fact in one
-              transcript would be the inconsistency worth avoiding, not two
-              visibilities. */}
-          <span class={cx("flex items-center gap-2", TURN_REVEAL_CLASS)}>
-            <Text variant="micro" tone="dim">
-              {longTimestamp(m().createdAt)}
-            </Text>
-          </span>
-          <Text variant="label" tone="dim">
-            Operator
-          </Text>
-        </div>
-      </div>
-      <Show
-        when={editing()}
-        fallback={
-          <>
+            <Show when={m().queuedPending && m().queuedHeld}>
+              <Text variant="label" tone="dim">
+                Held
+              </Text>
+            </Show>
+            <PinMarker message={m()} />
+            <VersionCycler
+              message={m()}
+              onSwitchVersion={props.onSwitchVersion}
+            />
+          </div>
+        </Show>
+        <Show
+          when={editing()}
+          fallback={
             <Show when={m().content}>
               <UserText text={m().content} />
             </Show>
-            <Show when={m().attachmentIds?.length}>
-              <MessageAttachments ids={m().attachmentIds!} />
-            </Show>
-            <Show when={m().fileRefs?.length}>
-              <MessageFileRefs paths={m().fileRefs!} />
-            </Show>
-            {/* Sets the expectation the QUEUED badge alone doesn't: the run hands
+          }
+        >
+          <div class="px-3.5 pt-1.5 pb-[11px]">
+            <Textarea
+              value={draft()}
+              rows={3}
+              onInput={(e) => edit.write(e.currentTarget.value)}
+              aria-label="Edit message"
+            />
+            <div class="mt-1 flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={edit.cancel}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={!draft().trim()}
+                onClick={save}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        </Show>
+      </div>
+      <Show when={!editing()}>
+        <>
+          <Show when={m().attachmentIds?.length}>
+            <MessageAttachments ids={m().attachmentIds!} />
+          </Show>
+          <Show when={m().fileRefs?.length}>
+            <MessageFileRefs paths={m().fileRefs!} />
+          </Show>
+          {/* Sets the expectation the QUEUED badge alone doesn't: the run hands
                 this to the model at its next model call, so a reply already being
                 written finishes first and this lands after it — not woven into the
                 text mid-sentence. Without saying so, an answer that streams on
                 past the message reads as the steering having been ignored. */}
-            <Show when={m().queuedPending}>
-              <Text variant="micro" tone="dim" class="max-w-[80%] text-right">
-                Goes to the model at its next step — after the current reply if
-                it finishes first.
-              </Text>
-            </Show>
-            {/* A bound that tripped before any response landed stamps the stop on
+          <Show when={m().queuedPending}>
+            <Text variant="micro" tone="dim" class="max-w-4/5 text-right">
+              Goes to the model at its next step — after the current reply if it
+              finishes first.
+            </Text>
+          </Show>
+          {/* A bound that tripped before any response landed stamps the stop on
                 this message (the turn's own prompt) — show the marker + Continue
                 here, where the operator's own words sit. */}
-            <Show when={m().blocked}>
-              <BlockedFooter
-                detail={m().blockedDetail}
-                onContinue={props.onContinue}
-                onCompactAndRetry={props.onCompactAndRetry}
-                compacting={props.compacting}
-              />
-            </Show>
-          </>
-        }
-      >
-        <div class="w-full max-w-[80%]">
-          <Textarea
-            value={draft()}
-            rows={3}
-            onInput={(e) => edit.write(e.currentTarget.value)}
-            aria-label="Edit message"
-          />
-          <div class="mt-1 flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={edit.cancel}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={!draft().trim()}
-              onClick={save}
-            >
-              Save
-            </Button>
-          </div>
-        </div>
+          <Show when={m().blocked}>
+            <BlockedFooter
+              detail={m().blockedDetail}
+              onContinue={props.onContinue}
+              onCompactAndRetry={props.onCompactAndRetry}
+              compacting={props.compacting}
+            />
+          </Show>
+        </>
       </Show>
     </div>
   );
@@ -573,7 +589,7 @@ function SourcesRow(props: { citations: Citation[] }): JSX.Element {
 
   return (
     <div class="flex flex-wrap items-center gap-2">
-      <Text variant="label" tone="dim">
+      <Text variant="plate" tone="dim">
         Sources
       </Text>
       <For each={shown()}>
@@ -640,21 +656,21 @@ function AssistantTurn(props: {
     // already centres a 10px stamp in 7px of air either side.
     <div class="group px-4 py-3">
       <div class="mb-1 flex items-center gap-2">
-        {/* WHEN, permanently — it took over from the model name, which is now
-            named once for the whole thread in the room header rather than
-            restamped above every turn. Something has to hold this row at rest:
-            with both gone it would be an empty strip that only fills when
-            pointed at, and a turn with no visible metadata at all reads as an
-            anonymous block of text.
-
-            Written out rather than `5D AGO`, because a transcript is *scrolled
-            back through*: a relative stamp answers "how long ago" for the turn
-            under the cursor and turns into arithmetic for every turn above it.
-            Still `micro` mono — a timestamp is emitted, not written (§2) —
-            which is what keeps a long stamp ambient at this size. */}
-        <Text variant="micro" tone="dim">
-          {longTimestamp(m().createdAt)}
-        </Text>
+        {/* WHEN, on hover or focus — the row is a fixed 24px (the actions'
+            height) whether or not the stamp is showing, so revealing it moves
+            nothing; on touch the shared reveal keeps it shown. Written out
+            rather than `5D AGO`, because a transcript is scrolled back through
+            and a relative stamp turns into arithmetic for every turn above the
+            one under the cursor. `micro` mono: a timestamp is emitted, not
+            written (§2). The full date rides in the title as well. */}
+        <span
+          class={cx(TURN_REVEAL_CLASS, "group-focus-within:opacity-100")}
+          title={longTimestamp(m().createdAt)}
+        >
+          <Text variant="micro" tone="dim">
+            <time dateTime={m().createdAt}>{longTimestamp(m().createdAt)}</time>
+          </Text>
+        </span>
         <PinMarker message={m()} />
         <VersionCycler message={m()} onSwitchVersion={props.onSwitchVersion} />
         <span class="ml-auto">

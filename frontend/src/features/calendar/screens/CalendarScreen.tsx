@@ -679,7 +679,7 @@ export function CalendarScreen(): JSX.Element {
                                 return (
                                   <button
                                     type="button"
-                                    class="mb-0.5 w-full truncate rounded-ctl px-1 py-0.5 text-left text-label font-sans transition-colors hover:bg-raised"
+                                    class="mb-0.5 w-full truncate px-1 py-0.5 text-left text-label font-sans transition-colors hover:bg-raised"
                                     classList={{
                                       "text-nominal": cal()?.tone === "nominal",
                                       "text-info": cal()?.tone === "info",

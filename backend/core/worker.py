@@ -22,11 +22,32 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
 
 from core.backoff import backoff_delay
+from core.config import get_settings
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 
 logger = logging.getLogger(__name__)
+
+
+async def wait_unlocked_or_stop(unlocked: asyncio.Event | None, stopping: asyncio.Event) -> bool:
+    """Park until ``unlocked`` is set or ``stopping`` is. True means the vault is open and
+    the caller may proceed; False means it is stopping while still locked and should give up.
+
+    The one spelling of the lock-aware park, shared by every lock-aware loop (this worker,
+    the task scheduler) so they cannot disagree about what a lock mid-shutdown means.
+    ``unlocked=None`` is a handler that never touches the key: always ready.
+    """
+    if unlocked is None or unlocked.is_set():
+        return True
+    stop_wait = asyncio.ensure_future(stopping.wait())
+    unlock_wait = asyncio.ensure_future(unlocked.wait())
+    try:
+        await asyncio.wait({stop_wait, unlock_wait}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        stop_wait.cancel()
+        unlock_wait.cancel()
+    return unlocked.is_set()
 
 
 class WriteBehindWorker[T]:
@@ -73,20 +94,32 @@ class WriteBehindWorker[T]:
         """Block until every queued item has been processed (or dropped)."""
         await self._queue.join()
 
-    async def stop(self) -> None:
-        """Flush what can be flushed, then cancel the drainer.
+    async def stop(self, drain_timeout_s: float | None = None) -> None:
+        """Flush what can be flushed — for at most ``drain_timeout_s`` — then cancel the
+        drainer.
 
         When lock-gated and currently locked, processing is parked, so we don't
-        block shutdown on ``join()`` — pending items stay unflushed.
+        block shutdown on ``join()`` — pending items stay unflushed. The flush is
+        bounded (default ``Settings.shutdown_drain_timeout_s``): a handler stuck on a
+        dead dependency must cost the shutdown seconds, not hang it. Items still queued
+        when the deadline passes are logged, not silently lost.
         """
         self._stopping.set()
+        timeout = drain_timeout_s
+        if timeout is None:
+            timeout = get_settings().shutdown_drain_timeout_s
         if self._unlocked is None or self._unlocked.is_set():
-            await self._queue.join()
-        if self._task is not None:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+            try:
+                await asyncio.wait_for(self._queue.join(), timeout)
+            except TimeoutError:
+                logger.warning(
+                    "%s: %d item(s) unflushed after %.1fs; stopping anyway",
+                    self._name,
+                    self._queue.qsize(),
+                    timeout,
+                )
+        await cancel_and_wait(self._task, STOP_TIMEOUT_S)
+        self._task = None
 
     async def _run(self) -> None:
         while True:
@@ -98,16 +131,7 @@ class WriteBehindWorker[T]:
 
     async def _ready(self) -> bool:
         """Wait until the vault is unlocked. False if stopping while still locked."""
-        if self._unlocked is None or self._unlocked.is_set():
-            return True
-        stop_wait = asyncio.ensure_future(self._stopping.wait())
-        unlock_wait = asyncio.ensure_future(self._unlocked.wait())
-        try:
-            await asyncio.wait({stop_wait, unlock_wait}, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            stop_wait.cancel()
-            unlock_wait.cancel()
-        return self._unlocked.is_set()
+        return await wait_unlocked_or_stop(self._unlocked, self._stopping)
 
     async def _process(self, item: T) -> None:
         """Handle one item: park while locked, retry transient errors, drop at the cap."""

@@ -23,6 +23,8 @@ function harness() {
     planRevision: 0,
     activeRunId: "run-1",
     runKind: null,
+    epoch: 0,
+    replayThrough: 0,
   };
   let clock: RunClock | null = null;
   const fold = createFolder({

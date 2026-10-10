@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 #: How long the proxy's own shutdown may take before it is left to the OS. It is a
 #: loopback socket server with no state to flush, so this is generous already.
 _PROXY_STOP_TIMEOUT_S = 5.0
+_BROWSER_CLOSE_TIMEOUT_S = 5.0
 
 #: Starts the Playwright driver and launches a browser with ``args``, returning both so
 #: each can be torn down. A test seam (see the module docstring), never a policy knob.
@@ -267,11 +268,13 @@ class HostBrowser:
         driver, self._driver = self._driver, None
         proxy, self._proxy = self._proxy, None
         if browser is not None:
+            # Bounded: closing over CDP to a Chromium that is hung (or already gone) never
+            # answers, and this runs inside app shutdown.
             with contextlib.suppress(Exception):
-                await browser.close()
+                await asyncio.wait_for(browser.close(), timeout=_BROWSER_CLOSE_TIMEOUT_S)
         if driver is not None:
             with contextlib.suppress(Exception):
-                await driver.stop()
+                await asyncio.wait_for(driver.stop(), timeout=_BROWSER_CLOSE_TIMEOUT_S)
         if proxy is not None and proxy.returncode is None:
             with contextlib.suppress(Exception):
                 proxy.terminate()

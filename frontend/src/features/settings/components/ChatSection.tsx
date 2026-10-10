@@ -55,8 +55,7 @@ function wholeNumber(
 
 /** This panel's policy for a bound that isn't set: fall back to the shared seed, so
  *  switching the limit on and pressing Save writes something sensible instead of erroring
- *  on a blank field. The conversion itself is `wallClockMinutes`, shared with the
- *  palette so one stored bound never rounds to two different numbers. */
+ *  on a blank field. The conversion itself is `wallClockMinutes`. */
 function minutesOr(seconds: number | null): number {
   return wallClockMinutes(seconds ?? DEFAULT_WALL_CLOCK_S);
 }

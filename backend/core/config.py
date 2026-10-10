@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     # the clock on every frame and never trips it, while spending no extra model requests.
     run_wall_clock_timeout_s: float | None = None
     run_inactivity_timeout_s: float | None = 120.0
+    # How long shutdown spends on any one drain — flushing a write-behind queue, waiting
+    # for cancelled runs to unwind, closing a browser — before moving on. A stop that
+    # waits forever on a stuck job is a Ctrl+C that has to be repeated, and the second one
+    # skips the rest of the shutdown; a bounded wait loses at most the one job that was
+    # already not finishing.
+    shutdown_drain_timeout_s: float = 5.0
 
     # Model resolution is the DB-backed registry's job (services/registry.py) —
     # named roles bound to ordered endpoint chains, the single source of truth,

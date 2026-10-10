@@ -1,5 +1,5 @@
 import { createEffect, createSignal, For, on, Show, type JSX } from "solid-js";
-import { Disclosure, Input, ListRow, Text, Tooltip, cx } from "~/ui";
+import { Disclosure, Input, ListRow, Text, Tooltip } from "~/ui";
 import { SETTINGS_GROUPS, type SettingsSection } from "./sections";
 import { searchSettingsSections } from "./sections-search";
 
@@ -44,7 +44,7 @@ export function SectionList(props: {
   const hits = () => searchSettingsSections(query());
   const searching = () => query().trim() !== "";
 
-  // A deep link (or a palette jump) can land on a section inside a group the
+  // A deep link can land on a section inside a group the
   // operator folded away — the row has to be visible where it says it is, so the
   // group unfolds rather than the selection hiding inside it.
   //
@@ -83,7 +83,6 @@ export function SectionList(props: {
           ) : undefined
         }
         onClick={() => props.onSelect(section.id)}
-        class={cx("rounded-ctl", section.id === props.active.id && "bg-raised")}
       />
     </Tooltip>
   );

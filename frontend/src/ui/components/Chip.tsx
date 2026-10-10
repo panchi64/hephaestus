@@ -19,7 +19,7 @@ export interface ChipProps {
  *  Filled rather than bordered (§7): a page can carry a dozen chips, and a
  *  dozen hairline rectangles is exactly the clutter this system dropped. */
 export const CHIP_BASE =
-  "inline-flex items-center gap-1 rounded-ctl bg-raised px-2 py-1 text-label font-sans text-dim";
+  "inline-flex items-center gap-1 bg-raised px-2 py-1 text-label font-sans text-dim";
 
 /** Compact bordered token for short labels / selectable suggestions. Static by
  *  default; pass `onClick` to make it an interactive button. Centralizes the

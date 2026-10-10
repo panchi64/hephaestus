@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import { Button, Modal, type SelectOption, Stack, toast } from "~/ui";
 import { isApiError } from "~/lib/api";
 import type { ModelEndpoint, ModelProvider } from "~/lib/stores/models";
@@ -62,9 +63,9 @@ export function EndpointFormDialog(props: {
   // The provider presets back the PROVIDER select and its prefills — served by
   // the backend, never hardcoded here.
   const providerById = (id: string): ModelProvider | undefined =>
-    (providers.latest ?? []).find((p) => p.id === id);
+    (settled(providers) ?? []).find((p) => p.id === id);
   const providerOptions = createMemo<SelectOption[]>(() =>
-    (providers.latest ?? []).map((p) => ({
+    (settled(providers) ?? []).map((p) => ({
       value: p.id,
       label: p.displayName,
     })),

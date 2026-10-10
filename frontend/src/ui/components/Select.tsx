@@ -115,6 +115,14 @@ export function Select(props: SelectProps): JSX.Element {
       setOpen(false);
       return;
     }
+    // A cell's menu prints each row's number; the number picks it.
+    const digit = props.cell ? Number.parseInt(e.key, 10) : Number.NaN;
+    if (digit >= 1 && digit <= Math.min(9, props.options.length)) {
+      e.preventDefault();
+      props.onChange?.(props.options[digit - 1]!.value);
+      setOpen(false);
+      return;
+    }
     const next = cursorStep(e.key, active(), props.options.length);
     if (next === null) return;
     e.preventDefault();
@@ -133,8 +141,11 @@ export function Select(props: SelectProps): JSX.Element {
         // A described row is two to three lines tall, so the cap that fits ~8 plain
         // rows would scroll a five-row described menu; `Popover` still clamps to the
         // viewport when even this doesn't fit.
+        // Opened from a ruled strip, a cell's menu is square and ruled like it.
+        variant={props.cell ? "console" : "default"}
         panelClass={cx(
-          "overflow-y-auto py-1",
+          "overflow-y-auto",
+          props.cell ? "w-72" : "py-1",
           props.options.some((o) => o.description)
             ? "max-h-[28rem]"
             : "max-h-72",
@@ -171,7 +182,7 @@ export function Select(props: SelectProps): JSX.Element {
                     // Matches Input/Combobox: a filled control, no bright edge on
                     // focus or open. Only `invalid` draws a border, because that is
                     // the one state that has to interrupt.
-                    "flex w-full items-center rounded-ctl border bg-raised text-left outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                    "flex w-full items-center border bg-raised text-left outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-40",
                     props.size === "sm" ? "h-6 gap-1.5 px-2" : "h-8 gap-2 px-3",
                     props.invalid ? "border-alert" : "border-transparent",
                   )
@@ -209,45 +220,37 @@ export function Select(props: SelectProps): JSX.Element {
             close();
           };
           return (
-            <div role="listbox">
+            <div role="listbox" aria-label={props["aria-label"]}>
+              {/* A cell's menu names itself in a plate, since the cell that opened it
+                  shows only the value. */}
+              <Show when={props.cell && props["aria-label"]}>
+                {(label) => (
+                  <div class="border-b border-line px-2.5 py-2">
+                    <Text variant="plate" tone="dim">
+                      {label()}
+                    </Text>
+                  </div>
+                )}
+              </Show>
               <For each={props.options}>
-                {(opt, i) => (
-                  <button
-                    type="button"
-                    id={optionId(i())}
-                    role="option"
-                    // Not focusable: the trigger keeps focus and names this row
-                    // through `aria-activedescendant`.
-                    tabIndex={-1}
-                    aria-selected={opt.value === props.value}
-                    onClick={() => pick(opt.value)}
-                    onMouseEnter={() => setActive(i())}
-                    class={cx(
-                      "flex w-full flex-col gap-0.5 px-2 py-1.5 text-left transition-colors hover:bg-raised",
-                      (opt.value === props.value || i() === active()) &&
-                        "bg-raised",
-                    )}
-                  >
-                    <span class="flex items-center gap-2">
-                      <Icon
-                        name="check"
-                        size={12}
-                        class={cx(
-                          "shrink-0",
-                          opt.value === props.value
-                            ? "text-nominal"
-                            : "opacity-0",
-                        )}
-                      />
-                      <Show when={opt.swatch}>
-                        {(swatch) => <Swatch class={swatch()} />}
-                      </Show>
-                      {/* The option sets its own width — no `truncate`. The panel is
-                          floored at the field's width and grows to its contents, so
-                          an option clipped here would be clipped by nothing: the room
-                          to render it in full is always there for the asking. The
-                          trigger above still truncates, because that one *is* bounded
-                          by the field. */}
+                {(opt, i) =>
+                  props.cell ? (
+                    <button
+                      type="button"
+                      id={optionId(i())}
+                      role="option"
+                      tabIndex={-1}
+                      aria-selected={opt.value === props.value}
+                      onClick={() => pick(opt.value)}
+                      onMouseEnter={() => setActive(i())}
+                      class={cx(
+                        "grid w-full grid-cols-[8px_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-0.5 border-b border-line px-2.5 py-2 text-left last:border-b-0 hover:bg-raised",
+                        (opt.value === props.value || i() === active()) &&
+                          "bg-raised",
+                        opt.value === props.value && "ody-selected-edge",
+                      )}
+                    >
+                      <Swatch class={opt.swatch ?? "bg-dim"} />
                       <Text
                         variant="body"
                         tone={opt.value === props.value ? "bright" : "default"}
@@ -255,25 +258,82 @@ export function Select(props: SelectProps): JSX.Element {
                       >
                         {opt.label}
                       </Text>
-                    </span>
-                    {/* The description wraps where the label doesn't: it is a
+                      <Text variant="meta" tone="dim">
+                        {i() < 9 ? String(i() + 1) : ""}
+                      </Text>
+                      <Show when={opt.description}>
+                        <span class="col-start-2 col-end-4 font-sans text-label text-dim">
+                          {opt.description}
+                        </span>
+                      </Show>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      id={optionId(i())}
+                      role="option"
+                      // Not focusable: the trigger keeps focus and names this row
+                      // through `aria-activedescendant`.
+                      tabIndex={-1}
+                      aria-selected={opt.value === props.value}
+                      onClick={() => pick(opt.value)}
+                      onMouseEnter={() => setActive(i())}
+                      class={cx(
+                        "flex w-full flex-col gap-0.5 px-2 py-1.5 text-left transition-colors hover:bg-raised",
+                        (opt.value === props.value || i() === active()) &&
+                          "bg-raised",
+                        opt.value === props.value && "ody-selected-edge",
+                      )}
+                    >
+                      <span class="flex items-center gap-2">
+                        <Icon
+                          name="check"
+                          size={12}
+                          class={cx(
+                            "shrink-0",
+                            opt.value === props.value
+                              ? "text-nominal"
+                              : "opacity-0",
+                          )}
+                        />
+                        <Show when={opt.swatch}>
+                          {(swatch) => <Swatch class={swatch()} />}
+                        </Show>
+                        {/* The option sets its own width — no `truncate`. The panel is
+                          floored at the field's width and grows to its contents, so
+                          an option clipped here would be clipped by nothing: the room
+                          to render it in full is always there for the asking. The
+                          trigger above still truncates, because that one *is* bounded
+                          by the field. */}
+                        <Text
+                          variant="body"
+                          tone={
+                            opt.value === props.value ? "bright" : "default"
+                          }
+                          class="whitespace-nowrap"
+                        >
+                          {opt.label}
+                        </Text>
+                      </span>
+                      {/* The description wraps where the label doesn't: it is a
                         sentence, and letting it set the panel's width would stretch
                         every menu to its longest one. Indented to sit under the
                         label — past the check, and the swatch when there is one.
                         The micro step in the sans face rather than `Text`'s mono
                         `micro`: it is fine print, but it is still a sentence. */}
-                    <Show when={opt.description}>
-                      <span
-                        class={cx(
-                          "max-w-60 font-sans text-micro text-dim",
-                          opt.swatch ? "pl-9" : "pl-5",
-                        )}
-                      >
-                        {opt.description}
-                      </span>
-                    </Show>
-                  </button>
-                )}
+                      <Show when={opt.description}>
+                        <span
+                          class={cx(
+                            "max-w-60 font-sans text-micro text-dim",
+                            opt.swatch ? "pl-9" : "pl-5",
+                          )}
+                        >
+                          {opt.description}
+                        </span>
+                      </Show>
+                    </button>
+                  )
+                }
               </For>
             </div>
           );

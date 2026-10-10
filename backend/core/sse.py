@@ -20,6 +20,9 @@ from contextlib import suppress
 
 from fastapi.responses import StreamingResponse
 
+from core.shutdown import STOPPED, get_unless_shutdown
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
+
 SSE_HEADERS = {
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
@@ -83,16 +86,16 @@ def sse_stream[T](
         try:
             while True:
                 try:
-                    item = await asyncio.wait_for(queue.get(), KEEPALIVE_INTERVAL_S)
+                    # Races the process-wide shutdown signal: a stream with no end of its
+                    # own (a feed, a parked run) must still let the server stop.
+                    item = await get_unless_shutdown(queue, KEEPALIVE_INTERVAL_S)
                 except TimeoutError:
                     yield ": ping\n\n"
                     continue
-                if item is None:  # the subscription ended
+                if item is None or item is STOPPED:  # source ended, or the app is stopping
                     break
                 yield frame(item)
         finally:
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            await cancel_and_wait(task, STOP_TIMEOUT_S)
 
     return StreamingResponse(frames(), media_type="text/event-stream", headers=SSE_HEADERS)

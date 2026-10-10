@@ -30,13 +30,14 @@ export interface ContextBarProps {
  *  The thresholds themselves stay the backend's — this maps a level, it doesn't
  *  decide one. */
 const FIGURE_TONE = {
-  nominal: "text-text",
+  // The cell's own tone, so the figure recedes with the strip it sits in.
+  nominal: "",
   warn: "text-warn",
   alert: "text-alert",
 } as const;
 
 /** How full the model's context window is, as the last cell of the composer's status
- *  bar: `ctx`, a short track, and the figure.
+ *  strip: a 64px track and the figure.
  *
  *  It is **the one readout left on the bar rather than behind Stats**. Everything in
  *  the stats panel is a *tally* — what the thread has spent, counting up with no
@@ -78,10 +79,9 @@ export function ContextBar(props: ContextBarProps): JSX.Element {
           onClick={() => setOpen(!open())}
           class="gap-2"
         >
-          <span class="text-dim">ctx</span>
           {/* Presentation only: the fill and the tick are positions along the backend's
               own fractions. */}
-          <span aria-hidden="true" class="relative h-1.5 w-20 shrink-0 bg-line">
+          <span aria-hidden="true" class="relative h-1 w-16 shrink-0 bg-line">
             <span
               class="absolute inset-y-0 left-0 bg-text"
               style={{ width: `${fill()}%` }}
@@ -89,7 +89,7 @@ export function ContextBar(props: ContextBarProps): JSX.Element {
             <Show when={fold()}>
               {(mark) => (
                 <span
-                  class="absolute -top-0.5 h-2.5 w-px bg-warn"
+                  class="absolute -top-0.5 h-2 w-px bg-warn"
                   style={{ left: `${mark().pct}%` }}
                 />
               )}

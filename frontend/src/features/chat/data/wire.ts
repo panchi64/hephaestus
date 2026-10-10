@@ -172,6 +172,10 @@ export interface ActiveRunDTO {
   kind: string;
   status: string;
   last_seq: number;
+  /** The persisted row the run is answering — the operator's prompt, or on a
+   *  regenerate the request being re-answered. Null for a run that answers nothing
+   *  (a fold), and briefly while a chat run is still queued or in its setup. */
+  prompt_message_id?: string | null;
 }
 
 /** The metric fields shared by the live `run.metrics` frame and the conversation

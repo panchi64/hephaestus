@@ -35,16 +35,9 @@
   /* ---- spacing base (p-1=4px, p-2=8px, p-4=16px, p-6=24px, p-8=32px) ---- */
   --spacing: var(--space-1);
 
-  /* ---- radius -> rounded-ctl (3px controls) / rounded-panel (6px containers).
-         The hairline data grid stays square — no radius utility on a table
-         cell, an instrument band, or a list row (§7). ---- */
-  --radius-ctl: var(--radius-1);
-  --radius-panel: var(--radius-2);
-
-  /* ---- fonts -> font-sans / font-mono / font-display ---- */
+  /* ---- fonts -> font-sans / font-mono ---- */
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-display: var(--font-display);
 
   /* ---- letter spacing -> tracking-label (mono uppercase) / tracking-plate
          (engraved panel legends) / tracking-tight ---- */
@@ -85,7 +78,6 @@
   --shadow-focus: var(--shadow-focus);
   --shadow-accent: var(--shadow-accent);
   --shadow-alert: var(--shadow-alert);
-  --shadow-bloom: var(--shadow-bloom);
 
   /* ---- motion -> ease-out-ody / duration-* ---- */
   --ease-ody: var(--ease);
@@ -813,8 +805,7 @@ body {
 }
 
 /* The exits. Declared AFTER the entries and at equal specificity, so source
-   order is what makes them win — the same arrangement `.ody-led`'s tone
-   modifiers rely on.
+   order is what makes them win.
      Each is a DIFFERENT animation NAME from its entry, and that is required
    rather than stylistic: `data-closed` appearing does not restart an animation
    that has already finished, so reusing the entry's name would leave the region
@@ -971,288 +962,760 @@ body {
   );
 }
 
-/* ==========================================================================
-   THE LIVE RAIL — an LED, not a border.
-
-   A process timeline's left edge is one of the few borders the system keeps
-   (§7), and while a block is live it should read as an *emitter*: a 2px strip
-   with light spilling leftward onto the page, the way a status LED bleeds onto
-   the panel around it.
-
-   Built as a pseudo-element rather than a `border-left` so the glow can be
-   directional. Four layers, each pushed further along ONE axis with a growing
-   blur, so the light falls away from the strip and fades — a symmetric glow
-   would read as a halo around a line, which is not what an LED does.
-
-   The colour comes from `--led` rather than `currentColor`: the rail wraps the
-   block's content, and `currentColor` would mean tinting every word inside it
-   just to colour a 1px strip.
-
-   Direction and intensity are BOTH custom properties, so a side modifier and a
-   tone modifier compose instead of multiplying: `--led-x`/`--led-y` aim the
-   falloff, `--led-a1..4` set its opacity curve, and the four `box-shadow`
-   layers are written exactly once below.
-   ========================================================================== */
-.ody-led {
-  position: relative;
-  /* Set here rather than inline in every shadow layer. Override it on the
-     element (or from a later rule) to light the rail a different colour. */
-  --led: var(--accent-info);
-  /* WHICH WAY the light falls, kept separate from WHICH EDGE the strip is on:
-     -1 throws away from the container (the rail beside a running block), 1
-     throws into it, under the container's own content (a list row that lights
-     up from its leading edge). The side modifier picks the axis and reads the
-     direction off this, so side and spill compose. */
-  --led-dir: -1;
-  --led-x: var(--led-dir);
-  --led-y: 0;
-  /* Intensity, as two knobs a caller can turn (`LedEdge intensity`) WITHOUT
-     touching the shared curve — brightness and distance are per-instance, not
-     per-tone, because how far a given fixture has to throw light is a fact about
-     where it is mounted, not about what colour it is.
-       --led-reach scales offset, blur and spread together, so the falloff keeps
-       its shape as it grows; raising opacity alone would only brighten the
-       strip's immediate surround.
-       --led-gain scales the whole opacity curve. */
-  --led-reach: 1;
-  --led-gain: 1;
-  --led-a1: 60%;
-  --led-a2: 42%;
-  --led-a3: 26%;
-  --led-a4: 12%;
-}
-.ody-led::before {
-  content: "";
+/* The clamp fade (`ScrollFade variant="clamp"`): "there is more below" over the
+   foot of a clamped block. Inside the block, from the block's own ground, no
+   blur — a clamped block is not a scroll region with something laid over it. */
+.ody-clamp-fade {
+  --fade-ground: var(--bg);
   position: absolute;
-  inset-block: 0;
-  /* ON the border, not beside it. An absolutely positioned box is placed against
-     the PADDING box, so `left: 0` puts the emitter one hairline *inside* the
-     rule it is meant to be — leaving the border showing alongside the light
-     rather than under it. Pulling it out by the border width makes the lit bar
-     and the resting hairline the same pixels, which is what lets one fade into
-     the other. */
-  left: calc(-1 * var(--line-w));
-  /* Exactly the hairline's width — the LED *is* the rail's rule, lit. Making it
-     thicker would change the timeline's structure to say something about state,
-     which the light is already saying. */
-  width: var(--line-w);
-  background: var(--led);
-  /* The reach is the whole point: a tight glow just reads as a coloured border
-     with soft edges, and only a long falloff reads as light actually spilling
-     onto the surface beside it. */
-  box-shadow:
-    calc(2px * var(--led-x) * var(--led-reach))
-      calc(2px * var(--led-y) * var(--led-reach)) calc(10px * var(--led-reach))
-      0
-      color-mix(
-        in oklab,
-        var(--led) calc(var(--led-a1) * var(--led-gain)),
-        transparent
-      ),
-    calc(6px * var(--led-x) * var(--led-reach))
-      calc(6px * var(--led-y) * var(--led-reach)) calc(24px * var(--led-reach))
-      calc(1px * var(--led-reach))
-      color-mix(
-        in oklab,
-        var(--led) calc(var(--led-a2) * var(--led-gain)),
-        transparent
-      ),
-    calc(14px * var(--led-x) * var(--led-reach))
-      calc(14px * var(--led-y) * var(--led-reach)) calc(52px * var(--led-reach))
-      calc(2px * var(--led-reach))
-      color-mix(
-        in oklab,
-        var(--led) calc(var(--led-a3) * var(--led-gain)),
-        transparent
-      ),
-    calc(26px * var(--led-x) * var(--led-reach))
-      calc(26px * var(--led-y) * var(--led-reach)) calc(96px * var(--led-reach))
-      calc(4px * var(--led-reach))
-      color-mix(
-        in oklab,
-        var(--led) calc(var(--led-a4) * var(--led-gain)),
-        transparent
-      );
-  /* The emitter is ALWAYS present, and lighting it is an opacity change rather
-     than the class appearing. Toggling `.ody-led` itself would mean the
-     pseudo-element blinking in and out of existence, which no transition can
-     smooth — and a run ending would kill the rail's light mid-frame instead of
-     letting it dim. Unlit, this fades to nothing and reveals whatever border
-     sits underneath it. */
-  opacity: var(--led-lit, 1);
-  /* All three are ambient state — a fixture changing what it reports, with
-     nothing waiting on it — so they fade rather than cut, at the human
-     register's ceiling (§8). A light that snaps reads as a different light
-     switching on, not as the same one changing. */
-  transition:
-    opacity var(--motion-slow) var(--ease),
-    background var(--motion-slow) var(--ease),
-    box-shadow var(--motion-slow) var(--ease);
+  inset-inline: 0;
+  bottom: 0;
+  height: var(--space-6);
+  pointer-events: none;
+  background: linear-gradient(to top, var(--fade-ground), transparent);
 }
-
-/* Dark. The rule underneath stays exactly where it was, so nothing moves. */
-.ody-led-off {
-  --led-lit: 0;
+.ody-clamp-fade[data-edge="top"] {
+  top: 0;
+  bottom: auto;
+  background: linear-gradient(to bottom, var(--fade-ground), transparent);
 }
-
-/* Side modifier. Declared AFTER `.ody-led::before` so it wins the geometry at
-   equal specificity. Only the strip's box and the falloff axis change — the
-   shadow stack itself is never restated. */
-.ody-led-top::before {
-  /* Same correction as the left edge, on the other axis: out by the border
-     width so the strip sits on the rule rather than under it. */
-  inset: calc(-1 * var(--line-w)) 0 auto;
-  width: auto;
-  height: var(--line-w);
+.ody-clamp-fade[data-ground="surface"] {
+  --fade-ground: var(--surface);
 }
-.ody-led-top {
-  --led-x: 0;
-  --led-y: var(--led-dir);
+.ody-clamp-fade[data-ground="sunken"] {
+  --fade-ground: var(--surface-sunken);
 }
-
-/* Spill modifier — the light falls INTO the container instead of away from it,
-   landing under the container's own content.
-
-   The z-index pair is what makes that legible rather than a wash over the top:
-   `z-index: 0` gives this element a stacking context, and the emitter at -1 then
-   paints ABOVE the element's own fill but BELOW its text. Without the context
-   the -1 would escape and hide behind whatever surface the element sits on.
-
-   An inward spill almost always wants clipping too — the glow blooms on every
-   axis, so on a short element it bleeds onto its neighbours. Give the container
-   `overflow-hidden` and the light fills the element and stops at its edges. */
-.ody-led-in {
-  --led-dir: 1;
-  z-index: 0;
-}
-.ody-led-in::before {
-  z-index: -1;
-}
-
-/* Tone modifiers. Declared AFTER `.ody-led` so that at equal specificity these
-   win the `--led` assignment. Prefer the `LedEdge` component over hand-writing
-   the pair. */
-.ody-led-nominal {
-  --led: var(--accent-nominal);
-}
-.ody-led-warn {
-  --led: var(--accent-warn);
-}
-.ody-led-alert {
-  --led: var(--accent-alert);
-}
-.ody-led-accent {
-  --led: var(--accent);
-}
-/* Neutral white light. A tone, and ONLY a tone — it sets no reach and no gain,
-   so brightening one surface's strip cannot brighten every other neutral one.
-   It does carry its own opacity curve, because white reads far brighter than a
-   saturated hue at the same alpha; that is compensation for the colour, not an
-   intensity choice. */
-.ody-led-neutral {
-  --led: var(--text-bright);
-  --led-a1: 34%;
-  --led-a2: 22%;
-  --led-a3: 13%;
-  --led-a4: 6%;
-}
-
-/* Taper modifier — a strip that is brightest at its centre and fades to nothing
-   at both ends, with a glow that fades the same way. A box-shadow cannot do that:
-   it is the shape of its box, equally strong along the whole length. So a tapered
-   strip draws its light as gradients instead, in a box that IS the lit region —
-   the emitter's line along the edge it sits on, and an elliptical wash thrown
-   away from it. Outward spill only; the inward case has no tapered consumer.
-
-   The colour still fades between tones because `--led` is registered as a
-   `<color>` (below): an unregistered custom property changes discretely, and a
-   gradient built from it would snap from white to blue as a run starts. */
-@property --led {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: transparent;
-}
-.ody-led-taper {
-  transition: --led var(--motion-slow) var(--ease);
-}
-.ody-led-taper.ody-led-top::before {
-  /* The box's bottom row is the edge's own hairline — the same pixels the
-     untapered strip occupies — and the rest of it is the space the glow falls
-     into above. */
-  inset: auto 0 100% 0;
-  width: auto;
-  /* Short and faint on purpose. The line carries the look; the wash only says
-     it is a light rather than a stroke. A filled ellipse at the box-shadow
-     curve's own mid alpha read as a dome of white over the transcript. */
-  height: calc(var(--line-w) + 20px * var(--led-reach));
-  box-shadow: none;
-  background:
-    linear-gradient(90deg, transparent, var(--led) 50%, transparent) bottom /
-      100% var(--line-w) no-repeat,
-    radial-gradient(
-      50% 100% at 50% 100%,
-      color-mix(
-        in oklab,
-        var(--led) calc(var(--led-a4) * var(--led-gain)),
-        transparent
-      ),
-      transparent
-    );
-}
-.ody-led-taper:not(.ody-led-top)::before {
-  inset: 0 100% 0 auto;
-  height: auto;
-  width: calc(var(--line-w) + 20px * var(--led-reach));
-  box-shadow: none;
-  background:
-    linear-gradient(180deg, transparent, var(--led) 50%, transparent) right /
-      var(--line-w) 100% no-repeat,
-    radial-gradient(
-      100% 50% at 100% 50%,
-      color-mix(
-        in oklab,
-        var(--led) calc(var(--led-a4) * var(--led-gain)),
-        transparent
-      ),
-      transparent
-    );
+.ody-clamp-fade[data-ground="raised"] {
+  --fade-ground: var(--surface-raised);
 }
 
 /* ==========================================================================
-   COMPOSER TOKENS. A `/command`, `@file` or skill in the field reads as a
-   contained cell — a square, hairline-ruled box on a faint accent fill, the
-   same register as the status bar's cells — rather than as coloured words.
+   THE ACTION TIER (`ActionFrame`, `ActionButtons`, `ChoiceList`).
 
-   **Nothing here may change a glyph's position.** The token is painted on the
-   layer *behind* a transparent textarea, and any padding, border or margin
-   would push the colours off the words the caret is moving through. So the box
-   is a pseudo-element laid *around* the text box (absolute, so it takes no
-   layout), reaching further along the sides than up and down for a little
-   air either side of the word. That reach eats into the space beside the
-   token, so the field and its layer both carry `.ody-composer-field`'s
-   extra word spacing: a space at the reading size is ~4px, and without the
-   extra, the next word would sit right against the box's edge.
+   Anything the run is waiting on the operator for gets MASS, not just a
+   coloured line: a solid plate band in the state's colour with inverse text and
+   a blinking square, a body tinted a few percent toward that colour, and a
+   filled primary. The colour names the kind of ask — amber an approval, blue a
+   question, red a conflict or stop — and `--action` carries it to every part,
+   so a building block placed inside a frame takes the frame's tone without
+   being told.
 
-   It sits behind the text at `z-index: -1`, which needs a stacking context to
-   stay inside — the layer carrying these tokens is `isolate` for that, or the
-   box would drop behind the card's own fill.
+   Square throughout. No shadow: it sits in the flow, it does not float (§13).
+   The frame imposes no padding on its body — a question card sits flush, an
+   approval pads its own.
    ========================================================================== */
-.ody-composer-token {
+.ody-action {
+  --action: var(--accent-warn);
+  display: flex;
+  flex-direction: column;
+  border: var(--line-w) solid var(--action);
+  background: color-mix(in srgb, var(--action) 7%, var(--bg));
+}
+.ody-action[data-tone="question"] {
+  --action: var(--accent-info);
+  background: color-mix(in srgb, var(--action) 5%, var(--bg));
+}
+.ody-action[data-tone="alert"] {
+  --action: var(--accent-alert);
+}
+.ody-action-band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--action);
+}
+/* The live marker — the band's one moving part. Hard-stepped like the caret
+   (§8): it is the machine reporting "still waiting", not decoration. */
+.ody-action-pulse {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  background: var(--bg);
+}
+@keyframes ody-action-blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ody-action-pulse {
+    animation: ody-action-blink 1.2s steps(2, jump-none) infinite;
+  }
+}
+
+/* A row of square cells with joined borders. The primary is the brightest thing
+   in the frame — luminance, not hue (§5) — and every other cell is outlined. */
+.ody-action-btns {
+  display: flex;
+  flex-wrap: wrap;
+}
+.ody-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--line-w) solid var(--line-strong);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--type-meta-size);
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ody-action-btn + .ody-action-btn {
+  border-left-width: 0;
+}
+.ody-action-btn:hover {
+  background: var(--surface-raised);
+  color: var(--text-bright);
+}
+.ody-action-btn[data-primary] {
+  background: var(--text-bright);
+  border-color: var(--text-bright);
+  color: var(--bg);
+}
+.ody-action-btn[data-primary]:hover {
+  opacity: 0.9;
+}
+.ody-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.ody-action-btn:focus-visible,
+.ody-choice:focus-visible {
+  outline: 2px solid var(--action, var(--accent-info));
+  box-shadow: none;
+}
+.ody-action-btn:focus-visible {
+  outline-offset: 2px;
+}
+.ody-action-btn kbd {
+  font: inherit;
+  opacity: 0.6;
+}
+
+/* A question's answers: edge-to-edge ruled rows, never side by side. Each row
+   is a keycap, the answer, and its consequence right-aligned on the same line.
+   The picked row is a filled keycap and a tinted row — not a full inversion,
+   which would outshout the band. */
+.ody-choices {
+  display: grid;
+  border-top: var(--line-w) solid var(--line);
+}
+.ody-choice {
+  display: grid;
+  grid-template-columns: 22px minmax(0, max-content) 1fr;
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: 2px;
+  width: 100%;
+  padding: 10px var(--space-3);
+  border-bottom: var(--line-w) solid var(--line);
+  text-align: left;
+  cursor: pointer;
+}
+.ody-choice:hover {
+  background: color-mix(
+    in srgb,
+    var(--action, var(--accent-info)) 6%,
+    transparent
+  );
+}
+.ody-choice:focus-visible {
+  outline-offset: -2px;
+}
+.ody-choice[aria-checked="true"] {
+  background: color-mix(
+    in srgb,
+    var(--action, var(--accent-info)) 16%,
+    transparent
+  );
+}
+.ody-choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.ody-choice-hint {
+  text-align: right;
+  min-width: 0;
+}
+@media (max-width: 560px) {
+  .ody-choice {
+    grid-template-columns: 22px 1fr;
+  }
+  .ody-choice-hint {
+    grid-column: 2;
+    text-align: left;
+  }
+}
+.ody-keycap {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: var(--line-w) solid var(--line-strong);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--type-meta-size);
+  line-height: 1;
+}
+.ody-choice[aria-checked="true"] .ody-keycap {
+  background: var(--action, var(--accent-info));
+  border-color: var(--action, var(--accent-info));
+  color: var(--bg);
+}
+/* The free-text row: a real input, its keycap dashed until it holds focus. */
+.ody-choice-free {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  align-items: center;
+  column-gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--line-w) solid var(--line);
+}
+.ody-choice-free .ody-keycap {
+  border-style: dashed;
+  color: var(--text-dim);
+}
+.ody-choice-free:focus-within .ody-keycap {
+  border-style: solid;
+  border-color: var(--action, var(--accent-info));
+  color: var(--action, var(--accent-info));
+}
+.ody-choice-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-left: var(--space-3);
+}
+
+/* ==========================================================================
+   THE COMPOSER (§10.12) — one ruled unit, square, no shadow: a plate row
+   saying what the thread is doing, the field, the attachment chips, and a
+   receded strip of cells (`StatusBar variant="recede"`) carrying the pickers,
+   the context bar and Send.
+   ========================================================================== */
+.ody-composer {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  border: var(--line-w) solid var(--line-strong);
+}
+/* The plate: mono, uppercase, dim, a 7px square glyph at its head. While a run
+   streams it turns info and the square blinks — state said in the plate, not
+   by light around the frame. */
+.ody-composer-plate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--line-w) solid var(--line);
+  font-family: var(--font-mono);
+  font-size: var(--type-meta-size);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ody-composer-plate-sq {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  background: var(--text-dim);
+}
+.ody-composer-plate-end {
+  margin-left: auto;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.ody-composer[data-live] .ody-composer-plate {
+  color: var(--accent-info);
+}
+.ody-composer[data-live] .ody-composer-plate-sq {
+  background: var(--accent-info);
+}
+.ody-composer[data-live] .ody-composer-plate-end {
+  color: var(--text);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ody-composer[data-live] .ody-composer-plate-sq {
+    animation: ody-action-blink 1s steps(2, jump-none) infinite;
+  }
+}
+/* The echo of the action tier (§10.18): while the thread waits on the
+   operator the plate is replaced by a solid amber strip with the tier's own
+   blinking square, and its Jump takes the operator to the ask. */
+.ody-composer-wait {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--accent-warn);
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--type-meta-size);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.ody-composer-wait button {
+  margin-left: auto;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.ody-composer-wait button:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* Send, outlined rather than a white slab under the words: dim while there is
+   nothing to send, bright once there is, filled only under the pointer. Stop is
+   the same key in the alert tone, its square in front. */
+.ody-send {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 3px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-meta-size);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 var(--line-w) var(--text-bright);
+  cursor: pointer;
+}
+.ody-send:not(:disabled):hover {
+  background: var(--text-bright);
+  color: var(--bg);
+}
+.ody-send:disabled {
+  color: var(--text-dim);
+  box-shadow: inset 0 0 0 var(--line-w) var(--line);
+  cursor: not-allowed;
+}
+.ody-send[data-tone="stop"] {
+  color: var(--accent-alert);
+  box-shadow: inset 0 0 0 var(--line-w)
+    color-mix(in srgb, var(--accent-alert) 45%, transparent);
+}
+.ody-send[data-tone="stop"]:hover {
+  background: var(--accent-alert);
+  color: var(--bg);
+}
+.ody-send-sq {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  background: currentColor;
+}
+.ody-send kbd {
+  font: inherit;
+  opacity: 0.6;
+}
+.ody-send:focus-visible {
+  outline: 2px solid var(--accent-info);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+/* The drop target: the console's own vocabulary — a ruled frame and a plate —
+   rather than a dashed tinted zone. */
+.ody-composer-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  border: var(--line-w) solid var(--text-bright);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+/* --- Composer tokens ----------------------------------------------------
+   A `/command` or `@file` in the field is a sigil cell welded to a raised name
+   cell. A command's sigil is solid inverse inside a bright outline; a file's is
+   outlined, its directory dim and its basename bright. No accent is spent.
+
+   **Nothing here may change a glyph's position, or reach past its advance.**
+   The token is painted on the layer *behind* a transparent textarea, and any
+   padding, border or margin would push the colours off the words the caret is
+   moving through. So the box is drawn entirely with fills and inset shadows,
+   which occupy no layout and stay inside the glyphs' own cells: the sigil
+   draws its top, bottom and left edges, the name its top, bottom and right,
+   and the two meet at the glyph boundary — that is the weld. Inline
+   `box-decoration-break: clone` keeps the edges whole when a long path wraps. */
+.ody-tok {
+  --tok-line: var(--line-strong);
+}
+.ody-tok[data-trigger="/"] {
+  --tok-line: var(--text-bright);
+}
+.ody-tok-sigil,
+.ody-tok-name {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.ody-tok-sigil {
+  box-shadow:
+    inset 0 var(--line-w) 0 var(--tok-line),
+    inset 0 calc(-1 * var(--line-w)) 0 var(--tok-line),
+    inset var(--line-w) 0 0 var(--tok-line);
+}
+.ody-tok-name {
+  color: var(--text-bright);
+  background: var(--surface-raised);
+  box-shadow:
+    inset 0 var(--line-w) 0 var(--tok-line),
+    inset 0 calc(-1 * var(--line-w)) 0 var(--tok-line),
+    inset calc(-1 * var(--line-w)) 0 0 var(--tok-line);
+}
+.ody-tok[data-trigger="/"] .ody-tok-sigil {
+  color: var(--bg);
+  background: var(--text-bright);
+}
+.ody-tok[data-trigger="@"] .ody-tok-sigil {
+  color: var(--text);
+}
+.ody-tok-dir {
+  color: var(--text-dim);
+}
+
+/* --- The receded strip ---------------------------------------------------
+   `StatusBar variant="recede"`: a sunken fill, a hairline, no cell dividers,
+   dim mono at a 28px row — so the words being written stay the brightest thing
+   in the unit. It comes up to normal contrast only while the pointer or focus
+   is in it. The rail's command strip and footer are the same strip. */
+.ody-status-recede {
+  background: var(--surface-sunken);
+}
+.ody-status-recede .ody-status-cell {
+  height: calc(var(--space-1) * 7);
+  color: var(--text-dim);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ody-status-recede .ody-status-cell {
+    transition: color 120ms ease;
+  }
+}
+.ody-status-recede:is(:hover, :focus-within) .ody-status-cell {
+  color: var(--text);
+}
+.ody-status-recede .ody-status-cell:is(button, label):hover,
+.ody-status-recede .ody-status-cell[aria-expanded="true"] {
+  color: var(--text-bright);
+}
+.ody-status-recede .ody-status-cell:disabled {
+  color: var(--line-strong);
+}
+.ody-status-recede .ody-status-cell input {
+  color: var(--text-bright);
+}
+.ody-status-recede .ody-status-cell input::placeholder {
+  color: var(--text-dim);
+}
+.ody-status-recede:is(:hover, :focus-within)
+  .ody-status-cell
+  input::placeholder {
+  color: var(--text);
+}
+
+/* ==========================================================================
+   THE RAIL (direction C). The mode bar is the one strong element; search and
+   New recede into the strip under it; the list is square ruled rows whose
+   glyph column carries each thread's state, and a thread waiting on the
+   operator takes the action tier's echo — an inset amber edge, a tint, a tag.
+   ========================================================================== */
+.ody-rail-modes {
+  display: grid;
+  grid-template-columns: repeat(var(--rail-modes, 3), minmax(0, 1fr));
+  border-top: var(--line-w) solid var(--line-strong);
+}
+/* The rail is a size container, so at its 208px minimum a part can shed a word
+   rather than overflow: the project filter collapses to its funnel, the strip's
+   key hints go, and the workspace id stacks under the brand. */
+.ody-rail {
+  container-type: inline-size;
+}
+.ody-rail-narrow {
+  display: none;
+}
+.ody-rail-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px var(--space-3) var(--space-3);
+}
+.ody-rail-wordmark {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-size);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: var(--tracking-plate);
+  text-transform: uppercase;
+  color: var(--text-bright);
+}
+.ody-rail-brand > :last-child {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@container (max-width: 230px) {
+  .ody-rail-wide,
+  .ody-rail .ody-status-recede kbd {
+    display: none;
+  }
+  .ody-rail-narrow {
+    display: inline-flex;
+  }
+  .ody-rail-brand {
+    display: grid;
+    gap: 5px;
+  }
+  .ody-rail-brand > :last-child {
+    margin-left: 0;
+  }
+}
+.ody-rail-modes > * {
+  display: grid;
+  min-width: 0;
+}
+.ody-rail-modes > * + * {
+  border-left: var(--line-w) solid var(--line);
+}
+.ody-rail-mode {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 11px 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-meta-size);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ody-rail-mode[aria-checked="true"] {
+  background: var(--text-bright);
+  color: var(--bg);
+}
+.ody-rail-mode:hover:not([aria-checked="true"]) {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.ody-rail-mode:focus-visible {
+  outline: 2px solid var(--accent-info);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+/* A plate naming a run of rows: mono uppercase, a count, and — for a group
+   heading — a hairline running out to the edge. */
+.ody-list-plate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-3) 6px;
+  font-family: var(--font-mono);
+  font-size: var(--type-plate-size);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: var(--tracking-plate);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ody-list-plate[data-rule]::after {
+  content: "";
+  order: 2;
+  flex: 1;
+  height: var(--line-w);
+  background: var(--line);
+}
+.ody-list-plate-count {
+  order: 3;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.ody-list-plate-aside {
+  order: 4;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.ody-list-plate[data-rule] .ody-list-plate-aside {
+  margin-left: 0;
+}
+.ody-list-plate[data-tone="section"] {
+  font-size: var(--type-meta-size);
+  padding-top: var(--space-3);
+}
+.ody-list-plate[data-tone="section"] .ody-list-plate-label {
+  color: var(--text);
+}
+.ody-list-plate[data-tone="section"] .ody-list-plate-count {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* A thread row: an 8px glyph column, the title, a readout. */
+.ody-rail-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  color: var(--text);
+  cursor: pointer;
+}
+.ody-rail-row:hover {
+  background: var(--surface-raised);
+}
+.ody-rail-row[data-selected] {
+  background: var(--surface-raised);
+  color: var(--text-bright);
+}
+/* The console's selection edge: a 2px bright inset bar on the leading side (`-b`:
+   under the cell, for a tab), which costs no layout. Paired with a raised fill by
+   whoever wears it. */
+.ody-selected-edge,
+.ody-rail-row[data-selected],
+.ody-rail-nav[data-selected] {
+  box-shadow: inset 2px 0 0 var(--text-bright);
+}
+.ody-selected-edge-b {
+  box-shadow: inset 0 -2px 0 var(--text-bright);
+}
+.ody-rail-glyph {
+  width: 7px;
+  height: 7px;
+  background: var(--text-dim);
+}
+.ody-rail-readout {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--type-micro-size);
+  line-height: 1;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ody-rail-row[data-unread] .ody-rail-title {
+  color: var(--text-bright);
+  font-weight: 500;
+}
+.ody-rail-row[data-unread] .ody-rail-glyph {
+  background: var(--text-bright);
+}
+.ody-rail-row[data-state="running"] .ody-rail-glyph {
+  background: var(--accent);
+}
+.ody-rail-row[data-state="running"] .ody-rail-readout {
   color: var(--accent);
 }
-.ody-composer-token::before {
-  content: "";
-  position: absolute;
-  inset: -1px -2px;
-  z-index: -1;
-  background: color-mix(in oklab, var(--accent) 12%, transparent);
-  border: 1px solid color-mix(in oklab, var(--accent) 45%, transparent);
+@media (prefers-reduced-motion: no-preference) {
+  .ody-rail-row[data-state="running"] .ody-rail-glyph {
+    animation: ody-action-blink 1s steps(2, jump-none) infinite;
+  }
 }
-/* On the field AND the layer behind it — any metric set on one and not the
-   other walks the colours off the words. */
-.ody-composer-field {
-  word-spacing: 0.15em;
+.ody-rail-row[data-state="failed"] .ody-rail-glyph {
+  background: var(--accent-alert);
+}
+.ody-rail-row[data-state="failed"] .ody-rail-readout {
+  color: var(--accent-alert);
+}
+.ody-rail-row[data-state="waiting"] {
+  background: color-mix(in srgb, var(--accent-warn) 7%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent-warn);
+  color: var(--text-bright);
+}
+/* Hover on a waiting row raises the fill under the amber tint, so the tint keeps
+   its meaning and the row still answers the pointer. */
+.ody-rail-row[data-state="waiting"]:hover {
+  background: color-mix(in srgb, var(--accent-warn) 7%, var(--surface-raised));
+}
+.ody-rail-row[data-state="waiting"][data-selected] {
+  box-shadow:
+    inset 3px 0 0 var(--accent-warn),
+    inset 0 0 0 var(--line-w)
+      color-mix(in srgb, var(--accent-warn) 35%, transparent);
+}
+.ody-rail-row[data-state="waiting"] .ody-rail-glyph {
+  background: var(--accent-warn);
+}
+.ody-rail-tag {
+  padding: 3px 5px;
+  background: var(--accent-warn);
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+/* The age gives way to the row's menu under the pointer, in the same slot. */
+.ody-rail-row .ody-rail-more {
+  display: none;
+}
+.ody-rail-row:is(:hover, :focus-within, [data-menu-open]) .ody-rail-more {
+  display: inline-flex;
+}
+.ody-rail-row:is(:hover, :focus-within, [data-menu-open]) .ody-rail-age {
+  display: none;
+}
+
+/* A destination in the rail's footer: a 16px icon, the label, its meta.
+   Selected is the raised fill plus the 2px bright inset edge the thread rows
+   use, so "you are here" reads the same everywhere in the rail. */
+.ody-rail-nav {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px var(--space-3);
+  color: var(--text);
+}
+.ody-rail-nav:hover {
+  background: var(--surface-raised);
+}
+.ody-rail-nav[data-selected] {
+  background: var(--surface-raised);
+  color: var(--text-bright);
+}
+.ody-rail-nav > svg {
+  color: var(--text-dim);
+}
+.ody-rail-nav:is(:hover, [data-selected]) > svg {
+  color: var(--text);
 }
 
 /* ==========================================================================
@@ -1634,21 +2097,18 @@ body {
   line-height: var(--prose-code-lh);
   background: var(--surface-raised);
   border: var(--line-w) solid var(--line);
-  border-radius: var(--radius-1);
   padding: 1px var(--space-1);
   color: var(--text-bright);
 }
 .ody-prose pre {
   background: var(--surface-raised);
   border: var(--line-w) solid var(--line);
-  border-radius: var(--radius-2);
   padding: var(--space-3);
   overflow-x: auto;
 }
 .ody-prose pre code {
   background: transparent;
   border: 0;
-  border-radius: 0;
   padding: 0;
 }
 /* A quote sits further from its neighbours than an ordinary block does — flush at

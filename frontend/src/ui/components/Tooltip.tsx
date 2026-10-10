@@ -26,7 +26,7 @@ export interface TooltipProps {
    for the one thing wrapping can't help with, an unbroken token (a long path, a
    model id) wider than the cap. */
 const tipChrome =
-  "pointer-events-none max-w-64 rounded-ctl bg-raised px-2 py-1 text-label font-sans whitespace-normal break-words text-bright shadow-1";
+  "pointer-events-none max-w-64 bg-raised px-2 py-1 text-label font-sans whitespace-normal break-words text-bright shadow-1";
 
 /** Hover/focus tooltip.
  *

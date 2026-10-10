@@ -125,6 +125,9 @@ export async function streamRun(
         while ((sep = buffer.indexOf("\n\n")) >= 0) {
           const frame = buffer.slice(0, sep);
           buffer = buffer.slice(sep + 2);
+          // A chunk can already be read when the signal fires (a thread switch):
+          // delivering its frames would fold the old run into whatever is bound now.
+          if (signal?.aborted) return;
           const event = parseFrame(frame);
           if (!event) continue;
           failures = 0; // a real frame resets the reconnect budget

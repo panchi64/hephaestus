@@ -1,4 +1,5 @@
 import { createSignal, For, Show, Suspense, type JSX } from "solid-js";
+import { settled } from "~/lib/resource";
 import {
   Button,
   EmptyState,
@@ -41,10 +42,9 @@ export function WorkflowsDirectoryScreen(props: {
   // Reading a Solid resource accessor re-throws its error. A 500 here would otherwise
   // trip the shell's ErrorBoundary and replace the whole dialog with one message —
   // InstrumentBand reads this and sits outside the Suspense. Derive from
-  // `.latest`/`.error` so a failed load degrades to an empty list with a message, and
+  // `settled` so a failed load degrades to an empty list with a message, and
   // the boundary stays the net rather than the plan.
-  const workflows = (): Workflow[] =>
-    workflowsResource.error ? [] : (workflowsResource.latest ?? []);
+  const workflows = (): Workflow[] => settled(workflowsResource) ?? [];
   const loadError = (): string | null =>
     workflowsResource.error
       ? workflowErrorMessage(

@@ -30,6 +30,7 @@ import {
   createSignal,
   on,
   onCleanup,
+  untrack,
   type Accessor,
 } from "solid-js";
 import {
@@ -37,6 +38,7 @@ import {
   setChatBusy,
   setRunErrored,
 } from "~/lib/stores/chatActivity";
+import type { SessionMode } from "~/lib/modes";
 import { markConversationRead } from "~/lib/stores/notifications";
 import { moveDraft } from "~/ui";
 import {
@@ -44,15 +46,24 @@ import {
   codeProjectId,
   setActiveSessionMode,
 } from "~/lib/stores/sessionMode";
-import { useChatSession } from "./data/conversations";
 import { refreshSessions } from "./data/sessions";
+import { createHistoryLoad, watchLateRuns } from "./historyLoad";
+import type { HistoryStatus } from "./historyStatus";
 import { DEFAULT_PERMISSION_LEVEL, type PermissionLevel } from "./model";
 import { seatPermission } from "./permissionSeat";
 import { createChatStream } from "./stream/chatStream";
 
 export interface MainChat {
   currentId: Accessor<string | null>;
+  /** Seat the room on a thread. Re-selecting the thread already open re-reads its
+   *  history instead of doing nothing — which is what makes a failed load recoverable
+   *  by clicking the row again. */
   setCurrentId: (id: string | null) => void;
+  /** Whether the open thread's history is loading, failed, or here. The transcript
+   *  draws a loading line or a retryable error from it rather than the empty state. */
+  history: Accessor<HistoryStatus>;
+  /** Read the open thread's history again. */
+  reloadHistory: () => void;
   /** The thread **on screen**, which is `currentId` except during the first turn of a
    *  thread the operator has just started: the backend gives that one an id the moment
    *  it accepts the turn, but the room does not seat itself on it until the run ends
@@ -66,6 +77,11 @@ export interface MainChat {
    *  the thread still uses `currentId`; this is a read-side answer to "which thread am
    *  I looking at", not a second seat. */
   openId: Accessor<string | null>;
+  /** The mode of the thread the room last loaded, tagged with that thread's id — what
+   *  the thread *is*, as opposed to the app-wide mode the operator has staged. Held
+   *  across a re-read of the same thread, so a reload does not look like a different
+   *  kind of thread for a moment. */
+  loadedMode: Accessor<{ id: string; mode: SessionMode } | null>;
   stream: ReturnType<typeof createChatStream>;
   /** Whether the one-time warm-resume entry intent has run this app session. The
    *  flag is part of the singleton so it survives navigation — see the screen. */
@@ -97,6 +113,10 @@ export function mainChat(): MainChat {
   if (_mainChat) return _mainChat;
   return (_mainChat = createRoot(() => {
     const [currentId, setCurrentId] = createSignal<string | null>(null);
+    const [loadedMode, setLoadedMode] = createSignal<{
+      id: string;
+      mode: SessionMode;
+    } | null>(null);
     const [permission, setLevel] = createSignal<PermissionLevel>(
       DEFAULT_PERMISSION_LEVEL,
     );
@@ -112,12 +132,10 @@ export function mainChat(): MainChat {
       permissionOwner = currentId();
       setLevel(level);
     };
-    const session = useChatSession(currentId);
+    const { loaded, fromLoaded, history, reloadHistory } =
+      createHistoryLoad(currentId);
     const stream = createChatStream(
-      // Withhold the source while history loads — the resource still reports the
-      // previous thread's value across a source change (Solid retains it), and
-      // feeding that to the stream would seed the wrong thread.
-      () => (session.loading ? undefined : session()?.messages),
+      fromLoaded((s) => s.messages),
       currentId,
       {
         onConversationStarted: (id) => {
@@ -140,16 +158,14 @@ export function mainChat(): MainChat {
         onTurnComplete: () => refreshSessions(),
         // Withheld in lockstep with the history above, so the meter seeds from the
         // loaded thread rather than the retained value of the one just left.
-        initialContext: () =>
-          session.loading ? undefined : session()?.context,
+        initialContext: fromLoaded((s) => s.context),
         // Same lockstep: the loaded thread's cumulative readout.
-        initialStats: () => (session.loading ? undefined : session()?.stats),
+        initialStats: fromLoaded((s) => s.stats),
         // Same lockstep: the in-flight run of the loaded thread, for a cold-read
         // reattach (a page reload mid-stream).
-        activeRun: () => (session.loading ? undefined : session()?.activeRun),
+        activeRun: fromLoaded((s) => s.activeRun),
         // Same lockstep: the loaded thread's git-style snapshot history.
-        initialSnapshots: () =>
-          session.loading ? undefined : session()?.snapshots,
+        initialSnapshots: fromLoaded((s) => s.snapshots),
         // Read only when a send creates the conversation.
         mode: activeSessionMode,
         projectId: codeProjectId,
@@ -181,18 +197,21 @@ export function mainChat(): MainChat {
       // Withheld across a source change in lockstep with everything else fed to the
       // stream — the resource retains the thread just left, and its level is the one
       // value here that would be written back to the wrong conversation.
-      const loaded = id === null || session.loading ? undefined : session();
+      const thread = loaded();
       const seat = seatPermission({
         currentId: id,
         owner: permissionOwner,
-        stored: loaded?.permission,
+        stored: thread?.permission,
       });
       if (seat) {
         permissionOwner = seat.owner;
         setLevel(seat.level);
         setPermissionPending(seat.provisional);
       }
-      if (loaded) setActiveSessionMode(loaded.mode);
+      if (thread) {
+        setActiveSessionMode(thread.mode);
+        if (id) setLoadedMode({ id, mode: thread.mode });
+      }
     });
     // Reattach when the tab returns to the foreground or the network comes back.
     // A backgrounded tab throttles the SSE reader until it stalls; on return we
@@ -246,11 +265,31 @@ export function mainChat(): MainChat {
       const id = currentId();
       if (id) markConversationRead(id);
     });
+    // Runs begun out of sight (another tab, a scheduled task, a research launch) are
+    // found by re-reading the open thread — see `watchLateRuns`.
+    watchLateRuns({
+      currentId,
+      history,
+      reloadHistory,
+      sending: stream.sending,
+      activeRunId: stream.activeRunId,
+    });
     const [warmResolved, setWarmResolved] = createSignal(false);
     return {
       currentId,
-      setCurrentId,
+      setCurrentId: (id) => {
+        if (
+          id !== null &&
+          id === untrack(currentId) &&
+          !untrack(stream.sending)
+        )
+          reloadHistory();
+        else setCurrentId(id);
+      },
+      history,
+      reloadHistory,
       openId: () => currentId() ?? stream.conversationId(),
+      loadedMode,
       stream,
       warmResolved,
       markWarmResolved: () => setWarmResolved(true),

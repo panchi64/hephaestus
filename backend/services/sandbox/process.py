@@ -14,6 +14,7 @@ server must not leave it running once the run that started it is gone.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fnmatch
 import os
 import signal
@@ -31,6 +32,85 @@ from .host import HostConfinement, confine
 #: enough for a server to close its listeners and drop a lockfile, short enough that an
 #: agent stopping a background command does not sit there waiting for it.
 _GRACE_S = 2.0
+
+
+#: Process groups started by :func:`spawn_confined` that may still be alive, each with the
+#: leader process that opened it. A command that backgrounds a server returns, its shell is
+#: reaped, and the group lives on — nothing else remembers it, so without this a quit app
+#: left every such server running on the operator's machine. Pruned on each spawn, so it
+#: never grows past what is actually running.
+_groups: dict[int, asyncio.subprocess.Process] = {}
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:  # EPERM: it exists but is not ours to signal — not ours to track either
+        return False
+    return True
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:  # EPERM: something holds the number, which is all this asks
+        return True
+    return True
+
+
+def _group_is_ours(pgid: int, leader: asyncio.subprocess.Process) -> bool:
+    """Whether ``pgid`` still names the group ``leader`` opened, rather than a number the
+    OS has since handed to something else.
+
+    A group id is its leader's pid, and a pid is free for reuse the moment nothing holds
+    it. While the group has any member the kernel keeps the number reserved, so a live
+    group at ``pgid`` is ours as long as no *other* process owns the pid. Once the group
+    empties it is not: the number can be given to an unrelated session leader — the
+    operator's own shell — and signalling it by number would kill that.
+
+    Two states are provably ours. The leader has not been reaped (``returncode`` is
+    ``None``): it, or its zombie, still holds the pid. Or the leader has been reaped and
+    nothing holds the pid but the group still has members: the kernel only keeps a pid
+    out of reuse for a live group, so the group is the one we opened. A reaped leader with
+    a process *at* ``pgid`` means the number was reused, which in turn means our group is
+    already gone. No process listing, no ancestry walk, no dependency — both probes are
+    signal-0 calls that behave the same on macOS and Linux.
+
+    The one residual window is the instant between the leader being reaped and asyncio
+    recording ``returncode`` on the loop; a number reused inside it is read as the
+    leader's. It needs the group to empty and the OS to recycle the pid within that
+    interval, which is why it is documented rather than closed.
+    """
+    if leader.returncode is not None and _pid_exists(pgid):
+        return False
+    return _group_alive(pgid)
+
+
+async def stop_all_groups(grace_s: float = 1.0) -> None:
+    """SIGTERM every process group this app started and still has running, give them
+    ``grace_s`` to leave, then SIGKILL what remains. Called once, from app shutdown.
+
+    Ownership is re-checked (:func:`_group_is_ours`) before each signal and on every poll
+    of the grace window, not once up front: a group that empties during the grace period
+    frees its number, and the SIGKILL pass must not land on whatever claimed it.
+    """
+    tracked = dict(_groups)
+    _groups.clear()
+    live = {g: p for g, p in tracked.items() if _group_is_ours(g, p)}
+    for pgid in live:
+        with contextlib.suppress(OSError):
+            os.killpg(pgid, signal.SIGTERM)
+    deadline = asyncio.get_running_loop().time() + grace_s
+    while live and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.05)
+        live = {g: p for g, p in live.items() if _group_is_ours(g, p)}
+    for pgid in live:
+        with contextlib.suppress(OSError):
+            os.killpg(pgid, signal.SIGKILL)
 
 
 def kill_tree(proc: asyncio.subprocess.Process) -> None:
@@ -115,7 +195,7 @@ async def spawn_confined(
     into something it can retry, while the hatch reports any launch failure as one — and
     flattening them here would take that distinction away from both.
     """
-    return await asyncio.create_subprocess_shell(
+    proc = await asyncio.create_subprocess_shell(
         command,
         cwd=str(cwd) if cwd is not None else None,
         env=dict(env) if env is not None else None,
@@ -123,6 +203,13 @@ async def spawn_confined(
         stderr=stderr,
         start_new_session=True,  # own process group, so we can kill the whole tree
     )
+    # The session leader's pid is the group id. Recorded so app shutdown can reach a
+    # backgrounded child whose shell has long since exited (see ``_groups``).
+    for pgid, leader in list(_groups.items()):
+        if not _group_is_ours(pgid, leader):
+            del _groups[pgid]
+    _groups[proc.pid] = proc
+    return proc
 
 
 async def run_on_host(

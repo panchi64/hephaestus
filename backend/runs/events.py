@@ -651,6 +651,25 @@ class CompactionDelta(_Body):
     text: str
 
 
+class CompactionFailed(_Body):
+    """A fold that began did not land — the closing frame for a ``compaction.started`` that
+    will never be followed by ``conversation.compacted``.
+
+    Without it a client holding a live "compacting" section, filled with the streamed
+    summary, had nothing to tell it the work was abandoned: the section sat there until the
+    run ended and a reload showed no trace of it, because the backend had never recorded a
+    compaction. On this frame the client drops the section (and its streamed text) and may
+    show ``message``. Emitted for every failure of a fold that had something to do — never
+    for a fold that found nothing to fold, which also emits no ``compaction.started``.
+    ``message`` is a short operator-readable cause, not a log line. Additive to v1; no
+    bump."""
+
+    type: Literal["compaction.failed"] = "compaction.failed"
+    conversation_id: str
+    reason: CompactionReason
+    message: str
+
+
 class ConversationCompacted(_Body):
     """The thread's earlier turns were folded into a summary before this turn ran,
     because its context footprint had reached the operator's threshold. Nothing was
@@ -1124,6 +1143,7 @@ EventBody = Annotated[
     | ConversationTitled
     | CompactionStarted
     | CompactionDelta
+    | CompactionFailed
     | ConversationCompacted
     | ConversationLinked
     | ContextInjected

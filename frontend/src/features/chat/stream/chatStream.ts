@@ -11,10 +11,13 @@
  * acting on a turn already recorded (`branching.ts`), and being pointed at a different
  * thread (`binding.ts`).
  *
- * **The optimistic store is authoritative for the thread it is on.** A turn's messages are
- * persisted only when it finishes, so a refetch mid-stream reads an empty conversation.
- * That rule is why `binding.ts` refuses to re-seed a live thread and why `resume.ts` adopts
- * ids rather than reseating wholesale.
+ * **The store is authoritative for the thread it is on, and the backend is authoritative
+ * for what a turn was.** The operator's prompt is persisted the moment a turn begins, but
+ * its answer only when it finishes, so a refetch mid-stream reads the prompt and none of
+ * the streaming reply. That is why `binding.ts` refuses to re-seed a live thread — and why,
+ * once the run ends, `resume.ts` reseats the transcript from the backend's rows: the
+ * optimistic echo and the streamed bubble give way to the ids the backend minted, with no
+ * positional guesswork about which is which.
  *
  * **The ops form a cycle, and it is a real one.** A run's teardown reconciles the thread,
  * reconciling can discover a live run and start a drive, and a drive hands undelivered
@@ -23,7 +26,7 @@
  * one closure in which every part can reach every other.
  */
 
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, untrack } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 import { api, isApiError } from "~/lib/api";
 import { effectiveSelection, type ModelSelection } from "~/lib/stores/models";
@@ -32,6 +35,7 @@ import type { SessionMode } from "~/lib/modes";
 import type { PlanDocument } from "../model";
 import { toast } from "~/ui";
 import { CONTINUE_PROMPT } from "../data/constants";
+import { refreshSessions } from "../data/sessions";
 import type { ChatCreatedDTO, ConversationDetailDTO } from "../data/wire";
 import type {
   ActiveRun,
@@ -46,9 +50,10 @@ import { createThreadBinding } from "./binding";
 import {
   createBranchingOps,
   reseatFromDetail,
+  reseatMessagesFromDetail,
   type TranscriptStore,
 } from "./branching";
-import { createRunDrive } from "./drive";
+import { attachOptions, createRunDrive } from "./drive";
 import { createFolder, type FoldState, type RunClock } from "./fold";
 import { createPatchById, nextId } from "./patch";
 import { createResumeOps } from "./resume";
@@ -150,16 +155,12 @@ export function createChatStream(
     planRevision: 0,
     activeRunId: null,
     runKind: null,
+    epoch: 0,
+    replayThrough: 0,
   };
   // The last run a cold-read reattach was kicked off for, so the load effect fires
   // at most once per run even if the session resource re-emits the same value.
   let reattachedRunId: string | null = null;
-  // Set when the operator cancels the in-flight run, so the just-ended drive's
-  // `adoptServerMeta` skips its reseat: a cancelled turn persists nothing, so the
-  // backend history is *shorter* than the optimistic store, and reseating to it
-  // would discard the whole in-flight turn (and, on a brand-new conversation with
-  // no prior turns, blank the chat entirely). Reset at the start of each drive.
-  let cancelled = false;
   // The conversation this stream is currently bound to (tracked separately from
   // the screen's `key`, which only updates once a new thread is persisted).
   //
@@ -186,6 +187,8 @@ export function createChatStream(
   const store: TranscriptStore = { setMessages, setUsage, setSnapshots };
   const reseat = (detail: ConversationDetailDTO) =>
     reseatFromDetail(store, detail);
+  const reseatMessages = (detail: ConversationDetailDTO) =>
+    reseatMessagesFromDetail(store, detail);
 
   const patchById = createPatchById(messages, setMessages);
 
@@ -205,6 +208,10 @@ export function createChatStream(
     setErrored,
     setTitlePending,
     setRunClock,
+    // A checkpoint that names a turn this transcript does not hold: the persisted
+    // thread is ahead of it, so take its word rather than a guessed position. Reached
+    // at call time — the resume ops are built below, and need the drive that needs this.
+    onFoldMisplaced: () => void resume.reconcileStaleDecision(),
   });
 
   // Steering: a message sent into a run that is already going, and the text handed
@@ -233,10 +240,9 @@ export function createChatStream(
     conversationId: () => activeConversationId,
     fetchDetail: (id) => api.get<ConversationDetailDTO>(`/conversations/${id}`),
     messages,
-    setMessages,
     reseat,
+    reseatMessages,
     reattachRun: (runId, opts) => drive.reattachRun(runId, opts),
-    wasCancelled: () => cancelled,
   });
 
   const drive = createRunDrive({
@@ -248,13 +254,11 @@ export function createChatStream(
     setSending,
     setErrored,
     setTitlePending,
-    clearCancelled: () => {
-      cancelled = false;
-    },
     restoreUndelivered: steering.restoreUndelivered,
     conversationId: () => activeConversationId,
-    adoptServerMeta: resume.adoptServerMeta,
+    reseatAfterRun: resume.reseatAfterRun,
     recoverLostRun: resume.recoverLostRun,
+    refetchRun: resume.refetchRun,
     onConversationStarted: (id) => options.onConversationStarted?.(id),
     onTurnComplete: () => options.onTurnComplete?.(),
   });
@@ -441,6 +445,11 @@ export function createChatStream(
       return false;
     }
     bindConversation(created.conversation_id);
+    // A brand-new thread exists the moment the backend accepts the send. The list read
+    // fired when `sending` flipped went out before this id did, so it cannot have
+    // listed the thread; read it again now so the row (and its running echo) appears
+    // for the length of the first turn instead of at its end.
+    if (wasNew && !options.ephemeral) refreshSessions();
     // Accepted — so the backend has retired the stop marker this turn resumes.
     // Echo that now rather than waiting for the run to finish: the warning is about
     // a turn the operator has visibly just resumed, and leaving it up for the length
@@ -507,9 +516,6 @@ export function createChatStream(
    *  the streaming state. Safe to call with no active run. */
   async function cancel(): Promise<void> {
     const runId = foldState.activeRunId;
-    // Mark the cancel before the abort unwinds the drive, so its `adoptServerMeta`
-    // in `finally` keeps the in-flight turn instead of reseating it away.
-    cancelled = true;
     if (runId) {
       try {
         await api.post(`/runs/${runId}/cancel`, {});
@@ -573,12 +579,20 @@ export function createChatStream(
   // reply-less. The source is withheld (→ undefined) while history loads, so this
   // never fires on an empty seed; it runs once per run (`reattachedRunId`) and not
   // for a run we're already driving.
+  //
+  // It is also how a run started out of sight is picked up (another tab, a scheduled
+  // task): the room re-reads the thread when the rail reports it busy, and the new
+  // `activeRun` lands here. A run this transcript already holds a settled turn for is
+  // one this stream drove to its end — the backend can still list it for a moment
+  // after — and replaying its buffer over that turn would double every delta.
   createEffect(() => {
     const ar = options.activeRun?.();
     if (!ar || ar.id === reattachedRunId || ar.id === foldState.activeRunId)
       return;
+    if (untrack(() => messages.some((m) => m.runId === ar.id && !m.streaming)))
+      return;
     reattachedRunId = ar.id;
-    void drive.reattachRun(ar.id, { fromSeq: 0, kind: ar.kind });
+    void drive.reattachRun(ar.id, attachOptions(ar));
   });
 
   return {

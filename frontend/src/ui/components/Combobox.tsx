@@ -158,6 +158,8 @@ export function Combobox(props: ComboboxProps): JSX.Element {
       class={props.class}
       align={props.align}
       onOpen={props.onOpen}
+      // Opened from a ruled strip, a cell's menu is square and ruled like it.
+      variant={props.cell ? "console" : "default"}
       panelClass="flex max-h-80 w-64 flex-col"
       trigger={({ open, setOpen }) => (
         <button
@@ -190,7 +192,7 @@ export function Combobox(props: ComboboxProps): JSX.Element {
                   "w-full min-w-0 text-text",
                 )
               : cx(
-                  "flex max-w-56 items-center gap-1.5 rounded-ctl transition-colors hover:text-bright",
+                  "flex max-w-56 items-center gap-1.5 transition-colors hover:text-bright",
                   props.size === "sm" ? "h-6" : "h-8",
                   // A filled trigger's padding is inside a visible box, so it reads as
                   // the control's shape. A bare one has no box, so the same padding just
@@ -261,7 +263,7 @@ export function Combobox(props: ComboboxProps): JSX.Element {
                         : undefined
                     }
                     placeholder={props.searchPlaceholder ?? "Search…"}
-                    class="h-7 w-full rounded-ctl bg-raised pl-8 pr-2 font-sans text-body text-bright placeholder:text-dim outline-none transition-colors"
+                    class="h-7 w-full bg-raised pl-8 pr-2 font-sans text-body text-bright placeholder:text-dim outline-none transition-colors"
                   />
                 </div>
               </div>
@@ -301,6 +303,7 @@ export function Combobox(props: ComboboxProps): JSX.Element {
                               (opt.value === props.value ||
                                 opt.value === activeValue()) &&
                                 "bg-raised",
+                              opt.value === props.value && "ody-selected-edge",
                             )}
                           >
                             <Icon

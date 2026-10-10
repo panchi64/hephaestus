@@ -82,7 +82,7 @@ export function ColorField(props: ColorFieldProps): JSX.Element {
           {/* `shadow-1` carries the hairline ring, which is load-bearing here:
               in Paper a near-white swatch on a white panel has no other edge. */}
           <label
-            class="relative block h-7 w-10 cursor-pointer overflow-hidden rounded-ctl shadow-1 focus-within:shadow-focus"
+            class="relative block h-7 w-10 cursor-pointer overflow-hidden border border-line-strong focus-within:shadow-focus"
             style={{ "background-color": props.value }}
           >
             <span class="sr-only">{props.label}</span>

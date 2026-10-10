@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from core.exceptions import DegradedCapabilityError, NotFoundError
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from services.conversations import ConversationStore
 from services.corpus.chunk_store import CorpusChunkStore
 from services.memory import MemoryStore
@@ -70,9 +71,8 @@ class EmbeddingReindexer:
         self._status = ReindexStatus(state="running", memories=0, messages=0)
         self._task = asyncio.create_task(self._run(owner_id))
 
-    def shutdown(self) -> None:
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
+    async def shutdown(self) -> None:
+        await cancel_and_wait(self._task, STOP_TIMEOUT_S)
 
     async def _run(self, owner_id: str) -> None:
         self._status = ReindexStatus(state="running", memories=0, messages=0)

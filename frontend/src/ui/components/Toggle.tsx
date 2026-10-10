@@ -35,7 +35,7 @@ export function Toggle(props: ToggleProps): JSX.Element {
         disabled={local.disabled}
         onClick={() => local.onChange?.(!local.checked)}
         class={cx(
-          "relative h-4 w-7 border rounded-ctl transition-colors",
+          "relative h-4 w-7 border transition-colors",
           local.checked ? "border-nominal bg-raised" : "border-line bg-surface",
         )}
       >

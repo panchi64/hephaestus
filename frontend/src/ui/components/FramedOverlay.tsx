@@ -28,10 +28,9 @@ export interface FramedOverlayProps {
  * edge, drops down the sides, and the glass resolves inside the frame it just
  * described. Closing takes it apart again.
  *
- * It exists because two overlays now want that arrival — the settings dialog and
- * the navigation palette — and a second hand-rolled copy of the portal, the
- * backdrop, the escape key and the four traps below would have drifted from the
- * first within a release.
+ * It exists so an overlay that wants that arrival — the settings dialog — does
+ * not hand-roll the portal, the backdrop, the escape key and the four traps
+ * below, which would drift from any second copy within a release.
  *
  * **This is not `Modal`, and could not be built on it.** `Modal`'s backdrop is
  * the *ancestor* of its dialog, which is fine for an opaque card and fatal here:

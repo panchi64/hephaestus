@@ -304,3 +304,27 @@ async def test_rehydrated_and_live_notifications_sort_together(tmp_path):
         page, _ = await cold.list_notifications(OWNER, before=cutoff)
         assert [i.id for i in page] == [old.id]
     await cold.stop()
+
+
+async def test_subscribe_ends_when_the_app_begins_shutting_down(tmp_path: Path):
+    """The feed has no end of its own; the shutdown signal is what lets the server stop."""
+    from core.shutdown import begin_shutdown, reset_shutdown  # noqa: PLC0415
+
+    service = await _service(tmp_path)
+    try:
+        ended = asyncio.Event()
+
+        async def consume() -> None:
+            async for _ in service.subscribe(0):
+                pass
+            ended.set()
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.05)
+        assert not ended.is_set()
+        begin_shutdown()
+        await asyncio.wait_for(ended.wait(), 1.0)
+        await task
+    finally:
+        reset_shutdown()
+        await service.stop()

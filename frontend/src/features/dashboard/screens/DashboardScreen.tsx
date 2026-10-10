@@ -226,12 +226,12 @@ export function DashboardScreen(): JSX.Element {
           The deep field runs behind the whole column now (the shell paints it), so
           there is no cropping layer here any more — one lived in this region and
           sliced the field to a 320px band. The composer's own surface goes glass
-          over it, and its bloom spills onto the field as it always did. */}
+          over it. */}
       <div class="flex min-h-0 flex-1 items-center justify-center py-8">
         <div class="w-full max-w-3xl">
           <Composer
             size="lg"
-            title="New conversation"
+            title="New thread · ready"
             autofocus
             storageKey="home-new"
             placeholder="Ask anything, request a summary, or describe a task…"
@@ -262,7 +262,7 @@ export function DashboardScreen(): JSX.Element {
                 />
               }
             >
-              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
                 <For each={recent()}>
                   {(s) => (
                     <RecentThreadCard

@@ -49,9 +49,9 @@ export const AREAS: NavArea[] = [
  *
  * **This is the map, not the rail.** Being here says the app owns this route:
  * it is what tells the shell `/chat` is a real backed surface rather than
- * something to paint NOT CONNECTED over, what names the page, and what the
- * palette can jump to. Whether the rail draws a row for it — and where — is a
- * separate question with a separate answer, in `RAIL_ROWS` below.
+ * something to paint NOT CONNECTED over, and what names the page. Whether the
+ * rail draws a row for it — and where — is a separate question with a separate
+ * answer, in `RAIL_ROWS` below.
  *
  * Those two were one list until a row was removed from the rail and took the
  * route's registration with it, overlaying NOT CONNECTED across the whole of
@@ -95,7 +95,7 @@ export const COMPARE: NavItem = {
   description: "Run the same prompt across models side by side",
 };
 
-/** Every surface outside an area. Order is the palette's, not the rail's. */
+/** Every surface outside an area. Order is the map's, not the rail's. */
 export const LOOSE_SURFACES: NavItem[] = [CHAT, KNOWLEDGE_BASE, COMPARE];
 
 /**

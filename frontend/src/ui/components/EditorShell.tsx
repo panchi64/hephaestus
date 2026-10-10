@@ -75,10 +75,7 @@ export function EditorShell(props: EditorShellProps): JSX.Element {
                 {props.title}
               </Text>
               <Show when={props.dirty}>
-                <span
-                  class="h-1.5 w-1.5 rounded-full bg-warn"
-                  title="Unsaved changes"
-                />
+                <span class="h-1.5 w-1.5 bg-warn" title="Unsaved changes" />
               </Show>
             </Row>
             <Show when={props.meta}>{props.meta}</Show>

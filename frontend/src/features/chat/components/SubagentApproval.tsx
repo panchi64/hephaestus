@@ -1,9 +1,10 @@
 import { Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { api } from "~/lib/api";
 import { streamRun, type RunEvent } from "~/lib/stream";
-import { Button, LoadingText, Row, Text, toast } from "~/ui";
+import { ActionButtons, ActionFrame, LoadingText, toast } from "~/ui";
 import type { Approval, ApprovalDecision } from "../model";
 import type { Subagent } from "../data";
+import { isOneClickPark } from "../approvalDecisions";
 import { ApprovalPanel } from "./ApprovalPanel";
 
 /**
@@ -75,11 +76,12 @@ export function SubagentApproval(props: {
     // sub-agent is blocked, and the next poll re-opens this.
   });
 
-  const submit = async (): Promise<void> => {
+  const submit = async (settled?: ApprovalDecision[]): Promise<void> => {
+    if (busy()) return;
     setBusy(true);
     try {
       await api.post(`/runs/${props.subagent.runId}/approve`, {
-        decisions: decisions(),
+        decisions: settled ?? decisions(),
         answers: [],
       });
       props.onSettled();
@@ -93,31 +95,54 @@ export function SubagentApproval(props: {
   };
 
   return (
-    <div class="flex flex-col gap-2">
-      <Text variant="micro" tone="warn">
-        {props.subagent.handle} is waiting on you
-      </Text>
+    // The action tier (design §10.18), the same frame the dock wears: the one
+    // sub-agent surface that is a request rather than a report.
+    <ActionFrame
+      tone="approval"
+      title={`Approval needed · ${props.subagent.handle}`}
+    >
       <Show
         when={approvals().length > 0}
-        fallback={<LoadingText label="Reading what it is asking for…" />}
+        fallback={
+          <div class="px-3 py-3">
+            <LoadingText label="Reading what it is asking for…" />
+          </div>
+        }
       >
         <ApprovalPanel
           approvals={approvals()}
+          // One call is one click: the verdict is sent on the spot and there is no
+          // second button to press. Several keep the pick-then-send flow.
+          onSettle={
+            isOneClickPark(approvals().length, 0)
+              ? (given) => submit(given)
+              : undefined
+          }
           onChange={(next, allDecided) => {
             setDecisions(next);
             setReady(allDecided);
           }}
         />
-        <Row gap={2}>
-          <Button
-            variant="primary"
-            disabled={!ready() || busy()}
-            onClick={() => void submit()}
-          >
-            {busy() ? "Sending…" : "Send decision"}
-          </Button>
-        </Row>
+        <Show
+          when={
+            !isOneClickPark(approvals().length, 0) ||
+            decisions().some((d) => d.intent === "revise")
+          }
+        >
+          <div class="flex justify-end border-t border-line">
+            <ActionButtons
+              buttons={[
+                {
+                  label: busy() ? "Sending…" : "Send decision",
+                  primary: true,
+                  disabled: !ready() || busy(),
+                  onClick: () => void submit(),
+                },
+              ]}
+            />
+          </div>
+        </Show>
       </Show>
-    </div>
+    </ActionFrame>
   );
 }

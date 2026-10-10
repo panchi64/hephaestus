@@ -114,8 +114,12 @@ class TestItNeverInterrupts:
             # queued, never spliced into a request already in flight. `drain_messages` is
             # what hands it over, and `agent/turn.py` calls that on a node yielded *before*
             # it streams.
+            #
+            # Queued before the turn's first request, the report rides that request
+            # alongside the prompt (which was already on record) and is recorded behind
+            # it as a node of its own — the answer to both follows, whole.
             turns = await app.state.conversations.messages_view(created.json()["conversation_id"])
-            assert [t.role for t in turns][:2] == ["user", "assistant"]
+            assert [t.role for t in turns][:3] == ["user", "subagent", "assistant"]
 
     def test_every_road_a_queued_message_takes_is_framed_the_same_way(self):
         """One drain, one framing — and there is more than one drain.
