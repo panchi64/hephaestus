@@ -5,7 +5,7 @@
  * This is a SEPARATE, independently-versioned stream from the per-run event
  * union in `./events.ts` (that union is frozen and untouched by this file).
  * Keep this in lockstep with the backend the same way `events.ts` mirrors
- * `backend/runs/events.py` — any shape change here must be matched there, and
+ * `backend/runs/events/` — any shape change here must be matched there, and
  * vice versa.
  */
 

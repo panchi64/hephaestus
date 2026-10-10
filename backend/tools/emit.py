@@ -22,7 +22,7 @@ Two consequences worth knowing:
 - **The library stamps the call.** When a tool emits, ``tool_call_id`` and ``tool_name``
   land on the *event* automatically, so the translator can always attribute it — the
   bodies that carry a ``tool_call_id`` of their own still set it themselves, because that
-  field is part of the wire contract in ``runs/events.py`` and not ours to make optional.
+  field is part of the wire contract in ``runs/events/`` and not ours to make optional.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ class RunEventEmitted(CustomEvent):
     """A ``runs.events`` body a tool put on the stream.
 
     One wrapper rather than an event class per message: the bodies are already defined —
-    ``runs/events.py`` *is* the wire contract — and restating them as event subclasses
+    ``runs/events/`` *is* the wire contract — and restating them as event subclasses
     would only give the translator the same set to unwrap again.
     """
 

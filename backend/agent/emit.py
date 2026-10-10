@@ -45,7 +45,7 @@ class ChassisEvent(CapabilityEvent, namespace=NAMESPACE):
     """A ``runs.events`` body a capability put on the stream.
 
     One wrapper rather than an event class per message, for the reason
-    ``tools/emit.py``'s twin gives: ``runs/events.py`` already *is* the wire contract.
+    ``tools/emit.py``'s twin gives: ``runs/events/`` already *is* the wire contract.
     """
 
     body: BaseModel
