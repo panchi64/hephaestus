@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 from core.concurrency import gather_bounded
 from core.fork import MergeReport
 from core.periodic import PeriodicTask
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from core.vault import Vault
 
 from .base import SandboxError, safe_key
@@ -63,6 +64,11 @@ logger = logging.getLogger(__name__)
 # stalled behind one another. Shared by both reasons a session is reaped: the idle
 # sweep, and a new session displacing an old one at the live-session cap.
 _TEARDOWN_CONCURRENCY = 3
+
+#: The longest app shutdown spends on any one session's containers (and on waiting for the
+#: reaper's in-flight teardowns). A container stop that has not returned by now is not
+#: going to, and the process exiting is worth more than the one stop.
+_SESSION_STOP_TIMEOUT_S = 10.0
 
 # How many stranded forks one sweep collects. Every key in a batch is tombstoned for
 # the whole batch, and an `acquire()` that lands on a tombstone waits with nothing to
@@ -601,24 +607,24 @@ class SandboxSessionManager:
         # The reaper owns its own cancel-and-await; the warm-up is a one-shot task with no
         # loop behind it, so it stays hand-rolled rather than being bent into a timer.
         await self._reaper.stop()
-        if self._warm is not None:
-            self._warm.cancel()
-            try:
-                await self._warm
-            except asyncio.CancelledError:
-                pass
+        await cancel_and_wait(self._warm, STOP_TIMEOUT_S)
         self._warm = None
         # Drained, never cancelled: a teardown interrupted partway leaves containers
         # still holding a workspace mount. Drained *before* taking the lock, which is
         # what each of them needs to release its own tombstone.
         if self._teardowns:
-            await asyncio.gather(*self._teardowns, return_exceptions=True)
+            await asyncio.wait(self._teardowns, timeout=_SESSION_STOP_TIMEOUT_S)
         async with self._lock:
-            for session in list(self._sessions.values()):
+            # In parallel and each bounded: serially, N sessions at up to 30s apiece was a
+            # shutdown measured in minutes. A session cut off by its cap is left to the
+            # reconcile pass at the next boot rather than allowed to hold the process open.
+            async def _stop(session: SandboxSession) -> None:
                 try:
-                    await session.shutdown()
+                    await asyncio.wait_for(session.shutdown(), _SESSION_STOP_TIMEOUT_S)
                 except Exception:  # noqa: BLE001 — tear the rest down regardless
-                    pass
+                    logger.warning("sandbox: session teardown did not finish", exc_info=True)
+
+            await asyncio.gather(*(_stop(s) for s in list(self._sessions.values())))
             self._sessions.clear()
             self._preview_tokens.clear()
 

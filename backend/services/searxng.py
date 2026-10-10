@@ -24,6 +24,7 @@ import logging
 import secrets
 from pathlib import Path
 
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from services.sandbox import (
     await_listening,
     detached_run_argv,
@@ -123,13 +124,8 @@ class ManagedSearxng:
         cancellation below. Resets back to the pre-``start`` state — ``_task`` and
         ``_base_url`` cleared — so a later ``start()`` brings it up afresh (the
         offline-mode monitor toggles this instance up and down)."""
-        if self._task is not None:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
+        await cancel_and_wait(self._task, STOP_TIMEOUT_S)
+        self._task = None
         if self._runtime is not None:
             await force_remove_container(self._runtime, self._container)
         # Drop the URL: the container is gone, so search must read this as

@@ -102,6 +102,12 @@ class MinerUExtractor:
                 # than left to GC; communicate() returns promptly once the process is dead.
                 await proc.communicate()
                 raise RuntimeError("MinerU timed out") from None
+            except asyncio.CancelledError:
+                # A shutdown (or a cancelled upload) is not a reason to leave a PyTorch
+                # job running on the operator's machine: the child is ours to kill.
+                if proc.returncode is None:
+                    proc.kill()
+                raise
             if proc.returncode != 0:
                 detail = stderr.decode("utf-8", errors="replace")[-500:]
                 raise RuntimeError(f"MinerU exited {proc.returncode}: {detail}")

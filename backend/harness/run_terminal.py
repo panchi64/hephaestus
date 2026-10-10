@@ -23,6 +23,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from core.tasks import STOP_TIMEOUT_S
+
 if TYPE_CHECKING:
     from runs import Run
 
@@ -76,4 +78,5 @@ class RunTerminalDispatcher:
         for task in pending:
             task.cancel()
         if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+            # Bounded: a hook that swallows the cancel must not hold the shutdown.
+            await asyncio.wait(pending, timeout=STOP_TIMEOUT_S)

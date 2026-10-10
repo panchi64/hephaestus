@@ -34,6 +34,7 @@ from sqlmodel import Session, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from core.vault import Vault
 from core.worker import WriteBehindWorker
 from models._fields import utcnow
@@ -155,10 +156,7 @@ class MailService:
         self._loop_task = asyncio.create_task(self._sync_loop(), name="mail-sync-loop")
 
     async def stop(self) -> None:
-        if self._loop_task is not None and not self._loop_task.done():
-            self._loop_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._loop_task
+        await cancel_and_wait(self._loop_task, STOP_TIMEOUT_S)
         await self._worker.stop()
         for live in list(self._transports.values()):
             with suppress(Exception):

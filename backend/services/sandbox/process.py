@@ -14,6 +14,7 @@ server must not leave it running once the run that started it is gone.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fnmatch
 import os
 import signal
@@ -31,6 +32,40 @@ from .host import HostConfinement, confine
 #: enough for a server to close its listeners and drop a lockfile, short enough that an
 #: agent stopping a background command does not sit there waiting for it.
 _GRACE_S = 2.0
+
+
+#: Process groups started by :func:`spawn_confined` that may still be alive. A command that
+#: backgrounds a server returns, its shell is reaped, and the group lives on — nothing else
+#: remembers it, so without this a quit app left every such server running on the operator's
+#: machine. Pruned on each spawn by probing, so it never grows past what is actually running.
+_groups: set[int] = set()
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:  # EPERM: it exists but is not ours to signal — not ours to track either
+        return False
+    return True
+
+
+async def stop_all_groups(grace_s: float = 1.0) -> None:
+    """SIGTERM every process group this app started and still has running, give them
+    ``grace_s`` to leave, then SIGKILL what remains. Called once, from app shutdown."""
+    live = [g for g in _groups if _group_alive(g)]
+    _groups.clear()
+    for pgid in live:
+        with contextlib.suppress(OSError):
+            os.killpg(pgid, signal.SIGTERM)
+    deadline = asyncio.get_running_loop().time() + grace_s
+    while live and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.05)
+        live = [g for g in live if _group_alive(g)]
+    for pgid in live:
+        with contextlib.suppress(OSError):
+            os.killpg(pgid, signal.SIGKILL)
 
 
 def kill_tree(proc: asyncio.subprocess.Process) -> None:
@@ -115,7 +150,7 @@ async def spawn_confined(
     into something it can retry, while the hatch reports any launch failure as one — and
     flattening them here would take that distinction away from both.
     """
-    return await asyncio.create_subprocess_shell(
+    proc = await asyncio.create_subprocess_shell(
         command,
         cwd=str(cwd) if cwd is not None else None,
         env=dict(env) if env is not None else None,
@@ -123,6 +158,11 @@ async def spawn_confined(
         stderr=stderr,
         start_new_session=True,  # own process group, so we can kill the whole tree
     )
+    # The session leader's pid is the group id. Recorded so app shutdown can reach a
+    # backgrounded child whose shell has long since exited (see ``_groups``).
+    _groups.intersection_update({g for g in _groups if _group_alive(g)})
+    _groups.add(proc.pid)
+    return proc
 
 
 async def run_on_host(

@@ -29,6 +29,8 @@ from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
 
+from core.shutdown import STOPPED, get_unless_shutdown
+
 from .events import Event, now_utc
 
 # Per-subscriber backlog cap before we treat the consumer as wedged and drop it.
@@ -91,7 +93,9 @@ class RunStream:
     async def subscribe(self, after_seq: int = 0) -> AsyncIterator[Event]:
         """Replay missed events (``seq > after_seq``) then stream live ones.
 
-        Ends when the stream is closed (the run reached a terminal state).
+        Ends when the stream is closed (the run reached a terminal state) or the app
+        begins shutting down — a run parked on an approval has no terminal state coming,
+        and its open stream would otherwise keep the server from stopping.
         Subscribing to an already-closed stream replays the backlog and stops —
         so a client reconnecting after the run ended still gets the full record.
         """
@@ -107,8 +111,8 @@ class RunStream:
             if already_closed:
                 return
             while True:
-                event = await queue.get()
-                if event is None:  # close sentinel
+                event = await get_unless_shutdown(queue)
+                if event is None or event is STOPPED:  # run closed, or the app is stopping
                     return
                 yield event
         finally:

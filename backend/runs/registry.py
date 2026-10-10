@@ -272,8 +272,8 @@ class RunRegistry:
             run.task.cancel()
         return True
 
-    async def shutdown(self) -> None:
-        """Cancel every live run and wait for it to unwind.
+    async def shutdown(self, timeout_s: float = 5.0) -> None:
+        """Cancel every live run and wait up to ``timeout_s`` for them to unwind.
 
         The app registers this **last** in its lifecycle, so it stops **first**: an
         orchestrator writes through stores (the conversation write-behind drainer above
@@ -287,7 +287,11 @@ class RunRegistry:
             await self.cancel(run.id)
         pending = [run.task for run in live if run.task is not None and not run.task.done()]
         if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+            # Bounded: a turn's own pre-cancel flush is worth waiting for, a tool that
+            # swallows the cancel is not worth a shutdown that never ends.
+            _, stuck = await asyncio.wait(pending, timeout=timeout_s)
+            if stuck:
+                logger.warning("runs: %d run(s) still unwinding after %.1fs", len(stuck), timeout_s)
 
     async def resume(
         self,

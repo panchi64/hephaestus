@@ -33,11 +33,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
 from dataclasses import dataclass
 from typing import Protocol
 
 from core.connectivity import check_online
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from services.settings_store import OFFLINE_AUTO_KEY, OFFLINE_MANUAL_KEY, SettingsStore
 
 logger = logging.getLogger(__name__)
@@ -139,11 +139,8 @@ class OfflineModeService:
     async def stop(self) -> None:
         """Cancel the monitor. The containers are stopped by the lifespan's own
         teardown (this service doesn't own their final shutdown)."""
-        if self._task is not None:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+        await cancel_and_wait(self._task, STOP_TIMEOUT_S)
+        self._task = None
 
     # --- reads ------------------------------------------------------------
 

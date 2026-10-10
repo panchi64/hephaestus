@@ -21,8 +21,9 @@ import asyncio
 import inspect
 import logging
 from collections.abc import Awaitable, Callable, Coroutine
-from contextlib import suppress
 from dataclasses import dataclass
+
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +73,7 @@ class LifecycleRegistry:
         task = asyncio.create_task(coro, name=name)
 
         async def _cancel() -> None:
-            if not task.done():
-                task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            await cancel_and_wait(task, STOP_TIMEOUT_S)
 
         self._units.append(_Unit(name, _cancel))
         return task

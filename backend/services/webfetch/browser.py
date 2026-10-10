@@ -35,6 +35,7 @@ from pathlib import Path
 
 from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
 
+from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from services.sandbox import (
     await_listening,
     await_log_marker,
@@ -159,13 +160,8 @@ class ManagedBrowser:
         """Cancel an in-flight bring-up, drop the CDP connection, and tear down the
         container. ``_bring_up`` logs its own failures, so the task only raises on the
         cancellation below."""
-        if self._task is not None:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
+        await cancel_and_wait(self._task, STOP_TIMEOUT_S)
+        self._task = None
         await self._disconnect()  # clears _proxy_up
         if self._runtime is not None:
             # Remove the proxy first — it shares the browser's network namespace.

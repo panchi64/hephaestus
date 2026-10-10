@@ -46,7 +46,7 @@ from .host import (
 )
 from .manager import SandboxSessionManager
 from .preview import PreviewHandle
-from .process import kill_tree, run_on_host, spawn_confined
+from .process import kill_tree, run_on_host, spawn_confined, stop_all_groups
 from .session import LiveWork, SandboxSession
 from .staging import (
     STAGE_DIR,
@@ -92,4 +92,5 @@ __all__ = [
     "run_on_host",
     "shutdown_confinement",
     "spawn_confined",
+    "stop_all_groups",
 ]
