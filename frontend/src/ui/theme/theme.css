@@ -991,6 +991,9 @@ body {
 .ody-clamp-fade[data-ground="sunken"] {
   --fade-ground: var(--surface-sunken);
 }
+.ody-clamp-fade[data-ground="raised"] {
+  --fade-ground: var(--surface-raised);
+}
 
 /* ==========================================================================
    THE ACTION TIER (`ActionFrame`, `ActionButtons`, `ChoiceList`).

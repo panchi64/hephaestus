@@ -12,7 +12,7 @@ export type ScrollFadeEdge = "top" | "bottom";
 export type ScrollFadeVariant = "overlay" | "clamp";
 
 /** The ground a `clamp` fade starts from — the surface the clamped block sits on. */
-export type ScrollFadeGround = "bg" | "surface" | "sunken";
+export type ScrollFadeGround = "bg" | "surface" | "sunken" | "raised";
 
 export interface ScrollFadeProps {
   edge: ScrollFadeEdge;
