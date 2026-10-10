@@ -220,14 +220,14 @@ export function ToolCallCard(props: {
           — at rest it is a strip tall enough to recognise the page, opened it is the
           frame at the card's full width. */}
       <Show when={props.tool.images?.length}>
-        <div class="flex flex-col gap-1 px-2 pb-1.5">
+        <div class="flex flex-col gap-1 px-2 pb-2">
           <For each={props.tool.images}>
             {(image, index) => (
               <img
                 /* Top-anchored: a page is recognised by its header, so a strip that
                    cropped from the middle would show the operator the least
                    identifying part of it. */
-                class="w-full rounded-ctl border border-line object-cover object-top"
+                class="w-full border border-line object-cover object-top"
                 classList={{ "max-h-28": !open() }}
                 /* A screenshot arrives as base64 in the block, so the bytes are in
                    the DOM the moment the turn renders. There is no fetch to defer,
@@ -246,7 +246,7 @@ export function ToolCallCard(props: {
         </div>
       </Show>
       <Collapse open={open()}>
-        <div class="flex flex-col gap-1 px-2 py-1.5">
+        <div class="flex flex-col gap-1 px-2 py-2">
           {/* The registry name and every argument — what the collapsed row trades
               away for scannability, restored the moment the operator asks.
               Height-capped and scrollable: `formatArgs` does not truncate, and a
@@ -270,7 +270,7 @@ export function ToolCallCard(props: {
                 code={script()}
                 lang="python"
                 fontStep={-1}
-                class="max-h-60 rounded-ctl border border-line"
+                class="max-h-60 border border-line"
               />
             )}
           </Show>

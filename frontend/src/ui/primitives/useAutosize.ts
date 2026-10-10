@@ -10,8 +10,16 @@ export interface AutosizeOptions {
 /**
  * Grow a textarea to fit its content, from one row up to the smaller of `maxRows`
  * and `maxViewportShare` of the window, then scroll. Re-measured whenever `value`
- * changes — typing, a draft load, a clear after send — and on window resize, since
- * one cap is a share of the window. A behavior hook: no styling of its own.
+ * changes — typing, a draft load, a clear after send — on window resize, since one
+ * cap is a share of the window, and whenever the field's width changes, since a
+ * narrower field wraps onto more lines. A behavior hook: no styling of its own.
+ *
+ * **The measure waits for the DOM.** `value` is the signal the field's own `value`
+ * binding reads, and a write to it from inside another effect (a draft restored on
+ * load, a thread switch) reaches this effect *before* the binding has put the text in
+ * the element — so a synchronous measure read the old, empty field and sized a five
+ * line draft to one row, where it stayed until the next keystroke. Deferring to a
+ * microtask runs after the binding and still before paint, so typing never flickers.
  */
 export function useAutosize(
   field: () => HTMLTextAreaElement | undefined,
@@ -42,10 +50,21 @@ export function useAutosize(
   };
   createEffect(() => {
     value();
-    autosize();
+    queueMicrotask(autosize);
   });
   onMount(() => {
     window.addEventListener("resize", autosize);
     onCleanup(() => window.removeEventListener("resize", autosize));
+    const el = field();
+    if (!el || typeof ResizeObserver === "undefined") return;
+    // Width only: the height is ours to set, and reacting to it would loop.
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      autosize();
+    });
+    observer.observe(el);
+    onCleanup(() => observer.disconnect());
   });
 }

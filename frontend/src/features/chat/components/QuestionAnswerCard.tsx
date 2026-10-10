@@ -1,5 +1,5 @@
 import { For, Show, type JSX } from "solid-js";
-import { ConsoleGroup, Stack, Text } from "~/ui";
+import { ActionFrame, Stack, Text } from "~/ui";
 import type { AnsweredQuestion } from "../model";
 
 /** The row's index in the machine's own voice — `01`, `02`. Padded so a card with ten
@@ -51,24 +51,24 @@ export function QuestionAnswerCard(props: {
   answers: AnsweredQuestion[];
 }): JSX.Element {
   return (
-    // `ConsoleGroup` (§10.14), not a hand-rolled frame. This band predates it and was
-    // the same skeleton spelled out inline — frame, header rule, `divide-y` rows — which
-    // is the shape the shell was extracted for. Its legend is `plate` rather than `meta`
-    // now, per §4: "Asked you" names the region, it does not report a state.
-    <ConsoleGroup
-      label="Asked you"
-      flush
-      right={
+    // The action tier's frame (design §10.18), settled: the same blue band the ask
+    // wore in the dock, without the live square — so the record reads as the answer
+    // to *that* ask rather than as a second, unrelated kind of panel. The frame pads
+    // nothing; the rows bring their own gutter, flush under the band as the live
+    // question's were.
+    <ActionFrame
+      tone="question"
+      live={false}
+      title="Asked you"
+      aside={
         // The one diegetic figure this panel spends (§11), at the band's edge.
-        <Text variant="micro" tone="dim" class="tabular-nums">
-          {props.answers.length} ANSWERED
-        </Text>
+        <span class="tabular-nums">{props.answers.length} answered</span>
       }
     >
       <div class="divide-y divide-line">
         <For each={props.answers}>
           {(answer, index) => (
-            <div class="flex gap-3 px-2 py-1.5">
+            <div class="flex gap-3 px-3 py-2">
               <Text
                 variant="micro"
                 tone="dim"
@@ -118,6 +118,6 @@ export function QuestionAnswerCard(props: {
           )}
         </For>
       </div>
-    </ConsoleGroup>
+    </ActionFrame>
   );
 }

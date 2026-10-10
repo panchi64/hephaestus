@@ -77,7 +77,7 @@ export function ConversationStatsPanel(props: {
             <Show when={stats()}>
               {(s) => (
                 <>
-                  <Text variant="meta" tone="dim">
+                  <Text variant="plate" tone="dim">
                     Totals
                   </Text>
 
@@ -186,7 +186,7 @@ export function ConversationStatsPanel(props: {
                 heading is gated on the one fact that guarantees at least one of them:
                 a thread with an id always has an auto-compaction setting. */}
             <Show when={props.conversationId() !== null}>
-              <Text variant="meta" tone="dim" class="pt-1">
+              <Text variant="plate" tone="dim" class="pt-1">
                 This conversation
               </Text>
               <ConversationGrants

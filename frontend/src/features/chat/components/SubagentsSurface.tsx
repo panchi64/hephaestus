@@ -3,7 +3,7 @@ import { Disclosure, EmptyState } from "~/ui";
 import { isLive, type Subagent } from "../data";
 import { SubagentCard } from "./SubagentCard";
 import { SubagentDetail } from "./SubagentDetail";
-import { SurfaceBody, SurfaceColumns } from "./surfaceChrome";
+import { SurfaceBody } from "./surfaceChrome";
 
 /** Waiting on the operator first, then working, then whatever went wrong.
  *
@@ -72,8 +72,22 @@ export function SubagentsSurface(props: {
   const finished = (): Subagent[] =>
     props.subagents().filter((s) => s.status === "done");
 
-  const card = (subagent: Subagent): JSX.Element => (
-    <SubagentCard subagent={subagent} onOpen={() => setOpenId(subagent.id)} />
+  /** One ruled roster (design §7, §10.14): a frame of flush rows, never a grid of
+   *  cards. It is a list read down a column of handles, so it stays one column at any
+   *  pane width — two would put the scan in two places. */
+  const roster = (subagents: Subagent[]): JSX.Element => (
+    <ul class="flex flex-col divide-y divide-line border border-line-strong">
+      <For each={subagents}>
+        {(subagent) => (
+          <li>
+            <SubagentCard
+              subagent={subagent}
+              onOpen={() => setOpenId(subagent.id)}
+            />
+          </li>
+        )}
+      </For>
+    </ul>
   );
 
   return (
@@ -114,18 +128,12 @@ export function SubagentsSurface(props: {
               />
             }
           >
-            <SurfaceColumns>
-              <For each={showing()}>{card}</For>
-            </SurfaceColumns>
+            <Show when={showing().length > 0}>{roster(showing())}</Show>
           </Show>
 
           <Show when={finished().length > 0}>
             <Disclosure label={`Finished (${finished().length})`}>
-              <div class="pt-1">
-                <SurfaceColumns>
-                  <For each={finished()}>{card}</For>
-                </SurfaceColumns>
-              </div>
+              <div class="pt-1">{roster(finished())}</div>
             </Disclosure>
           </Show>
         </div>

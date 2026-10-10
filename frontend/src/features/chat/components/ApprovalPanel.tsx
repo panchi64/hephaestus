@@ -1,5 +1,14 @@
 import { createSignal, For, Show, type JSX } from "solid-js";
-import { Button, cx, Disclosure, Row, Stack, StatusFlag, Text } from "~/ui";
+import {
+  ActionButtons,
+  Button,
+  cx,
+  Disclosure,
+  Row,
+  Stack,
+  StatusFlag,
+  Text,
+} from "~/ui";
 import { grantKey } from "../commandScope";
 import { formatArgs } from "../data";
 import type { Approval, ApprovalDecision } from "../model";
@@ -64,6 +73,9 @@ export function ApprovalPanel(props: {
    *  approval whose subject is too long to live on the card. Omit it where there is no
    *  panel to open — a compare pane has no viewport — and the button is not shown. */
   onReadPlan?: () => void;
+  /** The frame around the panel already names the one call it holds (the dock's band
+   *  reads `Approval needed · <tool>`), so the card does not repeat it. */
+  named?: boolean;
 }): JSX.Element {
   const [answers, setAnswers] = createSignal<Record<string, Answer>>({});
   const grant = createGrantToggle();
@@ -119,7 +131,7 @@ export function ApprovalPanel(props: {
     Array.isArray(approval.args.steps) ? approval.args.steps.length : 0;
 
   return (
-    <Stack gap={3}>
+    <div class="flex flex-col divide-y divide-line">
       <For each={props.approvals}>
         {(approval) => {
           const answer = () => answers()[approval.toolCallId];
@@ -132,26 +144,43 @@ export function ApprovalPanel(props: {
               : { tone: "alert", label: "Denied" };
           };
           return (
-            <Stack gap={2}>
-              <Row gap={2} align="center">
-                <StatusFlag status="warn" dot>
-                  {approval.name}
-                </StatusFlag>
-                {/* The one thing a reviewer can say that changes how this decision should
+            // The approval pads its own body (design §10.18): the frame imposes none.
+            <Stack gap={3} class="px-3 py-3">
+              <Show
+                when={
+                  !props.named ||
+                  approval.risk === "too_destructive" ||
+                  verdict()
+                }
+              >
+                <Row gap={2} align="center" class="flex-wrap">
+                  <Show when={!props.named}>
+                    <Text
+                      variant="meta"
+                      tone="bright"
+                      class="min-w-0 break-all"
+                    >
+                      {approval.name}
+                    </Text>
+                  </Show>
+                  {/* The one thing a reviewer can say that changes how this decision should
                     be read. It used to refuse such a call outright, which kept the
                     operator out of the decision they most need to be in; now the call
                     arrives here, and the finding has to arrive with it. */}
-                <Show when={approval.risk === "too_destructive"}>
-                  <StatusFlag status="alert">Cannot be undone</StatusFlag>
-                </Show>
-                <Show when={verdict()} keyed>
-                  {(v) => (
-                    <StatusFlag status={v.tone as "nominal" | "alert" | "warn"}>
-                      {v.label}
-                    </StatusFlag>
-                  )}
-                </Show>
-              </Row>
+                  <Show when={approval.risk === "too_destructive"}>
+                    <StatusFlag status="alert">Cannot be undone</StatusFlag>
+                  </Show>
+                  <Show when={verdict()} keyed>
+                    {(v) => (
+                      <StatusFlag
+                        status={v.tone as "nominal" | "alert" | "warn"}
+                      >
+                        {v.label}
+                      </StatusFlag>
+                    )}
+                  </Show>
+                </Row>
+              </Show>
 
               {/* A plan's subject is a document, so the card names it and points at the
                   panel that holds it. Everything else says what it is about to do in the
@@ -179,7 +208,7 @@ export function ApprovalPanel(props: {
                   {planTitle(approval)}
                 </Text>
                 <Row gap={2} align="center">
-                  <Text variant="micro" tone="dim">
+                  <Text variant="meta" tone="dim">
                     {planSteps(approval) === 1
                       ? "1 step"
                       : `${planSteps(approval)} steps`}
@@ -198,7 +227,7 @@ export function ApprovalPanel(props: {
               </Show>
 
               <Show when={approval.risk === "too_destructive"}>
-                <Text variant="micro" tone="warn">
+                <Text variant="body" tone="warn" class="break-words">
                   {approval.reviewReason}
                 </Text>
               </Show>
@@ -212,11 +241,17 @@ export function ApprovalPanel(props: {
                   showed an abridged one would be the worst of both. */}
               <Show when={Object.keys(approval.args).length > 0}>
                 <Disclosure label="Show call">
-                  <div class={cx("overflow-y-auto", ARGS_MAX_HEIGHT)}>
+                  <div
+                    class={cx(
+                      "overflow-y-auto border border-line bg-bg px-3 py-2",
+                      ARGS_MAX_HEIGHT,
+                    )}
+                  >
                     <Text
-                      variant="micro"
-                      tone="dim"
-                      class="block whitespace-pre-wrap break-words"
+                      as="div"
+                      variant="code"
+                      tone="bright"
+                      class="whitespace-pre-wrap break-words"
                     >
                       {formatArgs(approval.args)}
                     </Text>
@@ -224,40 +259,9 @@ export function ApprovalPanel(props: {
                 </Disclosure>
               </Show>
 
-              <Row gap={2}>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  leading="check"
-                  onClick={() => decide(approval.toolCallId, true)}
-                >
-                  Approve
-                </Button>
-                {/* Only where trying again is meaningful. A refused command is refused;
-                    a plan is a draft, and the answer to one is usually neither yes nor
-                    no but "not like that". */}
-                <Show when={isPlan(approval)}>
-                  <Button
-                    variant="default"
-                    size="sm"
-                    leading="edit"
-                    onClick={() => decide(approval.toolCallId, false, "revise")}
-                  >
-                    Request changes
-                  </Button>
-                </Show>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  leading="close"
-                  onClick={() => decide(approval.toolCallId, false, "deny")}
-                >
-                  {isPlan(approval) ? "Reject" : "Deny"}
-                </Button>
-              </Row>
-
               {/* A plan is submitted once and answered once; there is no recurring act
-                  for a standing grant to stand for. */}
+                  for a standing grant to stand for. Above the verdict, so it is set
+                  before the click that captures it. */}
               <Show when={!isPlan(approval)}>
                 <ConversationGrantToggle
                   command={commandOf(approval)}
@@ -269,10 +273,44 @@ export function ApprovalPanel(props: {
                   }}
                 />
               </Show>
+
+              {/* The filled cell is the verdict given — Approve until one is. Luminance
+                  says which answer is standing, the flag above says it in words.
+                  "Request changes" only where trying again is meaningful: a refused
+                  command is refused; a plan is a draft, and the answer to one is
+                  usually neither yes nor no but "not like that". */}
+              <ActionButtons
+                buttons={[
+                  {
+                    label: "Approve",
+                    primary: !answer() || answer()!.approved,
+                    onClick: () => decide(approval.toolCallId, true),
+                  },
+                  ...(isPlan(approval)
+                    ? [
+                        {
+                          label: "Request changes",
+                          primary:
+                            answer()?.approved === false &&
+                            answer()?.intent === "revise",
+                          onClick: () =>
+                            decide(approval.toolCallId, false, "revise"),
+                        },
+                      ]
+                    : []),
+                  {
+                    label: isPlan(approval) ? "Reject" : "Deny",
+                    primary:
+                      answer()?.approved === false &&
+                      answer()?.intent === "deny",
+                    onClick: () => decide(approval.toolCallId, false, "deny"),
+                  },
+                ]}
+              />
             </Stack>
           );
         }}
       </For>
-    </Stack>
+    </div>
   );
 }

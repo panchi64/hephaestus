@@ -184,7 +184,7 @@ function VersionCycler(props: {
           answer settles — the cycler would otherwise pop into a header the
           operator has already started reading. On a turn that mounts with
           siblings it just runs alongside the turn's own entry. */}
-      <span class="ody-fade-in flex items-center gap-0.5">
+      <span class="ody-fade-in flex items-center gap-1">
         <Button
           variant="ghost"
           size="sm"
@@ -246,7 +246,7 @@ function BlockedFooter(props: {
 }): JSX.Element {
   const overflowed = () => props.detail === CONTEXT_OVERFLOW_DETAIL;
   return (
-    <div class="flex flex-wrap items-center gap-1.5 text-warn">
+    <div class="flex flex-wrap items-center gap-2 text-warn">
       <Icon name="warning" size={12} />
       <Text variant="micro" tone="warn">
         Stopped: {props.detail ?? "a run limit was reached"}
@@ -330,7 +330,7 @@ function UserText(props: { text: string }): JSX.Element {
     // the 80% cap. With `w-full` a three-word prompt still reserved 80% of the
     // column, so short turns read as text floating in the middle of an empty
     // block instead of as a compact message pinned to the right.
-    <div class="flex w-fit max-w-[80%] flex-col items-end gap-1 self-end">
+    <div class="flex w-fit max-w-4/5 flex-col items-end gap-1 self-end">
       <div
         ref={ref}
         class="relative w-full overflow-hidden"
@@ -424,7 +424,7 @@ function UserTurn(props: {
     // `py-1.5` / `gap-0.5`: the identity row is already 24px (its actions are),
     // with its 12px label sitting in the middle of it, so the row brings its own
     // air — padding on top of that made a one-line prompt a 76px block.
-    <div class="group flex flex-col items-end gap-0.5 bg-sunken px-4 py-1.5">
+    <div class="group flex flex-col items-end gap-1 bg-sunken px-4 py-1.5">
       <div class="flex w-full items-center justify-between gap-2">
         {/* Left: actions reveal on hover. Right: identity + metadata. */}
         <div class="flex items-center gap-2">
@@ -520,7 +520,7 @@ function UserTurn(props: {
                 text mid-sentence. Without saying so, an answer that streams on
                 past the message reads as the steering having been ignored. */}
             <Show when={m().queuedPending}>
-              <Text variant="micro" tone="dim" class="max-w-[80%] text-right">
+              <Text variant="micro" tone="dim" class="max-w-4/5 text-right">
                 Goes to the model at its next step — after the current reply if
                 it finishes first.
               </Text>
@@ -539,7 +539,7 @@ function UserTurn(props: {
           </>
         }
       >
-        <div class="w-full max-w-[80%]">
+        <div class="w-full max-w-4/5">
           <Textarea
             value={draft()}
             rows={3}
@@ -583,7 +583,7 @@ function SourcesRow(props: { citations: Citation[] }): JSX.Element {
 
   return (
     <div class="flex flex-wrap items-center gap-2">
-      <Text variant="label" tone="dim">
+      <Text variant="plate" tone="dim">
         Sources
       </Text>
       <For each={shown()}>

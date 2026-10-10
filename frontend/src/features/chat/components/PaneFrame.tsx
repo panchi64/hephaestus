@@ -67,7 +67,9 @@ export function PaneFrame(props: {
       <Show when={props.header !== false}>
         <div class="flex shrink-0 items-center gap-2 px-3 py-2">
           <Icon name={spec().icon} class="shrink-0 text-dim" />
-          <Text variant="label" tone="bright" class="min-w-0 truncate">
+          {/* A plate: it names the region (design §4), in the voice every other
+              region name in chat speaks. */}
+          <Text variant="plate" tone="default" class="min-w-0 truncate">
             {spec().label}
           </Text>
           {/* Meta and toolbar give way before the close does: the close is the one

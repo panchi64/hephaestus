@@ -75,12 +75,11 @@ export function ViewChip(props: {
       type="button"
       onClick={() => props.onOpen()}
       class={cx(
-        // `rounded-ctl`: §7's radius table files chips with the controls, and a
-        // chip that is a button is a control whatever it is filled with — the
-        // fill and `shadow-1` say "liftable", not "container". It does sit in
-        // the transcript beside `ToolCallCard` at 6px, which is a real
-        // difference to settle in the design system rather than here.
-        "group/chip flex w-full items-center gap-2 rounded-ctl bg-surface shadow-1",
+        // A bare row in the tool rows' own anatomy — glyph, mono kind, detail,
+        // chevron — with no fill, radius or shadow at rest (design §6: nothing in
+        // the flow floats). The hover fill is what says it opens something; a
+        // lifted chip was a second container vocabulary in a turn of unboxed rows.
+        "group/chip flex w-full items-center gap-2",
         // `py-1` + 12px glyphs: a 24px row, the height of the process rows it
         // sits among. At `py-2` with 14px glyphs it was the tallest row in a
         // turn that wasn't prose, for a handle whose job is to be clicked.
@@ -93,7 +92,7 @@ export function ViewChip(props: {
         size={12}
         class="shrink-0 text-dim transition-colors group-hover/chip:text-text"
       />
-      <Text variant="label" tone="default">
+      <Text variant="meta" tone="default">
         {kindWord()}
       </Text>
       <Text variant="micro" tone="dim" class="min-w-0 flex-1 truncate">

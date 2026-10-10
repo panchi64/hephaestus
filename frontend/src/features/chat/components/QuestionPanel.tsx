@@ -1,5 +1,5 @@
-import { For, Show, type JSX } from "solid-js";
-import { Checkbox, Stack, Text, Textarea, cx } from "~/ui";
+import { createUniqueId, type JSX } from "solid-js";
+import { ChoiceList, Text, type ActionButtonSpec } from "~/ui";
 import type { QuestionReply, QuestionSpec } from "../model";
 
 /**
@@ -17,27 +17,40 @@ import type { QuestionReply, QuestionSpec } from "../model";
  * that only offered the guesses would quietly convert "here is what I think you want"
  * into "choose one of these", which is a different and much worse question.
  *
+ * **The shape is `ChoiceList`'s** (design §10.18): the question flush under the dock's
+ * band, the answers as edge-to-edge ruled rows with numbered keycaps, the free-text row,
+ * and one footer carrying the submit — which the dock hands in, together with its own
+ * Stop and Back, so the card has one footer rather than two. In a single-choice question
+ * typing an answer of one's own deselects the options: the words *are* the answer then.
+ * A multi-select keeps its ticks while the operator writes, because there the words
+ * qualify the picks.
+ *
  * It holds no state. The reply lives with the rest of the park's draft on the controller,
  * because the dock is mounted by a `Show` and anything kept inside it is lost to a
  * re-render — which is exactly what a steering message arriving mid-park used to cause.
- *
- * No `RadioGroup` is extracted from this and `SessionModeSwitch`, despite both being
- * `role="radiogroup"`. They are not the same control wearing different paint: one is a
- * segmented row of icon chips that fits in a rail, the other a vertical list of labelled
- * choices with descriptions and an optional multi-select. What they share is four ARIA
- * attributes, and a component unifying them would have to carry both layouts behind a
- * variant flag to save repeating those.
  */
 export function QuestionPanel(props: {
   question: QuestionSpec;
   /** What has been said to it so far, from the park's draft. */
   reply: QuestionReply | undefined;
   onChange: (reply: QuestionReply) => void;
+  /** The footer's primary — advance a page, or settle the park on the last one. */
+  onSubmit: () => void;
+  submitLabel?: string;
+  submitDisabled?: boolean;
+  /** The dock's own cells (Stop, Back), sharing the one footer. */
+  secondary?: ActionButtonSpec[];
+  disabled?: boolean;
 }): JSX.Element {
+  const questionId = createUniqueId();
   const selections = (): string[] => props.reply?.selections ?? [];
   const written = (): string => props.reply?.text ?? "";
 
-  const pick = (label: string) => {
+  const pick = (label: string | null) => {
+    if (label === null) {
+      props.onChange({ selections: [], text: written() });
+      return;
+    }
     const at = selections();
     const next = !props.question.multiSelect
       ? [label]
@@ -47,81 +60,38 @@ export function QuestionPanel(props: {
     props.onChange({ selections: next, text: props.reply?.text });
   };
 
-  const isChosen = (label: string) => selections().includes(label);
-
   return (
-    <Stack gap={2}>
-      <Text variant="body" tone="bright">
+    <div class="flex flex-col">
+      <Text
+        as="p"
+        id={questionId}
+        variant="body"
+        tone="bright"
+        class="px-3 pt-3 pb-2 break-words"
+      >
         {props.question.question}
       </Text>
-      <div
-        role={props.question.multiSelect ? "group" : "radiogroup"}
-        aria-label={props.question.question}
-        class="flex flex-col gap-1"
-      >
-        <For each={props.question.options}>
-          {(option) => (
-            <Show
-              when={!props.question.multiSelect}
-              fallback={
-                <label
-                  class={cx(
-                    "flex cursor-pointer flex-col gap-0.5 rounded-ctl px-2 py-1.5 transition-colors hover:bg-raised",
-                    isChosen(option.label) && "bg-raised",
-                  )}
-                >
-                  <Checkbox
-                    checked={isChosen(option.label)}
-                    onChange={() => pick(option.label)}
-                    label={option.label}
-                  />
-                  <Show when={option.description}>
-                    <Text variant="micro" tone="dim" class="pl-6">
-                      {option.description}
-                    </Text>
-                  </Show>
-                </label>
-              }
-            >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={isChosen(option.label)}
-                onClick={() => pick(option.label)}
-                class={cx(
-                  "flex flex-col items-start gap-0.5 rounded-ctl px-2 py-1.5 text-left transition-colors hover:bg-raised",
-                  // Selection is a raised fill, the same way the rest of the
-                  // system marks a current choice — not a coloured pill.
-                  isChosen(option.label) && "bg-raised",
-                )}
-              >
-                <Text
-                  variant="label"
-                  tone={isChosen(option.label) ? "bright" : "dim"}
-                >
-                  {option.label}
-                </Text>
-                <Show when={option.description}>
-                  <Text variant="micro" tone="dim">
-                    {option.description}
-                  </Text>
-                </Show>
-              </button>
-            </Show>
-          )}
-        </For>
-      </div>
-      <Textarea
-        rows={2}
-        placeholder="Or write your own answer"
-        value={written()}
-        onInput={(e) =>
-          props.onChange({
-            selections: selections(),
-            text: e.currentTarget.value,
-          })
-        }
+      <ChoiceList
+        labelledBy={questionId}
+        options={props.question.options.map((o) => ({
+          id: o.label,
+          label: o.label,
+          hint: o.description || undefined,
+        }))}
+        multiple={props.question.multiSelect}
+        selected={selections()}
+        value={selections()[0] ?? null}
+        onChange={pick}
+        freeText={{
+          value: written(),
+          onInput: (text) => props.onChange({ selections: selections(), text }),
+        }}
+        onSubmit={props.onSubmit}
+        submitLabel={props.submitLabel}
+        submitDisabled={props.submitDisabled}
+        secondary={props.secondary}
+        disabled={props.disabled}
       />
-    </Stack>
+    </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   PINNED_GROUP,
   UNFILED_GROUP,
   groupSessions,
+  rowAge,
   type SessionGroup,
   type WorkspaceDirectory,
 } from "./sessionGroups";
@@ -301,5 +302,30 @@ describe("groupSessions", () => {
     }).flatMap((g) => g.sessions);
     expect(flattened).toHaveLength(rows.length);
     expect(new Set(flattened.map((s) => s.id)).size).toBe(rows.length);
+  });
+});
+
+describe("rowAge", () => {
+  const now = new Date("2026-10-10T12:00:00Z");
+  const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
+  const MIN = 60_000;
+
+  test("steps from minutes to hours to days, flooring each", () => {
+    expect(rowAge(ago(20_000), now)).toBe("now");
+    expect(rowAge(ago(2 * MIN), now)).toBe("2m");
+    expect(rowAge(ago(59 * MIN), now)).toBe("59m");
+    expect(rowAge(ago(60 * MIN), now)).toBe("1h");
+    expect(rowAge(ago(4 * 60 * MIN + 59 * MIN), now)).toBe("4h");
+    expect(rowAge(ago(24 * 60 * MIN), now)).toBe("1d");
+  });
+
+  test("says nothing at 30 days and past, where the heading names the month", () => {
+    expect(rowAge(ago(29 * 24 * 60 * MIN), now)).toBe("29d");
+    expect(rowAge(ago(30 * 24 * 60 * MIN), now)).toBeUndefined();
+    expect(rowAge(ago(400 * 24 * 60 * MIN), now)).toBeUndefined();
+  });
+
+  test("an unparseable stamp has no age", () => {
+    expect(rowAge("not a date", now)).toBeUndefined();
   });
 });

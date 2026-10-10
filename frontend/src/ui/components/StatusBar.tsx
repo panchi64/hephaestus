@@ -1,5 +1,7 @@
 import { Show, children, splitProps, type JSX } from "solid-js";
 import { cx } from "../cx";
+import type { IconName } from "../icons/registry";
+import { Icon } from "../primitives/Icon";
 
 /** One cell's box, shared with every trigger that has to sit in a `StatusBar` as a
  *  cell of its own — `Select cell`, `Combobox cell`. Exported rather than restated so
@@ -11,7 +13,7 @@ import { cx } from "../cx";
  *  voice — the text beneath the card is a line of telemetry, and a sentence-case
  *  label there ("Auto-review", "Stats") reads as a heading over the row. */
 export const STATUS_CELL_CLASS =
-  "flex h-6 items-center gap-1.5 px-2.5 font-mono text-meta lowercase whitespace-nowrap transition-none";
+  "ody-status-cell flex h-6 items-center gap-1.5 px-2.5 font-mono text-meta lowercase whitespace-nowrap transition-none";
 
 /** A cell that acts: the text tone at rest, bright on a raised fill under the pointer.
  *  A disabled one drops to the line colour — present, so the row doesn't reflow, and
@@ -36,7 +38,13 @@ export interface StatusBarProps {
    *  top only, the unit's own frame closing the other three sides. `box` is a bar
    *  standing on its own — the same rule on all four sides — for when the unit it
    *  belongs to has given up its slot (the composer, while the approval dock holds it). */
-  edge?: "joined" | "box";
+  edge?: "joined" | "box" | "block";
+  /** `ruled` (default): `line` hairlines between cells, the text tone. `recede`: a
+   *  sunken fill, no dividers, dim mono at a 28px row that comes up to the text tone
+   *  only while the pointer or focus is in the strip — for a strip that should sit
+   *  *behind* what it serves (the composer's, the rail's). Its rules are `line`
+   *  hairlines rather than `line-strong`, and `block` draws one above and below. */
+  variant?: "ruled" | "recede";
   class?: string;
 }
 
@@ -58,7 +66,21 @@ export interface StatusBarProps {
  * before its neighbours are pushed onto a line of their own.
  */
 export function StatusBar(props: StatusBarProps): JSX.Element {
-  const [local] = splitProps(props, ["start", "end", "edge", "class"]);
+  const [local] = splitProps(props, [
+    "start",
+    "end",
+    "edge",
+    "variant",
+    "class",
+  ]);
+  const recede = () => local.variant === "recede";
+  const rule = () => (recede() ? "border-line" : "border-line-strong");
+  const edgeClass = () =>
+    local.edge === "box"
+      ? "border"
+      : local.edge === "block"
+        ? "border-y"
+        : "border-t";
   // Each slot resolved once: a JSX prop is a getter that rebuilds its elements on every
   // read, and a group tested for emptiness and then rendered would mount twice.
   const start = children(() => local.start);
@@ -74,21 +96,32 @@ export function StatusBar(props: StatusBarProps): JSX.Element {
       <div
         class={cx(
           "flex flex-wrap items-stretch justify-between text-text",
-          local.edge === "box"
-            ? "border border-line-strong"
-            : "border-t border-line-strong",
+          edgeClass(),
+          rule(),
+          recede() && "ody-status-recede",
           local.class,
         )}
       >
         {/* The rules are set from the group onto its direct children, so a caller hands
-          over plain cells and a cell never has to know which end of the bar it is at. */}
+          over plain cells and a cell never has to know which end of the bar it is at.
+          A receding strip draws none: its cells are told apart by spacing alone. */}
         <Show when={hasStart()}>
-          <div class="flex min-w-0 flex-wrap items-stretch [&>*]:border-r [&>*]:border-line">
+          <div
+            class={cx(
+              "flex min-w-0 flex-wrap items-stretch",
+              recede() ? "flex-1" : "[&>*]:border-r [&>*]:border-line",
+            )}
+          >
             {start()}
           </div>
         </Show>
         <Show when={hasEnd()}>
-          <div class="ml-auto flex min-w-0 flex-wrap items-stretch justify-end [&>*]:border-l [&>*]:border-line">
+          <div
+            class={cx(
+              "ml-auto flex min-w-0 flex-wrap items-stretch justify-end",
+              !recede() && "[&>*]:border-l [&>*]:border-line",
+            )}
+          >
             {end()}
           </div>
         </Show>
@@ -108,6 +141,58 @@ export interface StatusCellProps extends Omit<
   active?: boolean;
   class?: string;
   children: JSX.Element;
+}
+
+export interface StatusFieldProps {
+  value: string;
+  onInput: (value: string) => void;
+  placeholder: string;
+  "aria-label": string;
+  /** A glyph at the head of the cell. */
+  leading?: IconName;
+  /** The key that focuses the field, shown dim at its end (`/`). Binding it is the
+   *  caller's. */
+  kbd?: string;
+  /** Escape in the field. */
+  onEscape?: () => void;
+  ref?: (el: HTMLInputElement) => void;
+  class?: string;
+}
+
+/** A text field as a cell of a `StatusBar` — the rail's search. It takes the room the
+ *  start group has left, in the cell's own mono at the cell's height, with no box of its
+ *  own: the strip is already the control. */
+export function StatusField(props: StatusFieldProps): JSX.Element {
+  return (
+    <label
+      class={cx(STATUS_CELL_CLASS, "min-w-0 flex-1 cursor-text", props.class)}
+    >
+      <Show when={props.leading}>
+        {(name) => <Icon name={name()} size={16} class="shrink-0" />}
+      </Show>
+      <input
+        ref={(el) => props.ref?.(el)}
+        type="text"
+        value={props.value}
+        placeholder={props.placeholder}
+        aria-label={props["aria-label"]}
+        onInput={(e) => props.onInput(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key !== "Escape") return;
+          e.preventDefault();
+          props.onEscape?.();
+        }}
+        class="min-w-0 flex-1 bg-transparent font-mono text-meta normal-case outline-none"
+      />
+      <Show when={props.kbd}>
+        {(k) => (
+          <kbd aria-hidden="true" class="shrink-0 font-mono opacity-70">
+            {k()}
+          </kbd>
+        )}
+      </Show>
+    </label>
+  );
 }
 
 /** One cell of a `StatusBar`: a readout, or — given `onClick` — a button that reads

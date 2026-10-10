@@ -85,6 +85,8 @@ export function ComposerMenu(props: ComposerMenuProps): JSX.Element {
       // that is actually free and the direction the eye already travels from the field.
       prefer="above"
       anchor={props.anchor}
+      // Square and ruled: it hangs off the composer, which is.
+      variant="console"
       panelClass="max-h-72 overflow-y-auto scrollbar-thin py-1"
       panel={() => (
         // The id the field's `aria-controls` points at. Fixed rather than generated:

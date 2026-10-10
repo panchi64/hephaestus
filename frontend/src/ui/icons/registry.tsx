@@ -45,6 +45,7 @@ export type IconName =
   | "close"
   | "check"
   | "dot"
+  | "filter"
   | "search"
   | "menu"
   | "warning"
@@ -111,6 +112,8 @@ export const icons: Record<IconName, IconEntry> = {
     </>
   ),
   dot: () => <circle cx="8" cy="8" r="2" />,
+  // A funnel — a list filtered by a scope, where the scope's name has no room.
+  filter: () => <path d="M2.5 3.5h11L9.5 8.5v4l-3 1.5V8.5z" />,
   // A trunk with one line breaking off it — a forked conversation and a git
   // branch are the same shape, so they share the glyph.
   branch: () => (

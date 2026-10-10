@@ -67,7 +67,7 @@ export function ContextBreakdown(props: {
           >
             {pct(percent())}
           </Text>
-          <Text variant="label" tone="dim">
+          <Text variant="plate" tone="dim">
             of context used
           </Text>
         </div>
@@ -157,7 +157,8 @@ function Bar(props: {
           // Taller than the bar and crossing it, so it reads against the fill and against
           // the free tail alike — a notch *inside* the bar would have to be the panel's
           // own background colour to be visible, and would vanish the moment the fill
-          // reached it. The bar is `h-1` (4px), so -3/10 straddles it evenly.
+          // reached it. The bar is `h-1` (4px), so an 8px mark lifted 2px straddles it
+          // evenly, on the spacing scale.
           //
           // `-translate-x-1/2` centres the mark *on* its fraction rather than starting it
           // there: at 100% a left-edge-aligned mark falls entirely outside the track, and
@@ -167,7 +168,7 @@ function Bar(props: {
           // is not a severity.
           <div
             aria-hidden="true"
-            class={`absolute -top-[3px] h-[10px] w-px -translate-x-1/2 ${
+            class={`absolute -top-0.5 h-2 w-px -translate-x-1/2 ${
               mark().active ? "bg-bright" : "bg-dim"
             }`}
             style={{ left: `${mark().pct}%` }}
@@ -243,7 +244,7 @@ function Row(props: { row: ContextRow }): JSX.Element {
  *  — 22K of schemas is a lot of text, 22K across 68 tools is a catalog to prune. */
 function Detail(props: { item: ContextDetail }): JSX.Element {
   return (
-    <div class="flex items-baseline gap-3 py-0.5">
+    <div class="flex items-baseline gap-3 py-1">
       <Text variant="micro" tone="dim" class="min-w-0 truncate">
         {props.item.label}
       </Text>

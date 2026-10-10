@@ -22,31 +22,38 @@
  */
 
 import { For, Show, type JSX } from "solid-js";
-import { ConsoleGroup, Text } from "~/ui";
+import { ActionFrame, Text } from "~/ui";
 import type { ConflictRow } from "../viewport/coverageItems";
 import { SourceTokens } from "./ResearchFindings";
 
 export function ConflictCard(props: { row: ConflictRow }): JSX.Element {
   const c = () => props.row.conflict;
   return (
-    <ConsoleGroup
-      label="Disagreement"
-      right={
-        <Text variant="micro" tone="dim" class="min-w-0 truncate">
-          {props.row.handle}
-        </Text>
-      }
+    // The action tier in its alert tone (design §10.18), settled — a conflict is the
+    // red kind of ask, but nothing is parked on this one, so the band carries no live
+    // square. Inside, the positions are ruled cells rather than cards: a rounded fill
+    // inside a square frame was two container vocabularies in one region.
+    <ActionFrame
+      tone="alert"
+      live={false}
+      title="Conflict · sources disagree"
+      aside={props.row.handle}
     >
-      <div class="flex flex-col gap-2 px-1 py-0.5">
+      <div class="flex flex-col">
         {/* The question, at reading scale — it is the one sentence here written to be
             read as a sentence, and everything below it is an answer to it. */}
-        <Text as="p" variant="body" tone="bright" class="break-words">
+        <Text
+          as="p"
+          variant="body"
+          tone="bright"
+          class="px-3 pt-3 pb-2 break-words"
+        >
           {c().question}
         </Text>
         <Show
           when={c().positions.length}
           fallback={
-            <Text variant="micro" tone="dim">
+            <Text variant="body" tone="dim" class="px-3 pb-3">
               No positions were recorded for this disagreement.
             </Text>
           }
@@ -58,10 +65,10 @@ export function ConflictCard(props: { row: ConflictRow }): JSX.Element {
               of text — a container query, because a 340px pane on a wide monitor is
               still a strip. Three or more positions wrap into the same grid rather
               than compressing further. */}
-          <div class="grid grid-cols-1 gap-2 @xl:grid-cols-2">
+          <div class="grid grid-cols-1 @xl:grid-cols-2">
             <For each={c().positions}>
               {(position) => (
-                <div class="flex min-w-0 flex-col gap-1 rounded-panel bg-raised p-2">
+                <div class="flex min-w-0 flex-col gap-1 border-t border-line px-3 py-2 @xl:even:border-l">
                   <Text
                     as="p"
                     variant="body"
@@ -77,7 +84,7 @@ export function ConflictCard(props: { row: ConflictRow }): JSX.Element {
           </div>
         </Show>
         <Show when={c().assessment}>
-          <div class="flex flex-col gap-0.5 border-t border-line pt-1.5">
+          <div class="flex flex-col gap-1 border-t border-line px-3 py-2">
             <Text variant="plate" tone="dim">
               {props.row.handle} judges
             </Text>
@@ -87,6 +94,6 @@ export function ConflictCard(props: { row: ConflictRow }): JSX.Element {
           </div>
         </Show>
       </div>
-    </ConsoleGroup>
+    </ActionFrame>
   );
 }

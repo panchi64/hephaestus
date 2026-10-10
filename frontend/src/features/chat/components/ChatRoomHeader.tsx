@@ -78,25 +78,28 @@ export function ChatRoomHeader(props: ChatRoomHeaderProps): JSX.Element {
     // controls level with the title alone, leaving a gap beneath them.
     <header class="flex items-center justify-between gap-3 pb-1">
       <span class="flex min-w-0 flex-col">
-        <span class="flex min-w-0 items-center gap-1.5">
+        <span class="flex min-w-0 items-center gap-2">
           <Show
             when={props.reveal()}
             fallback={
-              <Text variant="readout" tone="bright" class="truncate">
+              // The interface's body step, bright and medium-weight: a thread's name is
+              // a title over the room, not a hero figure (`readout` is the instrument
+              // value style, design §4).
+              <Text variant="body" tone="bright" class="truncate font-medium">
                 {props.title()}
               </Text>
             }
           >
             {(title) => (
               <TypewriterText
-                variant="readout"
+                variant="body"
                 tone="bright"
                 text={title()}
                 speed={REVEAL_SPEED_MS}
                 // Same clamp as the static branch above. Without it a long
                 // auto-generated name overflows the row while it types itself out
                 // and then snaps to an ellipsis the moment the reveal hands over.
-                class="truncate"
+                class="truncate font-medium"
               />
             )}
           </Show>
@@ -108,7 +111,7 @@ export function ChatRoomHeader(props: ChatRoomHeaderProps): JSX.Element {
             it is context for the title, not a second title. */}
         <Show when={props.workspaceHint()}>
           {(hint) => (
-            <span class="flex min-w-0 items-center gap-1.5">
+            <span class="flex min-w-0 items-center gap-2">
               <Icon name="library" size={12} class="shrink-0 text-dim" />
               <Text variant="micro" tone="dim" class="min-w-0 truncate">
                 {hint()}

@@ -1,5 +1,5 @@
 import { For, Show, createSignal, type JSX } from "solid-js";
-import { Button, Panel, Row, Stack, StatusFlag, Text, type Status } from "~/ui";
+import { ActionButtons, ActionFrame, Row, Stack, StatusFlag, Text } from "~/ui";
 import { duration } from "~/lib/format";
 import { grantKey, type GrantWidth } from "../commandScope";
 import type { ApprovalDecision, HostCommand, HostCommandPhase } from "../model";
@@ -10,13 +10,19 @@ import {
 } from "./ConversationGrantToggle";
 import { createAdoptedOpen } from "./ProcessRow";
 
-const phaseFlag: Record<HostCommandPhase, { status: Status; label: string }> = {
-  pending: { status: "warn", label: "Awaiting approval" },
-  running: { status: "info", label: "Running" },
-  ok: { status: "nominal", label: "OK" },
-  error: { status: "alert", label: "Failed" },
-  denied: { status: "alert", label: "Denied" },
-  stale: { status: "idle", label: "Decided elsewhere" },
+/** The state at the plate's far end, in mono. Hue only where it means something —
+ *  running (info), failed or denied (alert); a command that finished is dim, because a
+ *  green OK on every successful command is the one accent spent on nothing. */
+const phaseFlag: Record<
+  HostCommandPhase,
+  { tone: "warn" | "info" | "dim" | "alert"; label: string }
+> = {
+  pending: { tone: "warn", label: "Awaiting approval" },
+  running: { tone: "info", label: "Running" },
+  ok: { tone: "dim", label: "Done" },
+  error: { tone: "alert", label: "Failed" },
+  denied: { tone: "alert", label: "Denied" },
+  stale: { tone: "dim", label: "Decided elsewhere" },
 };
 
 /**
@@ -133,7 +139,7 @@ function Terminal(props: {
   // A phase the map doesn't know (a newer backend, a replayed event) must not
   // throw on the property read below — fall back to a neutral flag.
   const flag = () =>
-    phaseFlag[c().phase] ?? { status: "idle" as Status, label: c().phase };
+    phaseFlag[c().phase] ?? { tone: "dim" as const, label: c().phase };
   // The terminal rests open — its output is the point of it — and yields to the
   // turn's expand-all/collapse-all like every other card.
   const { open: showOutput } = createAdoptedOpen(props, true);
@@ -150,110 +156,96 @@ function Terminal(props: {
     c().timedOut === true ||
     c().exitCode != null;
 
-  return (
-    <Panel
-      label="Host command"
-      meta={
-        <Row gap={2} align="center">
-          {/* The backend's own measurement, taken around the spawn — never a stopwatch
-              started here, which would be timing the stream rather than the command.
-              While it runs the figure comes from the progress ticks, so a long command
-              counts up instead of sitting at nothing until it ends. */}
-          <Show when={c().elapsedMs !== undefined}>
-            <Text variant="meta" tone="dim" class="tabular-nums">
-              {duration(c().elapsedMs!)}
-            </Text>
-          </Show>
-          <StatusFlag status={flag().status} dot>
-            {flag().label}
-          </StatusFlag>
-        </Row>
-      }
-      flush
-    >
-      <Stack gap={2} class="bg-bg p-2">
-        {/* The exact command line the agent asked to run on the host. */}
-        <Row gap={2} align="start">
-          <Text variant="body" tone="nominal" class="shrink-0">
-            $
-          </Text>
-          <Text
-            variant="body"
-            tone="bright"
-            class="whitespace-pre-wrap break-all"
-          >
-            {c().command}
-          </Text>
-        </Row>
+  /** The region's name: where the command runs, and how far it said it reaches. */
+  const plate = () => (c().reach ? `Host · ${c().reach}` : "Host");
 
-        {/* Pending: the operator's judgment aid, then the decision. */}
-        <Show when={c().phase === "pending"}>
-          <Show when={c().explanation}>
-            <Text variant="micro" tone="dim" class="break-words">
-              {c().explanation}
-            </Text>
-          </Show>
-          {/* What the Auto review found, when one ran. `too_destructive` is the whole
+  /** The backend's own measurement, taken around the spawn — never a stopwatch started
+   *  here, which would be timing the stream rather than the command. While it runs the
+   *  figure comes from the progress ticks, so a long command counts up instead of
+   *  sitting at nothing until it ends. */
+  const elapsed = () =>
+    c().elapsedMs !== undefined ? duration(c().elapsedMs!) : undefined;
+
+  const body = (): JSX.Element => (
+    <Stack gap={2} class="px-3 py-2">
+      {/* The exact command line the agent asked to run on the host — mono, the
+          machine's voice, with the prompt receding so the command is what reads. */}
+      <Row gap={2} align="start">
+        <Text variant="code" tone="dim" class="shrink-0">
+          $
+        </Text>
+        <Text
+          variant="code"
+          tone="bright"
+          class="min-w-0 whitespace-pre-wrap break-all"
+        >
+          {c().command}
+        </Text>
+      </Row>
+
+      {/* Pending: the operator's judgment aid, then the decision. */}
+      <Show when={c().phase === "pending"}>
+        <Show when={c().explanation}>
+          <Text variant="body" tone="default" class="break-words">
+            {c().explanation}
+          </Text>
+        </Show>
+        {/* What the Auto review found, when one ran. `too_destructive` is the whole
               reason it is here: the review used to refuse such a command itself, and now
               it hands it over — so the finding has to arrive with the command rather than
               on a collapsed row above it. */}
-          <Show when={c().risk === "too_destructive"}>
-            <Row gap={2} align="center">
-              <StatusFlag status="alert">Cannot be undone</StatusFlag>
-              <Text variant="micro" tone="warn" class="break-words">
-                {c().reviewReason}
-              </Text>
-            </Row>
-          </Show>
-          <Show
-            when={!decidedPending()}
-            fallback={
-              <Text variant="micro" tone="dim">
-                {props.decided ? "Approved" : "Denied"} —{" "}
-                {props.held ? "awaiting the other decisions…" : "submitting…"}
-              </Text>
-            }
-          >
-            <Stack gap={2}>
-              {/* The grant opt-in sits *above* the decision so it reads naturally; its
+        <Show when={c().risk === "too_destructive"}>
+          <Row gap={2} align="center">
+            <StatusFlag status="alert">Cannot be undone</StatusFlag>
+            <Text variant="micro" tone="warn" class="break-words">
+              {c().reviewReason}
+            </Text>
+          </Row>
+        </Show>
+        <Show
+          when={!decidedPending()}
+          fallback={
+            <Text variant="micro" tone="dim">
+              {props.decided ? "Approved" : "Denied"} —{" "}
+              {props.held ? "awaiting the other decisions…" : "submitting…"}
+            </Text>
+          }
+        >
+          <Stack gap={2}>
+            {/* The grant opt-in sits *above* the decision so it reads naturally; its
                   state is captured into this command's decision the moment APPROVE is
                   clicked (see `decide`), so set it before approving. */}
-              <ConversationGrantToggle
-                command={c().command}
-                toolName={c().name}
-                width={props.sessionWidth}
-                disabled={props.submitting}
-                onChange={(v) => props.onToggleSession?.(v)}
-              />
-              <Row gap={2}>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  leading="check"
-                  disabled={props.submitting}
-                  onClick={() => props.onDecide(c().toolCallId, true)}
-                >
-                  Approve & run
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  leading="close"
-                  disabled={props.submitting}
-                  onClick={() => props.onDecide(c().toolCallId, false)}
-                >
-                  Deny
-                </Button>
-              </Row>
-            </Stack>
-          </Show>
+            <ConversationGrantToggle
+              command={c().command}
+              toolName={c().name}
+              width={props.sessionWidth}
+              disabled={props.submitting}
+              onChange={(v) => props.onToggleSession?.(v)}
+            />
+            <ActionButtons
+              buttons={[
+                {
+                  label: "Approve & run",
+                  primary: true,
+                  disabled: props.submitting,
+                  onClick: () => props.onDecide(c().toolCallId, true),
+                },
+                {
+                  label: "Deny",
+                  disabled: props.submitting,
+                  onClick: () => props.onDecide(c().toolCallId, false),
+                },
+              ]}
+            />
+          </Stack>
         </Show>
+      </Show>
 
-        {/* What it declared and what held it to that — on the card from the moment the
+      {/* What it declared and what held it to that — on the card from the moment the
             declaration exists, which is before it runs as well as after. */}
-        <CommandBoundary command={c()} />
+      <CommandBoundary command={c()} />
 
-        {/* Approved and executing — text readout, never a spinner, and now the output
+      {/* Approved and executing — text readout, never a spinner, and now the output
             itself as it arrives. The run streams it in deltas every half-second, so a
             command that takes a minute reads as a command working rather than as a
             stalled turn.
@@ -263,84 +255,124 @@ function Terminal(props: {
             splitting them on a guess would file half a stack trace under the wrong
             heading. The result is the record and separates them properly, which is why
             this arm disappears the moment the call completes. */}
-        <Show when={c().phase === "running"}>
-          <Show
-            when={c().streamed}
-            fallback={
-              <Text variant="micro" tone="info">
-                Running…
-              </Text>
-            }
-          >
-            <Text
-              as="div"
-              variant="micro"
-              tone="default"
-              class="max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
-            >
-              {c().streamed}
+      <Show when={c().phase === "running"}>
+        <Show
+          when={c().streamed}
+          fallback={
+            <Text variant="micro" tone="info">
+              Running…
             </Text>
-          </Show>
-        </Show>
-
-        {/* Denied — it never ran. */}
-        <Show when={c().phase === "denied"}>
-          <Text variant="micro" tone="alert">
-            DENIED — not executed.
+          }
+        >
+          <Text
+            as="div"
+            variant="code"
+            tone="default"
+            class="max-h-64 overflow-y-auto whitespace-pre-wrap break-all"
+          >
+            {c().streamed}
           </Text>
         </Show>
+      </Show>
 
-        {/* This decision 409'd — already resolved elsewhere (a second tab, a
+      {/* Denied — it never ran. */}
+      <Show when={c().phase === "denied"}>
+        <Text variant="body" tone="alert">
+          Denied — not executed.
+        </Text>
+      </Show>
+
+      {/* This decision 409'd — already resolved elsewhere (a second tab, a
             retried request) by the time it landed. Non-interactive; the
             transcript reconciles with the actual outcome via a refetch. */}
-        <Show when={c().phase === "stale"}>
-          <Text variant="micro" tone="dim">
-            DECIDED ELSEWHERE — this was resolved from another session; the
-            transcript will catch up shortly.
-          </Text>
-        </Show>
+      <Show when={c().phase === "stale"}>
+        <Text variant="body" tone="dim">
+          Decided elsewhere — this was resolved from another session; the
+          transcript will catch up shortly.
+        </Text>
+      </Show>
 
-        {/* Runtime output, once the command has run. */}
-        <Show when={hasOutput() && showOutput()}>
-          <div class="mt-2" />
-          <Stack gap={1}>
-            <Show when={c().stdout}>
-              <Text
-                variant="micro"
-                tone="default"
-                class="whitespace-pre-wrap break-all"
-              >
-                {c().stdout}
-              </Text>
-            </Show>
-            <Show when={c().stderr}>
-              <Text
-                variant="micro"
-                tone="alert"
-                class="whitespace-pre-wrap break-all"
-              >
-                {c().stderr}
-              </Text>
-            </Show>
-            <Show when={c().error}>
-              <Text variant="micro" tone="warn" class="break-words">
-                {c().error}
-              </Text>
-            </Show>
-            {/* Beneath the streams, because it is about them: a permission error up
+      {/* Runtime output, once the command has run. */}
+      <Show when={hasOutput() && showOutput()}>
+        <Stack gap={1}>
+          <Show when={c().stdout}>
+            <Text
+              as="div"
+              variant="code"
+              tone="default"
+              class="whitespace-pre-wrap break-all"
+            >
+              {c().stdout}
+            </Text>
+          </Show>
+          <Show when={c().stderr}>
+            <Text
+              as="div"
+              variant="code"
+              tone="alert"
+              class="whitespace-pre-wrap break-all"
+            >
+              {c().stderr}
+            </Text>
+          </Show>
+          <Show when={c().error}>
+            <Text variant="micro" tone="warn" class="break-words">
+              {c().error}
+            </Text>
+          </Show>
+          {/* Beneath the streams, because it is about them: a permission error up
                 there is the fence holding, not the command breaking. */}
-            <FenceNote command={c()} />
-            {/* A timeout has no exit code — it never exited — so the marker has to be
+          <FenceNote command={c()} />
+          {/* A timeout has no exit code — it never exited — so the marker has to be
                 able to stand without one, and the null is the fact rather than a
                 missing value. */}
-            <Show when={c().timedOut || c().exitCode != null}>
-              <Text variant="micro" tone={c().exitCode === 0 ? "dim" : "alert"}>
-                {c().timedOut ? "TIMED OUT" : `EXIT ${c().exitCode}`}
-              </Text>
+          <Show when={c().timedOut || c().exitCode != null}>
+            <Text variant="meta" tone={c().exitCode === 0 ? "dim" : "alert"}>
+              {c().timedOut ? "Timed out" : `Exit ${c().exitCode}`}
+            </Text>
+          </Show>
+        </Stack>
+      </Show>
+    </Stack>
+  );
+
+  return (
+    <Show
+      when={c().phase === "pending"}
+      fallback={
+        // A ruled frame named by its plate (design §7, §10.14): the one region in a
+        // turn whose edge does work, since it holds a command and what came back from
+        // the operator's own machine. Contents bare; the state reports in mono at the
+        // plate's far end and spends a colour only where something went wrong or is
+        // still going — never a green OK.
+        <section class="flex flex-col border border-line-strong">
+          <div class="flex items-center gap-2 border-b border-line px-3 py-2">
+            <Text variant="plate" tone="dim" class="min-w-0 flex-1 truncate">
+              {plate()}
+            </Text>
+            <Show when={elapsed()}>
+              {(t) => (
+                <Text variant="meta" tone="dim" class="tabular-nums">
+                  {t()}
+                </Text>
+              )}
             </Show>
-          </Stack>
-        </Show>
-      </Stack>
-    </Panel>
+            <Text variant="meta" tone={flag().tone}>
+              {flag().label}
+            </Text>
+          </div>
+          {body()}
+        </section>
+      }
+    >
+      {/* Waiting on the operator: the action tier (design §10.18). */}
+      <ActionFrame
+        tone="approval"
+        title={`Approval needed · ${plate()}`}
+        aside={elapsed()}
+      >
+        {body()}
+      </ActionFrame>
+    </Show>
   );
 }

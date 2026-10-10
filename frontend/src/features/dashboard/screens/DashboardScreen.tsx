@@ -231,7 +231,7 @@ export function DashboardScreen(): JSX.Element {
         <div class="w-full max-w-3xl">
           <Composer
             size="lg"
-            title="New conversation"
+            title="New thread · ready"
             autofocus
             storageKey="home-new"
             placeholder="Ask anything, request a summary, or describe a task…"

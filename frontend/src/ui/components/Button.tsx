@@ -5,7 +5,7 @@ import { Icon, type IconProps } from "../primitives/Icon";
 import { Frames } from "./Frames";
 
 export type ButtonVariant = "primary" | "default" | "ghost" | "danger";
-export type ButtonSize = "sm" | "md" | "lg" | "console";
+export type ButtonSize = "sm" | "md" | "lg";
 
 export interface ButtonProps extends Omit<
   JSX.ButtonHTMLAttributes<HTMLButtonElement>,
@@ -60,14 +60,8 @@ const variantClass: Record<ButtonVariant, string> = {
 const GHOST_ACTIVE_CLASS = "bg-raised text-bright hover:text-bright";
 
 /* A button label is the interface speaking to the operator, so it is sans and
-   sentence case (§2) — the old mono uppercase made every control shout.
-
-   `console` is the one exception, and it is a size because the voice comes with the
-   dimensions: the composer's commit keys (TRANSMIT, QUEUE, STOP) sit in a unit whose
-   header, status bar and registration marks are all the machine's line, and a sans
-   sentence-case key there read as a web form's button bolted onto an instrument. It is
-   taller than `md` so the key sits by the field's line of text rather than under it,
-   and it carries its chord as a half-opacity suffix the caller passes as a child.
+   sentence case (§2) — the old mono uppercase made every control shout. (The
+   composer's commit keys are the machine's, and are `.ody-send`, not a size here.)
 
    The type family lives here rather than in the shared base, so a size never sets a
    font the base also sets — two `font-*` utilities on one node resolve by stylesheet
@@ -76,8 +70,6 @@ const sizeClass: Record<ButtonSize, string> = {
   sm: "h-6 px-2 gap-1 text-label font-sans font-medium",
   md: "h-8 px-3 gap-2 text-body font-sans font-medium",
   lg: "h-10 px-4 gap-2 text-body font-sans font-medium",
-  console:
-    "h-7 px-3 gap-2 font-mono text-meta font-semibold uppercase tracking-plate",
 };
 
 // Icons scale with the button so a larger control reads as larger, not padded.
@@ -85,7 +77,6 @@ const iconSize: Record<ButtonSize, number> = {
   sm: 12,
   md: 12,
   lg: 16,
-  console: 12,
 };
 
 /** Foundational control. Cosmetic differences are the `variant`/`size` props —

@@ -23,7 +23,7 @@ export function CompactionRow(props: {
   children: JSX.Element;
 }): JSX.Element {
   return (
-    <div class="space-y-1 px-2 py-1.5">
+    <div class="space-y-1 px-2 py-2">
       <div class="flex items-baseline justify-between gap-3">
         <Text variant="plate" tone="dim" class="min-w-0 truncate">
           {props.legend}

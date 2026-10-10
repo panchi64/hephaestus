@@ -95,8 +95,9 @@ function Settled(props: { message: ChatMessage }): JSX.Element {
         // about it is a row away, and a header listing all of them would be a second copy
         // of the panel set in smaller type.
         <Text variant="meta" tone="dim" class="tabular-nums">
-          <Show when={freed() > 0} fallback={<>NO ROOM FREED</>}>
-            FREED ~{compactCount(freed(), true)}
+          {/* Typed in sentence case; `meta` is what sets it in capitals. */}
+          <Show when={freed() > 0} fallback={<>No room freed</>}>
+            Freed ~{compactCount(freed(), true)}
           </Show>
         </Text>
       }

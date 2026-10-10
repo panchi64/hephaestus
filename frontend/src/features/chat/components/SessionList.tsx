@@ -13,7 +13,6 @@ import {
   Disclosure,
   EmptyState,
   Icon,
-  Input,
   ListGroupHeader,
   LoadingText,
   Menu,
@@ -85,6 +84,11 @@ export interface SessionListProps {
   /** The directory a staged (not yet sent) thread will work in. Its heading opens and
    *  takes the selected paint, so a click in the rail is answered in the rail. */
   stagedProjectId?: string | null;
+  /** What the rail's search cell holds. The field lives in the rail's command strip,
+   *  above this list; the filtering is still this list's. */
+  query: () => string;
+  /** Whether a thread has something the operator has not seen. */
+  unread?: (id: string) => boolean;
 }
 
 /** Searchable, pinnable thread list shared by the desktop rail and mobile
@@ -109,6 +113,7 @@ export function SessionList(props: SessionListProps): JSX.Element {
     source: () => props.sessions(),
     search: (s) => `${s.title} ${s.preview ?? ""} ${s.workspace ?? ""}`,
   });
+  createEffect(() => view.setQuery(props.query()));
   /** The grouping, or undefined while a worktree mode is still waiting on its
    *  directories. One value rather than a second flag the render has to keep in step
    *  with the first — see `directories` above for why the wait matters. */
@@ -155,14 +160,6 @@ export function SessionList(props: SessionListProps): JSX.Element {
         </div>
       }
     >
-      <div class="p-2">
-        <Input
-          leading="search"
-          placeholder="Search threads"
-          value={view.query()}
-          onInput={(e) => view.setQuery(e.currentTarget.value)}
-        />
-      </div>
       <Show
         when={!barren()}
         fallback={
@@ -220,6 +217,7 @@ export function SessionList(props: SessionListProps): JSX.Element {
                 }
                 onNewThread={props.onNewThread}
                 onSelect={props.onSelect}
+                unread={props.unread}
               />
             ) : (
               <RecencySection
@@ -227,6 +225,7 @@ export function SessionList(props: SessionListProps): JSX.Element {
                 currentId={props.currentId}
                 menu={props.menu}
                 onSelect={props.onSelect}
+                unread={props.unread}
               />
             )
           }
@@ -244,6 +243,7 @@ function SessionRows(props: {
   currentId: string | null;
   menu: ContextMenuApi;
   onSelect: (id: string) => void;
+  unread?: (id: string) => boolean;
 }): JSX.Element {
   return (
     <For each={props.sessions}>
@@ -252,6 +252,7 @@ function SessionRows(props: {
           title={s.title}
           selected={s.id === props.currentId}
           pinned={isPinned(s.id)}
+          unread={props.unread?.(s.id)}
           reveal={titleReveals[s.id]}
           retitling={isRetitling(s.id)}
           activity={s.activity}
@@ -284,15 +285,21 @@ function RecencySection(props: {
   currentId: string | null;
   menu: ContextMenuApi;
   onSelect: (id: string) => void;
+  unread?: (id: string) => boolean;
 }): JSX.Element {
   return (
     <div class="pb-1">
-      <ListGroupHeader label={props.group.label} />
+      <ListGroupHeader
+        variant="plate"
+        label={props.group.label}
+        count={props.group.sessions.length}
+      />
       <SessionRows
         sessions={props.group.sessions}
         currentId={props.currentId}
         menu={props.menu}
         onSelect={props.onSelect}
+        unread={props.unread}
       />
     </div>
   );
@@ -319,6 +326,7 @@ function DirectorySection(props: {
   actions?: MenuItem[];
   onNewThread?: (projectId: string) => void;
   onSelect: (id: string) => void;
+  unread?: (id: string) => boolean;
 }): JSX.Element {
   // Stored-then-derived: an explicit open or close by the operator wins and outlives
   // the reload, and a section they have never touched decides for itself. Without the
@@ -447,6 +455,7 @@ function DirectorySection(props: {
           currentId={props.currentId}
           menu={props.menu}
           onSelect={props.onSelect}
+          unread={props.unread}
         />
       </Disclosure>
     </div>
@@ -473,11 +482,11 @@ function WorkspaceLabel(props: { label: string }): JSX.Element {
   return (
     <span class="flex min-w-0 items-baseline">
       <Show when={head()}>
-        <Text variant="label" tone="dim" class="min-w-0 truncate opacity-60">
+        <Text variant="code" tone="dim" class="min-w-0 truncate">
           {head()}
         </Text>
       </Show>
-      <Text variant="label" tone="dim" class="shrink-0">
+      <Text variant="code" tone="bright" class="shrink-0">
         {name()}
       </Text>
     </span>
@@ -500,7 +509,7 @@ function WorkspaceStatusMark(props: { status?: WorkspaceStatus }): JSX.Element {
                   side="right"
                   label={`${n()} uncommitted change${n() === 1 ? "" : "s"} here won't be visible to the agent`}
                 >
-                  <Text variant="micro" tone="dim" class="shrink-0 pl-2">
+                  <Text variant="micro" tone="warn" class="shrink-0 pl-2">
                     ±{n()}
                   </Text>
                 </Tooltip>

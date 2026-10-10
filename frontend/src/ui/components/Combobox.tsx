@@ -158,6 +158,8 @@ export function Combobox(props: ComboboxProps): JSX.Element {
       class={props.class}
       align={props.align}
       onOpen={props.onOpen}
+      // Opened from a ruled strip, a cell's menu is square and ruled like it.
+      variant={props.cell ? "console" : "default"}
       panelClass="flex max-h-80 w-64 flex-col"
       trigger={({ open, setOpen }) => (
         <button

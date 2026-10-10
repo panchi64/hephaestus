@@ -42,7 +42,10 @@ import { settled } from "~/lib/resource";
 import { directoryLabel, focusAddDirectory } from "../addDirectory";
 import { ChatRoomHeader } from "../components/ChatRoomHeader";
 import { ChatViewportMounts } from "../components/ChatViewportMounts";
-import { ComposerHeaderStatus } from "../components/ComposerHeaderStatus";
+import {
+  ComposerHeaderAside,
+  ComposerHeaderStatus,
+} from "../components/ComposerHeaderStatus";
 import { createConversationStatus } from "../components/ConversationStatus";
 import { ParkDock } from "../components/ParkDock";
 import { PermissionControl } from "../components/PermissionControl";
@@ -483,6 +486,16 @@ export function ChatRoomScreen(): JSX.Element {
     stream.messages.filter(isOperatorQueued),
   );
 
+  /** The composer's `Jump ↑`: to the newest turn holding an ask, through the follow so
+   *  the bottom pin lets go — else to the tail, where the run is. */
+  const jumpToAsk = (): void => {
+    const asking = stream.messages.findLast((m) =>
+      m.blocks?.some((b) => b.kind === "approval" || b.kind === "question"),
+    );
+    const el = asking ? transcript.scrollToMessage(asking.id) : null;
+    if (!el) transcript.jumpToLatest();
+  };
+
   // The composer's status bar: its trailing cells, and the task rows they disclose.
   const status = createConversationStatus({
     conversationId: currentId,
@@ -652,10 +665,10 @@ export function ChatRoomScreen(): JSX.Element {
                 onPrefillConsumed={stream.clearUndeliveredDraft}
                 onShiftTab={cyclePermission}
                 headerStart={
-                  // What the input — and the thread behind it — is doing: the live
-                  // run and its clock, a lost stream, or a run that ended in a way
-                  // worth saying. `Input` when none of those holds.
+                  // What the thread is doing: its name and `ready` at rest, the live
+                  // run, a lost stream, or a run that ended in a way worth saying.
                   <ComposerHeaderStatus
+                    title={() => currentSummary()?.title ?? null}
                     streaming={stream.sending}
                     compacting={stream.compacting}
                     detached={stream.detached}
@@ -665,26 +678,34 @@ export function ChatRoomScreen(): JSX.Element {
                   />
                 }
                 headerEnd={
-                  // Operator messages waiting on the run, and the key that edits them —
-                  // amber because they are waiting on the operator's say-so as much as
-                  // on the run.
-                  <Show when={queuedOperator().length}>
-                    {(count) => (
-                      <span class="text-warn">
-                        Queued {count()} · ↑ to edit
-                      </span>
-                    )}
-                  </Show>
+                  // The run's clock, queued messages waiting on the operator's say-so,
+                  // or the branch a code thread writes to.
+                  <ComposerHeaderAside
+                    streaming={stream.sending}
+                    runClock={stream.runClock}
+                    queued={() => queuedOperator().length}
+                    branch={() => branch.latest()?.branch}
+                  />
+                }
+                // The action tier's echo. The dock takes the composer's slot for a
+                // park this room is driving, so what reaches here is a run the backend
+                // reports waiting that this room is not holding the ask for.
+                waiting={
+                  !stream.park() &&
+                  currentSummary()?.activity === "awaiting_input"
+                    ? { label: "Waiting on you", onJump: jumpToAsk }
+                    : null
                 }
                 controls={
                   // Ungated, unlike the mode picker that used to sit here. A mode is
                   // set once at creation — a code thread owns a branch, and
-                  // re-pointing it would strand that branch — so that control was
-                  // only shown while a thread was unsaved, and it now lives beside
-                  // the thread list. A level is the opposite: it is the operator's
-                  // live control over a thread already in flight, so it is offered at
-                  // every moment of one, and it rides the next send.
+                  // re-pointing it would strand that branch — so that control lives
+                  // beside the thread list and this strip only says which it is. A
+                  // level is the opposite: it is the operator's live control over a
+                  // thread already in flight, so it is offered at every moment of one,
+                  // and it rides the next send.
                   <>
+                    <ModelPicker />
                     <PermissionControl
                       level={permission()}
                       onLevelChange={setPermission}
@@ -693,9 +714,9 @@ export function ChatRoomScreen(): JSX.Element {
                       // that rather than naming a level the thread may not be at.
                       pending={permissionPending()}
                     />
-                    {/* Both facts about the message itself — how far it may go, and
-                        which model takes it — read together at the row's head. */}
-                    <ModelPicker />
+                    <StatusCell class="max-sm:hidden">
+                      {sessionModeSpec(mode()).label}
+                    </StatusCell>
                   </>
                 }
                 // What the thread is doing: the task count, the stats behind their

@@ -246,3 +246,22 @@ function recencyLabel(updatedAt: string, now: Date): string {
     ? month
     : `${month} ${then.getFullYear()}`;
 }
+
+/** How long since a thread last moved, as its rail row's readout: `now`, `2m`, `4h`,
+ *  `1d`. **Only inside the last 30 days** — past that the group heading already names
+ *  the month, and an age in the hundreds of days is a number nobody reads. Undefined
+ *  then, and for a stamp that does not parse. */
+export function rowAge(
+  updatedAt: string,
+  now: Date = new Date(),
+): string | undefined {
+  const t = parseInstant(updatedAt);
+  if (Number.isNaN(t)) return undefined;
+  const mins = Math.floor((now.getTime() - t) / 60_000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return days < 30 ? `${days}d` : undefined;
+}

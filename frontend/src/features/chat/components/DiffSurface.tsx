@@ -113,7 +113,7 @@ function FileRow(props: {
         type="button"
         onClick={() => props.onToggle()}
         aria-expanded={open()}
-        class="flex w-full min-w-0 flex-col gap-0.5 px-3 py-1.5 text-left hover:bg-raised"
+        class="flex w-full min-w-0 flex-col gap-1 px-3 py-2 text-left hover:bg-raised"
       >
         <div class="flex min-w-0 items-baseline gap-2">
           <Text
@@ -364,14 +364,14 @@ export function DiffSurface(props: {
             <Show when={b().behind}>
               {(behind) => (
                 <Text variant="micro" tone="warn" class="shrink-0">
-                  {behind()} BEHIND {b().baseRef}
+                  {behind()} behind {b().baseRef}
                 </Text>
               )}
             </Show>
             <Show when={b().lastCommitAt}>
               {(at) => (
                 <Text variant="micro" tone="dim" class="shrink-0">
-                  LAST COMMIT {relativeTime(at())}
+                  Last commit {relativeTime(at())}
                 </Text>
               )}
             </Show>
@@ -454,7 +454,7 @@ export function DiffSurface(props: {
               Discard
             </Button>
             <Text variant="micro" tone="dim">
-              MERGE is the only thing that writes your own working tree.
+              Merge is the only thing that writes your own working tree.
             </Text>
           </div>
         </div>

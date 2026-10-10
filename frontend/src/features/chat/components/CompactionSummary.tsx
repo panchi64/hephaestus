@@ -65,7 +65,7 @@ export function CompactionSummary(props: {
                 *above* the quote, not run into its first line. */}
             <Stack gap={1} class="border-line border-l pl-2">
               <Text variant="micro" tone="dim">
-                QUOTED FROM TOOL OUTPUT — NOT THIS WORKSPACE'S OWN WORDS
+                Quoted from tool output — not this workspace's own words
               </Text>
               <SectionBody section={section} />
             </Stack>

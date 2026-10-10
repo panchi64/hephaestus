@@ -40,8 +40,22 @@ export interface AttachmentChipProps {
   error?: string;
   /** Editable use: re-run a failed upload. Rendered only on an `error` chip. */
   onRetry?: () => void;
+  /** `pill` (default): the rounded micro pill a sent message carries. `console`: the
+   *  composer's square mono chip — a hairline box, the file's type as a dim uppercase
+   *  tag where the glyph was, then the name — so it reads as one more machine cell of
+   *  the ruled unit it sits in. */
+  variant?: "pill" | "console";
   class?: string;
 }
+
+/** The file's type, as the console chip's tag: its extension, or `file`. */
+const typeTag = (name: string): string => {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1) : "file";
+};
+
+const CONSOLE_BASE =
+  "inline-flex max-w-full items-center gap-2 border border-line px-2 py-1 font-mono text-meta text-text";
 
 const STATUS_HINT: Record<AttachmentStatus, string> = {
   uploading: "Uploading…",
@@ -74,9 +88,17 @@ export function AttachmentChip(props: AttachmentChipProps): JSX.Element {
       {STATUS_HINT[props.status!]}
     </Text>
   );
+  const square = () => props.variant === "console";
   const body = (
     <>
-      <Icon name="file" size={12} class="shrink-0" />
+      <Show
+        when={square()}
+        fallback={<Icon name="file" size={12} class="shrink-0" />}
+      >
+        <span class="shrink-0 uppercase tracking-label text-dim">
+          {typeTag(props.name)}
+        </span>
+      </Show>
       <span class="truncate max-w-40">{props.name}</span>
       <Show when={props.status && STATUS_HINT[props.status]}>
         {/* The reason rides on the status word rather than on the whole chip, so
@@ -92,10 +114,19 @@ export function AttachmentChip(props: AttachmentChipProps): JSX.Element {
   );
 
   return (
-    <span class={cx(CHIP_BASE, props.class)}>
+    <span class={cx(square() ? CONSOLE_BASE : CHIP_BASE, props.class)}>
       <Show
         when={props.href}
-        fallback={<span class="inline-flex items-center gap-1">{body}</span>}
+        fallback={
+          <span
+            class={cx(
+              "inline-flex min-w-0 items-center",
+              square() ? "gap-2" : "gap-1",
+            )}
+          >
+            {body}
+          </span>
+        }
       >
         <a
           href={props.href}
@@ -169,7 +200,9 @@ export function AttachmentChip(props: AttachmentChipProps): JSX.Element {
           class="shrink-0 text-dim transition-colors hover:text-alert"
           aria-label={`Remove ${props.name}`}
         >
-          <Icon name="close" size={12} />
+          <Show when={square()} fallback={<Icon name="close" size={12} />}>
+            <span aria-hidden="true">×</span>
+          </Show>
         </button>
       </Show>
     </span>

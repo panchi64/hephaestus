@@ -1,7 +1,7 @@
 import { Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { api } from "~/lib/api";
 import { streamRun, type RunEvent } from "~/lib/stream";
-import { Button, LoadingText, Row, Text, toast } from "~/ui";
+import { ActionButtons, ActionFrame, LoadingText, toast } from "~/ui";
 import type { Approval, ApprovalDecision } from "../model";
 import type { Subagent } from "../data";
 import { ApprovalPanel } from "./ApprovalPanel";
@@ -93,13 +93,19 @@ export function SubagentApproval(props: {
   };
 
   return (
-    <div class="flex flex-col gap-2">
-      <Text variant="micro" tone="warn">
-        {props.subagent.handle} is waiting on you
-      </Text>
+    // The action tier (design §10.18), the same frame the dock wears: the one
+    // sub-agent surface that is a request rather than a report.
+    <ActionFrame
+      tone="approval"
+      title={`Approval needed · ${props.subagent.handle}`}
+    >
       <Show
         when={approvals().length > 0}
-        fallback={<LoadingText label="Reading what it is asking for…" />}
+        fallback={
+          <div class="px-3 py-3">
+            <LoadingText label="Reading what it is asking for…" />
+          </div>
+        }
       >
         <ApprovalPanel
           approvals={approvals()}
@@ -108,16 +114,19 @@ export function SubagentApproval(props: {
             setReady(allDecided);
           }}
         />
-        <Row gap={2}>
-          <Button
-            variant="primary"
-            disabled={!ready() || busy()}
-            onClick={() => void submit()}
-          >
-            {busy() ? "Sending…" : "Send decision"}
-          </Button>
-        </Row>
+        <div class="flex justify-end border-t border-line">
+          <ActionButtons
+            buttons={[
+              {
+                label: busy() ? "Sending…" : "Send decision",
+                primary: true,
+                disabled: !ready() || busy(),
+                onClick: () => void submit(),
+              },
+            ]}
+          />
+        </div>
       </Show>
-    </div>
+    </ActionFrame>
   );
 }

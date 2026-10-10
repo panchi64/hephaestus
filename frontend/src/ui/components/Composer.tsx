@@ -8,6 +8,7 @@ import {
   type Accessor,
   type JSX,
 } from "solid-js";
+import { isMac } from "~/lib/keymap";
 import { attachmentGate } from "~/lib/stores/sendGate";
 import { cx } from "../cx";
 import { Icon } from "../primitives/Icon";
@@ -15,7 +16,6 @@ import { Text } from "../primitives/Text";
 import { useAutosize } from "../primitives/useAutosize";
 import { HIDDEN_FILE_INPUT, useFileDrop } from "../primitives/useFileDrop";
 import { AttachmentChip, type ComposerAttachment } from "./AttachmentChip";
-import { Button } from "./Button";
 import {
   ComposerMenu,
   type ComposerMenuGroup,
@@ -24,37 +24,41 @@ import {
 import { loadDraft, saveDraft } from "./composerDraft";
 import { createComposerMenuController } from "./composerMenuController";
 import { tokenSpans, type ComposerTrigger } from "./composerToken";
-import { RegistrationFrame } from "./RegistrationFrame";
 import { StatusBar, StatusCell } from "./StatusBar";
 import { Tooltip } from "./Tooltip";
 
-// The field grows with its content up to this many lines or this share of the
-// window, whichever is smaller, then scrolls — a long prompt gets real room to be
-// written and read back, without the bar swallowing the whole conversation.
-const MAX_ROWS = 16;
+// The field rests at one line and grows a line at a time up to this many lines or
+// this share of the window, whichever is smaller, then scrolls — a long prompt gets
+// room to be written and read back without the unit swallowing the conversation.
+const MAX_ROWS = 10;
 const MAX_VIEWPORT_SHARE = 0.4;
 
-// The send chord's glyph, for the button's hint. Read once: the
-// platform does not change under a running page. `userAgentData` first because
-// `navigator.platform` is deprecated, and still the only answer in Safari/Firefox.
-const IS_MAC = (() => {
-  if (typeof navigator === "undefined") return false;
-  const nav = navigator as Navigator & {
-    userAgentData?: { platform?: string };
-  };
-  return /mac|iphone|ipad/i.test(
-    nav.userAgentData?.platform ?? nav.platform ?? "",
-  );
-})();
+// The send chord's glyph, for the button's hint. Read once: the platform does not
+// change under a running page.
+const IS_MAC = isMac();
 const SEND_CHORD = IS_MAC ? "⌘↵" : "Ctrl↵";
 
-/** A commit key's chord, after its label at half weight — on screen so the rule is
+/** A commit key's chord, after its label at reduced weight — on screen so the rule is
  *  read rather than remembered, and quieter than the word so the word is what's read
  *  first. Hidden from assistive tech: the button's `aria-keyshortcuts` says it. */
 function KeyHint(props: { children: string }): JSX.Element {
+  return <kbd aria-hidden="true">{props.children}</kbd>;
+}
+
+/** One token in the accent layer: the sigil cell welded to the name cell. A file's
+ *  name splits at its last `/` so the directory can sit dim beside a bright basename. */
+function Token(props: { trigger: ComposerTrigger; text: string }): JSX.Element {
+  const name = () => props.text.slice(1);
+  const cut = () => (props.trigger === "@" ? name().lastIndexOf("/") : -1);
   return (
-    <span aria-hidden="true" class="font-normal opacity-50">
-      {props.children}
+    <span class="ody-tok" data-trigger={props.trigger}>
+      <span class="ody-tok-sigil">{props.trigger}</span>
+      <span class="ody-tok-name">
+        <Show when={cut() >= 0} fallback={name()}>
+          <span class="ody-tok-dir">{name().slice(0, cut() + 1)}</span>
+          {name().slice(cut() + 1)}
+        </Show>
+      </span>
     </span>
   );
 }
@@ -199,7 +203,7 @@ export interface ComposerProps {
    * takes focus so the correction can simply be typed.
    */
   onStop?: (correction?: string) => void;
-  /** What SEND is called. Defaults to "Transmit".
+  /** What SEND is called. Defaults to "Send".
    *
    *  For the one case where sending this field does something other than message the
    *  agent: the approval dock borrows the composer to collect a request for changes, and
@@ -216,21 +220,27 @@ export interface ComposerProps {
   placeholder?: string;
   /** `md` = docked input bar (default); `lg` = centered hero field. */
   size?: "md" | "lg";
-  /** The header line's left label when `headerStart` gives none — the hero's
-   *  "New conversation". Set in the header's engraved mono, like everything on it. */
+  /** The plate's left label when `headerStart` gives none — the hero's
+   *  "New thread · ready". Set in the plate's mono, like everything on it. */
   title?: string;
-  /** The **left** of the card's header line: what the input is doing right now — an
-   *  idle `Input`, or the live run's marker and clock. The caller's, because what a run
-   *  is and how long it has gone on are facts the design system cannot reach.
+  /** The **left** of the unit's plate: what the thread is doing right now — its name
+   *  and `ready` at rest, the live run's activity while one streams. The caller's,
+   *  because what a run is doing is a fact the design system cannot reach.
    *
-   *  One line of `plate` type, dim unless a piece of it carries its own tone. While a
-   *  message is recalled the Composer takes the whole line over for the edit's own
-   *  label and keys — one header, never a second line stacked on this one. */
+   *  One line of mono uppercase, dim at rest and info while `streaming`, unless a piece
+   *  of it carries its own tone. While a message is recalled the Composer takes the
+   *  whole line over for the edit's own label and keys — one plate, never a second line
+   *  stacked on this one. */
   headerStart?: JSX.Element;
-  /** The **right** of the header line — something waiting on the operator (queued
-   *  messages to edit). When it renders nothing, a composer with a header and a
-   *  `storageKey` says `Draft saved` there while the field holds a persisted draft. */
+  /** The **right** of the plate — the run's clock while one streams, the branch at
+   *  rest, queued messages waiting to be edited. When it renders nothing, a composer
+   *  with a plate and a `storageKey` says `Draft saved` there while the field holds a
+   *  persisted draft. */
   headerEnd?: JSX.Element;
+  /** Something the thread is waiting on the operator for, said where they are about to
+   *  type: the plate is **replaced** by the action tier's amber strip (`label`, e.g.
+   *  "1 approval waiting"), and `Jump ↑` takes them to the ask. Null when nothing is. */
+  waiting?: { label: string; onJump?: () => void } | null;
   autofocus?: boolean;
   /** Persists the unsent draft to localStorage under this key, reactively —
    *  switching keys (e.g. between conversations) loads that key's draft. */
@@ -247,11 +257,9 @@ export interface ComposerProps {
    *  the bar wraps the trailing group keeps its edge rather than trailing the leading
    *  one. */
   trailing?: JSX.Element;
-  /** Drop the card's fill and the registration marks — **the frame is kept**. For a
-   *  composer nested inside another surface (the approval dock): a fill on a fill is
-   *  the box-in-a-box §7 exists to stop, and corner marks set outside a unit that is
-   *  itself inside a panel frame the panel's content rather than the page's point of
-   *  action. */
+  /** Drop the unit's fill — **the frame is kept**. For a composer nested inside another
+   *  surface (the approval dock): a fill on a fill is the box-in-a-box §7 exists to
+   *  stop. */
   bare?: boolean;
   /** File-attachment controller. When supplied, the Composer shows an attach
    *  button + drag-drop and renders the attachment chips; omit to hide them. */
@@ -625,14 +633,15 @@ export function Composer(props: ComposerProps): JSX.Element {
          flex column this used to sit in directly, and it is load-bearing now that the
          field shares a wrapper with the accent layer measured against it. */
       /* No `min-h-*`: the field rests at one row (`rows={1}`) at both sizes and
-         grows from there, so an empty composer is one line of text and the button. */
-      "block w-full resize-none border-0 bg-transparent px-1 py-1 text-prose font-sans text-bright placeholder:text-dim outline-none disabled:opacity-40",
+         grows from there, so an empty composer is one line of text. */
+      "block w-full resize-none border-0 bg-transparent text-prose font-sans text-bright placeholder:text-dim outline-none disabled:opacity-40",
+      lg() ? "px-4 py-3" : "px-3 py-2.5",
       /* Wider spaces, so a boxed token's edge clears the word beside it — on both
          the field and the accent layer, which share this class list. */
       props.menu && "ody-composer-field",
     );
 
-  /** The field's text split into plain runs and boxed tokens (`.ody-composer-token`).
+  /** The field's text split into plain runs and tokens (`Token`, `.ody-tok`).
    *
    *  A textarea cannot colour part of its own value, so the standard arrangement is used:
    *  this layer sits directly behind a text-transparent field, painting the same string
@@ -650,15 +659,18 @@ export function Composer(props: ComposerProps): JSX.Element {
     // No accents on a recalled message: its tokens are not being resolved (see
     // `syncToken`), and colouring them would say they were.
     const spans = props.menu && !recalling() ? tokenSpans(shown) : [];
-    const runs: { text: string; token: boolean }[] = [];
+    const runs: { text: string; trigger: ComposerTrigger | null }[] = [];
     let at = 0;
     for (const span of spans) {
       if (span.start > at)
-        runs.push({ text: shown.slice(at, span.start), token: false });
-      runs.push({ text: shown.slice(span.start, span.end), token: true });
+        runs.push({ text: shown.slice(at, span.start), trigger: null });
+      runs.push({
+        text: shown.slice(span.start, span.end),
+        trigger: span.trigger,
+      });
       at = span.end;
     }
-    if (at < shown.length) runs.push({ text: shown.slice(at), token: false });
+    if (at < shown.length) runs.push({ text: shown.slice(at), trigger: null });
     return runs;
   };
 
@@ -679,8 +691,8 @@ export function Composer(props: ComposerProps): JSX.Element {
       >
         <For each={highlighted()}>
           {(run) => (
-            <Show when={run.token} fallback={run.text}>
-              <span class="ody-composer-token">{run.text}</span>
+            <Show when={run.trigger} fallback={run.text}>
+              {(trigger) => <Token trigger={trigger()} text={run.text} />}
             </Show>
           )}
         </For>
@@ -743,21 +755,22 @@ export function Composer(props: ComposerProps): JSX.Element {
   // the file-drop hook clicks. Only mounted when an attachments controller is
   // wired, so non-attachment surfaces are unchanged.
   //
-  // A plus, not a paperclip: what it means at the head of the status bar is "add
-  // something to this message", and a `+` says that at a glance. The word beside it is
-  // the bar's own voice — every other cell names itself, and a lone glyph was the one
-  // cell the operator had to hover to read. Disabled rather than hidden while a run
-  // streams or a message is recalled, so the bar never reflows under the pointer.
+  // A plus, not a paperclip: what it means at the head of the strip is "add something
+  // to this message", and a `+` says that at a glance. Disabled rather than hidden while
+  // a run streams or a message is recalled, so the strip never reflows under the
+  // pointer.
   const attachBtn = (
     <Show when={props.attachments}>
-      <StatusCell
-        aria-label="Attach files"
-        disabled={props.disabled || props.streaming || recalling()}
-        onClick={drop.openPicker}
-      >
-        <Icon name="plus" size={11} />
-        file
-      </StatusCell>
+      <Tooltip label="Attach files" side="top" delay={600}>
+        <StatusCell
+          aria-label="Attach files"
+          disabled={props.disabled || props.streaming || recalling()}
+          onClick={drop.openPicker}
+          class="px-3"
+        >
+          <Icon name="plus" size={14} />
+        </StatusCell>
+      </Tooltip>
     </Show>
   );
   // The picker's hidden input lives in the card, not beside the cell: the bar rules
@@ -773,17 +786,18 @@ export function Composer(props: ComposerProps): JSX.Element {
     </Show>
   );
 
-  // Attachment chips, above the field. Each shows status, a KB-membership
-  // toggle, a remove control, and — once failed — its reason and a retry. The
-  // card's column gap spaces them from the field. Not over a recalled message: the chips
-  // belong to the operator's own draft, which is off screen until the recall ends, and
-  // shown here they would read as riding the edit.
+  // Attachment chips, under the field: square mono chips, each with its type, its
+  // status, a KB-membership toggle, a remove control, and — once failed — its reason
+  // and a retry. Not over a recalled message: the chips belong to the operator's own
+  // draft, which is off screen until the recall ends, and shown here they would read
+  // as riding the edit.
   const chips = (
     <Show when={props.attachments && !recalling() && items().length > 0}>
-      <div class="flex flex-wrap gap-2">
+      <div class={cx("flex flex-wrap gap-1.5 pb-2.5", lg() ? "px-4" : "px-3")}>
         <For each={items()}>
           {(a) => (
             <AttachmentChip
+              variant="console"
               name={a.name}
               status={a.status}
               error={a.error}
@@ -804,7 +818,7 @@ export function Composer(props: ComposerProps): JSX.Element {
   // about, rather than a toast: the fix — retry or remove — is right there.
   const uploadNote = (
     <Show when={uploadFailed()}>
-      <div role="alert">
+      <div role="alert" class={cx("pb-2", lg() ? "px-4" : "px-3")}>
         <Text variant="micro" tone="alert">
           An upload failed — retry or remove it
         </Text>
@@ -838,11 +852,14 @@ export function Composer(props: ComposerProps): JSX.Element {
       ? "Save"
       : props.streaming
         ? "Queue"
-        : (props.sendLabel ?? "Transmit");
+        : (props.sendLabel ?? "Send");
+  // Outlined, never a white slab under the words (`.ody-send`): dim while there is
+  // nothing to send — which is what `disabled` already says — bright once there is,
+  // filled only under the pointer.
   const SendButton = () => (
-    <Button
-      variant="primary"
-      size="console"
+    <button
+      type="button"
+      class="ody-send"
       disabled={recalling() ? !recalled()?.trim() : !awaiting() && !canSend()}
       onClick={() =>
         recalling() ? saveRecall() : awaiting() ? cancelAwaiting() : submit()
@@ -853,7 +870,7 @@ export function Composer(props: ComposerProps): JSX.Element {
         {sendLabel()}
         <KeyHint>{SEND_CHORD}</KeyHint>
       </Show>
-    </Button>
+    </button>
   );
   // Wrapped only when there is something to say. A tooltip on every SEND would fire on
   // the one control the operator uses most, to tell them nothing.
@@ -885,65 +902,64 @@ export function Composer(props: ComposerProps): JSX.Element {
     text().trim()
       ? "Stop the run and send this correction (Esc stops without sending)"
       : "Stop the run (Esc)";
-  // `shrink-0`: the cluster keeps its size beside a field that takes the rest of the
-  // row (whose `items-end` keeps it by the field's last line as the field grows).
+  // The commit keys, at the strip's end. `flex` so the cluster is one cell of the
+  // strip, its keys standing inside it with their own outline.
   const actionBtn = (
-    <span class="flex shrink-0 items-center gap-2">
+    <span class="flex shrink-0 items-stretch">
       <Show when={props.streaming} fallback={sendBtn()}>
         <Show when={!props.disabled}>{sendBtn()}</Show>
-        {/* Alert, where the old STOP was a quiet outline: it ends work in flight,
-            and with a correction typed it also sends it — the one key on the unit
-            with a consequence the operator cannot take back. */}
+        {/* Alert: it ends work in flight, and with a correction typed it also sends
+            it — the one key on the unit with a consequence the operator cannot take
+            back. */}
         <Tooltip label={stopTip()} side="top">
-          <Button variant="danger" size="console" onClick={stop}>
+          <button
+            type="button"
+            class="ody-send"
+            data-tone="stop"
+            onClick={stop}
+          >
+            <span class="ody-send-sq" aria-hidden="true" />
             {text().trim() ? "Stop & correct" : "Stop"}
-            <KeyHint>Esc</KeyHint>
-          </Button>
+            <KeyHint>esc</KeyHint>
+          </button>
         </Tooltip>
       </Show>
     </span>
   );
 
-  // A subtle full-surface highlight while files hover the composer, so the drop
-  // target reads clearly without a separate dashed zone.
+  // The key hint, in the strip rather than on the button alone: Enter is a newline
+  // here, and that is the rule a newcomer would otherwise learn by sending half a
+  // message. While a run streams the same chord queues; a field that is off says
+  // nothing about keys it does not take.
+  const keyHint = () =>
+    recalling() || props.disabled
+      ? undefined
+      : `↵ new line · ${SEND_CHORD} ${props.streaming ? "queue" : "send"}`;
+
+  // While files hover the unit: the console's own vocabulary — a bright ruled frame
+  // and a plate — rather than a dashed tinted zone. Square, like the unit it covers.
   const dropOverlay = (
     <Show when={props.attachments && drop.isDragging()}>
-      {/* Square, like the unit it covers — an overlay with a radius of its own over a
-          square frame reads as a second box. */}
-      <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center border border-dashed border-info bg-info/10">
-        <Text variant="label" tone="info">
-          <span class="inline-flex items-center gap-2">
-            <Icon name="attach" size={16} />
-            Drop to attach
-          </span>
+      <div class="ody-composer-drop">
+        <Text variant="plate" tone="bright">
+          Drop to attach
         </Text>
       </div>
     </Show>
   );
 
-  /* ONE layout for both sizes, and ONE bordered unit. The docked bar and the hero
-     used to be separate branches, then a rounded card with a loose row of controls
-     floating under it; now both are a single square frame (`line-strong`, §10.12):
-     the card on top — the header line, the chips, then one row of the field
-     (taking the width) with the commit keys at its right, bottom-aligned so they
-     stay by the last line as the field grows — and the status bar joined to its
-     underside, one rule between them. Only padding differs between the sizes.
-
-     The bar is part of the unit because it is about this message and this thread,
-     and a row floating loose under a card read as page furniture that happened to
-     sit there. It is still *not* the card: it carries no fill, so the writing
-     surface stays the one lit, raised thing in the frame, and its cells are the
-     machine's line (mono, lowercase, hairline-ruled) where the card holds the
-     operator's words. The card stays the drop target: it is where the operator is
-     already looking.
+  /* ONE layout for both sizes, and ONE ruled unit (§10.12): a square `line-strong`
+     frame holding, top to bottom, the plate (what the thread is doing), the field
+     (the full width — nothing sits beside it, so it never wraps around a button),
+     the attachment chips, and the receded strip: `+`, the caller's pickers, then
+     the key hint, the caller's thread state and the commit keys. Only padding
+     differs between the sizes.
 
      The unit is marked as the point of action AT REST, not on hover or focus (§6):
-     the composer is the point of the screen whether or not the cursor is in it.
-     It is marked by its `line-strong` frame and by registration ticks outside the
-     four corners — dim at rest, info while a run streams, the same blue as
-     everything else live. No shadow and no light: its separation from the
-     transcript is its opaque fill and its ruled edge (§13 — shadows are for things
-     that float). */
+     its opaque fill and its `line-strong` frame. No corner ticks, no shadow and no
+     light — its separation from the transcript is the fill and the ruled edge (§13,
+     shadows are for things that float). A live run is said in the plate, which
+     turns info with a blinking square. */
   // Portalled to the body by `FloatingPanel`, so it sits outside the composer's own
   // stacking context and outside the transcript's `overflow-auto` — the two things that
   // would otherwise clip it. Mounted inside the card only so it shares the card's
@@ -988,35 +1004,52 @@ export function Composer(props: ComposerProps): JSX.Element {
     (headerLeft() && props.storageKey && text().trim()
       ? "Draft saved"
       : undefined);
-  const header = (
+  // The plate: the 7px square, what the thread is doing, and its aside. Its tone is
+  // the unit's (`.ody-composer[data-live]` turns it info while a run streams); a piece
+  // the caller hands in may carry its own.
+  const plate = (
     <Show when={recalling() || headerLeft() || headerRight()}>
-      {/* `leading-none`: the line is a caption strip over the field, and the plate
-          scale's own line-height left it the height of a second text row. */}
-      <div class="flex min-w-0 items-center justify-between gap-3 leading-none [&>*]:leading-none">
+      <div class="ody-composer-plate">
+        <span class="ody-composer-plate-sq" aria-hidden="true" />
         <Show
           when={recalling()}
           fallback={
             <>
-              <Text variant="plate" tone="dim" class="min-w-0 truncate">
-                {headerLeft()}
-              </Text>
-              <Text variant="plate" tone="dim" class="shrink-0">
-                {headerRight()}
-              </Text>
+              <span class="min-w-0 truncate">{headerLeft()}</span>
+              <span class="ody-composer-plate-end">{headerRight()}</span>
             </>
           }
         >
-          <Text variant="plate" tone="dim" class="min-w-0 truncate">
-            <span class="inline-flex items-center gap-1.5">
-              <Icon name="pen" size={10} />
-              {props.recall?.label}
-            </span>
-          </Text>
-          <Text variant="plate" tone="dim" class="shrink-0">
+          <span class="inline-flex min-w-0 items-center gap-1.5 truncate">
+            <Icon name="pen" size={10} />
+            {props.recall?.label}
+          </span>
+          <span class="ody-composer-plate-end">
             {SEND_CHORD} save · Esc cancel
-          </Text>
+          </span>
         </Show>
       </div>
+    </Show>
+  );
+
+  // The action tier's echo: while the thread waits on the operator, the plate is the
+  // amber strip — never under it, one line either way. A recalled message keeps its
+  // own plate: the edit is what the operator is doing right now.
+  const header = (
+    <Show when={!recalling() && props.waiting} fallback={plate}>
+      {(waiting) => (
+        <div class="ody-composer-wait" role="status">
+          <span class="ody-action-pulse" aria-hidden="true" />
+          <span class="min-w-0 truncate">{waiting().label}</span>
+          <Show when={waiting().onJump}>
+            {(jump) => (
+              <button type="button" onClick={() => jump()()}>
+                Jump ↑
+              </button>
+            )}
+          </Show>
+        </div>
+      )}
     </Show>
   );
 
@@ -1026,88 +1059,78 @@ export function Composer(props: ComposerProps): JSX.Element {
       {menu}
       {fileInput}
       {header}
+      {/* The two are one control: the layer paints the words, the field owns the
+          caret, and they must occupy the same box for the colours to land on the
+          right glyphs. The gap this wrapper would otherwise add is closed on the field
+          itself (`block` in `fieldClass`), not here: a textarea is inline-block, so a
+          block wrapper puts ~5px of baseline descender under it. The layer is
+          `inset-0` of this wrapper, so those 5px made it taller than the field, and
+          once it scrolled the two moved by different amounts and the colours slid off
+          the words. */}
+      <div class="relative min-w-0">
+        {highlightLayer}
+        {textarea}
+      </div>
       {chips}
       {uploadNote}
-      <div class="flex items-end gap-3">
-        {/* The two are one control: the layer paints the words, the field owns the
-            caret, and they must occupy the same box for the colours to land on the
-            right glyphs. The gap this wrapper would otherwise add is closed on the
-            field itself (`block` in `fieldClass`), not here: a textarea is
-            inline-block, so a block wrapper puts ~5px of baseline descender under it
-            where the surrounding flex column never did. The layer is `inset-0` of this
-            wrapper, so those 5px made it taller than the field, and once it scrolled
-            the two moved by different amounts and the colours slid off the words.
-            Closing it with `flex` here instead looked equivalent and is not: a
-            stretched flex item breaks the `height:auto` measurement the autosize
-            takes, and the field collapses to one row. `min-w-0` so a long unbroken
-            line wraps inside the field instead of pushing SEND out of the card. */}
-        <div class="relative min-w-0 flex-1">
-          {highlightLayer}
-          {textarea}
-        </div>
-        {actionBtn}
-      </div>
     </>
   );
 
-  // `+ file`, then the caller's two groups, as the unit's status bar. Mounted only when
-  // there is something to put in it, so a composer with no controls (the approval dock,
-  // the compare bench) is the card alone inside its frame.
+  // `+`, then the caller's two groups, as the unit's receded strip — with the key hint
+  // and the commit keys at its end, so the strip is always drawn: Send lives there.
   // Each slot resolved once, for the same reason as the header's.
   const controls = children(() => props.controls);
   const trailing = children(() => props.trailing);
-  // The bar draws nothing when both groups come up empty.
-  const statusBar = (
+  const strip = (
     <StatusBar
+      variant="recede"
       start={
         <>
           {attachBtn}
           {controls()}
         </>
       }
-      end={trailing()}
+      end={
+        <>
+          <Show when={keyHint()}>
+            {(hint) => (
+              <StatusCell class="max-sm:hidden" aria-hidden="true">
+                {hint()}
+              </StatusCell>
+            )}
+          </Show>
+          {trailing()}
+          {actionBtn}
+        </>
+      }
     />
   );
 
-  const cardClass = () =>
-    cx(
-      "relative flex flex-col gap-1.5",
-      // `ody-framed`: on a page carrying the deep field the composer's fill goes
-      // glass, so the field reads *through* the screen's focal object instead of
-      // stopping dead at its edge (§11.1). A bare composer has no fill to trade.
-      !props.bare && "ody-framed bg-surface",
-      lg() ? "px-4 py-3" : "py-2 pr-2 pl-3.5",
-    );
-
   const dropAttrs = () => (props.attachments ? drop.dropHandlers : {});
 
-  const card = (
-    <div class={cardClass()} {...dropAttrs()}>
-      {body}
-    </div>
-  );
-
-  // The frame: one square `line-strong` rule around the card and its status bar.
-  const unit = (
-    <div class="relative flex flex-col border border-line-strong">
-      {card}
-      {statusBar}
-    </div>
-  );
-
-  // `class` lands on the outer wrapper — it is layout glue, and the thing being
-  // placed is the whole unit, marks included.
+  // `class` lands on the unit — it is layout glue, and the thing being placed is the
+  // whole unit. `ody-framed`: on a page carrying the deep field the composer's fill
+  // goes glass, so the field reads *through* the screen's focal object instead of
+  // stopping dead at its edge (§11.1). A bare composer has no fill to trade. The whole
+  // unit is the drop target: it is where the operator is already looking.
   return (
-    <RegistrationFrame
-      marks="tick"
-      corners={!props.bare}
-      tone={props.streaming ? "info" : "dim"}
-      class={props.class}
+    <div
+      class={cx(
+        "ody-composer",
+        !props.bare && "ody-framed bg-surface",
+        props.class,
+      )}
+      data-live={
+        props.streaming && !props.waiting && !recalling() ? "" : undefined
+      }
+      data-bare={props.bare ? "" : undefined}
+      {...dropAttrs()}
     >
-      {unit}
+      {body}
+      {strip}
       <div class="sr-only" aria-live="polite" role="status">
         {announcement()}
       </div>
-    </RegistrationFrame>
+    </div>
   );
 }

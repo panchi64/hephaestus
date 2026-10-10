@@ -152,6 +152,12 @@ export {
 } from "./components/ScrollFade";
 export { ListRow, type ListRowProps } from "./components/ListRow";
 export {
+  RailRow,
+  RailTag,
+  type RailRowProps,
+  type RailRowState,
+} from "./components/RailRow";
+export {
   ListGroupHeader,
   type ListGroupHeaderProps,
 } from "./components/ListGroupHeader";
@@ -270,8 +276,10 @@ export { MetaAction, type MetaActionProps } from "./components/MetaAction";
 export {
   StatusBar,
   StatusCell,
+  StatusField,
   type StatusBarProps,
   type StatusCellProps,
+  type StatusFieldProps,
 } from "./components/StatusBar";
 export {
   Popover,

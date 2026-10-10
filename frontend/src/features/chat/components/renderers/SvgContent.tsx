@@ -45,13 +45,15 @@ export function SvgContent(props: {
         {(u) => (
           <div
             ref={(el) => rememberScroll(el, scrollKey)}
-            class="h-full overflow-auto bg-surface p-3"
+            class="h-full overflow-auto p-3"
           >
+            {/* Bare inside the pane's frame (design §8): the image on the region's own
+                ground, no card lifted around it. */}
             <button
               type="button"
               onClick={() => setLightboxOpen(true)}
               aria-label={`View ${props.name}`}
-              class="flex h-full w-full items-center justify-center rounded-panel bg-surface shadow-1"
+              class="flex h-full w-full items-center justify-center"
             >
               <img
                 src={u()}

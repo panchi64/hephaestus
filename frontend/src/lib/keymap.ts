@@ -27,7 +27,8 @@ type NavigatorWithUAData = Navigator & {
   userAgentData?: { platform?: string };
 };
 
-function isMac(): boolean {
+/** Whether `mod` is ⌘ here — for a hint that prints the chord. */
+export function isMac(): boolean {
   if (typeof navigator === "undefined") return false;
   const uaPlatform = (navigator as NavigatorWithUAData).userAgentData?.platform;
   if (uaPlatform !== undefined) return /mac/i.test(uaPlatform);

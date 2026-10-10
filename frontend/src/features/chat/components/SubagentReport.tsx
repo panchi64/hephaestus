@@ -1,5 +1,5 @@
 import { type JSX } from "solid-js";
-import { Icon, Stack, Text } from "~/ui";
+import { Stack, Text } from "~/ui";
 import type { ChatMessage } from "../model";
 
 /**
@@ -24,14 +24,19 @@ import type { ChatMessage } from "../model";
  */
 export function SubagentReport(props: { message: ChatMessage }): JSX.Element {
   return (
-    <Stack gap={1} class="border-line my-1 w-full border-l-2 py-1 pl-3">
-      <div class="flex items-center gap-1.5">
-        <Icon name="users" size={12} class="text-dim shrink-0" />
-        <Text variant="micro" tone="dim">
-          A sub-agent reported back
+    // A plate naming the region with a hairline running on from it, then the prose
+    // bare — the console register's way of setting something apart without boxing it
+    // (design §7). The 2px left rule this replaced is the emphasis border §7 retired.
+    // The plate names no handle: the report reaches the thread as a message, and the
+    // message carries no reference back to the sub-agent that wrote it.
+    <Stack gap={2} class="my-1 w-full">
+      <div class="flex items-center gap-3">
+        <Text variant="plate" tone="dim" class="shrink-0">
+          Report · sub-agent
         </Text>
+        <span class="h-px flex-1 bg-line" aria-hidden="true" />
       </div>
-      <Text variant="body" tone="dim" class="whitespace-pre-wrap">
+      <Text variant="body" tone="default" class="whitespace-pre-wrap">
         {props.message.content}
       </Text>
     </Stack>
