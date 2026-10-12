@@ -30,7 +30,8 @@ MANIFEST = FeatureManifest(
     dormant=(
         DormantCategory(
             "agents",
-            "draft a new agent with its own standing brief and tools, for the operator to "
+            "spawn agents to do self-contained work on their own and report back, message "
+            "the agents of your delegation tree, or draft a new agent for the operator to "
             "publish",
         ),
     ),

@@ -78,6 +78,8 @@ class QueuedMessage:
     text: str
     queued_at: datetime
     source: MessageSource = "operator"
+    #: For a message from another agent in the delegation tree, that agent's handle.
+    sender: str | None = None
     #: Held back from the drain while the operator has this message open in an editor.
     #: The message keeps its place in the queue — a hold is a pause, not a removal — and
     #: the drain stops at it rather than stepping over it (see :meth:`Run.drain_messages`).
@@ -261,7 +263,7 @@ class Run:
         self.parked_payload = payload
 
     def enqueue_message(
-        self, text: str, *, source: MessageSource = "operator"
+        self, text: str, *, source: MessageSource = "operator", sender: str | None = None
     ) -> QueuedMessage:
         """Queue a message for injection at the next model-request boundary.
 
@@ -275,11 +277,16 @@ class Run:
         their own undelivered text from the replay, and nothing but this holds a report.
         """
         message = QueuedMessage(
-            id=uuid4().hex, text=text, queued_at=now_utc(), source=source
+            id=uuid4().hex, text=text, queued_at=now_utc(), source=source, sender=sender
         )
         self.pending_messages.append(message)
         self.emit(
-            MessageQueued(message_id=message.id, text=message.text, source=message.source)
+            MessageQueued(
+                message_id=message.id,
+                text=message.text,
+                source=message.source,
+                sender=message.sender,
+            )
         )
         return message
 
@@ -299,6 +306,7 @@ class Run:
                     text=text,
                     queued_at=message.queued_at,
                     source=message.source,
+                    sender=message.sender,
                     held=message.held,
                 )
                 self.emit(MessageEdited(message_id=message_id, text=text))
@@ -334,6 +342,7 @@ class Run:
                     text=message.text,
                     queued_at=message.queued_at,
                     source=message.source,
+                    sender=message.sender,
                     held=held,
                 )
                 self.emit(MessageHeld(message_id=message_id, held=held))

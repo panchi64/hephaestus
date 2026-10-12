@@ -87,6 +87,12 @@ class Subagent(BaseModel):
     #: a finished sub-agent keeps the last figures it had.
     context_used: int | None = None
     context_window: int | None = None
+    #: The thread that spawned it — the viewed thread, or another card's conversation.
+    parent_conversation_id: str
+    #: How far below the tree's root it runs; the root's own agents are 1.
+    depth: int
+    #: Whether the operator opened it as a thread of its own.
+    opened: bool = False
     #: The tasks the sub-agent wrote for *itself*, in its own thread — the same list and the
     #: same shape ``GET /conversations/{id}/tasks`` serves, because it is that list. Empty
     #: for one that never wrote any, which most short sub-agents do not.
@@ -99,7 +105,7 @@ class SubagentList(BaseModel):
     subagents: list[Subagent]
 
 
-def _card(view: SubagentView, tasks: list[TaskOut]) -> Subagent:
+def _card(view: SubagentView, tasks: list[TaskOut], opened: bool) -> Subagent:
     # Split once, here, rather than letting the client do it: which part of a report is
     # prose and which is structure is a fact about the format, and a frontend deriving it
     # would be a frontend deciding. `report_structure` never raises, so an unreadable
@@ -113,6 +119,9 @@ def _card(view: SubagentView, tasks: list[TaskOut]) -> Subagent:
         name=view.name,
         handle=view.handle,
         task=view.task,
+        parent_conversation_id=view.parent_conversation_id,
+        depth=view.depth,
+        opened=opened,
         tasks=tasks,
         status=view.status,
         summary=report_prose(report) if report else None,
@@ -127,7 +136,7 @@ def _card(view: SubagentView, tasks: list[TaskOut]) -> Subagent:
 
 @router.get("/{conversation_id}/subagents", response_model=SubagentList)
 async def list_subagents(conversation_id: str, request: Request) -> SubagentList:
-    """Every sub-agent this thread has launched, newest first — live ones and finished.
+    """Every agent below this thread, at any depth, newest first — live ones and finished.
 
     Finished ones are kept for the whole life of the thread rather than dropped once their
     report has landed: the operator's reason for looking is usually that something went
@@ -143,11 +152,30 @@ async def list_subagents(conversation_id: str, request: Request) -> SubagentList
     launcher = request.app.state.capabilities.get_optional(SubagentLauncher)
     if launcher is None:
         raise HTTPException(status_code=404, detail="sub-agents are not available")
-    views = await launcher.for_parent(OPERATOR_ID, conversation_id)
+    views = await launcher.below(OPERATOR_ID, conversation_id)
     tasks = await asyncio.gather(*(_tasks_of(request, view) for view in views))
+    store = deps.store(request)
+    hidden = await asyncio.gather(*(store.is_hidden(view.conversation_id) for view in views))
     return SubagentList(
-        subagents=[_card(view, rows) for view, rows in zip(views, tasks, strict=True)]
+        subagents=[
+            _card(view, rows, not is_hidden)
+            for view, rows, is_hidden in zip(views, tasks, hidden, strict=True)
+        ]
     )
+
+
+class OpenedThread(BaseModel):
+    id: str
+    parent_id: str
+
+
+@router.post("/{conversation_id}/open", response_model=OpenedThread)
+async def open_thread(conversation_id: str, request: Request) -> OpenedThread:
+    """List a spawned agent's thread in the sidebar under the thread that spawned it, so the
+    operator can read and message it directly. Its finished turns still report to its
+    parent."""
+    parent_id = await deps.store(request).open_child(conversation_id, OPERATOR_ID)
+    return OpenedThread(id=conversation_id, parent_id=parent_id)
 
 
 async def _tasks_of(request: Request, view: SubagentView) -> list[TaskOut]:

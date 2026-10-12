@@ -17,7 +17,7 @@ before the turn is recorded (``agent/prelude``, ``services/conversations``'s
   project-declared template in this block at all.
 
 **Skills and sub-agents are reached by directive, not by invocation.** Both already have
-one tested path — ``skills_open`` and ``subagents_launch`` — carrying staging, the
+one tested path — ``skills_open`` and ``agents_spawn`` — carrying staging, the
 published-only check, permission folding and the approval gate. A second path that opened
 or launched from here would have to reproduce all of it, and in the sub-agent's case would
 produce one with no parent turn to report into. So the block says what the operator asked
@@ -73,7 +73,7 @@ def _agent_block(spec: CommandSpec, argument: str) -> str:
     brief = f"Their brief, verbatim: {argument}" if argument else _NO_ARGUMENT
     return (
         f"The operator invoked the `{spec.target}` sub-agent by name.\n"
-        f"Launch it with `subagents_launch(agent_name={spec.target!r}, …)`. {brief}\n"
+        f"Launch it with `agents_spawn(name=…, agent_name={spec.target!r}, …)`. {brief}\n"
         "Write the task so it stands alone — the sub-agent starts from an empty history "
         "and never sees this thread. Do not ask which sub-agent to use."
     )

@@ -573,6 +573,9 @@ export const ENGAGEMENT_ORDER: Record<
 export interface ChatMessage {
   id: string;
   role: Role;
+  /** `subagent` rows: the agent that sent the message, when it is one agent messaging
+   *  another and not a report. */
+  author?: string;
   /** User turns: the operator's prompt text. Assistant turns: unused — the
    *  answer lives in the `text` blocks of `blocks` (kept "" so copy/edit/version
    *  paths that touch user content stay role-agnostic). */
@@ -777,6 +780,8 @@ export interface ChatSummary {
   projectId?: string;
   /** The custom agent the thread runs as. Absent for the default agent. */
   agentName?: string;
+  /** The thread this one was opened from, when it belongs to an agent tree. */
+  parentId?: string;
 }
 
 /** How far the model may go in a thread — the backend's `services/permissions`

@@ -1,4 +1,5 @@
-"""The `agents` category — the model writing agents of its own.
+"""The `agents` category — the model writing agents of its own, and delegating to them
+(the delegation half is ``tools/delegation.py``).
 
 **What an agent writes is a draft.** A draft runs nowhere: the catalog every launch and
 every thread resolves through lists published agents only, so creating one needs no
@@ -17,10 +18,13 @@ from core.exceptions import AgentValidationError
 from services.agents import AgentStore, ToolAccess
 from services.permissions import PermissionLevel
 
+from .delegation import GATED_TOOLS as DELEGATION_GATED
+from .delegation import ProjectRoster, add_delegation_tools
 from .deps import RunDeps
 
-#: Raised for approval only when the agent being rewritten is published.
-GATED_TOOLS: frozenset[str] = frozenset({"agents_write"})
+#: Raised for approval only when the agent being rewritten is published, or when the agent
+#: being spawned can write.
+GATED_TOOLS: frozenset[str] = frozenset({"agents_write"}) | DELEGATION_GATED
 
 _UNAVAILABLE = "Agents cannot be written in this deployment."
 
@@ -98,4 +102,5 @@ def agents_toolset() -> AbstractToolset[RunDeps]:
         await store.set_published(ctx.deps.owner_id, agent.id, True)
         return {"ok": True, "name": agent.name, "status": "published"}
 
-    return toolset
+    add_delegation_tools(toolset)
+    return ProjectRoster(toolset)

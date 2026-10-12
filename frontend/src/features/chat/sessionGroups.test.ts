@@ -3,6 +3,7 @@ import {
   OLDER_GROUP,
   PINNED_GROUP,
   groupSessions,
+  nestingDepth,
   rowAge,
   type SessionGroup,
   type WorkspaceDirectory,
@@ -315,5 +316,39 @@ describe("rowAge", () => {
 
   test("an unparseable stamp has no age", () => {
     expect(rowAge("not a date", now)).toBeUndefined();
+  });
+});
+
+describe("threads opened from an agent tree", () => {
+  const ids = (g: SessionGroup | undefined) => g?.sessions.map((s) => s.id);
+
+  test("a child files directly beneath its parent, with the parent's section", () => {
+    const groups = groupSessions(
+      [
+        session("a", { updatedAt: "2026-08-30T00:00:00Z" }),
+        session("b", { updatedAt: "2026-08-30T00:00:00Z" }),
+        session("a-child", {
+          parentId: "a",
+          updatedAt: "2026-01-01T00:00:00Z",
+        }),
+      ],
+      { now: new Date("2026-08-30T12:00:00Z") },
+    );
+    expect(groups).toHaveLength(1);
+    expect(ids(groups[0])).toEqual(["a", "a-child", "b"]);
+  });
+
+  test("a child whose parent is not listed stays in its own place", () => {
+    const groups = groupSessions([session("orphan", { parentId: "gone" })], {
+      now: new Date("2026-08-30T12:00:00Z"),
+    });
+    expect(ids(groups[0])).toEqual(["orphan"]);
+  });
+
+  test("depth counts the parents within the list", () => {
+    const a = session("a");
+    const b = session("b", { parentId: "a" });
+    const c = session("c", { parentId: "b" });
+    expect([a, b, c].map((s) => nestingDepth(s, [a, b, c]))).toEqual([0, 1, 2]);
   });
 });

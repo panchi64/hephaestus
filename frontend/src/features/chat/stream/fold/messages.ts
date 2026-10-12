@@ -26,7 +26,7 @@ export function foldMessages(ev: RunEvent, c: FoldContext): boolean {
       // operator words they have not even seen. It also means the report is not offered
       // the edit/withdraw affordances, which belong to a message its author can still
       // take back.
-      const fromSubagent = ev.source === "subagent";
+      const fromSubagent = ev.source === "subagent" || ev.source === "agent";
       setMessages(
         produce((list) => {
           if (list.some((m) => m.queuedMessageId === ev.message_id)) return;
@@ -47,6 +47,7 @@ export function foldMessages(ev: RunEvent, c: FoldContext): boolean {
               queuedPending: true,
               queuedMessageId: ev.message_id,
               createdAt: ev.ts,
+              author: ev.sender ?? undefined,
             });
         }),
       );

@@ -148,11 +148,10 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # and stopping one are execution; asking what it printed is not.
             "shell_check_command",
             "skills_open",
-            # Asking how a sub-agent this thread already launched is getting on, and which
-            # of them are still working. Reading transcripts the operator can open
-            # themselves reaches nothing.
-            "subagents_list",
-            "subagents_read",
+            # Asking how the agents of this thread's delegation tree are getting on.
+            # Reading transcripts the operator can open themselves reaches nothing.
+            "agents_list",
+            "agents_read",
             "tasks_read",
             # Retrieval over the network. The operator's machine and every service on it
             # are exactly as they were afterwards.
@@ -184,6 +183,9 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # rewriting a published one, is gated on the tool itself.
             "agents_publish",
             "agents_write",
+            # Stopping agents this thread spawned. Nothing new runs; the reach is that of
+            # the spawn that was already allowed.
+            "agents_stop",
             "skills_create",
             "skills_edit",
             "tasks_update_statuses",
@@ -208,18 +210,13 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "code_run_host_command",
             "shell_run_command",
             "shell_start_command",
-            # A sub-agent's whole catalog, reached through one call. Its worst case is at
-            # least the worst case of running a program, and its arguments say nothing
-            # about which tools it will end up using — and it is asynchronous, so whatever
-            # it does happens after the launching turn has ended, with nobody's turn open
-            # around it.
-            "subagents_launch",
-            # Redirecting one that is already running, which is the same statement: a
-            # direction can point a sub-agent at any work its own catalog covers, and it
-            # is read after the redirecting turn has ended. Classed with the launch rather
-            # than with the reads because what it can cause is bounded by the sub-agent,
-            # not by this call.
-            "subagents_send",
+            # A spawned agent's whole catalog, reached through one call. Its worst case is
+            # at least the worst case of running a program, its arguments say nothing about
+            # which tools it will use, and it runs after the spawning turn has ended.
+            "agents_spawn",
+            # A message can point another agent at any work its own catalog covers, and is
+            # acted on after the sending turn has ended — the same statement as the spawn.
+            "agents_message",
         }
     ),
     Sensitivity.EXTERNAL_EFFECT: frozenset(

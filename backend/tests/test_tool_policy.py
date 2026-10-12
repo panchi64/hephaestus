@@ -90,7 +90,12 @@ async def test_catalog_matches_the_names_the_agent_is_offered():
 # shrinks the agent's world without any other test noticing — this literal set is the
 # tripwire. A deliberate tool addition/removal updates this list in the same change.
 _PINNED_CATALOG = {
+    "agents_list",
+    "agents_message",
     "agents_publish",
+    "agents_read",
+    "agents_spawn",
+    "agents_stop",
     "agents_write",
     "attachments_provision",
     "browse_click",
@@ -155,10 +160,6 @@ _PINNED_CATALOG = {
     "skills_create",
     "skills_edit",
     "skills_open",
-    "subagents_launch",
-    "subagents_list",
-    "subagents_read",
-    "subagents_send",
     "tasks_read",
     "tasks_update_statuses",
     "tasks_write",
@@ -191,7 +192,7 @@ async def test_booted_app_assembles_the_same_catalog():
             "agents_write",
             "shell_run_command",
             "shell_start_command",
-            "subagents_launch",
+            "agents_spawn",
         }
         # ...and every one of them is a real, registered tool, so the operator's scope
         # list can actually offer it.

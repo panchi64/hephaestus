@@ -29,6 +29,8 @@ export interface ConversationSummaryDTO {
   created_at: string;
   updated_at: string;
   message_count: number;
+  /** The conversation this one was opened from, when it is a thread of an agent tree. */
+  parent_id?: string | null;
   preview: string | null;
   /** Two or three sentences on what the agent did here, written by the backend's
    *  utility model once the thread had been idle a while and replaced wholesale each
@@ -123,6 +125,9 @@ export interface MessageDTO {
    *  the operator speaking. */
   role: "user" | "assistant" | "compaction" | "subagent";
   content: string;
+  /** On a `subagent` row: the handle of the agent that sent it, when it is a message
+   *  one agent sent another rather than a report. */
+  author?: string | null;
   tools: ToolCallDTO[];
   versions?: MessageVersionRefDTO[];
   created_at?: string | null;

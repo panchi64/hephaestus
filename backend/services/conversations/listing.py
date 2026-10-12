@@ -95,6 +95,7 @@ class _ListingMixin(_StoreCore):
             workspace_kind=workspace_kind(conversation.workspace_kind),
             project_id=conversation.project_id,
             agent_name=conversation.agent_name,
+            parent_id=conversation.parent_id,
         )
 
     async def list_conversations(

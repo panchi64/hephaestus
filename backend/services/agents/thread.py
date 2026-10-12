@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from core.exceptions import NotFoundError
-from services.agents.catalog import AgentCatalog
+from services.agents.catalog import AgentCatalog, lower_of
 from services.agents.definition import AgentDefinition
 from services.conversations import ConversationBinding
 from services.permissions import permission_level, stricter_permission
@@ -23,9 +23,7 @@ from services.projects.tree import thread_tree
 from services.workspace_kind import is_project_folder
 
 #: The tools that hand work to another agent, withheld from one that may not delegate.
-DELEGATION_TOOLS: frozenset[str] = frozenset(
-    {"subagents_launch", "subagents_send", "subagents_list"}
-)
+DELEGATION_TOOLS: frozenset[str] = frozenset({"agents_spawn"})
 
 type InstructionProvider = Callable[[Any], Awaitable[str]]
 
@@ -71,6 +69,13 @@ def as_thread(agent: AgentDefinition, binding: ConversationBinding) -> ThreadAge
         withheld=frozenset() if agent.can_delegate else DELEGATION_TOOLS,
         instructions=(_brief(agent.instructions),) if agent.instructions else (),
     )
+
+
+def may_delegate(agent: AgentDefinition, depth: int, limit: int) -> bool:
+    """Whether ``agent``, running ``depth`` levels below its tree's root, may spawn agents
+    of its own. ``limit`` is the installation's deepest tree; a definition may lower it."""
+    bound = lower_of(agent.max_depth, limit)
+    return agent.can_delegate and depth < (limit if bound is None else bound)
 
 
 def _brief(text: str) -> InstructionProvider:

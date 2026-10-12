@@ -27,12 +27,12 @@ export function SubagentReport(props: { message: ChatMessage }): JSX.Element {
     // A plate naming the region with a hairline running on from it, then the prose
     // bare — the console register's way of setting something apart without boxing it
     // (design §7). The 2px left rule this replaced is the emphasis border §7 retired.
-    // The plate names no handle: the report reaches the thread as a message, and the
-    // message carries no reference back to the sub-agent that wrote it.
     <Stack gap={2} class="my-1 w-full">
       <div class="flex items-center gap-3">
         <Text variant="plate" tone="dim" class="shrink-0">
-          Report · sub-agent
+          {props.message.author
+            ? `Message · ${props.message.author}`
+            : "Report · sub-agent"}
         </Text>
         <span class="h-px flex-1 bg-line" aria-hidden="true" />
       </div>

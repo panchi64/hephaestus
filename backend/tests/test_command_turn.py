@@ -42,7 +42,7 @@ class TestTheExpansionReachesTheModel:
         # The tail, never the head: a command body differs per turn, and a volatile block
         # at the head invalidates the whole cached prefix behind it.
         assert rows[0]["placement"] == "prompt"
-        assert "subagents_launch" in rows[0]["text"]
+        assert "agents_spawn" in rows[0]["text"]
         assert "check the auth path" in rows[0]["text"]
 
     async def test_a_skill_command_directs_the_model_to_open_it(self, monkeypatch):
@@ -80,7 +80,7 @@ class TestWhatIsWrittenDown:
         assert len(user_turns) == 1
         # Exactly what they typed — not the expansion, and not the two concatenated.
         assert user_turns[0]["content"] == "/reviewer check the auth path"
-        assert "subagents_launch" not in user_turns[0]["content"]
+        assert "agents_spawn" not in user_turns[0]["content"]
 
 
 class TestRerunningTheTurn:
@@ -118,7 +118,7 @@ class TestRerunningTheTurn:
 
         rows = [e for e in _injections(events) if e["contributor"] == "command"]
         assert len(rows) == 1, "the second answer is to the same question as the first"
-        assert "subagents_launch" in rows[0]["text"]
+        assert "agents_spawn" in rows[0]["text"]
         assert "check the auth path" in rows[0]["text"]
 
     async def test_the_expansion_still_never_lands_in_history(self, monkeypatch):
@@ -136,7 +136,7 @@ class TestRerunningTheTurn:
         # The point of stamping the invocation rather than the block: after a regenerate
         # the thread still holds one copy of the operator's typed text and no copy of the
         # directive. A persisted expansion would now be replayed on every later turn.
-        assert not any("subagents_launch" in str(m) for m in replay)
+        assert not any("agents_spawn" in str(m) for m in replay)
 
     async def test_an_edit_keeps_the_command_its_new_text_still_names(self, monkeypatch):
         patch_model_resolution(monkeypatch)

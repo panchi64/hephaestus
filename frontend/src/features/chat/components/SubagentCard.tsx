@@ -1,5 +1,5 @@
 import { Show, type JSX } from "solid-js";
-import { Text, cx } from "~/ui";
+import { Button, Text, cx } from "~/ui";
 import { duration, parseInstant } from "~/lib/format";
 import { isLive, type Subagent, type SubagentStatus } from "../data";
 
@@ -82,6 +82,12 @@ export function SubagentCard(props: {
   /** Open this sub-agent's own view. The row is a way in, not a thing that unfolds —
    *  see `SubagentsSurface` for why the transcript stopped living underneath it. */
   onOpen: () => void;
+  /** How many levels it sits below the top of the roster. */
+  level?: number;
+  /** Cancel its run. */
+  onStop: () => void;
+  /** Open it as a thread of its own, or go to the thread it already is. */
+  onOpenThread: () => void;
 }): JSX.Element {
   const s = () => props.subagent;
   // While it runs this is its latest answer rather than a report — a current best. Once
@@ -97,112 +103,130 @@ export function SubagentCard(props: {
       .join(" · ");
 
   return (
-    <button
-      type="button"
-      onClick={() => props.onOpen()}
-      aria-label={`${s().handle}, ${LABEL[s().status]}: ${s().task}`}
+    <div
       class={cx(
-        "relative flex w-full items-start gap-3 px-3 py-2 text-left hover:bg-raised",
-        s().status === "cancelled" && "opacity-60",
-        // Waiting on the operator: the action tier's echo on a row — an amber inset
-        // edge and a faint amber wash (design §10.18).
-        s().status === "blocked" && "bg-warn/5",
+        "flex flex-col",
+        (props.level ?? 0) > 0 && "border-l border-line-strong",
       )}
+      style={{ "margin-left": `${(props.level ?? 0) * 16}px` }}
     >
-      <Show when={s().status === "blocked"}>
+      <button
+        type="button"
+        onClick={() => props.onOpen()}
+        aria-label={`${s().handle}, ${LABEL[s().status]}: ${s().task}`}
+        class={cx(
+          "relative flex w-full items-start gap-3 px-3 py-2 text-left hover:bg-raised",
+          s().status === "cancelled" && "opacity-60",
+          // Waiting on the operator: the action tier's echo on a row — an amber inset
+          // edge and a faint amber wash (design §10.18).
+          s().status === "blocked" && "bg-warn/5",
+        )}
+      >
+        <Show when={s().status === "blocked"}>
+          <span
+            aria-hidden="true"
+            class="absolute inset-y-0 left-0 w-0.5 bg-warn"
+          />
+        </Show>
         <span
           aria-hidden="true"
-          class="absolute inset-y-0 left-0 w-0.5 bg-warn"
+          class={cx("mt-1 size-2 shrink-0", GLYPH[s().status])}
         />
-      </Show>
-      <span
-        aria-hidden="true"
-        class={cx("mt-1 size-2 shrink-0", GLYPH[s().status])}
-      />
-      <span class="flex min-w-0 flex-1 flex-col gap-1">
-        <span class="flex min-w-0 items-baseline gap-3">
-          {/* The handle, not the roster name: the launching agent named this one for
+        <span class="flex min-w-0 flex-1 flex-col gap-1">
+          <span class="flex min-w-0 items-baseline gap-3">
+            {/* The handle, not the roster name: the launching agent named this one for
               the job it is doing, and `explorer` three times over identifies nothing.
               Capped and truncated — a handle is whatever the launching model typed. */}
-          <Text
-            variant="label"
-            tone="bright"
-            class="max-w-2/5 shrink-0 truncate"
-          >
-            {s().handle}
-          </Text>
-          <Text variant="label" tone="dim" class="min-w-0 flex-1 truncate">
-            {s().task}
-          </Text>
-          <Show
-            when={s().status !== "blocked"}
-            fallback={
-              <Text
-                variant="meta"
-                tone="inverse"
-                class="shrink-0 self-center bg-warn px-1"
-              >
-                Waiting
-              </Text>
-            }
-          >
-            {/* `!== null`, not the value itself: a sub-agent that has barely started
-                rounds to 0, and 0 is falsy — a truthiness test would hide the bar for
-                exactly the rows that have just appeared and are the ones watched. */}
+            <Text
+              variant="label"
+              tone="bright"
+              class="max-w-2/5 shrink-0 truncate"
+            >
+              {s().handle}
+            </Text>
+            <Text variant="label" tone="dim" class="min-w-0 flex-1 truncate">
+              {s().task}
+            </Text>
             <Show
-              when={fullness(s()) !== null}
+              when={s().status !== "blocked"}
               fallback={
-                <Text variant="micro" tone="dim" class="shrink-0">
-                  —
+                <Text
+                  variant="meta"
+                  tone="inverse"
+                  class="shrink-0 self-center bg-warn px-1"
+                >
+                  Waiting
                 </Text>
               }
             >
-              <span class="flex shrink-0 items-center gap-2 self-center">
-                <span
-                  role="meter"
-                  aria-valuenow={fullness(s()) ?? 0}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-label="Context used"
-                  class="relative h-1 w-12 bg-line"
-                >
+              {/* `!== null`, not the value itself: a sub-agent that has barely started
+                rounds to 0, and 0 is falsy — a truthiness test would hide the bar for
+                exactly the rows that have just appeared and are the ones watched. */}
+              <Show
+                when={fullness(s()) !== null}
+                fallback={
+                  <Text variant="micro" tone="dim" class="shrink-0">
+                    —
+                  </Text>
+                }
+              >
+                <span class="flex shrink-0 items-center gap-2 self-center">
                   <span
-                    class={cx(
-                      "absolute inset-y-0 left-0",
-                      barFill(fullness(s()) ?? 0),
-                    )}
-                    style={{ width: `${fullness(s()) ?? 0}%` }}
-                  />
-                  {/* The tick at 75%: where the bar turns amber. */}
-                  <span
-                    aria-hidden="true"
-                    class="absolute -inset-y-0.5 left-3/4 w-px bg-line-strong"
-                  />
+                    role="meter"
+                    aria-valuenow={fullness(s()) ?? 0}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label="Context used"
+                    class="relative h-1 w-12 bg-line"
+                  >
+                    <span
+                      class={cx(
+                        "absolute inset-y-0 left-0",
+                        barFill(fullness(s()) ?? 0),
+                      )}
+                      style={{ width: `${fullness(s()) ?? 0}%` }}
+                    />
+                    {/* The tick at 75%: where the bar turns amber. */}
+                    <span
+                      aria-hidden="true"
+                      class="absolute -inset-y-0.5 left-3/4 w-px bg-line-strong"
+                    />
+                  </span>
+                  <Text
+                    variant="micro"
+                    tone="dim"
+                    class="w-8 text-right tabular-nums"
+                  >
+                    {fullness(s())}%
+                  </Text>
                 </span>
-                <Text
-                  variant="micro"
-                  tone="dim"
-                  class="w-8 text-right tabular-nums"
-                >
-                  {fullness(s())}%
-                </Text>
-              </span>
+              </Show>
             </Show>
-          </Show>
+          </span>
+          <span class="flex min-w-0 items-baseline gap-2">
+            <Text variant="micro" tone="dim" class="shrink-0">
+              {meta()}
+            </Text>
+            <Text
+              variant="body"
+              tone={s().status === "failed" ? "alert" : "default"}
+              class="min-w-0 flex-1 truncate"
+            >
+              {line()}
+            </Text>
+          </span>
         </span>
-        <span class="flex min-w-0 items-baseline gap-2">
-          <Text variant="micro" tone="dim" class="shrink-0">
-            {meta()}
-          </Text>
-          <Text
-            variant="body"
-            tone={s().status === "failed" ? "alert" : "default"}
-            class="min-w-0 flex-1 truncate"
-          >
-            {line()}
-          </Text>
-        </span>
-      </span>
-    </button>
+      </button>
+      <div class="flex items-center gap-2 px-3 pb-2 pl-8">
+        <Show when={isLive(s())}>
+          <Button variant="ghost" size="sm" onClick={() => props.onStop()}>
+            Stop
+          </Button>
+        </Show>
+        <Button variant="ghost" size="sm" onClick={() => props.onOpenThread()}>
+          {s().opened ? "Open thread" : "Open as thread"}
+        </Button>
+      </div>
+    </div>
   );
 }

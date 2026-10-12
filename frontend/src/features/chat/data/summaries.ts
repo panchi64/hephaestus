@@ -96,5 +96,6 @@ export function toSummary(dto: ConversationSummaryDTO): ChatSummary {
     workspace: dto.workspace ?? undefined,
     projectId: dto.project_id ?? undefined,
     agentName: dto.agent_name ?? undefined,
+    parentId: dto.parent_id ?? undefined,
   };
 }

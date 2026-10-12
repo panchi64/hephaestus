@@ -317,34 +317,42 @@ class TestWhatTheModelActuallySees:
 
         # THE assertion of the whole phase: what the model reads when it is deciding
         # carries the project's own agent, not just the ones this installation ships.
-        assert "`house-style`" in (tools["launch"].tool_def.description or "")
-        assert "Checks our house style." in (tools["launch"].tool_def.description or "")
+        assert "`house-style`" in (tools["spawn"].tool_def.description or "")
+        assert "Checks our house style." in (tools["spawn"].tool_def.description or "")
 
     async def test_a_run_with_no_project_agents_is_described_exactly_as_it_was_built(
         self, monkeypatch
     ):
-        from tools.subagents import launch_description
+        from tools.delegation import spawn_description
 
         tools = await _launch_tools(monkeypatch, builtin_roster())
 
         # The overwhelmingly common case. The description has to come out byte-identical,
         # or every request of every turn pays a fresh prefix for a rewrite that changed
         # nothing.
-        assert tools["launch"].tool_def.description == launch_description(builtin_roster())
+        assert tools["spawn"].tool_def.description == spawn_description(builtin_roster())
 
     def test_the_catalog_the_operator_reads_is_not_per_run(self):
-        from tools.subagents import subagents_toolset
+        from tools.agents import agents_toolset
 
         # The settings surface enumerates `.tools`, which has no run to resolve. A wrapper
         # that stopped forwarding it would silently cost the operator every toggle in this
         # category.
-        assert set(subagents_toolset().tools) == {"launch", "send", "list", "read"}
+        assert set(agents_toolset().tools) == {
+            "write",
+            "publish",
+            "spawn",
+            "message",
+            "list",
+            "read",
+            "stop",
+        }
 
     async def test_the_app_the_operator_runs_has_the_rewrite_in_its_stack(self):
         from tests._helpers import client_app
 
         async with client_app() as (_client, app):
-            category = app.state.tool_categories["subagents"]
+            category = app.state.tool_categories["agents"]
             # Built through the manifest rather than by this test: a wrapper that only
             # exists when the test constructs it is a wrapper no run ever passes through.
             assert hasattr(category, "wrapped")
@@ -362,9 +370,9 @@ class TestWhichLaunchesAreTheOperatorsToAllow:
     """
 
     def test_launching_is_not_gated_by_name_alone(self):
-        from tools.subagents import subagents_toolset
+        from tools.agents import agents_toolset
 
-        launch = subagents_toolset().tools["launch"]
+        launch = agents_toolset().tools["spawn"]
         assert launch.requires_approval is False
 
     async def test_the_tool_the_model_is_offered_is_not_pre_deferred(self, monkeypatch):
@@ -372,17 +380,17 @@ class TestWhichLaunchesAreTheOperatorsToAllow:
 
         # `unapproved` is the kind the static marking produces, and it is what makes the
         # library hold the call back rather than run it.
-        assert tools["launch"].tool_def.kind != "unapproved"
+        assert tools["spawn"].tool_def.kind != "unapproved"
 
     def test_a_sub_agent_that_only_reads_is_launched_without_asking(self):
-        from tools.subagents import _can_write
+        from tools.delegation import _can_write
 
         roster = builtin_roster()
         assert not _can_write(roster["explorer"])
         assert not _can_write(roster["reviewer"])
 
     def test_a_sub_agent_that_can_change_things_asks_first(self):
-        from tools.subagents import _can_write
+        from tools.delegation import _can_write
 
         roster = builtin_roster()
         # The test runner is here on purpose: it is withheld from *editing*, which is
@@ -392,7 +400,7 @@ class TestWhichLaunchesAreTheOperatorsToAllow:
         assert _can_write(roster["test_runner"])
 
     def test_a_project_agent_is_gated_by_what_it_can_do_rather_than_by_its_name(self):
-        from tools.subagents import _can_write
+        from tools.delegation import _can_write
 
         reads = parse_agent_file(
             "---\nname: auditor\ndescription: Reads.\npermission: plan\n---\n\nRead it.",
@@ -418,15 +426,14 @@ async def _launch_tools(monkeypatch, roster):
     from pydantic_ai.usage import RunUsage
 
     from runs import Run, RunStream
-    from tools import RunDeps
-    from tools import subagents as module
+    from tools import RunDeps, agents, delegation
 
-    monkeypatch.setattr(module, "run_roster", lambda _ctx: _resolved(roster))
+    monkeypatch.setattr(delegation, "run_roster", lambda _ctx: _resolved(roster))
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     ctx = RunContext(
         deps=RunDeps(run=run, owner_id="operator"), model=TestModel(), usage=RunUsage()
     )
-    return await module.subagents_toolset().get_tools(ctx)
+    return await agents.agents_toolset().get_tools(ctx)
 
 
 async def _resolved(value):

@@ -66,12 +66,12 @@ from services.permissions.reviewer import review_prompt
 from services.sandbox import HostConfinement
 from services.workspace import HostFiles, RunWorkspace
 from tools import RunDeps
+from tools.agents import agents_toolset
 from tools.browse import browse_toolset
 from tools.calendar import calendar_toolset
 from tools.code import code_toolset
 from tools.mail import mail_toolset
 from tools.skills import skills_toolset
-from tools.subagents import subagents_toolset
 from tools.vault import vault_toolset
 
 from ._helpers import client_app
@@ -487,7 +487,7 @@ class TestWhatEachToolSaysAboutItself:
 
     def test_a_delegated_task_is_named_by_its_agent_and_carried_whole(self):
         capability = capability_of(
-            "subagents_launch", {"agent_name": "explorer", "task": "read the docs"}
+            "agents_spawn", {"agent_name": "explorer", "task": "read the docs"}
         )
         assert "explorer" in capability.summary
         assert capability.detail == "task: read the docs"
@@ -555,7 +555,7 @@ class TestWhatEachToolSaysAboutItself:
 
     def test_the_detail_goes_to_the_reviewer_inside_the_fence(self):
         capability = capability_of(
-            "subagents_launch", {"agent_name": "explorer", "task": "read the docs"}
+            "agents_spawn", {"agent_name": "explorer", "task": "read the docs"}
         )
         prompt = review_prompt(ReviewRequest(capability=capability, transcript=()))
         assert json.loads(_fenced(prompt, "tool-call")) == {
@@ -638,7 +638,7 @@ class TestWhatEachToolSaysAboutItself:
             "calendar": calendar_toolset,
             "browse": browse_toolset,
             "vault": vault_toolset,
-            "subagents": subagents_toolset,
+            "agents": agents_toolset,
             "skills": skills_toolset,
             "code": code_toolset,
         }
@@ -1400,7 +1400,7 @@ class TestTheEngineRunsIt:
         await gating.review_call(
             run,
             tool_call_id="t1",
-            tool="subagents_launch",
+            tool="agents_spawn",
             args={"agent_name": "explorer", "task": "read the docs"},
             root=None,
             transcript=(),

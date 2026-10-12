@@ -20,7 +20,7 @@ from .base import _Body
 #: This is the load-bearing answer to "who sent this". The envelope
 #: (``services/subagents/report.py``) is a label anyone who can type angle brackets could
 #: forge; this is structural and never arrives from outside.
-MessageSource = Literal["operator", "subagent", "parent"]
+MessageSource = Literal["operator", "subagent", "agent"]
 
 
 class MessageQueued(_Body):
@@ -36,6 +36,8 @@ class MessageQueued(_Body):
     message_id: str
     text: str
     source: MessageSource = "operator"
+    #: For a message from another agent, the handle it was sent from.
+    sender: str | None = None
 
 
 class MessageEdited(_Body):

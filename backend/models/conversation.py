@@ -102,6 +102,12 @@ class Conversation(SQLModel, table=True):
     # meant to keep. Still a fully real conversation (readable, resumable, branch-
     # able by id); it's only omitted from the conversation list and the count.
     ephemeral: bool = Field(default=False)
+    # The thread that delegated to this one, for an agent another agent spawned. An opened
+    # child is listed under it.
+    parent_id: str | None = Field(default=None, index=True)
+    # The workspace every turn of this thread works in, when it is not its own: a spawned
+    # agent shares or forks its parent's.
+    workspace_key: str | None = Field(default=None)
     # Per-conversation override of the global conversation auto-compaction toggle (folding
     # older turns into a summary the thread's own model writes once the context footprint
     # nears the model's window): null inherits the operator default, True/False forces it

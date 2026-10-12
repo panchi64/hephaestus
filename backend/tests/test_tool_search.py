@@ -33,11 +33,10 @@ OWNER = "operator"
 #: costs. Pinned against the booted app below, and only ever a *subset* claim about the
 #: catalog — this file has no business asserting the whole of it.
 DORMANT = {
-    "agents": "draft a new agent",
+    "agents": "spawn agents to do self-contained work",
     "browse": "drive a real browser",
     "calendar": "the operator's calendars",
     "mail": "the operator's email",
-    "subagents": "another agent that works on its own",
     "vault": "the operator's stored secrets",
 }
 

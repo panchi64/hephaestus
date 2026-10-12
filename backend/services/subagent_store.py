@@ -16,7 +16,7 @@ import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.vault import Vault
@@ -49,6 +49,8 @@ class SubagentStore:
         subagent_id: str,
         owner_id: str,
         parent_conversation_id: str,
+        root_conversation_id: str,
+        depth: int,
         child_conversation_id: str,
         run_id: str,
         parent_run_id: str | None,
@@ -71,6 +73,8 @@ class SubagentStore:
             id=subagent_id,
             owner_id=owner_id,
             parent_conversation_id=parent_conversation_id,
+            root_conversation_id=root_conversation_id,
+            depth=depth,
             child_conversation_id=child_conversation_id,
             run_id=run_id,
             parent_run_id=parent_run_id,
@@ -131,55 +135,76 @@ class SubagentStore:
         return await in_session(self._db, work)
 
     async def by_handle(
-        self, parent_conversation_id: str, handle: str, owner_id: str
+        self, root_conversation_id: str, handle: str, owner_id: str
     ) -> SubagentRecord | None:
-        """The sub-agent a thread called ``handle`` — how the model's own two tools resolve.
-
-        Scoped to the parent thread and not merely to the owner, because that is where the
-        handle is unique and it is also the security boundary: an owner-wide lookup would
-        let one thread's agent address another thread's sub-agent by guessing a plausible
-        name, which is the sibling-injection hole the withheld-tool set closes on the other
-        axis.
-
-        Newest first where more than one row answers. Uniqueness is enforced at launch and
-        not by the schema, so the honest tie-breaker is the one that matches what the model
-        means: rows backfilled from an older build all took their spec's name, and a thread
-        that launched two ``explorer``s before handles existed has two rows called
-        ``explorer`` with no launch-time choice to tell them apart. The most recent is the
-        one a parent asking about ``explorer`` is asking about.
-        """
+        """The agent a delegation tree calls ``handle``. Scoped to the tree, which is where
+        a handle is unique and also how far an agent may reach. Newest first, for rows
+        written before handles were unique."""
 
         def work(session: Session) -> SubagentRecord | None:
             rows = session.exec(
                 select(SubagentRecord)
                 .where(SubagentRecord.owner_id == owner_id)
-                .where(SubagentRecord.parent_conversation_id == parent_conversation_id)
+                .where(SubagentRecord.root_conversation_id == root_conversation_id)
                 .where(SubagentRecord.handle == handle)
             ).all()
             return max(rows, key=lambda row: row.started_at, default=None)
 
         return await in_session(self._db, work)
 
-    async def handles_for_parent(
-        self, parent_conversation_id: str, owner_id: str
-    ) -> set[str]:
-        """Every handle already taken in a thread — what a launch makes itself unique against.
-
-        Finished sub-agents included, and that is the point: a parent can read a settled
-        sub-agent's report back by name long after it ended, so re-using its handle for a
-        new one would silently redirect that read to different work. A handle is unique for
-        the life of the thread, not for the life of the run.
-        """
+    async def handles_in_tree(self, root_conversation_id: str, owner_id: str) -> set[str]:
+        """Every handle taken in a tree, finished agents included: one can still be read
+        back by name after it reports."""
 
         def work(session: Session) -> set[str]:
             rows = session.exec(
                 select(SubagentRecord.handle)  # type: ignore[call-overload]
                 .where(SubagentRecord.owner_id == owner_id)
-                .where(SubagentRecord.parent_conversation_id == parent_conversation_id)
+                .where(SubagentRecord.root_conversation_id == root_conversation_id)
             ).all()
             return {handle for handle in rows if handle}
 
         return await in_session(self._db, work)
+
+    async def by_child(self, conversation_id: str) -> SubagentRecord | None:
+        """The record of the agent whose thread this is, or None for a thread nobody
+        spawned."""
+
+        def work(session: Session) -> SubagentRecord | None:
+            return session.exec(
+                select(SubagentRecord).where(
+                    SubagentRecord.child_conversation_id == conversation_id
+                )
+            ).first()
+
+        return await in_session(self._db, work)
+
+    async def tree(self, root_conversation_id: str, owner_id: str) -> list[SubagentRecord]:
+        """Every agent of one delegation tree, oldest first."""
+
+        def work(session: Session) -> list[SubagentRecord]:
+            rows = session.exec(
+                select(SubagentRecord)
+                .where(SubagentRecord.owner_id == owner_id)
+                .where(SubagentRecord.root_conversation_id == root_conversation_id)
+            ).all()
+            return sorted(rows, key=lambda row: row.started_at)
+
+        return await in_session(self._db, work)
+
+    async def reopen(self, subagent_id: str, run_id: str) -> None:
+        """Mark an agent working again on a new run, after a message woke it."""
+
+        def work(session: Session) -> None:
+            row = session.get(SubagentRecord, subagent_id)
+            if row is None:
+                return
+            row.run_id = run_id
+            row.status = "running"
+            row.ended_at = None
+            session.add(row)
+
+        await in_session(self._db, work)
 
     async def by_run(self, run_id: str) -> SubagentRecord | None:
         """The sub-agent a Run belongs to, or None for an ordinary run.
@@ -196,28 +221,29 @@ class SubagentStore:
 
         return await in_session(self._db, work)
 
-    async def for_parent(
-        self, parent_conversation_id: str, owner_id: str, *, live_only: bool = False
-    ) -> list[SubagentRecord]:
-        """Every sub-agent a thread launched, newest first — the panel's backfill."""
+    async def descendants(self, conversation_id: str, owner_id: str) -> list[SubagentRecord]:
+        """Every agent below a thread, at any depth, newest first."""
 
         def work(session: Session) -> list[SubagentRecord]:
-            query = (
-                select(SubagentRecord)
-                .where(SubagentRecord.owner_id == owner_id)
-                .where(SubagentRecord.parent_conversation_id == parent_conversation_id)
-            )
-            if live_only:
-                query = query.where(SubagentRecord.status.in_(LIVE_STATUSES))  # type: ignore[attr-defined]
-            rows = session.exec(query).all()
-            return sorted(rows, key=lambda row: row.started_at, reverse=True)
+            found: list[SubagentRecord] = []
+            frontier = [conversation_id]
+            while frontier:
+                rows = session.exec(
+                    select(SubagentRecord)
+                    .where(SubagentRecord.owner_id == owner_id)
+                    .where(col(SubagentRecord.parent_conversation_id).in_(frontier))
+                ).all()
+                found.extend(rows)
+                frontier = [row.child_conversation_id for row in rows]
+            return sorted(found, key=lambda row: row.started_at, reverse=True)
 
         return await in_session(self._db, work)
 
     async def live(
-        self, owner_id: str, *, parent_conversation_id: str | None = None
+        self, owner_id: str, *, root_conversation_id: str | None = None
     ) -> list[SubagentRecord]:
-        """Every sub-agent still expected to report — what the operator's cap counts."""
+        """Every agent still expected to report, the owner's or one tree's — what the
+        operator's cap counts."""
 
         def work(session: Session) -> list[SubagentRecord]:
             query = (
@@ -225,33 +251,21 @@ class SubagentStore:
                 .where(SubagentRecord.owner_id == owner_id)
                 .where(SubagentRecord.status.in_(LIVE_STATUSES))  # type: ignore[attr-defined]
             )
-            if parent_conversation_id is not None:
-                query = query.where(
-                    SubagentRecord.parent_conversation_id == parent_conversation_id
-                )
+            if root_conversation_id is not None:
+                query = query.where(SubagentRecord.root_conversation_id == root_conversation_id)
             rows = session.exec(query).all()
             return sorted(rows, key=lambda row: row.started_at)
 
         return await in_session(self._db, work)
 
-    async def delete_for_parent(self, parent_conversation_id: str, owner_id: str) -> None:
-        """Forget every sub-agent a thread launched, because the thread is gone.
-
-        The rows are only ever read *by* parent, so one whose parent has been deleted is
-        unreachable rather than merely unlisted — and it would still be counted by the cap
-        if it were somehow left live. Deleting them is the same reasoning as the thread's
-        tasks, plan and View history going with it: they all restate work that was asked
-        for in a conversation that no longer exists.
-        """
+    async def forget(self, subagent_ids: list[str]) -> None:
+        """Delete these rows, because the thread above them is gone."""
 
         def work(session: Session) -> None:
-            rows = session.exec(
-                select(SubagentRecord)
-                .where(SubagentRecord.owner_id == owner_id)
-                .where(SubagentRecord.parent_conversation_id == parent_conversation_id)
-            ).all()
-            for row in rows:
-                session.delete(row)
+            for subagent_id in subagent_ids:
+                row = session.get(SubagentRecord, subagent_id)
+                if row is not None:
+                    session.delete(row)
 
         await in_session(self._db, work)
 
@@ -304,15 +318,13 @@ class SubagentStore:
             # named after its spec, which is what every such row was called anyway.
             handle=row.handle or row.spec_name,
             task=self._vault.decrypt_str(row.task_enc),
+            parent_conversation_id=row.parent_conversation_id,
+            depth=row.depth,
             status=status or row.status,
-            summary=(
-                None if row.summary_enc is None else self._vault.decrypt_str(row.summary_enc)
-            ),
+            summary=(None if row.summary_enc is None else self._vault.decrypt_str(row.summary_enc)),
             error=None if row.error_enc is None else self._vault.decrypt_str(row.error_enc),
             context_used=context_used if context_used is not None else row.context_used,
-            context_window=(
-                context_window if context_window is not None else row.context_window
-            ),
+            context_window=(context_window if context_window is not None else row.context_window),
             started_at=row.started_at,
             ended_at=row.ended_at,
         )

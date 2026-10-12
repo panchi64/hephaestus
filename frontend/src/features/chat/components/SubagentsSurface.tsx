@@ -1,6 +1,13 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
-import { Disclosure, EmptyState } from "~/ui";
-import { isLive, type Subagent } from "../data";
+import { Disclosure, EmptyState, toast } from "~/ui";
+import {
+  isLive,
+  openSubagentThread,
+  refreshSessions,
+  stopSubagent,
+  type Subagent,
+} from "../data";
+import { mainChat } from "../mainChat";
 import { SubagentCard } from "./SubagentCard";
 import { SubagentDetail } from "./SubagentDetail";
 import { SurfaceBody } from "./surfaceChrome";
@@ -20,6 +27,40 @@ const RANK: Record<string, number> = {
 function byUrgency(a: Subagent, b: Subagent): number {
   const rank = (RANK[a.status] ?? 9) - (RANK[b.status] ?? 9);
   return rank !== 0 ? rank : b.startedAt.localeCompare(a.startedAt);
+}
+
+interface Placed {
+  subagent: Subagent;
+  level: number;
+}
+
+/** Lay the cards out depth-first, each directly beneath its parent. A card whose parent
+ *  is not among them — the viewed thread itself, or one filtered into the other roster —
+ *  is top level. */
+function arrange(cards: Subagent[]): Placed[] {
+  const owned = new Set(cards.map((c) => c.conversationId));
+  const children = new Map<string, Subagent[]>();
+  const top: Subagent[] = [];
+  for (const card of cards) {
+    const parent = card.parentConversationId;
+    if (owned.has(parent) && parent !== card.conversationId) {
+      const siblings = children.get(parent);
+      if (siblings) siblings.push(card);
+      else children.set(parent, [card]);
+    } else top.push(card);
+  }
+  const placed: Placed[] = [];
+  const seen = new Set<string>();
+  const walk = (card: Subagent, level: number) => {
+    if (seen.has(card.id)) return;
+    seen.add(card.id);
+    placed.push({ subagent: card, level });
+    for (const child of children.get(card.conversationId) ?? [])
+      walk(child, level + 1);
+  };
+  for (const card of top) walk(card, 0);
+  for (const card of cards) walk(card, 0);
+  return placed;
 }
 
 /**
@@ -72,17 +113,41 @@ export function SubagentsSurface(props: {
   const finished = (): Subagent[] =>
     props.subagents().filter((s) => s.status === "done");
 
+  const stop = async (subagent: Subagent): Promise<void> => {
+    if (!(await stopSubagent(subagent.runId)))
+      toast.error("That agent could not be stopped.");
+    props.onSettled?.();
+  };
+
+  const openThread = async (subagent: Subagent): Promise<void> => {
+    if (subagent.opened) {
+      mainChat().setCurrentId(subagent.conversationId);
+      return;
+    }
+    const id = await openSubagentThread(subagent.conversationId);
+    if (id === null) {
+      toast.error("That agent could not be opened as a thread.");
+      return;
+    }
+    refreshSessions();
+    props.onSettled?.();
+    mainChat().setCurrentId(id);
+  };
+
   /** One ruled roster (design §7, §10.14): a frame of flush rows, never a grid of
    *  cards. It is a list read down a column of handles, so it stays one column at any
    *  pane width — two would put the scan in two places. */
   const roster = (subagents: Subagent[]): JSX.Element => (
     <ul class="flex flex-col divide-y divide-line border border-line-strong">
-      <For each={subagents}>
-        {(subagent) => (
+      <For each={arrange(subagents)}>
+        {({ subagent, level }) => (
           <li>
             <SubagentCard
               subagent={subagent}
+              level={level}
               onOpen={() => setOpenId(subagent.id)}
+              onStop={() => void stop(subagent)}
+              onOpenThread={() => void openThread(subagent)}
             />
           </li>
         )}

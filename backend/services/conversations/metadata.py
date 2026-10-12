@@ -10,6 +10,7 @@ from typing import Any
 from sqlmodel import Session
 
 from core.db import in_session
+from core.exceptions import NotFoundError
 from models.conversation import Conversation
 from runs.overhead import TurnOverhead
 from services.permissions import PermissionLevel, permission_level
@@ -117,6 +118,7 @@ class _MetadataMixin(_StoreCore):
                 project_id=conversation.project_id,
                 permission=permission_level(conversation.permission_level),
                 agent_name=conversation.agent_name,
+                workspace_key=conversation.workspace_key or "",
             )
 
         return await in_session(self._engine, work)
@@ -185,6 +187,20 @@ class _MetadataMixin(_StoreCore):
                 conversation.agent_name = agent_name
 
         await in_session(self._engine, work)
+
+    async def open_child(self, conversation_id: str, owner_id: str) -> str:
+        """List a spawned agent's thread beside its parent's. Returns the parent's id."""
+
+        def work(session: Session) -> str:
+            conversation = session.get(Conversation, conversation_id)
+            if conversation is None or conversation.owner_id != owner_id:
+                raise NotFoundError("conversation not found")
+            if conversation.parent_id is None:
+                raise NotFoundError("not a spawned agent's thread")
+            conversation.ephemeral = False
+            return conversation.parent_id
+
+        return await in_session(self._engine, work)
 
     async def get_compaction_override(self, conversation_id: str) -> bool | None:
         """This conversation's auto-compaction override — ``None`` inherits the operator

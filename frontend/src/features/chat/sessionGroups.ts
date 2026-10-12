@@ -143,26 +143,27 @@ export function groupSessions(
     return group;
   };
 
-  for (const s of sessions) {
+  const file = (s: ChatSummary): SessionGroup | undefined => {
     if (s.projectId) {
       const label = named.get(s.projectId);
-      if (label !== undefined)
-        section({
-          kind: "directory",
-          id: s.projectId,
-          label,
-          projectId: s.projectId,
-          sessions: [],
-        }).sessions.push(s);
-      continue;
+      return label === undefined
+        ? undefined
+        : section({
+            kind: "directory",
+            id: s.projectId,
+            label,
+            projectId: s.projectId,
+            sessions: [],
+          });
     }
     const label = pinned.has(s.id)
       ? PINNED_GROUP
       : recencyLabel(s.updatedAt, now);
-    section({ kind: "recency", id: label, label, sessions: [] }).sessions.push(
-      s,
-    );
-  }
+    return section({ kind: "recency", id: label, label, sessions: [] });
+  };
+
+  for (const { session, anchor } of nestUnderParents(sessions))
+    file(anchor)?.sessions.push(session);
 
   for (const d of directories)
     section({
@@ -173,6 +174,53 @@ export function groupSessions(
       sessions: [],
     });
   return groups;
+}
+
+/** The list with every thread that names a parent present in it moved directly beneath
+ *  that parent, depth-first. Each entry carries the top-level thread it hangs from — the
+ *  one whose project, pin and recency decide the section — so a thread opened from an
+ *  agent tree files with its parent and not by its own stamps. */
+function nestUnderParents(
+  sessions: ChatSummary[],
+): { session: ChatSummary; anchor: ChatSummary }[] {
+  const ids = new Set(sessions.map((s) => s.id));
+  const children = new Map<string, ChatSummary[]>();
+  const top: ChatSummary[] = [];
+  for (const s of sessions) {
+    if (s.parentId && s.parentId !== s.id && ids.has(s.parentId)) {
+      const siblings = children.get(s.parentId);
+      if (siblings) siblings.push(s);
+      else children.set(s.parentId, [s]);
+    } else top.push(s);
+  }
+  const out: { session: ChatSummary; anchor: ChatSummary }[] = [];
+  const seen = new Set<string>();
+  const walk = (s: ChatSummary, anchor: ChatSummary) => {
+    if (seen.has(s.id)) return;
+    seen.add(s.id);
+    out.push({ session: s, anchor });
+    for (const child of children.get(s.id) ?? []) walk(child, anchor);
+  };
+  for (const s of top) walk(s, s);
+  for (const s of sessions) walk(s, s);
+  return out;
+}
+
+/** How many threads above this one, within the list it is shown in. */
+export function nestingDepth(
+  session: ChatSummary,
+  inList: readonly ChatSummary[],
+): number {
+  const byId = new Map(inList.map((s) => [s.id, s]));
+  let depth = 0;
+  let at = session;
+  while (at.parentId && depth < inList.length) {
+    const parent = byId.get(at.parentId);
+    if (!parent) break;
+    depth += 1;
+    at = parent;
+  }
+  return depth;
 }
 
 /** Local midnight `daysBack` days before `d`.

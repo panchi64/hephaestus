@@ -439,7 +439,7 @@ describe("a review's two frames", () => {
 describe("whose queued message it is", () => {
   const queued = (
     text: string,
-    source?: "operator" | "subagent",
+    source?: "operator" | "subagent" | "agent",
   ): RunEvent => ({
     type: "message.queued",
     seq: ++seq,
@@ -448,7 +448,16 @@ describe("whose queued message it is", () => {
     text,
     ...(source === undefined ? {} : { source }),
   });
-  const injected = (source?: "operator" | "subagent"): RunEvent => ({
+  const fromAgent = (text: string, sender: string): RunEvent => ({
+    type: "message.queued",
+    seq: ++seq,
+    ts: "",
+    message_id: "q1",
+    text,
+    source: "agent",
+    sender,
+  });
+  const injected = (source?: "operator" | "subagent" | "agent"): RunEvent => ({
     type: "message.injected",
     seq: ++seq,
     ts: "",
@@ -470,6 +479,14 @@ describe("whose queued message it is", () => {
     const bubble = h.messages.find((m) => m.queuedMessageId === "q1");
     expect(bubble?.role).toBe("subagent");
     expect(bubble?.content).toBe("explorer: the parser is in lexer.ts");
+  });
+
+  test("another agent's message lands as a subagent row carrying its sender", () => {
+    const h = harness(turn());
+    h.fold(fromAgent("check the lexer", "planner"));
+    const bubble = h.messages.find((m) => m.queuedMessageId === "q1");
+    expect(bubble?.role).toBe("subagent");
+    expect(bubble?.author).toBe("planner");
   });
 
   test("a report never tags an optimistic bubble the operator is waiting on", () => {

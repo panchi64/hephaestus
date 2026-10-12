@@ -48,6 +48,13 @@ export interface Subagent {
   contextWindow: number | null;
   startedAt: string;
   endedAt: string | null;
+  /** The thread this agent was spawned from: the viewed conversation, or another
+   *  card's `conversationId`. */
+  parentConversationId: string;
+  /** 1 for an agent spawned directly by the tree's root thread. */
+  depth: number;
+  /** Whether the operator has opened it as a thread of its own. */
+  opened: boolean;
 }
 
 /** `blocked` is waiting on the operator rather than on the machine, which is the one
@@ -76,6 +83,9 @@ interface SubagentDTO {
   context_window: number | null;
   started_at: string;
   ended_at: string | null;
+  parent_conversation_id: string;
+  depth: number;
+  opened: boolean;
 }
 
 function toSubagent(dto: SubagentDTO): Subagent {
@@ -96,6 +106,9 @@ function toSubagent(dto: SubagentDTO): Subagent {
     contextWindow: dto.context_window,
     startedAt: dto.started_at,
     endedAt: dto.ended_at,
+    parentConversationId: dto.parent_conversation_id,
+    depth: dto.depth,
+    opened: dto.opened,
   };
 }
 
@@ -106,7 +119,7 @@ export interface SubagentsRead {
   ok: boolean;
 }
 
-/** Every sub-agent this thread has launched, newest first. */
+/** Every agent below this thread at any depth, newest first. */
 export async function fetchSubagents(
   conversationId: string,
 ): Promise<SubagentsRead> {
@@ -118,5 +131,33 @@ export async function fetchSubagents(
   } catch (err) {
     console.warn("sub-agents unavailable", err);
     return { subagents: [], ok: false };
+  }
+}
+
+/** Cancel one agent's run. Resolves false when the backend refused it. */
+export async function stopSubagent(runId: string): Promise<boolean> {
+  try {
+    await api.post(`/runs/${runId}/cancel`, {});
+    return true;
+  } catch (err) {
+    console.warn("sub-agent could not be stopped", err);
+    return false;
+  }
+}
+
+/** Open an agent's conversation as a thread of its own; the id to navigate to, or null
+ *  when the backend refused it. */
+export async function openSubagentThread(
+  conversationId: string,
+): Promise<string | null> {
+  try {
+    const res = await api.post<{ id: string; parent_id: string }>(
+      `/conversations/${conversationId}/open`,
+      {},
+    );
+    return res.id;
+  } catch (err) {
+    console.warn("sub-agent could not be opened as a thread", err);
+    return null;
   }
 }

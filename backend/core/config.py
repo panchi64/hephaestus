@@ -128,6 +128,10 @@ class Settings(BaseSettings):
     # fits comfortably, a stuck one does not.
     subagent_wall_clock_timeout_s: float | None = 1080.0
 
+    # How deep a delegation tree may grow: a thread's own agents are depth 1. An agent's
+    # definition may lower it for the agents below it, never raise it.
+    agent_max_depth: int = 3
+
     # Execution sandbox. Agent code/shell runs isolated from the host; when no
     # runtime is available the capability is disabled (fail closed — never a host
     # fallback). `sandbox_runtime` pins docker/podman; None auto-detects.

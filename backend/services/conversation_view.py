@@ -36,7 +36,7 @@ from core.serde import jsonable
 from core.text import chars_to_tokens
 from services.answers import ASK_USER_TOOL, AnsweredQuestion, parse_answer, questions_of
 from services.commands.spec import Invocation
-from services.subagents.report import direction_body, report_body, report_prose
+from services.subagents.report import direction_body, message_body, report_body, report_prose
 
 if TYPE_CHECKING:  # a type, not a dependency — nothing here calls into the run substrate
     from runs import TurnOverhead
@@ -180,6 +180,9 @@ class MessageView:
     # something they have not even read.
     role: str  # "user" | "assistant" | "compaction" | "subagent"
     content: str = ""
+    # On a "subagent" turn that is a message rather than a report, the handle of the agent
+    # that sent it.
+    author: str | None = None
     tools: list[ToolView] = field(default_factory=list)
     timestamp: datetime | None = None
     # The model that produced this assistant turn (the last response's model_name —
@@ -795,6 +798,18 @@ def project_tree(
                 # role of its own would be a new vocabulary word for a distinction the
                 # reader of that transcript cannot act on.
                 direction = None if report is not None else direction_body(text)
+                sent = None if report is not None else message_body(text)
+                if sent is not None:
+                    views.append(
+                        MessageView(
+                            role="subagent",
+                            author=sent[0],
+                            content=sent[1],
+                            timestamp=getattr(part, "timestamp", None),
+                            id=node_id,
+                        )
+                    )
+                    continue
                 body = report if report is not None else direction
                 views.append(
                     MessageView(

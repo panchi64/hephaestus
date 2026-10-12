@@ -35,6 +35,7 @@ import {
 } from "../data";
 import {
   groupSessions,
+  nestingDepth,
   type DirectoryGroup,
   type RecencyGroup,
   type WorkspaceDirectory,
@@ -206,24 +207,33 @@ function SessionRows(props: {
   return (
     <For each={props.sessions}>
       {(s) => (
-        <SessionRow
-          title={s.title}
-          selected={s.id === props.currentId}
-          pinned={isPinned(s.id)}
-          unread={props.unread?.(s.id)}
-          reveal={titleReveals[s.id]}
-          retitling={isRetitling(s.id)}
-          activity={s.activity}
-          lastOutcome={s.lastOutcome}
-          updatedAt={s.updatedAt}
-          onOpen={() => props.onSelect(s.id)}
-          // The thread's id is the menu's key, which is what lets one panel serve the
-          // whole list: it tells the rail which thread to build items for, and tells
-          // the row whether the open menu is its own.
-          onContextMenu={(e) => props.menu.openAt(e, s.id)}
-          menuTrigger={props.menu.triggerProps(s.id)}
-          menuOpen={props.menu.isOpen(s.id)}
-        />
+        <div
+          class={cx(
+            nestingDepth(s, props.sessions) > 0 && "border-l border-line",
+          )}
+          style={{
+            "margin-left": `${nestingDepth(s, props.sessions) * 12}px`,
+          }}
+        >
+          <SessionRow
+            title={s.title}
+            selected={s.id === props.currentId}
+            pinned={isPinned(s.id)}
+            unread={props.unread?.(s.id)}
+            reveal={titleReveals[s.id]}
+            retitling={isRetitling(s.id)}
+            activity={s.activity}
+            lastOutcome={s.lastOutcome}
+            updatedAt={s.updatedAt}
+            onOpen={() => props.onSelect(s.id)}
+            // The thread's id is the menu's key, which is what lets one panel serve the
+            // whole list: it tells the rail which thread to build items for, and tells
+            // the row whether the open menu is its own.
+            onContextMenu={(e) => props.menu.openAt(e, s.id)}
+            menuTrigger={props.menu.triggerProps(s.id)}
+            menuOpen={props.menu.isOpen(s.id)}
+          />
+        </div>
       )}
     </For>
   );

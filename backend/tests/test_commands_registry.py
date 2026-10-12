@@ -202,7 +202,7 @@ class TestExpansion:
     def test_an_agent_command_carries_the_brief_verbatim(self):
         spec = _spec("reviewer", "agent", target="reviewer")
         block = expand(spec, "check the auth path")
-        assert "subagents_launch" in block
+        assert "agents_spawn" in block
         # A sub-agent starts from an empty history, so a brief left implicit in the
         # prompt above describes nothing it can act on.
         assert "check the auth path" in block

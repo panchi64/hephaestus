@@ -9,6 +9,8 @@ report and directions travel in (``report.py``).
 from __future__ import annotations
 
 from services.subagents.launcher import (
+    PARENT_ADDRESS,
+    ROOT_HANDLE,
     LaunchedSubagent,
     SubagentLauncher,
     SubagentParent,
@@ -17,6 +19,8 @@ from services.subagents.launcher import (
 )
 
 __all__ = [
+    "PARENT_ADDRESS",
+    "ROOT_HANDLE",
     "LaunchedSubagent",
     "SubagentLauncher",
     "SubagentParent",

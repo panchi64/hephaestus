@@ -165,7 +165,7 @@ async def submit_turn(
     # passes to the engine for attachments.
     #
     # Hoisted out of the call below because the command catalog needs the disabled set too:
-    # a `/reviewer` is an offer to launch a sub-agent, and where `subagents_launch` has been
+    # a `/reviewer` is an offer to launch a sub-agent, and where `agents_spawn` has been
     # withheld from this run there is nothing to offer. Resolving it twice would let the
     # command the operator picked and the tools the turn actually has disagree.
     scope = await turn_scope(request, conversation_id, vision=models[4])

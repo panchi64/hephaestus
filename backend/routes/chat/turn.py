@@ -209,7 +209,7 @@ def compose_turn(
         # sends — means "this conversation's own", filled in by `RunDeps`. A sub-agent's
         # turn is what passes one: it works in the workspace of the thread that launched
         # it, or in a delegated child of it (`services/workspace.py`).
-        workspace_key=workspace_key,
+        workspace_key=workspace_key or (binding.workspace_key if binding else ""),
     )
     try:
         run = registry.submit(

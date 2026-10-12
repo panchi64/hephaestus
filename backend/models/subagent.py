@@ -39,6 +39,10 @@ class SubagentRecord(SQLModel, table=True):
     #: The thread that launched this one — what the panel queries, and where a report is
     #: delivered when the sub-agent finishes. Indexed because every read is by parent.
     parent_conversation_id: str = Field(index=True)
+    #: The thread at the top of the delegation tree, which bounds who may address whom.
+    root_conversation_id: str = Field(default="", index=True)
+    #: How far below the root thread this agent runs; its direct children are depth 1.
+    depth: int = Field(default=1)
     #: The sub-agent's own (ephemeral) conversation: where its transcript lives.
     child_conversation_id: str = Field(index=True)
     #: Its Run — the live event stream while it works, and the approve endpoint while it

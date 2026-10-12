@@ -99,6 +99,8 @@ class ConversationSummary(BaseModel):
     workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     # The agent the thread runs, by name. Null is the default agent.
     agent_name: str | None = None
+    # The thread that spawned this one, for an agent's thread the operator opened.
+    parent_id: str | None = None
     # The **basename** of the project directory a thread is filed under, and nothing else
     # about it. Null for an unfiled thread, and for one whose project has since been
     # deleted. Deliberately not the path: the rail groups project threads under this, it is
@@ -190,6 +192,8 @@ class MessageOut(BaseModel):
     id: str
     role: str
     content: str
+    # The sending agent's handle, on a message one agent sent another.
+    author: str | None = None
     tools: list[ToolCallOut] = []
     versions: list[ViewVersionRefOut] = []
     created_at: datetime | None = None
@@ -368,6 +372,7 @@ def _summary(
         last_outcome=last_outcome,
         workspace_kind=view.workspace_kind,
         agent_name=view.agent_name,
+        parent_id=view.parent_id,
         workspace=(workspaces or {}).get(view.project_id or ""),
         project_id=view.project_id,
     )
@@ -401,6 +406,7 @@ def _message(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut:
         id=view.id,
         role=view.role,
         content=view.content,
+        author=view.author,
         tools=[
             ToolCallOut(
                 id=t.id,
@@ -664,7 +670,7 @@ _SUBAGENT_STOP_S = 5.0
 
 
 async def _discard_subagents(request: Request, conversation_id: str) -> None:
-    """Stop and forget every sub-agent a thread launched, because the thread is going.
+    """Stop and forget every agent below a thread, at any depth, because the thread is going.
 
     Cancelling first is the half that is not bookkeeping: a sub-agent is a live Run, and
     one whose parent has been deleted goes on making model requests to produce a report
@@ -680,7 +686,7 @@ async def _discard_subagents(request: Request, conversation_id: str) -> None:
     if records is None:
         return  # sub-agents are not wired in this deployment
     try:
-        rows = await records.for_parent(conversation_id, OPERATOR_ID)
+        rows = await records.descendants(conversation_id, OPERATOR_ID)
     except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded
         logger.warning("could not list sub-agents of %s", conversation_id, exc_info=True)
         return
@@ -705,7 +711,7 @@ async def _discard_subagents(request: Request, conversation_id: str) -> None:
         except Exception:  # noqa: BLE001 — one stuck child mustn't strand its siblings
             logger.warning("could not discard sub-agent %s", row.id, exc_info=True)
     try:
-        await records.delete_for_parent(conversation_id, OPERATOR_ID)
+        await records.forget([row.id for row in rows])
     except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded
         logger.warning("could not forget sub-agents of %s", conversation_id, exc_info=True)
 

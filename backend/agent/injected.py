@@ -24,7 +24,7 @@ the only way their writers and their readers cannot drift.
 from __future__ import annotations
 
 from runs import QueuedMessage
-from services.subagents.report import direction_envelope, report_envelope
+from services.subagents.report import message_envelope, report_envelope
 
 
 def injected_text(message: QueuedMessage) -> str:
@@ -37,6 +37,6 @@ def injected_text(message: QueuedMessage) -> str:
     """
     if message.source == "subagent":
         return report_envelope(message.text)
-    if message.source == "parent":
-        return direction_envelope(message.text)
+    if message.source == "agent":
+        return message_envelope(message.sender or "an agent", message.text)
     return message.text

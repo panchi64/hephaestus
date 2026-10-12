@@ -35,6 +35,8 @@ class ConversationBinding:
     tools: ToolAccess = UNRESTRICTED
     #: The furthest that agent may reach, which a level raised mid-turn stays under.
     permission_ceiling: PermissionLevel | None = None
+    #: The workspace its turns work in. Empty is the thread's own.
+    workspace_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -104,3 +106,5 @@ class ConversationSummaryView:
     # host path a listing should ever carry.
     project_id: str | None = None
     agent_name: str | None = None
+    #: The thread that spawned this one, for an opened agent thread.
+    parent_id: str | None = None

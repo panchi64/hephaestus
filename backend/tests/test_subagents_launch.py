@@ -11,8 +11,7 @@ The things worth pinning are the ones that would quietly stop being true:
 - `launch` **returns before the sub-agent finishes**, which is the whole point of the
   change and the one property the blocking version could not have;
 - the sub-agent can never do **more than the thread that launched it**;
-- it **cannot launch sub-agents of its own**, so the depth is one by construction rather
-  than by a counter somebody has to maintain;
+- an agent whose definition may not delegate is **not offered the spawn tool**;
 - its thread is **hidden but real** — no one can type into it, and its transcript is a
   conversation the panel can open by id;
 - it is **registered durably**, because a link held only in memory leaves the operator
@@ -146,7 +145,7 @@ class TestWhatItMayDo:
             # Otherwise one approved launch buys a standing level the operator never chose.
             assert binding.permission == "manual"
 
-    async def test_it_cannot_launch_subagents_of_its_own(self, monkeypatch):
+    async def test_an_agent_that_may_not_delegate_is_not_offered_spawning(self, monkeypatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             composed = _capture_composition(monkeypatch)
@@ -156,9 +155,8 @@ class TestWhatItMayDo:
             )
             await _settle(app, started.run_id)
 
-            # Depth is one by construction. A tree of agents is unbounded cost and
-            # unbounded blast radius, and nothing about the work needs one.
-            assert "subagents_launch" in composed["disabled_tools"]
+            assert not EXPLORER.can_delegate
+            assert "agents_spawn" in composed["disabled_tools"]
 
     async def test_it_runs_in_the_lane_for_work_the_agent_opened_for_itself(self, monkeypatch):
         async with client_app() as (_client, app):
@@ -184,12 +182,11 @@ class TestWhatItMayDo:
                 name="impossible",
                 description="needs something that is not there",
                 instructions="do the thing",
-                required=frozenset({"subagents_launch"}),
+                required=frozenset({"agents_spawn"}),
             )
-            # `subagents_launch` is withheld from every sub-agent, so this can never be
-            # satisfied — and a sub-agent that ran anyway would answer from model memory
-            # and read, to everything downstream, exactly as though it had done the work.
-            with pytest.raises(SubagentUnavailableError, match="subagents_launch"):
+            # It may not delegate, so `agents_spawn` is withheld from it — and an agent that
+            # ran anyway would answer from model memory as though it had done the work.
+            with pytest.raises(SubagentUnavailableError, match="agents_spawn"):
                 await _launcher(app).launch("operator", impossible, "go", handle="the-impossible")
 
 
@@ -361,7 +358,7 @@ class TestTheRegister:
             )
             await _settle(app, started.run_id)
 
-            rows = await _records(app).for_parent("parent-1", "operator")
+            rows = await _records(app).descendants("parent-1", "operator")
             assert [row.child_conversation_id for row in rows] == [started.conversation_id]
             # The link is what a restart would otherwise lose, leaving the operator with a
             # transcript nothing can name.
@@ -378,6 +375,8 @@ class TestTheRegister:
                 subagent_id=subagent_id,
                 owner_id="operator",
                 parent_conversation_id="parent-1",
+                root_conversation_id="parent-1",
+                depth=1,
                 child_conversation_id="child-1",
                 run_id="gone-with-the-process",
                 parent_run_id=None,
@@ -477,7 +476,7 @@ class TestTheCap:
 
             # Checked before anything exists, so a refusal leaves no hidden conversation,
             # no row and no forked workspace behind for the operator to wonder about.
-            rows = await _records(app).for_parent("parent-cap", "operator")
+            rows = await _records(app).descendants("parent-cap", "operator")
             assert len(rows) == 1
             await _settle(app, first.run_id)
 

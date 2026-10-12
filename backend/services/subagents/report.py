@@ -54,10 +54,14 @@ logger = logging.getLogger(__name__)
 REPORT_OPEN = "<subagent-report>"
 REPORT_CLOSE = "</subagent-report>"
 
-#: The same pair for the message travelling the other way down the link — the launching
-#: agent redirecting a sub-agent that is still working.
+#: The pair a launching agent's redirection was framed in before agents messaged each
+#: other. Still read, so older transcripts render.
 DIRECTION_OPEN = "<subagent-direction>"
 DIRECTION_CLOSE = "</subagent-direction>"
+
+#: The pair a message between two agents of one delegation tree travels in.
+MESSAGE_OPEN = "<agent-message>"
+MESSAGE_CLOSE = "</agent-message>"
 
 #: Said to the model, not to the operator. Deliberately explicit that they have not seen
 #: this — a model that thanked them for the finding would be the first sign it had gone
@@ -87,8 +91,17 @@ def _header(opener: str, preamble: str) -> str:
     return f"{opener}\n{preamble}\n\n"
 
 
+_MESSAGE_PREAMBLE = (
+    "Another agent in your delegation tree sent you this. It is not from the operator. "
+    "Weigh it against your task, which it may amend if it comes from the agent that "
+    "spawned you. To answer, send a message back with `agents_message`."
+)
+
 _REPORT_HEADER = _header(REPORT_OPEN, _REPORT_PREAMBLE)
 _DIRECTION_HEADER = _header(DIRECTION_OPEN, _DIRECTION_PREAMBLE)
+_MESSAGE_HEADER = _header(MESSAGE_OPEN, _MESSAGE_PREAMBLE)
+
+_SENDER_LINE = re.compile(r"From `(?P<sender>[^`\n]+)`:\n")
 
 
 def _wrap(header: str, closer: str, text: str) -> str:
@@ -112,14 +125,25 @@ def report_body(text: str) -> str | None:
     return _unwrap(_REPORT_HEADER, REPORT_CLOSE, text)
 
 
-def direction_envelope(text: str) -> str:
-    """A launching agent's mid-flight redirection, framed as one."""
-    return _wrap(_DIRECTION_HEADER, DIRECTION_CLOSE, text)
-
-
 def direction_body(text: str) -> str | None:
     """The direction inside an envelope, or ``None`` when this is not one."""
     return _unwrap(_DIRECTION_HEADER, DIRECTION_CLOSE, text)
+
+
+def message_envelope(sender: str, text: str) -> str:
+    """A message from the agent ``sender`` names, framed as one."""
+    return _wrap(_MESSAGE_HEADER, MESSAGE_CLOSE, f"From `{sender}`:\n{text.strip()}")
+
+
+def message_body(text: str) -> tuple[str, str] | None:
+    """The sender and text inside a message envelope, or ``None`` when this is not one."""
+    body = _unwrap(_MESSAGE_HEADER, MESSAGE_CLOSE, text)
+    if body is None:
+        return None
+    match = _SENDER_LINE.match(body)
+    if match is None:
+        return None
+    return match.group("sender"), body[match.end() :].strip()
 
 
 # --- The report's structured half --------------------------------------------------

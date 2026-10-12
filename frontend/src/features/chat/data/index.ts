@@ -63,6 +63,8 @@ export {
 export {
   fetchSubagents,
   isLive,
+  openSubagentThread,
+  stopSubagent,
   type Subagent,
   type SubagentsRead,
   type SubagentStatus,

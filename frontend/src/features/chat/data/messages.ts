@@ -124,6 +124,7 @@ export function toMessage(dto: MessageDTO): ChatMessage {
   const base: ChatMessage = {
     id: dto.id,
     role: dto.role,
+    author: dto.author ?? undefined,
     content: dto.content,
     createdAt: dto.created_at ?? new Date().toISOString(),
     versionIndex: dto.version_index,

@@ -12,7 +12,7 @@ typed.
 
 **Availability is decided here, never in the picker.** Three things narrow the catalog and
 all three are facts only the backend holds: a sub-agent command is pointless where
-``subagents_launch`` has been withheld (the operator's own switch, offline mode —
+``agents_spawn`` has been withheld (the operator's own switch, offline mode —
 ``services/tool_policy`` unions them), an action that acts on a conversation is pointless
 in a composer that has none, and a project-declared command is pointless outside the
 project's files. A client that filtered any of these would be deciding, and it
@@ -49,7 +49,7 @@ from .store import CommandStore
 
 #: The tool a sub-agent command exists to ask for. Withheld — by the operator's switch, by
 #: offline mode — and the command is an offer the turn cannot honour.
-LAUNCH_TOOL = "subagents_launch"
+LAUNCH_TOOL = "agents_spawn"
 
 #: How the picker groups what it is given, in the order the headings appear. The labels
 #: live here rather than in the client for the same reason the filtering does: a source
