@@ -1,7 +1,7 @@
 import { Show, children, createSignal, type JSX } from "solid-js";
 import { cx } from "../../cx";
 import { useFileDrop } from "../../primitives/useFileDrop";
-import { StatusBar, StatusCell } from "../StatusBar";
+import { StatusBar } from "../StatusBar";
 import { ComposerActions } from "./ComposerActions";
 import {
   AttachButton,
@@ -90,17 +90,17 @@ export function Composer(props: ComposerProps): JSX.Element {
 
   const hasDraft = () => Boolean(text().trim());
 
-  // The key hint, in the strip rather than on the button alone: Enter is a newline
-  // here, and that is the rule a newcomer would otherwise learn by sending half a
-  // message. While a run streams the same chord queues; a field that is off says
+  // The key hint, in the empty field rather than on the button alone: Enter is a
+  // newline here, and that is the rule a newcomer would otherwise learn by sending half
+  // a message. While a run streams the same chord queues; a field that is off says
   // nothing about keys it does not take.
   const keyHint = () =>
     recalling() || props.disabled
       ? undefined
       : `↵ new line · ${SEND_CHORD} ${props.streaming ? "queue" : "send"}`;
 
-  // `+`, then the caller's two groups, as the unit's receded strip — with the key hint
-  // and the commit keys at its end, so the strip is always drawn: Send lives there.
+  // `+`, then the caller's two groups, as the unit's receded strip — with the commit
+  // keys at its end, so the strip is always drawn: Send lives there.
   // Each slot resolved once, for the same reason as the header's.
   const controls = children(() => props.controls);
   const trailing = children(() => props.trailing);
@@ -111,7 +111,7 @@ export function Composer(props: ComposerProps): JSX.Element {
      frame holding, top to bottom, the plate (what the thread is doing), the field
      (the full width — nothing sits beside it, so it never wraps around a button),
      the attachment chips, and the receded strip: `+`, the caller's pickers, then
-     the key hint, the caller's thread state and the commit keys. Only padding
+     the caller's thread state and the commit keys. Only padding
      differs between the sizes.
 
      The unit is marked as the point of action AT REST, not on hover or focus (§6):
@@ -193,6 +193,7 @@ export function Composer(props: ComposerProps): JSX.Element {
         onCaret={menuCtl.sync}
         onBlur={menuCtl.dismiss}
         onPaste={props.attachments ? drop.pasteHandlers.onPaste : undefined}
+        hint={keyHint()}
       />
       <AttachmentChips
         attachments={props.attachments}
@@ -203,6 +204,7 @@ export function Composer(props: ComposerProps): JSX.Element {
       <UploadNote failed={send.uploadFailed()} lg={lg()} />
       <StatusBar
         variant="recede"
+        nowrap
         start={
           <>
             <AttachButton
@@ -217,13 +219,6 @@ export function Composer(props: ComposerProps): JSX.Element {
         }
         end={
           <>
-            <Show when={keyHint()}>
-              {(hint) => (
-                <StatusCell class="max-sm:hidden" aria-hidden="true">
-                  {hint()}
-                </StatusCell>
-              )}
-            </Show>
             {trailing()}
             <ComposerActions
               recalling={recalling()}

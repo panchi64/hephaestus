@@ -1,5 +1,6 @@
 import { For, Show, type JSX } from "solid-js";
 import { cx } from "../../cx";
+import { Text } from "../../primitives/Text";
 import { useAutosize } from "../../primitives/useAutosize";
 import { tokenSpans, type ComposerTrigger } from "./composerToken";
 
@@ -47,6 +48,8 @@ export interface ComposerFieldProps {
   onCaret: () => void;
   onBlur: () => void;
   onPaste: ((e: ClipboardEvent) => void) | undefined;
+  /** The key hint, shown at the field's right edge while it is empty. */
+  hint?: string;
 }
 
 /**
@@ -197,6 +200,21 @@ export function ComposerField(props: ComposerFieldProps): JSX.Element {
             "relative bg-transparent text-transparent caret-bright",
         )}
       />
+      <Show when={props.hint && !props.value ? props.hint : undefined}>
+        {(hint) => (
+          <Text
+            variant="micro"
+            tone="dim"
+            aria-hidden="true"
+            class={cx(
+              "pointer-events-none absolute top-1/2 -translate-y-1/2 whitespace-nowrap max-sm:hidden",
+              props.lg ? "right-4" : "right-3",
+            )}
+          >
+            {hint()}
+          </Text>
+        )}
+      </Show>
     </div>
   );
 }

@@ -45,6 +45,9 @@ export interface StatusBarProps {
    *  *behind* what it serves (the composer's, the rail's). Its rules are `line`
    *  hairlines rather than `line-strong`, and `block` draws one above and below. */
   variant?: "ruled" | "recede";
+  /** Keep the bar to one row: cells that can shrink (a truncating picker) give way
+   *  instead of the row wrapping. */
+  nowrap?: boolean;
   class?: string;
 }
 
@@ -71,8 +74,10 @@ export function StatusBar(props: StatusBarProps): JSX.Element {
     "end",
     "edge",
     "variant",
+    "nowrap",
     "class",
   ]);
+  const wrap = () => (local.nowrap ? "flex-nowrap" : "flex-wrap");
   const recede = () => local.variant === "recede";
   const rule = () => (recede() ? "border-line" : "border-line-strong");
   const edgeClass = () =>
@@ -95,7 +100,8 @@ export function StatusBar(props: StatusBarProps): JSX.Element {
     <Show when={hasStart() || hasEnd()}>
       <div
         class={cx(
-          "flex flex-wrap items-stretch justify-between text-text",
+          "flex items-stretch justify-between text-text",
+          wrap(),
           edgeClass(),
           rule(),
           recede() && "ody-status-recede",
@@ -108,7 +114,8 @@ export function StatusBar(props: StatusBarProps): JSX.Element {
         <Show when={hasStart()}>
           <div
             class={cx(
-              "flex min-w-0 flex-wrap items-stretch",
+              "flex min-w-0 items-stretch",
+              wrap(),
               recede() ? "flex-1" : "[&>*]:border-r [&>*]:border-line",
             )}
           >
@@ -118,7 +125,9 @@ export function StatusBar(props: StatusBarProps): JSX.Element {
         <Show when={hasEnd()}>
           <div
             class={cx(
-              "ml-auto flex min-w-0 flex-wrap items-stretch justify-end",
+              "ml-auto flex min-w-0 items-stretch justify-end",
+              wrap(),
+              local.nowrap && "shrink-0",
               !recede() && "[&>*]:border-l [&>*]:border-line",
             )}
           >
