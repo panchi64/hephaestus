@@ -20,6 +20,7 @@ import importlib
 import pkgutil
 from pathlib import Path
 
+from services.plugins import PluginRuntime
 from services.sandbox import SandboxSessionManager
 from services.vm.project import ProjectCopies
 from tests._helpers import client_app
@@ -34,6 +35,7 @@ _CONDITIONAL = {
     SandboxSessionManager,
     # Added only when the platform VM is enabled; tests run vm_enabled=False.
     ProjectCopies,
+    PluginRuntime,
 }
 
 

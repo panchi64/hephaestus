@@ -1,0 +1,43 @@
+"""Shared setup for the plugin tests: a plugin bundle and a store on an in-memory database."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from core.db import init_db, make_engine
+from core.vault import Vault
+from services.plugins import PluginStore
+from services.revisions import RevisionStore
+
+OWNER = "operator"
+
+MANIFEST = """\
+name: weather
+description: Forecasts.
+requirements: [httpx]
+egress: [api.example.com]
+secrets: {API_KEY: api.example.com}
+tools:
+  - name: forecast
+    description: The forecast for a city.
+    entry: weather:forecast
+    sensitivity: read
+    parameters:
+      type: object
+      properties: {city: {type: string}}
+      required: [city]
+"""
+
+CODE = "def forecast(city):\n    return {'city': city, 'sky': 'clear'}\n"
+
+
+def bundle(manifest: str = MANIFEST, code: str = CODE) -> dict[str, bytes]:
+    return {"plugin.yaml": manifest.encode(), "weather.py": code.encode()}
+
+
+async def make_store(tmp_path: Path) -> PluginStore:
+    engine = make_engine("sqlite:///:memory:")
+    init_db(engine)
+    vault = Vault(tmp_path / "keyfile.json")
+    await vault.setup("pw")
+    return PluginStore(engine, vault, RevisionStore(engine, vault))

@@ -149,6 +149,9 @@ _PINNED_CATALOG = {
     "plan_submit",
     "platform_read",
     "platform_search",
+    "plugins_read",
+    "plugins_test",
+    "plugins_write",
     "project_active",
     "project_list",
     "project_open_worktree",
@@ -192,6 +195,7 @@ async def test_booted_app_assembles_the_same_catalog():
             "shell_run_command",
             "shell_start_command",
             "agents_spawn",
+            "plugins_test",
         }
         # ...and every one of them is a real, registered tool, so the operator's scope
         # list can actually offer it.

@@ -25,6 +25,7 @@ from core.citations import Citation
 from core.untrusted import new_nonce, unfence, untrusted_fence, untrusted_preamble
 from services import ranking
 from services.corpus import CorpusHit, CorpusIndex
+from services.plugins import PluginStore
 from services.projects import visible_project_ids
 from services.recall_index import rank_texts
 from services.skills import SkillStore
@@ -34,7 +35,15 @@ from .project_agents import run_catalog
 from .recall_gate import gate_global_recall
 
 Source = Literal[
-    "conversations", "memory", "files", "summaries", "reports", "routines", "skills", "agents"
+    "conversations",
+    "memory",
+    "files",
+    "summaries",
+    "reports",
+    "routines",
+    "skills",
+    "agents",
+    "plugins",
 ]
 
 _CORPUS_KINDS: dict[str, tuple[str, ...]] = {
@@ -54,7 +63,9 @@ _SOURCE_OF_SURFACE = {
 }
 #: Surfaces keyed by conversation id, which never return the caller's own thread.
 _THREAD_SURFACES = frozenset({"surf-conversations", "surf-summaries"})
-_UNGATED: frozenset[str] = frozenset({"memory", "skills", "agents"})
+#: Sources answered from a catalog of what the operator published, not from the corpus.
+_CATALOGS: frozenset[str] = frozenset({"skills", "agents", "plugins"})
+_UNGATED: frozenset[str] = frozenset({"memory"}) | _CATALOGS
 _ALL: tuple[Source, ...] = (
     "conversations",
     "memory",
@@ -64,6 +75,7 @@ _ALL: tuple[Source, ...] = (
     "routines",
     "skills",
     "agents",
+    "plugins",
 )
 #: Characters of one item ``platform_read`` returns before cutting it short.
 READ_LIMIT = 40_000
@@ -96,7 +108,7 @@ class PlatformResults:
                 engagement="listed",
             )
             for hit in self.hits
-            if hit.source not in ("skills", "agents")
+            if hit.source not in _CATALOGS
         ]
 
 
@@ -109,7 +121,7 @@ class PlatformDocument:
     at: str | None = None
 
     def citations(self) -> list[Citation]:
-        if self.ref.startswith(("skill:", "agent:")):
+        if self.ref.startswith(("skill:", "agent:", "plugin:")):
             return []
         source_id, _, ref = self.ref.partition(":")
         return [
@@ -156,7 +168,8 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         limit: int = 8,
     ) -> PlatformResults | str:
         """Search everything outside this conversation: other conversations, memory,
-        files and uploads, work summaries, agent reports, routine outputs, skills, agents.
+        files and uploads, work summaries, agent reports, routine outputs, skills, agents,
+        plugins.
 
         Use it before saying you don't know, or asking what the operator may have told
         you before. ``since`` is an ISO date. Open a hit's ``ref`` with
@@ -171,7 +184,7 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
 
         kinds = [kind for source in chosen for kind in _CORPUS_KINDS.get(source, ())]
         index = deps.caps.get_optional(CorpusIndex)
-        if kinds and index is None and not {"skills", "agents"} & set(chosen):
+        if kinds and index is None and not _CATALOGS & set(chosen):
             return "Platform search is unavailable."
         if kinds and index is not None:
             hits = await index.retrieve(
@@ -201,12 +214,14 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
             lists.append(await _skill_hits(ctx, tokens))
         if "agents" in chosen and after is None:
             lists.append(await _agent_hits(ctx, tokens))
+        if "plugins" in chosen and after is None:
+            lists.append(await _plugin_hits(ctx, tokens))
 
         by_ref = {hit.ref: hit for hits in lists for hit in hits}
         fused = ranking.rrf_lists([[hit.ref for hit in hits] for hits in lists])
         ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
         found = [by_ref[ref] for ref, _ in ranked]
-        fenced = any(hit.source not in ("skills", "agents") for hit in found)
+        fenced = any(hit.source not in _CATALOGS for hit in found)
         return PlatformResults(instruction=untrusted_preamble(nonce) if fenced else "", hits=found)
 
     @toolset.tool
@@ -217,6 +232,11 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         if kind == "skill":
             return (
                 f"`{name}` is a skill. Call `skills_open` with that name to load its instructions."
+            )
+        if kind == "plugin":
+            return (
+                f"`{name}` is a plugin. Load its tools with `search_tools` for the `plugins` "
+                f"group; they are named `plugins_{name}_<tool>`."
             )
         if kind == "agent":
             agent = (await run_catalog(ctx)).get(name)
@@ -288,6 +308,36 @@ async def _agent_hits(ctx: RunContext[RunDeps], tokens: set[str]) -> list[Platfo
             source="agents",
             title=name,
             excerpt=roster[name].description,
+            at=None,
+            matched_by="keyword",
+        )
+        for name, _ in ranked
+    ]
+
+
+async def _plugin_hits(ctx: RunContext[RunDeps], tokens: set[str]) -> list[PlatformHit]:
+    store = ctx.deps.caps.get_optional(PluginStore)
+    if store is None:
+        return []
+    manifests = {
+        view.name: view.active
+        for view, _files in await store.published(ctx.deps.owner_id)
+        if view.active is not None
+    }
+    ranked = rank_texts(
+        {
+            name: " ".join([name, m.description, *(t.description for t in m.tools)])
+            for name, m in manifests.items()
+        },
+        tokens,
+    )
+    return [
+        PlatformHit(
+            ref=f"plugin:{name}",
+            source="plugins",
+            title=name,
+            excerpt=f"{manifests[name].description} Tools: "
+            + ", ".join(f"plugins_{name}_{tool.name}" for tool in manifests[name].tools),
             at=None,
             matched_by="keyword",
         )

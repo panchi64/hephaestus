@@ -6,7 +6,8 @@ read-only, its own workspace at ``/work``, and nothing of any other workspace, t
 platform services, or the relay's pool port. Its only network is the egress proxy that
 ``enter.py`` puts on its loopback. Where the guest has cgroup v2, a workspace's commands
 share one cgroup, capped at its memory, CPU and process limits as far as the guest's
-controllers allow.
+controllers allow. A plugin's call also sees that plugin version's directory at
+``/plugin``, read-only except while its packages install.
 
 ``run`` waits and exits with the command's status (124 on a timeout); ``start`` runs it
 as a named background job, whose output, process and exit status are files under
@@ -27,6 +28,7 @@ import subprocess
 import sys
 
 _KEY = re.compile(r"^[A-Za-z0-9_.-]{1,200}$")
+_PLUGIN = re.compile(r"^[a-z][a-z0-9_]{0,39}/[0-9a-f]{16,64}$")
 _PATH = "/usr/local/bin:/usr/bin:/bin"
 _CA_STORE = "/etc/ssl/certs/ca-certificates.crt"
 _TIMEOUT_EXIT = 124
@@ -41,6 +43,7 @@ def _layout(root: str) -> dict[str, str]:
         "previews": os.path.join(run, "previews"),
         "jobs": os.path.join(run, "jobs"),
         "enter": os.path.join(root, "opt/odysseus/enter.py"),
+        "plugins": os.path.join(root, "plugins"),
     }
 
 
@@ -109,6 +112,9 @@ def _bwrap(args: argparse.Namespace, paths: dict[str, str]) -> list[str]:
         argv += ["--bind", preview, "/run/preview"]
     if args.cwd_file:
         argv += ["--bind", args.cwd_file, "/run/cwd"]
+    if args.plugin:
+        bind = "--bind" if args.plugin_writable else "--ro-bind"
+        argv += [bind, _plugin_dir(args, paths), "/plugin"]
     env = {
         "PATH": _PATH,
         "HOME": "/work",
@@ -151,11 +157,22 @@ def _drop(uid: int) -> list[str]:
     ]
 
 
+def _plugin_dir(args: argparse.Namespace, paths: dict[str, str]) -> str:
+    """A plugin version's directory: its files and its virtualenv, bound at ``/plugin``."""
+    if not _PLUGIN.match(args.plugin):
+        raise SystemExit("not a plugin version")
+    return os.path.join(paths["plugins"], args.plugin)
+
+
 def _prepare(args: argparse.Namespace, paths: dict[str, str]) -> None:
     workspace = os.path.join(paths["work"], args.key)
     os.makedirs(workspace, exist_ok=True)
     os.chown(workspace, args.uid, args.uid)
     os.chmod(workspace, 0o700)
+    if args.plugin and args.plugin_writable:
+        plugin = _plugin_dir(args, paths)
+        os.makedirs(plugin, exist_ok=True)
+        os.chown(plugin, args.uid, args.uid)
     if args.cwd_file:
         with open(args.cwd_file, "a"):
             pass
@@ -401,6 +418,8 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=1 << 20)
     # A file the command may write its final working directory to, as /run/cwd.
     parser.add_argument("--cwd-file", default="")
+    parser.add_argument("--plugin", default="")
+    parser.add_argument("--plugin-writable", action="store_true")
     own, command = _split(sys.argv[1:])
     args = parser.parse_args(own)
     args.argv = command

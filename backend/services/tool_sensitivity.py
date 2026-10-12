@@ -141,6 +141,7 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "plan_read",
             "platform_read",
             "platform_search",
+            "plugins_read",
             "project_active",
             "project_list",
             "repo_inventory_agent_context",
@@ -186,6 +187,8 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # Stopping agents this thread spawned. Nothing new runs; the reach is that of
             # the spawn that was already allowed.
             "agents_stop",
+            # A plugin an agent writes is a draft: it runs only through `plugins_test`.
+            "plugins_write",
             "skills_create",
             "skills_edit",
             "tasks_update_statuses",
@@ -208,6 +211,8 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # and the shell in the VM or, declared `host`, on that machine.
             "code_execute",
             "code_run_host_command",
+            # Runs a plugin draft's code in the platform VM.
+            "plugins_test",
             "shell_run_command",
             "shell_start_command",
             # A spawned agent's whole catalog, reached through one call. Its worst case is

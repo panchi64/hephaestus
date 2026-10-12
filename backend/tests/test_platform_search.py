@@ -24,11 +24,13 @@ from services.corpus import (
 )
 from services.corpus.chunk_store import _stitch
 from services.memory import MemoryStore
+from services.plugins import PluginStore
 from services.registry import ModelRegistry
 from services.skills import SkillStore
 from tools.deps import RunDeps
 from tools.platform import platform_toolset
 
+from ._plugin_helpers import bundle
 from .test_conversation_search import DegradedEmbedder, _record, _setup
 
 OWNER = "operator"
@@ -41,13 +43,14 @@ class _Ctx:
 
 
 class Platform:
-    def __init__(self, engine, vault, store, index, memory, skills) -> None:
+    def __init__(self, engine, vault, store, index, memory, skills, plugins) -> None:
         self.engine = engine
         self.vault = vault
         self.store = store
         self.index = index
         self.memory = memory
         self.skills = skills
+        self.plugins = plugins
         self.tools = platform_toolset().tools
 
     def ctx(self, conversation_id: str | None = "current") -> _Ctx:
@@ -57,7 +60,7 @@ class Platform:
                 run=run,
                 owner_id=OWNER,
                 conversation_id=conversation_id,
-                caps=ServiceContainer.of(self.index, self.skills),
+                caps=ServiceContainer.of(self.index, self.skills, self.plugins),
             )
         )
 
@@ -81,7 +84,9 @@ async def platform():
     index.register(ConversationAdapter(search))
     for adapter in record_adapters(engine, vault):
         index.register(adapter)
-    yield Platform(engine, vault, store, index, memory, SkillStore(engine, vault))
+    yield Platform(
+        engine, vault, store, index, memory, SkillStore(engine, vault), PluginStore(engine, vault)
+    )
     await store.stop()
 
 
@@ -197,6 +202,17 @@ async def test_the_catalogs_are_searched_by_description(platform):
     assert "agent:researcher" in _refs(agents)
     document = await platform.read("agent:researcher")
     assert document.title == "researcher"
+
+
+async def test_published_plugins_are_searched_by_their_tools(platform):
+    view = await platform.plugins.write_draft(OWNER, "weather", bundle(), source="agent")
+    assert _refs(await platform.search("forecast", sources=["plugins"])) == []
+
+    await platform.plugins.publish(OWNER, view.id)
+    results = await platform.search("forecast", sources=["plugins"])
+    assert _refs(results) == ["plugin:weather"]
+    assert "plugins_weather_forecast" in results.hits[0].excerpt
+    assert "search_tools" in await platform.read("plugin:weather")
 
 
 async def test_a_file_reads_back_whole(platform, tmp_path: Path):

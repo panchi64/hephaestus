@@ -39,6 +39,7 @@ from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 
 from .driver import ExecResult, VMDriver, VMError
 from .egress import EgressGateway
+from .intercept import Interceptor
 from .sync import Changes, Manifest, pack, parse_manifest, unpack
 from .tunnel import EgressTunnel, PreviewPort
 
@@ -74,6 +75,9 @@ class GuestLayout:
     def xfer(self) -> str:
         return self.path("run/odysseus/xfer")
 
+    def plugin(self, version: str) -> str:
+        return self.path("plugins", version)
+
     def work(self, key: str) -> str:
         return self.path("work", key)
 
@@ -87,6 +91,8 @@ class GuestLayout:
 #: what actually ends it.
 _EXEC_GRACE_S = 15.0
 _ADMIN_TIMEOUT_S = 120.0
+_RELAY_START_S = 30.0
+_RELAY_POLL_S = 0.1
 #: Guest calls in flight at once, across every caller.
 _CONCURRENCY = 8
 
@@ -138,7 +144,7 @@ class PlatformVM:
         self.limits = limits or WorkspaceLimits()
         self._enabled = enabled
         self._transfer_max_bytes = transfer_max_bytes
-        self.gateway = EgressGateway()
+        self.gateway = EgressGateway(Interceptor())
         self._tunnel: EgressTunnel | None = None
         self._pool_port: int | None = None
         self._mux_port: int | None = None
@@ -205,6 +211,8 @@ class PlatformVM:
             self._bring_up_task = None
         async with self._lock:
             await self._take_down()
+        if self.gateway.interceptor is not None:
+            await self.gateway.interceptor.close()
 
     async def reset(self) -> None:
         """Rebuild the VM from the clean image. Every guest copy of a workspace is lost
@@ -233,6 +241,7 @@ class PlatformVM:
                         f"> {lay.run_dir}/relay.log 2>&1 &",
                     ]
                 )
+                await self._wait_for_relay()
                 self._pool_port = await self._driver.forward(lay.pool_port)
                 self._mux_port = await self._driver.forward(lay.mux_port)
                 self._tunnel = EgressTunnel(self.gateway, self._connect_pool)
@@ -249,6 +258,24 @@ class PlatformVM:
                 task = asyncio.create_task(hook())
                 self._hook_tasks.add(task)
                 task.add_done_callback(self._hook_tasks.discard)
+
+    async def _wait_for_relay(self) -> None:
+        """Until the relay is listening: a command started before it would find no egress
+        socket to bind."""
+        log = f"{self.layout.run_dir}/relay.log"
+        deadline = asyncio.get_running_loop().time() + _RELAY_START_S
+        while True:
+            ready = await self._driver.exec(
+                ["grep", "-q", "RELAY-READY", log], timeout_s=_ADMIN_TIMEOUT_S
+            )
+            if ready.exit_code == 0:
+                return
+            if asyncio.get_running_loop().time() > deadline:
+                tail = await self._driver.exec(
+                    ["tail", "-c", "1000", log], timeout_s=_ADMIN_TIMEOUT_S
+                )
+                raise VMError(f"the platform VM's relay did not start: {tail.stdout.strip()}")
+            await asyncio.sleep(_RELAY_POLL_S)
 
     async def _take_down(self) -> None:
         self._ready.clear()
@@ -336,8 +363,11 @@ class PlatformVM:
         timeout_s: float,
         stdin: str | None = None,
         workdir: str = "",
+        plugin: str = "",
+        plugin_writable: bool = False,
     ) -> ExecResult:
-        """Run the agent's command confined to workspace ``key``. Exit 124 is a timeout."""
+        """Run the agent's command confined to workspace ``key``, with plugin version
+        ``plugin`` (``name/digest``) at ``/plugin`` when given. Exit 124 is a timeout."""
         self._require()
         stdin_path = ""
         if stdin is not None:
@@ -358,6 +388,8 @@ class PlatformVM:
                     str(timeout_s),
                     *(["--stdin", stdin_path] if stdin_path else []),
                     *(["--workdir", workdir] if workdir else []),
+                    *(["--plugin", plugin] if plugin else []),
+                    *(["--plugin-writable"] if plugin_writable else []),
                     *self.limits.flags(),
                     *_env_flags(env),
                     "--",

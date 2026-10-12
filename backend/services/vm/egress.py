@@ -24,11 +24,16 @@ import ipaddress
 import logging
 import secrets
 import socket
-from collections.abc import Iterable
+import ssl
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from core.ssrf import is_blocked
+
+if TYPE_CHECKING:
+    from services.vm.intercept import Interceptor, Secret
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +47,7 @@ DENIED_MARKER = "odysseus-egress: denied"
 #: The most of a request head the proxy holds before answering. What sends it is code the
 #: agent wrote, so an endless head is refused rather than buffered.
 _MAX_HEAD_BYTES = 64 * 1024
-_HEAD_TIMEOUT_S = 30.0
+HEAD_TIMEOUT_S = 30.0
 
 
 def parse_allowlist(text: str) -> tuple[str, ...]:
@@ -103,18 +108,35 @@ class Allowlist:
         return allowed(host, self.domains())
 
 
+@dataclass(frozen=True)
+class Grant:
+    """What one set of workspace credentials reaches, and the secrets sent for it."""
+
+    allowlist: Policy
+    secrets: tuple[Secret, ...] = ()
+
+    def permits(self, host: str) -> bool:
+        return self.allowlist.permits(host)
+
+    def secrets_for(self, host: str) -> tuple[Secret, ...]:
+        name = host.strip().rstrip(".").lower()
+        return tuple(secret for secret in self.secrets if secret.host == name)
+
+
 class EgressGateway:
     """Serves tunnelled connections, deciding each by its channel and credentials."""
 
-    def __init__(self) -> None:
-        self._grants: dict[str, Allowlist] = {}
+    def __init__(self, interceptor: Interceptor | None = None) -> None:
+        self._grants: dict[str, Grant] = {}
         self._standing: dict[Path, str] = {}
-        self._public = PublicPolicy()
+        self._public = Grant(PublicPolicy())
+        self.interceptor = interceptor
 
-    def grant(self, allow_dir: Path) -> str:
-        """Proxy credentials (``user:password``) that reach what ``allow_dir`` allows."""
+    def grant(self, allow_dir: Path, secrets_: Sequence[Secret] = ()) -> str:
+        """Proxy credentials (``user:password``) that reach what ``allow_dir`` allows,
+        with ``secrets_`` put into HTTPS requests to their hosts."""
         token = secrets.token_urlsafe(24)
-        self._grants[token] = Allowlist(allow_dir)
+        self._grants[token] = Grant(Allowlist(allow_dir), tuple(secrets_))
         return f"workspace:{token}"
 
     def credentials_for(self, allow_dir: Path) -> str:
@@ -132,15 +154,15 @@ class EgressGateway:
         self, channel: bytes, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         try:
-            request = await asyncio.wait_for(_read_head(reader), _HEAD_TIMEOUT_S)
+            request = await asyncio.wait_for(read_head(reader), HEAD_TIMEOUT_S)
             if request is None:
                 await _respond(writer, "431 Request Header Fields Too Large")
                 return
             if not request.line:
                 writer.close()
                 return
-            policy = self._policy(channel, request)
-            if policy is None:
+            grant = self._grant(channel, request)
+            if grant is None:
                 await _respond(
                     writer,
                     "407 Proxy Authentication Required",
@@ -148,18 +170,43 @@ class EgressGateway:
                     extra='Proxy-Authenticate: Basic realm="odysseus"\r\n',
                 )
                 return
-            await _dispatch(request, policy, reader, writer)
+            await self._dispatch(request, grant, reader, writer)
         except Exception:  # one bad client must never stop the gateway
             logger.debug("egress: a tunnelled connection failed", exc_info=True)
             _close(writer)
 
-    def _policy(self, channel: bytes, request: _Request) -> Policy | None:
+    def _grant(self, channel: bytes, request: _Request) -> Grant | None:
         if channel == PLATFORM:
             return self._public
         if channel != WORKSPACE:
             return None
         token = _basic_password(request.header(b"proxy-authorization"))
         return self._grants.get(token or "")
+
+    async def _dispatch(
+        self,
+        request: _Request,
+        grant: Grant,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        parts = request.line.decode("latin-1").split()
+        if len(parts) != 3:
+            await _respond(writer, "400 Bad Request")
+            return
+        method, target, version = parts
+        if method.upper() != "CONNECT":
+            await _forward(method, target, version, request.headers, grant, reader, writer)
+            return
+        host, port = split_hostport(target, 443)
+        if not grant.permits(host):
+            await _deny(writer, host)
+            return
+        secrets_ = grant.secrets_for(host)
+        if secrets_ and self.interceptor is not None:
+            await self.interceptor.intercept(host, port, secrets_, reader, writer)
+        else:
+            await _connect(host, port, reader, writer)
 
 
 class _Request:
@@ -175,7 +222,7 @@ class _Request:
         return None
 
 
-async def _read_head(reader: asyncio.StreamReader) -> _Request | None:
+async def read_head(reader: asyncio.StreamReader) -> _Request | None:
     line = await reader.readline()
     if not line:
         return _Request(b"", [])
@@ -202,30 +249,11 @@ def _basic_password(value: bytes | None) -> str | None:
     return decoded.partition(":")[2]
 
 
-async def _dispatch(
-    request: _Request,
-    policy: Policy,
-    reader: asyncio.StreamReader,
-    writer: asyncio.StreamWriter,
-) -> None:
-    parts = request.line.decode("latin-1").split()
-    if len(parts) != 3:
-        await _respond(writer, "400 Bad Request")
-        return
-    method, target, version = parts
-    if method.upper() == "CONNECT":
-        await _connect(target, policy, reader, writer)
-    else:
-        await _forward(method, target, version, request.headers, policy, reader, writer)
 
 
 async def _connect(
-    authority: str, policy: Policy, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    host: str, port: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
 ) -> None:
-    host, port = split_hostport(authority, 443)
-    if not policy.permits(host):
-        await _deny(writer, host)
-        return
     upstream = await dial_pinned(host, port, writer)
     if upstream is None:
         return
@@ -299,10 +327,10 @@ async def _resolve_public_ips(host: str, port: int) -> list[str]:
 
 
 async def dial_pinned(
-    host: str, port: int, client_w: asyncio.StreamWriter
+    host: str, port: int, client_w: asyncio.StreamWriter, *, tls: ssl.SSLContext | None = None
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter] | None:
-    """Connect to a pinned public address of ``host``, trying each in turn; ``None``
-    after refusing ``client_w``."""
+    """Connect to a pinned public address of ``host``, trying each in turn, over
+    ``tls`` verified as ``host`` when given; ``None`` after refusing ``client_w``."""
     try:
         ips = await _resolve_public_ips(host, port)
     except PermissionError:
@@ -313,7 +341,9 @@ async def dial_pinned(
         return None
     for ip in ips:
         try:
-            return await asyncio.open_connection(host=ip, port=port)
+            return await asyncio.open_connection(
+                host=ip, port=port, ssl=tls, server_hostname=host if tls else None
+            )
         except OSError:
             continue
     await _respond(client_w, "502 Bad Gateway")

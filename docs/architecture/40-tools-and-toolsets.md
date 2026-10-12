@@ -104,7 +104,7 @@ Two deliberate omissions, each a settled decision rather than an oversight:
 |---|---|---|---|
 | `builtin` | `now` | — (starter category so the stack has something to compose) | ✅ built |
 | `memory` | `remember`, `recall` | `services/memory` (hybrid recall, `MEM-*`) | ✅ built |
-| `platform` | `search`, `read` | `services/corpus` over every source, plus the skill and agent catalogs (D118) | ✅ built |
+| `platform` | `search`, `read` | `services/corpus` over every source, plus the skill, agent and plugin catalogs (D118) | ✅ built |
 | `code` | `execute`, `request_egress`, `run_host_command` | `services/sandbox` + `services/egress` (`XC-SEC-7`) | ✅ built |
 | `view` | `view_show` (file → version, or serve → live head), `view_close` | `services/artifacts` (version store) + `services/sandbox` (live head) | ✅ built |
 | `web` | `search`, `fetch` | `services/search` + `services/searxng` (`SEARCH-*`) | ✅ built |
@@ -112,6 +112,7 @@ Two deliberate omissions, each a settled decision rather than an oversight:
 | `document` | `create`, `edit` | `services/documents` (versioned library, `DOC-1`/`DOC-2`) | ✅ built |
 | `attachments` | `provision` | `services/uploads` + `services/sandbox` (stage a file into `/work`) | ✅ built |
 | `skills` | `open`, `create`, `edit` | `services/skills` (Agent Skills bundles, `SKILL-1..3`) | ✅ built |
+| `plugins` | `write`, `read`, `test`, and each published plugin's tools as `plugins_<plugin>_<tool>` | `services/plugins`: drafts the operator publishes, run in the platform VM (D122) | ✅ built |
 | `mail`, … | — | land with their `services/` capability | ⬜ pending |
 | MCP servers, integrations | — | external (`MCP-*`, `INTEG-*`) | ⬜ pending (gating designed — §4.4) |
 
@@ -266,6 +267,8 @@ The result: the spec's entire access-control surface (`AE-2` categories, `AE-3` 
 | D91 async sub-agents (`subagents` category, register, wake, panel) | ✅ built (`services/subagents/`, `services/subagent_store.py`, `harness/manifests/subagents.py`, `tools/subagents.py`) — replaces the `agents` category and its blocking `delegate_task`, and the `research` category with it: research is now the `researcher` spec in the roster, launched, redirected (`subagents_send`) and listed (`subagents_list`) like any other |
 | D115 agent definitions (`agents` category, catalog, per-thread agent, tool-access gate) | ✅ built (`services/agents/`, `harness/manifests/agents.py`, `tools/agents.py`, `routes/agents.py`) — the roster's specs became `AgentDefinition`s; the enabled gate also checks `RunDeps.tool_access` |
 | D116 agent trees (`agents_spawn`/`message`/`list`/`read`/`stop`, depth, tree messaging, open-as-thread) | ✅ built (`harness/manifests/_subagents.py`, `_subagent_wake.py`, `tools/delegation.py`, `routes/subagents.py`) — the `subagents` category folded into `agents`; `tools/subagents.py` is gone |
+| D121 version history (skills, agents, plugins: history, diff, restore) | ✅ built (`services/revisions.py`, `routes/revisions.py`) |
+| D122 plugins (drafts, VM runtime, declared egress, secret placeholders) | ✅ built (`services/plugins/`, `services/vm/intercept.py`, `tools/plugins.py`, `routes/plugins.py`) |
 | Privilege gate (D14) | 🔭 seam reserved — empty until a second user exists |
 | Relevance pre-filter (D3) | 🔭 seam reserved — deliberately omitted |
 | D24 scheduled pre-authorization | ⬜ designed, lands with `TASK-*` |

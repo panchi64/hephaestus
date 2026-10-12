@@ -37,6 +37,7 @@ DORMANT = {
     "browse": "drive a real browser",
     "calendar": "the operator's calendars",
     "mail": "the operator's email",
+    "plugins": "the operator's published plugins",
     "vault": "the operator's stored secrets",
 }
 

@@ -44,6 +44,7 @@ from services.memory import MemoryStore
 from services.notifications import NotificationService
 from services.offline import OfflineModeService
 from services.plan_mode import PlanMode
+from services.plugins import PluginStore
 from services.projects import ProjectStore, WorktreeManager, visible_project_ids
 from services.projects.tree import worktree_root
 from services.registry import ModelRegistry
@@ -207,6 +208,10 @@ def agents(request: Request) -> AgentCatalog:
 
 def agent_store(request: Request) -> AgentStore:
     return request.app.state.agent_store
+
+
+def plugins(request: Request) -> PluginStore:
+    return request.app.state.plugins
 
 
 def commands(request: Request) -> CommandRegistry:
