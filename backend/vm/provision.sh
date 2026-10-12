@@ -15,7 +15,7 @@ export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 apt-get update
 apt-get install -y --no-install-recommends \
     bubblewrap build-essential ca-certificates curl git python3 python3-dev \
-    libnss3-tools python3-pip python3-venv python-is-python3 tar util-linux
+    libnss3-tools python3-pip python3-venv python-is-python3 tar unzip util-linux
 
 if [ -n "${1:-}" ]; then
     install -D -m 0644 "$1" /usr/local/share/ca-certificates/odysseus-extra.crt
@@ -40,14 +40,41 @@ if [ -n "${1:-}" ]; then
     chown -R browser:browser /home/browser/.pki
 fi
 
-# Headless Chromium for page rendering, from Playwright's builds.
+# Headless Chromium for page rendering: Chrome for Testing's headless shell, at the
+# version this Playwright release pins. Playwright's own installer knows one CDN and
+# gives up after three 30s stalls, so the shell is fetched here, from that CDN and then
+# from Google's bucket, over IPv4.
 python3 -m venv /opt/odysseus/playwright
 /opt/odysseus/playwright/bin/pip install --no-cache-dir playwright
-PLAYWRIGHT_BROWSERS_PATH=/opt/odysseus/browsers \
-    /opt/odysseus/playwright/bin/playwright install --with-deps --only-shell chromium
+/opt/odysseus/playwright/bin/playwright install-deps chromium-headless-shell
+version=$(/opt/odysseus/playwright/bin/python -c '
+import json, pathlib, playwright
+listing = pathlib.Path(playwright.__file__).parent / "driver/package/browsers.json"
+browsers = json.loads(listing.read_text())["browsers"]
+print(next(b["browserVersion"] for b in browsers if b["name"] == "chromium-headless-shell"))
+')
+case "$(uname -m)" in
+    x86_64) platform=linux64 ;;
+    aarch64) platform=linux-arm64 ;;
+    *) echo "no headless Chromium build for $(uname -m)" >&2; exit 1 ;;
+esac
+archive=/tmp/headless-shell.zip
+fetched=""
+for base in https://cdn.playwright.dev/builds/cft \
+    https://storage.googleapis.com/chrome-for-testing-public; do
+    if curl -fL4 --retry 3 --retry-all-errors --connect-timeout 30 \
+        --speed-limit 1024 --speed-time 60 -o "$archive" \
+        "$base/$version/$platform/chrome-headless-shell-$platform.zip"; then
+        fetched=1
+        break
+    fi
+done
+test -n "$fetched"
+install -d -m 0755 /opt/odysseus/browsers /opt/odysseus/bin
+unzip -q -o "$archive" -d /opt/odysseus/browsers
+rm -f "$archive"
 chmod -R a+rX /opt/odysseus/browsers
-install -d -m 0755 /opt/odysseus/bin
-ln -sf "$(find /opt/odysseus/browsers -type f -name headless_shell | head -n 1)" \
+ln -sf "/opt/odysseus/browsers/chrome-headless-shell-$platform/chrome-headless-shell" \
     /opt/odysseus/bin/headless_shell
 test -x /opt/odysseus/bin/headless_shell
 
