@@ -7,11 +7,12 @@ from core.api_scopes import ScopeClaim
 from harness.manifest import DormantCategory, FeatureManifest, FeatureRuntime, HarnessContext
 from routes import agents as agents_routes
 from services.agents import AgentCatalog, AgentStore
+from services.revisions import RevisionStore
 from tools.agents import GATED_TOOLS, agents_toolset
 
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
-    store = AgentStore(ctx.engine, ctx.vault)
+    store = AgentStore(ctx.engine, ctx.vault, RevisionStore(ctx.engine, ctx.vault))
     catalog = AgentCatalog(store)
     return FeatureRuntime(
         services=(store, catalog),

@@ -38,10 +38,16 @@ from services.agents.files import (
     AgentNameError,
     normalize_agent_name,
     parse_agent_file,
+    render_agent_file,
 )
 from services.permissions import PERMISSION_LEVELS
+from services.revisions import Bundle, RevisionStore, records
 
 INSTRUCTIONS_MAX_CHARS = 32_000
+
+#: A version's files: the agent file, and the model it runs on, which that file leaves out.
+AGENT_FILE = "agent.md"
+MODEL_FILE = "model.json"
 
 #: The fields a caller may set. The rest (``id``, ``source``, ``published``, and the
 #: built-in-only ``required`` and ``delegable``) are the store's to decide.
@@ -64,9 +70,14 @@ EDITABLE: frozenset[str] = frozenset(
 
 
 class AgentStore:
-    def __init__(self, engine: Engine, vault: Vault) -> None:
+    revision_kind = "agent"
+
+    def __init__(
+        self, engine: Engine, vault: Vault, revisions: RevisionStore | None = None
+    ) -> None:
         self._engine = engine
         self._vault = vault
+        self.revisions = revisions
 
     async def list(self, owner_id: str, *, published_only: bool = False) -> list[AgentDefinition]:
         def work(session: Session) -> list[AgentDefinition]:
@@ -117,6 +128,7 @@ class AgentStore:
 
         return await in_session(self._engine, work)
 
+    @records("edited")
     async def update(
         self, owner_id: str, agent_id: str, changes: Mapping[str, Any]
     ) -> AgentDefinition:
@@ -157,6 +169,7 @@ class AgentStore:
         current = await self.get(owner_id, agent_id)
         return await self.update(owner_id, agent_id, _file_values(text, current.name))
 
+    @records("published")
     async def set_published(
         self, owner_id: str, agent_id: str, published: bool
     ) -> AgentDefinition:
@@ -177,6 +190,30 @@ class AgentStore:
             session.delete(_require(session, owner_id, agent_id))
 
         await in_session(self._engine, work)
+        if self.revisions is not None:
+            await self.revisions.forget(owner_id, self.revision_kind, agent_id)
+
+    async def snapshot(self, owner_id: str, agent_id: str) -> Bundle:
+        agent = await self.get(owner_id, agent_id)
+        model = {"endpoint_id": agent.endpoint_id, "model": agent.model}
+        return {
+            AGENT_FILE: render_agent_file(agent).encode(),
+            MODEL_FILE: json.dumps(model, indent=2).encode(),
+        }
+
+    working_copy = snapshot
+
+    async def restore_snapshot(
+        self, owner_id: str, agent_id: str, bundle: Bundle
+    ) -> AgentDefinition:
+        document = bundle.get(AGENT_FILE)
+        if document is None:
+            raise AgentValidationError("file", f"that version has no {AGENT_FILE}")
+        current = await self.get(owner_id, agent_id)
+        model = json.loads(bundle.get(MODEL_FILE) or b"{}")
+        values = _file_values(document.decode(), current.name)
+        values.update({key: model.get(key) for key in ("endpoint_id", "model")})
+        return await self.update(owner_id, agent_id, values)
 
     def _columns(self, agent: AgentDefinition) -> dict[str, Any]:
         return {

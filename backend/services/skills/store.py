@@ -32,14 +32,17 @@ from core.exceptions import NotFoundError, SkillSpanError, SkillValidationError
 from core.text import replace_unique
 from core.vault import Vault
 from models.skill import Skill, SkillFile, SkillSource
+from services.revisions import Bundle, RevisionStore, records
 
 from .bundle import (
     BUNDLE_MAX_BYTES,
     NAME_MAX_CHARS,
+    SKILL_FILE,
     ImportedBundle,
     ParsedSkill,
     parse_skill_md,
     read_import,
+    render_skill_md,
     validate_description,
     validate_name,
     write_bundle,
@@ -112,9 +115,14 @@ class SkillView:
 
 
 class SkillStore:
-    def __init__(self, engine: Engine, vault: Vault) -> None:
+    revision_kind = "skill"
+
+    def __init__(
+        self, engine: Engine, vault: Vault, revisions: RevisionStore | None = None
+    ) -> None:
         self._engine = engine
         self._vault = vault
+        self.revisions = revisions
 
     # ── writes ───────────────────────────────────────────────────────────────────────────
 
@@ -163,6 +171,7 @@ class SkillStore:
 
         return await in_session(self._engine, work)
 
+    @records("edited")
     async def update(
         self,
         owner_id: str,
@@ -237,6 +246,7 @@ class SkillStore:
             extras=parsed.extras or {},
         )
 
+    @records("edited")
     async def replace_span(
         self, owner_id: str, skill_id: str, old_text: str, new_text: str
     ) -> SkillView:
@@ -258,6 +268,7 @@ class SkillStore:
 
         return await in_session(self._engine, work)
 
+    @records("published")
     async def set_published(self, owner_id: str, skill_id: str, published: bool) -> SkillView:
         """Publishing is what makes a skill visible to the agent, so it re-checks that the
         bundle is one the model can actually act on."""
@@ -300,7 +311,10 @@ class SkillStore:
             session.delete(skill)
 
         await in_session(self._engine, work)
+        if self.revisions is not None:
+            await self.revisions.forget(owner_id, self.revision_kind, skill_id)
 
+    @records("edited")
     async def put_file(self, owner_id: str, skill_id: str, relpath: str, blob: bytes) -> SkillView:
         """Add or replace one supporting file in the bundle."""
         clean = _validate_relpath(relpath)
@@ -334,6 +348,7 @@ class SkillStore:
 
         return await in_session(self._engine, work)
 
+    @records("edited")
     async def delete_file(self, owner_id: str, skill_id: str, relpath: str) -> SkillView:
         def work(session: Session) -> SkillView:
             skill = _require(session, owner_id, skill_id)
@@ -345,6 +360,37 @@ class SkillStore:
             if row is None:
                 raise NotFoundError(f"{relpath} is not in this skill's bundle")
             session.delete(row)
+            skill.updated_at = datetime.now(UTC)
+            session.add(skill)
+            session.flush()
+            return self._view(session, skill)
+
+        return await in_session(self._engine, work)
+
+    # ── history ──────────────────────────────────────────────────────────────────────────
+
+    async def snapshot(self, owner_id: str, skill_id: str) -> Bundle:
+        """The skill as files: its ``SKILL.md`` and its bundle."""
+        view = await self.get(owner_id, skill_id)
+        files = dict(await self.file_contents(owner_id, skill_id))
+        return {SKILL_FILE: render_skill_md(view.parsed()).encode(), **files}
+
+    working_copy = snapshot
+
+    async def restore_snapshot(self, owner_id: str, skill_id: str, bundle: Bundle) -> SkillView:
+        document = bundle.get(SKILL_FILE)
+        if document is None:
+            raise SkillValidationError("bundle", f"that version has no {SKILL_FILE}")
+        await self.replace_document(owner_id, skill_id, document.decode())
+
+        def work(session: Session) -> SkillView:
+            skill = _require(session, owner_id, skill_id)
+            for row in session.exec(select(SkillFile).where(SkillFile.skill_id == skill_id)):
+                session.delete(row)
+            session.flush()
+            for relpath, blob in sorted(bundle.items()):
+                if relpath != SKILL_FILE:
+                    session.add(self._file_row(owner_id, skill_id, relpath, blob))
             skill.updated_at = datetime.now(UTC)
             session.add(skill)
             session.flush()

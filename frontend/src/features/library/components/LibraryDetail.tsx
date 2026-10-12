@@ -68,8 +68,12 @@ export function LibraryDetail(props: {
   extraDirty?: boolean;
   saveExtra?: () => Promise<void>;
   resetExtra?: () => void;
+  /** Version history; adds a History tab when present. */
+  history?: JSX.Element;
 }): JSX.Element {
-  const [tab, setTab] = createSignal<"overview" | "contents">("overview");
+  const [tab, setTab] = createSignal<"overview" | "contents" | "history">(
+    "overview",
+  );
   const [editing, setEditing] = createSignal(false);
   const [mode, setMode] = createSignal<ViewMode>("preview");
   const [drafts, setDrafts] = createStore<Record<string, string>>({});
@@ -262,10 +266,15 @@ export function LibraryDetail(props: {
         items={[
           { value: "overview", label: "Overview" },
           { value: "contents", label: `Contents · ${props.files.length}` },
+          ...(props.history ? [{ value: "history", label: "History" }] : []),
         ]}
         value={tab()}
-        onChange={(v) => setTab(v === "contents" ? "contents" : "overview")}
+        onChange={(v) =>
+          setTab(v === "contents" || v === "history" ? v : "overview")
+        }
       />
+
+      <Show when={tab() === "history"}>{props.history}</Show>
 
       <Show when={tab() === "overview"}>
         <Stack gap={4}>

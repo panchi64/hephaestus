@@ -13,6 +13,11 @@ import {
   type LibraryFileSource,
   type LibraryProperty,
 } from "~/features/library";
+import {
+  RevisionHistory,
+  refreshRevisions,
+  revisionsBase,
+} from "~/features/revisions";
 import { settled } from "~/lib/resource";
 import { relativeTime } from "~/lib/format";
 import {
@@ -26,6 +31,7 @@ import {
   setSkillPinned,
   setSkillPublished,
   skillErrorMessage,
+  refreshSkillDetail,
   useSkillDetail,
 } from "../data";
 import {
@@ -99,6 +105,7 @@ export function SkillDetailScreen(props: {
     const next = !s.published;
     try {
       await setSkillPublished(s.id, next);
+      refreshRevisions();
       toast.success(
         next
           ? "Published — the agent can see this skill now."
@@ -246,14 +253,21 @@ export function SkillDetailScreen(props: {
             saveFile={async (path, text) => {
               if (path === MAIN_FILE) {
                 await putSkillDocument(s().id, text);
-                return;
+              } else {
+                await putSkillFile(
+                  s().id,
+                  path,
+                  new File([text], baseName(path)),
+                );
               }
-              await putSkillFile(
-                s().id,
-                path,
-                new File([text], baseName(path)),
-              );
+              refreshRevisions();
             }}
+            history={
+              <RevisionHistory
+                base={revisionsBase("skills", s().id)}
+                onRestored={refreshSkillDetail}
+              />
+            }
             onAddFile={async (relpath) => {
               await putSkillFile(
                 s().id,

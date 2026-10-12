@@ -117,6 +117,11 @@ export function useAgentDetail(id: () => string): Resource<Agent | undefined> {
   return data;
 }
 
+/** Refetches the open agent after a change made outside this module. */
+export function refreshAgentDetail(): void {
+  refreshAll();
+}
+
 function refreshAll(): void {
   setListTick((n) => n + 1);
   setDetailTick((n) => n + 1);

@@ -1,4 +1,9 @@
 import { createSignal, Show, Suspense, type JSX } from "solid-js";
+import {
+  RevisionHistory,
+  refreshRevisions,
+  revisionsBase,
+} from "~/features/revisions";
 import { settled } from "~/lib/resource";
 import { Button, EmptyState, LoadingText, Text, confirm, toast } from "~/ui";
 import {
@@ -12,6 +17,7 @@ import {
   exportAgent,
   getAgentDocument,
   putAgentDocument,
+  refreshAgentDetail,
   setAgentPublished,
   updateAgent,
   useAgentDetail,
@@ -94,6 +100,7 @@ export function AgentDetailScreen(props: {
     const next = !a.published;
     try {
       await setAgentPublished(a.id, next);
+      refreshRevisions();
       toast.success(
         next
           ? "Published — threads can run as this agent now."
@@ -206,7 +213,16 @@ export function AgentDetailScreen(props: {
             files={filesOf(a())}
             saveFile={async (_path, text) => {
               await putAgentDocument(a().id, text);
+              refreshRevisions();
             }}
+            history={
+              a().editable ? (
+                <RevisionHistory
+                  base={revisionsBase("agents", a().id)}
+                  onRestored={refreshAgentDetail}
+                />
+              ) : undefined
+            }
             extraDirty={modelDirty(a())}
             saveExtra={async () => {
               const d = modelDraft();

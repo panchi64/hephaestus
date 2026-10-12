@@ -27,9 +27,11 @@ from core.exceptions import SkillSpanError, SkillValidationError
 from routes import deps
 from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
+from routes.revisions import add_revision_routes
 from services.skills import BUNDLE_MAX_BYTES, SkillSummaryView, SkillView, render_skill_md
 
 router = APIRouter(prefix="/skills", tags=["skills"])
+add_revision_routes(router, deps.skills)
 
 
 class SkillCreate(BaseModel):

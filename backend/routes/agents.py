@@ -16,12 +16,14 @@ from pydantic import BaseModel
 from core.exceptions import AgentValidationError, NotFoundError
 from routes import deps
 from routes.deps import OPERATOR_ID
+from routes.revisions import add_revision_routes
 from services.agents import BUILTIN, AgentDefinition, ToolAccess, project_agents
 from services.agents.definition import AgentSource, WorkspacePolicy
 from services.agents.files import render_agent_file
 from services.permissions import PermissionLevel
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+add_revision_routes(router, deps.agent_store)
 
 _IMPORT_MAX_BYTES = 64 * 1024
 

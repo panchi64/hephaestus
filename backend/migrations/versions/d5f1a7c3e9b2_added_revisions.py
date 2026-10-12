@@ -1,0 +1,50 @@
+"""Added revisions
+
+Revision ID: d5f1a7c3e9b2
+Revises: c4e8a2f6d1b3
+Create Date: 2026-10-13 00:30:00.000000
+
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+import sqlmodel
+
+
+# revision identifiers, used by Alembic.
+revision: str = "d5f1a7c3e9b2"
+down_revision: Union[str, Sequence[str], None] = "c4e8a2f6d1b3"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    op.create_table(
+        "revisions",
+        sa.Column("id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("owner_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("kind", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("subject_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("number", sa.Integer(), nullable=False),
+        sa.Column("note", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("digest", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("size_bytes", sa.Integer(), nullable=False),
+        sa.Column("bundle_enc", sa.LargeBinary(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("kind", "subject_id", "number", name="uq_revisions_subject_number"),
+    )
+    with op.batch_alter_table("revisions", schema=None) as batch_op:
+        batch_op.create_index(batch_op.f("ix_revisions_owner_id"), ["owner_id"], unique=False)
+        batch_op.create_index(batch_op.f("ix_revisions_subject_id"), ["subject_id"], unique=False)
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    with op.batch_alter_table("revisions", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_revisions_subject_id"))
+        batch_op.drop_index(batch_op.f("ix_revisions_owner_id"))
+    op.drop_table("revisions")
