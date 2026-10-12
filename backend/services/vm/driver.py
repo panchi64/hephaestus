@@ -26,6 +26,11 @@ class ExecResult:
 
 
 class VMDriver(Protocol):
+    #: What a boot in progress is doing ("building" the image, or "booting"), and the
+    #: image build's current step; both ``None`` otherwise.
+    phase: str | None
+    step: str | None
+
     async def boot(self) -> None:
         """Start a fresh VM from the clean image, ready for :meth:`exec`."""
 

@@ -19,7 +19,7 @@ router = APIRouter(prefix="/vm", tags=["vm"])
 
 class VMStatus(BaseModel):
     state: Literal["ready", "starting", "unavailable"]
-    #: Why it is unavailable, when it is.
+    #: Why it is unavailable, or what it is doing while it starts.
     detail: str | None = None
 
 
@@ -35,7 +35,7 @@ def _status(vm: PlatformVM) -> VMStatus:
         return VMStatus(state="ready")
     if vm.failure is not None:
         return VMStatus(state="unavailable", detail=vm.failure)
-    return VMStatus(state="starting")
+    return VMStatus(state="starting", detail=vm.progress)
 
 
 @router.get("", response_model=VMStatus)

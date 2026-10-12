@@ -40,6 +40,8 @@ def local_layout() -> GuestLayout:
 
 class LocalDriver:
     def __init__(self) -> None:
+        self.phase: str | None = None
+        self.step: str | None = None
         self.running = False
         self.boots = 0
         self._sessions: set[int] = set()

@@ -27,10 +27,13 @@ import secrets
 import shlex
 import shutil
 import subprocess
+import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 
 from smolvm import InternetSettings, SmolVM, SmolVMError, VMConfig
 from smolvm.utils import ensure_ssh_key
@@ -42,6 +45,10 @@ logger = logging.getLogger(__name__)
 PROVISION_SCRIPT = Path(__file__).resolve().parents[2] / "vm" / "provision.sh"
 _GUEST_OS = "ubuntu"
 _MACHINE = "q35"
+_PROVISION_LOG = "/root/provision.log"
+_PROVISION_EXIT = "/root/provision.exit"
+_PROVISION_POLL_S = 5.0
+_STEP_CHARS = 120
 #: Every guest command starts from this environment. smolvm's vsock agent passes on its
 #: init's, which exports no PATH, while its SSH channel passes a login's; neither is ours.
 _GUEST_ENV = (
@@ -92,6 +99,10 @@ class SmolvmDriver:
         self._image_override = image
         self._ca_bundle = ca_bundle
         self._vm: SmolVM | None = None
+        #: What a boot in progress is doing: "building" the image, or "booting".
+        self.phase: str | None = None
+        #: The provisioning step a build is on.
+        self.step: str | None = None
 
     @property
     def _smolvm_dir(self) -> Path:
@@ -152,10 +163,21 @@ class SmolvmDriver:
             raise VMError("the platform VM is not running")
         return self._vm
 
+    def _on_step(self, step: str) -> None:
+        logger.info("platform VM: building the image: %s", step)
+        self.step = step
+
     def _boot(self) -> None:
+        try:
+            self._boot_fresh()
+        finally:
+            self.phase = self.step = None
+
+    def _boot_fresh(self) -> None:
         self._stop()
         self._discard_leftover()
         image = self._clean_image()
+        self.phase, self.step = "booting", None
         private, public = ensure_ssh_key(self._state / "keys")
         vm_id = f"odysseus-{secrets.token_hex(4)}"
         config = VMConfig(
@@ -217,6 +239,7 @@ class SmolvmDriver:
 
     def _build_image(self, target: Path) -> None:
         logger.info("platform VM: building the clean image (once per provision script)")
+        self.phase = "building"
         building = target.with_name(f".{target.name}.building")
         shutil.rmtree(building, ignore_errors=True)
         building.mkdir(parents=True)
@@ -242,15 +265,7 @@ class SmolvmDriver:
             argv = ["bash", "/root/provision.sh"]
             if self._ca_bundle is not None:
                 argv.append("/root/extra-ca.crt")
-            result = vm.run(
-                _guest_command(argv),
-                timeout=math.ceil(self._provision_timeout_s),
-                shell="raw",
-            )
-            if result.exit_code != 0:
-                raise VMError(
-                    f"provisioning the platform VM failed: {result.stderr[-2000:].strip()}"
-                )
+            provision(vm, argv, timeout_s=self._provision_timeout_s, on_step=self._on_step)
             config = vm.info.config
             vm.stop()
             _flatten(Path(config.rootfs_path), building / "disk.qcow2")
@@ -264,6 +279,57 @@ class SmolvmDriver:
                 vm.delete()
         shutil.rmtree(target, ignore_errors=True)
         building.rename(target)
+
+
+def provision(
+    vm: Any, argv: list[str], *, timeout_s: float, on_step: Callable[[str], None]
+) -> None:
+    """Run the provision script detached in the guest and follow its log, so a build that
+    takes many minutes reports each step it reaches."""
+    script = shlex.join(argv)
+    vm.run(
+        _guest_command(
+            [
+                "sh",
+                "-c",
+                f"setsid sh -c '{script} > {_PROVISION_LOG} 2>&1; "
+                f"echo $? > {_PROVISION_EXIT}' > /dev/null 2>&1 < /dev/null &",
+            ]
+        ),
+        timeout=60,
+        shell="raw",
+    )
+    deadline = time.monotonic() + timeout_s
+    last_step = ""
+    while time.monotonic() < deadline:
+        time.sleep(_PROVISION_POLL_S)
+        probe = vm.run(
+            _guest_command(
+                [
+                    "sh",
+                    "-c",
+                    f"cat {_PROVISION_EXIT} 2>/dev/null; echo; "
+                    f"grep '^+ ' {_PROVISION_LOG} | tail -n 1",
+                ]
+            ),
+            timeout=60,
+            shell="raw",
+        )
+        status, _, last = probe.stdout.partition("\n")
+        step = last.strip().removeprefix("+ ")[:_STEP_CHARS]
+        if step and step != last_step:
+            last_step = step
+            on_step(step)
+        if status.strip():
+            if status.strip() != "0":
+                tail = vm.run(
+                    _guest_command(["tail", "-c", "2000", _PROVISION_LOG]),
+                    timeout=60,
+                    shell="raw",
+                )
+                raise VMError(f"provisioning the platform VM failed: {tail.stdout.strip()}")
+            return
+    raise VMError("provisioning the platform VM timed out")
 
 
 def _read_image(directory: Path) -> CleanImage:

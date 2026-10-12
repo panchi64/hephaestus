@@ -6,7 +6,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from services.vm.smolvm import SmolvmDriver
+import pytest
+
+from services.vm import VMError
+from services.vm import smolvm as smolvm_module
+from services.vm.smolvm import SmolvmDriver, provision
 
 
 @dataclass
@@ -46,3 +50,47 @@ async def test_a_command_finds_its_tools_without_the_agents_path(tmp_path, monke
     executable, home = result.stdout.splitlines()
     assert Path(executable).is_absolute()
     assert home == "/root"
+
+
+class _BuildingGuest:
+    """A provisioning guest whose log advances one scripted probe at a time."""
+
+    def __init__(self, probes: list[str], tail: str = "") -> None:
+        self._probes = probes
+        self._tail = tail
+        self.commands: list[str] = []
+
+    def run(self, command: str, *, timeout: int, shell: str) -> _Ran:
+        self.commands.append(command)
+        if "provision.exit 2>/dev/null" in command:
+            return _Ran(0, self._probes.pop(0), "")
+        if command.endswith("/root/provision.log") and " tail " in f" {command} ":
+            return _Ran(0, self._tail, "")
+        return _Ran(0, "", "")
+
+
+def test_an_image_build_reports_each_step_it_reaches(monkeypatch):
+    monkeypatch.setattr(smolvm_module, "_PROVISION_POLL_S", 0)
+    guest = _BuildingGuest(["\n+ apt-get update\n", "\n+ apt-get update\n", "0\n+ sync\n"])
+    steps: list[str] = []
+
+    provision(guest, ["bash", "/root/provision.sh"], timeout_s=60, on_step=steps.append)
+
+    assert "setsid" in guest.commands[0]
+    assert steps == ["apt-get update", "sync"]
+
+
+def test_a_failed_build_reports_the_end_of_its_log(monkeypatch):
+    monkeypatch.setattr(smolvm_module, "_PROVISION_POLL_S", 0)
+    guest = _BuildingGuest(["1\n+ pip install\n"], tail="ModuleNotFoundError: typing_extensions")
+
+    with pytest.raises(VMError, match="typing_extensions"):
+        provision(guest, ["bash", "/root/provision.sh"], timeout_s=60, on_step=lambda _: None)
+
+
+def test_a_build_that_never_finishes_times_out(monkeypatch):
+    monkeypatch.setattr(smolvm_module, "_PROVISION_POLL_S", 0)
+    guest = _BuildingGuest(["\n"] * 1000)
+
+    with pytest.raises(VMError, match="timed out"):
+        provision(guest, ["bash", "/root/provision.sh"], timeout_s=0.05, on_step=lambda _: None)

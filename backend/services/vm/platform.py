@@ -163,6 +163,24 @@ class PlatformVM:
         return self._ready.is_set()
 
     @property
+    def building(self) -> bool:
+        return not self.available and self._driver.phase == "building"
+
+    @property
+    def progress(self) -> str | None:
+        """What a bring-up in progress is doing, worded for the operator."""
+        if self.available or self._failure is not None:
+            return None
+        if self._driver.phase == "building":
+            step = self._driver.step
+            return "Building the VM image (first start after an update; can take 10–30 minutes)" + (
+                f": {step}" if step else ""
+            )
+        if self._driver.phase == "booting":
+            return "Booting"
+        return None
+
+    @property
     def failure(self) -> str | None:
         """Why the last bring-up failed, for the operator."""
         return self._failure

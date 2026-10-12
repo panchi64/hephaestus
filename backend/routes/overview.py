@@ -148,6 +148,8 @@ async def get_overview(request: Request) -> Overview:
         sandbox_detail = "platform VM"
     elif vm is not None and vm.failure is not None:
         sandbox_detail = "VM unavailable"
+    elif vm is not None and vm.building:
+        sandbox_detail = "VM building image"
     else:
         sandbox_detail = "VM starting"
     capabilities.append(

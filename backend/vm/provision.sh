@@ -81,7 +81,12 @@ test -x /opt/odysseus/bin/headless_shell
 # SearXNG, from source as its own docs install it.
 git clone --depth 1 https://github.com/searxng/searxng.git /opt/odysseus/searxng-src
 python3 -m venv /opt/odysseus/searxng
-/opt/odysseus/searxng/bin/pip install --no-cache-dir -U pip setuptools wheel pyyaml msgspec
+# The editable install imports searx to build its metadata, so its runtime dependencies
+# go in first.
+/opt/odysseus/searxng/bin/pip install --no-cache-dir -U pip setuptools wheel pyyaml msgspec \
+    typing_extensions
+/opt/odysseus/searxng/bin/pip install --no-cache-dir \
+    -r /opt/odysseus/searxng-src/requirements.txt
 /opt/odysseus/searxng/bin/pip install --no-cache-dir --use-pep517 --no-build-isolation \
     -e /opt/odysseus/searxng-src
 chmod -R a+rX /opt/odysseus/searxng /opt/odysseus/searxng-src
