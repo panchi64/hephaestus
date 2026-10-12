@@ -2,7 +2,7 @@
 
 This feature owns *two* things now: the visible Chromium on the host (and the SSRF proxy
 it is pointed at), and the per-conversation sessions attached to it. It no longer depends
-on `web` — the browser it drives is its own, not the container web fetch renders in — so
+on `web` — the browser it drives is its own, not the VM browser web fetch renders in — so
 the build order is free again.
 
 Both register a stop here, the window's *before* the sessions': the lifecycle unwinds in

@@ -3,7 +3,7 @@
 The file tools, `code_execute` or the shell, attachment staging and the skills bundler all
 act on one resolved value, so the agent never edits a file it cannot run:
 
-    workspace "sandbox"  → the conversation's own container, mounted at ``/work``
+    workspace "sandbox"  → the conversation's own workspace, at ``/work`` in the VM
     workspace "checkout" → the project's own folder, on the host, on its current branch
     workspace "worktree" → the project's git worktree, on the host, by absolute path
 
@@ -43,9 +43,8 @@ from services.workspace_kind import WorkspaceKind
 
 logger = logging.getLogger(__name__)
 
-#: Where a conversation's sandbox workspace is mounted inside the container. The model is
-#: told this, never the host path — the host path means nothing on the other side of the
-#: bind mount.
+#: Where a conversation's sandbox workspace appears inside the VM. The model is
+#: told this, never the host path — the host path means nothing in the guest.
 SANDBOX_MOUNT = "/work"
 
 #: Odysseus' own scratch inside a worktree: staged attachments and opened skill bundles.
@@ -104,7 +103,7 @@ class RunWorkspace:
     def display(self, relpath: str) -> str:
         """The path string the model is given for ``relpath``.
 
-        The one place the sandbox's bind mount is translated, so a marker, a tool result
+        The one place the sandbox's guest path is translated, so a marker, a tool result
         and a staged skill can never name the same file three different ways.
         """
         if self.kind == "sandbox":
@@ -115,11 +114,11 @@ class RunWorkspace:
 async def sandbox_workspace(
     sessions: SandboxSessionManager, workspace_key: str, *, holder: LiveWork | None = None
 ) -> RunWorkspace:
-    """The conversation's container workspace. Raises `SandboxError` when it can't be
-    opened (no runtime, a locked vault, an unreadable seal) — the caller degrades.
+    """The conversation's sandbox workspace. Raises `SandboxError` when it can't be
+    opened (the VM is down, a locked vault, an unreadable seal) — the caller degrades.
 
     ``holder`` is the run this workspace is for, and passing it is what keeps the
-    live-session cap from displacing a container the run is still working in between two
+    live-session cap from displacing a session the run is still working in between two
     of its tool calls. The files would survive that — a reap leaves them alone — but the
     live process and system state around them would not.
 
@@ -127,7 +126,7 @@ async def sandbox_workspace(
     rather than to a session of its own. Read here rather than left to the caller for the
     reason the worktree half reads it: a delegated run resolves its workspace on every
     file-tool call, and a plain `acquire` on a delegated key would quietly hand back an
-    empty container — a sub-agent working in a copy of nothing, and a merge at the end
+    empty workspace — a sub-agent working in a copy of nothing, and a merge at the end
     with no fork to land."""
     owner, delegation = split_workspace_key(workspace_key)
     session = (
@@ -175,7 +174,7 @@ async def _delegated_session(
 #:
 #: The convention is not new — a forked sandbox has always been keyed ``<parent>/<child>``
 #: — but it used to be honoured by one workspace kind and ignored by the other, which is
-#: why a delegated run could be given its own container and never its own checkout.
+#: why a delegated run could be given its own workspace and never its own checkout.
 DELEGATION_SEP = "/"
 
 
@@ -186,7 +185,7 @@ def split_workspace_key(workspace_key: str) -> tuple[str, str | None]:
     ``"c123/w7"`` → ``("c123", "w7")``: a delegated child of it.
 
     One reading of the key, shared by both kinds, so a sub-agent cannot end up with a
-    container forked from its parent and a checkout that is its parent's own.
+    workspace forked from its parent and a checkout that is its parent's own.
     """
     owner, separator, delegation = workspace_key.partition(DELEGATION_SEP)
     return owner, (delegation or None) if separator else None
@@ -309,7 +308,7 @@ async def resolve_workspace(
         branch = out.strip() if code == 0 and out.strip() else None
         return RunWorkspace(root=root, kind="checkout", files=HostFiles(root), branch=branch)
     if workspace_kind == "worktree":
-        # Never fall back to the sandbox. A worktree run that quietly got a container
+        # Never fall back to the sandbox. A worktree run that quietly got a sandbox
         # workspace would edit files its shell tools are refused access to, and nothing
         # would say why — the failure the one-workspace rule exists to prevent. No
         # worktree means no workspace, and the tool layer says so in words.

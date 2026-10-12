@@ -20,7 +20,7 @@ needs to do any more is restate the answer already written here.
 - ``InvalidInputError`` → **422**. The operator supplied something we can't accept; the
   form that collected it can show the message inline.
 - ``DegradedCapabilityError`` → **503**. A capability is unavailable *right now* — no
-  embedding endpoint bound, no browser container, no utility model. It is not the caller's
+  embedding endpoint bound, no web browser, no utility model. It is not the caller's
   mistake, so it is never a 4xx, and a retry after the operator wires the capability up is
   the fix. Two routes used to answer 422 here; both turned out to be raising this type for
   what was really invalid input, which is now its own error.

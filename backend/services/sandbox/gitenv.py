@@ -32,12 +32,13 @@ empty tree) does stop all three, and stops git-lfs and end-of-line normalisation
 them: it would trade a repository that can run a program for a repository the agent
 silently commits raw blobs into.
 
-**So those keys are the fence's to answer, and it does.** ``fence.py`` bounds what a
-spawned program may *do* — which is the only formulation that covers a program the
-repository named, a program the build named, and a program nobody named — instead of
-guessing what git might be asked to run. What the pins below still buy is the case the
-fence cannot see: they keep a poisoned `core.fsmonitor` from being *launched* at all, and
-they keep a pager from blocking on a pipe. Two keys, and nothing about the drivers.
+**So those keys are the fence's to answer, and it does.** A project command runs in the
+platform VM, which bounds what a spawned program may *do* — the only formulation that
+covers a program the repository named, a program the build named, and a program nobody
+named — instead of guessing what git might be asked to run. What the pins below still buy
+is the case the fence cannot see: they keep a poisoned `core.fsmonitor` from being
+*launched* at all, and they keep a pager from blocking on a pipe. Two keys, and nothing
+about the drivers.
 """
 
 from __future__ import annotations

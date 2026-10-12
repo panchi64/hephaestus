@@ -116,7 +116,7 @@ export function AnnunciatorGrid(props: AnnunciatorGridProps): JSX.Element {
               </Text>
               {/* The reason scrolls rather than truncating, because it is the one
                   thing in the cell the operator actually has to finish reading — a
-                  clipped "no runtime — disabl…" is the half that does not say what to
+                  clipped "VM not ready — disa…" is the half that does not say what to
                   do. `Marquee` moves only when the text genuinely overflows its column
                   and holds still under reduced motion, so a panel at rest stays at
                   rest. The legend above it truncates instead: it is a name, and a name

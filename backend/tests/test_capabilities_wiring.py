@@ -29,7 +29,7 @@ _BACKEND = Path(__file__).resolve().parents[1]
 # the host lacks the facility, which is exactly how the test app boots. Each entry
 # needs a reason; anything else missing is a wiring bug, not a condition.
 _CONDITIONAL = {
-    # Added only when a container runtime is detected; tests run sandbox_enabled=False.
+    # Added only when the sandbox is enabled; tests run sandbox_enabled=False.
     SandboxSessionManager,
 }
 

@@ -1,6 +1,6 @@
 """Running a command on the operator's real machine, and reaping the tree it starts.
 
-Two paths land here — the project shell and ``code_run_host_command``, the approval-gated
+Two paths land here — the host shell and ``code_run_host_command``, the approval-gated
 escape hatch — and they differ only in what they do with the streams afterwards. The
 mechanics live beside the fence rather than inside it (``host.py``) so that *what a command
 may reach* and *how a process is started and killed* have separate reasons to change.
@@ -128,7 +128,7 @@ async def terminate_tree(proc: asyncio.subprocess.Process) -> None:
     """Ask the process group to stop, then make it, and wait for it either way.
 
     What a `SIGKILL` alone costs is everything the process would have done on its way out:
-    a dev server never closes its socket, a compose stack leaves its containers up, a test
+    a dev server never closes its socket, a compose stack leaves its services up, a test
     run leaves a scratch database and a lockfile behind. Killing outright is still the
     fallback, because a process that ignores `SIGTERM` must not be able to hold a turn
     open — but it is the fallback, not the opening move.

@@ -24,6 +24,8 @@ import os
 # tested. Off here, so the host path under test is the plain subprocess; the confinement
 # logic itself is exercised explicitly in `test_sandbox.py`, which configures it directly.
 os.environ.setdefault("ODYSSEUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
+# The app would otherwise boot a real QEMU VM; the VM tests drive a local stand-in.
+os.environ.setdefault("ODYSSEUS_VM_ENABLED", "false")
 
 import core.crypto  # noqa: E402 — must follow the environment default above
 import core.db  # noqa: E402
@@ -81,14 +83,3 @@ def egress_policy(data_dir, domains: tuple[str, ...] = ("pypi.org",)):
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     return EgressPolicy(engine, data_dir, domains)
-
-
-async def unfenced(command: str, *, profile=None) -> str:
-    """A ``Confiner`` that rewrites nothing — the shell's fence, stood down for a test.
-
-    The project-folder shell refuses to run anything unfenced, and the platform's confinement
-    is switched off for the whole suite (above), so every test that wants a command to
-    actually execute passes this. Wrapping in the real one instead would mean testing
-    seatbelt, on whichever machines happen to have it.
-    """
-    return command

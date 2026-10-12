@@ -34,7 +34,7 @@ const STAGE: Record<NonNullable<Review["stage"]>, string> = {
  *  domains are allowed. */
 const TIER: Record<NonNullable<Review["tier"]>, string> = {
   read: "The tool only observes, whatever it is asked for.",
-  sandbox: "It runs offline inside this conversation's own container.",
+  sandbox: "It runs offline inside the platform VM.",
   workspace: "Ran fenced to the worktree, with no network.",
 };
 

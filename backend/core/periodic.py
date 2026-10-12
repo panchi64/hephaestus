@@ -10,7 +10,7 @@ fourth copy could quietly omit it and nobody would be looking at the other three
 
 What it owns is deliberately only the task. A caller's own teardown stays the caller's: the
 browser manager tears down every live session after its loop stops, the sandbox manager
-drains its in-flight teardowns and shuts its containers, and neither of those belongs to a
+drains its in-flight teardowns and stops its sessions, and neither of those belongs to a
 timer. :meth:`stop` puts the loop down and returns.
 
 **The interval is slept first, never last.** Every user of this wants "every N seconds from
@@ -54,8 +54,8 @@ class PeriodicTask:
     ``log_level`` against ``logger`` and the loop carries on, because the alternative — a
     loop that exits on its first bad sweep — is a background job that silently stops
     existing in a process that is otherwise healthy. The level is the caller's because the
-    two kinds of failure are not the same news: a reaper that could not talk to the
-    container runtime this minute will try again in the next one and is ``debug``; a job
+    two kinds of failure are not the same news: a reaper that could not reach the
+    VM this minute will try again in the next one and is ``debug``; a job
     whose whole purpose was to produce something has lost that output and is ``warning``.
     """
 

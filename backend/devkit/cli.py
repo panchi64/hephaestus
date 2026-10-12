@@ -62,8 +62,7 @@ def status_payload(instance: DevInstance) -> dict[str, Any]:
         "ready": all(running.values()),
         "seeded": instance.seeded or None,
         "auth": instance.auth,
-        "containers": instance.containers,
-        "container_prefix": instance.container_prefix,
+        "vm": instance.vm,
         # Printed because with auth off nobody is asked for it and it would otherwise
         # look like a secret that had gone missing when someone turns auth on.
         "password": instance.password,
@@ -118,7 +117,7 @@ def _print_ready(payload: dict[str, Any], outcomes: dict[str, str], *, detached:
 
 
 def _cmd_up(args: argparse.Namespace) -> int:
-    instance = resolve(auth=args.auth, containers=args.with_containers)
+    instance = resolve(auth=args.auth, vm=args.with_vm)
     supervisor = Supervisor()
     try:
         instance, outcomes = launch.bring_up(instance, supervisor, reseed=args.reseed)
@@ -231,7 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="dev_instance",
         description=(
             "Run an isolated Odysseus for development — its own data, ports and "
-            "containers, seeded and safe to break."
+            "platform VM, seeded and safe to break."
         ),
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -248,7 +247,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Both are tri-state on purpose: given, they change the instance and stick, so a
     # session need not repeat them; omitted, they leave the stored choice alone. Without
     # the `--no-` half a flag could only ever be turned on, and an instance that once ran
-    # `--with-containers` would keep pulling images on every later `up`.
+    # `--with-vm` would keep booting a VM on every later `up`.
     up.add_argument(
         "--auth",
         action=argparse.BooleanOptionalAction,
@@ -256,10 +255,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="put the real login screen in front of the app (default: off, and remembered)",
     )
     up.add_argument(
-        "--with-containers",
+        "--with-vm",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="also run the sandbox, SearXNG and web-fetch containers (remembered)",
+        help="also run the platform VM: sandbox, SearXNG and web fetch (remembered)",
     )
     up.add_argument(
         "--reseed",

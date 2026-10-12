@@ -63,7 +63,6 @@ from services.permissions import (
 )
 from services.permissions.projections import PROJECTIONS
 from services.permissions.reviewer import review_prompt
-from services.sandbox import HostConfinement
 from services.workspace import HostFiles, RunWorkspace
 from tools import RunDeps
 from tools.agents import agents_toolset
@@ -95,18 +94,10 @@ def verdict(risk: str, authorization: str = "neutral", correctness: str | None =
 
 
 def pretend_fenced(monkeypatch) -> None:
-    """Tell the gate this host can confine a process, without configuring one.
-
-    The suite runs with host confinement switched off (``conftest``) so no test depends on
-    whether the machine it runs on has the platform primitive. The structural stage clears
-    nothing unfenced — correctly — so a test about anything *else* in the gate has to say
-    which of the two worlds it is in, and this is that.
-    """
-
-    async def available(settings):
-        return HostConfinement(True)
-
-    monkeypatch.setattr(gating.fence, "resolve_confinement", available)
+    """Tell the gate the platform VM is up, without booting one. The structural stage
+    clears nothing unfenced, so a test about anything else in the gate says which world
+    it is in."""
+    monkeypatch.setattr(gating, "vm_fences", lambda caps: True)
 
 
 class TestTheDeterministicStageComesFirst:
@@ -129,7 +120,7 @@ class TestTheDeterministicStageComesFirst:
         # while something is holding it there.
         outcome = await review(BENIGN, reviewer=reviewer_of(verdict("low")))
         assert outcome.stage == "reviewer"
-        assert "no OS fence" in judge(BENIGN, fenced=False).reason
+        assert "no fence" in judge(BENIGN, fenced=False).reason
 
     async def test_what_the_judge_declines_is_handed_on_with_its_reason(self):
         seen: list[ReviewRequest] = []
@@ -1199,11 +1190,11 @@ class TestTheRubricWithoutTheScore:
         assert "Declared reach" in clear and "declared it needs to reach" in REVIEW_INSTRUCTIONS
         assert "Could not be fully read" in clear
         assert "could not be read at all" in REVIEW_INSTRUCTIONS
-        # The container is the whole of what bounds an interpreter's program, and the
+        # The sandbox is the whole of what bounds an interpreter's program, and the
         # `low` clause turns on it — so it is a fact the prompt states, not one the
         # reviewer is left to infer from a tool name it was never told the meaning of.
-        assert "Runs inside the conversation's sandbox container" in clear
-        assert "runs inside the conversation's sandbox container" in REVIEW_INSTRUCTIONS
+        assert "Runs inside the conversation's sandbox" in clear
+        assert "runs inside the conversation's sandbox" in REVIEW_INSTRUCTIONS
         # And the one model-authored field the projections added, which the reviewer would
         # otherwise meet as an unexplained key inside a fence.
         assert "detail field" in REVIEW_INSTRUCTIONS
@@ -1220,30 +1211,26 @@ class TestTheRubricWithoutTheScore:
 
     def test_the_sandbox_fact_is_stated_for_the_call_that_turns_on_it(self):
         # `code_execute` is the one act whose program nothing here reads, so what bounds
-        # it is the container alone — the fact the `low` clause names.
+        # it is the sandbox alone — the fact the `low` clause names.
         sandboxed = capability_of("code_execute", {"code": "print(1)"})
-        assert "Runs inside the conversation's sandbox container: yes" in review_prompt(
+        assert "Runs inside the conversation's sandbox: yes" in review_prompt(
             ReviewRequest(capability=sandboxed, transcript=())
         )
         host = capability_of("code_run_host_command", {"command": "ls"})
-        assert "Runs inside the conversation's sandbox container: no" in review_prompt(
+        assert "Runs inside the conversation's sandbox: no" in review_prompt(
             ReviewRequest(capability=host, transcript=())
         )
 
     def test_the_network_fact_is_always_reported_as_what_was_seen_written(self):
-        # `Capability.network` has one producer now — the grammar walk, reading an address
-        # out of a command's text. It once had two: `code_execute` carried a per-call
-        # egress switch, and a sandboxed call was labelled for *that*, since reporting a
-        # switch as "names a network address" would be a false measurement and the rubric
-        # tells the reviewer the measurements outrank the model's own text. The switch is
-        # gone (widening a workspace's egress is its own approval-gated act), so the one
-        # remaining label has to be the walk's for every kind of call — including a
-        # sandboxed one, where the container wording would now mislabel a walk result.
+        # `Capability.network` has one producer — the grammar walk, reading an address out
+        # of a command's text. The rubric tells the reviewer the measurements outrank the
+        # model's own text, so the label has to be the walk's for every kind of call,
+        # including a sandboxed one.
         program = capability_of("code_execute", {"code": "import urllib"})
         prompt = review_prompt(ReviewRequest(capability=program, transcript=()))
-        assert "Runs inside the conversation's sandbox container: yes" in prompt
+        assert "Runs inside the conversation's sandbox: yes" in prompt
         assert "Names a network address: no" in prompt
-        assert "Can reach the network from that container" not in prompt
+        assert "Can reach the network from that sandbox" not in prompt
 
     def test_the_ordinary_work_the_fence_holds_is_named_as_low(self):
         """What reaches this stage is what the structural judge would not vouch for — so a

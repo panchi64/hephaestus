@@ -7,7 +7,7 @@ no HTTP, no phone-home to a tracker. The first anchor that accepts a connection 
 "online"; all failing within the timeout means "offline".
 
 Used by the offline-mode monitor (:mod:`services.offline`) to decide whether the managed
-web containers are worth running. Pure stdlib asyncio, no domain coupling.
+web services are worth running. Pure stdlib asyncio, no domain coupling.
 """
 
 from __future__ import annotations

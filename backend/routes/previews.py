@@ -4,7 +4,7 @@ The agent runs a dev server in its sandbox (``start_preview``); this forwards th
 operator's browser to it. The address carries an unguessable per-preview **token**
 (``/previews/{token}/…``) which *is* the credential, and the token rides every
 relative subresource load automatically. So this subtree is exempt from the cookie
-gate (see ``core/auth``) — it only ever proxies to a loopback preview container,
+gate (see ``core/auth``) — it only ever proxies to a loopback preview server,
 never to operator data. It is *not* exempt from the vault-locked gate: locking takes
 the preview offline with everything else.
 

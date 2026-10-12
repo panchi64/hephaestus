@@ -1,8 +1,8 @@
 """Reading back the archives written while a reap still sealed the workspace.
 
-A workspace used to live as a plaintext directory while its container was up and as
-one vault-sealed tar the rest of the time. It no longer does — a reap stops the
-container and leaves the directory alone — but an installation that ran the old
+A workspace used to live as a plaintext directory while its sandbox was up and as
+one vault-sealed tar the rest of the time. It no longer does — a reap wipes the
+guest copy and leaves the directory alone — but an installation that ran the old
 build still has archives on disk, and they hold conversations' real work.
 
 So this module is the one-way door out of that format: **restore only, and delete the

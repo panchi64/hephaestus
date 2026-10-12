@@ -5,6 +5,7 @@ import {
   ChatSection,
   ModelsScreen,
   OfflineSection,
+  PlatformVmSection,
   SearchProvidersPanel,
 } from "~/features/settings";
 import { McpScreen } from "~/features/mcp";
@@ -38,6 +39,7 @@ export const SECTION_RENDERERS: Record<string, () => JSX.Element> = {
   appearance: () => <AppearanceSection />,
   chat: () => <ChatSection />,
   offline: () => <OfflineSection />,
+  "platform-vm": () => <PlatformVmSection />,
   models: () => <ModelsScreen />,
   "agent-tools": () => <AgentToolsPanel />,
   skills: () => <SkillsSection />,

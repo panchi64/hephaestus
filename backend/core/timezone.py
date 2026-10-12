@@ -12,7 +12,7 @@ Three sources, in the order a POSIX host means them:
 2. ``/etc/localtime`` — on Linux and macOS alike this is a symlink into the tz database,
    and the path tail after ``zoneinfo/`` is the IANA key. This is the common case, and the
    only source that yields a *name* rather than a number.
-3. The current UTC offset, as ``UTC±HH:MM``. A last resort: a container with a copied
+3. The current UTC offset, as ``UTC±HH:MM``. A last resort: a system with a copied
    rather than linked ``/etc/localtime`` has a real offset and no name to give it, and an
    offset is still worth more to a model reasoning about "tomorrow morning" than nothing.
 

@@ -53,8 +53,8 @@ export function OfflineSection(): JSX.Element {
                   Status
                 </Text>
                 <Text variant="micro" tone="dim">
-                  When connectivity is lost the web search + fetch containers
-                  are suspended to save resources and the agent's web tools are
+                  When connectivity is lost the web search + fetch services are
+                  suspended to save resources and the agent's web tools are
                   hidden. They return automatically when you're back online.
                 </Text>
               </Stack>
@@ -70,8 +70,8 @@ export function OfflineSection(): JSX.Element {
                   Offline now
                 </Text>
                 <Text variant="micro" tone="dim">
-                  Force offline immediately — tears down the web containers
-                  regardless of connectivity.
+                  Force offline immediately — stops the web services regardless
+                  of connectivity.
                 </Text>
               </Stack>
               <Toggle

@@ -235,12 +235,12 @@ async def test_searxng_stop_then_start_is_restartable():
 
     sx = ManagedSearxng(
         enabled=True,
-        image="example/searxng:latest",
+        vm=None,
         data_dir=make_tmp_dir(),
         startup_timeout_s=1.0,
         external_base_url="http://searx.example:8888",
     )
-    # An external instance needs no container — start() just adopts the URL.
+    # An external instance needs no VM service — start() just adopts the URL.
     await sx.start()
     assert sx.base_url == "http://searx.example:8888"
     await sx.stop()

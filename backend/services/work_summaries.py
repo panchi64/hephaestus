@@ -105,7 +105,7 @@ class WorkSummaryService:
             work=self.sweep,
             logger=logger,
             # A failed sweep loses the thing it existed to produce, unlike a reaper's, which
-            # simply tries the same containers again next minute. Worth saying out loud.
+            # simply tries the same sessions again next minute. Worth saying out loud.
             log_level=logging.WARNING,
         )
 

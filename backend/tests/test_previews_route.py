@@ -28,9 +28,8 @@ class _FakeManager:
         self._token = token
         self._handle = PreviewHandle(
             token=token,
-            container="c",
             host_port=host_port,
-            container_port=8000,
+            server_port=8000,
             command=("srv",),
         )
         self.touches = 0

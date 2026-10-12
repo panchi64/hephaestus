@@ -3,23 +3,27 @@
 Four layers, fastest-first:
 - ``extract`` — the trafilatura→innerText cascade over an HTML string (no browser).
 - ``RequestGuard`` — the per-request SSRF policy (no browser; IP literals stay offline).
-- ``BrowserFetcher`` — pre-flight refusal + degrade, and a real Chromium render that
-  proves JavaScript-injected content is captured (skipped when Chromium isn't installed).
+- ``BrowserFetcher`` — pre-flight refusal + degrade, and a real Chromium render in the
+  platform VM that proves JavaScript-injected content is captured (skipped without a real VM).
 - the agent reaching ``web_fetch`` through the toolset stack.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import urllib.parse
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 import pytest
 
+from core.config import Settings
 from core.exceptions import SSRFError, WebFetchError
 from core.text import tokens_to_chars, truncate_on_boundary
-from services.sandbox.container import IMAGE_PULL_TIMEOUT_S
+from services.vm import PlatformVM
+from services.vm.smolvm import SmolvmDriver
 from services.webfetch import BrowserFetcher, FetchedPage, ManagedBrowser, proxy_script
 from services.webfetch.cookies import DomainCookieJar
 from services.webfetch.extract import extract
@@ -176,7 +180,7 @@ def test_proxy_blocklist_matches_core_ssrf():
     ]
     for s in samples:
         ip = ipaddress.ip_address(s)
-        assert proxy_script._is_blocked(ip) == core_ssrf._is_blocked(ip), s
+        assert proxy_script._is_blocked(ip) == core_ssrf.is_blocked(ip), s
 
 
 async def _proxy_request(raw: bytes) -> bytes:
@@ -318,7 +322,7 @@ async def test_fetch_refuses_private_target_before_opening_browser():
     fetcher = BrowserFetcher(
         browser=ManagedBrowser(
             enabled=False,
-            image="x",
+            vm=None,
             startup_timeout_s=1.0,
             concurrency=1,
             user_agent="t",
@@ -334,7 +338,7 @@ async def test_fetch_degrades_when_browser_unavailable():
     fetcher = BrowserFetcher(
         browser=ManagedBrowser(
             enabled=False,
-            image="x",
+            vm=None,
             startup_timeout_s=1.0,
             concurrency=1,
             user_agent="t",
@@ -740,13 +744,35 @@ async def test_fetch_pdf_text_size_cap(monkeypatch):
         await client.aclose()
 
 
-# --- containerized browser: a real render (skipped without a runtime/image) ------
+# --- VM-hosted browser: a real render (skipped without a real VM) ------------
 
 
-async def _browser_or_skip() -> ManagedBrowser:
+async def _browser_or_skip(tmp_path) -> tuple[ManagedBrowser, PlatformVM]:
+    """A browser in a real platform VM; set ``ODYSSEUS_TEST_VM=1`` on a host that has the
+    VM backend and its image to run it."""
+    if not os.environ.get("ODYSSEUS_TEST_VM"):
+        pytest.skip("set ODYSSEUS_TEST_VM=1 to render in a real platform VM")
+    settings = Settings(data_dir=tmp_path)
+    vm = PlatformVM(
+        SmolvmDriver(
+            state_dir=tmp_path / "vm",
+            cpus=settings.vm_cpus,
+            memory_mb=settings.vm_memory_mb,
+            disk_gb=settings.vm_disk_gb,
+            boot_timeout_s=settings.vm_boot_timeout_s,
+            provision_timeout_s=settings.vm_provision_timeout_s,
+            image=Path(settings.vm_image) if settings.vm_image else None,
+            ca_bundle=Path(settings.vm_ca_bundle) if settings.vm_ca_bundle else None,
+        ),
+        scratch=tmp_path / "vm" / "transfer",
+    )
+    await vm.start()
+    if not await vm.wait_ready(settings.vm_boot_timeout_s + settings.vm_provision_timeout_s):
+        await vm.stop()
+        pytest.fail(f"the platform VM did not come up: {vm.failure}")
     browser = ManagedBrowser(
         enabled=True,
-        image="chromedp/headless-shell:latest",
+        vm=vm,
         startup_timeout_s=45.0,
         concurrency=2,
         user_agent="",
@@ -754,40 +780,21 @@ async def _browser_or_skip() -> ManagedBrowser:
         timezone_id="America/New_York",
     )
     await browser.start()
-    # Bring-up runs as a background task, and `available` is settled the moment it
-    # returns: every failure path inside it (no runtime, no image, a proxy that never
-    # listened) returns early, and success flips the flag as its last act. So wait on
-    # the task rather than polling a fixed budget. The old fixed poll capped the wait
-    # below what bring-up actually costs — `ensure_image` re-pulls both `:latest` images
-    # on every call — so a container that was merely still starting was reported as
-    # unavailable, and the test went green as a skip without ever exercising anything.
-    #
-    # The bound is a backstop, not the budget: it is set above everything bring-up can
-    # legitimately spend (a pull each for the browser and proxy images, then the startup
-    # wait) so it cannot reintroduce that false skip. Overrunning it means bring-up is
-    # wedged rather than slow, which is a failure — skipping there would once again be a
-    # green result that tested nothing.
     assert browser._task is not None  # enabled=True, so start() created it
-    budget = 2 * IMAGE_PULL_TIMEOUT_S + browser._startup_timeout_s + 60
-    try:
-        async with asyncio.timeout(budget):
-            await browser._task
-    except TimeoutError:
-        await browser.stop()
-        pytest.fail(f"browser bring-up did not settle within {budget:.0f}s")
+    await browser._task
     if not browser.available:
         await browser.stop()
-        pytest.skip("web fetch container unavailable (no container runtime or image)")
-    return browser
+        await vm.stop()
+        pytest.fail("the browser did not connect in the platform VM")
+    return browser, vm
 
 
 async def _allow_all(url: str) -> None:
     return None
 
 
-@pytest.mark.container
-async def test_containerized_browser_renders_js_extracts_and_is_stealthed(monkeypatch):
-    browser = await _browser_or_skip()
+async def test_vm_browser_renders_js_extracts_and_is_stealthed(monkeypatch, tmp_path):
+    browser, vm = await _browser_or_skip(tmp_path)
     try:
         # 1) The fetch pipeline renders a JS-built page and extracts its content as Markdown.
         # Let the synthetic data: URL past the entry pre-flight (the guard treats data: as
@@ -851,6 +858,7 @@ async def test_containerized_browser_renders_js_extracts_and_is_stealthed(monkey
             assert await probe.evaluate("() => navigator.userAgentData.platform") == "Linux"
     finally:
         await browser.stop()
+        await vm.stop()
 
 
 # --- agent reaches the fetch tool through the toolset stack ----------------

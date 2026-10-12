@@ -59,7 +59,7 @@ class SubagentParent:
     #: share those files, or ``<parent>/<delegation>`` to work in a fork of them — so this
     #: is the whole of what decides which filesystem a sub-agent ends up on. Deliberately
     #: the key and not a resolved root: resolving the parent's workspace here would open a
-    #: container or cut a checkout for an answer nothing reads, and the child resolves its
+    #: sandbox or cut a checkout for an answer nothing reads, and the child resolves its
     #: own on its first file-tool call like every other run.
     workspace_key: str | None = None
     #: The run doing the launching. Only its id is kept, to tie a card back to the turn

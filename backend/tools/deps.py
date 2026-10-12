@@ -90,7 +90,7 @@ class RunDeps:
     # reason as `workspace` — and deliberately per *run* rather than per conversation:
     # "I already read this" is a fact about the investigation in flight, not a durable one.
     web_dedupe: DedupeSets = field(default_factory=DedupeSets, repr=False, compare=False)
-    # The key everything about this run's workspace hangs off: its container session,
+    # The key everything about this run's workspace hangs off: its sandbox session,
     # its preview, its staged artifacts. The conversation when there is one, else the
     # run (a stateless turn). A real field rather than a derived property because a
     # child workspace is a *fork* of its parent's, and delegation has to be able to

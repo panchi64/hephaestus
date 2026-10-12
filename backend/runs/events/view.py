@@ -31,7 +31,7 @@ class ViewLive(_Body):
     url: str  # "/previews/{token}/<entry>"
     title: str | None = None
     command: str  # the server command, for display
-    port: int  # the in-container port it listens on
+    port: int  # the sandbox port it listens on
 
 
 class ViewLiveStopped(_Body):

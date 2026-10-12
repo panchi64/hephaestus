@@ -1,9 +1,9 @@
-"""The OS-level fence for everything that runs outside a container, and the escape hatch.
+"""The OS-level fence for everything that runs outside the platform VM, and the escape hatch.
 
-Two paths execute on the operator's real machine: the project shell, working in a
+Two paths execute on the operator's real machine: the host shell, working in a
 project's folder or worktree, and ``code_run_host_command``, the approval-gated exception
 that exists for when the host itself must change. Both are fenced the same way, by
-``sandbox-runtime`` (seatbelt on macOS, bubblewrap on Linux, no container): credential
+``sandbox-runtime`` (seatbelt on macOS, bubblewrap on Linux): credential
 paths and the data directory are unreadable, writes are deny-by-default, and egress to the
 *outside* goes only to allowlisted domains. :func:`confine` is that fence, applied per
 command; :func:`resolve_confinement` is the once-per-process machinery behind it.
@@ -11,7 +11,7 @@ command; :func:`resolve_confinement` is the once-per-process machinery behind it
 **Loopback is outside the allowlist, deliberately and not for free.** A dev server, its
 test suite and every tool that talks to one are compute, so the profile permits
 ``localhost``. What that also permits is whatever else listens there — including the
-loopback ports this application publishes for its own managed containers, some of which
+loopback ports this application publishes for its own VM services, some of which
 (the web-fetch browser's DevTools port) speak an unauthenticated protocol that can fetch
 on a command's behalf. So the honest statement of this fence is that it bounds where a
 command may reach *off the machine*, not that everything it can reach is on the list.
@@ -20,11 +20,10 @@ command may reach *off the machine*, not that everything it can reach is on the 
 to is the command; what a command can *reach* once running is a separate question, and
 one they cannot audit from a single line of shell.
 
-**The hatch degrades where everything else fails closed, deliberately.** The shell refuses
-outright without a fence, and ``detect.py`` disables sandboxed execution when no runtime
-exists, because nothing was promised in either case. Here the operator has explicitly
-approved *this* command, and refusing it because a platform primitive is missing would
-break the single case the tool exists for — so it runs unconfined and says so.
+**The hatch degrades rather than failing closed, deliberately.** The operator has
+explicitly approved *this* command, and refusing it because a platform primitive is
+missing would break the single case the tool exists for — so it runs unconfined and says
+so.
 """
 
 from __future__ import annotations
@@ -105,22 +104,14 @@ def scratch_path() -> Path:
     Split from the claim so a *profile* can name the path without a squatted directory
     taking confinement resolution down with it: the refusal belongs to the command that
     would have run there, not to the process that configures the fence for every later
-    command. Two profiles name it, for opposite reasons — this module's allows writing it
-    (it is where an approved host command starts), and the worktree fence
-    (``fence.py``) denies it, so a command nobody approved cannot plant something in the
-    directory an approved one will run in.
+    command. This module's profile allows writing it (it is where an approved host command
+    starts).
     """
     return Path(tempfile.gettempdir()) / f"odysseus-host-{os.getuid()}"
 
 
 def denied_read_paths(settings: Settings) -> tuple[str, ...]:
-    """The paths no confined command may read, whichever profile is confining it.
-
-    One list with two consumers — the host escape hatch below and the worktree fence
-    (``fence.py``) — because the invariant is a comparison between them: a command the
-    deterministic stage cleared for itself must never be fenced *more loosely* than one the
-    operator read and approved. Two copies of this list could only ever drift into breaking
-    that, and silently.
+    """The paths no confined host command may read.
 
     The data directory is the entry that matters most, and the one an operator's own
     ``host_command_deny_read`` would not think to name: it holds the vault, the sealed
@@ -240,12 +231,12 @@ async def _configure(settings: Settings) -> HostConfinement:
 
     # Through the same funnel an approved domain goes through, so what an operator wrote
     # in the setting means the same thing at both fences. Left raw, `Files.PythonHosted.org`
-    # or a pasted URL would be allowed by the container's proxy and refused here.
+    # or a pasted URL would be allowed by the egress gateway and refused here.
     domains = [normalise_domain(d) for d in settings.egress_allowed_domains]
     try:
         await SandboxManager.initialize(
             SandboxRuntimeConfig(
-                # The same allowlist the container fence reads. An approved command is
+                # The same allowlist the VM's egress gateway reads. An approved command is
                 # still only approved for what the operator read; where it may *reach* is
                 # one installation-wide policy, not a second list that drifts from it.
                 # `allow_local_binding` because a dev server or a test suite opening a
@@ -307,7 +298,7 @@ async def confine(
 
     :func:`resolve_confinement` settles the machinery once per process — the platform
     probe, the proxy listeners — but not where a particular command may write, because the
-    two callers do not agree on that: the project shell writes into one conversation's
+    two callers do not agree on that: the host shell writes into one conversation's
     project folder, the approved host command wherever the operator allowed. Those rules are
     genuinely per-call, because they go into the wrapper the OS itself enforces.
 

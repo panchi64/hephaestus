@@ -632,7 +632,7 @@ class TestTheStructuralStage:
         # model reviewer rules instead — with the same structural facts in front of it.
         for command in ("ls -la", "uv run pytest", "git status"):
             assert not cleared(command, fenced=False)
-        assert "no OS fence" in reason("ls -la", fenced=False)
+        assert "no fence" in reason("ls -la", fenced=False)
 
     def test_a_read_and_a_sandbox_call_clear_with_no_fence_at_all(self):
         # The two tiers a fence has nothing to do with: one is settled by the tool's class,

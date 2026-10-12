@@ -23,18 +23,19 @@ answerable from three facts it can actually establish:
   could not be read at all;
 - **a declared reach** — ``workspace``, ``network`` or ``host``, stated by the model on the
   call itself (:data:`~services.permissions.capability.Reach`);
-- **an OS fence** — whether this host can actually *hold* a process to that reach
-  (``services/sandbox/fence.py``: seatbelt on macOS, bubblewrap on Linux).
+- **a fence** — whether a process can actually be *held* to that reach: a project command
+  runs in the platform VM against a copy of the project (``services/sandbox/project_shell.py``),
+  with no network unless it declared one.
 
 The declaration is what makes the structure decidable and the fence is what holds a command
-to most of it: a command declaring ``workspace`` runs under a profile that permits writing
-the worktree and nothing else and reaching no network, so a write or an egress beyond what
-it declared fails *inside* the fence instead of quietly succeeding. **Reads are the
-exception, and the one place structure carries the whole weight**: the runtime has a read
-denylist and no read allowlist (``services/sandbox/fence.py``), so nothing downstream will
-catch a read outside the worktree that this stage cleared. That is why the extraction
-refuses a word it cannot place as a single path (``shell_ast.py``) rather than measuring it
-optimistically, and why a path that escapes is refused here before anything else is asked.
+to most of it: a command declaring ``workspace`` runs in the VM with no network, so an
+egress beyond what it declared fails *inside* the fence instead of quietly succeeding, and
+only the project's own files come back out. **Reads of the project are the exception, and
+the one place structure carries the whole weight**: the guest copy holds the project, so
+nothing downstream will catch a read of it that this stage cleared. That is why the
+extraction refuses a word it cannot place as a single path (``shell_ast.py``) rather than
+measuring it optimistically, and why a path that escapes is refused here before anything
+else is asked.
 
 **And it is why "relative to the workspace root" has to stay true.** A shell session
 persists its working directory between calls, so a relative path is judged as relative to
@@ -58,7 +59,7 @@ whenever one of them is missing.
   with no utility model bound. Only a *classified* name reaches it: an unknown one resolves
   to the class that reaches furthest, so nothing an operator's own MCP server names can
   arrive wearing a read's clothes;
-- an **offline sandbox call**: the conversation's container is itself the fence, so the
+- an **offline sandbox call**: the conversation's sandbox is itself the fence, so the
   program inside it needs no reading. This is the one branch that clears a capability the
   extraction marked unbounded, and deliberately: for an interpreter there is no reading of
   the arguments that would ever bound it, and the boundary was never the arguments;
@@ -66,9 +67,9 @@ whenever one of them is missing.
   network, and a fence available to hold it there.
 
 **A ``network`` declaration is not a fourth one, and the asymmetry is deliberate.** The
-fence bounds writes and egress and cannot bound *reads*, so a command cleared at
-``workspace`` can already read whatever the operator's account can — and the only way that
-leaves the machine is a command that reaches out. An allowed-domains list does not make
+fence bounds writes and egress and cannot bound *reads* of the project, so a command
+cleared at ``workspace`` can already read everything in it — and the only way that leaves
+the machine is a command that reaches out. An allowed-domains list does not make
 that safe: the seed names hosts that accept uploads as readily as they serve downloads, so
 `git push` of copied data is inside it. So every networked command goes to the model
 reviewer, whatever the operator has allowed, and the allowed list stays what the *fence*
@@ -76,9 +77,9 @@ holds an approved one to (``tools/shell.py``) rather than what clears it.
 
 **Everything else escalates, and the reason says which of the three facts was missing** —
 an unreadable construct, a path outside the worktree, a `host` declaration, a declaration
-the command's own syntax contradicts, a host with no fence, or a reach into the network.
-That reason is what an operator reads on the review row, and "the system was arbitrary" is
-the reading it exists to prevent.
+the command's own syntax contradicts, a command with no fence to hold it, or a reach
+into the network. That reason is what an operator reads on the review row, and "the
+system was arbitrary" is the reading it exists to prevent.
 
 **Pure, and pure on purpose.** Nothing here probes the host or reads settings: whether a
 fence exists arrives as an argument, so the same call is decidable in a test, at the gate
@@ -119,15 +120,15 @@ class Judgement:
 def judge(capability: Capability, *, fenced: bool) -> Judgement:
     """Whether ``capability``'s structure, declaration and fence agree — and at which tier.
 
-    ``fenced`` says whether this host can confine a process at all
-    (``services/sandbox/fence.py``). It is a fact about the machine rather than about the
-    call, which is why it is an argument: this function stays pure and total, never raises,
-    never calls out, and never returns ``approved`` for anything it did not fully account
-    for.
+    ``fenced`` says whether a process can be held to its declared reach at all — whether
+    it runs in the platform VM rather than on the host. It is a fact about the machine
+    rather than about the call, which is why it is an argument: this function stays pure
+    and total, never raises, never calls out, and never returns ``approved`` for anything
+    it did not fully account for.
 
     The two class-settled tiers are tested first, ahead of ``unbounded``, because for both
     of them the arguments are not what settles the act: a classified read is settled by its
-    tool and a sandboxed call by its container. Every other branch reads the extraction, so
+    tool and a sandboxed call by its sandbox. Every other branch reads the extraction, so
     a partially-read command is refused *as* one before any of them.
     """
     if capability.kind is ActionKind.READ:
@@ -137,11 +138,11 @@ def judge(capability: Capability, *, fenced: bool) -> Judgement:
         # for the same kind of answer a command gets.
         return Judgement(True, "classified read, cleared at Auto with no review", tier="read")
     if capability.sandboxed and not capability.network:
-        # The container is the fence: no host filesystem, no egress, and outputs that come
+        # The sandbox is the fence: no host filesystem, no egress, and outputs that come
         # back explicitly. Reading the program would add nothing, which is why this is the
         # one branch that clears something the extraction could not bound.
         return Judgement(
-            True, "runs offline in the conversation's own container", tier="sandbox"
+            True, "runs offline in the conversation's own sandbox", tier="sandbox"
         )
     if capability.unbounded:
         return Judgement(False, capability.unbounded[0])
@@ -184,8 +185,8 @@ def _shell_judgement(capability: Capability, *, fenced: bool) -> Judgement:
         )
     if reach == "network":
         # The one declaration that is never settled here, and not because it is unreadable:
-        # the fence has no read allowlist, so a command cleared for the worktree can read
-        # anything the operator can, and reaching out is the only way any of it leaves. An
+        # the fence does not bound reads of the project, so a command cleared for the worktree
+        # can read all of it, and reaching out is the only way any of it leaves. An
         # allowed-domains list narrows where it may go and not what it may send, so who
         # approves an egress stays a judgement about the conversation.
         return Judgement(False, "reaches the network; the reviewer decides")
@@ -193,7 +194,7 @@ def _shell_judgement(capability: Capability, *, fenced: bool) -> Judgement:
         # Nothing about the command is wrong; there is simply nothing here that would hold
         # it to what it declared, so the declaration buys nothing and the model reviewer
         # rules with the structural facts in front of it instead.
-        return Judgement(False, "no OS fence is available on this host to hold it to that")
+        return Judgement(False, "no fence is available to hold it to that")
     if capability.network:
         # The declaration and the command's own syntax disagree, and the disagreement is
         # the finding: a fence built for `workspace` would deny the egress anyway, so what

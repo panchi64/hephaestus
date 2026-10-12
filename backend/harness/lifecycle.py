@@ -1,7 +1,7 @@
 """One owner for the app's background start/stop order.
 
 Everything long-lived the app brings up — write-behind drainers, sync loops,
-container monitors, fire-and-forget startup tasks, clients that need closing —
+service monitors, fire-and-forget startup tasks, clients that need closing —
 registers here at its construction point, and shutdown becomes a single call
 that unwinds in **reverse registration order**. Before this existed, the
 lifespan's ``finally`` block was a hand-maintained mirror of the construction

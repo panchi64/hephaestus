@@ -12,7 +12,7 @@ because a token nobody has asked about in an hour is one nobody is going to. Exp
 closes are deliberately *not* tombstoned — the close already emits its own event, and a
 client that asked for the teardown does not need to be told it happened twice.
 
-Bookkeeping only: nothing here starts, stops, or touches a container. The manager owns
+Bookkeeping only: nothing here starts, stops, or touches the VM. The manager owns
 that, and calls in here to record what it did.
 """
 

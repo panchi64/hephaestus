@@ -1,13 +1,10 @@
 """The mechanics behind the project shell: one persistent working directory, the
-background processes started from it, and the fence every command is wrapped in.
+background processes started from it, on the operator's machine.
 
 **The behaviour is the harness `Shell`'s on purpose.** The model has been trained on those
 four tools — their names, their arguments, the shape of what they return — and changing any
-of it to gain a fence would cost more than the fence is worth. What is *not* the harness's
-is the seam: it spawns processes itself, with nowhere to rewrite a command, and a code
-conversation's shell has to run every command under OS confinement or not at all. So the
-shape is copied and the spawn is ours. ``tools/shell.py`` keeps the model-facing contract;
-what happens to a process is here.
+of it would cost more than it gains. The shape is copied and the spawn is ours.
+``tools/shell.py`` keeps the model-facing contract; what happens to a process is here.
 
 The working directory persists between calls because a person's shell does, and because
 the permission judge reads relative paths against it (``services/permissions/judge.py``).
@@ -25,7 +22,7 @@ browser, and a timed-out command threw its output away because there was no slot
 it in. The prose a *model* reads is composed one layer up (``tools/shell.py``), from these
 fields; nothing here decides how the result is worded.
 
-**Output can be watched while it accumulates.** :meth:`FencedShell.run` takes an optional
+**Output can be watched while it accumulates.** :meth:`HostShell.run` takes an optional
 ``on_progress`` and calls it with whatever the command has newly printed, every
 :data:`_PROGRESS_INTERVAL_S`. It is a hook and not an event: this module knows nothing
 about runs or streams, and what a caller does with a chunk is theirs
@@ -50,16 +47,13 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Concatenate, Literal, Protocol
+from typing import IO, Concatenate, Literal
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.shell._capability import _DEFAULT_DENIED_COMMANDS
 
 from .process import filtered_env, kill_tree, spawn_confined, terminate_tree
-
-if TYPE_CHECKING:  # pragma: no cover — the fence's own type, never imported at runtime
-    from sandbox_runtime import SandboxRuntimeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -76,13 +70,12 @@ _PROGRESS_INTERVAL_S = 0.5
 _PROGRESS_MAX_CHARS = 200_000
 
 #: Destructive programs (`rm`, `dd`, `mkfs`, `shutdown`, …) refused by name. Taken from the
-#: harness rather than restated: it is a guardrail against a slip, not a boundary — the
-#: fence is the boundary — and two copies of a guardrail is one copy that stops being
-#: updated when the other grows an entry.
+#: harness rather than restated: it is a guardrail against a slip, not a boundary, and two
+#: copies of a guardrail is one copy that stops being updated when the other grows an entry.
 _DENIED_COMMANDS: frozenset[str] = frozenset(_DEFAULT_DENIED_COMMANDS)
 
-#: Programs that want a terminal. Under this fence they would not fail — they would hang
-#: until the timeout, spending the turn on nothing.
+#: Programs that want a terminal. Here they would not fail — they would hang until the
+#: timeout, spending the turn on nothing.
 _INTERACTIVE = re.compile(
     r"^(vi|vim|nano|emacs|less|more|top|htop|man)\b|^sudo\s|^(passwd|ssh|telnet|ftp)\b"
 )
@@ -144,22 +137,9 @@ class BackgroundStatus:
     stderr: str
 
 
-class Confiner(Protocol):
-    """Rewrites a command so the OS holds it to ``profile``. A protocol rather than
-    :func:`services.sandbox.fence.wrap` itself because a test driving the real fence would
-    be testing seatbelt.
-
-    The profile arrives per call and is built elsewhere (``services/sandbox/fence.py``,
-    from the reach the model declared). Nothing in this module knows what a reach is: the
-    shell runs a process under a boundary it is handed, and what that boundary should be is
-    a permissions question answered one layer up in ``tools/shell.py``."""
-
-    async def __call__(self, command: str, *, profile: SandboxRuntimeConfig) -> str: ...
-
-
 def _recoverable[R, **P](
-    fn: Callable[Concatenate[FencedShell, P], Awaitable[R]],
-) -> Callable[Concatenate[FencedShell, P], Awaitable[R]]:
+    fn: Callable[Concatenate[HostShell, P], Awaitable[R]],
+) -> Callable[Concatenate[HostShell, P], Awaitable[R]]:
     """Turn what the model can correct into `ModelRetry`, and leave the rest alone.
 
     Pydantic AI feeds only `ModelRetry` back as a retry prompt; anything else aborts the
@@ -167,7 +147,7 @@ def _recoverable[R, **P](
     both the agent's to act on, so they go back to it rather than ending the turn."""
 
     @functools.wraps(fn)
-    async def wrapper(self: FencedShell, *args: P.args, **kwargs: P.kwargs) -> R:
+    async def wrapper(self: HostShell, *args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return await fn(self, *args, **kwargs)
         except PermissionError as exc:
@@ -195,22 +175,20 @@ class _Background:
         self.exit_code: int | None = None
 
 
-class FencedShell:
-    """One workspace's shell: the drifting working directory, the background processes
-    started in it, and the fence. Built per worktree and shared by the runs working there,
-    so a `cd` and a dev server both outlive the turn that made them."""
+class HostShell:
+    """One workspace's shell on the operator's machine: the drifting working directory and
+    the background processes started in it. Built per worktree and shared by the runs
+    working there, so a `cd` and a dev server both outlive the turn that made them."""
 
     def __init__(
         self,
         root: Path,
         *,
-        confiner: Confiner,
         default_timeout: float,
         max_output_chars: int,
     ) -> None:
         self._root = root
         self._cwd = root
-        self._confine = confiner
         self._default_timeout = default_timeout
         self._max_output_chars = max_output_chars
         self._background: dict[str, _Background] = {}
@@ -226,11 +204,10 @@ class FencedShell:
         self,
         command: str,
         *,
-        profile: SandboxRuntimeConfig | None,
         timeout_seconds: float | None = None,
         on_progress: ProgressHook | None = None,
     ) -> ShellResult:
-        """Run ``command`` to completion under ``profile`` and return what it did.
+        """Run ``command`` to completion and return what it did.
 
         ``on_progress``, where given, is handed each new piece of output as the command
         runs (see the module docstring). It is watched from a task of its own so a hook
@@ -238,13 +215,13 @@ class FencedShell:
         way out of this method — including the cancellation one, where there is no time
         left to drain anything and the partial output is about to stop mattering.
         """
-        _check(command)
+        check_command(command)
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
         wrapped, cwd_file = self._with_cwd_capture(command)
         out, err = _stream_files("run")
         started = time.monotonic()
         try:
-            proc = await self._spawn(wrapped, profile, out, err)
+            proc = await self._spawn(wrapped, out, err)
             out.close()
             err.close()
             watcher = (
@@ -294,13 +271,13 @@ class FencedShell:
             _unlink(out.name, err.name, str(cwd_file))
 
     @_recoverable
-    async def start(self, command: str, *, profile: SandboxRuntimeConfig | None) -> str:
-        """Start ``command`` in the background under ``profile``, and return its id."""
-        _check(command)
+    async def start(self, command: str) -> str:
+        """Start ``command`` in the background, and return its id."""
+        check_command(command)
         command_id = uuid.uuid4().hex[:12]
         out, err = _stream_files(command_id)
         try:
-            proc = await self._spawn(command, profile, out, err)
+            proc = await self._spawn(command, out, err)
         except BaseException:
             _unlink(out.name, err.name)
             raise
@@ -323,9 +300,7 @@ class FencedShell:
         if not bg.finished and bg.proc.returncode is not None:
             bg.exit_code = bg.proc.returncode
             bg.finished = True
-        return self._status(
-            command_id, bg, "finished" if bg.finished else "running", bg.exit_code
-        )
+        return self._status(command_id, bg, "finished" if bg.finished else "running", bg.exit_code)
 
     async def stop(self, command_id: str) -> BackgroundStatus | None:
         """Stop a background command's whole group and hand back its final output.
@@ -372,25 +347,16 @@ class FencedShell:
             await self.stop(command_id)
 
     async def _spawn(
-        self, command: str, profile: SandboxRuntimeConfig | None, out: IO[bytes], err: IO[bytes]
+        self, command: str, out: IO[bytes], err: IO[bytes]
     ) -> asyncio.subprocess.Process:
-        """Fence ``command``, then start it in the tracked directory with a filtered env.
-
-        ``None`` runs it as written. That is not this module's decision and it is not a
-        fallback: `tools/shell.py` returns no profile only where somebody's explicit yes
-        asked for the unfenced machine, and a host with no fence at all refuses the tools
-        outright long before anything reaches here. Applying a fence "just in case" would
-        break the act that was approved; inventing one here would put the decision in two
-        places.
-        """
-        fenced = command if profile is None else await self._confine(command, profile=profile)
+        """Start ``command`` in the tracked directory with a filtered env."""
         return await spawn_confined(
-            fenced, cwd=self._cwd, env=filtered_env(), stdout=out, stderr=err
+            command, cwd=self._cwd, env=filtered_env(), stdout=out, stderr=err
         )
 
     def _with_cwd_capture(self, command: str) -> tuple[str, Path]:
         """``command`` with its final directory recorded out of band (see the module
-        docstring). Wrapped *before* the fence, so the capture happens inside it."""
+        docstring)."""
         fd, name = tempfile.mkstemp(prefix="odysseus_cwd_")
         os.close(fd)
         wrapped = f"{command}\n__ody_ec=$?\npwd > {shlex.quote(name)}\nexit $__ody_ec"
@@ -405,8 +371,7 @@ class FencedShell:
         (``services/permissions/shell_ast.py``), so a `cd` that moved the tracked directory
         out of the worktree would leave every later containment claim measured against the
         wrong place: `cat secrets.txt` would clear as contained while reading some other
-        directory's file. The fence would not catch it either — it bounds writes and egress,
-        never reads.
+        directory's file.
 
         Both spellings of the root are compared, because the two ends disagree about it on
         macOS: the shell starts at the path it was given and `pwd` reports the one the
@@ -423,7 +388,7 @@ class FencedShell:
             landed = Path(recorded)
             if landed.is_dir() and self._contains(landed):
                 self._cwd = landed
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return
 
     def _contains(self, candidate: Path) -> bool:
@@ -442,10 +407,10 @@ class FencedShell:
         return truncate_tail(text, self._max_output_chars)
 
 
-def _check(command: str) -> None:
+def check_command(command: str) -> None:
     """Refuse what this shell will not run at all, before anything is spawned. Best-effort,
     and not the boundary: a determined agent walks around a name check with an interpreter.
-    The boundary is the fence every command is wrapped in."""
+    The boundary is the permission layer in front of it."""
     if "\x00" in command:
         raise ModelRetry("The command contains a NUL byte, which cannot be passed to a process.")
     try:

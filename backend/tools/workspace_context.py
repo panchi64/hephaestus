@@ -19,7 +19,7 @@ conversation behind it (`tools/deps.py`, `agent/factory.py`). At the tail it is 
 hundred tokens on the turn it rides, and the history in front of it stays byte-stable.
 
 **It creates nothing.** Not a session, not a directory — see `settled_workspace`. A
-turn that never touches a file must not pay for a container's worth of bookkeeping to
+turn that never touches a file must not pay for a session's worth of bookkeeping to
 be told there is nothing to say. And it runs **off the event loop**: the walk is
 ordinary blocking IO over a directory the agent controls the size of, so it goes
 through a thread like every other workspace walk in this codebase.

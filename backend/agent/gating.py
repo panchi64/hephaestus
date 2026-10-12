@@ -79,7 +79,7 @@ from services.permissions import (
     review_transcript,
 )
 from services.registry import ModelRegistry
-from services.sandbox import fence
+from services.vm.project import ProjectCopies
 from tools.deps import RunDeps
 from tools.workspace import resolve_run_workspace
 
@@ -306,11 +306,9 @@ async def review_batch(
     )
     nonce = new_nonce()
     root = await _judged_root(deps, calls)
-    # Whether this host can fence a process at all is a property of the machine, not of the
-    # call: resolved once for the batch, from the same process-global primitive the tool
-    # will build its profile out of, so the gate and the tool cannot disagree about whether
-    # a command was held to what it declared.
-    confinement = await fence.resolve_confinement(settings)
+    # Resolved once for the batch: a non-host command is held to its reach only by running
+    # in the platform VM, and the shell refuses every command while the VM is down.
+    fenced = vm_fences(caps)
     outcomes = await gather_bounded(
         [
             review_call(
@@ -322,7 +320,7 @@ async def review_batch(
                 transcript=transcript,
                 reviewer=reviewer,
                 granted=grant_width(call.tool_name, call.args_as_dict(), grants),
-                fenced=confinement.active,
+                fenced=fenced,
                 budget=budget,
                 nonce=nonce,
             )
@@ -331,6 +329,11 @@ async def review_batch(
         _REVIEW_CONCURRENCY,
     )
     return {call.tool_call_id: outcome for call, outcome in zip(calls, outcomes, strict=True)}
+
+
+def vm_fences(caps: ServiceContainer) -> bool:
+    copies = caps.get_optional(ProjectCopies)
+    return copies is not None and copies.vm.available
 
 
 async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Path | None:
@@ -344,7 +347,7 @@ async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Path | N
 
     Once for the batch, and only when a call in it is actually placed against a root
     (:func:`measured_against_root`). Opening a workspace is a `git worktree add` or a
-    container start; every call in the batch would be judged against the same directory
+    sandbox start; every call in the batch would be judged against the same directory
     anyway, and a batch of mail sends would pay for one to learn nothing.
 
     A failure here never ends the turn. The workspace this could not open is the one the

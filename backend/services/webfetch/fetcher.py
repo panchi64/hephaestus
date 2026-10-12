@@ -5,7 +5,7 @@ Replaces the old static httpx+trafilatura fetch: the page is loaded in Chromium 
 JavaScript runs and client-rendered content is present, then the rendered DOM is handed
 to the extractor (:mod:`services.webfetch.extract`). The entry URL is pre-flighted
 (:func:`core.ssrf.assert_public_url`) before a context opens, and every request the browser
-then makes is gated by the proxy sidecar (:mod:`services.webfetch.proxy_script`). Output is
+then makes is gated by the VM's egress gateway (:mod:`services.vm.egress`). Output is
 untrusted-wrapped — web content is data, never instructions.
 
 Domain errors only (so the service stays reusable by non-agent callers): ``SSRFError`` for
@@ -217,7 +217,7 @@ class BrowserFetcher:
 
     async def _render(self, url: str) -> tuple[str, str, str]:
         """Load the page in an isolated context and capture the rendered HTML, the rendered
-        innerText, and the final URL. SSRF is enforced out-of-browser by the proxy sidecar
+        innerText, and the final URL. SSRF is enforced out-of-browser by the VM's egress gateway
         (it refuses non-public destinations on every request, including redirects); a request
         it refuses surfaces here as a load failure, which degrades to a recoverable error —
         the synchronous pre-flight in :meth:`fetch` is what yields the hard SSRF refusal."""
@@ -252,7 +252,7 @@ class BrowserFetcher:
         except PlaywrightError as exc:
             raise WebFetchError(f"could not render {url!r}: {_reason(exc)}") from exc
         # Cap (in characters) what we hand the extractor. The browser already buffered the
-        # full page (the container's --memory bounds that); this just keeps an outsized DOM
+        # full page; this just keeps an outsized DOM
         # from ballooning the extractor's input. trafilatura/lxml recover from a mid-tag cut.
         return html[: self._max_bytes], (text or "")[: self._max_bytes], final_url
 

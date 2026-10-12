@@ -70,9 +70,8 @@ class FakeManager:
             raise SandboxError("address already in use")
         return PreviewHandle(
             token="tok",
-            container="c",
             host_port=5000,
-            container_port=port,
+            server_port=port,
             command=tuple(command),
         )
 

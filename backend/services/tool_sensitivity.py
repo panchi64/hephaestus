@@ -17,7 +17,7 @@ kinds of reach, not degrees of danger:
   conversation's plan, the operator's memory and skills, a local draft. Visible from
   inside Odysseus, inspectable, and undoable from here.
 - ``host_exec`` — hands a command or a program to an interpreter, so the worst case is not
-  bounded by the tool's own arguments. The sandbox container is a fence around the blast
+  bounded by the tool's own arguments. The sandbox is a fence around the blast
   radius, not a reason to call running arbitrary code a file write.
 - ``external_effect`` — reaches something outside: a mail server, a calendar server, a live
   page in the operator's own browser session, a third-party tool.
@@ -204,8 +204,8 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
     Sensitivity.HOST_EXEC: frozenset(
         {
             # Arbitrary code, whichever machine runs it: `code_execute` in the
-            # conversation's container, `code_run_host_command` and the shell on the
-            # operator's own.
+            # conversation's sandbox, `code_run_host_command` on the operator's own machine,
+            # and the shell in the VM or, declared `host`, on that machine.
             "code_execute",
             "code_run_host_command",
             "shell_run_command",

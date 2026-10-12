@@ -13,11 +13,12 @@ from core.db import init_db, make_engine
 from core.exceptions import NotFoundError
 from core.vault import Vault
 from models.workspace_history import WorkspaceBlob, WorkspaceSnapshot
-from services.sandbox import ContainerSandbox, SandboxSessionManager
+from services.sandbox import SandboxSessionManager
 from services.workspace_history import WorkspaceHistoryStore
 
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from .conftest import egress_policy
+from .vm_fakes import FakeVM
 
 _EXCLUDES = Settings().sandbox_walk_excludes
 
@@ -32,7 +33,7 @@ async def _store(tmp_path) -> WorkspaceHistoryStore:
 
 def _manager(tmp_path, vault) -> SandboxSessionManager:
     return SandboxSessionManager(
-        ContainerSandbox(),
+        FakeVM(tmp_path / "sandbox" / "work"),
         vault,
         egress=egress_policy(tmp_path),
         data_dir=tmp_path,

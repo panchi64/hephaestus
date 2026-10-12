@@ -1,6 +1,6 @@
 """Loopback readiness — wait for a subprocess to bind its port, and to start serving on it.
 
-The shared probes behind every server we spawn and wait on: sandbox containers, the
+The shared probes behind every server we spawn and wait on: preview dev servers, the
 managed SearXNG and the web-fetch browser. No domain coupling,
 so each caller wraps the outcome in its own error (``SandboxError``, …).
 

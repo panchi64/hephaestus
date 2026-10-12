@@ -5,7 +5,7 @@ serves (the notification feed, the event stream of a run parked on an approval, 
 preview) have no end of their own. The code that would close them sits in the lifespan's
 ``finally`` — which uvicorn runs only *after* the connections are gone. Each side waited on
 the other, a second Ctrl+C force-exited past the lifespan, and the write-behind queues,
-containers and proxies it was meant to stop were simply abandoned.
+the VM and proxies it was meant to stop were simply abandoned.
 
 This module breaks the cycle by being raised from *outside* the lifespan: the uvicorn
 server in :mod:`core.server` calls :func:`begin_shutdown` the instant it receives the

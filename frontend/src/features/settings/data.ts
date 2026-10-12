@@ -25,7 +25,9 @@ import type {
   ReindexStatus,
   SearchProvider,
   SearchProviderInput,
+  VmState,
 } from "./model";
+import { toVmState, type VmStateDTO } from "./vmDto";
 
 // The endpoint catalog, the provider presets, and the role bindings (reads AND
 // the role writes) are owned by the shared models store so the chat picker,
@@ -345,6 +347,29 @@ export async function setOfflineManual(value: boolean): Promise<void> {
 /** Turn the auto-detect master switch on/off (does not itself force offline). */
 export async function setOfflineAutoDetect(value: boolean): Promise<void> {
   await putOffline({ auto_detect: value });
+}
+
+/* ── Platform VM ───────────────────────────────────────────────────────────────
+   A live-polled plain signal for the same reason as offline mode: the screen polls
+   `refreshVmState` while the VM is starting. */
+
+const [vmState, setVmState] = createSignal<VmState | null>(null);
+
+export function useVmState(): () => VmState | null {
+  return vmState;
+}
+
+export async function refreshVmState(): Promise<void> {
+  try {
+    setVmState(toVmState(await api.get<VmStateDTO>("/vm")));
+  } catch {
+    // Keep the last known state on a transient poll failure.
+  }
+}
+
+/** Rebuild the platform VM and reflect the state the POST returns. */
+export async function resetVm(): Promise<void> {
+  setVmState(toVmState(await api.post<VmStateDTO>("/vm/reset")));
 }
 
 /* ── Agent tools ────────────────────────────────────────────────────────────────

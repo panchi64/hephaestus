@@ -14,7 +14,7 @@ import type {
  *  types from one place. */
 export type { CompactionReason };
 
-/** Where a thread does its work: `sandbox` is the thread's own container, `checkout` is
+/** Where a thread does its work: `sandbox` is the thread's own workspace in the platform VM, `checkout` is
  *  the project's own folder on the operator's machine (on the branch they have checked
  *  out), and `worktree` is an isolated git worktree of that repository. A project thread
  *  starts in the checkout and the agent may move it to a worktree mid-conversation,

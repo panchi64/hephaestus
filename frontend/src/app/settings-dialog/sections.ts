@@ -223,6 +223,13 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         keywords: ["export", "import", "restore", "snapshot"],
       },
       {
+        id: "platform-vm",
+        label: "Platform VM",
+        icon: "cpu",
+        description: "The VM that runs agent code, previews and web tools",
+        keywords: ["sandbox", "reset", "restart", "runtime", "virtual machine"],
+      },
+      {
         id: "health",
         label: "Health",
         icon: "activity",

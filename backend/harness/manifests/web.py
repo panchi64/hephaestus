@@ -1,11 +1,11 @@
 """The web feature — managed search, page fetch, and the offline mode that owns
-both of their containers.
+both of their services.
 
 Search queries the backend's own SearXNG (zero operator setup; an enabled provider
-in the encrypted registry overrides it). Fetch renders every page in a
-containerized headless browser before extraction — the open web is treated as
+in the encrypted registry overrides it). Fetch renders every page in a headless
+browser in the platform VM before extraction — the open web is treated as
 always-dynamic. Offline mode probes connectivity first and owns bringing both
-containers up/down, so a host that boots offline never launches the heavy browser.
+services up/down, so a host that boots offline never launches the heavy browser.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from services.registry import ModelRegistry
 from services.search import SearchService
 from services.searxng import ManagedSearxng
 from services.settings_store import SettingsStore
+from services.vm import PlatformVM
 from services.webfetch import BrowserFetcher, ManagedBrowser, WebDistiller
 from tools.search import web_toolset
 
@@ -31,18 +32,17 @@ from tools.search import web_toolset
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
     settings = ctx.settings
     registry = ctx.services.get(ModelRegistry)
-    # Managed web search — the backend runs its own SearXNG (same container runtime
-    # as the sandbox). The container is not started here: the offline-mode service
-    # (below) owns bringing both web containers up — probe-first. Its stop registers
+    vm = ctx.services.get_optional(PlatformVM) if settings.vm_enabled else None
+    # Managed web search — the backend runs its own SearXNG in the platform VM. It is
+    # not started here: the offline-mode service (below) owns bringing both web
+    # services up — probe-first. Its stop registers
     # before the monitor's, so the monitor stops first and never fights the teardown.
     searxng = ManagedSearxng(
         enabled=settings.searxng_enabled,
-        image=settings.searxng_image,
+        vm=vm,
         data_dir=settings.data_dir,
         startup_timeout_s=settings.searxng_startup_timeout_s,
         external_base_url=settings.searxng_base_url,
-        runtime_pref=settings.sandbox_runtime,
-        container_prefix=settings.container_prefix,
     )
     ctx.lifecycle.on_stop("searxng", searxng.stop)
     # The web outbound client does NOT follow redirects: an unguarded redirect off
@@ -57,12 +57,12 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         timeout_s=settings.web_search_timeout_s,
         result_limit=settings.web_search_result_limit,
     )
-    # Web fetch — a containerized headless Chromium + the render-and-extract
-    # fetcher. Bring-up is best-effort: no runtime / a failed pull leaves the
-    # browser unavailable and web fetch degrades, like managed search.
+    # Web fetch — a headless Chromium in the platform VM + the render-and-extract
+    # fetcher. Bring-up is best-effort: without the VM the browser is unavailable
+    # and web fetch degrades, like managed search.
     browser = ManagedBrowser(
         enabled=settings.web_fetch_enabled,
-        image=settings.web_fetch_image,
+        vm=vm,
         startup_timeout_s=settings.web_fetch_startup_timeout_s,
         concurrency=settings.web_fetch_concurrency,
         user_agent=settings.web_fetch_user_agent,
@@ -70,9 +70,6 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         timezone_id=settings.web_fetch_timezone,
         cookie_ttl_s=settings.web_fetch_cookie_ttl_s,
         cookie_max=settings.web_fetch_cookie_max,
-        proxy_image=settings.web_fetch_proxy_image,
-        runtime_pref=settings.sandbox_runtime,
-        container_prefix=settings.container_prefix,
     )
     ctx.lifecycle.on_stop("browser", browser.stop)
     # Goal-aware distillation of oversized pages: a closure resolves the utility
@@ -113,7 +110,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         distiller=distiller,
     )
 
-    # Offline mode — owns both web containers' lifecycle. Probe-first at boot, then
+    # Offline mode — owns both web services' lifecycle. Probe-first at boot, then
     # watches the link and suspends/resumes them as connectivity comes and goes. The
     # operator can also force offline manually; both switches persist.
     async def _assume_online() -> bool:

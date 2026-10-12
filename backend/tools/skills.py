@@ -67,7 +67,7 @@ async def _stage(
     byte-for-byte so re-opening a skill in a warm session is a no-op rather than a
     rewrite. Returns the absolute paths the model should use — which is why they come
     from the workspace rather than a literal ``/work``: a worktree run's files are on the
-    host, and telling the model about a container path it cannot reach is worse than not
+    host, and telling the model about a sandbox path it cannot reach is worse than not
     staging at all."""
     root = f"{workspace.stage_prefix}{_STAGE_DIR}/{skill.name}"
     staged: list[str] = []

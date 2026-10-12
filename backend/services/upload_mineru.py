@@ -3,8 +3,8 @@
 MinerU turns a PDF (or image) into clean Markdown with layout, tables, and formulas
 preserved — far better than the built-in text+OCR pass for complex documents. Its
 model stack is heavy (PyTorch + multi-GB weights), so it is **detected, not bundled**:
-the project venv never pulls it. We treat it exactly like the container runtime and the
-managed SearXNG — a host capability discovered with ``shutil.which`` and shelled out to.
+the project venv never pulls it. It is a host capability discovered with
+``shutil.which`` and shelled out to.
 
 Crucially it runs as a **transient subprocess**: each extraction loads MinerU's models,
 produces Markdown, and exits — so the models are lazy by construction and freed on exit,

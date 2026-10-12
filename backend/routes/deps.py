@@ -324,8 +324,8 @@ def workspace_history(request: Request) -> WorkspaceHistoryStore:
 
 
 def sandbox_sessions(request_or_ws: Request | WebSocket) -> SandboxSessionManager | None:
-    """The per-conversation sandbox manager, or None when no runtime is available
-    (fail closed).
+    """The per-conversation sandbox manager, or None when code execution is
+    disabled (fail closed).
 
     Accepts a ``WebSocket`` as well as a ``Request``: the preview proxy reaches this
     from both a request handler and a socket handler, and the two share no base class

@@ -1,19 +1,18 @@
-"""SSRF-enforcing forward proxy — runs in a sidecar container, NOT the backend.
+"""SSRF-enforcing forward proxy — runs as a host subprocess, NOT in the backend process.
 
-The web fetcher's headless browser must have its SSRF policy enforced on every request, but
-doing that the obvious way (a Playwright ``context.route`` handler) enables CDP's ``Fetch``
-domain — which bot walls (Reddit/Cloudflare class) detect and hard-block. So enforcement
-moves *out of the browser*: this is a plain CONNECT/HTTP forward proxy that the browser is
-pointed at with ``--proxy-server``. It runs in its own container sharing the browser's
-network namespace (reached over loopback, never the host network — Docker Desktop's host
-networking is firewall-flaky), resolves each destination, **pins the resolved public IP**
+The host browser (``services/browser/host.py``) must have its SSRF policy enforced on
+every request, but doing that the obvious way (a Playwright ``context.route`` handler)
+enables CDP's ``Fetch`` domain — which bot walls (Reddit/Cloudflare class) detect and
+hard-block. So enforcement moves *out of the browser*: this is a plain CONNECT/HTTP forward
+proxy that the browser is pointed at with ``--proxy-server``. It runs as its own process
+on the host's loopback, resolves each destination, **pins the resolved public IP**
 (closing the DNS-rebinding gap the in-browser guard couldn't), and refuses any non-public
 address. TLS stays end-to-end browser↔site (CONNECT is an opaque tunnel — no interception,
 no CA, no proxy tell).
 
-**Self-contained on purpose** — it is mounted read-only into a stock ``python`` image with
-none of our code on its path, so it imports stdlib only. The SSRF predicate below mirrors
-``core.ssrf._is_blocked``; ``tests/test_webfetch.py`` asserts the two never drift.
+**Self-contained on purpose** — it is run by path with none of our code on its path, so it
+imports stdlib only. The SSRF predicate below mirrors
+``core.ssrf.is_blocked``; ``tests/test_webfetch.py`` asserts the two never drift.
 """
 
 from __future__ import annotations
@@ -48,8 +47,8 @@ async def _resolve_public_ips(host: str, port: int) -> list[str]:
     """Resolve ``host`` to the list of IPs to connect to, or raise if *any* address it
     resolves to is non-public (conservative: a split-horizon name with one private answer is
     refused). The caller dials a returned literal, which pins it — no second resolution to
-    rebind. Order is preserved so the caller can fall through families (a bridge container is
-    often IPv4-only, yet getaddrinfo may list an unreachable IPv6 first)."""
+    rebind. Order is preserved so the caller can fall through families (a host may be IPv4-only,
+    yet getaddrinfo may list an unreachable IPv6 first)."""
     loop = asyncio.get_running_loop()
     infos = await loop.run_in_executor(
         None, lambda: socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)

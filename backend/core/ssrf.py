@@ -28,7 +28,7 @@ _METADATA_ADDRESSES = frozenset({"169.254.169.254", "fd00:ec2::254"})
 _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
 
-def _is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+def is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) so the v4 checks apply.
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
@@ -85,14 +85,14 @@ async def assert_public_url(url: str) -> None:
     for addr in addresses:
         # An address this can't parse is one it can't prove is public, so it is refused
         # rather than passed through — the guard fails closed. (Scoped link-local forms
-        # like ``fe80::1%eth0`` do parse, and land in `_is_blocked` on their own merits.)
+        # like ``fe80::1%eth0`` do parse, and land in `is_blocked` on their own merits.)
         try:
             parsed = ipaddress.ip_address(addr)
         except ValueError as exc:
             raise SSRFError(
                 f"refused to fetch {url!r}: host {host!r} resolved to unparseable address {addr!r}"
             ) from exc
-        if _is_blocked(parsed):
+        if is_blocked(parsed):
             raise SSRFError(
                 f"refused to fetch {url!r}: host {host!r} resolves to non-public address {addr}"
             )

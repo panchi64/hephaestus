@@ -102,17 +102,6 @@ def _isolation(instance: DevInstance) -> list[Finding]:
     else:
         findings.append(Finding("data dir", OK, str(instance.data_dir)))
 
-    if env["ODYSSEUS_CONTAINER_PREFIX"] == "odysseus":
-        findings.append(
-            Finding(
-                "container prefix", FAIL,
-                "this instance would share container names with the operator's",
-                "boot reconciliation removes by name — delete instance.json and re-run `up`",
-            )
-        )
-    else:
-        findings.append(Finding("container prefix", OK, env["ODYSSEUS_CONTAINER_PREFIX"]))
-
     if env["ODYSSEUS_PORT"] in {"8000", "5173"}:
         findings.append(
             Finding("ports", FAIL, "this instance is on the operator's own ports",

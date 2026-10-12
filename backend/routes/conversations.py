@@ -679,7 +679,7 @@ async def _discard_subagents(request: Request, conversation_id: str) -> None:
     this delete is destroying were the only way in.
 
     Best-effort throughout, per sub-agent, for the reason every teardown below is: the
-    conversation row is already gone, and a container that would not stop must not turn a
+    conversation row is already gone, and a sandbox that would not stop must not turn a
     delete the operator has already seen succeed into a 500.
     """
     records = getattr(request.app.state, "subagent_records", None)
@@ -838,7 +838,7 @@ async def delete_conversation(
         # The domains the operator opened for this thread, and the allowlist file the
         # fences read them from. Same reasoning as the workspace above, and best-effort for
         # the same reason — but unconditional, because the policy exists whether or not a
-        # container runtime does.
+        # sandbox does.
         try:
             await deps.egress(request).forget(conversation_id)
         except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded

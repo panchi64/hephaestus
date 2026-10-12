@@ -372,21 +372,19 @@ def review_prompt(request: ReviewRequest) -> str:
     ):
         if values:
             lines.append(f"{label}: {json.dumps(list(values))}")
-    # The container line first, because the rubric's `low` turns on it: an interpreter's
-    # program is not bounded by anything here, but the container it runs in bounds what the
+    # The sandbox line first, because the rubric's `low` turns on it: an interpreter's
+    # program is not bounded by anything here, but the sandbox it runs in bounds what the
     # program can reach, and the reviewer has no other way to tell that call from one on
     # the operator's own machine.
     lines.append(
-        "Runs inside the conversation's sandbox container: "
+        "Runs inside the conversation's sandbox: "
         f"{'yes' if capability.sandboxed else 'no'}"
     )
     # And the network fact is always the grammar walk's, which is why the label says what
-    # was *seen written* rather than what the action can reach. There used to be a second
-    # producer — `code_execute`'s own per-call egress switch — and a sandboxed call was
-    # labelled for it; that switch is gone (widening a workspace's egress is its own
-    # approval-gated act now), so one producer means one label. Keeping the container
-    # wording for sandboxed calls would be the mislabelled measurement the old branch
-    # existed to prevent, only inverted: it would report a walk result as a switch.
+    # was *seen written* rather than what the action can reach. The grammar walk is the
+    # only producer (widening a workspace's egress is its own approval-gated act), so one
+    # producer means one label; wording that described the sandbox's egress would report
+    # a walk result as a switch.
     #
     # Seeing no address is deliberately not the same claim as "reaches nothing": `git
     # push`, `npm publish` and `scp host:/path` all write none, so the label says what was

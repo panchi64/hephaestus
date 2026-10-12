@@ -52,7 +52,7 @@ MANIFEST = FeatureManifest(
     toolsets=(("view", view_toolset),),
     # The live-head proxy is auth-exempt: the unguessable token in the path is the
     # credential (a sandboxed, opaque-origin iframe loads it without the operator
-    # cookie), and it only ever proxies to a loopback preview container.
+    # cookie), and it only ever proxies to a loopback preview server.
     public_prefixes=("/previews",),
     build=_build,
 )

@@ -4,7 +4,7 @@ The capability behind git-style View history. After a file-changing turn the
 sandbox workspace's text files are captured as a **snapshot**: bytes are
 content-addressed and encrypted at rest under the vault (deduped by hash across
 snapshots), the manifest (path → hash) records the tree. Reads decrypt on demand
-and compute diffs server-side with :mod:`difflib` — no git binary, no container.
+and compute diffs server-side with :mod:`difflib` — no git binary.
 
 Mirrors :mod:`services.artifacts`: owner-scoped, vault-sealed bytes, clear
 metadata, all DB work through ``core.db.in_session``.

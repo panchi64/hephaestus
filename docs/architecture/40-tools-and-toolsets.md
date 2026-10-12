@@ -155,12 +155,12 @@ Approval is **consent, not containment**: a misjudged click, a destructive comma
 
 | | `execute` | `request_egress` | `run_host_command` |
 |---|---|---|---|
-| Runs on | the conversation's **container** (`services/sandbox`) | — (widens the workspace's allowlist) | the **real host** |
+| Runs on | the conversation's **sandbox** in the platform VM (`services/sandbox`, `services/vm`) | — (widens the workspace's allowlist) | the **real host** |
 | Approval | **none** — compute is not an exit | **`requires_approval=True`**, **per call, never a standing grant** | **`requires_approval=True`** (deferred, D20) |
 | Extra contract | — | `domains` + a `reason` in the model's own words; the domain is remembered for the workspace once approved, the *act of widening* never is | a plain-language **`explanation`** arg, shown to the operator, describing what it does and its effect on the host (`AE-3.4`) |
 | If capability absent | returns "code execution is unavailable" — the model adapts | reports no allowlist is configured | n/a |
 | In a sub-agent's run | available | **withheld** — a child has nobody to ask | **withheld** |
-| In a project folder (checkout or worktree) | **withheld** — the folder is the one workspace, and the fenced shell is the one way to run in it (`services/workspace_kind.py`) | **withheld** — a grant widens a container's proxy, and there is no container; the host fence reads `egress_allowed_domains` alone | **withheld** — the fenced shell already is that path |
+| In a project folder (checkout or worktree) | **withheld** — the folder is the one workspace, and the fenced shell is the one way to run in it (`services/workspace_kind.py`) | **withheld** — a grant widens a workspace's allowlist at the VM's egress gateway, and a project folder has no such workspace; a command declared `host` is fenced by the host confinement, which reads `egress_allowed_domains` alone | **withheld** — the fenced shell already is that path |
 
 The inversion is the point: **routine code-exec has no approval friction at all**, and the approval prompts are the genuine exits — changing the operator's host, and reaching somewhere nobody approved.
 
@@ -168,15 +168,15 @@ The inversion is the point: **routine code-exec has no approval friction at all*
 
 | Invariant | Status | How |
 |---|---|---|
-| Real files enter as **copies** | unchanged | the workspace is a host-side dir bind-mounted at `/work`; a coding thread gets a worktree on a throwaway branch instead. The operator's own tree is written only by a merge they press |
-| No host filesystem / process / environment reach | unchanged | `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user uid:gid`, only `spec.env` passed; credential paths are never mounted |
-| Walls inside the box | **relaxed (D78)** | no `--read-only` root (the image's tree is root-owned and the box is not root, so it bought nothing `--user` did not), a 1g `/tmp` tmpfs, honest caps (4g / 2.0 cpus / 1024 pids). Compute and installing packages must not feel restricted |
-| Network | **reshaped (D78)** | not "off by default" and no per-call `network=True` bridge container. Each session sits on its own `--internal` network whose only exit is an **allowlisting proxy sidecar** (`sidecar.py` + `egress_proxy.py`). One list feeds both fences, not one per fence: the sidecar reads `egress_allowed_domains` plus whatever `code_request_egress` widened for *that* workspace (`services/egress.py`) |
-| Execution outside a container | **fenced (D78)** | the code-mode shell and the approved host command run under seatbelt/bubblewrap confinement (`host.py`) reading that **same** `egress_allowed_domains` — credential paths and the data dir unreadable, writes allowed in the worktree. Required for the shell (it refuses when confinement cannot initialise), degrading with `confined:false` for the host hatch, where the operator approved *this* command |
+| Real files enter as **copies** | unchanged | the workspace is a host-side dir piped into the VM per run as `/work` (nothing is mounted); a coding thread gets a worktree on a throwaway branch instead. The operator's own tree is written only by a merge they press |
+| No host filesystem / process / environment reach | unchanged | each command runs under bubblewrap as uid 1100 inside the platform VM, only `spec.env` passed; the data dir, vault, uploads and `$HOME` never enter the VM |
+| Walls inside the box | **relaxed (D78)** | the box is not root, so a read-only root bought nothing the unprivileged user did not; caps are the `sandbox_memory` / `sandbox_cpus` / `sandbox_pids_limit` settings. Compute and installing packages must not feel restricted |
+| Network | **reshaped (D78)** | not "off by default" and no per-call `network=True` switch. A sandbox command has no network except through the VM's **allowlisting egress gateway** on the host (`services/vm/egress.py`). One list feeds both fences, not one per fence: the gateway reads `egress_allowed_domains` plus whatever `code_request_egress` widened for *that* workspace (`services/egress.py`) |
+| Execution outside the VM | **fenced (D78)** | the approved host command (and the host shell) runs under seatbelt/bubblewrap confinement (`host.py`) reading that **same** `egress_allowed_domains` — credential paths and the data dir unreadable. It degrades with `confined:false` where confinement cannot initialise, since the operator approved *this* command. Project-chat shell commands do not run here: they run in the platform VM (`services/sandbox/project_shell.py`) |
 | A sub-agent's workspace | **shared, or forked on request (D91)** | it works in the launching thread's own workspace by default — a sub-agent the thread is waiting on should work where the work is. `isolate` gives it its own copy (sandbox) or child worktree, merged back through a three-way merge that reports conflicts rather than overwriting. Isolation only ever increases: a spec written to stay out of the way cannot be talked into the operator's files |
-| Fails closed, never to host | unchanged | `detect_sandbox()` returns `None` with no runtime, no `SandboxSessionManager` is registered in the capability bag, and `code_execute` reports the capability unavailable (`XC-DEG-*`) |
+| Fails closed, never to host | unchanged | with the platform VM disabled (`vm_enabled`) no `SandboxSessionManager` is registered in the capability bag, and `code_execute` reports the capability unavailable (`XC-DEG-*`) |
 
-The backend stays **pluggable** (`Sandbox` ABC; default `ContainerSandbox` over Docker/Podman — portable per `XC-PORT-1`). Outputs return explicitly (stdout/stderr + copied-out files); nothing escapes as a side effect. The operator's own terminal (`SHELL-*`) is unchanged and **agent-unreachable** — the agent's paths to the host are the explained-approval tool and, in a code thread, the fenced shell.
+Code runs in one shared platform microVM (`services/vm`, smolvm/QEMU), which also hosts SearXNG and web fetch's headless Chromium. Outputs return explicitly (stdout/stderr + copied-out files); nothing escapes as a side effect. The operator's own terminal (`SHELL-*`) is unchanged and **agent-unreachable** — the agent's paths to the host are the explained-approval tool and, in a code thread, the fenced shell.
 
 ### 4.3 D24 — pre-authorized scheduled tasks ⬜ *designed, not built*
 
@@ -211,15 +211,15 @@ a deferred call at the Auto level
   │                  an MCP call: the connector, the tool, and the argument KEYS
   → judge.py         a STRUCTURAL stage over that capability — no list of programs.
   │                    Three facts have to agree: what the syntax names, the `reach` the
-  │                    model DECLARED on the call, and whether this host has an OS fence
-  │                    to hold it there (services/sandbox/fence.py).  Contained +
+  │                    model DECLARED on the call, and whether a fence (the platform VM)
+  │                    holds it there.  Contained +
   │                    declared + fenced clears at that tier.  Its only power is to
   │                    APPROVE; everything else escalates rather than being refused —
   │                    a `host` declaration, a `network` declaration (always, whatever
   │                    the operator's allowed-domains list holds: the fence bounds no
-  │                    reads, so egress is how what a command read leaves the machine),
+  │                    reads of the project, so egress is how what a command read leaves the machine),
   │                    a path outside the worktree, an AST shape it could not read, or
-  │                    a host with no fence.
+  │                    a command with no fence to hold it.
   → reviewer.py      one structured call on the `utility` model, scoring three axes:
   │                    risk           low | high | too_destructive
   │                    authorization  explicitly_no | neutral | explicitly_yes
@@ -232,7 +232,7 @@ a deferred call at the Auto level
 Four properties are load-bearing and each is there for a reason that is easy to lose:
 
 - **The cheap stage settles the common case.** `git status`, `ls src`, `grep -rn foo .`, `uv run pytest`, `git commit -m x` clear with no model call at all — on their *shape*, whatever binary they happen to name. That is what makes the stage affordable to keep strict: narrowing it costs latency, widening it costs the operator's trust, and only one of those is recoverable.
-- **The fence bounds writes and egress, and deliberately not reads.** `sandbox_runtime` carries a read denylist and no read allowlist, so a cleared command can still read outside the worktree by a route its words did not name. Containment is therefore checked in the judge before anything else, and the extraction refuses any word it cannot place as a single path — a program named by path and an environment assignment's value included.
+- **The fence bounds writes and egress, and deliberately not reads of the project.** A cleared command runs in the VM against a copy of the project, so it can still read any of it by a route its words did not name. Containment is therefore checked in the judge before anything else, and the extraction refuses any word it cannot place as a single path — a program named by path and an environment assignment's value included.
 - **The reviewer is told the rubric and never the passing score.** The combination lives in `decide.py` and is written down nowhere the model can read it. A reviewer that knows the threshold optimises for the threshold, which turns three independent observations into one negotiated verdict.
 - **Its transcript carries user and assistant messages only — never tool results.** Everything the model has read from a file, a page or an MCP server is content someone else wrote, and a reviewer that saw it could be argued into approving the very call that untrusted text asked for. Same posture `XC-SEC-5` takes everywhere else, applied to the one call whose output is a permission. What it *does* see is fenced as untrusted on top of that.
 - **Every failure parks.** No utility model bound, a reviewer timeout, an unparseable answer — all of them return the call to the operator. This is the one place in the codebase where the conservative branch has to be the default (`XC-DEG-*`): a review that cannot run is not a review that passes.
@@ -247,7 +247,7 @@ Four properties are load-bearing and each is there for a reason that is easy to 
 2. `build_agent_toolsets()` produces the gated, namespaced stack; the `Agent` is built with it (`deps_type=RunDeps`, `output_type=[str, DeferredToolRequests]`).
 3. The model runs its multi-step loop; for each call, the `_enabled_gate` and tool args are evaluated against `ctx.deps`. A non-sensitive tool executes and may emit `tool.progress`.
 4. A **sensitive** tool does *not* execute — the turn ends with `DeferredToolRequests`. The engine rules on each deferred call: the thread's permission level refuses or parks it, a standing conversation grant answers the levels that would have asked, and at the Auto level the review settles it — with the grant riding into that review as the operator's authorization rather than skipping it (§4.5). What is still unanswered parks (§4.1) and waits for `POST …/approve`.
-5. `code_execute` runs in the conversation's container if present, else reports disabled (§4.2); `code_request_egress` and `code_run_host_command` always park for approval first — the two exits, never the compute.
+5. `code_execute` runs in the conversation's sandbox if the platform VM is up, else reports disabled (§4.2); `code_request_egress` and `code_run_host_command` always park for approval first — the two exits, never the compute.
 
 The result: the spec's entire access-control surface (`AE-2` categories, `AE-3` sensitivity + enable/disable, `AE-4` model-discerns) is a **dozen lines of toolset composition plus a per-tool `requires_approval` flag** — keyed on one deps object, with every harder case (host exec, scheduled tasks, external tools) reusing the *same* deferred-tool pause rather than inventing new control flow.
 
@@ -262,7 +262,7 @@ The result: the spec's entire access-control surface (`AE-2` categories, `AE-3` 
 | D20 approval pause/resume (engine + `/runs/{id}/approve`) | ✅ built |
 | Auto-level review (shell judge + utility-model reviewer) | ✅ built (`services/permissions/`, `agent/gating.py`) |
 | D23 sandbox isolation + host escape hatch | ✅ built (`services/sandbox`, `tools/code.py`) |
-| D78 blast-radius model (egress allowlist + sidecar, fenced shell, forked delegates, boot reconciliation) | ✅ built (`services/egress.py`, `services/sandbox/{sidecar,egress_proxy,host,fork,reconcile}.py`) |
+| D78 blast-radius model (egress allowlist + VM gateway, fenced shell, forked delegates) | ✅ built (`services/egress.py`, `services/vm/egress.py`, `services/sandbox/{host,fork}.py`) |
 | D91 async sub-agents (`subagents` category, register, wake, panel) | ✅ built (`services/subagents/`, `services/subagent_store.py`, `harness/manifests/subagents.py`, `tools/subagents.py`) — replaces the `agents` category and its blocking `delegate_task`, and the `research` category with it: research is now the `researcher` spec in the roster, launched, redirected (`subagents_send`) and listed (`subagents_list`) like any other |
 | D115 agent definitions (`agents` category, catalog, per-thread agent, tool-access gate) | ✅ built (`services/agents/`, `harness/manifests/agents.py`, `tools/agents.py`, `routes/agents.py`) — the roster's specs became `AgentDefinition`s; the enabled gate also checks `RunDeps.tool_access` |
 | D116 agent trees (`agents_spawn`/`message`/`list`/`read`/`stop`, depth, tree messaging, open-as-thread) | ✅ built (`harness/manifests/_subagents.py`, `_subagent_wake.py`, `tools/delegation.py`, `routes/subagents.py`) — the `subagents` category folded into `agents`; `tools/subagents.py` is gone |

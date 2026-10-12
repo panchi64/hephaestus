@@ -2,7 +2,7 @@
 
 The agent's other way to touch files is ``code_execute``, which means editing by heredoc
 and reading by ``cat``. That works and is miserable: every edit rewrites a whole file
-through a shell, and every read costs a container round-trip. These tools are the direct
+through a shell, and every read costs a round-trip into the VM. These tools are the direct
 route — read a slice, replace an exact span, grep, glob — so the model spends its turn on
 the problem rather than on shell quoting.
 
@@ -21,8 +21,8 @@ toolset as ``ctx.workspace``.
 
 **The invariant is that these tools reach exactly what this run can execute in, and
 nothing else.** In a sandbox mode that is the conversation's sandbox workspace at
-``<data_dir>/sandbox/work/<key>/`` — the host side of the container's ``/work`` bind
-mount, the box's own scratch space, never the operator's files — so they reach exactly
+``<data_dir>/sandbox/work/<key>/`` — the host copy of what appears as ``/work`` in the VM,
+the box's own scratch space, never the operator's files — so they reach exactly
 what ``code_execute`` reaches. In a worktree it is the project's git worktree, which is
 exactly what the shell tools run in. Either way editing and running agree, which is the
 whole point of resolving the workspace once (``services/workspace.py``).

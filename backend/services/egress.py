@@ -3,8 +3,8 @@
 Compute is not the thing worth restricting — installing a package, cloning a repository
 and burning CPU are what the workspace is *for*, and a fence that makes them feel
 dangerous only teaches the operator to turn it off. Exfiltration is. So there is exactly
-one policy here, expressed as domains, and both fences read it: the container's proxy
-sidecar and the OS-level confinement the code-mode shell and the host hatch run under.
+one policy here, expressed as domains, and both fences read it: the VM's egress
+gateway and the OS-level confinement the code-mode shell and the host hatch run under.
 Two lists would mean a hole in whichever one nobody remembered to widen.
 
 A workspace's allowlist is the installation-wide set (``egress_allowed_domains``) plus
@@ -17,11 +17,8 @@ semantics for the sake of a handful of rows that no longer name anything once th
 ends.
 
 The fences do not read the database. They read a file — ``allow.txt``, one domain per
-line — inside a **directory** this module materialises per workspace, because that
-directory is what gets bind-mounted. A single-file bind mount would pin the inode the
-mount was made against, and rewriting the file atomically (the only safe way to rewrite
-it while a proxy is reading it) replaces that inode, so the container would keep seeing
-the allowlist as it stood when it started.
+line — inside a **directory** this module materialises per workspace. The gateway re-reads
+the file whenever its mtime moves, so a grant takes effect on the next connection.
 """
 
 from __future__ import annotations
@@ -43,9 +40,7 @@ from core.exceptions import InvalidInputError
 from models._fields import new_id, utcnow
 from models.egress_grant import EgressGrant
 from services.sandbox.base import safe_key
-
-#: What the fences read inside the mounted directory.
-ALLOW_FILE = "allow.txt"
+from services.vm.egress import ALLOW_FILE
 
 # The ownership seam, single-operator like every other record. Not a parameter because
 # nothing calling this has a second owner to hand it; the column exists so that the day a
@@ -145,10 +140,10 @@ class EgressPolicy:
         """Fence one workspace by another's allowlist — what a fork is.
 
         A delegated agent reaches exactly what the conversation that delegated to it
-        reaches: its sidecar mounts the parent's directory, and a grant the operator
+        reaches: its gateway grant reads the parent's directory, and a grant the operator
         approves for one is not a second thing to approve for the other. So both halves
         have to agree on which key the grant belongs to — a row written under the child's
-        own key would materialise a file nothing has mounted, and the approval would read
+        own key would materialise a file nothing reads, and the approval would read
         as having done nothing.
         """
         self._shared[key] = with_key
@@ -249,8 +244,8 @@ class EgressPolicy:
         await asyncio.to_thread(lambda: shutil.rmtree(directory, ignore_errors=True))
 
     def allow_dir(self, key: str) -> Path:
-        """The directory bind-mounted into this workspace's fence. Derived from the same
-        ``safe_key`` the session manager names containers and workspaces with, so a
+        """The directory holding this workspace's allowlist file. Derived from the same
+        ``safe_key`` the session manager names workspaces with, so a
         workspace and its allowlist can never end up under two different tokens."""
         return self.dir_for(safe_key(self._fenced_by(key)))
 

@@ -40,10 +40,8 @@ class Settings(BaseSettings):
     @field_validator("data_dir")
     @classmethod
     def _absolute_data_dir(cls, value: Path) -> Path:
-        # Anchor to an absolute host path once, here. Consumers bind-mount paths
-        # beneath this (the sandbox workspace, the managed SearXNG config) into
-        # containers, and a container bind mount needs an absolute source — a
-        # relative one is read as a named volume, which forbids path separators.
+        # Anchor to an absolute host path once, here, so every consumer of a path beneath
+        # this resolves the same directory whatever the working directory is.
         return value.expanduser().resolve()
 
     # Where the chats' git worktrees are checked out. **Deliberately outside
@@ -132,29 +130,30 @@ class Settings(BaseSettings):
     # definition may lower it for the agents below it, never raise it.
     agent_max_depth: int = 3
 
-    # Execution sandbox. Agent code/shell runs isolated from the host; when no
-    # runtime is available the capability is disabled (fail closed — never a host
-    # fallback). `sandbox_runtime` pins docker/podman; None auto-detects.
+    # The platform VM: one microVM (smolvm, on QEMU) per installation, where agent
+    # commands, previews, headless Chromium and SearXNG run. It boots in the background
+    # from a clean image built once from `backend/vm/provision.sh` (or `vm_image`, a
+    # directory holding a prebuilt one), and nothing durable lives in it. Without it the
+    # capabilities that need it report unavailable (fail closed — never a host fallback).
+    # `vm_ca_bundle` is a CA bundle the guest trusts as well, for networks that inspect
+    # TLS. `vm_transfer_max_bytes` caps what one move of a workspace out of the VM may
+    # carry.
+    vm_enabled: bool = True
+    vm_cpus: int = 4
+    vm_memory_mb: int = 6144
+    vm_disk_gb: int = 32
+    vm_image: str | None = None
+    vm_ca_bundle: str | None = None
+    vm_boot_timeout_s: float = 300.0
+    vm_provision_timeout_s: float = 3600.0
+    vm_transfer_max_bytes: int = 4 * 1024**3
+
+    # Execution sandbox: each conversation's workspace, run in the platform VM.
     sandbox_enabled: bool = True
-    sandbox_runtime: str | None = None
-    sandbox_image: str = "python:3.12-slim"
-    # What every container and network this app creates is named after, and the only
-    # thing separating one instance's containers from another's on a shared host.
-    #
-    # It exists because boot reconciliation deletes by *pattern*: it lists everything
-    # matching our names and removes it, on the reasoning that startup is the one moment
-    # nothing carrying them can be in use. That reasoning holds for exactly one instance
-    # per machine. A second one booting under the same prefix — a test instance, a
-    # second checkout — would collect the first's live sandboxes mid-conversation, and
-    # the managed SearXNG and web-fetch containers would be force-removed out from under
-    # it by name. Giving the second instance its own prefix makes the two mutually
-    # invisible: every filter is anchored, so neither one's pattern can match the
-    # other's names.
-    container_prefix: str = "odysseus"
-    # What a box may consume. These are here to protect the *host* — one runaway
-    # container must not take the operator's machine with it — not to keep the agent
-    # small. Set generously enough that ordinary work (a build, a dataframe, a test
-    # suite) never notices them, so a failure that does hit one is genuinely
+    # What one workspace's commands may consume between them, so one runaway workspace
+    # cannot starve the others sharing the VM — not to keep the agent small. Set
+    # generously enough that ordinary work (a build, a dataframe, a test suite) never
+    # notices them, so a failure that does hit one is genuinely
     # pathological and worth reporting as such.
     sandbox_memory: str = "4g"
     sandbox_cpus: str = "2.0"
@@ -166,18 +165,18 @@ class Settings(BaseSettings):
     # an offset), so this bounds a single call rather than what the agent can ultimately
     # read — set to keep one oversized file from crowding out the rest of the turn.
     sandbox_files_max_read_lines: int = 2_000
-    # Per-conversation live sandbox: a container lazily spun up on the first code
-    # execution and kept warm so the agent can iterate (fix an error, reuse an
-    # installed dependency) without rebuilding. Idle sessions are reaped to free
-    # resources; a reap takes the container down and leaves the workspace (the agent's
-    # files) untouched on disk. `idle_ttl` is how long a session may sit unused before
+    # Per-conversation live sandbox: a guest copy of the workspace in the platform VM,
+    # created on the first code execution and kept so the agent can iterate (fix an error,
+    # reuse an installed dependency) without rebuilding. Idle sessions are reaped to free
+    # resources; a reap wipes the guest copy and leaves the workspace (the agent's files)
+    # untouched on disk. `idle_ttl` is how long a session may sit unused before
     # it is killed; `reap_interval` is how often the reaper sweeps.
     sandbox_session_idle_ttl_s: float = 1800.0
     sandbox_session_reap_interval_s: float = 60.0
     # And how many conversations may hold one at once. The TTL bounds a session in time;
     # without a count, threads worked on in rotation all stay inside the window and every
-    # one of them keeps a container. Past the cap, the least-recently-used idle session is
-    # sealed to make room — the same reap the TTL performs, triggered by pressure instead
+    # one of them keeps a guest copy. Past the cap, the least-recently-used idle session is
+    # reaped to make room — the same reap the TTL performs, triggered by pressure instead
     # of by the clock, and just as invisible to the conversation it hits.
     sandbox_max_sessions: int = 8
     # Live preview: the agent runs a dev server in the sandbox and the backend
@@ -198,8 +197,8 @@ class Settings(BaseSettings):
         ".cache", "dist", "build", "*.pyc", "*.pyo", "*.egg-info",
     )
 
-    # The one network allowlist, and the only one. Both fences read it: the proxy sidecar
-    # that is a container workspace's only route off its internal network, and the OS-level
+    # The one network allowlist, and the only one. Both fences read it: the VM's egress gateway,
+    # the only route a sandbox command has off the guest, and the OS-level
     # confinement the code-mode shell and the approved host command run under. Two lists
     # would mean a hole in whichever one nobody remembered to widen. An entry matches that
     # host exactly — `github.com` is not `gist.github.com`; the subdomain form is spelled
@@ -260,19 +259,7 @@ class Settings(BaseSettings):
     # egress allowlist, which are the exfiltration paths. The credential paths above are
     # additionally write-denied, so a confined command can neither read nor clobber them.
     host_command_allow_write: tuple[str, ...] = ("~", "/tmp", "/var/tmp")
-    # The same knob for the *worktree* fence (`services/sandbox/fence.py`), and a separate
-    # list rather than a reuse of the one above, because the two are approved differently:
-    # a host command is one the operator read, and a worktree command at `reach="workspace"`
-    # is one nobody was asked about. Widening this one to `~` would mean an unreviewed
-    # command may write anywhere in the operator's home, which is the fence dissolved.
-    #
-    # So the seed is the build caches and nothing else. Every one of them is content the
-    # tool would re-download rather than something the operator wrote, and without them the
-    # ordinary work this tier exists to clear does not run at all: `uv` fails to initialise
-    # `~/.cache/uv`, `npm ci` cannot write `~/.npm/_cacache`, `cargo` cannot write its
-    # registry. Deliberately *not* here are the sibling paths that name a program to run —
-    # `~/.cargo/config.toml`, `~/.gradle/init.gradle`, `~/.npmrc` — since a fence a command
-    # can write its way out of is not one.
+    # Build-cache locations. Nothing reads this setting.
     worktree_command_allow_write: tuple[str, ...] = (
         "~/.cache",
         "~/Library/Caches",
@@ -324,27 +311,24 @@ class Settings(BaseSettings):
     web_search_timeout_s: float = 15.0
 
     # Web fetch. The open web is treated as always-dynamic: every page is rendered in a
-    # headless Chromium that runs in its own loopback-bound container (isolating untrusted
-    # page JS from the host), driven over CDP; the rendered DOM is extracted to Markdown.
-    # `image` tracks :latest (refreshed each boot, like SearXNG — CDP is version-tolerant);
-    # `enabled` turns fetch off (degrades); `startup_timeout_s` bounds container bring-up;
+    # headless Chromium that runs in the platform VM (isolating untrusted page JS from the
+    # host), driven over CDP; the rendered DOM is extracted to Markdown.
+    # `enabled` turns fetch off (degrades); `startup_timeout_s` bounds browser bring-up;
     # `timeout_s` bounds navigation/render; `max_bytes` caps the rendered HTML/text handed
     # to the extractor; `wait_until` is Playwright's load milestone with `render_wait_ms`
     # an extra settle delay; `concurrency` bounds simultaneous contexts; `min_chars` is the
     # length below which extraction falls back to innerText. The browser is stealthed to
     # present as a normal user's Chrome (so sites return what a person would see):
     # `user_agent` empty ⇒ derive a realistic one from the engine version; `locale`/`timezone`
-    # set the context. SSRF is enforced out-of-browser by a proxy sidecar (`proxy_image` —
-    # a stock python image the SSRF script is mounted into; tracks :latest), so every request
-    # is gated without the in-browser interception bot walls detect.
+    # set the context. SSRF is enforced out-of-browser by the platform VM's egress
+    # gateway, so every request is gated without the in-browser interception bot walls
+    # detect.
     # `cookie_ttl_s` (>0 enables) caches a site's cookies in-memory across fetches so a
     # solved JS/bot challenge's clearance carries forward, bounded by TTL + `cookie_max`;
     # `min_interval_s` (>0 enables) is the minimum gap between fetches to the same host
     # (politeness vs rate limits); `challenge_waits`/`challenge_wait_ms` let a render that
     # looks like a bot-wall interstitial settle and be re-snapshotted instead of returned.
     web_fetch_enabled: bool = True
-    web_fetch_image: str = "chromedp/headless-shell:latest"
-    web_fetch_proxy_image: str = "python:alpine"
     web_fetch_startup_timeout_s: float = 45.0
     web_fetch_timeout_s: float = 15.0
     web_fetch_max_bytes: int = 2_000_000
@@ -400,8 +384,8 @@ class Settings(BaseSettings):
     # they can log in by hand before handing the thread over, or do one step themselves
     # faster than describing it. Nothing to switch on or off — the window is launched on
     # first use and closed with the app, so a thread that never browses opens nothing.
-    # This is a second browser, separate from the containerized one web fetch renders in
-    # (that one keeps its own container and sidecar); the SSRF proxy this one is pointed
+    # This is a second browser, separate from the headless one web fetch renders in
+    # inside the platform VM; the SSRF proxy this one is pointed
     # at runs as a host subprocess instead, and no proxy means no browser.
     #
     # A session is conversation-scoped, not per-turn: a login or a half-filled form in
@@ -425,26 +409,24 @@ class Settings(BaseSettings):
         return self.data_dir / "browser"
 
     # Managed web search. So search "just works" with zero operator setup, the
-    # backend runs its own SearXNG in a container (the same runtime the sandbox
-    # uses), bound to loopback, and queries it automatically — the DB-backed
-    # provider registry stays as an optional override for a custom/remote instance.
-    # The image is always refreshed to the latest tag on boot. When no runtime is
-    # present web search simply degrades (no host fallback). `searxng_base_url`
-    # points at an already-running instance instead, so no container is managed.
+    # backend runs its own SearXNG in the platform VM and queries it automatically —
+    # the DB-backed provider registry stays as an optional override for a custom/remote
+    # instance. Without the VM web search simply degrades (no host fallback).
+    # `searxng_base_url` points at an already-running instance instead, so nothing is
+    # managed.
     searxng_enabled: bool = True
-    searxng_image: str = "searxng/searxng:latest"
     searxng_startup_timeout_s: float = 30.0
     searxng_base_url: str | None = None
 
-    # Offline mode — when internet connectivity is lost the managed web containers
-    # (SearXNG + the fetch browser/proxy) are torn down to save resources and the
+    # Offline mode — when internet connectivity is lost the managed web services
+    # (SearXNG + the fetch browser, both in the platform VM) are stopped to save resources and the
     # web tools are hidden from the agent; both return automatically when
     # connectivity is back. The operator can also force offline manually. Boot is
     # probe-first / fail-closed: one check decides whether the heavy browser starts
     # at all. The monitor TCP-connects to these public anchors (direct IPs, no DNS,
     # no payload) on its interval; `fail_threshold` consecutive failures declare
     # offline, `recover_threshold` consecutive successes declare online (hysteresis
-    # so the containers don't flap on a flaky link).
+    # so the services don't flap on a flaky link).
     # When False the monitor does no network probing and simply assumes online, so
     # auto-detection is off and only the manual switch can force offline (a host on a
     # known-always-online link, or tests that must not touch the network).
@@ -516,7 +498,7 @@ class Settings(BaseSettings):
     # Extraction engine. `auto` uses MinerU (high-fidelity Markdown — layout, tables,
     # formulas) when the `mineru` tool is detected on the host, falling back to the
     # zero-setup built-in (pypdfium2 text + vision OCR) otherwise; `mineru`/`basic`
-    # pin one. MinerU is detected, not bundled (like the container runtime) and runs as
+    # pin one. MinerU is detected, not bundled, and runs as
     # a transient subprocess, so its heavy models load per-extraction and free on exit.
     # `upload_mineru_timeout_s` bounds one MinerU run before degrading to the built-in.
     upload_extractor: Literal["auto", "mineru", "basic"] = "auto"

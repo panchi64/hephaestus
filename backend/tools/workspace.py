@@ -76,10 +76,10 @@ async def resolve_run_workspace(deps: RunDeps) -> RunWorkspace | None:
         projects=deps.caps.get_optional(ProjectStore),
         worktrees=deps.caps.get_optional(WorktreeManager),
         checkouts=deps.caps.get_optional(CheckoutHolders),
-        # The run claims its container for as long as it lasts, not for the length of
-        # one tool call: the live-session cap would otherwise be free to seal a workspace
-        # away between two of them, and the seal drops exactly what an install or a clone
-        # just put there.
+        # The run claims its session for as long as it lasts, not for the length of
+        # one tool call: the live-session cap would otherwise be free to reap the guest copy
+        # between two of them, dropping the live processes and system state around an
+        # install or a clone.
         holder=deps.run,
     )
     deps.workspace = workspace

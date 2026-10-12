@@ -12,6 +12,7 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 from functools import partial
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
@@ -45,6 +46,7 @@ from routes import (
     runs,
     tokens,
     tools,
+    vm,
 )
 from routes.deps import OPERATOR_ID
 from runs import LaneLimits, PrefixLedger, RunRegistry
@@ -58,15 +60,17 @@ from services.plan_mode import PlanMode
 from services.registry import ModelRegistry
 from services.sandbox import (
     SandboxSessionManager,
-    detect_sandbox,
     shutdown_confinement,
     stop_all_groups,
 )
-from services.sandbox.names import ContainerNames
 from services.sealing import seal_legacy_column
 from services.settings_store import SettingsStore
 from services.task_list import ConversationTasks
 from services.tool_policy import AvailabilityCheck, CategoryAvailability
+from services.vm import PlatformVM
+from services.vm.platform import WorkspaceLimits
+from services.vm.project import ProjectCopies
+from services.vm.smolvm import SmolvmDriver
 from services.work_summaries import WorkSummaryService
 from services.worktree_switch import WorktreeSwitch
 from tools import (
@@ -128,7 +132,7 @@ async def lifespan(app: FastAPI):
     lifecycle = LifecycleRegistry()
     # `_wire` starts long-lived units as it goes, so it runs inside the same `try` as
     # the serving phase below. A manifest that fails to build half-way has to unwind the
-    # units already started — otherwise a boot that never finishes leaves containers,
+    # units already started — otherwise a boot that never finishes leaves the VM,
     # drainers, and proxy listeners running with nothing left holding a reference.
     try:
         await _wire(app, settings, lifecycle)
@@ -270,7 +274,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # Conversation-scoped tool auto-approval grants — part of the approval posture,
     # so it stays core beside the run substrate the approvals park on.
     app.state.approval_grants = ApprovalGrantStore(engine, settings.approval_grant_ttl_s)
-    # The one egress allowlist both fences read — the container's proxy sidecar and the
+    # The one egress allowlist both fences read — the VM's egress gateway and the
     # OS-level confinement. Beside the approval grants because it is the same posture seen
     # from the other side: that store remembers which *tools* may run without asking, this
     # one which *domains* they may reach once running.
@@ -279,38 +283,69 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # the sealed column ran before unlock with no key, so the healing happens here
     # once unlocked (XC-SEC-3).
     lifecycle.track("sealing-backfill", _backfill_sealed_columns(engine, vault))
-    # The execution sandbox — detected once at boot. None ⇒ no runtime, so the
-    # code-execution capability is disabled (it never falls back to the host).
-    # Present ⇒ wrap it in a per-conversation session manager that keeps a
-    # container warm for iterative work and reaps it when idle.
-    backend = await detect_sandbox(settings)
+    # The platform VM, where agent code, previews, headless Chromium and SearXNG run.
+    # It boots in the background; until it is up (or if it never comes up) what needs
+    # it reports unavailable rather than running on the host.
+    vm_dir = settings.data_dir / "vm"
+    platform_vm = PlatformVM(
+        SmolvmDriver(
+            state_dir=vm_dir,
+            cpus=settings.vm_cpus,
+            memory_mb=settings.vm_memory_mb,
+            disk_gb=settings.vm_disk_gb,
+            boot_timeout_s=settings.vm_boot_timeout_s,
+            provision_timeout_s=settings.vm_provision_timeout_s,
+            image=Path(settings.vm_image) if settings.vm_image else None,
+            ca_bundle=Path(settings.vm_ca_bundle) if settings.vm_ca_bundle else None,
+        ),
+        scratch=vm_dir / "transfer",
+        limits=WorkspaceLimits(
+            memory=settings.sandbox_memory,
+            cpus=settings.sandbox_cpus,
+            pids=settings.sandbox_pids_limit,
+        ),
+        enabled=settings.vm_enabled,
+        transfer_max_bytes=settings.vm_transfer_max_bytes,
+    )
+    app.state.vm = platform_vm
+    await lifecycle.start("platform-vm", start=platform_vm.start, stop=platform_vm.stop)
+    # The execution sandbox: a per-conversation session manager over the VM that keeps a
+    # workspace in it while the conversation runs code and reaps it when idle.
     sandbox_manager = (
         SandboxSessionManager(
-            backend,
+            platform_vm,
             vault,
             egress=app.state.egress,
             data_dir=settings.data_dir,
             idle_ttl_s=settings.sandbox_session_idle_ttl_s,
             reap_interval_s=settings.sandbox_session_reap_interval_s,
             excludes=settings.sandbox_walk_excludes,
-            # The same stock python image the web fetcher's SSRF proxy runs in: both
-            # sidecars are one stdlib script over a read-only mount, and a second image
-            # to keep current would be a second thing to pull for no gain.
-            proxy_image=settings.web_fetch_proxy_image,
             preview_startup_timeout_s=settings.sandbox_preview_startup_timeout_s,
             max_sessions=settings.sandbox_max_sessions,
-            names=ContainerNames(settings.container_prefix),
         )
-        if backend is not None
+        if settings.sandbox_enabled and settings.vm_enabled
         else None
     )
     app.state.sandbox = sandbox_manager
     if sandbox_manager is not None:
-        # Logs its own code-execution + preview boot status and warms the image.
         await lifecycle.start("sandbox", start=sandbox_manager.start, stop=sandbox_manager.stop)
     else:
-        logger.info("sandbox: code execution disabled (no container runtime)")
-        logger.info("preview: disabled (no container runtime)")
+        logger.info("sandbox: code execution disabled")
+    # The project folders a project chat's shell has brought into the VM, each brought
+    # back out and wiped once idle.
+    project_copies = (
+        ProjectCopies(
+            platform_vm,
+            idle_ttl_s=settings.sandbox_session_idle_ttl_s,
+            reap_interval_s=settings.sandbox_session_reap_interval_s,
+        )
+        if settings.vm_enabled
+        else None
+    )
+    if project_copies is not None:
+        await lifecycle.start(
+            "project-copies", start=project_copies.start, stop=project_copies.stop
+        )
 
     # The deferred work-summary sweep — what the agent did in a thread, written once the
     # thread has been idle a while and shown when the operator comes back to it. Beside the
@@ -349,11 +384,14 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         app.state.approval_grants,
         app.state.egress,
         app.state.api_tokens,
+        platform_vm,
     ):
         container.add(handle)
     if sandbox_manager is not None:
         container.add(sandbox_manager)
         agent_capabilities.add(sandbox_manager)
+    if project_copies is not None:
+        agent_capabilities.add(project_copies)
     # The core-owned agent-facing handles: the engine consults grants at the deferred
     # split, and the sandbox backs code execution. Everything else reaches the bag
     # through its own manifest's `capabilities` export.
@@ -438,9 +476,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # — and given their own pre-cancel flush — while those are still running. Without
     # this a turn in flight at shutdown submits onto an already-stopped write-behind
     # drainer, which discards it with no error.
-    lifecycle.on_stop(
-        "runs", partial(app.state.runs.shutdown, settings.shutdown_drain_timeout_s)
-    )
+    lifecycle.on_stop("runs", partial(app.state.runs.shutdown, settings.shutdown_drain_timeout_s))
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -451,9 +487,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # the lifespan runs each enabled manifest's build in the same order.
     app.state.feature_manifests = discover_manifests()
     enabled_manifests = [
-        m
-        for m in app.state.feature_manifests
-        if m.enabled is None or m.enabled(settings)
+        m for m in app.state.feature_manifests if m.enabled is None or m.enabled(settings)
     ]
 
     # The inbound-token scope table: core's own claims plus every enabled feature's.
@@ -463,9 +497,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         [*CORE_CLAIMS, *(claim for m in enabled_manifests for claim in m.api_scopes)]
     )
     app.state.api_scope_table = scope_table
-    public_prefixes = tuple(
-        prefix for m in enabled_manifests for prefix in m.public_prefixes
-    )
+    public_prefixes = tuple(prefix for m in enabled_manifests for prefix in m.public_prefixes)
 
     # The agent's tool catalog: the core categories plus every enabled manifest's
     # `toolsets` export, plus the union of their conditionally-gated names and their
@@ -586,6 +618,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(overview.router)
     app.include_router(models.router)
     app.include_router(api_tokens.router)
+    app.include_router(vm.router)
     app.include_router(tools.router)
     app.include_router(tokens.router)
     # Every feature surface registers through its manifest; a manifest whose

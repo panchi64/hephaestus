@@ -34,10 +34,11 @@ async def test_overview_empty_workspace():
     assert caps["chat_model"]["remediation_href"] == "/models"
     assert caps["embeddings"]["status"] == "warn"
     assert caps["sandbox"]["status"] == "warn"
-    # Web search is managed (auto-run SearXNG); with no runtime in tests it degrades
+    assert caps["sandbox"]["detail"] == "disabled"
+    # Web search is managed (SearXNG in the platform VM); with no VM in tests it degrades
     # to warn, and there is nothing for the operator to configure.
     assert caps["web_search"]["status"] == "warn"
-    assert caps["web_search"]["detail"] == "no runtime — disabled"
+    assert caps["web_search"]["detail"] == "VM not ready — disabled"
     assert caps["web_search"]["remediation_href"] is None
 
 

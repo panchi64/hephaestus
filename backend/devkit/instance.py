@@ -36,11 +36,6 @@ ROOT = Path("~/.odysseus/dev").expanduser()
 #: because it holds the vault passphrase.
 STATE_FILE = "instance.json"
 
-#: The prefix this instance's containers carry, so boot reconciliation can never reach
-#: the operator's. See ``services.sandbox.names``.
-CONTAINER_PREFIX = "odysseus-dev"
-
-
 @dataclass(frozen=True, slots=True)
 class DevInstance:
     """A resolved instance — every value that distinguishes it from the operator's."""
@@ -56,9 +51,10 @@ class DevInstance:
     #: that navigates here lands in the product rather than at a password prompt; on when
     #: the auth surfaces are themselves what is being worked on.
     auth: bool = False
-    #: Whether the managed containers (sandbox, SearXNG, web fetch) run. Off by default:
-    #: they cost images, memory and boot time that most visual checks never need.
-    containers: bool = False
+    #: Whether the platform VM (and with it the sandbox, SearXNG and web fetch) runs. Off
+    #: by default: it costs an image build, memory and boot time that most visual checks
+    #: never need. The VM lives under this instance's own data dir.
+    vm: bool = False
 
     @property
     def data_dir(self) -> Path:
@@ -99,10 +95,6 @@ class DevInstance:
         """The OpenAI-compatible base URL the seeded ``main`` endpoint points at."""
         return f"http://127.0.0.1:{self.stub_port}/v1"
 
-    @property
-    def container_prefix(self) -> str:
-        return f"{CONTAINER_PREFIX}-{self.slot}"
-
     def env(self) -> dict[str, str]:
         """The environment the backend runs under — the whole of the isolation.
 
@@ -129,10 +121,10 @@ class DevInstance:
             # Set up on the first boot and unlocked on every later one, so seeding and
             # browsing need no login step even when the gate above is on.
             "ODYSSEUS_UNLOCK_PASSPHRASE": self.password,
-            "ODYSSEUS_CONTAINER_PREFIX": self.container_prefix,
-            "ODYSSEUS_SANDBOX_ENABLED": str(self.containers).lower(),
-            "ODYSSEUS_SEARXNG_ENABLED": str(self.containers).lower(),
-            "ODYSSEUS_WEB_FETCH_ENABLED": str(self.containers).lower(),
+            "ODYSSEUS_VM_ENABLED": str(self.vm).lower(),
+            "ODYSSEUS_SANDBOX_ENABLED": str(self.vm).lower(),
+            "ODYSSEUS_SEARXNG_ENABLED": str(self.vm).lower(),
+            "ODYSSEUS_WEB_FETCH_ENABLED": str(self.vm).lower(),
             # Assume online without probing: the monitor's boot check is a real
             # connection, and an instance that exists to be screenshotted should not
             # reach the network to decide whether to start.
@@ -155,7 +147,7 @@ class DevInstance:
                     "password": self.password,
                     "seeded": self.seeded,
                     "auth": self.auth,
-                    "containers": self.containers,
+                    "vm": self.vm,
                 },
                 indent=2,
             )
@@ -208,11 +200,11 @@ def claimed_slots(root: Path = ROOT) -> set[int]:
 
 def resolve(
     *, root: Path = ROOT, name: str | None = None, auth: bool | None = None,
-    containers: bool | None = None,
+    vm: bool | None = None,
 ) -> DevInstance:
     """This worktree's instance, created on first use and read back on every later one.
 
-    ``auth`` and ``containers`` are the only values a caller may change after creation —
+    ``auth`` and ``vm`` are the only values a caller may change after creation —
     they are flags on a run, not facts about the workspace. The rest is decided once:
     re-deriving a slot while the instance's own services are listening would read them as
     a conflict and move the instance's URLs out from under whoever was using them.
@@ -230,7 +222,7 @@ def resolve(
             password=stored["password"],
             seeded=stored.get("seeded", ""),
             auth=stored.get("auth", False),
-            containers=stored.get("containers", False),
+            vm=stored.get("vm", False),
         )
         instance = stored_instance
     else:
@@ -246,8 +238,8 @@ def resolve(
         )
     if auth is not None:
         instance = replace(instance, auth=auth)
-    if containers is not None:
-        instance = replace(instance, containers=containers)
+    if vm is not None:
+        instance = replace(instance, vm=vm)
     # Written only when something actually changed. `status`, `doctor` and `stop` all
     # resolve an instance in order to read it, and a read that rewrites the file races
     # any concurrent writer over the one record holding the slot and the vault

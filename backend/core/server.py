@@ -5,7 +5,7 @@ is the whole problem: on Ctrl+C uvicorn stops accepting, then waits for every op
 connection to finish *before* it runs the app's lifespan shutdown. This app's long-lived SSE
 responses never finish on their own, and the lifespan is what would end them, so a plain
 ``uvicorn.run`` waited forever and a second Ctrl+C force-exited past the lifespan, abandoning
-the write-behind queues and leaving containers running.
+the write-behind queues and leaving the VM running.
 
 :class:`OdysseusServer` closes that gap by raising :func:`core.shutdown.begin_shutdown` from
 ``handle_exit`` — the instant the signal lands, before uvicorn starts waiting — so every

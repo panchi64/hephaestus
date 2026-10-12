@@ -209,7 +209,7 @@ def compose_turn(
         auto_compact=auto_compact,
         # The operator's per-turn model-request ceiling; absent ⇒ the config default.
         request_limit=request_limit,
-        # While offline mode is active the web containers are down, so hide the web
+        # While offline mode is active the web services are down, so hide the web
         # tools from the agent rather than let it discover they're unavailable.
         disabled_tools=disabled_tools,
         # The thread's workspace and project. Absent ⇒ an unfiled sandbox thread, which is what

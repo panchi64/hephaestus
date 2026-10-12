@@ -42,7 +42,7 @@ from services.sandbox import (
     resolve_confinement,
     run_on_host,
 )
-from services.sandbox.egress_proxy import DENIED_MARKER
+from services.vm import DENIED_MARKER
 
 from .deps import RunDeps
 from .emit import RunEventEmitted
@@ -54,7 +54,7 @@ _INTERPRETERS: dict[str, list[str]] = {
 }
 
 # Hitting the pids-limit surfaces as a failed fork/thread-create *inside* the process —
-# unlike the OOM killer, there is no distinct container-level signal for it, so this is
+# unlike the OOM killer, there is no distinct signal for it, so this is
 # a crude heuristic over the OS errors that failure mode typically prints.
 _PID_CAP_MARKERS = (
     "resource temporarily unavailable",
@@ -231,7 +231,7 @@ def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
     return (
         "Run `python` (the default `language`) or a `bash` script on your own "
         "computer — a private Linux machine that is yours alone (it is not the "
-        "operator's host). It runs a Debian userland with `python`, `bash`, and "
+        "operator's host). It runs an Ubuntu userland with `python`, `bash`, `git`, and "
         "the usual command-line tools on the path.\n\n"
         "Your working directory is `/work` (where your shell starts), and it persists "
         "across calls in this conversation: files you write and packages you install "
@@ -248,8 +248,8 @@ def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
         "write, edit, search and list it, and use this tool to run things.\n\n"
         "The package registries and GitHub are already reachable, so fetching from them "
         f"needs no permission — install as freely as you like. {ask} `pip` is what the "
-        "machine ships with; anything else you want (`uv`, for instance, or a `git` to "
-        "clone with) you install with it first — a "
+        "machine ships with; anything else you want (`uv`, for instance) you install "
+        "with it first — a "
         "package's command lands in `/work/.local/bin`, which is not on your `PATH`, so "
         "invoke it by that full path (`/work/.local/bin/uv ...`) or as `python -m "
         "<pkg>`. System package managers are not an option — `apt` and friends need "
@@ -326,18 +326,14 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         )
         try:
             session = await sessions.acquire(ctx.deps.workspace_key, holder=ctx.deps.run)
-            # A cold container takes a beat to spin up — longer still the first
-            # time, when the image must be pulled. Announce that wait so the run
-            # reads as the environment starting, not the model stalling; a warm
-            # session runs at once and needs no notice. When the boot-time image
-            # pull is still in flight, say so truthfully (a minutes-long download
-            # reads very differently from an ordinary few-hundred-ms container
-            # start).
+            # A cold workspace takes a beat to bring into the VM — longer still while
+            # the VM itself is starting (the first boot builds its image). Announce that
+            # wait so the run reads as the environment starting, not the model stalling;
+            # a warm session runs at once and needs no notice.
             if ctx.tool_call_id and not session.is_warm:
-                downloading = getattr(sessions, "image_warmup_pending", False)
                 partial = (
-                    "Downloading the sandbox image, this first run can take a few minutes…"
-                    if downloading
+                    "Starting the platform VM, this first run can take a few minutes…"
+                    if sessions.vm_starting
                     else "Starting the sandbox environment…"
                 )
                 await ctx.emit(

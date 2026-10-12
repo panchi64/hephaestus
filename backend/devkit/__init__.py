@@ -5,7 +5,7 @@ picker, a card, a layout or a flow is either seen working in the running product
 taken on trust, and the only running instance otherwise belongs to the operator, holding
 their conversations and their credentials.
 
-So: an instance with its own data directory, its own ports, its own containers and a
+So: an instance with its own data directory, its own ports, its own platform VM and a
 scripted model behind it, brought up by one command and seeded so every surface renders
 populated. Nothing in here is imported by the app — it configures and launches the app
 from outside, through the same environment any deployment would use.

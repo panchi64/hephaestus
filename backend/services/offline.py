@@ -1,9 +1,9 @@
-"""Offline mode — suspend the web containers when there's no internet to use them.
+"""Offline mode — suspend the web services when there's no internet to use them.
 
-The agent's two web capabilities each run a long-lived container: the managed SearXNG
-(:class:`services.searxng.ManagedSearxng`) and the headless browser + SSRF proxy
-(:class:`services.webfetch.browser.ManagedBrowser`, ~2 GB). With no connectivity they
-burn RAM/CPU producing nothing, so this service watches the link and **tears them down
+The agent's two web capabilities each run a long-lived service in the platform VM: the
+managed SearXNG (:class:`services.searxng.ManagedSearxng`) and the headless browser
+(:class:`services.webfetch.browser.ManagedBrowser`). With no connectivity they
+burn RAM/CPU producing nothing, so this service watches the link and **stops them
 when offline**, bringing them **back automatically when connectivity returns**.
 
 Four facts, one verdict:
@@ -12,17 +12,17 @@ Four facts, one verdict:
 - ``auto`` (persisted) — the auto-detect master switch (default on).
 - ``online`` (runtime) — the monitor's debounced connectivity verdict.
 - ``effective_offline = manual OR (auto AND NOT online)`` — what actually drives the
-  containers and the web-tool gate.
+  two services and the web-tool gate.
 
 **Boot is probe-first / fail-closed:** :meth:`start` runs one connectivity check and sets
-the initial ``online`` *before* deciding whether to launch the containers — so a host that
+the initial ``online`` *before* deciding whether to launch the services — so a host that
 boots with no internet never spins up the heavy browser at all. Thereafter the monitor
 applies hysteresis (``fail_threshold`` consecutive failures to declare offline,
-``recover_threshold`` successes to declare online) so the containers don't flap on a flaky
+``recover_threshold`` successes to declare online) so the services don't flap on a flaky
 link. Manual offline survives a connectivity recovery — we never override the operator's
 explicit choice.
 
-The web capabilities already degrade gracefully when their container is down (search
+The web capabilities already degrade gracefully when their service is down (search
 raises ``DegradedCapabilityError``, fetch checks ``browser.available``), so tearing them
 down is safe; on top of that the offline window hides the ``web_search``/``web_fetch``
 tools from the agent via the standard enabled-gate (:func:`web_tools_disabled`).
@@ -47,8 +47,8 @@ def _flag(value: bool) -> str:
     return "true" if value else "false"
 
 
-class _GatedContainer(Protocol):
-    """The slice of a managed container the offline monitor drives — both
+class _GatedService(Protocol):
+    """The slice of a managed service the offline monitor drives — both
     :class:`ManagedSearxng` and :class:`ManagedBrowser` satisfy it, and tests pass a
     stub. ``start``/``stop`` are idempotent (each is a no-op when already in that
     state), so a teardown at boot-while-never-started is harmless."""
@@ -78,8 +78,8 @@ class OfflineModeService:
     def __init__(
         self,
         *,
-        searxng: _GatedContainer,
-        browser: _GatedContainer,
+        searxng: _GatedService,
+        browser: _GatedService,
         settings_store: SettingsStore,
         owner_id: str,
         anchors: list[str],
@@ -105,13 +105,13 @@ class OfflineModeService:
         self._manual = False
         self._auto = auto_default
         self._online = True  # set for real by the boot probe in start()
-        # None until the first apply, so the boot apply always acts (the containers
+        # None until the first apply, so the boot apply always acts (the services
         # are not running yet — there is no prior effective state to compare against).
         self._effective_offline: bool | None = None
         self._fail = 0
         self._ok = 0
         self._task: asyncio.Task | None = None
-        # Serializes container start/stop so a manual toggle can't race a monitor
+        # Serializes service start/stop so a manual toggle can't race a monitor
         # transition into a double bring-up or a torn-down-then-half-started state.
         self._lock = asyncio.Lock()
 
@@ -119,7 +119,7 @@ class OfflineModeService:
 
     async def start(self) -> None:
         """Load persisted switches, probe once (offline until proven online), bring the
-        containers up iff online, then launch the monitor. Replaces the direct
+        services up iff online, then launch the monitor. Replaces the direct
         ``searxng.start()``/``browser.start()`` calls in the app lifespan."""
         manual_raw = await self._settings.get(self._owner, OFFLINE_MANUAL_KEY)
         auto_raw = await self._settings.get(self._owner, OFFLINE_AUTO_KEY)
@@ -137,7 +137,7 @@ class OfflineModeService:
         self._task = asyncio.create_task(self._monitor())
 
     async def stop(self) -> None:
-        """Cancel the monitor. The containers are stopped by the lifespan's own
+        """Cancel the monitor. The services are stopped by the lifespan's own
         teardown (this service doesn't own their final shutdown)."""
         await cancel_and_wait(self._task, STOP_TIMEOUT_S)
         self._task = None
@@ -184,19 +184,19 @@ class OfflineModeService:
 
         Runs unconditionally (the probe is a cheap TCP connect) so the reported status
         stays live even when auto-detect is off or the operator is manually offline —
-        only the *action* (toggling containers) is gated, by the effective-state math."""
+        only the *action* (toggling the services) is gated, by the effective-state math."""
         while True:
             await asyncio.sleep(self._interval_s)
             try:
                 await self._observe(await self._safe_probe())
             except Exception:
-                # The heartbeat must outlive a transient error on the container-toggle
+                # The heartbeat must outlive a transient error on the service-toggle
                 # path; if it died, connectivity would stop being tracked silently.
                 logger.exception("offline mode: monitor iteration failed")
 
     async def _observe(self, online: bool) -> None:
         """Fold one connectivity sample into the debounced ``online`` verdict, applying a
-        container transition when the streak crosses a threshold. Split out from the
+        service transition when the streak crosses a threshold. Split out from the
         monitor loop so the state machine is unit-testable without real timers."""
         if online:
             self._ok += 1
@@ -216,18 +216,18 @@ class OfflineModeService:
                 await self._apply()
 
     async def _apply(self) -> None:
-        """Recompute the effective verdict and, on a change, toggle the containers."""
+        """Recompute the effective verdict and, on a change, toggle the services."""
         async with self._lock:
             new = self._manual or (self._auto and not self._online)
             if new == self._effective_offline:
                 return
             self._effective_offline = new
             if new:
-                logger.info("offline mode: ON — suspending web containers")
+                logger.info("offline mode: ON — suspending web services")
                 await self._searxng.stop()
                 await self._browser.stop()
             else:
-                logger.info("offline mode: OFF — resuming web containers")
+                logger.info("offline mode: OFF — resuming web services")
                 await self._searxng.start()
                 await self._browser.start()
 

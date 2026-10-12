@@ -137,13 +137,9 @@ class Capability:
     writes: tuple[str, ...] = ()
     #: Environment variables the command sets for what it runs.
     env_writes: tuple[str, ...] = ()
-    #: Whether this act can reach off the machine at all — and it has **two** producers,
-    #: which is why it is not named "names an address". For a command, it is what the
-    #: grammar walk saw written in it (a URL, a network redirect). For a call into the
-    #: conversation's container, it is the egress *switch* that call flipped, since the
-    #: program itself was never read. Anything reporting this to a reader has to say which
-    #: of the two it is looking at (``reviewer.py``) — a measurement the reviewer is told
-    #: outranks the model's own text has to be true of the act in front of it.
+    #: Whether the grammar walk saw a network address written in the command (a URL, a
+    #: network redirect). It is a statement of what was *seen*, not of what the act can
+    #: reach; a sandboxed program is never read, so it is False for one.
     network: bool = False
     #: Paths that leave the workspace, or that we cannot place inside it.
     escapes: tuple[str, ...] = ()
@@ -151,8 +147,8 @@ class Capability:
     #: nothing — a mail send, a file write, an MCP call — which is a different fact from
     #: declaring the widest reach, and the two must not read the same on a review row.
     reach: Reach | None = None
-    #: Whether this act runs inside the conversation's own container rather than on the
-    #: host. The container is itself a fence, so an offline call to one is bounded without
+    #: Whether this act runs inside the conversation's own sandbox rather than on the
+    #: host. The sandbox is itself a fence, so an offline call to one is bounded without
     #: anything here having read its program — which is the only way an interpreter's
     #: program is ever bounded.
     sandboxed: bool = False
@@ -228,15 +224,15 @@ def measured_against_root(tool: str) -> bool:
     for a less obvious reason — it runs on the host, not in the workspace, so a root would
     be the wrong measure rather than a missing one. The caller that has to *open* a
     workspace to supply the root asks first (``agent/gating.py``): opening one is a `git
-    worktree add` or a container start, and paying it to judge a mail send buys nothing.
+    worktree add` or a sandbox start, and paying it to judge a mail send buys nothing.
     """
     if tool in _HOST_COMMAND_TOOLS:
         return False
     return tool in _COMMAND_ARG or tool in _PATH_ARG
 
 
-#: Shell-shaped tools whose command runs inside the conversation's own container. The
-#: container is the fence there, so nothing about the command has to be understood for the
+#: Shell-shaped tools whose command runs inside the conversation's own sandbox. The
+#: sandbox is the fence there, so nothing about the command has to be understood for the
 #: act to be bounded — see :attr:`Capability.sandboxed`.
 _SANDBOXED_TOOLS = frozenset({"code_execute"})
 
@@ -407,7 +403,7 @@ def _command_capability(
             # run under, and both the review row and the reviewer are describing what is
             # about to happen rather than what was typed.
             {**args, "language": language},
-            fallback="Runs a program in the conversation's sandbox container",
+            fallback="Runs a program in the conversation's sandbox",
         )
         return Capability(
             tool=tool,

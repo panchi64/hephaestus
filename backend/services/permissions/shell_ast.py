@@ -42,8 +42,7 @@ word by word, so `sh -c 'cat /etc/passwd'` is refused for the `/etc/passwd` it c
 the commit message, carrying no path at all, clears. An argument carrying the punctuation a
 parser reads as syntax (:data:`_COMPOSITE`) — `python3 -c 'print(open(…))'` — is not a word
 this walk can place at all, and is recorded as unbounded. What that leaves is a script
-whose every word stays inside the worktree, which is exactly what the fence was built to
-hold.
+whose every word stays inside the worktree, which is what the fence is there to hold.
 
 **Every word a command line carries is measured, not only the operands.** The program
 itself (`~/evil.sh`, `/etc/../bin/ls`) and an environment assignment's value
@@ -56,10 +55,9 @@ through `PATH`, which this command line did not write.
 **What that does *not* cover, stated so nobody reads more into it.** The walk bounds what a
 command's own words name. A command that takes its paths from *bytes* at run time —
 `xargs cat < list`, a script the model just wrote — names nothing this file can read, and no
-grammar could. The fence is the answer for that class, and it is a partial one: it bounds
-writes and egress, not reads (``services/sandbox/fence.py``). So a fenced ``workspace``
-command can still read outside the worktree by a route its words did not name — it just
-cannot send what it read anywhere, or write anywhere but the worktree.
+grammar could. The fence is the answer for that class: a ``workspace`` command runs in the platform
+VM against a copy of the project, with no network, so a route its words did not name reaches
+only what the guest copy holds — and it cannot send what it read anywhere.
 """
 
 from __future__ import annotations

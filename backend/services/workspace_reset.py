@@ -18,7 +18,7 @@ Two entries are held back, and only two:
 
 * **the live database file** (plus its ``-wal``/``-shm`` siblings) — SQLAlchemy holds
   it open, and it is empty anyway; that is the precondition for being here at all.
-* **``searxng/``** — a running container's bind-mount source, not operator data.
+* **``searxng/``** — the managed SearXNG's persisted secret key, not operator data.
 
 Coding-mode worktrees live outside ``data_dir`` on purpose (see ``Settings``), so a
 reset never reaches the operator's own checkouts.

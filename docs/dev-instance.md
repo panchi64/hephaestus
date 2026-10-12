@@ -1,7 +1,7 @@
 # The dev instance
 
 A second, disposable Odysseus you can run, drive and break: its own data directory, its
-own ports, its own containers, and a scripted model behind it. Nothing it does touches
+own ports, its own platform VM, and a scripted model behind it. Nothing it does touches
 the operator's workspace.
 
 It exists because the test suite proves behaviour and cannot show a change working. A
@@ -31,7 +31,7 @@ browser pane. Ports differ per worktree — read them from
 `uv run python dev_instance.py status --json`, never assume them.
 
 This instance is **not** the operator's: separate data directory, separate ports,
-separate containers, a stub model. Nothing in it is real, and breaking it costs nothing.
+a separate VM, a stub model. Nothing in it is real, and breaking it costs nothing.
 Full recipe in `docs/dev-instance.md`.
 
 <!-- claude-md:end -->
@@ -115,12 +115,13 @@ export ODY_DEV_CHAT_MODEL=your-model
 export ODY_DEV_CHAT_KEY=…          # optional; a local engine usually needs none
 ```
 
-## Containers, and why they are off
+## The platform VM, and why it is off
 
-The sandbox, SearXNG and the web-fetch browser do not run by default — they cost images,
-memory and boot time that most visual checks never need. `up --with-containers` turns them
-on, under a container name prefix of this instance's own, so boot reconciliation can never
-reach the operator's.
+The platform VM — and with it the sandbox, the project shell, SearXNG and the web-fetch
+browser — does not run by default: it costs an image build, memory and boot time that most
+visual checks never need. `up --with-vm` turns it on. The VM and its image live under this
+instance's own data dir; to skip the first image build, point `ODYSSEUS_VM_IMAGE` at an
+image directory another instance already built (`<data dir>/vm/images/<hash>`).
 
 ## When something is wrong
 
@@ -137,4 +138,4 @@ forgets the instance entirely; the next `up` builds a new one.
 
 Not a place to point at real data. `ODYSSEUS_DATA_DIR` and the rest are set by the
 launcher for exactly this reason: an instance aimed at the operator's data directory would
-seed fixtures into their workspace and reconcile their containers away.
+seed fixtures into their workspace and boot a second VM over their state.

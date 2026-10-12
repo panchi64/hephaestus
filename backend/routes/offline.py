@@ -2,7 +2,7 @@
 
 A thin surface over :mod:`services.offline`: report the live state and flip the two
 switches (the manual force-offline toggle and the auto-detect master switch). All the
-policy — the connectivity verdict, the container teardown, the web-tool gate — lives in
+policy — the connectivity verdict, the web-service shutdown, the web-tool gate — lives in
 the service; this just parses and relays.
 """
 

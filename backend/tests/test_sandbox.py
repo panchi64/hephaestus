@@ -1,52 +1,60 @@
-"""The execution-sandbox capability: fail-closed detection, container hardening,
-copy in/out, and the deliberate host escape hatch."""
+"""The execution-sandbox value types and path helpers, and the deliberate host escape
+hatch."""
 
 from __future__ import annotations
 
 import asyncio
 import os
 import stat
-import subprocess
 from pathlib import Path
 
 import pytest
 
-import services.sandbox.container as container_mod
 import services.sandbox.host as host_mod
 from core.config import Settings
 from services.sandbox import (
-    ContainerSandbox,
     HostConfinement,
     HostExecutionError,
     SandboxError,
-    SandboxFile,
     SandboxResult,
-    SandboxSpec,
-    detect_sandbox,
     host_scratch_dir,
     run_on_host,
 )
-from services.sandbox.container import (
-    discover_runtime,
-    hardened_flags,
-    prepare_workspace,
-    runtime_fault_line,
-    workspace_env_defaults,
-)
+from services.sandbox.base import contained_file, contained_path
 from services.sandbox.host import _configure, confine
 
 
-def _runtime_ready() -> bool:
-    """A runtime binary on PATH *and* a reachable daemon — the real gate for the
-    integration tests (a present CLI with a dead daemon must still skip)."""
-    runtime = discover_runtime()
-    if runtime is None:
-        return False
-    try:
-        proc = subprocess.run([runtime, "version"], capture_output=True, timeout=10, check=False)
-    except OSError, subprocess.SubprocessError:
-        return False
-    return proc.returncode == 0
+# --- paths stay inside the workspace ----------------------------------------
+def test_contained_path_resolves_inside_the_root(tmp_path):
+    assert contained_path(tmp_path, "a/b.txt") == tmp_path.resolve() / "a" / "b.txt"
+
+
+@pytest.mark.parametrize("relpath", ["../escape", "a/../../escape", "/etc/passwd"])
+def test_contained_path_refuses_an_escape(tmp_path, relpath):
+    with pytest.raises(SandboxError, match="escapes"):
+        contained_path(tmp_path, relpath)
+
+
+def test_contained_path_refuses_a_symlink_out_of_the_root(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "link").symlink_to(outside)
+    with pytest.raises(SandboxError):
+        contained_path(root, "link/x")
+
+
+def test_contained_file_answers_none_instead_of_raising(tmp_path):
+    (tmp_path / "here.txt").write_text("x")
+    (tmp_path / "dir").mkdir()
+    assert contained_file(tmp_path, "here.txt") == tmp_path.resolve() / "here.txt"
+    assert contained_file(tmp_path, "dir") is None
+    assert contained_file(tmp_path, "missing.txt") is None
+    assert contained_file(tmp_path, "../here.txt") is None
+    assert contained_file(tmp_path, "/etc/passwd") is None
+    assert contained_file(tmp_path, "") is None
+    assert contained_file(tmp_path, "a\0b") is None
 
 
 # --- result/value types ------------------------------------------------------
@@ -54,272 +62,6 @@ def test_result_ok_only_when_clean_exit():
     assert SandboxResult(exit_code=0, stdout="", stderr="").ok
     assert not SandboxResult(exit_code=1, stdout="", stderr="").ok
     assert not SandboxResult(exit_code=0, stdout="", stderr="", timed_out=True).ok
-
-
-# --- runtime faults are the environment's failure, not the code's ------------
-def test_runtime_fault_line_matches_the_runtimes_own_errors():
-    oci = (
-        "OCI runtime exec failed: exec failed: unable to start container process: "
-        "current working directory is outside of container mount namespace root "
-        "-- possible container breakout detected"
-    )
-    assert runtime_fault_line(128, oci, "") == oci  # CLI printed it to stdout
-    assert runtime_fault_line(128, "", oci) == oci  # or to stderr
-    daemon = "Error response from daemon: No such container: odysseus-sbx-x"
-    assert runtime_fault_line(125, "", f"pulled layer\n{daemon}\n") == daemon
-
-
-def test_runtime_fault_line_ignores_ordinary_code_failures():
-    assert runtime_fault_line(0, "OCI runtime exec failed", "") is None  # clean exit
-    assert runtime_fault_line(1, "", "NameError: x is not defined") is None
-    assert runtime_fault_line(127, "", "bash: line 1: nope: command not found") is None
-
-
-async def test_run_in_raises_sandbox_error_on_a_runtime_fault(tmp_path, monkeypatch):
-    # A daemon-level failure of the one-shot path must surface as an environment
-    # problem (SandboxError → "your computer could not run the code"), never as a
-    # pseudo code-failure result the model would try to fix by editing its code.
-    async def fake_run_subprocess(argv, **_kwargs):
-        return (
-            False,
-            125,
-            b"",
-            b"Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
-        )
-
-    monkeypatch.setattr(container_mod, "run_subprocess", fake_run_subprocess)
-    backend = ContainerSandbox(runtime="docker")
-
-    with pytest.raises(SandboxError, match="container runtime failed"):
-        await backend.run_in(tmp_path, SandboxSpec(command=["python", "-c", "1"], timeout_s=5))
-
-
-# --- fail-closed detection (the one safety rule) -----------------------------
-async def test_detect_disabled_returns_none():
-    assert await detect_sandbox(Settings(sandbox_enabled=False)) is None
-
-
-async def test_detect_returns_none_when_no_runtime(monkeypatch):
-    # No backend available ⇒ capability absent, never a host fallback.
-    monkeypatch.setattr(ContainerSandbox, "available", lambda self: _false())
-    assert await detect_sandbox(Settings(sandbox_enabled=True)) is None
-
-
-async def test_detect_returns_backend_when_available(monkeypatch):
-    monkeypatch.setattr(ContainerSandbox, "available", lambda self: _true())
-    sandbox = await detect_sandbox(Settings(sandbox_enabled=True))
-    assert isinstance(sandbox, ContainerSandbox)
-
-
-async def _false() -> bool:
-    return False
-
-
-async def _true() -> bool:
-    return True
-
-
-# --- container command construction (host shut out by construction) ----------
-def test_run_argv_is_locked_down_by_default(tmp_path):
-    sandbox = ContainerSandbox(runtime="docker", image="img:1")
-    argv = sandbox._run_argv("docker", SandboxSpec(command=["echo", "hi"]), tmp_path)
-    joined = " ".join(argv)
-    # The one-shot path belongs to no workspace, so there is no allowlist to fence it
-    # against and no sidecar to route through: it gets no interface at all.
-    assert "--network none" in joined
-    assert "--cap-drop ALL" in joined
-    # Runs as the workspace's host owner, not the image's root: with all caps
-    # dropped an in-container root can't write the uid-owned /work, so installs
-    # fall back to the /tmp tmpfs and nothing the agent installs survives.
-    assert f"--user {os.getuid()}:{os.getgid()}" in joined
-    assert "--security-opt no-new-privileges" in joined
-    # No read-only root. It bought nothing `--user` does not already buy — the image's
-    # tree is root-owned and this box is not root — while turning every world-writable
-    # scratch path into an error the agent could not act on.
-    assert "--read-only" not in joined
-    assert "--tmpfs /tmp:rw,size=1g" in joined
-    assert "--pids-limit 1024" in joined
-    assert f"{tmp_path}:/work" in joined  # copies mounted, not host files
-    # The command is preserved verbatim at the tail, wrapped by the in-container
-    # timeout, which the image precedes.
-    assert argv[-2:] == ["echo", "hi"]
-    assert argv[argv.index("img:1") + 1] == "timeout"  # enforced inside the box
-    assert "--kill-after=5" in joined
-
-
-def test_hardened_flags_take_a_network_name_never_a_switch(tmp_path):
-    # There is no spelling of these flags that reaches the open web: `None` is no
-    # interface at all, and a name is one of a workspace's `--internal` networks, whose
-    # only exit is the proxy sidecar sharing it.
-    def flags(network):
-        return " ".join(
-            hardened_flags(
-                network=network,
-                memory="512m",
-                cpus="1.0",
-                pids_limit=256,
-                workdir="/work",
-                mount=tmp_path,
-                env={},
-            )
-        )
-
-    assert "--network none" in flags(None)
-    assert "--network odysseus-net-s1" in flags("odysseus-net-s1")
-    assert "bridge" not in flags("odysseus-net-s1")
-
-
-def test_env_is_explicit_only(tmp_path):
-    sandbox = ContainerSandbox(runtime="docker")
-    spec = SandboxSpec(command=["x"], env={"FOO": "bar"})
-    argv = sandbox._run_argv("docker", spec, tmp_path)
-    assert "--env FOO=bar" in " ".join(argv)
-
-
-# --- package installs redirect to the writable workspace ---------------------
-def test_workspace_env_defaults_point_under_the_workdir():
-    env = workspace_env_defaults("/work")
-    # Installs, caches, build temp, and HOME all land in the writable bind-mount.
-    assert env["PIP_USER"] == "1"
-    assert env["PYTHONUSERBASE"] == "/work/.local"
-    assert env["PIP_CACHE_DIR"].startswith("/work/")
-    assert env["TMPDIR"].startswith("/work/")
-    # HOME is a seal-excluded scratch subdir, not the workdir itself, so $HOME
-    # caches/config don't bloat the sealed archive.
-    assert env["HOME"] == "/work/.home"
-    # PATH is left to the configured image — forcing it would break a non-Debian
-    # image's binary layout.
-    assert "PATH" not in env
-
-
-def test_hardened_flags_inject_install_redirects(tmp_path):
-    joined = " ".join(
-        hardened_flags(
-            network=None,
-            memory="512m",
-            cpus="1.0",
-            pids_limit=256,
-            workdir="/work",
-            mount=tmp_path,
-            env={},
-        )
-    )
-    assert "--env PIP_USER=1" in joined
-    assert "--env PYTHONUSERBASE=/work/.local" in joined
-
-
-def test_explicit_env_overrides_a_default(tmp_path):
-    flags = hardened_flags(
-        network=None,
-        memory="512m",
-        cpus="1.0",
-        pids_limit=256,
-        workdir="/work",
-        mount=tmp_path,
-        env={"PIP_USER": "0"},
-    )
-    joined = " ".join(flags)
-    assert "PIP_USER=0" in joined
-    assert "PIP_USER=1" not in joined  # the caller's value wins, not duplicated
-
-
-def test_prepare_workspace_creates_the_scratch_dirs(tmp_path):
-    # TMPDIR/HOME must pre-exist or mktemp fails (tempfile falls back to the small
-    # tmpfs) and some tools refuse to start; the env points them at "<workdir>/.tmp"
-    # and "<workdir>/.home", so those subdirs must be created.
-    env = workspace_env_defaults("/work")
-    assert env["TMPDIR"] == "/work/.tmp"
-    assert env["HOME"] == "/work/.home"
-    prepare_workspace(tmp_path)
-    assert (tmp_path / ".tmp").is_dir()
-    assert (tmp_path / ".home").is_dir()
-    # Idempotent — a second call over an existing workspace is fine.
-    prepare_workspace(tmp_path)
-    assert (tmp_path / ".tmp").is_dir()
-    assert (tmp_path / ".home").is_dir()
-
-
-# --- copy in / copy out ------------------------------------------------------
-def test_write_and_read_files_round_trip(tmp_path):
-    spec = SandboxSpec(
-        command=["x"],
-        files=[SandboxFile(path="in.txt", content=b"hello")],
-        outputs=["out.txt"],
-    )
-    ContainerSandbox._write_inputs(tmp_path, spec)
-    assert (tmp_path / "in.txt").read_bytes() == b"hello"
-    # Only a file that exists is read back; a named-but-missing output is skipped.
-    assert ContainerSandbox._read_outputs(tmp_path, spec) == {}
-    (tmp_path / "out.txt").write_bytes(b"result")
-    assert ContainerSandbox._read_outputs(tmp_path, spec) == {"out.txt": b"result"}
-
-
-def test_input_path_cannot_escape_the_box(tmp_path):
-    spec = SandboxSpec(command=["x"], files=[SandboxFile(path="../escape", content=b"x")])
-    with pytest.raises(SandboxError):
-        ContainerSandbox._write_inputs(tmp_path, spec)
-
-
-# --- a cancelled runtime command takes its child with it ---------------------
-async def test_cancelling_a_runtime_command_kills_the_child(monkeypatch):
-    # The runtime client is a child process: it does not exit because the task awaiting
-    # it was cancelled. Without the kill, a bring-up cancelled mid-pull (app shutdown, a
-    # test tearing its app down) leaves `docker pull` running for its full five-minute
-    # budget — and they accumulate, one per cancellation, all holding the network open.
-    spawned: list[asyncio.subprocess.Process] = []
-    real_exec = asyncio.create_subprocess_exec
-
-    async def capturing_exec(*argv, **kwargs):
-        proc = await real_exec(*argv, **kwargs)
-        spawned.append(proc)
-        return proc
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", capturing_exec)
-
-    task = asyncio.create_task(container_mod.run_subprocess(["sleep", "30"], timeout_s=30))
-    # Bounded, and watching the task as well: a spawn that fails outright (`run_subprocess`
-    # raises `SandboxError` when the exec does) never appends, and waiting on `spawned`
-    # alone would hang the suite forever instead of reporting that failure.
-    async with asyncio.timeout(10):
-        while not spawned:
-            if task.done():
-                await task  # re-raises whatever run_subprocess failed with
-                pytest.fail("run_subprocess returned without spawning a child")
-            await asyncio.sleep(0.01)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    [child] = spawned
-    # Reaped promptly rather than outliving the run — `wait` would hang out to the
-    # sleep's full 30s if the child had merely been abandoned.
-    await asyncio.wait_for(child.wait(), timeout=5)
-    assert child.returncode is not None
-
-
-async def test_force_remove_gives_up_on_a_daemon_that_never_answers(monkeypatch):
-    # Removal is what boot reconciliation and the reaper both run, and a container whose
-    # mount is wedged makes the daemon take the call and never answer. Unbounded, that
-    # parks app startup with nothing in the log; bounded, boot moves on and the next one
-    # tries again.
-    spawned: list[asyncio.subprocess.Process] = []
-    real_exec = asyncio.create_subprocess_exec
-
-    async def hanging_exec(*_argv, **kwargs):
-        proc = await real_exec("sleep", "30", **kwargs)
-        spawned.append(proc)
-        return proc
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", hanging_exec)
-
-    async with asyncio.timeout(10):  # the assertion is that this returns at all
-        await container_mod.force_remove_container("docker", "odysseus-sbx-wedged", timeout_s=0.1)
-
-    [child] = spawned
-    # Killed, not merely abandoned — an orphaned client per stuck container would
-    # outlive every boot that hit one.
-    await asyncio.wait_for(child.wait(), timeout=5)
-    assert child.returncode is not None
 
 
 # --- the deliberate host escape hatch ----------------------------------------
@@ -507,25 +249,3 @@ async def test_confinement_denies_reading_the_data_directory(tmp_path):
     secret.write_text("SEALEDKEYMATERIAL")
     result = await run_on_host(f"cat {secret}", confinement=confinement)
     assert "SEALEDKEYMATERIAL" not in result.stdout
-
-
-# --- container integration (only when a real runtime is present) -------------
-@pytest.mark.container
-@pytest.mark.skipif(not _runtime_ready(), reason="no usable container runtime")
-async def test_container_runs_python_in_isolation():
-    sandbox = ContainerSandbox()
-    result = await sandbox.run(SandboxSpec(command=["python", "-c", "print(6 * 7)"], timeout_s=60))
-    assert result.ok
-    assert result.stdout.strip() == "42"
-
-
-@pytest.mark.container
-@pytest.mark.skipif(not _runtime_ready(), reason="no usable container runtime")
-async def test_the_one_shot_path_has_no_interface_at_all():
-    # This backend's own path is a throwaway run over a throwaway directory: no network
-    # object, so not even a name to resolve. A workspace that needs an exit gets one
-    # through a session and its proxy — see `tests/test_sandbox_session.py`.
-    sandbox = ContainerSandbox()
-    probe = "import socket; socket.gethostbyname('pypi.org'); print('reached')"
-    result = await sandbox.run(SandboxSpec(command=["python", "-c", probe], timeout_s=60))
-    assert not result.ok  # no route, no DNS — the lookup raises and exits non-zero

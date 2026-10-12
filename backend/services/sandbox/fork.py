@@ -1,9 +1,9 @@
 """A delegated agent's own copy of the workspace, and what comes back from it.
 
-A child agent does not share its parent's container: sharing one means two agents
+A child agent does not share its parent's workspace: sharing one means two agents
 writing the same files with no record of who wrote what, and a parent that cannot tell
 its own work from the work it asked for. So the child gets a **fork** — the parent's
-whole workspace, copied — runs in its own container behind its own fence, and the parent
+whole workspace, copied — runs in its own guest copy behind its own confinement, and the parent
 decides afterwards what to keep.
 
 **The copy keeps everything the seal throws away.** ``.venv``, ``node_modules``,
@@ -32,7 +32,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import shutil
-from collections.abc import Iterable, Mapping
+from collections.abc import Container, Iterable, Mapping
 from pathlib import Path
 
 from core.fork import MergeReport, clone_tree
@@ -143,3 +143,27 @@ def merge_workspace(
 
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def orphan_fork_keys(work_root: Path, taken: Container[str]) -> list[str]:
+    """The delegated forks under ``work_root`` that nothing owns any more.
+
+    A fork is the one workspace directory a crash can strand that nobody will ever ask
+    for again: its files copy a parent workspace that still exists under its own key,
+    and its delegation ended when the process died. Every other directory here is an
+    ordinary conversation's files, which is not a leftover and must never be collected.
+
+    ``taken`` is whatever the caller still considers live — the session map and its
+    in-flight teardowns. Passed in rather than reached for, so this stays a pure reading
+    of a directory and the caller keeps the answer atomic against its own maps.
+    """
+    if not work_root.exists():
+        return []
+    return [
+        path.name
+        for path in sorted(work_root.iterdir())
+        if path.is_dir()
+        and path.name.startswith("s")  # `safe_key`'s prefix — never a scratch dir
+        and path.name not in taken
+        and fork_marker(path).exists()
+    ]

@@ -53,7 +53,7 @@ def _default_timezone() -> str:
 
     Portability is kept where it actually lives — the key is read from the host in a
     POSIX-portable way (:mod:`core.timezone`) and *validated* against the tz database here,
-    so a `TZ` holding a POSIX rule string, a container with no zoneinfo link, or a bare
+    so a `TZ` holding a POSIX rule string, a system with no zoneinfo link, or a bare
     offset falls back to UTC rather than reaching a caller that will try to construct a
     `ZoneInfo` from it. Resolved once at import: the host's zone does not change under a
     running process, and this is a column default.

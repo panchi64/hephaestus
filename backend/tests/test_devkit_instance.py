@@ -38,7 +38,7 @@ def test_a_second_worktree_gets_its_own_slot(tmp_path):
     second = resolve(root=tmp_path, name="beta")
     assert second.slot != first.slot
     assert set(second.env()) == set(first.env())
-    for key in ("ODYSSEUS_PORT", "ODYSSEUS_DATA_DIR", "ODYSSEUS_CONTAINER_PREFIX"):
+    for key in ("ODYSSEUS_PORT", "ODYSSEUS_DATA_DIR"):
         assert second.env()[key] != first.env()[key]
 
 
@@ -66,20 +66,20 @@ def test_resolving_twice_returns_the_same_instance(tmp_path):
 
 def test_flags_are_per_run_but_the_workspace_is_not(tmp_path):
     first = resolve(root=tmp_path, name="alpha")
-    with_auth = resolve(root=tmp_path, name="alpha", auth=True, containers=True)
-    assert (with_auth.auth, with_auth.containers) == (True, True)
+    with_auth = resolve(root=tmp_path, name="alpha", auth=True, vm=True)
+    assert (with_auth.auth, with_auth.vm) == (True, True)
     assert with_auth.password == first.password  # the vault key never changes underneath
     assert resolve(root=tmp_path, name="alpha").auth is True  # and the choice persists
 
 
 def test_a_flag_that_sticks_can_also_be_turned_back_off(tmp_path):
     # The bug: the CLI mapped an absent flag to False and then to None, so `--auth` and
-    # `--with-containers` could only ever be switched on. An instance that once ran with
-    # containers kept pulling images on every later `up`, with no way to say otherwise.
-    resolve(root=tmp_path, name="alpha", auth=True, containers=True)
-    off = resolve(root=tmp_path, name="alpha", auth=False, containers=False)
-    assert (off.auth, off.containers) == (False, False)
-    assert resolve(root=tmp_path, name="alpha").containers is False
+    # `--with-vm` could only ever be switched on otherwise. An instance that once ran with
+    # the VM would boot it on every later `up`, with no way to say otherwise.
+    resolve(root=tmp_path, name="alpha", auth=True, vm=True)
+    off = resolve(root=tmp_path, name="alpha", auth=False, vm=False)
+    assert (off.auth, off.vm) == (False, False)
+    assert resolve(root=tmp_path, name="alpha").vm is False
 
 
 def test_resolving_without_a_change_does_not_rewrite_the_state_file(tmp_path):
@@ -122,7 +122,6 @@ def test_the_environment_isolates_every_piece_of_state(tmp_path):
     # mode cuts real git worktrees into the operator's ~/.odysseus/worktrees.
     assert env["ODYSSEUS_WORKTREES_DIR"].startswith(root)
     assert root in env["ODYSSEUS_DB_URL"]
-    assert env["ODYSSEUS_CONTAINER_PREFIX"].startswith("odysseus-dev")
     assert env["ODYSSEUS_OFFLINE_CHECK_ENABLED"] == "false"
 
 
@@ -148,7 +147,6 @@ def test_the_settings_layer_accepts_the_environment_verbatim(tmp_path, monkeypat
     assert settings.port == instance.backend_port
     assert settings.data_dir == instance.data_dir
     assert settings.worktrees_dir == instance.worktrees_dir
-    assert settings.container_prefix == instance.container_prefix
     assert settings.auth_enabled is False
     assert settings.unlock_passphrase == instance.password
     assert settings.sandbox_enabled is False

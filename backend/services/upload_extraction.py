@@ -14,8 +14,7 @@ and the light built-in one are interchangeable and composable:
   which the agent layer implements and ``app.py`` injects.
 - :class:`~services.upload_mineru.MinerUExtractor` — the high-fidelity path (layout,
   tables, formulas → clean Markdown), used when the operator has the ``mineru`` tool on
-  the host. It is detected, not bundled (the same posture as the container runtime and
-  SearXNG), so the project venv never pulls its PyTorch stack.
+  the host. It is detected, not bundled, so the project venv never pulls its PyTorch stack.
 - :class:`FallbackExtractor` — composes the two: try the primary (MinerU), drop to the
   built-in on any failure, so a missing or broken high-fidelity path degrades to a
   working extraction rather than an error.

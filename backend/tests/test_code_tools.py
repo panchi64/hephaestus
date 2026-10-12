@@ -51,6 +51,8 @@ class _CannedSession:
 
 
 class _CannedManager:
+    vm_starting = False
+
     def __init__(self, session: _CannedSession) -> None:
         self._session = session
 
@@ -79,6 +81,7 @@ class FakeSessionManager:
         self.session = FakeSession()
         self.acquired: str | None = None
         self.holder: object = None
+        self.vm_starting = False
 
     async def acquire(self, key: str, *, holder: object = None) -> FakeSession:
         self.acquired = key
@@ -203,7 +206,7 @@ async def test_execute_code_runs_in_the_conversation_session():
 
 
 async def test_cold_session_announces_the_spin_up():
-    # A cold container emits a tool.progress so the wait reads as the environment
+    # A cold workspace emits a tool.progress so the wait reads as the environment
     # starting up, not the model stalling.
     manager = FakeSessionManager()  # FakeSession.is_warm is False ⇒ cold start
     run = await _run_one_tool("code_execute", sessions=manager)
@@ -213,18 +216,16 @@ async def test_cold_session_announces_the_spin_up():
     assert "sandbox" in progress[0].partial.lower()
 
 
-async def test_cold_session_announces_a_download_when_the_image_is_still_pulling():
-    # sandbox-01: distinguishes an ordinary cold start from one that's actually
-    # waiting on the boot-time image pull, so the wait reads truthfully.
-    class WarmingSessionManager(FakeSessionManager):
-        image_warmup_pending = True
-
-    manager = WarmingSessionManager()
+async def test_cold_session_announces_the_vm_boot_when_the_vm_is_still_starting():
+    # Distinguishes an ordinary cold start from one that is waiting on the platform VM
+    # itself, so a minutes-long first boot reads truthfully.
+    manager = FakeSessionManager()
+    manager.vm_starting = True
     run = await _run_one_tool("code_execute", sessions=manager)
 
     progress = [b for b in _bodies(run) if b.type == "tool.progress"]
     assert len(progress) == 1
-    assert "download" in progress[0].partial.lower()
+    assert "vm" in progress[0].partial.lower()
 
 
 async def test_execute_code_fails_closed_without_a_runtime():

@@ -215,9 +215,9 @@ async def client_app(*, auth_enabled: bool = False, passphrase: str | None = "te
             worktrees_dir=Path(tmp) / "worktrees",
             auth_enabled=auth_enabled,
             unlock_passphrase=passphrase,
-            # No container side effects in tests, regardless of the host: the managed
-            # SearXNG / web-fetch browser would pull/launch a container at boot, and
-            # sandbox detection would otherwise flip with host Docker. Tests that need
+            # No VM side effects in tests, regardless of the host: the managed
+            # SearXNG / web-fetch browser would start in the platform VM at boot, and
+            # the sandbox would otherwise depend on it. Tests that need
             # any of these inject it directly (e.g. app.state.sandbox = a fake).
             searxng_enabled=False,
             web_fetch_enabled=False,

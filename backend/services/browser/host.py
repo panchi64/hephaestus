@@ -1,19 +1,17 @@
 """HostBrowser — the visible Chromium the agent drives and the operator shares.
 
-The browse tools used to attach to web fetch's containerized headless Chromium, which
-made the agent's browsing invisible: the operator could watch a screencast of it but
-could not *touch* it. Yet the two things an operator most wants from an agent's browser
-are exactly the ones that need hands — do this one step faster than describing it, and
-log me in before you start. So this browser is a real window on the operator's own
-machine, launched by Playwright with ``headless=False``, and the agent reaches the same
-window over CDP. Web fetch keeps its container untouched; this is a second browser, and
-the only one page JavaScript from an agent-driven page runs in.
+The two things an operator most wants from an agent's browser need hands — do this one
+step faster than describing it, and log me in before you start. So this browser is a real
+window on the operator's own machine, launched by Playwright with ``headless=False``, and
+the agent reaches the same window over CDP. Web fetch's headless Chromium runs in the
+platform VM; this is a second browser, and the only one that runs an agent-driven page's
+JavaScript on the host.
 
 **Launched lazily.** ``ensure()`` is called from the session manager's attach path, so no
 window appears at boot and a thread that never browses never opens one.
 
-**The SSRF boundary survives the move to the host.** The same stdlib-only proxy web
-fetch's sidecar runs (``services/webfetch/proxy_script.py``) is spawned here as a plain
+**The SSRF boundary survives the move to the host.** A stdlib-only
+proxy (``services/webfetch/proxy_script.py``) is spawned here as a plain
 host subprocess on loopback, and Chromium is pointed at it with ``--proxy-server`` plus
 ``--proxy-bypass-list=<-loopback>`` — the bypass list is what closes the hole a host
 browser would otherwise open, since without it the window could reach this very backend
@@ -21,8 +19,8 @@ and every other service on the operator's loopback. Fail-closed: no proxy, no br
 The cost is real and deliberate — a loopback dev server is unreachable in this window.
 
 **Chromium's own sandbox is the rest of the boundary**, and it is asked for explicitly at
-launch rather than left to Playwright's default, which is off. With no container under
-this browser, the renderer sandbox is all that separates a page the model chose from the
+launch rather than left to Playwright's default, which is off. With nothing between this
+browser and the host, the renderer sandbox is all that separates a page the model chose from the
 operator's account.
 
 **``cdp_url`` is the liveness answer, not a stored string.** It is ``None`` unless the
@@ -80,13 +78,13 @@ def _free_port() -> int:
 
 def _launch_args(cdp_port: int, proxy_port: int) -> list[str]:
     """What the window is launched with: the same disguise and proxy-tightening flags web
-    fetch's container uses, plus the debugging port we then attach over.
+    fetch's VM browser uses, plus the debugging port we then attach over.
 
     ``LAUNCH_FLAGS`` is shared rather than re-listed because two of its entries are part
     of the egress boundary, not cosmetics: QUIC goes straight to the origin over UDP
     instead of through an HTTP proxy, and WebRTC will happily send UDP to a host a page
     chooses. Both would step around the proxy in *this* browser exactly as they would in
-    the container.
+    the VM.
     """
     return [
         *LAUNCH_FLAGS,
@@ -103,9 +101,9 @@ async def _launch_chromium(args: Sequence[str]) -> tuple[Any, Any]:
 
     ``chromium_sandbox`` is spelled out because Playwright's own default is the unsafe
     one: left unset, it appends ``--no-sandbox`` and every page the agent opens renders
-    with the renderer sandbox off, as the operator, on the operator's filesystem. There is
-    no container under this browser any more, so Chromium's sandbox is the whole of what
-    stands between an arbitrary page and that filesystem.
+    with the renderer sandbox off, as the operator, on the operator's filesystem.
+    Chromium's sandbox is the whole of what stands between
+    an arbitrary page and that filesystem.
 
     Imported lazily so a process that never opens a browser never pays for the driver
     module, and so tests that inject a launcher need no Playwright at all.
@@ -204,7 +202,7 @@ class HostBrowser:
 
         Returns ``None`` when the launch failed, which is a degraded capability rather
         than an error: the caller tells the model there is no browser, exactly as web
-        fetch degrades when its container cannot come up.
+        fetch degrades when the VM cannot come up.
         """
         async with self._lock:
             live = self.cdp_url

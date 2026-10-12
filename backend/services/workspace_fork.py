@@ -15,7 +15,7 @@ out rather than read off ``RunDeps``: ``services`` sits below ``tools`` in the d
 order and must not import it.
 
 Every handle is resolved optionally, which is the same degrade every capability-backed
-feature makes: a host with no container runtime can still run a sub-agent, it just cannot
+feature makes: a host with no platform VM can still run a sub-agent, it just cannot
 give one a workspace of its own, and the caller turns that into a sentence rather than an
 exception.
 """

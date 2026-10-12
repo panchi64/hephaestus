@@ -167,9 +167,9 @@ async def test_no_sandbox_runtime_degrades_instead_of_failing(tmp_path):
     assert "unavailable" in str(result).lower()
 
 
-async def test_reading_materializes_the_workspace_without_a_container(tmp_path):
+async def test_reading_materializes_the_workspace_without_the_vm(tmp_path):
     manager = _Manager(tmp_path)
     await _call("list_directory", {"path": "."}, manager=manager)
     # The session was asked for its workspace (which restores a sealed one), and nothing
-    # else — browsing files must not pay for a container start.
+    # else — browsing files must not pay for a VM round trip.
     assert manager.sessions["conv-1"].ensured >= 1

@@ -1,14 +1,12 @@
-"""What a worktree command hands back, and what it says while it is still running.
+"""What a host command hands back, and what it says while it is still running.
 
-The shell used to answer with one labelled string — `[stdout]`, `[stderr]`, `[exit code:
-N]` — and everything downstream took it back apart to get at a field. These tests pin the
-structure that replaced it, and they pin the two things the string could not express at
-all: a timed-out command's output, and output that arrives before the command is over.
+A result is structure, not a labelled string: exit code, the two streams apart, whether the
+command was killed on its timeout, and how long it took. These tests pin that structure,
+including a timed-out command's output and output that arrives before the command is over.
 
-The runner is driven directly here, with no profile and no toolset. ``tools/shell.py``
-owns the boundary a command runs under and ``tests/test_shell_fence.py`` owns testing it;
-what is under test here is the shape of the answer, which is the same whether or not a
-fence was built.
+The runner is driven directly here, with no profile and no toolset. ``tools/shell.py`` owns
+where a command runs and ``tests/test_shell_fence.py`` and ``tests/test_project_shell.py``
+test the routes; what is under test here is the shape of the answer.
 """
 
 from __future__ import annotations
@@ -17,16 +15,13 @@ import asyncio
 from pathlib import Path
 
 from services.sandbox import shell_runner
-from services.sandbox.shell_runner import FencedShell
+from services.sandbox.shell_runner import HostShell
 
 
-def _shell(root: Path, *, timeout: float = 30.0, max_chars: int = 1_000_000) -> FencedShell:
+def _shell(root: Path, *, timeout: float = 30.0, max_chars: int = 1_000_000) -> HostShell:
     root.mkdir(parents=True, exist_ok=True)
-    return FencedShell(
+    return HostShell(
         root,
-        # Never called: a `None` profile runs the command as written, which is the whole
-        # of what a confiner would be asked about here.
-        confiner=None,  # type: ignore[arg-type]
         default_timeout=timeout,
         max_output_chars=max_chars,
     )
@@ -38,7 +33,6 @@ def _shell(root: Path, *, timeout: float = 30.0, max_chars: int = 1_000_000) -> 
 async def test_the_two_streams_come_back_apart(tmp_path):
     result = await _shell(tmp_path / "w").run(
         "echo out; echo err >&2",
-        profile=None,
     )
     assert result.stdout.strip() == "out"
     assert result.stderr.strip() == "err"
@@ -48,28 +42,26 @@ async def test_the_two_streams_come_back_apart(tmp_path):
 async def test_a_silent_command_is_two_empty_strings_and_not_a_sentence(tmp_path):
     # "(no output)" was prose in the slot where the output goes — a renderer had to know
     # the phrase to avoid printing it as if the command had said it.
-    result = await _shell(tmp_path / "w").run("true", profile=None)
+    result = await _shell(tmp_path / "w").run("true")
     assert result.stdout == "" and result.stderr == ""
     assert result.ok
 
 
 async def test_a_failing_command_carries_its_status_as_a_number(tmp_path):
-    result = await _shell(tmp_path / "w").run("echo nope >&2; exit 3", profile=None)
+    result = await _shell(tmp_path / "w").run("echo nope >&2; exit 3")
     assert result.exit_code == 3 and not result.ok
     assert "nope" in result.stderr
 
 
 async def test_a_command_is_timed_and_the_duration_is_its_own(tmp_path):
-    result = await _shell(tmp_path / "w").run("sleep 0.3", profile=None)
+    result = await _shell(tmp_path / "w").run("sleep 0.3")
     assert result.duration_ms >= 250  # wall clock, measured around the spawn
 
 
 async def test_a_timed_out_command_keeps_what_it_printed(tmp_path):
     # The whole reason this is worth a test: the labelled string answered a timeout with
     # the timeout line *alone*, throwing away the output that says where it hung.
-    result = await _shell(tmp_path / "w").run(
-        "echo reached-here; sleep 5", profile=None, timeout_seconds=0.4
-    )
+    result = await _shell(tmp_path / "w").run("echo reached-here; sleep 5", timeout_seconds=0.4)
     assert result.timed_out is True
     assert "reached-here" in result.stdout
     # No status was collected, and a zero here would read as a command that succeeded.
@@ -82,7 +74,7 @@ async def test_a_timed_out_command_does_not_move_the_working_directory(tmp_path)
     shell = _shell(tmp_path / "w")
     (tmp_path / "w" / "sub").mkdir()
     before = shell.cwd
-    await shell.run("cd sub; sleep 5", profile=None, timeout_seconds=0.3)
+    await shell.run("cd sub; sleep 5", timeout_seconds=0.3)
     assert shell.cwd == before
 
 
@@ -96,7 +88,7 @@ async def test_output_arrives_while_the_command_is_still_running(tmp_path):
         chunks.append((chunk, elapsed_s))
 
     result = await _shell(tmp_path / "w").run(
-        "echo first; sleep 1.2; echo second", profile=None, on_progress=hook
+        "echo first; sleep 1.2; echo second", on_progress=hook
     )
     # More than one tick, which is what says the output was not simply handed over at the
     # end: the first landed while the command was sleeping through the second.
@@ -119,7 +111,7 @@ async def test_the_last_thing_a_command_printed_is_not_lost_to_the_polling_inter
     async def hook(chunk: str, _elapsed: float) -> None:
         chunks.append(chunk)
 
-    await _shell(tmp_path / "w").run("echo quick", profile=None, on_progress=hook)
+    await _shell(tmp_path / "w").run("echo quick", on_progress=hook)
     assert "quick" in "".join(chunks)
 
 
@@ -127,7 +119,7 @@ async def test_a_progress_hook_that_fails_does_not_fail_the_command(tmp_path):
     async def hook(_chunk: str, _elapsed: float) -> None:
         raise RuntimeError("the stream went away")
 
-    result = await _shell(tmp_path / "w").run("echo fine", profile=None, on_progress=hook)
+    result = await _shell(tmp_path / "w").run("echo fine", on_progress=hook)
     assert result.ok and "fine" in result.stdout
 
 
@@ -144,7 +136,7 @@ async def test_streaming_stops_at_its_budget_and_the_result_still_has_everything
         chunks.append(chunk)
 
     result = await _shell(tmp_path / "w").run(
-        "echo aaaaaaaaaa; sleep 1.2; echo bbbbbbbbbb", profile=None, on_progress=hook
+        "echo aaaaaaaaaa; sleep 1.2; echo bbbbbbbbbb", on_progress=hook
     )
     assert len(chunks) == 1 and "bbbb" not in chunks[0]
     assert "aaaaaaaaaa" in result.stdout and "bbbbbbbbbb" in result.stdout
@@ -157,7 +149,7 @@ async def test_a_cancelled_command_does_not_leave_its_watcher_running(tmp_path):
         ticks.append(chunk)
 
     shell = _shell(tmp_path / "w")
-    task = asyncio.create_task(shell.run("echo up; sleep 5", profile=None, on_progress=hook))
+    task = asyncio.create_task(shell.run("echo up; sleep 5", on_progress=hook))
     await asyncio.sleep(0.7)  # past the first tick, so the watcher is certainly alive
     task.cancel()
     try:
@@ -174,7 +166,7 @@ async def test_a_cancelled_command_does_not_leave_its_watcher_running(tmp_path):
 
 async def test_a_background_command_reports_status_and_streams_as_fields(tmp_path):
     shell = _shell(tmp_path / "w")
-    command_id = await shell.start("echo up; sleep 30", profile=None)
+    command_id = await shell.start("echo up; sleep 30")
     for _ in range(50):
         status = await shell.check(command_id)
         assert status is not None

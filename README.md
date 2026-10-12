@@ -28,7 +28,7 @@ I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loo
 **Work surfaces.**
 
 - **Projects.** A project is a directory you work in, and the whole app scopes to it. A chat filed under a project works in that folder, on the branch you have checked out, one chat at a time. When the work should stay apart from yours, the agent moves the chat onto a git worktree on a branch named for the thread, which reaches your folder only through a merge you press. Deleting a thread with unmerged commits is refused unless you say to discard it.
-- **Sandboxed code, the View, and previews.** The agent runs code in a host-isolated, per-conversation container that fails closed and never touches the host, and publishes output to the View — one versioned surface where each result is a snapshot you can star and return to, optionally fronted by a live reverse-proxied head.
+- **Sandboxed code, the View, and previews.** The agent runs code in a platform microVM, confined to its own conversation's workspace, that fails closed and never touches the host, and publishes output to the View — one versioned surface where each result is a snapshot you can star and return to, optionally fronted by a live reverse-proxied head.
 - **Agents.** Write your own agents — a standing brief, a model, the tools it may use and how far it may reach — and run any chat with one, or let agents delegate to them. The agent can draft new ones too, which stay inert until you publish them. A project's `.claude/agents/*.md` files join the catalog while you work in it.
 - **Research, through sub-agents.** Any chat can investigate a question by fanning out parallel researcher sub-agents that cite the page behind every claim. It stays a conversation, so you can push back halfway through.
 - **Knowledge Base.** Point it at folders of your own documents and retrieve from them by meaning; sources, index stats, reindex and rebuild are all yours to drive.
@@ -38,7 +38,7 @@ I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loo
 
 **Reach.**
 
-- **Web search and fetch.** A managed SearXNG instance with no operator setup, plus a containerized headless browser that renders a page to Markdown. SSRF-guarded on every request; untrusted content is marked as data before it reaches a prompt.
+- **Web search and fetch.** A managed SearXNG instance with no operator setup, plus a headless browser in the platform VM that renders a page to Markdown. SSRF-guarded on every request; untrusted content is marked as data before it reaches a prompt.
 - **Email.** Multiple accounts over IMAP/SMTP, Gmail, Microsoft Graph or JMAP, with OAuth where the provider wants it — plus AI triage (urgency, tagging, summaries) and reply drafts that match how you actually write.
 - **Calendar.** Local-first, with CalDAV sync, `.ics` import/export, recurrence, and natural-language entry — "lunch Friday 1pm" becomes a draft, with the model reading the phrase and the code doing the date arithmetic.
 - **Tasks.** Scheduled and webhook-triggered jobs the agent runs unattended within a pre-authorized scope. An out-of-scope sensitive action still parks for approval exactly like an interactive run.
@@ -113,13 +113,11 @@ cd backend
 uv sync                                       # creates .venv (Python 3.14), installs deps
 uv run python dev.py                          # http://localhost:8000  (/health to check)
 uv run pytest                                 # the test suite (fans out across cores)
-uv run pytest -m container                    # the container-backed tests, held back from
-                                              #   the default run: they pull real images
 uv run ruff check .                           # lint
 ```
 `dev.py` is `uvicorn app:app` with auto-reload, minus the directories that hold runtime state rather than source. To run without reload (production), use `uv run uvicorn app:app` directly.
 
-On first run, create the operator account via the frontend (the password you choose also derives the at-rest encryption key). A container runtime (Docker/Podman) is needed for the code sandbox, web fetch and managed web search; without one, those capabilities report unavailable rather than falling back to the host.
+On first run, create the operator account via the frontend (the password you choose also derives the at-rest encryption key). [QEMU](https://www.qemu.org) is needed for the platform VM, which runs the code sandbox, the project shell, web fetch and managed web search (KVM on Linux or Hypervisor.framework on macOS makes it fast; without either it still runs, slowly). The first boot builds the VM's image once, which takes several minutes and needs internet access. Without the VM, those capabilities report unavailable rather than falling back to the host.
 
 **Frontend** (requires [bun](https://bun.sh)):
 ```bash
@@ -131,7 +129,7 @@ bun run lint        # eslint + prettier --check
 bun run test        # the fast unit suite
 ```
 
-**A disposable instance to develop against.** A second Odysseus with its own data directory, its own ports, its own containers and a scripted model behind it — seeded on first use, safe to break, and separate from the workspace above:
+**A disposable instance to develop against.** A second Odysseus with its own data directory, its own ports, its own platform VM (off unless `up --with-vm`) and a scripted model behind it — seeded on first use, safe to break, and separate from the workspace above:
 ```bash
 cd backend
 uv run python dev_instance.py up --detach     # starts everything and prints the URLs
@@ -149,9 +147,9 @@ It lives under `~/.odysseus/dev/<worktree>/`, needs no login, and points at a st
 Odysseus can do powerful things on your machine — sandboxed and (with approval) host code execution, file writes, email, web research — so I don't treat security as an afterthought. The full details are in [SECURITY.md](SECURITY.md).
 
 - **Single operator.** All data and features belong to *you* — the sole user. Every request is authenticated before any feature is reached; every record is owner-stamped against a future multi-user seam.
-- **A blast radius, not a cage.** Every agent workspace is disposable — a container over copied files, or a git worktree on a throwaway branch — so computing, installing packages and reaching a package registry cost nothing and feel like nothing. What is guarded is the small set of ways out of it.
-- **The exits require approval.** The agent pauses and asks before anything that leaves the box: changing your host, writing your real files, sending email, configuration, vault, or reaching a domain the allowlist doesn't name (asked per request, never granted standing). Running code in the agent's own container is *not* sensitive; a coding thread's shell asks once, at its first command, and then works freely on its own branch.
-- **One fence, tuned for exfiltration.** Containers sit on a private network whose only exit is an allowlisting proxy; the coding shell and any approved host command run under OS-level confinement (seatbelt on macOS, bubblewrap on Linux) that hides your credential paths and the data directory. Both read the same domain list, so there's no half of it to forget. Where that confinement can't start, the coding shell refuses to run at all — but an approved host command still runs, unconfined, and says so in its result, because that one command is one you read and approved.
+- **A blast radius, not a cage.** Every agent workspace is disposable — a copy in the platform VM, or a git worktree on a throwaway branch — so computing, installing packages and reaching a package registry cost nothing and feel like nothing. What is guarded is the small set of ways out of it.
+- **The exits require approval.** The agent pauses and asks before anything that leaves the box: changing your host, writing your real files, sending email, configuration, vault, or reaching a domain the allowlist doesn't name (asked per request, never granted standing). Running code in the agent's own workspace is *not* sensitive; a coding thread's shell asks once, at its first command, and then works freely on its own branch.
+- **One fence, tuned for exfiltration.** Agent commands run in a microVM that holds only the workspaces in use and has no network of its own: its one exit is an allowlisting gateway on the host, which also refuses your LAN and the host itself. An approved host command runs under OS-level confinement (seatbelt on macOS, bubblewrap on Linux) that hides your credential paths and the data directory, reading the same domain list. Where the VM can't start, the agent's shell refuses to run at all — but an approved host command still runs, and says so in its result, because that one command is one you read and approved.
 - **Edits to your checkout follow your permission level.** A project chat edits your folder directly, so Manual asks before every write and Edit and above write freely; only one chat holds a folder at a time. Work the agent moves to a worktree reaches your folder only through a merge you press. A delegated sub-agent can get its own fork of a worktree, and its work comes back through a merge that reports conflicts instead of overwriting.
 - **Encrypted at rest.** All user data is AES-256 encrypted; auth secrets are one-way hashed. The key is derived from your password and lives only in memory — no OS keystore, nothing readable on disk, re-locked on restart.
 - **Untrusted content is data, not instructions.** External content (web pages, fetched URLs, files) is wrapped and marked so the model treats it as data before it enters a prompt.

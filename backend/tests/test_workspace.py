@@ -23,14 +23,12 @@ from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
-import services.sandbox.host as host_module
-import tools.shell as shell_module
-from core.config import Settings
 from core.container import ServiceContainer
 from runs import Run, RunStream
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.checkout import CheckoutHolders
-from services.sandbox import HostConfinement, SandboxError, SandboxSessionManager
+from services.sandbox import SandboxError, SandboxSessionManager
+from services.vm.project import ProjectCopies
 from services.workspace import (
     SANDBOX_MOUNT,
     WORKTREE_SCRATCH,
@@ -42,7 +40,8 @@ from tools.deps import RunDeps
 from tools.shell import shell_toolset
 from tools.workspace import run_workspace
 
-from .conftest import unfenced
+from .shell_support import Shell, checkout_ctx, local_copies, make_repo
+from .vm_local import can_confine
 
 OWNER = "operator"
 
@@ -270,301 +269,130 @@ class TestShellIsProjectFolderOnly:
         # sandbox thread — so the toolset checks too. Calling it directly is exactly the
         # scenario a filter regression would produce.
         ctx = _ctx(_caps(tmp_path), conversation_id="conv-a")
-        result = await shell_toolset(confiner=unfenced).call_tool(
-            "run_command",
-            {"command": "echo hi"},
-            ctx,
-            None,  # type: ignore[arg-type]
-        )
+        result = await shell_toolset().call_tool("run_command", {"command": "echo hi"}, ctx, None)
         assert "only available in a conversation filed under a project" in str(result)
 
 
-class TestShellRecoverableFailures:
-    @pytest.mark.parametrize("kind", ["checkout", "worktree"])
-    async def test_a_command_the_os_wont_spawn_is_a_retry_not_a_dead_run(self, tmp_path, kind):
-        """What the model can act on — a refused command, a working directory that
-        vanished, a command the OS will not spawn — comes back as `ModelRetry`, so the turn
-        continues and the agent tries something else. Only failures it could do nothing
-        about still abort.
+async def test_the_declaration_is_offered_to_the_model_with_the_workspace_default(tmp_path):
+    caps = _caps(tmp_path, {"proj-1": tmp_path})
+    ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
+    tool = (await shell_toolset().get_tools(ctx))["run_command"]
+    schema = tool.tool_def.parameters_json_schema
+    reach = schema["properties"]["reach"]
+    description = str(reach.get("description", "")).lower()
+    assert "reach" not in schema.get("required", [])
+    assert reach.get("default") == "workspace"
+    # The description explains where each answer runs and never the permission level: one
+    # string ships at all four, so a promise about an approval outcome is wrong at three.
+    assert "vm" in description and "host" in description
+    assert "approv" not in description
 
-        The confiner is explicit: these tools refuse outright without a fence, and the
-        suite runs with the platform's turned off (see `conftest`), so a test that wants
-        commands to actually run has to supply one.
-        """
+
+@pytest.mark.skipif(not can_confine(), reason="needs root and bubblewrap")
+class TestShellRunsInTheVm:
+    """Commands reach the VM through the project's copy, driven for real on this machine."""
+
+    @pytest.fixture
+    async def copies(self, tmp_path):
+        async with local_copies(tmp_path / "vm") as live:
+            yield live
+
+    def _shell(self, tmp_path, copies, *, kind="checkout", shells=None, project="proj-1"):
+        root = tmp_path / project
+        if not root.exists():
+            make_repo(root)
+        ctx = checkout_ctx(root, copies=copies, kind=kind, project_id=project)
+        return root, Shell(shell_toolset(shells=shells), ctx)
+
+    @pytest.mark.parametrize("kind", ["checkout", "worktree"])
+    async def test_a_refused_command_is_a_retry_not_a_dead_run(self, tmp_path, copies, kind):
+        """What the model can act on — a refused command — comes back as `ModelRetry`, so
+        the turn continues and the agent tries something else."""
         root = await _repo(tmp_path / "project")
         caps = _caps(tmp_path, {"proj-1": root})
+        caps.add(copies, as_type=ProjectCopies)
         ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind=kind)
-        toolset = shell_toolset(confiner=unfenced)
-        tools = await toolset.get_tools(ctx)
-
-        async def run(command: str):
-            return await toolset.call_tool(
-                "run_command",
-                {"command": command},
-                ctx,
-                tools["run_command"],
-            )
-
-        # Approval is the gate on the *first* command; `tool_call_approved` is what the
-        # engine sets on the re-invocation, so drive the post-approval call directly.
         ctx.tool_call_approved = True
+        shell = Shell(shell_toolset(), ctx)
 
-        # A destructive command the denylist refuses by name.
         with pytest.raises(ModelRetry):
-            await run("rm -rf /")
-
-        # A command holding a NUL byte, which the OS cannot spawn at all.
-        with pytest.raises(ModelRetry):
-            await run("echo \x00hi")
+            await shell.call("run_command", command="rm -rf /")
 
         # And the turn is still usable afterwards — a retry left nothing broken behind it.
-        assert "ok" in str(await run("echo ok"))
+        assert "ok" in (await shell.call("run_command", command="echo ok"))["stdout"]
 
-
-class TestShellDeclaresAndEnforcesItsReach:
-    """The model says how far a command needs to go; the tool holds it to that.
-
-    The enforcement is here rather than at the permission gate on purpose: a declaration
-    is a statement about the command, so it costs nothing to hold a command to its own
-    statement at *every* level — including one the operator approved by hand, which never
-    passed a gate at all.
-    """
-
-    async def _run(self, tmp_path, monkeypatch, command: str, **args):
-        """Drive one call with a recording confiner in place of the platform's fence.
-
-        Injected through `shell_toolset(confiner=…)` rather than patched onto
-        `fence.wrap`, because that is the seam built for it: passing a confiner *asserts*
-        that commands are fenced, so a test never has to switch the fence off to observe
-        it, and there is no module attribute whose patch has to land before the toolset
-        captures it.
-        """
-        wrapped: list[str] = []
-
-        async def recording(command, *, profile):  # noqa: D401
-            # Returned unchanged so the command still runs; what is under test is whether
-            # the fence was asked for it at all, and with which profile. This is the
-            # `Confiner` seam the shell runner calls — one argument, one boundary object.
-            wrapped.append(command)
-            self.profile = profile
-            return command
-
-        root = await _repo(tmp_path / "project")
-        caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
-        ctx.tool_call_approved = True
-        toolset = shell_toolset(confiner=recording)
-        tools = await toolset.get_tools(ctx)
-        result = await toolset.call_tool(
-            "run_command", {"command": command, **args}, ctx, tools["run_command"]
-        )
-        # Only the command line the model wrote. `run_command` appends its own
-        # working-directory capture *before* fencing, so the fence sees it too — asserted
-        # on its own in `test_the_directory_capture_happens_inside_the_fence`.
-        return [w.split("\n", 1)[0] for w in wrapped], str(result)
-
-    def _fenced_host(self, monkeypatch) -> None:
-        async def available(settings):
-            return HostConfinement(True)
-
-        monkeypatch.setattr(shell_module.fence, "resolve_confinement", available)
-
-    async def test_the_declaration_is_offered_to_the_model_with_the_workspace_default(
-        self, tmp_path
+    async def test_a_workspace_command_runs_in_the_vm_and_a_host_one_on_the_host(
+        self, tmp_path, copies
     ):
-        caps = _caps(tmp_path, {"proj-1": tmp_path})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
-        tool = (await shell_toolset().get_tools(ctx))["run_command"]
-        schema = tool.tool_def.parameters_json_schema
-        reach = schema["properties"]["reach"]
-        assert "reach" not in schema.get("required", [])
-        assert reach.get("default") == "workspace"
-        # The description explains the fence and never the permission level: one string
-        # ships at all four, so a promise about an approval outcome is wrong at three.
-        assert "fence" in str(reach.get("description", "")).lower()
-        assert "approv" not in str(reach.get("description", "")).lower()
+        root, shell = self._shell(tmp_path, copies)
+        inside = await shell.call("run_command", command="pwd")
+        assert inside["stdout"].strip() == "/work"
+        assert inside["reach"] == "workspace" and inside["fenced"] is True
+        assert "unfenced_reason" not in inside
 
-    async def test_a_contained_command_runs_inside_the_fence(self, tmp_path, monkeypatch):
-        wrapped, output = await self._run(tmp_path, monkeypatch, "echo ok")
-        assert wrapped == ["echo ok"]
-        assert "ok" in output
-
-    async def test_a_host_declaration_is_run_as_the_approver_read_it(self, tmp_path, monkeypatch):
-        # `host` is the declaration that asks for no fence, and it has already been
-        # approved *as that*: wrapping it in one anyway would break the act somebody said
-        # yes to, which is the opposite of enforcing the declaration.
-        wrapped, output = await self._run(tmp_path, monkeypatch, "echo ok", reach="host")
-        assert wrapped == []
-        assert "ok" in output
-
-    async def test_a_command_the_structure_contradicts_is_not_fenced_either(
-        self, tmp_path, monkeypatch
-    ):
-        # It escalated to a reviewer or to the operator, who ruled on the command as
-        # written; there is no tier here to build a profile from.
-        wrapped, _output = await self._run(tmp_path, monkeypatch, "echo ok > /etc/nope")
-        assert wrapped == []
+        outside = await shell.call("run_command", command="pwd", reach="host")
+        assert Path(outside["stdout"].strip()).resolve() == root.resolve()
+        assert outside["reach"] == "host" and outside["fenced"] is False
 
     @pytest.mark.parametrize(
         "command",
         [
-            "echo $(printf ok)",  # a nested command, unreadable rather than escaping
-            "sh -c 'echo ok'",  # an argument that could itself be a command line
-            "echo 'two words'",  # ...and the same shape spelled innocently
+            "echo $(pwd)",  # a nested command, unreadable rather than escaping
+            "sh -c pwd",  # an argument that could itself be a command line
+            "echo 'two words' && pwd",  # ...and the same shape spelled innocently
+            "echo ok > /etc/nope; pwd",  # a path the structure contradicts
         ],
     )
-    async def test_a_command_the_judge_could_not_read_is_still_fenced(
-        self, tmp_path, monkeypatch, command
+    async def test_a_command_the_judge_could_not_read_still_runs_in_the_vm(
+        self, tmp_path, copies, command
     ):
-        # The lever this closes: the judge declines these for being *unreadable*, not for
-        # reaching anywhere, and a fence keyed off the judgement alone would have let any
-        # command escape it by being written so nothing could read it — the model choosing
-        # whether the OS boundary applies. What it declared is still a statement about the
-        # command, and a reviewer who allowed it was never asked about the fence.
-        wrapped, _output = await self._run(tmp_path, monkeypatch, command)
-        assert wrapped == [command]
+        # The judge declines these for being *unreadable*, not for reaching anywhere, and a
+        # route keyed off the judgement alone would let a command choose where it runs by
+        # being written so nothing could read it. Only a `host` declaration leaves the VM.
+        _root, shell = self._shell(tmp_path, copies)
+        result = await shell.call("run_command", command=command)
+        assert result["fenced"] is True and "/work" in result["stdout"]
+        assert not Path("/etc/nope").exists()
 
-    async def test_the_tracked_directory_cannot_be_moved_out_of_the_worktree(
-        self, tmp_path, monkeypatch
-    ):
-        # What a command ends in is what the session persists, so the shell adopts it only
-        # while it is still under the worktree root — otherwise a `cd` out would leave
-        # every later relative path judged against a directory the command is no longer in,
-        # and reads are the half no fence holds.
-        #
-        # This runs for real against an unwrapping confiner, because the containment is a
-        # `Path` comparison in the runner now rather than a shell construct in the wrapper:
-        # there is no generated string left to assert on.
+    async def test_the_tracked_directory_cannot_be_moved_out_of_the_project(self, tmp_path, copies):
+        # What a command ends in is what the shell persists, so it adopts it only while it
+        # is still under the project root — otherwise a `cd` out would leave every later
+        # relative path judged against a directory the command is no longer in.
         shells: list = []
-        root = await _repo(tmp_path / "project")
-        caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
-        ctx.tool_call_approved = True
-        toolset = shell_toolset(confiner=unfenced, shells=shells)
-        tools = await toolset.get_tools(ctx)
+        root, shell = self._shell(tmp_path, copies, shells=shells)
+        await shell.call("run_command", command="mkdir -p sub && cd sub")
+        bound = shells[-1]  # shells[0] is the root-independent template
+        assert bound.project.cwd == root / "sub"  # ...a `cd` inside the project is kept
+        await shell.call("run_command", command="cd /tmp")
+        assert bound.project.cwd == root / "sub"  # ...and one out is not
 
-        async def run(command: str) -> None:
-            await toolset.call_tool("run_command", {"command": command}, ctx, tools["run_command"])
+    async def test_two_project_roots_do_not_share_a_shell(self, tmp_path, copies):
+        # Rooting, not isolation: each shell is compared to the folder it should be bound
+        # to, because two shells both rooted at the template would also "not share" state.
+        shells: list = []
+        toolset = shell_toolset(shells=shells)
+        root_a, root_b = make_repo(tmp_path / "a"), make_repo(tmp_path / "b")
+        a = Shell(toolset, checkout_ctx(root_a, copies=copies, project_id="a"))
+        b = Shell(toolset, checkout_ctx(root_b, copies=copies, project_id="b"))
+        await a.call("run_command", command="mkdir -p sub && cd sub")
+        assert (await b.call("run_command", command="pwd"))["stdout"].strip() == "/work"
+        assert (await a.call("run_command", command="pwd"))["stdout"].strip() == "/work/sub"
+        assert {shell.project.cwd for shell in shells[1:]} == {root_a / "sub", root_b}
 
-        await run("mkdir -p sub && cd sub")
-        shell = shells[-1]  # shells[0] is the root-independent template
-        worktree = shell.cwd.parent
-        assert shell.cwd.name == "sub"  # ...a `cd` inside the worktree is kept
-        await run("cd /tmp")
-        assert shell.cwd.resolve() == (worktree / "sub").resolve()  # ...and one out is not
+    async def test_a_shell_handed_back_by_a_finished_run_is_reaped(self, tmp_path, copies):
+        shells: list = []
+        _root, shell = self._shell(tmp_path, copies, shells=shells)
+        vm_job = (await shell.call("start_command", command="sleep 60"))["command_id"]
+        host_job = (await shell.call("start_command", command="sleep 60", reach="host"))[
+            "command_id"
+        ]
+        assert (await shell.call("check_command", command_id=vm_job))["status"] == "running"
 
-    async def test_without_a_primitive_the_tools_refuse_rather_than_running_bare(self, tmp_path):
-        # No confiner injected here, deliberately: passing one *asserts* that commands are
-        # fenced, so it is never a way to observe the unfenced path. This probes the
-        # platform, which the suite leaves switched off — and the answer is a refusal, not
-        # an unfenced run. Nobody consented to an unfenced agent shell, and a code
-        # conversation is a long stretch of commands nobody reads one by one. The host
-        # hatch inverts this on purpose: there the operator read and approved that exact
-        # command, so it degrades and says so.
-        root = await _repo(tmp_path / "project")
-        caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
-        ctx.tool_call_approved = True
-        toolset = shell_toolset()
-        tools = await toolset.get_tools(ctx)
-        output = str(
-            await toolset.call_tool(
-                "run_command", {"command": "echo should-not-run"}, ctx, tools["run_command"]
-            )
-        )
-        assert "cannot be confined" in output
-        assert "should-not-run" not in output  # ...and nothing ran
+        await shells[-1].shutdown(copies)
 
-    async def test_the_directory_capture_happens_inside_the_fence(self, tmp_path, monkeypatch):
-        # The `pwd` that carries a `cd` to the next call is appended *before* the command
-        # is wrapped, so it runs within the boundary. Appended after, it would report the
-        # directory the shell started in and quietly undo every `cd` the model wrote —
-        # which is the bug the whole capture exists around.
-        captured: list[str] = []
-
-        async def recording(command, *, profile):
-            captured.append(command)
-            return command
-
-        root = await _repo(tmp_path / "project")
-        caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
-        ctx.tool_call_approved = True
-        toolset = shell_toolset(confiner=recording)
-        tools = await toolset.get_tools(ctx)
-        await toolset.call_tool("run_command", {"command": "echo ok"}, ctx, tools["run_command"])
-        [fenced] = captured
-        assert fenced.startswith("echo ok\n")
-        assert "pwd > " in fenced
-
-
-@pytest.mark.fence
-class TestAFencedCommandStillBehavesLikeAShell:
-    """The whole glue, once: the tool's fence wrap, the harness's own checks, a real spawn.
-
-    Everything above stops at the wrapper's string. What is not provable there is the part
-    with two authors — the harness appends its own `pwd > …` to whatever it is handed, and
-    that suffix lands *outside* the sandboxed shell, where it would record the directory
-    the tool started in and quietly undo every `cd` the model wrote. So this runs commands
-    for real and asks the two questions a broken shim answers wrongly while every string
-    assertion still passes: does a `cd` survive to the next call, and does a failing
-    command still come back as failed.
-    """
-
-    async def _session(self, tmp_path: Path, monkeypatch):
-        settings = Settings(data_dir=tmp_path / "data", host_command_sandbox_enabled=True)
-        confinement = await host_module._configure(settings)
-        if not confinement.active:
-            pytest.skip(f"no host sandbox primitive here: {confinement.reason}")
-        # The real `resolve_confinement` reads a process-global that the suite deliberately
-        # leaves unresolved; the settings are the tool's own lookup, and both have to say
-        # the same thing or the command would be judged fenced and run bare.
-        monkeypatch.setattr(host_module, "_resolved", confinement)
-        monkeypatch.setattr(shell_module, "get_settings", lambda: settings)
-        root = await _repo(tmp_path / "project")
-        caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
-        ctx.tool_call_approved = True
-        toolset = shell_toolset()
-        tools = await toolset.get_tools(ctx)
-
-        async def run(command: str) -> str:
-            return str(
-                await toolset.call_tool(
-                    "run_command", {"command": command}, ctx, tools["run_command"]
-                )
-            )
-
-        return run
-
-    async def test_a_cd_survives_to_the_next_fenced_command(self, tmp_path, monkeypatch):
-        run = await self._session(tmp_path, monkeypatch)
-        assert "Operation not permitted" not in await run("mkdir -p sub && cd sub")
-        assert "/sub" in await run("pwd")
-
-    async def test_a_denial_reaches_the_model_as_the_fence_and_not_as_a_broken_tool(
-        self, tmp_path, monkeypatch
-    ):
-        # Also the proof that the two tests either side of this one ran fenced at all: the
-        # repository's `config` is the one path denied *inside* an allowed one, so a
-        # failure here cannot come from anything but the profile. And the note is what
-        # turns `Operation not permitted` into something the model can act on — without it
-        # its next move on an apparently broken tool is to try again.
-        run = await self._session(tmp_path, monkeypatch)
-        # Spelled with a bare word rather than a path: `/tmp/x` would leave the worktree,
-        # which the structural stage refuses outright, and the command would then run
-        # *unfenced* as the thing a reviewer or the operator ruled on.
-        output = await run("git config core.fsmonitor sneaky")
-        assert "Operation not permitted" in output
-        assert "[fence]" in output and "declare the reach" in output
-
-    async def test_a_failing_command_still_comes_back_failed(self, tmp_path, monkeypatch):
-        # The wrapper *sets* the inner exit code rather than exiting on it, so that the
-        # harness's own suffix can still run. Getting that backwards makes every fenced
-        # command look successful.
-        run = await self._session(tmp_path, monkeypatch)
-        assert "1" in await run("false")
-        assert "ok" in await run("echo ok")
+        for command_id in (vm_job, host_job):
+            gone = await shell.call("check_command", command_id=command_id)
+            assert gone["ok"] is False and command_id in gone["error"]
 
 
 # --- the host-side staging adapter ---------------------------------------------------

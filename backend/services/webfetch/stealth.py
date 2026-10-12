@@ -63,7 +63,7 @@ if (_query) {
       ? Promise.resolve({ state: Notification.permission })
       : _query(p);
 }
-// A coherent Linux desktop GPU (the real container is SwiftShader/llvmpipe, which screams
+// A coherent Linux desktop GPU (the real renderer is SwiftShader/llvmpipe, which screams
 // headless/VM). Patch both WebGL 1 and 2; vendor/renderer must match the Linux UA.
 const _patchWebGL = (proto) => {
   if (!proto) return;
@@ -117,7 +117,7 @@ def _major(browser_version: str | None) -> str:
 
 def realistic_user_agent(browser_version: str | None) -> str:
     """A normal desktop Chrome UA, matched to the engine's actual major version so the UA
-    and feature set agree. The container runs Linux Chromium, so the UA claims Linux —
+    and feature set agree. The VM runs Linux Chromium, so the UA claims Linux —
     internally consistent (no Mac/Linux platform mismatch for a site to notice)."""
     return (
         f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "

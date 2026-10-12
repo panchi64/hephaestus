@@ -70,12 +70,14 @@ async def get_overview(request: Request) -> Overview:
     usable_chat_endpoints = [e for e in endpoints if e.native_tools and e.enabled]
     embedding_configured = bool(roles.get("embedding"))
     sandbox_present = deps.sandbox_sessions(request) is not None
+    vm = getattr(request.app.state, "vm", None)
+    vm_ready = vm is not None and vm.available
     provider_enabled = any(p.enabled for p in search_providers)
     managed_search_ready = deps.searxng(request).base_url is not None
     web_search_configured = provider_enabled or managed_search_ready
-    # Offline mode suspends both web capabilities (the containers are torn down to save
+    # Offline mode suspends both web capabilities (their VM services are stopped to save
     # resources); when active it's the reason the rows are down, so it overrides the
-    # generic "no runtime" detail below.
+    # generic VM detail below.
     offline_active = deps.offline(request).state().effective_offline
 
     active_runs = [r for r in deps.registry(request).list(OPERATOR_ID) if not r.is_terminal]
@@ -138,26 +140,37 @@ async def get_overview(request: Request) -> Overview:
             remediation_label=None if embedding_configured else "CONFIGURE",
         )
     )
-    # Execution sandbox — present ⇒ code execution available; absent ⇒ disabled (no host fallback).
+    # Execution sandbox — runs in the platform VM, so it is available once the VM is up;
+    # absent ⇒ disabled (no host fallback).
+    if not sandbox_present:
+        sandbox_detail = "disabled"
+    elif vm_ready:
+        sandbox_detail = "platform VM"
+    elif vm is not None and vm.failure is not None:
+        sandbox_detail = "VM unavailable"
+    else:
+        sandbox_detail = "VM starting"
     capabilities.append(
         Capability(
             key="sandbox",
             label="CODE SANDBOX",
-            status="nominal" if sandbox_present else "warn",
-            detail="container runtime" if sandbox_present else "no runtime — disabled",
+            status="nominal" if sandbox_present and vm_ready else "warn",
+            detail=sandbox_detail,
         )
     )
     # Web search — the backend's managed SearXNG (or an operator-configured provider that
-    # overrides it) ⇒ search available; neither ⇒ disabled (degraded, not down — e.g. no
-    # container runtime, or the instance still booting).
+    # overrides it) ⇒ search available; neither ⇒ disabled (degraded, not down — e.g. the
+    # platform VM is not up, or the instance is still booting).
     if offline_active:
         search_detail = "offline mode — paused"
     elif provider_enabled:
         search_detail = "SearXNG configured"
     elif managed_search_ready:
         search_detail = "SearXNG (managed)"
+    elif not vm_ready:
+        search_detail = "VM not ready — disabled"
     else:
-        search_detail = "no runtime — disabled"
+        search_detail = "not running — disabled"
     capabilities.append(
         Capability(
             key="web_search",
@@ -166,16 +179,18 @@ async def get_overview(request: Request) -> Overview:
             detail=search_detail,
         )
     )
-    # Web fetch — a separate capability from search: a containerized headless browser
-    # renders pages. It can be down independently (no runtime, image pull failed, still
-    # bringing up), so it gets its own row rather than being folded into web search.
+    # Web fetch — a separate capability from search: a headless browser in the platform
+    # VM renders pages. It can be down independently (VM not up, browser not answering,
+    # still bringing up), so it gets its own row rather than being folded into web search.
     fetch_available = deps.browser(request).available
     if offline_active:
         fetch_detail = "offline mode — paused"
     elif fetch_available:
-        fetch_detail = "containerized browser"
+        fetch_detail = "VM browser"
+    elif not vm_ready:
+        fetch_detail = "VM not ready — unavailable"
     else:
-        fetch_detail = "no runtime — unavailable"
+        fetch_detail = "not running — unavailable"
     capabilities.append(
         Capability(
             key="web_fetch",
