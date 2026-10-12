@@ -20,6 +20,8 @@ const manifest = {
       parameters: { type: "object" },
     },
   ],
+  agents: ["researcher"],
+  skills: ["summarise"],
 };
 
 function dto(over: Partial<PluginOut> = {}): PluginOut {
@@ -44,6 +46,16 @@ describe("toPlugin", () => {
     expect(p.active).toBeNull();
     expect(p.draft?.tools[0]).toEqual(manifest.tools[0]);
     expect(p.draft?.secrets).toEqual({ TOKEN: "api.example.com" });
+  });
+
+  it("maps agents and skills, defaulting to none for older payloads", () => {
+    const p = toPlugin(dto());
+    expect(p.draft?.agents).toEqual(["researcher"]);
+    expect(p.draft?.skills).toEqual(["summarise"]);
+    const { agents: _a, skills: _s, ...old } = manifest;
+    const legacy = toPlugin(dto({ draft: old }));
+    expect(legacy.draft?.agents).toEqual([]);
+    expect(legacy.draft?.skills).toEqual([]);
   });
 
   it("describes the plugin by its draft, else its active version", () => {

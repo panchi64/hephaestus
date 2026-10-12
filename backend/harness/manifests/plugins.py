@@ -6,6 +6,7 @@ from __future__ import annotations
 from core.api_scopes import ScopeClaim
 from harness.manifest import DormantCategory, FeatureManifest, FeatureRuntime, HarnessContext
 from routes import plugins as plugins_routes
+from services.agents import AgentCatalog
 from services.plugins import PluginRuntime, PluginStore
 from services.revisions import RevisionStore
 from services.vm import PlatformVM
@@ -18,12 +19,15 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     runtime = (
         None if vm is None else PluginRuntime(vm, ctx.settings.data_dir / "plugins" / "egress")
     )
+    ctx.services.get(AgentCatalog).contribute(store.agents)
     services = (store,) if runtime is None else (store, runtime)
     return FeatureRuntime(services=services, capabilities=services, state={"plugins": store})
 
 
 MANIFEST = FeatureManifest(
     name="plugins",
+    # Its published plugins' agents join the agent catalog.
+    after=("agents",),
     routers=(plugins_routes.router,),
     api_scopes=(ScopeClaim("knowledge", ("/plugins",)),),
     toolsets=(("plugins", plugins_toolset),),

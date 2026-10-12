@@ -78,10 +78,12 @@ async def list_agents(request: Request, project_id: str | None = None) -> list[A
     root = await deps.composer_root(request, project_id, None)
     stored = await deps.agent_store(request).list(OPERATOR_ID)
     declared = project_agents(root) if root is not None else ()
-    effective = await deps.agents(request).agents(OPERATOR_ID, project_root=root)
+    catalog = deps.agents(request)
+    contributed = await catalog.contributed(OPERATOR_ID)
+    effective = await catalog.agents(OPERATOR_ID, project_root=root)
     return [
         _out(agent, active=effective.get(agent.name) == agent)
-        for agent in (*BUILTIN, *declared, *stored)
+        for agent in (*BUILTIN, *declared, *contributed, *stored)
     ]
 
 
@@ -194,6 +196,9 @@ async def _find(request: Request, agent_id: str, root: Path | None) -> AgentDefi
         agent = next((a for a in BUILTIN if a.name == name), None)
     elif source == "project":
         agent = next((a for a in project_agents(root) if a.name == name), None) if root else None
+    elif source == "plugin":
+        contributed = await deps.agents(request).contributed(OPERATOR_ID)
+        agent = next((a for a in contributed if a.name == name), None)
     else:
         agent = await deps.agent_store(request).get(OPERATOR_ID, agent_id)
     if agent is None:

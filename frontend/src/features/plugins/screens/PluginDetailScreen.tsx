@@ -16,9 +16,9 @@ import {
 import {
   binaryNote,
   canPublish,
+  contributionParts,
   hasPendingDraft,
   isAgentDrafted,
-  toolCount,
   type Plugin,
   type PluginVersion,
 } from "../model";
@@ -34,7 +34,7 @@ import { PluginSecrets } from "../components/PluginSecrets";
 import { PluginStateFlags } from "../components/PluginStateFlags";
 
 function metaOf(p: Plugin): string {
-  const parts = [`${toolCount(p)} ${toolCount(p) === 1 ? "tool" : "tools"}`];
+  const parts = contributionParts(p);
   if (isAgentDrafted(p)) parts.push("drafted by an agent");
   if (hasPendingDraft(p)) parts.push("review before publishing");
   return parts.join(" · ");

@@ -3,6 +3,7 @@
 from .manifest import (
     MANIFEST_FILE,
     PluginManifest,
+    PluginSkill,
     PluginTool,
     PluginValidationError,
     parse_manifest,
@@ -16,6 +17,7 @@ __all__ = [
     "CallResult",
     "PluginError",
     "PluginManifest",
+    "PluginSkill",
     "PluginRuntime",
     "PluginStore",
     "PluginTool",

@@ -77,6 +77,32 @@ export function PluginOverview(props: { plugin: Plugin }): JSX.Element {
                 </Stack>
               </Show>
             </Panel>
+            <Show when={m().agents.length}>
+              <Panel label={`Agents it adds · ${m().agents.length}`}>
+                <Stack gap={1}>
+                  <For each={m().agents}>
+                    {(name) => (
+                      <Text variant="code" tone="bright">
+                        {name}
+                      </Text>
+                    )}
+                  </For>
+                </Stack>
+              </Panel>
+            </Show>
+            <Show when={m().skills.length}>
+              <Panel label={`Skills it adds · ${m().skills.length}`}>
+                <Stack gap={1}>
+                  <For each={m().skills}>
+                    {(name) => (
+                      <Text variant="code" tone="bright">
+                        {name}
+                      </Text>
+                    )}
+                  </For>
+                </Stack>
+              </Panel>
+            </Show>
             <Panel label="Hosts it can reach">
               <Show
                 when={m().egress.length}

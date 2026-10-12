@@ -1,11 +1,13 @@
 /** Plugin data contracts and the pure rules around them.
  *
- *  A plugin is a set of Python tools that run in the platform VM. An agent's
+ *  A plugin is a set of Python tools that run in the platform VM, and may also
+ *  contribute agents and skills. An agent's
  *  work is a draft; the operator reviews it and publishes it, which makes its
- *  tools callable. The helpers here shape what the screens show — the backend
+ *  tools callable and its agents and skills available. The helpers here shape what the screens show — the backend
  *  owns every validation rule.
  */
 
+import { plural } from "~/lib/format";
 import type { Status } from "~/ui";
 
 export type PluginSource = "user" | "agent";
@@ -27,6 +29,10 @@ export interface PluginManifest {
   /** Secret name → the host it is sent to. */
   secrets: Record<string, string>;
   tools: PluginTool[];
+  /** Names of the agents it contributes while published. */
+  agents: string[];
+  /** Names of the skills it contributes while published. */
+  skills: string[];
 }
 
 export interface Plugin {
@@ -103,6 +109,21 @@ export function toolCount(plugin: Plugin): number {
   return currentManifest(plugin)?.tools.length ?? 0;
 }
 
+/** What the plugin contributes, as short labels: "2 tools", "1 agent". Zero
+ *  counts are left out unless nothing is contributed. */
+export function contributionParts(plugin: Plugin): string[] {
+  const m = currentManifest(plugin);
+  const counts: [number, string, string][] = [
+    [m?.tools.length ?? 0, "tool", "tools"],
+    [m?.agents.length ?? 0, "agent", "agents"],
+    [m?.skills.length ?? 0, "skill", "skills"],
+  ];
+  const parts = counts
+    .filter(([n]) => n > 0)
+    .map(([n, one, many]) => plural(n, one, many));
+  return parts.length ? parts : ["0 tools"];
+}
+
 /** What Publish acts on: the draft, or the active version when re-enabling. */
 export function publishTarget(plugin: Plugin): PluginManifest | null {
   return plugin.draft ?? plugin.active;
@@ -172,6 +193,8 @@ export interface PublishChanges {
     sensitivity: SensitivityChange[];
   };
   requirements: { added: string[]; removed: string[] };
+  agents: { added: string[]; removed: string[] };
+  skills: { added: string[]; removed: string[] };
   descriptionChanged: boolean;
 }
 
@@ -199,6 +222,8 @@ export function publishChanges(
     egress: [],
     secrets: {},
     tools: [],
+    agents: [],
+    skills: [],
   };
 
   const secretNames = diffSet(
@@ -248,19 +273,24 @@ export function publishChanges(
       sensitivity,
     },
     requirements: diffSet(base.requirements, draft.requirements),
+    agents: diffSet(base.agents, draft.agents),
+    skills: diffSet(base.skills, draft.skills),
     descriptionChanged:
       active !== null && active.description !== draft.description,
   };
 }
 
 /** Whether publishing widens what the plugin can reach or do: a new host, a new
- *  or re-pointed secret, a new tool, or a tool that became more sensitive. */
+ *  or re-pointed secret, a new tool, a new agent or skill (standing instructions the model acts
+ *  under), or a tool that became more sensitive. */
 export function widensAccess(changes: PublishChanges): boolean {
   return (
     changes.egress.added.length > 0 ||
     changes.secrets.added.length > 0 ||
     changes.secrets.rehosted.length > 0 ||
     changes.tools.added.length > 0 ||
+    changes.agents.added.length > 0 ||
+    changes.skills.added.length > 0 ||
     changes.tools.sensitivity.some((s) => s.escalated)
   );
 }
@@ -277,7 +307,11 @@ export function hasChanges(changes: PublishChanges): boolean {
       changes.tools.removed.length +
       changes.tools.sensitivity.length +
       changes.requirements.added.length +
-      changes.requirements.removed.length >
+      changes.requirements.removed.length +
+      changes.agents.added.length +
+      changes.agents.removed.length +
+      changes.skills.added.length +
+      changes.skills.removed.length >
       0 || changes.descriptionChanged
   );
 }
@@ -292,6 +326,10 @@ export function accessSummary(manifest: PluginManifest): string[] {
     lines.push(
       `Secrets: ${secrets.map(([name, host]) => `${name} → ${host}`).join(", ")}`,
     );
+  if (manifest.agents.length)
+    lines.push(`Agents: ${manifest.agents.join(", ")}`);
+  if (manifest.skills.length)
+    lines.push(`Skills: ${manifest.skills.join(", ")}`);
   if (!lines.length) lines.push("It declares no hosts or secrets.");
   return lines;
 }

@@ -6,9 +6,8 @@ import {
   compareByUpdated,
   LibraryDirectory,
 } from "~/features/library";
-import { plural } from "~/lib/format";
 import { importPlugin, pluginErrorMessage, usePlugins } from "../data";
-import { hasPendingDraft, toolCount, type Plugin } from "../model";
+import { contributionParts, hasPendingDraft, type Plugin } from "../model";
 import { deleteWithConfirm, exportWithToast } from "../actions";
 import { PluginStateFlags } from "../components/PluginStateFlags";
 
@@ -43,7 +42,7 @@ export function PluginsDirectoryScreen(props: {
   return (
     <LibraryDirectory
       title="Plugins"
-      subtitle="Python tools agents write. They run in the platform VM once you review and publish them."
+      subtitle="Tools, agents and skills that agents write. Python tools run in the platform VM once you review and publish them."
       assetId="ODY-PLG-01.0"
       noun="plugin"
       nouns="plugins"
@@ -63,7 +62,7 @@ export function PluginsDirectoryScreen(props: {
           tone: awaiting() > 0 ? "bright" : "dim",
         },
       ]}
-      draftHint="A draft's tools are not callable. Publishing is what lets agents use them — review the hosts, secrets and tools it asks for first."
+      draftHint="Nothing in a draft is used. Publishing is what lets agents use it — review the hosts, secrets, tools, agents and skills it adds first."
       importHint="Accepts a plugin zip. It lands as a draft so you can read it before publishing."
       importAccept=".zip"
       importing={importing()}
@@ -73,7 +72,7 @@ export function PluginsDirectoryScreen(props: {
       rowRight={(plugin) => (
         <>
           <Text variant="micro" tone="dim">
-            {plural(toolCount(plugin), "tool").toUpperCase()}
+            {contributionParts(plugin).join(" · ").toUpperCase()}
           </Text>
           <PluginStateFlags plugin={plugin} />
         </>

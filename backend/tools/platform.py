@@ -28,11 +28,11 @@ from services.corpus import CorpusHit, CorpusIndex
 from services.plugins import PluginStore
 from services.projects import visible_project_ids
 from services.recall_index import rank_texts
-from services.skills import SkillStore
 
 from .deps import RunDeps
 from .project_agents import run_catalog
 from .recall_gate import gate_global_recall
+from .skills import skill_catalog
 
 Source = Literal[
     "conversations",
@@ -275,10 +275,7 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
 
 
 async def _skill_hits(ctx: RunContext[RunDeps], tokens: set[str]) -> list[PlatformHit]:
-    store = ctx.deps.caps.get_optional(SkillStore)
-    if store is None:
-        return []
-    entries = {entry.name: entry for entry in await store.catalog(ctx.deps.owner_id)}
+    entries = {entry.name: entry for entry in await skill_catalog(ctx)}
     ranked = rank_texts(
         {name: f"{name} {entry.description}" for name, entry in entries.items()},
         tokens,

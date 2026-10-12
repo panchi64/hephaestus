@@ -8,9 +8,12 @@ from typing import Any
 import pytest
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
+from agent.factory import build_agent
 from core.container import ServiceContainer
 from runs import Run, RunStream
 from services.plugins import CallResult, PluginRuntime
@@ -148,3 +151,27 @@ async def test_no_plugin_tools_are_offered_while_the_vm_is_down(store):
     await store.publish(OWNER, view.id)
     tools = await plugins_toolset().get_tools(_ctx(store, _Runtime(available=False)))
     assert set(tools) == {"write", "read", "test"}
+
+
+async def test_a_turn_loads_the_plugins_group_and_calls_a_published_tool(store):
+    runtime = _Runtime()
+    view = await store.write_draft(OWNER, "weather", bundle(), source="agent")
+    await store.publish(OWNER, view.id)
+    categories = {"plugins": plugins_toolset()}
+    dormant = {"plugins": "the operator's published plugins"}
+    offered: list[set[str]] = []
+
+    def respond(_messages, info: AgentInfo) -> ModelResponse:
+        offered.append({tool.name for tool in info.function_tools})
+        if len(offered) == 1:
+            return ModelResponse(parts=[ToolCallPart("search_tools", {"queries": ["plugins"]})])
+        if len(offered) == 2:
+            return ModelResponse(parts=[ToolCallPart("plugins_weather_forecast", {"city": "Oslo"})])
+        return ModelResponse(parts=[TextPart("done")])
+
+    agent = build_agent(FunctionModel(respond), categories=categories, dormant=dormant)
+    await agent.run("forecast?", deps=_ctx(store, runtime).deps)
+
+    assert "plugins_weather_forecast" not in offered[0]
+    assert "plugins_weather_forecast" in offered[1]
+    assert runtime.calls[0]["args"] == {"city": "Oslo"}

@@ -18,6 +18,9 @@ tools:
       required: [city]
 ```
 
+Beside it, ``agents/<name>.md`` files contribute agents and ``skills/<name>/SKILL.md``
+bundles contribute skills, available while the plugin is published.
+
 A secret's value never reaches the plugin: its environment variable holds a placeholder
 that the egress gateway swaps for the value, in requests to the secret's own host only.
 """
@@ -26,14 +29,17 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator, SchemaError
 
-from core.exceptions import InvalidInputError, PluginValidationError
+from core.exceptions import InvalidInputError, PluginValidationError, SkillValidationError
+from services.agents.definition import AgentDefinition
+from services.agents.files import AgentFileError, AgentNameError, parse_agent_file
 from services.egress import normalise_domain
+from services.skills.bundle import SKILL_FILE, ParsedSkill, parse_skill_md
 from services.tool_sensitivity import Sensitivity
 
 MANIFEST_FILE = "plugin.yaml"
@@ -73,6 +79,13 @@ class PluginTool:
 
 
 @dataclass(frozen=True)
+class PluginSkill:
+    skill: ParsedSkill
+    #: The skill's bundled files, by path within the skill.
+    files: tuple[tuple[str, bytes], ...]
+
+
+@dataclass(frozen=True)
 class PluginManifest:
     name: str
     description: str
@@ -81,6 +94,10 @@ class PluginManifest:
     #: Secret name → the host its value may be sent to.
     secrets: Mapping[str, str]
     tools: tuple[PluginTool, ...]
+    #: Agents from ``agents/<name>.md``, in the format a project's agent files use.
+    agents: tuple[AgentDefinition, ...] = ()
+    #: Skills from ``skills/<name>/SKILL.md`` and the files beside it.
+    skills: tuple[PluginSkill, ...] = ()
 
     def tool(self, name: str) -> PluginTool | None:
         return next((tool for tool in self.tools if tool.name == name), None)
@@ -113,6 +130,9 @@ def validate_files(files: Mapping[str, bytes]) -> PluginManifest:
     except UnicodeDecodeError:
         raise PluginValidationError(MANIFEST_FILE, "is not UTF-8 text") from None
     manifest = parse_manifest(text)
+    manifest = replace(manifest, agents=_agents(files), skills=_skills(files))
+    if not (manifest.tools or manifest.agents or manifest.skills):
+        raise PluginValidationError("tools", "a plugin contributes a tool, an agent or a skill")
     for tool in manifest.tools:
         module = tool.module.replace(".", "/")
         if f"{module}.py" not in files and f"{module}/__init__.py" not in files:
@@ -121,6 +141,44 @@ def validate_files(files: Mapping[str, bytes]) -> PluginManifest:
                 f"tool {tool.name!r} names module {tool.module!r}, which is not in the files",
             )
     return manifest
+
+
+def _agents(files: Mapping[str, bytes]) -> tuple[AgentDefinition, ...]:
+    agents: list[AgentDefinition] = []
+    for path, blob in sorted(files.items()):
+        folder, _, filename = path.rpartition("/")
+        if folder != "agents" or not filename.endswith(".md"):
+            continue
+        try:
+            agent = parse_agent_file(blob.decode(), name=filename.removesuffix(".md"))
+        except (AgentFileError, AgentNameError, UnicodeDecodeError) as exc:
+            raise PluginValidationError("agents", f"{path}: {exc}") from None
+        agents.append(replace(agent, source="plugin", published=True, id=None))
+    if len({agent.name for agent in agents}) != len(agents):
+        raise PluginValidationError("agents", "two agents share a name")
+    return tuple(agents)
+
+
+def _skills(files: Mapping[str, bytes]) -> tuple[PluginSkill, ...]:
+    skills: list[PluginSkill] = []
+    for path, blob in sorted(files.items()):
+        parts = path.split("/")
+        if len(parts) != 3 or parts[0] != "skills" or parts[2] != SKILL_FILE:
+            continue
+        prefix = f"skills/{parts[1]}/"
+        try:
+            parsed = parse_skill_md(blob.decode())
+        except (SkillValidationError, UnicodeDecodeError) as exc:
+            raise PluginValidationError("skills", f"{path}: {exc}") from None
+        bundled = tuple(
+            (other.removeprefix(prefix), content)
+            for other, content in sorted(files.items())
+            if other.startswith(prefix) and other != path
+        )
+        skills.append(PluginSkill(parsed, bundled))
+    if len({entry.skill.name for entry in skills}) != len(skills):
+        raise PluginValidationError("skills", "two skills share a name")
+    return tuple(skills)
 
 
 def validate_path(path: str) -> str:
@@ -153,8 +211,6 @@ def parse_manifest(text: str) -> PluginManifest:
     egress = tuple(sorted({_domain("egress", raw) for raw in _list(data, "egress")}))
     secrets = _secrets(data.get("secrets") or {})
     raw_tools = _list(data, "tools", items=dict)
-    if not raw_tools:
-        raise PluginValidationError("tools", "a plugin contributes at least one tool")
     if len(raw_tools) > TOOLS_MAX:
         raise PluginValidationError("tools", f"a plugin contributes at most {TOOLS_MAX} tools")
     tools = tuple(_tool(raw) for raw in raw_tools)

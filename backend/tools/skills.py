@@ -34,6 +34,7 @@ from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from core.exceptions import NotFoundError, SkillSpanError, SkillValidationError
 from prompts.agent import SKILL_CATALOG, SKILL_PINNED, SKILL_PINNED_LIMIT
+from services.plugins import PluginSkill, PluginStore
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import SandboxError
 from services.skills import (
@@ -43,7 +44,7 @@ from services.skills import (
     SkillStore,
     render_skill_md,
 )
-from services.skills.store import SkillView
+from services.skills.bundle import ParsedSkill
 from services.workspace import RunWorkspace
 
 from .deps import RunDeps
@@ -55,13 +56,34 @@ _STAGE_DIR = "skills"
 _UNAVAILABLE = "Skills are unavailable right now."
 
 
-async def _published_names(store: SkillStore, owner_id: str) -> str:
-    entries = await store.catalog(owner_id)
-    return ", ".join(entry.name for entry in entries) or "none yet"
+async def skill_catalog(ctx: RunContext[RunDeps]) -> list[SkillCatalogEntry]:
+    """The published skills, then those published plugins contribute under names no
+    stored skill has taken."""
+    store = ctx.deps.caps.get_optional(SkillStore)
+    plugins = ctx.deps.caps.get_optional(PluginStore)
+    entries = await store.catalog(ctx.deps.owner_id) if store is not None else []
+    taken = {entry.name for entry in entries}
+    if plugins is not None:
+        entries += [
+            SkillCatalogEntry(entry.skill.name, entry.skill.description)
+            for entry in await plugins.skills(ctx.deps.owner_id)
+            if entry.skill.name not in taken
+        ]
+    return entries
+
+
+async def _plugin_skill(ctx: RunContext[RunDeps], name: str) -> PluginSkill | None:
+    plugins = ctx.deps.caps.get_optional(PluginStore)
+    if plugins is None:
+        return None
+    return next(
+        (entry for entry in await plugins.skills(ctx.deps.owner_id) if entry.skill.name == name),
+        None,
+    )
 
 
 async def _stage(
-    workspace: RunWorkspace, skill: SkillView, files: list[tuple[str, bytes]]
+    workspace: RunWorkspace, skill: ParsedSkill, files: list[tuple[str, bytes]]
 ) -> list[str]:
     """Write the bundle into the run's workspace, skipping any file already there
     byte-for-byte so re-opening a skill in a warm session is a no-op rather than a
@@ -71,7 +93,7 @@ async def _stage(
     staging at all."""
     root = f"{workspace.stage_prefix}{_STAGE_DIR}/{skill.name}"
     staged: list[str] = []
-    for relpath, blob in [(SKILL_FILE, render_skill_md(skill.parsed()).encode())] + files:
+    for relpath, blob in [(SKILL_FILE, render_skill_md(skill).encode())] + files:
         target = f"{root}/{relpath}"
         try:
             if workspace.files.read_file(target) == blob:
@@ -106,12 +128,20 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
         if store is None:
             return {"ok": False, "error": _UNAVAILABLE}
         try:
-            skill = await store.get_by_name(ctx.deps.owner_id, name, published_only=True)
+            view = await store.get_by_name(ctx.deps.owner_id, name, published_only=True)
+            skill = view.parsed()
+            stored_id: str | None = view.id
+            bundled: list[tuple[str, bytes]] = []
         except NotFoundError:
-            available = await _published_names(store, ctx.deps.owner_id)
-            raise ModelRetry(
-                f"No published skill named {name!r}. Available skills: {available}."
-            ) from None
+            contributed = await _plugin_skill(ctx, name)
+            if contributed is None:
+                available = ", ".join(e.name for e in await skill_catalog(ctx)) or "none yet"
+                raise ModelRetry(
+                    f"No published skill named {name!r}. Available skills: {available}."
+                ) from None
+            skill = contributed.skill
+            stored_id = None
+            bundled = list(contributed.files)
 
         result: dict = {
             "ok": True,
@@ -134,7 +164,7 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
             )
             return result
 
-        files = await store.file_contents(ctx.deps.owner_id, skill.id)
+        files = await store.file_contents(ctx.deps.owner_id, stored_id) if stored_id else bundled
         total = sum(len(blob) for _, blob in files)
         if total > BUNDLE_MAX_BYTES:
             result["note"] = (
@@ -226,7 +256,8 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
             # it exists from a different error message.
             skill = await store.get_by_name(ctx.deps.owner_id, name, published_only=True)
         except NotFoundError:
-            available = await _published_names(store, ctx.deps.owner_id)
+            stored = await store.catalog(ctx.deps.owner_id)
+            available = ", ".join(entry.name for entry in stored) or "none yet"
             raise ModelRetry(
                 f"No published skill named {name!r}. Available skills: {available}."
             ) from None
@@ -272,7 +303,4 @@ async def skill_catalog_instructions(ctx: RunContext[RunDeps]) -> str:
     """Tell the agent the operator's published skills exist and how to find them
     (`SKILL-2`). A dynamic instruction, so it is always current and lives outside history.
     Empty when there's no skill store or nothing is published."""
-    store = ctx.deps.caps.get_optional(SkillStore)
-    if store is None:
-        return ""
-    return _skill_catalog_block(await store.catalog(ctx.deps.owner_id))
+    return _skill_catalog_block(await skill_catalog(ctx))

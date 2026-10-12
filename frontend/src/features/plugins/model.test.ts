@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   accessSummary,
   canPublish,
+  contributionParts,
   currentManifest,
   hasChanges,
   pluginState,
@@ -31,6 +32,8 @@ function manifest(over: Partial<PluginManifest> = {}): PluginManifest {
     egress: [],
     secrets: {},
     tools: [],
+    agents: [],
+    skills: [],
     ...over,
   };
 }
@@ -77,6 +80,29 @@ describe("currentManifest, toolCount, canPublish", () => {
     expect(canPublish(plugin({ published: true, active: manifest() }))).toBe(
       false,
     );
+  });
+});
+
+describe("contributionParts", () => {
+  it("lists tools, agents and skills, leaving out zero counts", () => {
+    const p = plugin({
+      draft: manifest({
+        tools: [tool("a")],
+        agents: ["x", "y"],
+        skills: ["s"],
+      }),
+    });
+    expect(contributionParts(p)).toEqual(["1 tool", "2 agents", "1 skill"]);
+    expect(
+      contributionParts(plugin({ draft: manifest({ skills: ["s"] }) })),
+    ).toEqual(["1 skill"]);
+  });
+
+  it("falls back to zero tools when nothing is contributed", () => {
+    expect(contributionParts(plugin())).toEqual(["0 tools"]);
+    expect(contributionParts(plugin({ draft: manifest() }))).toEqual([
+      "0 tools",
+    ]);
   });
 });
 
@@ -168,7 +194,42 @@ describe("publishChanges", () => {
   });
 });
 
+describe("agents and skills", () => {
+  it("diffs agents and skills and treats additions as widening", () => {
+    const c = publishChanges(
+      manifest({ agents: ["old"], skills: ["a", "b"] }),
+      manifest({ agents: ["new"], skills: ["b"] }),
+    );
+    expect(c.agents).toEqual({ added: ["new"], removed: ["old"] });
+    expect(c.skills).toEqual({ added: [], removed: ["a"] });
+    expect(hasChanges(c)).toBe(true);
+    expect(widensAccess(c)).toBe(true);
+  });
+
+  it("does not widen when only removed", () => {
+    const c = publishChanges(
+      manifest({ agents: ["a"], skills: ["s"] }),
+      manifest(),
+    );
+    expect(hasChanges(c)).toBe(true);
+    expect(widensAccess(c)).toBe(false);
+  });
+
+  it("treats a tool-less first publish of a skill as new and widening", () => {
+    const c = publishChanges(null, manifest({ skills: ["s"] }));
+    expect(c.skills.added).toEqual(["s"]);
+    expect(c.tools.added).toEqual([]);
+    expect(widensAccess(c)).toBe(true);
+  });
+});
+
 describe("accessSummary", () => {
+  it("lists contributed agents and skills", () => {
+    expect(
+      accessSummary(manifest({ agents: ["a"], skills: ["s", "t"] })),
+    ).toEqual(["Agents: a", "Skills: s, t"]);
+  });
+
   it("lists hosts and secrets with their hosts", () => {
     expect(
       accessSummary(

@@ -39,6 +39,9 @@ class ManifestOut(BaseModel):
     #: Secret name → the host its value is for.
     secrets: dict[str, str]
     tools: list[ToolOut]
+    #: Names of the agents and skills it contributes.
+    agents: list[str]
+    skills: list[str]
 
 
 class PluginOut(BaseModel):
@@ -192,6 +195,8 @@ def _manifest(manifest: PluginManifest) -> ManifestOut:
             )
             for tool in manifest.tools
         ],
+        agents=[agent.name for agent in manifest.agents],
+        skills=[entry.skill.name for entry in manifest.skills],
     )
 
 

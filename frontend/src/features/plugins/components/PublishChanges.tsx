@@ -21,7 +21,7 @@ function Line(props: {
   );
 }
 
-/** What the operator approves by publishing: every host, secret and tool that is
+/** What the operator approves by publishing: every host, secret, tool, agent and skill that is
  *  new, gone or more sensitive than in the active version. */
 export function PublishChanges(props: {
   changes: Changes;
@@ -75,6 +75,20 @@ export function PublishChanges(props: {
             </Line>
           )}
         </For>
+        <For each={c().agents.added}>
+          {(name) => (
+            <Line tag="NEW AGENT" tone="alert">
+              {name}
+            </Line>
+          )}
+        </For>
+        <For each={c().skills.added}>
+          {(name) => (
+            <Line tag="NEW SKILL" tone="alert">
+              {name}
+            </Line>
+          )}
+        </For>
         <For each={c().requirements.added}>
           {(r) => (
             <Line tag="NEW REQUIREMENT" tone="warn">
@@ -99,6 +113,20 @@ export function PublishChanges(props: {
         <For each={c().tools.removed}>
           {(name) => (
             <Line tag="TOOL REMOVED" tone="idle">
+              {name}
+            </Line>
+          )}
+        </For>
+        <For each={c().agents.removed}>
+          {(name) => (
+            <Line tag="AGENT REMOVED" tone="idle">
+              {name}
+            </Line>
+          )}
+        </For>
+        <For each={c().skills.removed}>
+          {(name) => (
+            <Line tag="SKILL REMOVED" tone="idle">
               {name}
             </Line>
           )}

@@ -79,6 +79,8 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         returns JSON-able data. A secret's env var holds a placeholder that becomes the
         value only in the URL or headers of HTTPS requests to its host.
 
+        `agents/<name>.md` and `skills/<name>/SKILL.md` add agents and skills.
+
         It stays a draft until the operator publishes it; check it with `plugins_test`.
         """
         store = ctx.deps.caps.get_optional(PluginStore)

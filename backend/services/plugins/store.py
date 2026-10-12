@@ -20,10 +20,12 @@ from core.db import in_session
 from core.exceptions import NotFoundError
 from core.vault import Vault
 from models.plugin import Plugin, PluginSecret
+from services.agents.definition import AgentDefinition
 from services.revisions import Bundle, RevisionStore, decode_bundle, encode_bundle, records
 
 from .manifest import (
     PluginManifest,
+    PluginSkill,
     PluginValidationError,
     secret_domain,
     validate_files,
@@ -134,6 +136,24 @@ class PluginStore:
             ]
 
         return await in_session(self._engine, work)
+
+    async def agents(self, owner_id: str) -> list[AgentDefinition]:
+        """The agents published plugins contribute."""
+        return [
+            agent
+            for view, _files in await self.published(owner_id)
+            if view.active is not None
+            for agent in view.active.agents
+        ]
+
+    async def skills(self, owner_id: str) -> list[PluginSkill]:
+        """The skills published plugins contribute."""
+        return [
+            skill
+            for view, _files in await self.published(owner_id)
+            if view.active is not None
+            for skill in view.active.skills
+        ]
 
     # --- writes -----------------------------------------------------------------
 

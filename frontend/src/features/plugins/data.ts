@@ -27,6 +27,9 @@ export interface ManifestOut {
   egress: string[];
   secrets: Record<string, string>;
   tools: ToolOut[];
+  /** Absent from older payloads. */
+  agents?: string[];
+  skills?: string[];
 }
 
 export interface PluginOut {
@@ -68,6 +71,8 @@ export function toManifest(dto: ManifestOut): PluginManifest {
     egress: dto.egress,
     secrets: dto.secrets,
     tools: dto.tools.map(toTool),
+    agents: dto.agents ?? [],
+    skills: dto.skills ?? [],
   };
 }
 
