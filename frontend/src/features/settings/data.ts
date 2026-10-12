@@ -372,6 +372,11 @@ export async function resetVm(): Promise<void> {
   setVmState(toVmState(await api.post<VmStateDTO>("/vm/reset")));
 }
 
+/** Log the agent's shared browser profile out of every site. */
+export async function forgetBrowserProfile(): Promise<void> {
+  await api.del("/browser/profile");
+}
+
 /* ── Agent tools ────────────────────────────────────────────────────────────────
    The catalog is the backend's — derived there from the live toolset registry, never
    enumerated here — so this is a plain read plus a per-tool flip. `/tools` is a

@@ -161,6 +161,19 @@ export const SURFACES = [
     minHeight: 260,
     defaultWidth: 480,
   },
+  {
+    // A **panel**: a page is read and driven at full size, and the frame letterboxes
+    // rather than scales its content, so there is no narrower form worth offering. Last
+    // in the order, so the digits that address the other surfaces keep their meaning
+    // on the threads that never open a browser.
+    id: "browser",
+    shape: "panel",
+    label: "Browser",
+    icon: "link",
+    minWidth: 360,
+    minHeight: 280,
+    defaultWidth: 640,
+  },
 ] as const satisfies readonly SurfaceSpec[];
 
 export type SurfaceId = (typeof SURFACES)[number]["id"];

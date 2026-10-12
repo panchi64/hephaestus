@@ -1,4 +1,4 @@
-"""The agent's controllable browser — one live page per conversation, in a real window.
+"""The agent's controllable browser — one live session per conversation, in the VM.
 
 `pydantic_ai_harness.playwright` gives the model eighteen typed browser tools; what it
 does *not* give is a browser that outlives a turn. `PlaywrightBrowser.wrap_run` opens the
@@ -6,36 +6,30 @@ session when a run starts and closes it when the run ends, which is right for a 
 agent and wrong for a chat thread: an operator who watches the agent log into a site and
 then says "now open the billing page" is talking about *that* page. So the capability's
 per-run lifecycle is bypassed here and the session is keyed by conversation instead,
-reaped on idleness the way a sandbox session is (``services/sandbox/manager.py`` is the
-model this follows, down to the token tombstones).
+reaped on idleness the way a sandbox session is.
 
-**It attaches to the window we launched, and the operator shares it.** ``HostBrowser``
-owns one visible Chromium on the operator's machine; each conversation gets its own
-browser *context* on it, which in a headed Chromium is its own window with its own cookie
-jar. The operator can click in that window — to log in before handing the thread over, or
-to do one step faster than describing it — and the agent re-reads the page afterwards
-like any other change. Nothing arbitrates between the two drivers, deliberately.
+**Each conversation gets its own browser context** on the platform VM's Chromium
+(``VMBrowser``), so tabs and history stay per conversation. The operator watches and
+drives it through the app's live view (``view.py``); nothing arbitrates between the two
+drivers, deliberately.
+
+**The logins are one profile** (``live.Profile``), loaded into every context at attach and
+merged back on each sweep and at teardown, so a login set up once serves every
+conversation.
 
 **The egress guard is deliberately left off.** ``EgressPolicy`` enforces its allowlist
 with Playwright routing, which turns on CDP's Fetch domain; ``services/webfetch/browser``
-documents why that is unacceptable here (bot walls detect it, and a page that trips one
-renders as a challenge instead of content). Passing ``block_private_addresses=False``
-with no allowlist leaves the policy unenforced, so no route is installed and the proxy
-``HostBrowser`` points the window at — which resolves each destination and refuses
-non-public addresses out of process — remains the single enforcement point. The default
-is ``True``, so this must be explicit.
-
-A conversation's login survives its session, saved and restored around the attach — see
-``services/browser/live.py``, which owns one session and everything that outlives it.
+documents why that is unacceptable here (bot walls detect it). Passing
+``block_private_addresses=False`` with no allowlist leaves the policy unenforced, so the
+platform proxy, which reaches public addresses only, remains the single enforcement point.
+The default is ``True``, so this must be explicit.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
-import re
 import secrets
 import time
 from pathlib import Path
@@ -45,29 +39,23 @@ from pydantic_ai_harness.playwright import EgressPolicy
 
 from core.periodic import PeriodicTask
 
-from .host import HostBrowser
-from .live import ControlledBrowserSession, LiveBrowser
+from .live import ControlledBrowserSession, LiveBrowser, Profile
+from .vm import VMBrowser
 
 logger = logging.getLogger(__name__)
-
-#: Anything that is not plainly filename-safe in a conversation id. Ids are generated, not
-#: typed, so this is containment rather than sanitation — but a key also stands in for a
-#: run id on a stateless turn, and a state file must never be able to name a path.
-_UNSAFE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
 class BrowserSessionManager:
     """Maps a conversation to its live browser, reaping idle ones.
 
-    Degrades rather than fails: when no window can be opened — Chromium missing, the SSRF
-    proxy refusing to start, the operator having quit the browser mid-launch —
-    :meth:`acquire` returns ``None`` and the browse tools tell the model so, exactly as
-    web fetch degrades under the same conditions.
+    Degrades rather than fails: when the VM's browser is not up (no VM, offline mode,
+    web fetch disabled) :meth:`acquire` returns ``None`` and the browse tools tell the
+    model so, exactly as web fetch degrades under the same conditions.
     """
 
     def __init__(
         self,
-        host: HostBrowser,
+        host: VMBrowser,
         *,
         idle_ttl_s: float,
         reap_interval_s: float,
@@ -77,16 +65,15 @@ class BrowserSessionManager:
         self._host = host
         self._idle_ttl = idle_ttl_s
         self._max_live = max(1, max_live)
-        self._state_dir = state_dir
+        self.profile = Profile(state_dir / "profile.json" if state_dir is not None else None)
         self._sessions: dict[str, LiveBrowser] = {}
         self._lock = asyncio.Lock()
         # Per-conversation creation locks. Tool calls within one model response run
         # concurrently, so two browse tools can race the first acquire of a thread; without
         # this they would each attach a session and one would be silently orphaned.
         self._creating: dict[str, asyncio.Lock] = {}
-        # Conversations whose window the *operator* closed. Not a cache and not an error
-        # state — a record of a decision somebody made, kept so the next tool call reports
-        # it instead of quietly launching a replacement window on their screen. Cleared
+        # Conversations whose browser the *operator* ended. A record of a decision, kept so
+        # the next tool call reports it instead of quietly starting a replacement. Cleared
         # the moment a session attaches again, which only something explicit can cause.
         self._closed: set[str] = set()
         self._reaper = PeriodicTask(
@@ -104,47 +91,34 @@ class BrowserSessionManager:
         return self._sessions.get(key)
 
     def closed(self, key: str) -> bool:
-        """Whether this conversation's window was closed by the operator rather than by us.
+        """Whether the operator ended this conversation's browser, rather than us.
 
-        The distinction the caller needs in order to say something true. A session that was
-        reaped for idleness is *ours* to re-attach silently — the login is restored and the
-        model never needed to know. A window the operator closed is a thing they did, and
-        the honest report is that they did it.
+        A session reaped for idleness is ours to re-attach silently; one the operator ended
+        is a thing they did, and the honest report is that they did it.
         """
         return key in self._closed
 
     # ── lifecycle ────────────────────────────────────────────────────────────────
 
-    async def acquire(
-        self, key: str, *, focus: bool = False, reopen: bool = True
-    ) -> LiveBrowser | None:
-        """This conversation's browser, launching and attaching one on first use.
+    async def acquire(self, key: str, *, reopen: bool = True) -> LiveBrowser | None:
+        """This conversation's browser, attaching one on first use.
 
         Returns ``None`` when no browser could be opened, which is a degraded capability
         rather than an error: the caller reports it to the model.
 
-        ``focus`` is for the operator's own "open the browser" control, where the window
-        appearing behind the app would look like nothing happened. The agent never sets
-        it: a tool call stealing focus mid-sentence is the panel-that-pops-up problem in
-        a more disruptive form.
-
-        ``reopen`` is what a caller says when it is *allowed* to put a new window on the
-        operator's screen. It defaults to True because the operator's own control is a
-        caller too; the browse tools pass False for everything except an explicit
-        ``navigate`` (:data:`tools.browse.REOPENING_TOOLS`). Closing the window is how
-        somebody says they are done with it, and a tool call that silently launched a
-        replacement would overrule that — while still, from the model's side, behaving as
-        if the page it was working on had simply gone blank.
+        ``reopen`` is what a caller says when it may start a browser the operator ended.
+        The browse tools pass False for everything except an explicit ``navigate``
+        (:data:`tools.browse.REOPENING_TOOLS`), so ending it is not silently overruled.
         """
         live = self._sessions.get(key)
         if live is not None and (self._host.cdp_url is None or live.abandoned):
-            # The window this session was attached to is gone. Only the sweep looks for
-            # that, and it runs on its own clock, so without this an operator who quits
-            # Chromium and immediately reopens their browser gets a cheerful "open" on a
-            # dead session — and the agent gets raw Playwright errors instead of the
-            # degrade. Drop it here, and remember *who* ended it.
+            # The browser went away (a VM reset, offline mode) or every tab was closed.
+            # The sweep notices on its own clock; dropping it here keeps the next call
+            # from meeting raw Playwright errors.
+            abandoned = live.abandoned and self._host.cdp_url is not None
             await self.release(key)
-            self._closed.add(key)
+            if abandoned:
+                self._closed.add(key)
             live = None
         if live is None and key in self._closed and not reopen:
             return None
@@ -156,26 +130,25 @@ class BrowserSessionManager:
                     live = await self._attach(key)
                     if live is None:
                         return None
-                    # A window is open again, so whatever was closed before is history.
+                    # A browser is open again, so whatever was ended before is history.
                     self._closed.discard(key)
                     async with self._lock:
                         self._sessions[key] = live
                     await self._enforce_cap()
         live.touch()
-        if focus:
-            await self._bring_to_front(live)
         return live
 
     async def _attach(self, key: str) -> LiveBrowser | None:
         cdp_url = await self._host.ensure()
         if cdp_url is None:
             return None
+        loaded = self.profile.load()
         session = ControlledBrowserSession(
             # Unenforced by design — the proxy is the egress boundary. See the module
             # docstring; the default is True, so this must be said out loud.
             policy=EgressPolicy(block_private_addresses=False),
             cdp_url=cdp_url,
-            storage_state=self._load_state(key),
+            storage_state=loaded,
         )
         await session.__aenter__()
         try:
@@ -190,49 +163,21 @@ class BrowserSessionManager:
             key,
             secrets.token_urlsafe(32),
             session,
-            self._state_path(key),
-            # The window itself, so the session can tell an operator's own tabs from the
-            # ones the harness happens to track. See `live.LiveBrowser.open_pages`.
+            self.profile,
+            # The context itself, so the session counts tabs the harness never wired
+            # (ones the operator opened). See `live.LiveBrowser.open_pages`.
             getattr(page, "context", None),
+            loaded,
         )
 
     async def _prepare(self, page: Any) -> None:
         """Bring a freshly-attached page up to the same disguise every fetched page gets.
 
         Best-effort: a page that browses without the automation masking is worse at passing
-        for a real browser, not broken. Nothing here raises the window — the attach happens
-        on the agent's first browse tool call as often as on the operator's own action, and
-        only the latter asked for a window in front of them.
+        for a real browser, not broken.
         """
         with contextlib.suppress(Exception):
             await self._host.apply_stealth(page)
-
-    async def _bring_to_front(self, live: LiveBrowser) -> None:
-        page = live.session.page
-        if page is None:
-            return
-        with contextlib.suppress(Exception):
-            await page.bring_to_front()
-
-    def _state_path(self, key: str) -> Path | None:
-        """Where this conversation's cookies live, or ``None`` when nothing was
-        configured (tests, mostly) and logins are simply not persisted."""
-        if self._state_dir is None:
-            return None
-        return self._state_dir / f"{_UNSAFE.sub('-', key)}.json"
-
-    def _load_state(self, key: str) -> Any | None:
-        """The login this conversation had last time, if any. A missing file is the
-        ordinary case (a first attach); an unreadable one is treated the same way, because
-        starting logged out is a recoverable annoyance and refusing to attach is not."""
-        path = self._state_path(key)
-        if path is None or not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text())
-        except Exception:
-            logger.debug("browser: could not read the saved login for %s", key, exc_info=True)
-            return None
 
     async def release(self, key: str) -> None:
         """Tear down one conversation's browser. Idempotent."""
@@ -241,32 +186,34 @@ class BrowserSessionManager:
         if live is not None:
             await live.teardown()
 
-    async def purge(self, key: str) -> None:
-        """Tear this conversation's browser down **and** delete the login it left behind.
-
-        For a deleted conversation, where :meth:`release` alone would be worse than doing
-        nothing: teardown writes the cookie jar out, so the sites this thread logged into
-        would stay logged in on disk forever, keyed to a thread the operator destroyed. The
-        state file is the most sensitive thing a conversation leaves anywhere — it *is* the
-        sessions — so it goes with the workspace, the plan and the history. Idempotent.
-        """
+    async def close(self, key: str) -> None:
+        """The operator ends this conversation's browser. Its logins stay in the profile."""
         await self.release(key)
-        # ...including the note that its window was closed. The conversation is gone, so
-        # there is nobody left for that to be true about, and this is the one map keyed by
-        # conversation with no other reaper — every other entry it can hold belongs to a
-        # thread that still exists and can still reopen.
+        self._closed.add(key)
+
+    async def purge(self, key: str) -> None:
+        """Forget a deleted conversation's browser. The profile is shared, so it stays.
+        Idempotent."""
+        await self.release(key)
         self._closed.discard(key)
-        path = self._state_path(key)
-        if path is not None:
-            with contextlib.suppress(OSError):
-                path.unlink(missing_ok=True)
+
+    async def forget_profile(self) -> None:
+        """Log out of everything: end every session without saving, and delete the
+        profile."""
+        async with self._lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for live in sessions:
+            live.profile = None
+            await live.teardown()
+        with contextlib.suppress(OSError):
+            self.profile.forget()
 
     async def _enforce_cap(self) -> None:
         """Evict least-recently-used sessions past the cap.
 
-        Each live session holds a Playwright driver subprocess and a window of its own, so
-        this is a real resource ceiling rather than tidiness — and the operator's screen is
-        part of the resource.
+        Each live session holds a Playwright driver subprocess and a browser context in the
+        VM, so this is a real resource ceiling rather than tidiness.
         """
         async with self._lock:
             if len(self._sessions) <= self._max_live:
@@ -319,24 +266,19 @@ class BrowserSessionManager:
             await live.teardown()
 
     async def _sweep(self) -> None:
-        """Reap what nobody is using — and every session at once when the window is gone.
+        """Reap what nobody is using, and save what somebody is.
 
-        Three ways a session ends here, and they do not all mean the same thing. The
-        operator quit Chromium (or its proxy died), so ``cdp_url`` is ``None`` and nothing
-        any session holds is still real. They closed a conversation's last tab, which is as
-        clear a "done with this" as there is. Or it simply sat unused — and *unused* counts
-        the operator's own clicking, not only the agent's tool calls, or a browser being
-        worked in by hand would be reaped out from under the person working in it.
-
-        **The first two are theirs and the third is ours**, so only the first two leave a
-        tombstone (:meth:`closed`). An idle reap is bookkeeping the model never needed to
-        hear about: the next tool call re-attaches, the saved login comes back with it, and
-        the only thing lost is where the page was pointed. A window somebody closed is a
-        decision, and the next tool call says so instead of reopening one.
+        A session ends here when the browser went away (a VM reset, offline mode), when
+        every tab was closed, or when it sat unused — counting the operator's own clicking
+        in the view, not only the agent's tool calls. Only closed tabs leave a tombstone
+        (:meth:`closed`): the other two are ours, and the next tool call re-attaches with
+        the profile restored. A session that moved saves into the profile, so a login made
+        here reaches other conversations without waiting for this one to end.
         """
         gone = self._host.cdp_url is None
         now = time.monotonic()
         reasons: list[tuple[LiveBrowser, str]] = []
+        moved: list[LiveBrowser] = []
         async with self._lock:
             for live in list(self._sessions.values()):
                 if gone:
@@ -345,19 +287,16 @@ class BrowserSessionManager:
                     reasons.append((live, "closed"))
                 elif live.moved_since_last_sweep():
                     live.touch()
+                    moved.append(live)
                 elif live.idle_seconds(now) >= self._idle_ttl:
                     reasons.append((live, "idle"))
             for live, reason in reasons:
                 self._sessions.pop(live.key, None)
-                if reason != "idle":
+                if reason == "closed":
                     self._closed.add(live.key)
             self._prune_creation_locks()
         for live, reason in reasons:
             logger.info("browser: reaped the session for %s (%s)", live.key, reason)
             await live.teardown()
-        if gone:
-            # A quit window leaves its driver and its SSRF proxy running until something
-            # asks for a browser again; if nothing ever does, the proxy would outlive the
-            # window it guarded for the rest of the process. Only a still-dead host is
-            # closed — a launch that happened between the check above and here survives.
-            await self._host.close_if_dead()
+        for live in moved:
+            await live.save()

@@ -16,9 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="ODYSSEUS_", env_file=".env", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_prefix="ODYSSEUS_", env_file=".env", extra="ignore")
 
     version: str = "0.1.0"
     environment: str = "development"
@@ -192,9 +190,24 @@ class Settings(BaseSettings):
     #
     # Matched against every *part* of a path, so `build` covers `packages/x/build/` too.
     sandbox_walk_excludes: tuple[str, ...] = (
-        ".venv", "venv", "env", ".local", ".tmp", ".home", "__pycache__",
-        "node_modules", ".git", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-        ".cache", "dist", "build", "*.pyc", "*.pyo", "*.egg-info",
+        ".venv",
+        "venv",
+        "env",
+        ".local",
+        ".tmp",
+        ".home",
+        "__pycache__",
+        "node_modules",
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".cache",
+        "dist",
+        "build",
+        "*.pyc",
+        "*.pyo",
+        "*.egg-info",
     )
 
     # The one network allowlist, and the only one. Both fences read it: the VM's egress gateway,
@@ -210,14 +223,24 @@ class Settings(BaseSettings):
     # only teach the operator to switch it off. Anything else is asked for per call and
     # approved per call (`services/egress.py`).
     egress_allowed_domains: tuple[str, ...] = (
-        "pypi.org", "files.pythonhosted.org",
-        "registry.npmjs.org", "registry.yarnpkg.com",
-        "github.com", "api.github.com", "codeload.github.com",
-        "objects.githubusercontent.com", "raw.githubusercontent.com",
-        "deb.debian.org", "security.debian.org",
-        "crates.io", "static.crates.io", "index.crates.io",
-        "proxy.golang.org", "sum.golang.org",
-        "huggingface.co", "cdn-lfs.huggingface.co",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "registry.npmjs.org",
+        "registry.yarnpkg.com",
+        "github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+        "raw.githubusercontent.com",
+        "deb.debian.org",
+        "security.debian.org",
+        "crates.io",
+        "static.crates.io",
+        "index.crates.io",
+        "proxy.golang.org",
+        "sum.golang.org",
+        "huggingface.co",
+        "cdn-lfs.huggingface.co",
     )
 
     # The approved host-command escape hatch, confined. Approval is consent to the
@@ -393,10 +416,9 @@ class Settings(BaseSettings):
     # browser rather than fetching pages. `idle_ttl_s` is how long one may sit unused
     # before it is reaped — the operator's own clicking counts as use, not just the
     # agent's tool calls — `reap_interval_s` how often the sweep runs, and `max_live` caps
-    # how many conversations hold one at once, each of them a window on the screen and a
-    # Playwright driver process, so this is deliberately small. `launch_timeout_s` bounds
-    # both halves of the bring-up: the proxy reporting itself listening, and Chromium
-    # publishing its debugging endpoint.
+    # how many conversations hold one at once, each of them a browser context in the VM
+    # and a Playwright driver process, so this is deliberately small. `launch_timeout_s`
+    # is how long an attach waits for the VM's browser to finish coming up.
     browser_control_idle_ttl_s: float = 900.0
     browser_control_reap_interval_s: float = 60.0
     browser_control_max_live: int = 3
@@ -404,8 +426,8 @@ class Settings(BaseSettings):
 
     @property
     def browser_control_state_dir(self) -> Path:
-        """Where each conversation's cookies and local storage are kept between sessions,
-        so the idle reap does not throw away a login the operator just set up by hand."""
+        """Where the browser's shared login profile (cookies and local storage) is kept,
+        on the host, between sessions."""
         return self.data_dir / "browser"
 
     # Managed web search. So search "just works" with zero operator setup, the

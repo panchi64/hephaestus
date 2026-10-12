@@ -6,8 +6,8 @@
  * open, a measured box the splitting policy consults — and none of that is a preference.
  *
  * **One stored width, still.** The panel briefly had two (a document's and the agent
- * browser's) and that was collapsed when the browser moved to a window of its own; this
- * does not bring it back. One panel, one width the operator drags, and the open set
+ * browser's) and that was collapsed; the browser's return as a surface does not bring it
+ * back. One panel, one width the operator drags, and the open set
  * contributes a *floor* rather than a remembered number of its own. A per-surface map
  * would mean the panel changing size as surfaces come and go, which is the panel moving
  * under the operator rather than for them.

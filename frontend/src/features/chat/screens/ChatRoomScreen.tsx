@@ -54,6 +54,7 @@ import { threadAgentName } from "~/features/agents/model";
 import { ThreadRecap } from "../components/ThreadRecap";
 import { TranscriptView } from "../components/TranscriptView";
 import { ModelPicker } from "~/app/ModelPicker";
+import { createBrowserState } from "../browserState";
 import { createConversationActions } from "../conversationActions";
 import { registerChatRoomKeymap } from "../chatRoomKeymap";
 import { useChatViewport } from "../useChatViewport";
@@ -269,8 +270,10 @@ export function ChatRoomScreen(): JSX.Element {
   // The viewport pane beside the conversation — everything about what it holds, how
   // wide it is, whether it renders as an aside or a sheet, and where focus goes when
   // it closes. It is a concern of its own, so it lives in one.
+  const browser = createBrowserState(currentId);
   const viewport = useChatViewport(currentId, {
     ...stream,
+    browser,
     branch: branch.latest,
     refetchBranch: branch.refetch,
     subagents: subagents.latest,
@@ -320,6 +323,8 @@ export function ChatRoomScreen(): JSX.Element {
     sending: stream.sending,
     cancel: stream.cancel,
     removeMessage: stream.removeMessage,
+    browser,
+    showBrowser: () => viewport.showSurface("browser"),
     onDeleted: clearThread,
     onForked: setCurrentId,
   });

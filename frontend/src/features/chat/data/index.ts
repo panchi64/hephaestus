@@ -44,13 +44,26 @@ export {
   fetchOrphanImageAttachments,
   fetchPlan,
   forkConversation,
-  openBrowser,
   regenerateTitle,
   renameConversation,
   revokeGrant,
   setAutoCompactOverride,
   useChatSession,
 } from "./conversations";
+
+export {
+  closeBrowser,
+  createBrowserInput,
+  fetchBrowserSession,
+  openBrowser,
+  streamBrowserView,
+  type BrowserFrame,
+  type BrowserSession,
+  type BrowserViewEnd,
+  type BrowserViewEvent,
+} from "./browser";
+
+export type { BrowserInput } from "./browserInput";
 
 export {
   discardBranch,

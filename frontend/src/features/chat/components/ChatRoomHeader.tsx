@@ -172,11 +172,12 @@ export function ChatRoomHeader(props: ChatRoomHeaderProps): JSX.Element {
                 onSelect: props.actions.compact,
               },
               {
-                label: "Open browser",
+                label: props.viewport.browser.active()
+                  ? "Show browser"
+                  : "Open browser",
                 icon: "link",
-                // The window belongs to the thread — its cookies and its logins are
-                // this conversation's — so there is nothing to open until there is a
-                // thread to open it for.
+                // The browser session belongs to the thread, so there is nothing to
+                // open until there is a thread to open it for.
                 disabled: !props.conversationId(),
                 onSelect: props.actions.openBrowser,
               },

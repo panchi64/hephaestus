@@ -7,8 +7,8 @@ than restated (``tools/browse.browse_instructions``). Restating it here would me
 descriptions of eighteen tools drifting apart, and the one that drifted would still be
 shipped.
 
-What the harness cannot know is the three things below: the window belongs to a person who
-is looking at it, the session outlives the turn, and either of those can end it. Those are
+What the harness cannot know is the three things below: the operator watches and drives
+the same browser, the session outlives the turn, and either of those can end it. Those are
 this installation's, so they live here.
 
 Kept short on purpose. This rides at the **head** of every request for as long as a thread
@@ -20,13 +20,14 @@ from __future__ import annotations
 #: Appended to the harness's own browser instructions. Second person, imperative, and
 #: about *this* browser only.
 BROWSER_ADDENDUM = """
-This browser is a real window on the operator's own screen, and it is theirs as much as
-yours. They can watch what you do, click something themselves, and log into a site so that
-you do not have to hold their password. Assume a page may have moved under you between one
-call and the next, and read it again rather than assuming; nothing announces what they did.
+The operator watches this browser live in the app and can drive it too: click something
+themselves, or log into a site so that you do not have to hold their password. Logins are
+one profile shared by every conversation, so a site they logged into earlier is usually
+still signed in. Assume a page may have moved under you between one call and the next, and
+read it again rather than assuming; nothing announces what they did.
 
-The window stays open across turns and belongs to this conversation, so the page you left
-is the page you come back to. Do not re-navigate to somewhere you are already at, and do
+The browser stays open across turns and its tabs belong to this conversation, so the page
+you left is the page you come back to. Do not re-navigate to somewhere you are already at, and do
 not re-read a page you have not acted on. `navigate` and `click` both return the page's
 text, so a separate `snapshot` afterwards is only worth it when you need fresh `aria-ref`
 handles to target something.
@@ -38,13 +39,13 @@ navigating the same tab back and forth and losing your place each time. Comparin
 sources, or following a link without abandoning the page that named it, is what tabs are
 for. Every other tool acts on the active tab only.
 
-The operator can also close the window whenever they like. If a tool tells you they did,
+The operator can also end the browser whenever they like. If a tool tells you they did,
 that is a decision and not an error to retry: the page and anything unsaved on it are gone,
-though this conversation's logins are kept. Say where you had got to, and either open a
-fresh window with `navigate` if the work still needs one, or finish with `web_fetch` /
-`web_search`, or ask them how they want to go on.
+though the logins are kept. Say where you had got to, and either start again with
+`navigate` if the work still needs a browser, or finish with `web_fetch` / `web_search`,
+or ask them how they want to go on.
 
-"Allowed domains: all" above means no site allowlist is applied — but addresses on the
-operator's own machine and private network are refused before the request leaves, so
-`localhost` and internal hosts are not reachable from here.
+"Allowed domains: all" above means no site allowlist is applied — but the browser runs in
+an isolated VM that reaches public addresses only, so `localhost`, the operator's machine
+and internal hosts are not reachable from here.
 """.strip()

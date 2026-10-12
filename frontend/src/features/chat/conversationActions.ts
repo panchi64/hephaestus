@@ -36,6 +36,7 @@ import {
   openBrowser,
   regenerateTitle,
 } from "./data";
+import type { BrowserState } from "./browserState";
 import type { ChatMessage } from "./model";
 
 /** Flatten the whole thread to plain text for COPY CONVERSATION — each turn's
@@ -196,6 +197,10 @@ export interface ConversationActionDeps {
   sending: () => boolean;
   cancel: () => Promise<void>;
   removeMessage: (messageId: string, purgeImages: boolean) => Promise<void>;
+  /** The thread's browser, which an open marks as running. */
+  browser: BrowserState;
+  /** Put the browser panel on screen. */
+  showBrowser: () => void;
   /** The open thread is gone; the room stages a new one. */
   onDeleted: () => void;
   /** The fork's id — the room opens it, leaving the source untouched. */
@@ -209,7 +214,8 @@ export interface ConversationActions {
   retitling: Accessor<boolean>;
   retitle: () => Promise<void>;
   fork: (messageId: string) => Promise<void>;
-  /** Bring up this thread's agent browser as a window on the host. */
+  /** Show this thread's agent browser in the panel, starting it first if it is not
+   *  running. */
   openBrowser: () => Promise<void>;
   removeConversation: () => Promise<void>;
   removeMessage: (messageId: string) => Promise<void>;
@@ -249,20 +255,28 @@ export function createConversationActions(
     }
   }
 
-  /** Open the thread's browser — a real Chromium window the operator and the agent
-   *  share, so the operator can log in or land on a page before handing the thread on.
+  /** Show the thread's browser in the panel — the headless Chromium the agent drives,
+   *  watched and steered by the operator from here, so they can log in or land on a page
+   *  before handing the thread on.
    *
-   *  No success toast: the window arriving in front is the confirmation, and a note
-   *  about it would land behind the thing it announced. Only a failure has anything to
-   *  say, and the backend's own sentence says it better than a generic line would. */
+   *  A session that is already running is only shown; nothing is posted. No success
+   *  toast: the panel arriving is the confirmation. Only a failure has anything to say,
+   *  and the backend's own sentence says it better than a generic line would. */
   async function open(): Promise<void> {
     const id = deps.conversationId();
     if (!id) return;
-    try {
-      await openBrowser(id);
-    } catch (err) {
-      toast.error(isApiError(err) ? err.detail : "Unable to open the browser.");
+    if (!deps.browser.active()) {
+      try {
+        await openBrowser(id);
+      } catch (err) {
+        toast.error(
+          isApiError(err) ? err.detail : "Unable to open the browser.",
+        );
+        return;
+      }
+      deps.browser.opened();
     }
+    deps.showBrowser();
   }
 
   async function removeConversation(): Promise<void> {

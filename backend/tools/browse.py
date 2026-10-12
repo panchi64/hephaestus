@@ -27,23 +27,23 @@ What is used from the harness is the toolset alone — the eighteen tools over a
 own. See `tools/rebound.py` for why the tools are *defined* by a template and *dispatched*
 through a per-conversation instance.
 
-**The window is the operator's too.** These tools drive a visible Chromium on the
-operator's own machine, one window per conversation, which they can click in themselves —
-to log in before handing the thread over, or to do a step faster than describing it.
-Nothing announces what they did; the model simply re-reads the page with `snapshot` or
-`get_text` like it would after any other change.
+**The browser is the operator's too.** These tools drive a Chromium in the platform VM,
+one browser context per conversation, which the operator watches and drives through the
+app's live view — to log in before handing the thread over, or to do a step faster than
+describing it. Nothing announces what they did; the model simply re-reads the page with
+`snapshot` or `get_text` like it would after any other change.
 
-**Degrades, never fails.** A window that could not be launched — no Chromium, or its SSRF
-proxy refusing to start — means there is nothing to attach to; the tools say so and the
-model moves on, exactly as web fetch does under the same conditions.
+**Degrades, never fails.** When the VM's browser is not up (no VM, offline mode, web fetch
+disabled) there is nothing to attach to; the tools say so and the model moves on, exactly
+as web fetch does under the same conditions.
 
-**And the operator can close it at any moment, which is not the same failure.** A window
-they closed is a thing they chose, so the tools report *that* — the page is gone, the
-login is not, and they may simply be done — instead of launching a replacement window on
-their screen mid-turn. Only `navigate` reopens (:data:`REOPENING_TOOLS`), because a
-navigation is the model deliberately starting somewhere; a `click` that silently opened a
-fresh blank window would let it believe the click landed. An *idle* reap is ours rather
-than theirs and stays invisible: the next call re-attaches with the login restored.
+**And the operator can end it at any moment, which is not the same failure.** A browser
+they ended is a thing they chose, so the tools report *that* — the page is gone, the
+logins are not, and they may simply be done — instead of starting a replacement mid-turn.
+Only `navigate` reopens (:data:`REOPENING_TOOLS`), because a navigation is the model
+deliberately starting somewhere; a `click` that silently opened a fresh blank page would
+let it believe the click landed. An *idle* reap is ours rather than theirs and stays
+invisible: the next call re-attaches with the profile restored.
 """
 
 from __future__ import annotations
@@ -99,28 +99,26 @@ NETWORK_TOOLS = frozenset(f"browse_{name}" for name in TOOL_NAMES)
 VISION_TOOLS = frozenset({"browse_screenshot"})
 
 _UNAVAILABLE = (
-    "The browser is not available right now — no window could be opened on this machine. "
+    "The browser is not available right now — the platform VM's browser is not running. "
     "Use web_fetch or web_search to read a page instead, or try again later."
 )
 
-#: Said when the *operator* closed the window rather than when none could be opened. It
-#: names what is gone (the page, and anything that was on it), what is not (the login),
-#: and the one call that starts over — so the model's next move is a decision rather than
-#: a retry of the call that just failed.
+#: Said when the *operator* ended the browser rather than when none could be opened. It
+#: names what is gone (the page), what is not (the logins), and the one call that starts
+#: over — so the model's next move is a decision rather than a retry.
 _CLOSED = (
-    "The operator closed the browser window, so the page you were working on is gone "
-    "along with anything unsaved on it. This is something they did, not a failure to "
-    "retry: they may well be finished with it. If the work still needs a browser, say "
-    "what you were in the middle of and call navigate to open a fresh window — the saved "
-    "login for this conversation carries over, the page you were on does not. If it does "
-    "not, read what you need with web_fetch or web_search, or ask them how they want to "
-    "go on."
+    "The operator ended this conversation's browser, so the page you were working on is "
+    "gone along with anything unsaved on it. This is something they did, not a failure to "
+    "retry: they may well be finished with it. If the work still needs a browser, say what "
+    "you were in the middle of and call navigate to start again — the saved logins carry "
+    "over, the page you were on does not. If it does not, read what you need with "
+    "web_fetch or web_search, or ask them how they want to go on."
 )
 
-#: The one tool allowed to put a new window on the operator's screen after they closed
-#: one. A navigation is the model explicitly starting somewhere; every other tool acts on
-#: a page that no longer exists, so reopening for those would hand it a blank window and
-#: let it believe its click landed.
+#: The one tool allowed to start a browser after the operator ended one. A navigation is
+#: the model explicitly starting somewhere; every other tool acts on a page that no longer
+#: exists, so reopening for those would hand it a blank page and let it believe its click
+#: landed.
 REOPENING_TOOLS = frozenset({"navigate"})
 
 
@@ -159,7 +157,7 @@ def browse_toolset() -> AbstractToolset[RunDeps]:
 def _policy() -> EgressPolicy:
     """The one policy shape both the real sessions and the instruction text are built from.
 
-    Unenforced by design — the SSRF proxy the window points at is the egress boundary, and
+    Unenforced by design — the VM's platform proxy is the egress boundary, and
     `services/browser/session.py` argues why Playwright routing is not usable here. It is
     spelled once because the instructions *quote* it (`Allowed domains: …`), and a
     description of a boundary that came from a different object than the boundary is the
@@ -173,10 +171,10 @@ async def browse_instructions(ctx: RunContext[RunDeps]) -> str:
 
     **Borrowed from the harness rather than restated.** `PlaywrightBrowser` carries the
     guidance for its own eighteen tools and is maintained alongside them; constructing one
-    starts no browser and touches no window, so asking it for that text costs nothing and
+    starts no browser, so asking it for that text costs nothing and
     cannot drift from the tools actually offered. Ours is appended
     (:data:`prompts.browse.BROWSER_ADDENDUM`) and covers only what a general browser
-    capability cannot know: that the window is on the operator's screen, that the session
+    capability cannot know: that the operator watches and drives it, that the session
     outlives the turn, and that either of them can end it.
 
     **Silent until a browser is open, which is the whole reason this is affordable.** The

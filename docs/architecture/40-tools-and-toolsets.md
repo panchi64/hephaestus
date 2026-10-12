@@ -108,7 +108,7 @@ Two deliberate omissions, each a settled decision rather than an oversight:
 | `code` | `execute`, `request_egress`, `run_host_command` | `services/sandbox` + `services/egress` (`XC-SEC-7`) | ✅ built |
 | `view` | `view_show` (file → version, or serve → live head), `view_close` | `services/artifacts` (version store) + `services/sandbox` (live head) | ✅ built |
 | `web` | `search`, `fetch` | `services/search` + `services/searxng` (`SEARCH-*`) | ✅ built |
-| `browse` | the harness's eighteen Playwright tools (`navigate`, `snapshot`, `click`, `type_text`, `screenshot`, `tabs`, …) | `services/browser` — a conversation-scoped session on a visible Chromium the operator shares (D84), launched on the host behind an SSRF proxy and driven over CDP (see D57) | ✅ built |
+| `browse` | the harness's eighteen Playwright tools (`navigate`, `snapshot`, `click`, `type_text`, `screenshot`, `tabs`, …) | `services/browser` — a conversation-scoped browser context on web fetch's Chromium in the platform VM, with one login profile kept on the host; the operator watches and drives it through the app's live view (D120) | ✅ built |
 | `document` | `create`, `edit` | `services/documents` (versioned library, `DOC-1`/`DOC-2`) | ✅ built |
 | `attachments` | `provision` | `services/uploads` + `services/sandbox` (stage a file into `/work`) | ✅ built |
 | `skills` | `open`, `create`, `edit` | `services/skills` (Agent Skills bundles, `SKILL-1..3`) | ✅ built |

@@ -26,7 +26,6 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
 
@@ -52,9 +51,6 @@ _BINARY = "/opt/odysseus/bin/headless_shell"
 #: Chromium serves CDP on the guest's loopback only; the forwarder exposes it here.
 _CDP_PORT = 9222
 _CDP_EXPOSED = 9223
-# Public because the agent's host browser (`services/browser/host.py`) runs this SSRF
-# proxy as a plain subprocess; web fetch's own browser goes through the VM's egress gateway.
-PROXY_SCRIPT = Path(__file__).with_name("proxy_script.py").resolve()
 
 
 class ManagedBrowser:
@@ -96,6 +92,7 @@ class ManagedBrowser:
         self._browser: Browser | None = None
         self._user_agent = ""  # resolved from the override or the engine version in _bring_up
         self._browser_version = ""  # the engine version, for matching the client-hint brands
+        self._ws_url: str | None = None
         self._task: asyncio.Task | None = None
         if vm is not None:
             vm.on_ready(self._after_boot)
@@ -103,6 +100,18 @@ class ManagedBrowser:
     @property
     def available(self) -> bool:
         return self._browser is not None and self._browser.is_connected()
+
+    @property
+    def cdp_url(self) -> str | None:
+        """Where another client attaches to this browser, while it is up."""
+        return self._ws_url if self.available else None
+
+    async def wait_available(self, timeout_s: float) -> bool:
+        """Wait up to ``timeout_s`` for a bring-up in progress to finish."""
+        task = self._task
+        if task is not None and not self.available:
+            await asyncio.wait({task}, timeout=timeout_s)
+        return self.available
 
     async def start(self) -> None:
         """Begin bring-up. Returns immediately — the pull/launch/connect runs in a
@@ -263,9 +272,11 @@ class ManagedBrowser:
             return
         self._browser_version = browser.version
         self._user_agent = self._user_agent_override or realistic_user_agent(browser.version)
+        self._ws_url = ws_url
         logger.info("web fetch: browser ready (Chromium %s)", browser.version)
 
     async def _disconnect(self) -> None:
+        self._ws_url = None
         if self._browser is not None:
             try:
                 await self._browser.close()

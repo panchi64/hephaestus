@@ -68,6 +68,9 @@ export interface SurfaceDeps {
   /** Every source the thread has read, already folded. Derived from the transcript
    *  like `commands`, so this opens no fetch either — see the module note. */
   sources: () => SourceInventory;
+  /** Whether the thread has a live browser, or one that has just ended. Held by the room
+   *  and read once on open, so this opens no fetch either. */
+  browser: () => boolean;
 }
 
 export function createSurfaceSources(
@@ -164,6 +167,15 @@ export function createSurfaceSources(
       // opened itself on the first search hit would take the screen away from the turn
       // producing it, at the earliest possible moment.
       arrival: () => "announce",
+      claimKey: () => "",
+    },
+    // A thread has a browser only once the agent or the operator has started one.
+    browser: {
+      available: () => deps.browser(),
+      // **Silent.** The agent is already narrating what it does in the browser, and the
+      // operator driving it is a choice they make from the menu; a panel that opened
+      // itself on every page load would be one they learn to close.
+      arrival: () => "silent",
       claimKey: () => "",
     },
     // A thread's View is its captured versions plus any live head.

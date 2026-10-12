@@ -10,7 +10,12 @@ import {
   Text,
   toast,
 } from "~/ui";
-import { refreshVmState, resetVm, useVmState } from "../data";
+import {
+  forgetBrowserProfile,
+  refreshVmState,
+  resetVm,
+  useVmState,
+} from "../data";
 import { vmNeedsPolling, vmStateLabel, vmStateTone } from "../vmDto";
 
 const POLL_MS = 3_000;
@@ -39,6 +44,23 @@ export function PlatformVmSection(): JSX.Element {
       await resetVm();
     } catch {
       toast.error("Couldn't reset the VM.");
+    }
+  };
+
+  const forgetLogins = async (): Promise<void> => {
+    const ok = await confirm({
+      title: "Log the agent's browser out of every site?",
+      detail:
+        "Every conversation's browser closes and the shared logins are deleted. You will need to log in again.",
+      confirmLabel: "Log out everywhere",
+      tone: "alert",
+    });
+    if (!ok) return;
+    try {
+      await forgetBrowserProfile();
+      toast.success("The agent's browser is logged out of every site.");
+    } catch {
+      toast.error("Couldn't clear the browser's logins.");
     }
   };
 
@@ -81,6 +103,23 @@ export function PlatformVmSection(): JSX.Element {
                 onClick={() => void reset()}
               >
                 Reset VM
+              </Button>
+            </Row>
+            <Row align="center" justify="between">
+              <Stack gap={1}>
+                <Text variant="label" tone="default">
+                  Browser logins
+                </Text>
+                <Text variant="micro" tone="dim">
+                  One profile, shared by every conversation's browser.
+                </Text>
+              </Stack>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => void forgetLogins()}
+              >
+                Log out everywhere
               </Button>
             </Row>
           </Stack>

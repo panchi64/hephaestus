@@ -1,18 +1,19 @@
-"""Browser control — the agent drives a real page, in a window the operator shares.
+"""Browser control — the agent drives a real page in the platform VM, and the operator
+watches and drives it through the app's live view.
 
-:class:`HostBrowser` is the one visible Chromium this app launches on the operator's
-machine (with the SSRF proxy it is pointed at); :class:`BrowserSessionManager` gives each
-conversation its own context on that browser — its own window, its own cookie jar — and
-reaps the ones nobody is using.
+:class:`VMBrowser` hands out web fetch's Chromium; :class:`BrowserSessionManager` gives
+each conversation its own context on it, keeps the shared login profile, and reaps the
+sessions nobody is using.
 """
 
-from .host import HostBrowser
-from .live import ControlledBrowserSession, LiveBrowser
+from .live import ControlledBrowserSession, LiveBrowser, Profile
 from .session import BrowserSessionManager
+from .vm import VMBrowser
 
 __all__ = [
     "BrowserSessionManager",
     "ControlledBrowserSession",
-    "HostBrowser",
     "LiveBrowser",
+    "Profile",
+    "VMBrowser",
 ]

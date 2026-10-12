@@ -1,14 +1,9 @@
-"""The browser-control feature — the agent drives a real page, in the operator's window.
+"""The browser-control feature — the agent drives a real page in the platform VM.
 
-This feature owns *two* things now: the visible Chromium on the host (and the SSRF proxy
-it is pointed at), and the per-conversation sessions attached to it. It no longer depends
-on `web` — the browser it drives is its own, not the VM browser web fetch renders in — so
-the build order is free again.
-
-Both register a stop here, the window's *before* the sessions': the lifecycle unwinds in
-reverse, so the sessions drain first and none is left attached to a window that is already
-closing. Neither has anything to start — the window is launched lazily on the first
-acquire, so a run of the app in which nobody browses opens none.
+The browser is web fetch's Chromium (``services/browser/vm.py``), so this feature builds
+after ``web`` and owns only the per-conversation sessions attached to it, the shared login
+profile, and the operator's live view. Nothing starts here but the reaper: a session
+attaches on the first browse tool call or the operator's own "open browser".
 """
 
 from __future__ import annotations
@@ -21,16 +16,19 @@ from harness.manifest import (
     HarnessContext,
 )
 from routes import browser as browser_routes
-from services.browser import BrowserSessionManager, HostBrowser
+from services.browser import BrowserSessionManager, VMBrowser
+from services.webfetch import ManagedBrowser
 from tools.browse import NETWORK_TOOLS, browse_instructions, browse_toolset
 
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
     settings = ctx.settings
-    host = HostBrowser(launch_timeout_s=settings.browser_control_launch_timeout_s)
-    ctx.lifecycle.on_stop("host-browser", host.stop)
+    browser = VMBrowser(
+        ctx.services.get(ManagedBrowser),
+        launch_timeout_s=settings.browser_control_launch_timeout_s,
+    )
     sessions = BrowserSessionManager(
-        host,
+        browser,
         idle_ttl_s=settings.browser_control_idle_ttl_s,
         reap_interval_s=settings.browser_control_reap_interval_s,
         max_live=settings.browser_control_max_live,
@@ -46,13 +44,14 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
 MANIFEST = FeatureManifest(
     name="browser",
+    after=("web",),
     routers=(browser_routes.router,),
-    # Asking whether a thread has a live browser — and asking for one — is part of working
-    # in that thread.
+    # A thread's browser — opening it, watching it, driving it — is part of working in
+    # that thread.
     api_scopes=(ScopeClaim("chat", ("/browser/session",)),),
     # No kill-switch of its own, deliberately. A switch that withheld the *category* would
     # make the operator's tool catalog disagree with the agent's real stack — the exact
-    # divergence the namespacing exists to prevent. When no window can be opened, the
+    # divergence the namespacing exists to prevent. When no browser is available, the
     # tools assemble and degrade, like every other capability here.
     toolsets=(("browse", browse_toolset),),
     # The brief for those eighteen tools, and it belongs at the *head* rather than in

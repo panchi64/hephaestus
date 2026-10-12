@@ -66,10 +66,17 @@ const sources = (over: Partial<SurfaceDeps> = {}) =>
     subagents: () => [],
     commands: () => [],
     sources: () => buildInventory([]),
+    browser: () => false,
     ...over,
   });
 
 describe("availability", () => {
+  test("the browser is offered only while the thread has one", () => {
+    expect(sources().browser.available()).toBe(false);
+    expect(sources({ browser: () => true }).browser.available()).toBe(true);
+    expect(sources({ browser: () => true }).browser.arrival()).toBe("silent");
+  });
+
   test("nothing is offered on a fresh thread", () => {
     const s = sources();
     expect(s.view.available()).toBe(false);

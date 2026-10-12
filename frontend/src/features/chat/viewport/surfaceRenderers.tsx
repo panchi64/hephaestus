@@ -22,6 +22,7 @@ import { createMemo, Show, type JSX } from "solid-js";
 import { StatusFlag, Text } from "~/ui";
 import { plural } from "~/lib/format";
 import { SubagentsSurface } from "../components/SubagentsSurface";
+import { BrowserSurface } from "../components/BrowserSurface";
 import { CommandsSurface } from "../components/CommandsSurface";
 import { SourcesSurface } from "../components/SourcesSurface";
 import { DiffSurface } from "../components/DiffSurface";
@@ -76,6 +77,12 @@ export const SURFACE_RENDERERS: Record<
     />
   ),
   sources: (ctx) => <SourcesSurface inventory={ctx.viewport.sources} />,
+  browser: (ctx) => (
+    <BrowserSurface
+      conversationId={ctx.viewport.conversationId}
+      browser={ctx.viewport.browser}
+    />
+  ),
   files: (ctx) => (
     <FilesSurface
       branch={ctx.viewport.branch}

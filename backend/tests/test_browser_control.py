@@ -6,9 +6,8 @@ Two layers, fastest-first:
 - the toolset — that two conversations drive two *pages*, not merely two toolsets.
 
 Nothing here starts Chromium: what is worth guarding is the wiring around the harness's
-browser, and launching a real window would make these tests slow, flaky and
-environment-dependent without testing more of our own code. ``test_browser_host.py``
-covers the launch itself, equally without one.
+browser, and launching a real one would make these tests slow, flaky and
+environment-dependent without testing more of our own code.
 """
 
 from __future__ import annotations
@@ -35,8 +34,8 @@ OWNER = "operator"
 
 
 class _FakeContext:
-    """The window behind a page: the tabs really open in it, and the cookie jar the
-    manager saves on teardown."""
+    """The browser context behind a page: the tabs really open in it, and the cookie jar
+    the manager saves into the profile."""
 
     def __init__(self, state: dict | None = None) -> None:
         self.state = state or {"cookies": [{"name": "session", "value": "abc"}]}
@@ -88,19 +87,14 @@ class _FakeSession:
 
 
 class _FakeHost:
-    """A HostBrowser stand-in whose window a test can take away."""
+    """A VMBrowser stand-in whose browser a test can take away."""
 
     def __init__(self, cdp_url: str | None = "http://127.0.0.1:9222") -> None:
         self.cdp_url = cdp_url
         self.stealthed: list[_FakePage] = []
-        self.closed = 0
 
     async def ensure(self) -> str | None:
         return self.cdp_url
-
-    async def close_if_dead(self) -> None:
-        if self.cdp_url is None:
-            self.closed += 1
 
     async def apply_stealth(self, page) -> None:
         self.stealthed.append(page)
@@ -172,34 +166,42 @@ async def test_an_attached_page_is_stealthed_and_left_where_it_is(attached):
     assert page.fronted == 0  # type: ignore[union-attr]
 
 
-async def test_the_login_survives_the_session_it_was_made_in(tmp_path, attached):
-    # The reason state is persisted at all: an operator logs in by hand, the session is
-    # reaped fifteen minutes later, and the next turn must not land on a login page.
+async def test_a_login_made_in_one_conversation_reaches_the_next(tmp_path, attached):
+    # The reason the profile exists: the operator logs in once, and a later conversation's
+    # agent must not land on a login page.
     manager = _manager(_FakeHost(), state_dir=tmp_path)
     await manager.acquire("c1")
 
     await manager.release("c1")
 
-    saved = json.loads((tmp_path / "c1.json").read_text())
-    assert saved == {"cookies": [{"name": "session", "value": "abc"}]}
-    await manager.acquire("c1")
-    assert attached[-1].kwargs["storage_state"] == saved
-    # A different conversation is a different jar — logins are never shared across threads.
+    saved = json.loads((tmp_path / "profile.json").read_text())
+    assert saved["cookies"] == [{"name": "session", "value": "abc"}]
     await manager.acquire("c2")
-    assert attached[-1].kwargs["storage_state"] is None
+    assert attached[-1].kwargs["storage_state"] == saved
 
 
-async def test_the_login_is_deleted_with_the_conversation(tmp_path, attached):
-    # A deleted thread must not leave the sessions it signed into sitting on disk: the
-    # state file is the cookies, and teardown alone would write it back out.
+async def test_deleting_a_conversation_keeps_the_shared_profile(tmp_path, attached):
     manager = _manager(_FakeHost(), state_dir=tmp_path)
     await manager.acquire("c1")
 
     await manager.purge("c1")
 
-    assert not (tmp_path / "c1.json").exists()
+    assert (tmp_path / "profile.json").exists()
     assert manager.existing("c1") is None
     await manager.purge("c1")  # idempotent: deleting twice is not an error
+
+
+async def test_forgetting_the_profile_ends_every_session_unsaved(tmp_path, attached):
+    manager = _manager(_FakeHost(), state_dir=tmp_path)
+    await manager.acquire("c1")
+    await manager.release("c1")
+    live = await manager.acquire("c2")
+
+    await manager.forget_profile()
+
+    assert not (tmp_path / "profile.json").exists()
+    assert manager.existing("c2") is None
+    assert live is not None and getattr(live.session, "exited", False)
 
 
 async def test_a_session_whose_window_is_gone_is_not_handed_out_again(attached):
@@ -219,19 +221,6 @@ async def test_a_session_whose_window_is_gone_is_not_handed_out_again(attached):
     fresh = await manager.acquire("c1")
 
     assert fresh is not None and fresh is not stale
-
-
-async def test_focus_brings_the_window_forward_only_when_asked():
-    # The operator's own "open the browser" action must land the window in front; an
-    # agent tool call stealing focus mid-sentence must not.
-    manager = _manager(_FakeHost())
-    live = _live(manager, "c1")
-
-    await manager.acquire("c1")
-    assert live.session.page.fronted == 0  # type: ignore[union-attr]
-
-    await manager.acquire("c1", focus=True)
-    assert live.session.page.fronted == 1  # type: ignore[union-attr]
 
 
 async def test_an_idle_session_is_reaped():
@@ -296,7 +285,7 @@ async def test_a_tab_the_operator_opened_keeps_the_session_alive():
 
 
 async def test_the_browser_going_away_reaps_every_session():
-    # An operator who quits Chromium takes every session with it: `cdp_url` goes None and
+    # A VM reset or offline mode takes every session with it: `cdp_url` goes None and
     # nothing any of them holds is real any more.
     host = _FakeHost()
     manager = _manager(host)
@@ -307,13 +296,6 @@ async def test_the_browser_going_away_reaps_every_session():
 
     assert manager.existing("c1") is None and manager.existing("c2") is None
     assert first.session.exited and second.session.exited  # type: ignore[union-attr]
-    # And the host is told to drop what the window left behind — its proxy above all —
-    # rather than leaving it listening until something asks for a browser again.
-    assert host.closed == 1
-
-    await manager._sweep()  # noqa: SLF001 — nothing left to reap, and a host still dead
-
-    assert host.closed == 2
 
 
 async def test_the_live_cap_evicts_the_least_recently_used():
@@ -503,9 +485,9 @@ async def test_an_idle_reap_leaves_no_such_record(attached):
     assert await manager.acquire("c1", reopen=False) is not None
 
 
-async def test_quitting_chromium_is_the_operators_doing_too(attached):
-    # The other way they end it: quitting the browser rather than closing one window. Same
-    # meaning, so it leaves the same record.
+async def test_the_browser_going_away_is_not_the_operators_doing(attached):
+    # A VM reset or offline mode is ours, so the next tool call degrades or re-attaches
+    # rather than telling the model the operator ended it.
     host = _FakeHost()
     manager = _manager(host)
     _live(manager, "c1")
@@ -513,7 +495,18 @@ async def test_quitting_chromium_is_the_operators_doing_too(attached):
 
     await manager._sweep()  # noqa: SLF001
 
+    assert not manager.closed("c1")
+
+
+async def test_the_operator_ending_the_browser_is_recorded(attached):
+    manager = _manager(_FakeHost())
+    await manager.acquire("c1")
+
+    await manager.close("c1")
+
+    assert manager.existing("c1") is None
     assert manager.closed("c1")
+    assert await manager.acquire("c1", reopen=False) is None
 
 
 async def test_only_navigate_may_reopen_after_a_close(attached):
@@ -529,7 +522,7 @@ async def test_only_navigate_may_reopen_after_a_close(attached):
     refusal = await toolset.bind("click", _ctx(caps, "c1"))
 
     assert isinstance(refusal, str)
-    assert "closed the browser" in refusal
+    assert "ended this conversation's browser" in refusal
     assert "not available" not in refusal  # ...the *other* degrade, which would be wrong
     assert attached == []
 
@@ -565,7 +558,7 @@ async def test_an_open_browser_brings_the_harness_guidance_and_ours():
 
     assert "aria-ref" in text  # the harness's half, borrowed rather than restated
     assert "tabs('new')" in text  # ...and ours: opening a tab is a thing it may do
-    assert "close the window" in text  # ...and that the operator can end it
+    assert "end the browser" in text  # ...and that the operator can end it
 
 
 @pytest.mark.parametrize("phrase", ["snapshot", "iframe", "wait_for", "scroll"])

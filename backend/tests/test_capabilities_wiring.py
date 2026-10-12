@@ -21,6 +21,7 @@ import pkgutil
 from pathlib import Path
 
 from services.sandbox import SandboxSessionManager
+from services.vm.project import ProjectCopies
 from tests._helpers import client_app
 
 _BACKEND = Path(__file__).resolve().parents[1]
@@ -31,6 +32,8 @@ _BACKEND = Path(__file__).resolve().parents[1]
 _CONDITIONAL = {
     # Added only when the sandbox is enabled; tests run sandbox_enabled=False.
     SandboxSessionManager,
+    # Added only when the platform VM is enabled; tests run vm_enabled=False.
+    ProjectCopies,
 }
 
 

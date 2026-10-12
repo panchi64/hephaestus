@@ -24,7 +24,7 @@ from core.exceptions import SSRFError, WebFetchError
 from core.text import tokens_to_chars, truncate_on_boundary
 from services.vm import PlatformVM
 from services.vm.smolvm import SmolvmDriver
-from services.webfetch import BrowserFetcher, FetchedPage, ManagedBrowser, proxy_script
+from services.webfetch import BrowserFetcher, FetchedPage, ManagedBrowser
 from services.webfetch.cookies import DomainCookieJar
 from services.webfetch.extract import extract
 from services.webfetch.fetcher import _looks_like_challenge
@@ -149,72 +149,6 @@ def test_extract_empty_returns_none():
         "<html><body></body></html>", url="https://x.example", rendered_text="", min_chars=50
     )
     assert body is None
-
-
-# --- SSRF proxy sidecar (no browser; IP literals resolve offline) ----------
-
-
-def test_proxy_blocklist_matches_core_ssrf():
-    # The sidecar runs with none of our code on its path, so it carries a copy of the SSRF
-    # predicate. This guards against the copy drifting from the source of truth.
-    import ipaddress
-
-    from core import ssrf as core_ssrf
-
-    samples = [
-        "8.8.8.8",
-        "1.1.1.1",
-        "93.184.216.34",  # public
-        "127.0.0.1",
-        "10.0.0.1",
-        "192.168.1.1",
-        "172.16.0.1",  # loopback / private
-        "169.254.169.254",
-        "100.64.0.1",
-        "224.0.0.1",
-        "0.0.0.0",  # metadata / cgnat / mcast
-        "::1",
-        "fe80::1",
-        "2606:4700:4700::1111",
-        "fd00:ec2::254",  # ipv6
-    ]
-    for s in samples:
-        ip = ipaddress.ip_address(s)
-        assert proxy_script._is_blocked(ip) == core_ssrf.is_blocked(ip), s
-
-
-async def _proxy_request(raw: bytes) -> bytes:
-    """Run one request through the proxy's dispatcher on loopback; return the first reply line."""
-    server = await asyncio.start_server(proxy_script._dispatch, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    task = asyncio.create_task(server.serve_forever())
-    try:
-        reader, writer = await asyncio.open_connection("127.0.0.1", port)
-        writer.write(raw)
-        await writer.drain()
-        line = await asyncio.wait_for(reader.readline(), timeout=5)
-        writer.close()
-        return line
-    finally:
-        server.close()
-        task.cancel()
-
-
-async def test_proxy_refuses_private_connect():
-    # A CONNECT to a private host is refused (403) before any tunnel opens — no network.
-    line = await _proxy_request(b"CONNECT 10.0.0.1:443 HTTP/1.1\r\nHost: 10.0.0.1\r\n\r\n")
-    assert b"403" in line
-
-
-async def test_proxy_refuses_metadata_http():
-    line = await _proxy_request(
-        b"GET http://169.254.169.254/latest/meta-data/ HTTP/1.1\r\nHost: x\r\n\r\n"
-    )
-    assert b"403" in line
-
-
-async def test_proxy_rejects_malformed_request():
-    assert b"400" in await _proxy_request(b"not a real request line\r\n\r\n")
 
 
 # --- cookie jar: per-domain, TTL'd, bounded (no browser) -------------------

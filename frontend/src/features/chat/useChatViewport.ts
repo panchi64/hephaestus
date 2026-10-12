@@ -57,6 +57,7 @@ import {
   type ViewportLayout,
 } from "./viewport/layout";
 import { panelBox, widenFor } from "./viewport/viewportWidth";
+import type { BrowserState } from "./browserState";
 import { arrivalClaims, createSurfaceSources } from "./viewport/surfaceSources";
 import {
   DEFAULT_VIEW_SURFACE,
@@ -92,6 +93,8 @@ export interface ViewportSource {
   subagents: Accessor<Subagent[]>;
   /** Re-read them — after the operator answers one that was waiting on them. */
   refetchSubagents: () => void;
+  /** The thread's browser, for the Browser surface. */
+  browser: BrowserState;
   toggleSnapshotKeeper: (snapshotId: string, keeper: boolean) => Promise<void>;
 }
 
@@ -122,6 +125,10 @@ export interface ChatViewport {
   /** Every source the thread has read, folded and shelved, for the Sources surface.
    *  Derived from the transcript's citations for the same reason `commands` is. */
   sources: Accessor<SourceInventory>;
+  /** The open thread's id, for the surfaces that talk to the backend about it. */
+  conversationId: () => string | null;
+  /** The thread's browser. */
+  browser: BrowserState;
   /** Whether a surface has anything to show — which header buttons exist. */
   available: (id: SurfaceId) => boolean;
   /** The first surface in registry order that has anything to show, or `undefined` on a
@@ -225,6 +232,7 @@ export function useChatViewport(
     subagents: source.subagents,
     commands,
     sources: sourceInventory,
+    browser: source.browser.available,
   });
   const available = (id: SurfaceId): boolean => sources[id].available();
   const firstAvailable = (): SurfaceId | undefined =>
@@ -602,6 +610,8 @@ export function useChatViewport(
     // availability record this module builds, and the two are different things that
     // one short word would happily confuse.
     sources: sourceInventory,
+    conversationId: currentId,
+    browser: source.browser,
     available,
     firstAvailable,
     layout: liveLayout,

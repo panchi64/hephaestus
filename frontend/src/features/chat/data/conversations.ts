@@ -2,12 +2,11 @@
  * One conversation: how it is read, and everything the operator can do to it that isn't a
  * turn.
  *
- * Renaming, retitling, forking, deleting, revoking a grant, forcing compaction on or off,
- * raising the thread's browser window — each is a thin relay to a live endpoint, and each
- * ends by telling the list to re-read itself rather than patching a second copy of the
- * truth locally. That is the rule this module exists to keep: the backend owns a
- * conversation's state, and the client's job is to ask again, not to guess what the answer
- * became.
+ * Renaming, retitling, forking, deleting, revoking a grant, forcing compaction on or off —
+ * each is a thin relay to a live endpoint, and each ends by telling the list to re-read
+ * itself rather than patching a second copy of the truth locally. That is the rule
+ * this module exists to keep: the backend owns a conversation's state, and the client's
+ * job is to ask again, not to guess what the answer became.
  */
 
 import { createResource, createSignal, type Resource } from "solid-js";
@@ -183,18 +182,6 @@ export async function fetchPlan(
   conversationId: string,
 ): Promise<PlanDocument | null> {
   return api.get<PlanDocument | null>(`/conversations/${conversationId}/plan`);
-}
-
-/** Open (or bring forward) this thread's agent browser — a real Chromium window on the
- *  host that the operator and the agent share.
- *
- *  There is nothing to render here: the window *is* the view, so the call returns
- *  nothing and its only visible outcome is the window arriving in front. The backend
- *  answers 503 with a sentence when it could not launch one; the caller surfaces that
- *  detail rather than a generic failure, since "why not" is the whole of what the
- *  operator can act on. */
-export async function openBrowser(conversationId: string): Promise<void> {
-  await api.post(`/browser/session/${conversationId}`, {});
 }
 
 /** Revoke one conversation auto-approval — the next call it covered asks again.
