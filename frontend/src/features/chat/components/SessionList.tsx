@@ -35,12 +35,12 @@ import {
 } from "../data";
 import {
   groupSessions,
-  nestingDepth,
   type DirectoryGroup,
   type RecencyGroup,
   type WorkspaceDirectory,
 } from "../sessionGroups";
 import { SessionRow } from "./SessionRow";
+import { ThreadLog } from "./ThreadLog";
 
 /** What a directory's heading reports about the repository under it. Resolved by the
  *  caller from the live project listing — this component renders it and reads nothing. */
@@ -204,17 +204,18 @@ function SessionRows(props: {
   onSelect: (id: string) => void;
   unread?: (id: string) => boolean;
 }): JSX.Element {
+  // An agent thread the operator opened sits in its parent's thread log rather than
+  // in the list, and only a parent that is itself listed here can hold it.
+  const listed = createMemo(() => new Set(props.sessions.map((s) => s.id)));
+  const childrenOf = (id: string) =>
+    props.sessions.filter((s) => s.parentId === id && s.id !== id);
+  const top = createMemo(() =>
+    props.sessions.filter((s) => !s.parentId || !listed().has(s.parentId)),
+  );
   return (
-    <For each={props.sessions}>
+    <For each={top()}>
       {(s) => (
-        <div
-          class={cx(
-            nestingDepth(s, props.sessions) > 0 && "border-l border-line",
-          )}
-          style={{
-            "margin-left": `${nestingDepth(s, props.sessions) * 12}px`,
-          }}
-        >
+        <>
           <SessionRow
             title={s.title}
             selected={s.id === props.currentId}
@@ -233,7 +234,15 @@ function SessionRows(props: {
             menuTrigger={props.menu.triggerProps(s.id)}
             menuOpen={props.menu.isOpen(s.id)}
           />
-        </div>
+          <Show when={childrenOf(s.id).length > 0}>
+            <ThreadLog
+              threads={childrenOf(s.id)}
+              childrenOf={childrenOf}
+              currentId={props.currentId}
+              onSelect={props.onSelect}
+            />
+          </Show>
+        </>
       )}
     </For>
   );

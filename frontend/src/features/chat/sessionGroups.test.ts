@@ -3,7 +3,6 @@ import {
   OLDER_GROUP,
   PINNED_GROUP,
   groupSessions,
-  nestingDepth,
   rowAge,
   type SessionGroup,
   type WorkspaceDirectory,
@@ -343,12 +342,5 @@ describe("threads opened from an agent tree", () => {
       now: new Date("2026-08-30T12:00:00Z"),
     });
     expect(ids(groups[0])).toEqual(["orphan"]);
-  });
-
-  test("depth counts the parents within the list", () => {
-    const a = session("a");
-    const b = session("b", { parentId: "a" });
-    const c = session("c", { parentId: "b" });
-    expect([a, b, c].map((s) => nestingDepth(s, [a, b, c]))).toEqual([0, 1, 2]);
   });
 });

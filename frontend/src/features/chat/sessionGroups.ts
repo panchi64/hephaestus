@@ -206,23 +206,6 @@ function nestUnderParents(
   return out;
 }
 
-/** How many threads above this one, within the list it is shown in. */
-export function nestingDepth(
-  session: ChatSummary,
-  inList: readonly ChatSummary[],
-): number {
-  const byId = new Map(inList.map((s) => [s.id, s]));
-  let depth = 0;
-  let at = session;
-  while (at.parentId && depth < inList.length) {
-    const parent = byId.get(at.parentId);
-    if (!parent) break;
-    depth += 1;
-    at = parent;
-  }
-  return depth;
-}
-
 /** Local midnight `daysBack` days before `d`.
  *
  *  Every boundary goes through here rather than subtracting multiples of 86,400,000ms

@@ -15,7 +15,6 @@ import { ComposerHeader } from "./ComposerHeader";
 import { ComposerMenu } from "./ComposerMenu";
 import { createComposerKeys } from "./composerKeys";
 import { createComposerMenuController } from "./composerMenuController";
-import { SEND_CHORD } from "./sendChord";
 import type { ComposerProps } from "./types";
 import { createComposerAnnouncer } from "./useComposerAnnouncer";
 import { createComposerDraft } from "./useComposerDraft";
@@ -89,15 +88,6 @@ export function Composer(props: ComposerProps): JSX.Element {
   });
 
   const hasDraft = () => Boolean(text().trim());
-
-  // The key hint, in the empty field rather than on the button alone: Enter is a
-  // newline here, and that is the rule a newcomer would otherwise learn by sending half
-  // a message. While a run streams the same chord queues; a field that is off says
-  // nothing about keys it does not take.
-  const keyHint = () =>
-    recalling() || props.disabled
-      ? undefined
-      : `↵ new line · ${SEND_CHORD} ${props.streaming ? "queue" : "send"}`;
 
   // `+`, then the caller's two groups, as the unit's receded strip — with the commit
   // keys at its end, so the strip is always drawn: Send lives there.
@@ -193,7 +183,6 @@ export function Composer(props: ComposerProps): JSX.Element {
         onCaret={menuCtl.sync}
         onBlur={menuCtl.dismiss}
         onPaste={props.attachments ? drop.pasteHandlers.onPaste : undefined}
-        hint={keyHint()}
       />
       <AttachmentChips
         attachments={props.attachments}
