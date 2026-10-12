@@ -5,6 +5,9 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [solidStart({ ssr: false }), tailwindcss(), nitro({ preset: "node-server" })],
+  // Nitro's plugin otherwise moves the dev server to 3000, an origin the backend's CORS
+  // list does not allow.
+  server: { port: 5173 },
   assetsInclude: ["**/*.wasm"],
   // The View's PDF renderer resolves pdf.js's worker through a dynamic import, which
   // Rollup cannot bundle into a classic iife worker. See renderers/PdfViewer.tsx.
