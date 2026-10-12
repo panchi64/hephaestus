@@ -46,6 +46,8 @@ export function LibraryDetail(props: {
   meta: string;
   onExport: () => void;
   published: boolean;
+  /** Item-specific buttons beside Export, for lifecycles a toggle cannot say. */
+  actions?: JSX.Element;
   /** Absent where the item cannot be published (read-only). */
   onTogglePublished?: () => void;
   /** Present for items that can be pinned; the toggle only applies while published. */
@@ -55,13 +57,19 @@ export function LibraryDetail(props: {
   canEdit: boolean;
   startEditing?: boolean;
   menuItems: MenuItem[];
-  description: string;
+  description?: string;
   /** The Overview's key/value list; may offer inputs while editing. */
-  properties: (editing: boolean) => LibraryProperty[];
+  properties?: (editing: boolean) => LibraryProperty[];
+  /** Replaces the Overview's description and properties. */
+  overview?: JSX.Element;
+  /** Shown above the file browser on the Contents tab. */
+  contentsHeader?: JSX.Element;
+  /** Tabs after History. */
+  extraTabs?: { value: string; label: string; content: JSX.Element }[];
   /** The first file is the item's own markdown file. */
   files: LibraryFileSource[];
   /** Persist one file's full text. Throws the backend's rejection. */
-  saveFile: (path: string, text: string) => Promise<void>;
+  saveFile?: (path: string, text: string) => Promise<void>;
   onDeleteFile?: (path: string) => Promise<void>;
   onAddFile?: (relpath: string) => Promise<void>;
   /** Unsaved edits made outside the files (the agent's model). */
@@ -71,9 +79,7 @@ export function LibraryDetail(props: {
   /** Version history; adds a History tab when present. */
   history?: JSX.Element;
 }): JSX.Element {
-  const [tab, setTab] = createSignal<"overview" | "contents" | "history">(
-    "overview",
-  );
+  const [tab, setTab] = createSignal("overview");
   const [editing, setEditing] = createSignal(false);
   const [mode, setMode] = createSignal<ViewMode>("preview");
   const [drafts, setDrafts] = createStore<Record<string, string>>({});
@@ -117,7 +123,7 @@ export function LibraryDetail(props: {
       ...dirtyPaths().filter((p) => p !== main),
     ];
     try {
-      for (const path of paths) await props.saveFile(path, drafts[path]);
+      for (const path of paths) await props.saveFile?.(path, drafts[path]);
       await props.saveExtra?.();
     } catch (err) {
       setError(saveMessage(err));
@@ -203,6 +209,7 @@ export function LibraryDetail(props: {
                 >
                   Export
                 </Button>
+                {props.actions}
                 <Show when={props.onTogglePublished}>
                   <Toggle
                     label="Published"
@@ -267,40 +274,54 @@ export function LibraryDetail(props: {
           { value: "overview", label: "Overview" },
           { value: "contents", label: `Contents · ${props.files.length}` },
           ...(props.history ? [{ value: "history", label: "History" }] : []),
+          ...(props.extraTabs ?? []).map(({ value, label }) => ({
+            value,
+            label,
+          })),
         ]}
         value={tab()}
-        onChange={(v) =>
-          setTab(v === "contents" || v === "history" ? v : "overview")
-        }
+        onChange={setTab}
       />
+
+      <For each={props.extraTabs}>
+        {(t) => <Show when={tab() === t.value}>{t.content}</Show>}
+      </For>
 
       <Show when={tab() === "history"}>{props.history}</Show>
 
       <Show when={tab() === "overview"}>
-        <Stack gap={4}>
-          <Panel label="Description">
-            <Text variant="body">{props.description}</Text>
-          </Panel>
-          <Panel label="Properties">
-            <Stack gap={2}>
-              <For each={props.properties(editing())}>
-                {(p) => (
-                  <div class="grid grid-cols-[10rem_minmax(0,1fr)] items-baseline gap-3">
-                    <Text variant="meta" tone="dim">
-                      {p.label}
-                    </Text>
-                    <div class="min-w-0 break-words font-mono text-code text-bright">
-                      {p.value}
-                    </div>
-                  </div>
-                )}
-              </For>
+        <Show
+          when={props.overview}
+          fallback={
+            <Stack gap={4}>
+              <Panel label="Description">
+                <Text variant="body">{props.description}</Text>
+              </Panel>
+              <Panel label="Properties">
+                <Stack gap={2}>
+                  <For each={props.properties?.(editing())}>
+                    {(p) => (
+                      <div class="grid grid-cols-[10rem_minmax(0,1fr)] items-baseline gap-3">
+                        <Text variant="meta" tone="dim">
+                          {p.label}
+                        </Text>
+                        <div class="min-w-0 break-words font-mono text-code text-bright">
+                          {p.value}
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </Stack>
+              </Panel>
             </Stack>
-          </Panel>
-        </Stack>
+          }
+        >
+          {props.overview}
+        </Show>
       </Show>
 
       <Show when={tab() === "contents"}>
+        {props.contentsHeader}
         <LibraryFileBrowser
           files={props.files}
           mode={mode()}

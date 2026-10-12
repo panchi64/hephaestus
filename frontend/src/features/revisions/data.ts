@@ -71,7 +71,10 @@ export function refreshRevisions(): void {
 }
 
 /** `kind` is the collection the item lives in; `id` is the item's id. */
-export function revisionsBase(kind: "skills" | "agents", id: string): string {
+export function revisionsBase(
+  kind: "skills" | "agents" | "plugins",
+  id: string,
+): string {
   return `/${kind}/${encodeURIComponent(id)}/revisions`;
 }
 

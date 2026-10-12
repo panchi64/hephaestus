@@ -125,6 +125,14 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         keywords: ["custom", "persona", "subagent", "delegate", "instructions"],
       },
       {
+        id: "plugins",
+        label: "Plugins",
+        icon: "plug",
+        description:
+          "Python tools agents write, which run in the platform VM once you publish them",
+        keywords: ["tool", "python", "extension", "egress", "secret", "draft"],
+      },
+      {
         id: "workflows",
         label: "Workflows",
         icon: "terminal",

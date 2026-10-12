@@ -12,6 +12,7 @@ import { McpScreen } from "~/features/mcp";
 import { MemoryTimelineScreen } from "~/features/memory";
 import { ProjectsScreen } from "~/features/projects";
 import { AgentsSection } from "~/features/agents";
+import { PluginsSection } from "~/features/plugins";
 import { SkillsSection } from "~/features/skills";
 import { WorkflowsSection } from "~/features/workflows";
 import { VaultScreen } from "~/features/vault";
@@ -44,6 +45,7 @@ export const SECTION_RENDERERS: Record<string, () => JSX.Element> = {
   "agent-tools": () => <AgentToolsPanel />,
   skills: () => <SkillsSection />,
   agents: () => <AgentsSection />,
+  plugins: () => <PluginsSection />,
   workflows: () => <WorkflowsSection />,
   projects: () => <ProjectsScreen />,
   memory: () => <MemoryTimelineScreen />,

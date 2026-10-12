@@ -57,5 +57,6 @@ describe("revisionsBase", () => {
   it("encodes the id", () => {
     expect(revisionsBase("agents", "a b")).toBe("/agents/a%20b/revisions");
     expect(revisionsBase("skills", "x")).toBe("/skills/x/revisions");
+    expect(revisionsBase("plugins", "p1")).toBe("/plugins/p1/revisions");
   });
 });

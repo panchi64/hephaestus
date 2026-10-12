@@ -52,7 +52,8 @@ export interface LibraryDirectoryProps<T extends LibraryEntry> {
   importAccept: string;
   importing: boolean;
   onImport: (file: File | undefined) => void;
-  onNew: () => void;
+  /** Absent where items are not created by hand; the New button is omitted. */
+  onNew?: () => void;
   onOpen: (item: T) => void;
   /** Everything on the right of a row except the `…` menu. */
   rowRight: (item: T) => JSX.Element;
@@ -118,9 +119,13 @@ export function LibraryDirectory<T extends LibraryEntry>(
             >
               {props.importing ? "Importing…" : "Import"}
             </Button>
-            <Button variant="primary" leading="plus" onClick={props.onNew}>
-              New {props.noun}
-            </Button>
+            <Show when={props.onNew}>
+              {(onNew) => (
+                <Button variant="primary" leading="plus" onClick={onNew()}>
+                  New {props.noun}
+                </Button>
+              )}
+            </Show>
           </Row>
         }
       />
