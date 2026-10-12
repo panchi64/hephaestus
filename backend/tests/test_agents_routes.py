@@ -91,3 +91,58 @@ async def test_a_stored_agent_shadows_a_builtin_of_the_same_name():
         listed = {a["id"]: a for a in (await client.get("/agents")).json()}
         assert listed[agent_id]["active"] is True
         assert listed["builtin:reviewer"]["active"] is False
+
+
+async def test_an_exported_agent_imports_back_as_a_draft():
+    async with client_app() as (client, _app):
+        made = (
+            await client.post(
+                "/agents",
+                json={
+                    **_BODY,
+                    "tools": ["files"],
+                    "deny_tools": ["shell"],
+                    "permission_ceiling": "plan",
+                    "workspace": "own",
+                    "request_limit": 12,
+                    "can_delegate": True,
+                },
+            )
+        ).json()
+        exported = await client.get(f"/agents/{made['id']}/export")
+        assert exported.status_code == 200
+        assert 'filename="scout.md"' in exported.headers["content-disposition"]
+        await client.delete(f"/agents/{made['id']}")
+
+        imported = await client.post(
+            "/agents/import", files={"file": ("scout.md", exported.content, "text/markdown")}
+        )
+        assert imported.status_code == 201
+        body = imported.json()
+        assert body["published"] is False
+        assert {k: body[k] for k in ("name", "tools", "deny_tools", "workspace")} == {
+            "name": "scout",
+            "tools": ["files"],
+            "deny_tools": ["shell"],
+            "workspace": "own",
+        }
+        assert body["permission_ceiling"] == "plan"
+        assert body["request_limit"] == 12
+        assert body["can_delegate"] is True
+        assert body["instructions"] == "Look around."
+
+
+async def test_a_builtin_exports_as_an_agent_file():
+    async with client_app() as (client, _app):
+        exported = await client.get("/agents/builtin:reviewer/export")
+        assert exported.status_code == 200
+        assert exported.text.startswith("---\nname: reviewer\n")
+
+
+async def test_an_unreadable_import_is_a_422():
+    async with client_app() as (client, _app):
+        resp = await client.post(
+            "/agents/import", files={"file": ("x.md", b"no frontmatter here", "text/markdown")}
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["field"] == "file"

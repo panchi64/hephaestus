@@ -7,9 +7,10 @@ endpoint because it is the boundary between a draft and instructions the model a
 
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 
 from core.exceptions import AgentValidationError, NotFoundError
@@ -17,9 +18,12 @@ from routes import deps
 from routes.deps import OPERATOR_ID
 from services.agents import BUILTIN, AgentDefinition, ToolAccess, project_agents
 from services.agents.definition import AgentSource, WorkspacePolicy
+from services.agents.files import render_agent_file
 from services.permissions import PermissionLevel
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+_IMPORT_MAX_BYTES = 64 * 1024
 
 _READ_ONLY_SOURCES: frozenset[str] = frozenset({"builtin", "project", "plugin"})
 
@@ -83,16 +87,40 @@ async def list_agents(request: Request, project_id: str | None = None) -> list[A
 async def get_agent(request: Request, agent_id: str, project_id: str | None = None) -> AgentOut:
     root = await deps.composer_root(request, project_id, None)
     effective = await deps.agents(request).agents(OPERATOR_ID, project_root=root)
-    source, _, name = agent_id.partition(":")
-    if source == "builtin":
-        agent = next((a for a in BUILTIN if a.name == name), None)
-    elif source == "project":
-        agent = next((a for a in project_agents(root) if a.name == name), None) if root else None
-    else:
-        agent = await deps.agent_store(request).get(OPERATOR_ID, agent_id)
-    if agent is None:
-        raise NotFoundError("agent not found")
+    agent = await _find(request, agent_id, root)
     return _out(agent, active=effective.get(agent.name) == agent)
+
+
+@router.get("/{agent_id}/export")
+async def export_agent(request: Request, agent_id: str, project_id: str | None = None) -> Response:
+    """The agent as a `.claude/agents` file, which a project or another installation reads."""
+    root = await deps.composer_root(request, project_id, None)
+    agent = await _find(request, agent_id, root)
+    return Response(
+        content=render_agent_file(agent),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{agent.name}.md"'},
+    )
+
+
+@router.post("/import", response_model=AgentOut, status_code=201)
+async def import_agent(request: Request, file: Annotated[UploadFile, File()]) -> AgentOut:
+    """Import an agent file as a draft."""
+    content = await file.read(_IMPORT_MAX_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=422, detail="file is empty")
+    if len(content) > _IMPORT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="an agent file is at most 64 KB")
+    try:
+        text = content.decode("utf-8")
+        agent = await deps.agent_store(request).import_file(
+            OPERATOR_ID, text, filename=file.filename or "agent.md"
+        )
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=422, detail="an agent file is UTF-8 text") from None
+    except AgentValidationError as exc:
+        raise _invalid(exc) from None
+    return await _resolved(request, agent)
 
 
 @router.post("", response_model=AgentOut, status_code=201)
@@ -130,6 +158,19 @@ async def unpublish_agent(request: Request, agent_id: str) -> AgentOut:
 @router.delete("/{agent_id}", status_code=204)
 async def delete_agent(request: Request, agent_id: str) -> None:
     await deps.agent_store(request).delete(OPERATOR_ID, agent_id)
+
+
+async def _find(request: Request, agent_id: str, root: Path | None) -> AgentDefinition:
+    source, _, name = agent_id.partition(":")
+    if source == "builtin":
+        agent = next((a for a in BUILTIN if a.name == name), None)
+    elif source == "project":
+        agent = next((a for a in project_agents(root) if a.name == name), None) if root else None
+    else:
+        agent = await deps.agent_store(request).get(OPERATOR_ID, agent_id)
+    if agent is None:
+        raise NotFoundError("agent not found")
+    return agent
 
 
 async def _resolved(request: Request, agent: AgentDefinition) -> AgentOut:

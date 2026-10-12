@@ -21,6 +21,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic_ai_harness.repo_context import RepoContext
 
 from core.frontmatter import FrontmatterError, split_frontmatter
@@ -166,8 +167,36 @@ def parse_agent_file(text: str, *, name: str) -> AgentDefinition:
         tools=_declared_tools(fields),
         permission_ceiling=_declared_ceiling(fields, name=spec_name),
         workspace=_declared_workspace(fields, name=spec_name),
+        request_limit=_positive(fields.get("request-limit"), int),
+        wall_clock_timeout_s=_positive(fields.get("wall-clock-timeout"), float),
+        can_delegate=fields.get("can-delegate") is True,
+        max_depth=_positive(fields.get("max-depth"), int),
         source="project",
     )
+
+
+def render_agent_file(agent: AgentDefinition) -> str:
+    """``agent`` as an agent file that :func:`parse_agent_file` reads back. The model is
+    left out: it names an endpoint of this installation."""
+    front: dict[str, Any] = {"name": agent.name, "description": agent.description}
+    if agent.tools.allow is not None:
+        front["tools"] = ", ".join(sorted(agent.tools.allow))
+    if agent.tools.deny:
+        front["disallowed-tools"] = ", ".join(sorted(agent.tools.deny))
+    if agent.permission_ceiling is not None:
+        front["permission"] = agent.permission_ceiling
+    if agent.workspace != "shared":
+        front["workspace"] = agent.workspace
+    if agent.request_limit is not None:
+        front["request-limit"] = agent.request_limit
+    if agent.wall_clock_timeout_s is not None:
+        front["wall-clock-timeout"] = agent.wall_clock_timeout_s
+    if agent.can_delegate:
+        front["can-delegate"] = True
+    if agent.max_depth is not None:
+        front["max-depth"] = agent.max_depth
+    dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    return f"---\n{dumped}---\n\n{agent.instructions}\n"
 
 
 def normalize_agent_name(raw: str) -> str:
@@ -292,6 +321,13 @@ def _declared_tools(fields: dict[str, Any]) -> ToolAccess:
         allow=allow if allow and not allow <= _FOREIGN_TOOLS else None,
         deny=deny if deny and not deny <= _FOREIGN_TOOLS else frozenset(),
     )
+
+
+def _positive[T: (int, float)](raw: Any, kind: type[T]) -> T | None:
+    """A positive number from frontmatter, or None for anything else."""
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or raw <= 0:
+        return None
+    return kind(raw)
 
 
 def _tool_names(raw: Any) -> frozenset[str]:

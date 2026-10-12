@@ -14,6 +14,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import fields, replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, update
@@ -31,7 +32,13 @@ from services.agents.definition import (
     ToolAccess,
     workspace_policy,
 )
-from services.agents.files import DESCRIPTION_MAX_CHARS, AgentNameError, normalize_agent_name
+from services.agents.files import (
+    DESCRIPTION_MAX_CHARS,
+    AgentFileError,
+    AgentNameError,
+    normalize_agent_name,
+    parse_agent_file,
+)
 from services.permissions import PERMISSION_LEVELS
 
 INSTRUCTIONS_MAX_CHARS = 32_000
@@ -139,6 +146,17 @@ class AgentStore:
             return self._definition(row)
 
         return await in_session(self._engine, work)
+
+    async def import_file(self, owner_id: str, text: str, *, filename: str) -> AgentDefinition:
+        """Store an agent file (``.claude/agents`` format) as a draft."""
+        try:
+            parsed = parse_agent_file(text, name=Path(filename).stem)
+        except AgentFileError as exc:
+            raise AgentValidationError("file", str(exc)) from None
+        values = {
+            name: getattr(parsed, name) for name in EDITABLE if name not in {"endpoint_id", "model"}
+        }
+        return await self.create(owner_id, values)
 
     async def set_published(
         self, owner_id: str, agent_id: str, published: bool
