@@ -53,7 +53,8 @@ A Run owns:
 - an **in-memory event buffer** so a client that disconnects and reconnects can replay what it missed (`AE-7`) — this lives only as long as the server process, which is exactly what the spec requires,
 - a background **asyncio task** tracked in a `RunRegistry`, decoupled from any client connection: closing the browser does not stop the work (`AE-7.1`),
 - **bounds**: a max-step ceiling (`AE-1.5`), optional tool-call ceiling (`AE-1.6`), an inactivity watchdog and an opt-in wall-clock limit (`XC-PERF-2`), and cancellation that takes effect at the next step boundary (`DR-3.3`, `CHAT-5`). The step ceiling and the watchdog apply to every run; the wall clock is off unless the deploy or the operator sets one, since a turn that is merely slow is a turn we want to let finish. A mode may raise the step ceiling for itself — research does — but never lower the operator's own.
-- **a lane**: concurrency is bounded per lane rather than by one shared pool — `interactive` (the operator's own turn), `background` (a scheduled task), `linked` (a thread the agent opened for itself) — picked from the run's `kind`, so unattended work can never leave a turn somebody is waiting on queued at the gate.
+- **a lane**: concurrency is bounded per lane rather than by one shared pool — `interactive` (the operator's own turn), `background` (a scheduled task), `linked` (a thread the agent opened for itself) — picked from the run's `kind`, so unattended work can never leave a turn somebody is waiting on queued at the gate,
+- **an endpoint lease**: past its lane, a run waits in line for its model endpoint's capacity and holds it for the whole turn (`runs/endpoint_gate.py`, D117), announcing its place with `run.queued`.
 
 Because every long-running feature is a Run, continuity/resume/cancel/timeout/metrics are written **once** and inherited everywhere. ⟦OPEN: D1 transport, D2 concurrency model⟧
 

@@ -125,11 +125,10 @@ class OpenAICompatProvider:
     async def model_limits(
         self, base_url: str, api_key: str | None, model: str, *, client=None
     ) -> ModelLimits:
-        # The window only: this wire treats an absent `max_tokens` as the server's own
+        # No output ceiling: this wire treats an absent `max_tokens` as the server's own
         # limit, so there is no library default to replace.
-        return ModelLimits(
-            context_window=await self.context_window(base_url, api_key, model, client=client)
-        )
+        window, slots = await llm.discover_openai_limits(base_url, model, api_key, client=client)
+        return ModelLimits(context_window=window, parallel_slots=slots)
 
     def reasoning_off(self, descriptor: reasoning.ModelDescriptor) -> ModelSettings:
         return reasoning.disable_thinking(descriptor)

@@ -14,6 +14,15 @@ class RunStarted(_Body):
     protocol_version: int = PROTOCOL_VERSION
 
 
+class RunQueued(_Body):
+    """The run is waiting for its model endpoint, at ``position`` in that endpoint's line.
+    Sent again whenever the position moves; ``run.started`` ends the wait. Added in v1.1."""
+
+    type: Literal["run.queued"] = "run.queued"
+    position: int
+    endpoint: str
+
+
 class RunEnded(_Body):
     """The closing frame for a run that reached an *expected* end.
 

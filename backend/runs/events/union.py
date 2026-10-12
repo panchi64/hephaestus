@@ -30,6 +30,7 @@ from .lifecycle import (
     LimitNotice,
     RunEnded,
     RunError,
+    RunQueued,
     RunStarted,
     StepCompleted,
     StepStarted,
@@ -58,6 +59,7 @@ from .view import ViewLive, ViewLiveStopped, ViewSnapshot
 
 EventBody = Annotated[
     RunStarted
+    | RunQueued
     | RunMetrics
     | RunEnded
     | RunError

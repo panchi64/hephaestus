@@ -51,6 +51,8 @@ class ModelLimits:
     context_window: int | None = None
     # The largest `max_tokens` one response may ask for.
     max_output_tokens: int | None = None
+    # How many requests the server runs in parallel (a llama.cpp server's slots).
+    parallel_slots: int | None = None
 
 
 @runtime_checkable

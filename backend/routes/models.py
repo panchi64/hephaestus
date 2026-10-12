@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from models.registry import ModelEndpoint
@@ -34,6 +34,7 @@ class EndpointCreate(BaseModel):
     vision: bool = False
     thinking: bool = False
     enabled: bool = True
+    max_concurrent_runs: int | None = Field(default=None, ge=1)
 
 
 class EndpointUpdate(BaseModel):
@@ -47,6 +48,7 @@ class EndpointUpdate(BaseModel):
     vision: bool | None = None
     thinking: bool | None = None
     enabled: bool | None = None
+    max_concurrent_runs: int | None = Field(default=None, ge=0)  # 0 clears it
 
 
 class EndpointView(BaseModel):
@@ -64,6 +66,8 @@ class EndpointView(BaseModel):
     native_tools: bool
     vision: bool
     thinking: bool
+    # None ⇒ the server's reported slot count, or unlimited.
+    max_concurrent_runs: int | None
     # Disable-without-delete + last connection-test health. ``last_*`` carry the
     # backend's verdict verbatim so the catalog list shows at-a-glance status without
     # a probe per row; they are null until the endpoint has been tested.
@@ -86,6 +90,7 @@ def _view(endpoint: ModelEndpoint) -> EndpointView:
         native_tools=endpoint.native_tools,
         vision=endpoint.vision,
         thinking=endpoint.thinking,
+        max_concurrent_runs=endpoint.max_concurrent_runs,
         enabled=endpoint.enabled,
         last_status=endpoint.last_status,
         last_error_category=endpoint.last_error_category,

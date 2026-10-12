@@ -33,7 +33,9 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.settings import ModelSettings
 
 from core.exceptions import DegradedCapabilityError
+from runs import Endpoint, EndpointGate
 from services import reasoning
+from services.gated_model import EndpointGatedModel
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,22 @@ class EndpointSpec:
     native_tools: bool = True
     vision: bool = False
     thinking: bool = False
+    # The stored endpoint this spec was resolved from; None for a spec built by hand.
+    endpoint_id: str | None = None
+    name: str = ""
+    # The operator's cap on concurrent runs, else the slot count the server reports.
+    max_concurrent_runs: int | None = None
+    parallel_slots: int | None = None
+
+    def gate_endpoint(self) -> Endpoint | None:
+        """This endpoint as the run gate sees it, or None when it is not a stored one."""
+        if self.endpoint_id is None:
+            return None
+        return Endpoint(
+            id=self.endpoint_id,
+            name=self.name,
+            capacity=self.max_concurrent_runs or self.parallel_slots,
+        )
 
 
 def descriptor_of(spec: EndpointSpec) -> reasoning.ModelDescriptor:
@@ -99,16 +117,20 @@ def build_model(spec: EndpointSpec) -> Model:
     return get_provider(spec.provider).build_model(spec)
 
 
-def build_chain(specs: Sequence[EndpointSpec]) -> Model:
+def build_chain(specs: Sequence[EndpointSpec], gate: EndpointGate | None = None) -> Model:
     """Build a model for an ordered fallback chain.
 
     One endpoint resolves to a plain model; two or more are wrapped in
     ``FallbackModel`` (tried in order on connection/HTTP failure — pre-answer
-    only, per AE-5.3). An empty chain is a degraded capability.
+    only, per AE-5.3). An empty chain is a degraded capability. With a ``gate``, the
+    primary's requests wait in its endpoint's line (`services/gated_model.py`).
     """
     if not specs:
         raise DegradedCapabilityError("no endpoints in the model chain")
     models = [build_model(spec) for spec in specs]
+    primary = specs[0].gate_endpoint()
+    if gate is not None and primary is not None:
+        models[0] = EndpointGatedModel(models[0], gate, primary)
     if len(models) == 1:
         return models[0]
     return FallbackModel(*models)
@@ -262,7 +284,20 @@ async def discover_openai_context_window(
     *,
     client: httpx.AsyncClient | None = None,
 ) -> int | None:
-    """The context window an OpenAI-wire server reports for ``model``, or None.
+    """The context window an OpenAI-wire server reports for ``model``, or None."""
+    window, _ = await discover_openai_limits(base_url, model, api_key, client=client)
+    return window
+
+
+async def discover_openai_limits(
+    base_url: str,
+    model: str,
+    api_key: str | None = None,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[int | None, int | None]:
+    """The context window an OpenAI-wire server reports for ``model``, and the number of
+    parallel slots it runs; None for whichever it does not say.
 
     **Never raises.** A window we can't discover is not an error — it is a fact the
     server didn't state, and every caller's answer to that is the same (fall back to
@@ -308,11 +343,12 @@ async def discover_openai_context_window(
     )
     if posture is not None:
         logger.debug("prompt cache posture base=%s %s", base_url, posture.summary())
+    slots = posture.total_slots if posture is not None else None
     if loaded is not None:
-        return loaded
+        return loaded, slots
     if posture is not None and posture.context_window is not None:
-        return posture.context_window
-    return maximum
+        return posture.context_window, slots
+    return maximum, slots
 
 
 #: Settings a llama.cpp-derived server may report that decide what happens to a slot's KV

@@ -1194,7 +1194,7 @@ async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> 
     conversation_id = run.conversation_id
     assert conversation_id is not None  # noqa: S101 — set by the submit below
     try:
-        model, _, _, context_window, vision = await thread_models(
+        model, _, _, context_window, vision, _ = await thread_models(
             request, conversation_id, pick.endpoint_id, pick.model
         )
     except HTTPException as exc:

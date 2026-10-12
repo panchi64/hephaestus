@@ -19,7 +19,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from .events import LimitNotice, RunEnded, RunError, RunStarted, now_utc
+from .endpoint_gate import Endpoint, EndpointGate
+from .events import LimitNotice, RunEnded, RunError, RunQueued, RunStarted, now_utc
 from .lanes import LaneGate, LaneLimits
 from .run import Orchestrator, Run, RunStatus
 from .stream import RunStream
@@ -104,11 +105,17 @@ def _timeout_message(kind: str, bound_s: float | None) -> str:
     return f"{kind} timeout exceeded"  # defensive fallback for an unrecognized kind
 
 
+def _queued(run: Run, position: int) -> None:
+    if run.endpoint is not None and not run.stream.closed:
+        run.emit(RunQueued(position=position, endpoint=run.endpoint.name))
+
+
 class RunRegistry:
     def __init__(
         self,
         *,
         lanes: LaneLimits | None = None,
+        endpoints: EndpointGate | None = None,
         wall_clock_timeout_s: float | None = None,
         inactivity_timeout_s: float | None = None,
         max_retained: int = 200,
@@ -116,6 +123,7 @@ class RunRegistry:
     ) -> None:
         self._runs: dict[str, Run] = {}
         self._lanes = LaneGate(lanes)
+        self._endpoints = endpoints or EndpointGate()
         self._wall_clock = wall_clock_timeout_s
         self._inactivity = inactivity_timeout_s
         self._max_retained = max_retained
@@ -130,6 +138,10 @@ class RunRegistry:
         # attention-surface emit policy over this; nothing in `runs/` imports
         # `services/`). Synchronous and best-effort: see `_fire_terminal`.
         self._on_terminal = on_terminal
+
+    @property
+    def endpoints(self) -> EndpointGate:
+        return self._endpoints
 
     # --- lookup ---------------------------------------------------------------
     def get(self, run_id: str) -> Run | None:
@@ -195,6 +207,7 @@ class RunRegistry:
         orchestrator: Orchestrator,
         run_id: str | None = None,
         conversation_id: str | None = None,
+        endpoint: Endpoint | None = None,
         wall_clock_timeout_s: float | None | object = _UNSET,
         inactivity_timeout_s: float | None | object = _UNSET,
     ) -> Run:
@@ -211,6 +224,7 @@ class RunRegistry:
             kind=kind,
             owner_id=owner_id,
             conversation_id=conversation_id,
+            endpoint=endpoint,
             stream=RunStream(),
         )
         self._runs[run.id] = run
@@ -338,8 +352,14 @@ class RunRegistry:
     ) -> None:
         try:
             # Bursts wait here while ``queued`` — bounded concurrency, in this run's own
-            # lane, so a saturated lane never holds up work in another one.
-            async with self._lanes.slot(run.kind):
+            # lane, so a saturated lane never holds up work in another one; then in line
+            # for the run's model endpoint (`runs/endpoint_gate.py`).
+            async with (
+                self._lanes.slot(run.kind),
+                self._endpoints.lease(
+                    run.endpoint, run.kind, on_position=lambda position: _queued(run, position)
+                ),
+            ):
                 run.status = RunStatus.running
                 run.touch()
                 if not resuming:

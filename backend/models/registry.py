@@ -61,6 +61,9 @@ class ModelEndpoint(SQLModel, table=True):
     # flags, role memberships) but is skipped by resolution and hidden from the
     # picker — so a flaky provider can be parked, then restored, without re-setup.
     enabled: bool = True
+    # How many runs may use this endpoint at once; the rest queue (`runs/endpoint_gate.py`).
+    # None ⇒ the server's reported slot count, or unlimited when it reports none.
+    max_concurrent_runs: int | None = None
     # Last connection-test outcome — operator-facing health, all **cleartext**
     # structural metadata (never the key). ``last_status`` is ``"untested"`` until
     # the first probe; ``last_error_category`` is a stable machine token the UI maps

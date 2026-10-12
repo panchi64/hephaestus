@@ -30,6 +30,7 @@ from core.db import get_owned, in_session
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
 from models.registry import ModelEndpoint, ModelRole
+from runs import Endpoint, EndpointGate
 from services import embeddings, llm
 from services.providers import DEFAULT_PROVIDER_ID, get_provider
 from services.providers.base import ModelLimits
@@ -67,6 +68,8 @@ class ResolvedModel:
     reasoning_off: ModelSettings
     context_window: int | None = None
     vision: bool = False
+    #: The primary endpoint, as the run gate leases it.
+    endpoint: Endpoint | None = None
 
 
 @dataclass(frozen=True)
@@ -85,10 +88,16 @@ class EndpointHealth:
 
 class ModelRegistry:
     def __init__(
-        self, engine: Engine, vault: Vault, http_client: httpx.AsyncClient | None = None
+        self,
+        engine: Engine,
+        vault: Vault,
+        http_client: httpx.AsyncClient | None = None,
+        gate: EndpointGate | None = None,
     ) -> None:
         self._engine = engine
         self._vault = vault
+        # The per-endpoint run gate the resolved models' requests wait in; None ⇒ ungated.
+        self._gate = gate
         # Pooled client for provider model discovery; None ⇒ a transient client
         # per call (the path tests take, where discovery is monkeypatched out).
         self._http_client = http_client
@@ -134,6 +143,7 @@ class ModelRegistry:
         vision: bool = False,
         thinking: bool = False,
         enabled: bool = True,
+        max_concurrent_runs: int | None = None,
     ) -> ModelEndpoint:
         self._validate_provider(provider, has_key=bool(api_key))
         endpoint = ModelEndpoint(
@@ -148,6 +158,7 @@ class ModelRegistry:
             vision=vision,
             thinking=thinking,
             enabled=enabled,
+            max_concurrent_runs=max_concurrent_runs,
         )
 
         def work(session: Session) -> ModelEndpoint:
@@ -166,7 +177,8 @@ class ModelRegistry:
     ) -> ModelEndpoint:
         """Apply field changes. ``api_key`` (plaintext, or "" to clear) is sealed
         before storage; ``model`` accepts "" to clear the default back to null;
-        every other key maps straight onto the column."""
+        ``max_concurrent_runs`` accepts 0 to clear it; every other key maps straight
+        onto the column."""
         current = await self.get_endpoint(owner_id, endpoint_id)  # ownership check
         # The provider/key pairing is validated against the *effective* state after
         # the change — switching to a key-requiring provider without a stored key, or
@@ -187,6 +199,8 @@ class ModelRegistry:
                 elif key == "model":
                     # An explicit empty value clears the default back to discovery-only.
                     endpoint.model = str(value) if value else None
+                elif key == "max_concurrent_runs" and value == 0:
+                    endpoint.max_concurrent_runs = None
                 elif value is not None:
                     setattr(endpoint, key, value)
             endpoint.updated_at = datetime.now(UTC)
@@ -483,6 +497,7 @@ class ModelRegistry:
                         else limits.context_window
                     ),
                     max_output_tokens=limits.max_output_tokens,
+                    parallel_slots=limits.parallel_slots,
                 )
             )
         return resolved
@@ -557,13 +572,14 @@ class ModelRegistry:
         # in `services/reasoning` because a generic gateway can front any family.
         reasoning_off = get_provider(primary.provider).reasoning_off(llm.descriptor_of(primary))
         return ResolvedModel(
-            model=llm.build_chain(specs),
+            model=llm.build_chain(specs, self._gate),
             reasoning_off=reasoning_off,
             context_window=primary.context_window,
             # Vision holds only if *every* endpoint in the fallback chain can see —
             # otherwise a failover from the primary onto a text-only endpoint would be
             # handed image bytes it can't interpret. AND across the chain, not the head.
             vision=all(spec.vision for spec in specs),
+            endpoint=primary.gate_endpoint(),
         )
 
     async def resolve_background(
@@ -806,6 +822,9 @@ class ModelRegistry:
             native_tools=endpoint.native_tools,
             vision=endpoint.vision,
             thinking=endpoint.thinking,
+            endpoint_id=endpoint.id,
+            name=endpoint.name,
+            max_concurrent_runs=endpoint.max_concurrent_runs,
         )
 
     def _validate_provider(self, provider: str, *, has_key: bool) -> None:

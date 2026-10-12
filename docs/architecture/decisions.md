@@ -192,7 +192,7 @@ Surfaced while surveying the whole spec; captured here so they aren't lost. One-
   - **Versioning.** Protocol version announced in `run.started`; additive events/fields don't bump it, breaking changes do.
   - **Naming convention.** `entity.event`, **dot.lowercase**. Discrete (it *happened*) → past-tense verb (`started`, `committed`, `failed`); streaming increments → `delta`/`progress`.
   - **v1 event set:**
-    - **Run:** `run.started` · `run.metrics` · `run.ended` · `run.error`
+    - **Run:** `run.queued` (v1.1, D117) · `run.started` · `run.metrics` · `run.ended` · `run.error`
     - **Step:** `step.started` · `step.completed`
     - **Content:** `thinking.delta` · `answer.delta` (the `AE-6.3` reasoning/answer split)
     - **Tools:** `tool.started` · `tool.progress` (elapsed + partial, for slow tools) · `tool.completed` · `tool.failed`
@@ -990,3 +990,11 @@ reason: what a section is when nobody is searching must not be a function of a q
   - **One delivery road for everything.** A report or message is queued onto the recipient's running turn, or delivered by waking it; `MessageSource` gains `agent`, carrying the sender's handle, and the envelope names the sender. No tool waits on another run, so per-endpoint queueing can never deadlock a parent against its child. Every turn a spawned agent finishes reports to its parent, whether its first, one a message woke, or one the operator sent. A stopped agent is never woken again.
   - **One wake budget per tree.** `WAKE_CHAIN_LIMIT` counts unattended turns across the whole tree; the operator sending anything into any thread of it clears the count.
   - **A spawned agent can be opened as a thread.** `POST /conversations/{id}/open` clears its `ephemeral` flag, so it is listed under its parent (`conversations.parent_id`). Its workspace key is stored on the conversation, so the operator's own turns there work on the same files as its first.
+
+- **D117 — Each model endpoint has a run capacity, and runs over it wait in line 🟢 DECIDED.** `ModelEndpoint.max_concurrent_runs`; empty means the slot count a llama.cpp server reports in `/props`, or no limit when it reports none.
+  - **A run leases its primary endpoint for the whole turn**, taken in `RunRegistry._execute` after the lane slot and released at the turn's end or park. A turn is many requests over one growing prefix, and another thread's request in between costs a single-slot server the whole prefix.
+  - **Requests outside a lease take a slot each** (titles, summaries, the reviewer, a fold): the chain's primary is wrapped in `EndpointGatedModel`. A request from inside the run that holds the endpoint passes through, including from tasks the run started, but not once its lease has ended.
+  - **Order is by lane, then arrival**: interactive, then linked and wakes, then background. A run waiting announces `run.queued {position, endpoint}` (additive, v1.1) and again whenever its place moves.
+  - **A saturated endpoint queues; it never falls through to a fallback**, which is for failures. Fallback endpoints are not gated at all. The one wait inside a turn is a utility request, and every run's utility requests go to the one `utility` endpoint or to its own main, so the runs holding the `utility` endpoint never wait back and no cycle can form.
+  - **No deadlock across a delegation tree**, because no tool awaits another run (D116): a parent's turn ends before its child's starts on a one-slot endpoint, and the child's report wakes the parent afterwards.
+  - **Rejected: pydantic-ai's `ConcurrencyLimitedModel`.** Its limiter's `release()` takes no argument, so a request that passed through under a lease can't be told apart from one that took a slot.

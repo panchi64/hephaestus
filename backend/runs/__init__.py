@@ -16,6 +16,7 @@ See docs/architecture/README.md (Pillars I & II).
 from __future__ import annotations
 
 from . import events
+from .endpoint_gate import Endpoint, EndpointGate
 from .events import (
     DEFAULT_CONTEXT_THRESHOLDS,
     INJECTED_TEXT_LIMIT,
@@ -56,6 +57,7 @@ from .events import (
     RunEnded,
     RunError,
     RunMetrics,
+    RunQueued,
     RunStarted,
     StepCompleted,
     StepStarted,
@@ -87,6 +89,8 @@ __all__ = [
     "RunRegistry",
     "RunTimeout",
     "LaneLimits",
+    "Endpoint",
+    "EndpointGate",
     "LANE_BY_KIND",
     "CHAT_TURN_KINDS",
     "lane_for",
@@ -111,6 +115,7 @@ __all__ = [
     "parse_last_event_id",
     # event bodies (re-exported for producers)
     "RunStarted",
+    "RunQueued",
     "RunMetrics",
     "DEFAULT_CONTEXT_THRESHOLDS",
     "ContextComposition",

@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from .endpoint_gate import Endpoint
 from .events import (
     DEFAULT_CONTEXT_THRESHOLDS,
     ContextThresholds,
@@ -96,6 +97,8 @@ class Run:
     # has only a conversation id (e.g. after a page reload) find the in-flight run
     # to reattach to — see ``RunRegistry.active_run_for``.
     conversation_id: str | None = None
+    # The model endpoint this run's turn leases while it executes (`runs/endpoint_gate.py`).
+    endpoint: Endpoint | None = None
     # The stored id of the operator's prompt this run is answering — written down by the
     # orchestrator as the turn begins (or, for a regenerate, the request it re-answers).
     # What lets a client that opens the thread mid-run find the row its streaming answer

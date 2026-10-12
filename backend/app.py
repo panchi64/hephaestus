@@ -241,7 +241,9 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # stopped after the runs (which kill their own commands), so it only catches strays.
     lifecycle.on_stop("host-process-groups", stop_all_groups)
     # The model registry — role→endpoint resolution + the endpoint catalog.
-    registry = ModelRegistry(engine, vault, http_client=discovery_client)
+    registry = ModelRegistry(
+        engine, vault, http_client=discovery_client, gate=app.state.runs.endpoints
+    )
     app.state.models = registry
     # One embedder over the registry's embedding role, shared by long-term memory and
     # cross-chat search; degrades to keyword recall when no embedding endpoint is set.

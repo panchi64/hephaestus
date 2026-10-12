@@ -13,11 +13,15 @@ rather than letting it run unguarded.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import httpx
 import pytest
 
 from core.vault import Vault
+from runs import Endpoint
 from services import llm
+from services.providers import get_provider
 from services.providers.anthropic import PROVIDER as ANTHROPIC
 from services.providers.base import ModelLimits
 from services.providers.google import PROVIDER as GOOGLE
@@ -488,6 +492,29 @@ async def test_the_props_response_also_yields_the_servers_cache_posture():
     # carries a given knob has moved between builds and neither placement is promised.
     assert posture.cache_settings == {"cache_ram": -1, "cache_reuse": 256}
     assert "cache_ram=-1" in posture.summary()
+
+
+async def test_a_llama_cpp_servers_slot_count_becomes_its_endpoints_run_capacity():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/props":
+            return httpx.Response(
+                200, json={"default_generation_settings": {"n_ctx": 8192}, "total_slots": 1}
+            )
+        return httpx.Response(404)
+
+    async with _client(handler) as client:
+        limits = await get_provider("openai-compatible").model_limits(
+            "http://s/v1", None, "m", client=client
+        )
+
+    assert limits == ModelLimits(context_window=8192, parallel_slots=1)
+    spec = llm.EndpointSpec(
+        base_url="http://s/v1", model="m", endpoint_id="ep", name="local", parallel_slots=1
+    )
+    assert spec.gate_endpoint() == Endpoint(id="ep", name="local", capacity=1)
+    assert replace(spec, max_concurrent_runs=3).gate_endpoint() == Endpoint(
+        id="ep", name="local", capacity=3
+    )
 
 
 async def test_a_server_that_mentions_no_cache_settings_says_so_rather_than_guessing():

@@ -16,7 +16,9 @@ from core.db import in_session, init_db, make_engine
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
 from models.registry import ModelRole
+from runs import Endpoint, EndpointGate
 from services import embeddings, llm
+from services.gated_model import EndpointGatedModel
 from services.registry import ModelRegistry
 
 from ._helpers import client_app
@@ -70,6 +72,31 @@ async def test_multi_endpoint_chain_wraps_in_fallback():
     model = await _resolve(reg, "main", owner_id=OWNER)
     assert isinstance(model, FallbackModel)
     assert len(model.models) == 2
+
+
+async def test_a_gated_registry_wraps_the_primary_and_names_its_capacity():
+    engine = make_engine("sqlite:///:memory:")
+    init_db(engine)
+    vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
+    await vault.setup("pw")
+    reg = ModelRegistry(engine, vault, gate=EndpointGate())
+    primary = await reg.create_endpoint(
+        OWNER, name="a", base_url="http://a/v1", model="m1", max_concurrent_runs=2
+    )
+    backup = await reg.create_endpoint(OWNER, name="b", base_url="http://b/v1", model="m2")
+    await reg.set_role(OWNER, "main", [primary.id, backup.id])
+
+    resolved = await reg.resolve_detailed("main", owner_id=OWNER)
+    assert resolved.endpoint == Endpoint(id=primary.id, name="a", capacity=2)
+    assert isinstance(resolved.model, FallbackModel)
+    head, tail = resolved.model.models
+    assert isinstance(head, EndpointGatedModel)
+    assert isinstance(tail, OpenAIChatModel)
+
+    await reg.update_endpoint(OWNER, primary.id, max_concurrent_runs=0)
+    cleared = await reg.resolve_detailed("main", owner_id=OWNER)
+    assert cleared.endpoint is not None
+    assert cleared.endpoint.capacity is None
 
 
 async def test_unbound_utility_is_degraded():

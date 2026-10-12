@@ -8,7 +8,7 @@ sub-agent's wake) drives an ordinary turn through the same path a route does.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi import HTTPException
 from pydantic_ai.models import Model
@@ -26,6 +26,7 @@ from runs import (
     DEFAULT_CONTEXT_THRESHOLDS,
     ContextThresholds,
     ConversationBusyError,
+    Endpoint,
     RunRegistry,
 )
 from runs.registry import _UNSET
@@ -35,10 +36,17 @@ from services.registry import ModelRegistry
 from services.uploads import UploadStore
 from tools import InstructionProvider, PromptContextProvider
 
-#: What :func:`resolve_turn_models` resolves: the main model, the background model, its
-#: reasoning-off settings, the main model's context window, and whether the main model
-#: reads images.
-type TurnModels = tuple[Model, Model, ModelSettings | None, int | None, bool]
+
+class TurnModels(NamedTuple):
+    """What :func:`resolve_turn_models` resolves."""
+
+    main: Model
+    utility: Model
+    utility_settings: ModelSettings | None
+    context_window: int | None
+    vision: bool
+    #: The main model's primary endpoint, which the turn's run leases.
+    endpoint: Endpoint | None = None
 
 
 async def resolve_turn_models(
@@ -111,7 +119,9 @@ async def resolve_turn_models(
         )
         utility_model = background.model
         title_settings = background.reasoning_off
-    return (resolved, utility_model, title_settings, main.context_window, main.vision)
+    return TurnModels(
+        resolved, utility_model, title_settings, main.context_window, main.vision, main.endpoint
+    )
 
 
 
@@ -167,7 +177,7 @@ def compose_turn(
     identical orchestrator; the kind decides only which concurrency lane the run waits in
     (``runs/lanes.py``), so unattended work can never hold up the turn someone is sitting
     in front of."""
-    resolved, utility_model, background_settings, context_window, vision = models
+    resolved, utility_model, background_settings, context_window, vision, endpoint = models
     orchestrator = build_chat_orchestrator(
         prompt,
         model=resolved,
@@ -217,6 +227,7 @@ def compose_turn(
             owner_id=owner_id,
             orchestrator=orchestrator,
             conversation_id=conversation_id,
+            endpoint=endpoint,
             # The operator's inactivity bound, resolved by the interactive caller; the
             # unattended task path omits it (_UNSET) and the registry default applies.
             inactivity_timeout_s=inactivity_timeout_s,
