@@ -11,6 +11,7 @@ import {
   Tabs,
   Text,
   Toggle,
+  Tooltip,
   toast,
   type IconName,
   type MenuItem,
@@ -47,6 +48,10 @@ export function LibraryDetail(props: {
   published: boolean;
   /** Absent where the item cannot be published (read-only). */
   onTogglePublished?: () => void;
+  /** Present for items that can be pinned; the toggle only applies while published. */
+  pinned?: boolean;
+  onTogglePinned?: () => void;
+  pinHint?: string;
   canEdit: boolean;
   startEditing?: boolean;
   menuItems: MenuItem[];
@@ -200,6 +205,16 @@ export function LibraryDetail(props: {
                     checked={props.published}
                     onChange={() => props.onTogglePublished?.()}
                   />
+                </Show>
+                <Show when={props.onTogglePinned}>
+                  <Tooltip label={props.pinHint ?? ""} side="bottom">
+                    <Toggle
+                      label="Pin to brief"
+                      checked={props.pinned}
+                      disabled={!props.published}
+                      onChange={() => props.onTogglePinned?.()}
+                    />
+                  </Tooltip>
                 </Show>
                 <Show when={props.canEdit}>
                   <Button

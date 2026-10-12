@@ -96,3 +96,16 @@ describe("one-line form, for places with no room for a card", () => {
     expect(toolRowLabel(tool({ name: "builtin_now" }))).toBe("Clock");
   });
 });
+
+describe("platform search and read", () => {
+  test("search leads with its query and counts hits", () => {
+    expect(toolPresentation("platform_search")).toEqual({
+      icon: "search",
+      label: "Search platform",
+    });
+    expect(toolPresentation("platform_read")).toEqual({
+      icon: "library",
+      label: "Read",
+    });
+  });
+});

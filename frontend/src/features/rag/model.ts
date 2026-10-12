@@ -20,8 +20,8 @@ export interface RagSource {
   label: string;
   /** Row icon — surfaces echo their nav icon; folders fall back to a path glyph. */
   icon: IconName;
-  /** Surfaces link to where they're managed, when they have a page of their own. */
-  href?: string;
+  /** Surfaces link to where they're managed; null for one with no page of its own. */
+  href?: string | null;
   docCount: number;
   status: RagIndexStatus;
   /** Null for surfaces that report no timestamp and folders not yet indexed. */

@@ -15,6 +15,7 @@ interface SkillSummaryOut {
   name: string;
   description: string;
   published: boolean;
+  pinned: boolean;
   source: string;
   fileCount: number;
   sizeBytes: number;
@@ -57,6 +58,7 @@ function toSummary(dto: SkillSummaryOut): SkillSummary {
     name: dto.name,
     description: dto.description,
     published: dto.published,
+    pinned: dto.pinned,
     source: toSource(dto.source),
     fileCount: dto.fileCount,
     sizeBytes: dto.sizeBytes,
@@ -75,6 +77,7 @@ function toSkill(dto: SkillOut): Skill {
     name: dto.name,
     description: dto.description,
     published: dto.published,
+    pinned: dto.pinned,
     source: toSource(dto.source),
     fileCount: files.length,
     sizeBytes: files.reduce((total, f) => total + f.sizeBytes, 0),
@@ -207,6 +210,19 @@ export async function setSkillPublished(
 ): Promise<Skill> {
   const dto = await api.post<SkillOut>(
     `/skills/${id}/${published ? "publish" : "unpublish"}`,
+  );
+  refreshSkills();
+  refreshSkillDetail();
+  return toSkill(dto);
+}
+
+/** Name a published skill in every agent brief, or leave it to be found by search. */
+export async function setSkillPinned(
+  id: string,
+  pinned: boolean,
+): Promise<Skill> {
+  const dto = await api.post<SkillOut>(
+    `/skills/${id}/${pinned ? "pin" : "unpin"}`,
   );
   refreshSkills();
   refreshSkillDetail();

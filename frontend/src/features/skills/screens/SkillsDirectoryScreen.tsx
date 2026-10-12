@@ -11,11 +11,13 @@ import {
   deleteSkill,
   exportSkill,
   importSkill,
+  setSkillPinned,
   setSkillPublished,
   skillErrorMessage,
   useSkills,
 } from "../data";
 import {
+  PIN_DRAFT_HINT,
   skillSourceFlag,
   skillStatusFlag,
   skillStatusLabel,
@@ -117,6 +119,36 @@ export function SkillsDirectoryScreen(props: {
     );
   }
 
+  async function handlePinToggle(skill: SkillSummary): Promise<void> {
+    const next = !skill.pinned;
+    try {
+      await setSkillPinned(skill.id, next);
+    } catch (err) {
+      toast.error(
+        skillErrorMessage(
+          err,
+          `Could not ${next ? "pin" : "unpin"} "${skill.name}"`,
+        ),
+      );
+      return;
+    }
+    toast.success(
+      next
+        ? `"${skill.name}" pinned — named in every conversation.`
+        : `"${skill.name}" unpinned — found by search only.`,
+      {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            setSkillPinned(skill.id, !next).catch(() =>
+              toast.error("Could not undo"),
+            );
+          },
+        },
+      },
+    );
+  }
+
   async function handleExport(skill: SkillSummary): Promise<void> {
     try {
       await exportSkill(skill.id, skill.name);
@@ -172,6 +204,9 @@ export function SkillsDirectoryScreen(props: {
           <StatusFlag status={skillStatusFlag(skill.published)}>
             {skillStatusLabel(skill.published)}
           </StatusFlag>
+          <Show when={skill.pinned}>
+            <StatusFlag status="idle">PINNED</StatusFlag>
+          </Show>
           <Text variant="micro" tone="dim">
             {relativeTime(skill.updatedAt)}
           </Text>
@@ -192,6 +227,13 @@ export function SkillsDirectoryScreen(props: {
           label: skill.published ? "Unpublish" : "Publish",
           icon: "check",
           onSelect: () => void handlePublishToggle(skill),
+        },
+        {
+          label: skill.pinned ? "Unpin" : "Pin to brief",
+          icon: "check",
+          disabled: !skill.published,
+          hint: PIN_DRAFT_HINT,
+          onSelect: () => void handlePinToggle(skill),
         },
         {
           label: "Delete",

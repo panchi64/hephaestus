@@ -147,17 +147,6 @@ const TOOLS: Record<string, ToolEntry> = {
     terminal: true,
   },
 
-  conversations_read: {
-    icon: "chat",
-    label: "Read thread",
-    keys: ["conversation_id"],
-  },
-  conversations_search: {
-    icon: "chat",
-    label: "Search threads",
-    keys: ["query"],
-    noun: ["thread", "threads"],
-  },
   corpus_retrieve: {
     icon: "library",
     label: "Retrieve",
@@ -223,6 +212,14 @@ const TOOLS: Record<string, ToolEntry> = {
   plan_enter: { icon: "note", label: "Enter plan mode" },
   plan_read: { icon: "note", label: "Read plan" },
   plan_submit: { icon: "note", label: "Submit plan" },
+
+  platform_read: { icon: "library", label: "Read", keys: ["ref"] },
+  platform_search: {
+    icon: "search",
+    label: "Search platform",
+    keys: ["query"],
+    noun: ["hit", "hits"],
+  },
 
   project_active: { icon: "layers", label: "Active project" },
   project_list: {

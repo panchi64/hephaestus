@@ -23,11 +23,14 @@ import {
   getSkillFileText,
   putSkillDocument,
   putSkillFile,
+  setSkillPinned,
   setSkillPublished,
   skillErrorMessage,
   useSkillDetail,
 } from "../data";
 import {
+  PIN_DRAFT_HINT,
+  PIN_HINT,
   skillSourceFlag,
   skillStatusFlag,
   skillStatusLabel,
@@ -111,6 +114,25 @@ export function SkillDetailScreen(props: {
     }
   }
 
+  async function togglePinned(s: Skill): Promise<void> {
+    const next = !s.pinned;
+    try {
+      await setSkillPinned(s.id, next);
+      toast.success(
+        next
+          ? "Pinned — named in every conversation."
+          : "Unpinned — found by search only.",
+      );
+    } catch (err) {
+      toast.error(
+        skillErrorMessage(
+          err,
+          `Could not ${next ? "pin" : "unpin"} the skill.`,
+        ),
+      );
+    }
+  }
+
   async function remove(s: Skill): Promise<void> {
     const ok = await confirm({
       title: `Delete "${s.name}"?`,
@@ -185,10 +207,16 @@ export function SkillDetailScreen(props: {
                 <StatusFlag status={skillStatusFlag(s().published)}>
                   {skillStatusLabel(s().published)}
                 </StatusFlag>
+                <Show when={s().pinned}>
+                  <StatusFlag status="idle">PINNED</StatusFlag>
+                </Show>
               </>
             }
             published={s().published}
             onTogglePublished={() => void togglePublished(s())}
+            pinned={s().pinned}
+            onTogglePinned={() => void togglePinned(s())}
+            pinHint={PIN_HINT}
             onExport={() => void exportIt(s())}
             canEdit
             startEditing={props.editing}
@@ -197,6 +225,13 @@ export function SkillDetailScreen(props: {
                 label: s().published ? "Unpublish" : "Publish",
                 icon: "check",
                 onSelect: () => void togglePublished(s()),
+              },
+              {
+                label: s().pinned ? "Unpin" : "Pin to brief",
+                icon: "check",
+                disabled: !s().published,
+                hint: PIN_DRAFT_HINT,
+                onSelect: () => void togglePinned(s()),
               },
               {
                 label: "Delete",

@@ -25,6 +25,9 @@ export interface SkillSummary {
   description: string;
   /** The trust boundary: only a published skill is visible to the agent. */
   published: boolean;
+  /** Named in every agent brief; an unpinned published skill is found by search.
+   *  Only meaningful while published. */
+  pinned: boolean;
   source: SkillSource;
   fileCount: number;
   sizeBytes: number;
@@ -64,6 +67,14 @@ export const SKILL_NAME_PATTERN = /^[a-z0-9-]+$/;
 export function skillStatusFlag(published: boolean): Status {
   return published ? "nominal" : "idle";
 }
+
+/** What a pin means, for the toggle's tooltip. */
+export const PIN_HINT =
+  "Pinned skills are named in every conversation; others are found by search.";
+
+/** Why the pin control is off for a draft. */
+export const PIN_DRAFT_HINT =
+  "Publish the skill first — a draft is never shown to the agent.";
 
 export function skillStatusLabel(published: boolean): string {
   return published ? "PUBLISHED" : "DRAFT";

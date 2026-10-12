@@ -158,7 +158,8 @@ export function RagConfigScreen(): JSX.Element {
    *  link) and expose their single REINDEX action as a direct icon button;
    *  folders are static rows whose three actions live behind an overflow menu. */
   function sourceRow(source: RagSource): JSX.Element {
-    const href = source.kind === "surface" ? source.href : undefined;
+    const href =
+      source.kind === "surface" ? (source.href ?? undefined) : undefined;
     const folderMenuItems: MenuItem[] = [
       {
         label: "Reindex",
