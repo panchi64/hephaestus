@@ -362,9 +362,7 @@ def _progress_hook(ctx: RunContext[RunDeps]) -> ProgressHook | None:
     async def hook(chunk: str, elapsed_s: float) -> None:
         await ctx.emit(
             RunEventEmitted(
-                body=ToolProgress(
-                    tool_call_id=tool_call_id, elapsed_s=elapsed_s, partial=chunk
-                )
+                body=ToolProgress(tool_call_id=tool_call_id, elapsed_s=elapsed_s, partial=chunk)
             )
         )
 
@@ -584,9 +582,7 @@ def shell_toolset(
     sub-agent's fork — has to have what it left running reaped with it.
     """
     settings = get_settings()
-    build = partial(
-        _toolset_for, confiner=confiner or fence.wrap, settings=settings, shells=shells
-    )
+    build = partial(_toolset_for, confiner=confiner or fence.wrap, settings=settings, shells=shells)
     return WorkspaceToolset(
         "shell",
         build(_TEMPLATE_ROOT),

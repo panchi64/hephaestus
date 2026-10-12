@@ -147,11 +147,7 @@ def _also_present(root: Path, excludes: tuple[str, ...]) -> str:
     setting, and a `dist/` they chose to make visible would otherwise be listed *and*
     announced as "not listed" in the same block.
     """
-    found = [
-        name
-        for name in _WORTH_NAMING
-        if excluded(name, excludes) and (root / name).is_dir()
-    ]
+    found = [name for name in _WORTH_NAMING if excluded(name, excludes) and (root / name).is_dir()]
     if not found:
         return ""
     return (

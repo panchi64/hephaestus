@@ -224,9 +224,7 @@ def _connector_toolset(
                 name=name,
                 description=f"{connector.name}: {action.description}",
             )
-            routes[name] = _Route(
-                "integration", connector.id, action.name, connector.name
-            )
+            routes[name] = _Route("integration", connector.id, action.name, connector.name)
             if not action.enabled:
                 disabled.add(name)
     return toolset, routes, disabled
@@ -269,8 +267,6 @@ def _connector_call(
         except Exception as exc:  # noqa: BLE001 - a transport failure is retryable too
             raise ModelRetry(f"{connector.name} could not be reached: {exc}") from exc
         # A connector's response is data from a third party, never instructions.
-        return wrap_untrusted(
-            f"HTTP {response.status}\n{response.body}", source=connector.name
-        )
+        return wrap_untrusted(f"HTTP {response.status}\n{response.body}", source=connector.name)
 
     return call

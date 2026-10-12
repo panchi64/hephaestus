@@ -191,9 +191,7 @@ class SubagentLauncher(ABC):
         """
 
     @abstractmethod
-    async def read(
-        self, owner_id: str, conversation_id: str, handle: str
-    ) -> SubagentView:
+    async def read(self, owner_id: str, conversation_id: str, handle: str) -> SubagentView:
         """One sub-agent's current state, with its report if it has finished.
 
         Addressed the same way :meth:`steer` is, and scoped to the launching thread for the

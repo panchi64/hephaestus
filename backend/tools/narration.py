@@ -102,7 +102,7 @@ def _strip_from_json(payload: str) -> str:
     """
     try:
         parsed = json.loads(payload)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return payload
     if not isinstance(parsed, dict) or NARRATION_ARG not in parsed:
         return payload

@@ -124,8 +124,7 @@ def subagents_toolset() -> AbstractToolset[RunDeps]:
             name = normalize_agent_name(name)
         except AgentNameError as exc:
             raise ModelRetry(
-                f"{exc} Name it for the job this sub-agent is for, like "
-                "`helper-function-finder`."
+                f"{exc} Name it for the job this sub-agent is for, like `helper-function-finder`."
             ) from exc
         roster = await run_roster(ctx)
         spec = roster.get(agent_name)
@@ -287,9 +286,7 @@ def subagents_toolset() -> AbstractToolset[RunDeps]:
         if launcher is None:
             return {"available": False, "detail": _UNAVAILABLE}
         try:
-            view = await launcher.read(
-                ctx.deps.owner_id, ctx.deps.conversation_id or "", name
-            )
+            view = await launcher.read(ctx.deps.owner_id, ctx.deps.conversation_id or "", name)
         except SubagentUnavailableError as exc:
             raise ModelRetry(str(exc)) from exc
         return {

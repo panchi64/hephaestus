@@ -76,9 +76,7 @@ def web_toolset() -> FunctionToolset[RunDeps]:
                 "Ask a different question or read one of the results you already have."
             )
         try:
-            results = await svc.search(
-                ctx.deps.owner_id, query, limit=limit, time_range=time_range
-            )
+            results = await svc.search(ctx.deps.owner_id, query, limit=limit, time_range=time_range)
         except DegradedCapabilityError as exc:
             dedupe.release(claim)
             return f"Web search is unavailable: {exc}"

@@ -179,9 +179,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         try:
             detail = await service.read_message(ctx.deps.owner_id, message_id)
         except NotFoundError as exc:
-            raise ModelRetry(
-                f"{exc}. Use mail_list_messages to get a valid message id."
-            ) from exc
+            raise ModelRetry(f"{exc}. Use mail_list_messages to get a valid message id.") from exc
         except MailError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "message": wrap_untrusted(_detail_text(detail), source="email")}
@@ -258,9 +256,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         if service is None:
             return _UNAVAILABLE
         try:
-            sent_id = await service.reply(
-                ctx.deps.owner_id, message_id, body, reply_all=reply_all
-            )
+            sent_id = await service.reply(ctx.deps.owner_id, message_id, body, reply_all=reply_all)
         except NotFoundError as exc:
             raise ModelRetry(str(exc)) from exc
         except MailError as exc:

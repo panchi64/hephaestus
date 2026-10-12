@@ -190,10 +190,7 @@ class _ConversationTaskToolset(AbstractToolset[RunDeps]):
             upstream, tool_args, inward, (await bound.get_tools(ctx))[upstream]
         )
 
-
-    def _for(
-        self, ctx: RunContext[RunDeps]
-    ) -> tuple[AbstractToolset[RunDeps], TaskStoreProtocol]:
+    def _for(self, ctx: RunContext[RunDeps]) -> tuple[AbstractToolset[RunDeps], TaskStoreProtocol]:
         # Keyed by conversation where there is one, else by run: a conversation's tasks
         # outlive its turns, a one-off run's do not.
         key = ctx.deps.conversation_id or f"run:{ctx.deps.run.id}"

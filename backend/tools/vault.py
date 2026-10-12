@@ -25,8 +25,7 @@ from services.secret_vault import SecretEntryView, SecretVaultLocked, SecretVaul
 from .deps import RunDeps
 
 _UNAVAILABLE = (
-    "The password vault is not available in this session, so stored credentials "
-    "cannot be read."
+    "The password vault is not available in this session, so stored credentials cannot be read."
 )
 _LOCKED = (
     "The password vault is locked. Only the operator can unlock it — ask them to "

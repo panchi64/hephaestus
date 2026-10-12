@@ -336,8 +336,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
             if ctx.tool_call_id and not session.is_warm:
                 downloading = getattr(sessions, "image_warmup_pending", False)
                 partial = (
-                    "Downloading the sandbox image, this first run can take a "
-                    "few minutes…"
+                    "Downloading the sandbox image, this first run can take a few minutes…"
                     if downloading
                     else "Starting the sandbox environment…"
                 )
@@ -351,9 +350,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
             # Any sandbox/infra failure comes back as something the model can act
             # on — it never escapes to crash the run.
             return {"ok": False, "error": f"Your computer could not run the code: {exc}"}
-        return _exec_result(
-            result, settings, sandboxed=True, delegated=ctx.deps.delegated_approved
-        )
+        return _exec_result(result, settings, sandboxed=True, delegated=ctx.deps.delegated_approved)
 
     async def _only_where_there_is_someone_to_ask(
         ctx: RunContext[RunDeps], tool_def: ToolDefinition
@@ -461,9 +458,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         # confined changes what that approval actually permitted.
         payload["confined"] = confinement.active
         if not confinement.active:
-            payload["confinement_note"] = (
-                f"This ran unconfined on the host ({confinement.reason})."
-            )
+            payload["confinement_note"] = f"This ran unconfined on the host ({confinement.reason})."
         return payload
 
     return toolset

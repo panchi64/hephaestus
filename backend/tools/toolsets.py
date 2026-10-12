@@ -85,9 +85,8 @@ def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
     correctly taken back out.
     """
     name = tool_def.name
-    return (
-        name not in ctx.deps.disabled_tools
-        and name not in permission_disabled_tools(ctx.deps.permission)
+    return name not in ctx.deps.disabled_tools and name not in permission_disabled_tools(
+        ctx.deps.permission
     )
 
 
@@ -220,9 +219,7 @@ def build_agent_toolsets(
         sending it through a pass that resolves cross-references would be asking a rewrite
         to check a string this repo controls.
         """
-        return [
-            own_harness_events(_narrated(describe(tool_def, names))) for tool_def in tool_defs
-        ]
+        return [own_harness_events(_narrated(describe(tool_def, names))) for tool_def in tool_defs]
 
     # Namespaced, then filtered, then gated, then described — in that order because each
     # step needs the one before it: the gate classifies by the `category_tool` name the
