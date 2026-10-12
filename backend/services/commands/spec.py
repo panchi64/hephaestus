@@ -90,9 +90,10 @@ class CommandSpec:
     #: the expansion's input, and a catalog that shipped every body would cost the operator
     #: a page of prose to render a list of names.
     body: str | None = None
-    #: Modes this command is offered in. Empty means every mode; the route narrows further
-    #: on facts it can only know per request (a disabled toolset, no conversation yet).
-    modes: tuple[str, ...] = ()
+    #: Workspace kinds this command is offered in. Empty means every kind; the route
+    #: narrows further on facts it can only know per request (a disabled toolset, no
+    #: conversation yet).
+    workspaces: tuple[str, ...] = ()
 
     @property
     def qualified_name(self) -> str:

@@ -80,7 +80,7 @@ async def _searchable_roots(request: Request) -> list[Path]:
 
     * the active project before the rest, then most-recently-opened, because that is
       the work they are in;
-    * each project's **worktree** before their own checkout, because a code thread's
+    * each project's **worktree** before their own checkout, because a worktree thread's
       files live in the worktree and a file the agent just created exists nowhere else.
 
     Both come from the cheap lookups (no git probe): a click must not cost N subprocesses.

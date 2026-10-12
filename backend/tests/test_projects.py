@@ -440,7 +440,7 @@ class TestRoutes:
             resp = await client.post("/projects/ensure", json={"rootPath": str(tmp_path / "no")})
             assert resp.status_code == 422, resp.text
 
-    async def test_a_code_thread_carries_its_workspace_into_the_listing(self, tmp_path):
+    async def test_a_worktree_thread_carries_its_workspace_into_the_listing(self, tmp_path):
         async with client_app() as (client, app):
             work = tmp_path / "acme-api"
             work.mkdir()
@@ -449,7 +449,9 @@ class TestRoutes:
 
             def seed(session: Session) -> None:
                 session.add(
-                    Conversation(id="c-code", owner_id="operator", project_id=pid, mode="code")
+                    Conversation(
+                        id="c-code", owner_id="operator", project_id=pid, workspace_kind="worktree"
+                    )
                 )
                 session.commit()
 
@@ -457,9 +459,9 @@ class TestRoutes:
 
             listing = await client.get("/conversations", headers={"X-Ody-Project": "all"})
             row = next(c for c in listing.json() if c["id"] == "c-code")
-            # The rail groups on these two and nothing else — the mode picks the section,
+            # The rail groups on these two and nothing else — the workspace kind picks the section,
             # the workspace names it, and the path stays on the server.
-            assert row["mode"] == "code"
+            assert row["workspace_kind"] == "worktree"
             assert row["workspace"] == "acme-api"
 
     async def test_the_project_toolset_is_in_the_catalog(self):

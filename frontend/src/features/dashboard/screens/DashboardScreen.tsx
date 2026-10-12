@@ -42,7 +42,7 @@ import {
   parsePermissionLevel,
   type PermissionLevel,
 } from "~/features/chat/model";
-import { activeSessionMode, codeProjectId } from "~/lib/stores/sessionMode";
+import { stagedProjectId } from "~/lib/stores/stagedProject";
 import { toast } from "~/ui";
 import { settled } from "~/lib/resource";
 
@@ -140,8 +140,8 @@ export function DashboardScreen(): JSX.Element {
   };
 
   /**
-   * The launchpad's `/` menu. No `@` beside it: that browses a thread's own worktree,
-   * and there is no thread here yet.
+   * The launchpad's `/` menu. No `@` beside it: that browses a thread's own files, and
+   * there is no thread here yet.
    *
    * Three of the five built-in actions are absent without the picker doing anything —
    * the route drops `compact`, `fork` and `retitle` when it is told there is no
@@ -151,12 +151,10 @@ export function DashboardScreen(): JSX.Element {
    * created, which is what its own description already promises.
    */
   const commands = createComposerCommands(
-    activeSessionMode,
     () => null,
-    // The project staged in the rail for the next code thread, so a repository's own
-    // `.claude/commands` are offered here too — from the operator's checkout, since the
-    // worktree that thread will work in does not exist yet.
-    () => codeProjectId() ?? null,
+    // The project staged for the next thread, so a repository's own `.claude/commands`
+    // are offered here too — from the operator's checkout, since no worktree exists yet.
+    () => stagedProjectId() ?? null,
     {
       // Unreachable — the route withholds all three without a conversation. They are
       // wired rather than left to throw, because "what this build does with an id it was
@@ -197,7 +195,7 @@ export function DashboardScreen(): JSX.Element {
     <div class="flex min-h-full flex-col gap-6">
       <PageHeader
         title="Odysseus"
-        subtitle="Your private, self-hosted AI workspace — chat, code, research, memory, and more."
+        subtitle="Your private, self-hosted AI workspace — chat, code, memory, and more."
         assetId="ODY-HUD-00.1 EDITION 02"
         actions={
           <Show

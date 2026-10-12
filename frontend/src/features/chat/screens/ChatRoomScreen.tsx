@@ -29,17 +29,15 @@ import {
   titleReveals,
   useChatSessions,
 } from "../data";
-import { sessionModeSpec } from "~/lib/modes";
 import { sendBlockedReason, setSelectedModel } from "~/lib/stores/models";
 import {
-  activeSessionMode,
-  codeProjectId,
-  setCodeProjectId,
-} from "~/lib/stores/sessionMode";
+  setStagedProjectId,
+  stagedProjectId,
+} from "~/lib/stores/stagedProject";
 import { createComposerAttachments } from "~/features/uploads/data";
 import { useProjects } from "~/lib/stores/projects";
 import { settled } from "~/lib/resource";
-import { directoryLabel, focusAddDirectory } from "../addDirectory";
+import { directoryLabel } from "../addDirectory";
 import { ChatRoomHeader } from "../components/ChatRoomHeader";
 import { ChatViewportMounts } from "../components/ChatViewportMounts";
 import {
@@ -49,6 +47,7 @@ import {
 import { createConversationStatus } from "../components/ConversationStatus";
 import { ParkDock } from "../components/ParkDock";
 import { PermissionControl } from "../components/PermissionControl";
+import { ProjectControl } from "../components/ProjectControl";
 import { ThreadRecap } from "../components/ThreadRecap";
 import { TranscriptView } from "../components/TranscriptView";
 import { ModelPicker } from "~/app/ModelPicker";
@@ -90,7 +89,6 @@ export function ChatRoomScreen(): JSX.Element {
   const {
     currentId,
     openId,
-    loadedMode,
     setCurrentId,
     history,
     reloadHistory,
@@ -101,53 +99,23 @@ export function ChatRoomScreen(): JSX.Element {
     setPermission,
     permissionPending,
   } = mainChat();
-  // Straight from the app-wide store, not through the room controller: the mode is
-  // the window's, and re-exposing it on the chat handle only hid that.
-  const mode = activeSessionMode;
   const projects = useProjects();
-  /** This thread works in a directory on the operator's machine, not in a sandbox. */
-  const rooted = () => sessionModeSpec(mode()).workspace === "worktree";
 
-  /** The project a **staged** worktree thread would work in — undefined once the thread
-   *  is saved, and for every sandbox mode. Read by both the send gate (which needs to
-   *  know the directory can host a worktree) and the header's subtitle (which names it),
-   *  so the two can't disagree about which directory is in play.
+  /** The project a **staged** thread would be scoped to — undefined once the thread is
+   *  saved. Read by the header's subtitle and the composer's picker, so the two can't
+   *  disagree about which project is in play.
    *
    *  Staged means *no backend id anywhere*, which is `openId` and not `currentId`: the
    *  room keeps its seat empty for the length of a new thread's first turn, and reading
    *  that as "still staged" put the hint about the name this thread does not have yet
-   *  directly under the name the backend had just given it — and kept the
-   *  not-a-git-repository send gate up against a worktree that had already been cut. */
+   *  directly under the name the backend had just given it. */
   const stagedProject = createMemo(() => {
-    if (!rooted() || openId() !== null) return undefined;
-    const id = codeProjectId();
+    if (openId() !== null) return undefined;
+    const id = stagedProjectId();
     return id
       ? settled(projects)?.projects.find((p) => p.id === id)
       : undefined;
   });
-
-  /** Why SEND is unavailable, or null. The model/context gate, plus the one thing
-   *  only this screen can know: a worktree thread is cut from a directory's repository,
-   *  so a send that names no directory is a turn the backend will refuse with a 422.
-   *  Saying so before the message is committed is the same courtesy the context gate
-   *  already extends — the alternative is losing a typed message to an error.
-   *
-   *  It should now be near-unreachable: a code thread is started *from* its directory,
-   *  so there is no ordinary path to a staged one with none. It stays as the backstop
-   *  for the paths that don't go through the rail. */
-  const sendBlocked = (): string | null => {
-    if (rooted() && currentId() === null) {
-      if (!codeProjectId())
-        return "Choose a directory in the rail for this code session";
-      // The directory is staged but cannot host a worktree. The rail's heading already
-      // carries this as a marker; saying it again here is what stops a typed message
-      // being spent on a turn the backend is certain to refuse.
-      const project = stagedProject();
-      if (project && !project.repo.isGitRepo)
-        return `${project.name} isn't a git repository yet`;
-    }
-    return sendBlockedReason();
-  };
 
   // Follow the stream: pinned to the bottom while the answer arrives, yielding the
   // moment the operator scrolls up to read back (see `transcriptScroll.ts`).
@@ -225,8 +193,8 @@ export function ChatRoomScreen(): JSX.Element {
     markWarmResolved();
   });
 
-  /** The directory a staged worktree thread will work in, as the header names it.
-   *  Nothing for a saved thread — its branch chip is the answer there. */
+  /** The project a staged thread is scoped to, as the header names it. Nothing for a
+   *  saved thread — its branch chip is the answer there. */
   const workspaceHint = (): string | undefined => {
     const project = stagedProject();
     return project ? directoryLabel(project) : undefined;
@@ -236,27 +204,11 @@ export function ChatRoomScreen(): JSX.Element {
    *  room goes when the thread it was showing is *gone*, so it can never decline. */
   const clearThread = () => setCurrentId(null);
 
-  /** A fresh composer, **asked for**.
-   *
-   *  In a worktree mode it lands in a directory rather than nowhere, resolved in the
-   *  order the operator would expect: whatever is already staged, else the directory of
-   *  the thread they are standing in, else the one they opened most recently. The staged
-   *  value alone is not enough to decide on — it is a memory-only signal, so it is unset
-   *  after every reload, and keying the fallback on it made the reflex shortcut dead on
-   *  a fresh window even with a dozen directories filed.
-   *
-   *  Only with genuinely nowhere to start does this decline, and then it puts the
-   *  operator in front of the rail's ADD DIRECTORY button rather than raising a modal OS
-   *  chooser off a keystroke they made without looking. */
+  /** A fresh composer, **asked for**. It stays in the project of the thread the operator
+   *  is standing in, since that is the work they are most likely continuing; from a
+   *  composer that is already staged it changes nothing. */
   const startNew = () => {
-    if (!rooted()) return clearThread();
-    if (!codeProjectId()) {
-      const target =
-        currentSummary()?.projectId ?? settled(projects)?.projects[0]?.id;
-      if (!target) {
-        if (focusAddDirectory()) return;
-      } else setCodeProjectId(target);
-    }
+    if (openId() !== null) setStagedProjectId(currentSummary()?.projectId);
     clearThread();
   };
 
@@ -292,14 +244,14 @@ export function ChatRoomScreen(): JSX.Element {
     refreshSessions();
   });
 
-  // A code thread's branch, read once for everyone who shows it: the header's chip and
+  // A worktree thread's branch, read once for everyone who shows it: the header's chip and
   // the Diff surface are two views of one fetch, and two resources over the same
   // endpoint would disagree for as long as either was in flight. Re-reads when a turn
   // settles, since that is when the agent has just changed something.
   const branch = createBranchState(
     currentId,
     () => (stream.sending() ? 0 : 1),
-    loadedMode,
+    () => currentSummary()?.workspaceKind,
   );
 
   // The thread's sub-agents. Re-read when a turn settles for the same reason as the
@@ -314,8 +266,6 @@ export function ChatRoomScreen(): JSX.Element {
   // it closes. It is a concern of its own, so it lives in one.
   const viewport = useChatViewport(currentId, {
     ...stream,
-    mode,
-    loadedMode,
     branch: branch.latest,
     refetchBranch: branch.refetch,
     subagents: subagents.latest,
@@ -372,24 +322,34 @@ export function ChatRoomScreen(): JSX.Element {
   // either the first-turn auto-title (stream) or a manual regenerate.
   const titleWorking = () => stream.titlePending() || actions.retitling();
 
+  /** The saved thread's project, named for the status bar. */
+  const savedProjectLabel = (): string | undefined => {
+    const summary = currentSummary();
+    if (!summary?.projectId) return undefined;
+    const project = settled(projects)?.projects.find(
+      (p) => p.id === summary.projectId,
+    );
+    return project ? directoryLabel(project) : summary.workspace;
+  };
+
   // Which project this composer is about, for both menus. The saved thread's own, else
-  // the one staged in the rail for the next code thread — the same pair the send gate and
-  // the header subtitle already read, so neither picker can be browsing a directory the
-  // thread is not about to work in.
+  // the one staged for the next thread — the same pair the header subtitle already
+  // reads, so neither picker can be browsing a project the thread is not about to be
+  // scoped to.
   //
   // Derived once and passed to both rather than resolved twice: the `@` picker lists that
   // checkout's files and the `/` picker offers the commands that checkout declares, and a
   // pair that disagreed would put a file from one tree beside a command from another.
   const composerProjectId = (): string | null =>
     currentSummary()?.projectId ??
-    (currentId() === null ? codeProjectId() : null) ??
+    (currentId() === null ? stagedProjectId() : null) ??
     null;
 
   // The composer's `/` menu. Every action it can fire is a relay this room already owns
   // — a command is a second way to reach a control, never a second implementation of
   // one. `fork` takes the newest turn, which is what "fork from here" means when the
   // operator is typing rather than pointing at a message.
-  const commands = createComposerCommands(mode, currentId, composerProjectId, {
+  const commands = createComposerCommands(currentId, composerProjectId, {
     compact: () => void stream.compactNow(),
     fork: () => {
       const last = stream.messages.at(-1);
@@ -404,9 +364,9 @@ export function ChatRoomScreen(): JSX.Element {
     },
   });
 
-  // The `@` menu, over the thread's own filesystem. Offered only in a worktree mode —
-  // a sandbox thread works in a container holding nothing the operator has ever seen.
-  const fileRefs = createComposerFileRefs(mode, composerProjectId, currentId);
+  // The `@` menu, over the project's filesystem. Shut for a thread with no project — its
+  // container holds nothing the operator has ever seen.
+  const fileRefs = createComposerFileRefs(composerProjectId, currentId);
 
   /** Both menus behind the Composer's one slot.
    *
@@ -658,7 +618,7 @@ export function ChatRoomScreen(): JSX.Element {
                 recall={recall}
                 // The backend refuses a turn it can't keep inside a context window; this
                 // is the same stop, arriving before the message is committed to it.
-                sendBlocked={sendBlocked()}
+                sendBlocked={sendBlockedReason()}
                 attachments={attachments}
                 storageKey={composerKey()}
                 prefill={stream.undeliveredDraft()}
@@ -697,13 +657,11 @@ export function ChatRoomScreen(): JSX.Element {
                     : null
                 }
                 controls={
-                  // Ungated, unlike the mode picker that used to sit here. A mode is
-                  // set once at creation — a code thread owns a branch, and
-                  // re-pointing it would strand that branch — so that control lives
-                  // beside the thread list and this strip only says which it is. A
-                  // level is the opposite: it is the operator's live control over a
-                  // thread already in flight, so it is offered at every moment of one,
-                  // and it rides the next send.
+                  // The project is chosen while the thread is staged and only named once
+                  // it is saved — it is set at creation, and re-pointing a thread would
+                  // strand whatever worktree it had cut. The level is the opposite: it
+                  // is the operator's live control over a thread already in flight, so
+                  // it is offered at every moment of one, and it rides the next send.
                   <>
                     <ModelPicker />
                     <PermissionControl
@@ -714,9 +672,24 @@ export function ChatRoomScreen(): JSX.Element {
                       // that rather than naming a level the thread may not be at.
                       pending={permissionPending()}
                     />
-                    <StatusCell class="max-sm:hidden">
-                      {sessionModeSpec(mode()).label}
-                    </StatusCell>
+                    <Show
+                      when={openId() === null}
+                      fallback={
+                        <Show when={savedProjectLabel()}>
+                          {(label) => (
+                            <StatusCell class="max-sm:hidden">
+                              {label()}
+                            </StatusCell>
+                          )}
+                        </Show>
+                      }
+                    >
+                      <ProjectControl
+                        projects={settled(projects)?.projects ?? []}
+                        value={stagedProjectId()}
+                        onChange={setStagedProjectId}
+                      />
+                    </Show>
                   </>
                 }
                 // What the thread is doing: the task count, the stats behind their

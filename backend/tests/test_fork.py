@@ -122,10 +122,10 @@ class TestTheCopy:
 
 
 class TestTheBinding:
-    async def test_the_fork_inherits_project_and_mode(self, tmp_path):
+    async def test_the_fork_inherits_project_and_workspace_kind(self, tmp_path):
         store = await _store(tmp_path)
         source = await store.create_conversation(
-            OWNER, title="T", project_id="proj-1", mode="code"
+            OWNER, title="T", project_id="proj-1", workspace_kind="worktree"
         )
         store.record(source, [_user("q"), _assistant("a")])
         tree = await store._tree(source)  # noqa: SLF001
@@ -133,9 +133,9 @@ class TestTheBinding:
         forked = await store.fork(source, tree.active_path()[0].id, OWNER)
         assert forked is not None
         binding = await store.binding(forked)
-        # A code fork that came back as a Normal thread would silently drop the operator
+        # A worktree fork that came back as a sandbox thread would silently drop the operator
         # into a different workspace with the same transcript.
-        assert (binding.mode, binding.project_id) == ("code", "proj-1")
+        assert (binding.workspace_kind, binding.project_id) == ("worktree", "proj-1")
 
 
 # --- over HTTP, and the code fork's branch --------------------------------------------
@@ -197,7 +197,7 @@ class TestTheRoute:
             )
             assert resp.status_code == 404
 
-    async def test_a_code_fork_branches_from_the_sources_branch(self, tmp_path, monkeypatch):
+    async def test_a_worktree_fork_branches_from_the_sources_branch(self, tmp_path, monkeypatch):
         async with client_app() as (client, app):
             root = await _repo(tmp_path / "work")
             project = (
@@ -207,15 +207,12 @@ class TestTheRoute:
             created = (
                 await client.post(
                     "/chat",
-                    json={
-                        "prompt": "hello",
-                        "mode": "code",
-                        "project_id": project["id"],
-                    },
+                    json={"prompt": "hello", "project_id": project["id"]},
                 )
             ).json()
             await _settled(app, created["run_id"])
             source = created["conversation_id"]
+            assert await app.state.conversations.open_worktree(source)
 
             # The source does some work. It does **not** commit — the agent has no
             # `git commit`; reading the branch is what snapshots it.

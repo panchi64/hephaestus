@@ -30,10 +30,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from services.modes import mode_spec
 from services.sandbox import SandboxSessionManager
 from services.sandbox.walk import excluded, walk_files
 from services.workspace import SANDBOX_MOUNT
+from services.workspace_kind import is_project_folder
 
 from .deps import PromptContextRequest
 
@@ -168,7 +168,7 @@ async def workspace_context(req: PromptContextRequest) -> str:
     # already describing it. Listing thousands of tracked files every turn would be the
     # expensive half of this idea with none of the benefit — the agent there has never
     # been the one who does not know what is on disk.
-    if mode_spec(req.mode).workspace == "worktree":
+    if is_project_folder(req.workspace_kind):
         return ""
     sessions = req.caps.get_optional(SandboxSessionManager)
     if sessions is None:

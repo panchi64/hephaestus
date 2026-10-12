@@ -5,10 +5,10 @@ import type { ProjectRepo } from "../model";
 /** A project's git state in one line.
  *
  *  The uncommitted count is the important half and the reason this component exists
- *  rather than a bare "git ✓". Coding mode branches a worktree from the project's
- *  base ref, so **uncommitted work in the operator's own checkout is invisible to the
- *  agent**. That is the price of never touching their tree, and it should be readable
- *  before they start a session rather than discovered halfway through one. */
+ *  rather than a bare "git ✓". A worktree branches from the project's base ref, so
+ *  **uncommitted work in the operator's own checkout is invisible to the agent there**.
+ *  That is the price of never touching their tree, and it should be readable before
+ *  they start a session rather than discovered halfway through one. */
 export function RepoStatus(props: { repo: ProjectRepo }): JSX.Element {
   return (
     <Row gap={3} class="items-center">
@@ -23,7 +23,7 @@ export function RepoStatus(props: { repo: ProjectRepo }): JSX.Element {
         <Show
           when={props.repo.isGitRepo}
           fallback={
-            <Tooltip label="Coding mode needs a repository — it will offer to create one">
+            <Tooltip label="A worktree needs a repository — it will offer to create one">
               <Text variant="micro" tone="warn">
                 Not a repo
               </Text>

@@ -42,7 +42,6 @@ from .conversation import (
     CompactionReason,
     CompactionStarted,
     ConversationCompacted,
-    ConversationLinked,
     ConversationTitled,
 )
 from .lifecycle import (
@@ -104,7 +103,6 @@ __all__ = [
     "ContextThresholds",
     "ContextWindow",
     "ConversationCompacted",
-    "ConversationLinked",
     "ConversationTitled",
     "DEFAULT_CONTEXT_THRESHOLDS",
     "Event",

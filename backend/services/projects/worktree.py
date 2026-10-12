@@ -1,6 +1,6 @@
-"""Git worktrees — where coding mode actually works.
+"""Git worktrees — where a chat works when the agent wants its changes kept apart.
 
-The operator's checkout is never written to. A coding conversation gets a **branch**
+A worktree never writes the operator's checkout. A worktree conversation gets a **branch**
 (``ody/<conversation-id>``) checked out in a worktree beside the repository, the agent
 edits and runs tests there, and the only thing that ever touches the operator's own tree
 is an explicit merge they ask for.
@@ -38,7 +38,7 @@ real, visible side effect. `ensure_repo` performs it, but only when the caller h
 explicit confirmation from the operator — the Projects UI asks at project-creation time,
 not the agent mid-turn.
 
-**A merge releases the project.** The holder map is what enforces one coding thread per
+**A merge releases the project.** The holder map is what enforces one worktree thread per
 checkout, and `discard` used to be the only thing that cleared it — so a merged thread
 kept the project locked forever, and the busy message told the operator to do the very
 thing they had just done. Merging hands the project back. Merging a *fork* back does
@@ -84,7 +84,7 @@ logger = logging.getLogger(__name__)
 
 
 class WorktreeBusyError(Exception):
-    """Another coding conversation is holding this project's worktree.
+    """Another worktree conversation is holding this project's worktree.
 
     Refused rather than queued or silently shared: two threads interleaving edits over
     one checkout would corrupt both their mental models of the tree.
@@ -93,7 +93,7 @@ class WorktreeBusyError(Exception):
 
 @dataclass(frozen=True)
 class Diff:
-    """What a coding conversation has changed, against the project's base ref.
+    """What a worktree conversation has changed, against the project's base ref.
 
     Three answers in one read, because the merge gate asks all three at once: the raw
     patch (what changed), the per-file rows with their risk verdict (what to look at
@@ -159,7 +159,7 @@ class WorktreeManager:
             return False
         if not confirmed:
             raise InvalidInputError(
-                f"{root} is not a git repository. Coding mode needs one so your work can "
+                f"{root} is not a git repository. A worktree needs one so your work can "
                 "be kept separate — confirm to create it."
             )
         await run_git_ok(root, "init")
@@ -222,7 +222,7 @@ class WorktreeManager:
         holder = self._holders.get(project_id)
         if holder is not None and holder != conversation_id:
             raise WorktreeBusyError(
-                "Another coding conversation is currently working in this project. "
+                "Another worktree conversation is currently working in this project. "
                 "Finish or merge that one first."
             )
 
@@ -358,7 +358,7 @@ class WorktreeManager:
     async def branch_from(self, root: Path, *, source_id: str, conversation_id: str) -> None:
         """Cut this conversation's branch from **another conversation's**, for a fork.
 
-        A forked coding thread inherits a transcript describing files as they are on the
+        A forked worktree thread inherits a transcript describing files as they are on the
         source's branch, so branching it from the project's base ref instead would hand it
         a tree that contradicts its own history. Raises when the source has no branch —
         the caller treats that as "nothing to inherit" and lets the fork cut its own
@@ -466,7 +466,7 @@ class WorktreeManager:
         different result from the one they read and approved. Better to say so.
 
         Snapshots first for the same reason `diff` does, then releases the project so a
-        second coding conversation can take it: without that, a project stays locked to
+        second worktree conversation can take it: without that, a project stays locked to
         its first thread forever and the busy message names an escape that does not work.
         """
         await self.snapshot(project_id, conversation_id=conversation_id)

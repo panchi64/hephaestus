@@ -182,13 +182,6 @@ BUILTIN: tuple[SubagentSpec, ...] = (
             "sources — for a topic worth several searches, not a single lookup"
         ),
         brief=_RESEARCHER_BRIEF,
-        # **Not** research mode, which is the mode of the thread that *orchestrates*
-        # research: its prompt is written for an agent with an operator to ask and a plan
-        # to submit, and a sub-agent has neither tool. The two modes are otherwise the same
-        # row (`services/modes.py` — sandbox workspace, the same admitted categories), so
-        # normal costs this nothing and the whole of what makes it a researcher is its
-        # brief. Which is what a brief is for.
-        mode="normal",
         # Read-only by absence: reading the web is the entire job, and a level at which a
         # mutating tool is never offered is what keeps the launch itself ungated.
         permission_ceiling="plan",
@@ -199,9 +192,8 @@ BUILTIN: tuple[SubagentSpec, ...] = (
         # web probably says — which reads, to everyone downstream, exactly like something
         # it went and looked up.
         required=frozenset({"web_search", "web_fetch"}),
-        # Research mode's floor, carried explicitly because the mode that used to supply it
-        # is not this sub-agent's. Reading enough sources to see where they disagree is
-        # many more round trips than answering a question.
+        # Reading enough sources to see where they disagree is many more round trips than
+        # answering a question.
         request_limit=60,
     ),
 )

@@ -20,6 +20,7 @@ from pydantic_ai.usage import RunUsage
 
 from prompts.agent import INSTRUCTIONS
 from runs import Run, RunStream
+from services.workspace_kind import WORKSPACE_TOOLS
 from tools import RunDeps, build_agent_toolsets
 from tools.catalog import tool_catalog
 from tools.describe import (
@@ -47,14 +48,17 @@ _BACKTICKED = re.compile(r"(?P<ticks>`+)(?P<body>[^`\n]+?)(?P=ticks)")
 
 
 async def _offered() -> dict[str, ToolDefinition]:
-    """Every tool definition a run is actually handed, through the composed stack the
-    engine gives the Agent — not a re-derivation, so what is asserted below is what the
-    model reads."""
+    """Every tool definition a run is actually handed in any workspace, through the
+    composed stack the engine gives the Agent — not a re-derivation, so what is asserted
+    below is what the model reads."""
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
-    deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=frozenset())
-    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
-    tools = await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx)
-    return {name: tool.tool_def for name, tool in tools.items()}
+    offered: dict[str, ToolDefinition] = {}
+    for kind in WORKSPACE_TOOLS:
+        deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=frozenset(), workspace_kind=kind)
+        ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+        tools = await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx)
+        offered |= {name: tool.tool_def for name, tool in tools.items()}
+    return offered
 
 
 def _flatten(text: str) -> str:

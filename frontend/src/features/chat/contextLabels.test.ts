@@ -18,9 +18,9 @@ describe("a slug becomes a label without a registry to maintain", () => {
   });
 
   test("the thread's two axes read as a pair, and an adjective becomes a thing", () => {
-    // "Mode" and "Level" side by side in the breakdown name a posture and a bare
+    // "Workspace" and "Level" side by side in the breakdown name a posture and a bare
     // scale; the second one has to say what it is a level of.
-    expect(segmentLabel("mode")).toBe("Mode posture");
+    expect(segmentLabel("workspace_posture")).toBe("Workspace posture");
     expect(segmentLabel("level")).toBe("Permission posture");
     // The block is an index of tool groups, not a state — "Dormant" alone labels a
     // row with an adjective and leaves the operator to supply the noun.

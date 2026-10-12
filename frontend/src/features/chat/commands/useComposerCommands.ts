@@ -22,7 +22,6 @@ import type {
   ComposerMenuItem,
   ComposerTrigger,
 } from "~/ui";
-import type { SessionMode } from "~/lib/modes";
 import { settled } from "~/lib/resource";
 import { useCommands } from "./data";
 import type { Command, CommandActionId, CommandInvocation } from "./model";
@@ -96,12 +95,11 @@ function toItem(command: Command): ComposerMenuItem {
 }
 
 export function createComposerCommands(
-  mode: () => SessionMode,
   conversationId: () => string | null,
   projectId: () => string | null,
   actions: CommandActions,
 ): ComposerCommands {
-  const catalog = useCommands(mode, conversationId, projectId);
+  const catalog = useCommands(conversationId, projectId);
   const [query, setQuery] = createSignal<string | null>(null);
   // The picked command, held until the send reads it back against the typed text. The
   // whole spec, not just its name: the send has to know whether this was a message or

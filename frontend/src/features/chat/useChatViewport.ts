@@ -42,7 +42,6 @@ import type {
 } from "./model";
 import type { BranchState, Subagent } from "./data";
 import type { TaskItem } from "~/lib/stream/events";
-import { sessionModeSpec, type SessionMode } from "~/lib/modes";
 import {
   emptyLayout,
   focusInStack,
@@ -68,17 +67,10 @@ import {
 import { shapeOf, SURFACE_IDS, type SurfaceId } from "./viewport/surfaces";
 import { collectCommands } from "./viewport/commandItems";
 import {
-  collectCoverage,
-  contestedTokens,
-  type CoverageReport,
-} from "./viewport/coverageItems";
-import {
   buildInventory,
   collectSources,
   type SourceInventory,
 } from "./viewport/sourceItems";
-import type { ClaimInventory } from "./viewport/claimItems";
-import { createClaimsState } from "./claimsState";
 import {
   claimAutoOpen,
   collectViewItems,
@@ -89,13 +81,6 @@ import {
  *  panel can be reasoned about without the whole streaming controller. */
 export interface ViewportSource {
   messages: ChatMessage[];
-  /** What kind of work this thread is. Passed in rather than read from the app store,
-   *  because the pane belongs to a room and the room already resolved it — a second
-   *  read of the global would be a second answer to the same question, and would be the
-   *  wrong one in any pane whose thread is not the window's current mode. */
-  mode: Accessor<SessionMode>;
-  /** The mode of the thread the room last loaded, tagged with its id — see `MainChat`. */
-  loadedMode: Accessor<{ id: string; mode: SessionMode } | null>;
   /** Whether a run is streaming into the thread. */
   sending: Accessor<boolean>;
   snapshots: Accessor<ViewSnapshotRef[]>;
@@ -137,19 +122,6 @@ export interface ChatViewport {
   /** Every source the thread has read, folded and shelved, for the Sources surface.
    *  Derived from the transcript's citations for the same reason `commands` is. */
   sources: Accessor<SourceInventory>;
-  /** The shape of the investigation, for the Coverage surface — merged out of whatever
-   *  structured reports the sub-agents have sent back. */
-  coverage: Accessor<CoverageReport>;
-  /** What a second reader found in this thread's answers — claim, source, passage.
-   *  **Fetched, not derived**: unlike `sources` and `commands` this is not in the
-   *  transcript at all. Empty for every thread that has no reading, which is most. */
-  claims: Accessor<ClaimInventory>;
-  /** Whether offering to read this thread's claims is worth doing — its mode runs the
-   *  pass at all, it has sources, and nothing has read them yet. The backend runs its
-   *  own trigger either way, so this decides only whether the control is shown. */
-  canExtractClaims: () => boolean;
-  extractClaims: () => void;
-  extractingClaims: Accessor<boolean>;
   /** Whether a surface has anything to show — which header buttons exist. */
   available: (id: SurfaceId) => boolean;
   /** The first surface in registry order that has anything to show, or `undefined` on a
@@ -242,48 +214,9 @@ export function useChatViewport(
   // the terminal blocks are already the record, and a second source would be a second
   // answer to what happened.
   const commands = createMemo(() => collectCommands(source.messages));
-  // **The coverage map is derived first, because the inventory depends on it.** Which
-  // sources a report put on opposite sides of a disagreement is the one fact about a
-  // source that does not come from the citation stream, and it is the fact that decides
-  // which shelf the source sits on — so the join runs here, once, rather than inside a
-  // surface that would have to reach for the other's data to do it.
-  const coverage = createMemo(() => collectCoverage(source.subagents()));
-  // Two memos rather than one, so a sub-agent reporting back does not re-fold the whole
-  // transcript's citations: the poll invalidates `coverage` every few seconds, and a
-  // thread that has read two hundred sources should not pay for that.
-  const citations = createMemo(() => collectSources(source.messages));
   const sourceInventory = createMemo(() =>
-    buildInventory(citations(), contestedTokens(coverage())),
+    buildInventory(collectSources(source.messages)),
   );
-  // The thread's claim-level reading. Re-read when the transcript grows, since that is
-  // when a turn — and with it the post-answer pass — has just finished.
-  // Asked only of a loaded thread whose mode reads its answers back — everywhere else the
-  // answer is the same empty list — and only between runs: the transcript grows with
-  // every delta, and a reading of an answer still being written is not worth a request.
-  const claimsState = createClaimsState(
-    currentId,
-    () => source.messages.length,
-    () => {
-      const loaded = source.loadedMode();
-      return (
-        !source.sending() &&
-        source.messages.length > 0 &&
-        loaded !== null &&
-        loaded.id === currentId() &&
-        sessionModeSpec(loaded.mode).attributesClaims
-      );
-    },
-  );
-  // Offered only where asking can produce an answer: a mode that reads its answers back
-  // against their sources, a thread with sources to read them against, and no reading
-  // yet. The mode test is the backend's rule, not a refinement of ours — the route does
-  // no model call for a mode that does not declare the pass, so on a normal or code
-  // thread that happened to run a web search the button would answer with the same empty
-  // list it started from and never go away.
-  const canExtractClaims = (): boolean =>
-    sessionModeSpec(source.mode()).attributesClaims &&
-    sourceInventory().items.length > 0 &&
-    claimsState.claims().items.length === 0;
   const sources = createSurfaceSources({
     viewItems: items,
     tasks: source.tasks,
@@ -669,11 +602,6 @@ export function useChatViewport(
     // availability record this module builds, and the two are different things that
     // one short word would happily confuse.
     sources: sourceInventory,
-    coverage,
-    claims: claimsState.claims,
-    canExtractClaims,
-    extractClaims: claimsState.extract,
-    extractingClaims: claimsState.extracting,
     available,
     firstAvailable,
     layout: liveLayout,

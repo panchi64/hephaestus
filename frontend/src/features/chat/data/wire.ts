@@ -49,13 +49,12 @@ export interface ConversationSummaryDTO {
    *  `activity` above, not a replacement — both can be set at once, and `activity` is
    *  the one that wins while it is. */
   last_outcome?: ChatOutcome | null;
-  /** The thread's mode, and — for a code thread — the basename of the directory it
-   *  works in plus the project that directory belongs to. All three on the *listing*
-   *  because the rail's shape depends on them: it shows one mode at a time and files
-   *  code threads under the directory they work in. The id is what it files *by* —
-   *  the rail lists every directory, not only the ones holding threads, and two of
-   *  them can share a basename. */
-  mode?: string | null;
+  /** Where the thread works (`sandbox`, `checkout` or `worktree`), the basename of the
+   *  directory a checkout or worktree thread works in, and the project the thread is scoped to. All on the
+   *  *listing* because the rail files threads under their project. The id is what it
+   *  files *by* — the rail lists every directory, not only the ones holding threads, and
+   *  two of them can share a basename. */
+  workspace_kind?: string | null;
   workspace?: string | null;
   project_id?: string | null;
 }

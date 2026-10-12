@@ -41,7 +41,7 @@ export interface ToolEntry extends ToolPresentation {
    *  is the thing the operator most needs to see happen, and there is more than one
    *  tool that does it — the fold used to ask `name === code_run_host_command` in four
    *  separate event cases, which is four places to remember when a second one lands,
-   *  and is why `shell_run_command` (code mode's only way to run anything, already
+   *  and is why `shell_run_command` (a worktree thread's only way to run anything, already
    *  carrying the terminal glyph two rows below) fell through to a generic card.
    *
    *  It used to say *how* the tool reported, because the worktree shell answered with
@@ -73,7 +73,6 @@ const CATEGORY_ICONS: Record<string, IconName> = {
   plan: "note",
   project: "layers",
   repo: "branch",
-  research: "research",
   shell: "terminal",
   skills: "library",
   subagents: "users",
@@ -214,14 +213,8 @@ const TOOLS: Record<string, ToolEntry> = {
     label: "Projects",
     noun: ["project", "projects"],
   },
+  project_open_worktree: { icon: "branch", label: "Opened a worktree" },
   repo_inventory_agent_context: { icon: "branch", label: "Repo context" },
-
-  research_read: {
-    icon: "research",
-    label: "Read research",
-    keys: ["conversation_id"],
-  },
-  research_start: { icon: "research", label: "Research", keys: ["question"] },
 
   // A harness tool, like `search_tools` below, so it declares no category: a Python
   // script whose own tool calls are rows of their own, nested on this one's card. No

@@ -63,17 +63,9 @@ export {
 export {
   fetchSubagents,
   isLive,
-  type Conflict,
-  type ConflictPosition,
-  type Confidence,
-  type Depth,
-  type Finding,
-  type ReportSource,
   type Subagent,
-  type SubagentFindings,
   type SubagentsRead,
   type SubagentStatus,
-  type TopicCoverage,
 } from "./subagents";
 
 export {

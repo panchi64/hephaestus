@@ -12,12 +12,11 @@ import {
  * property is, and `themeCSS` is serialised into the generated `<svg>`, which is
  * a subtree the cascade reaches but which must still carry its own values for the
  * lightbox (where the same markup is handed to an `<img>` and stops inheriting
- * anything at all). Odysseus has two themes, a signature accent that moves with
- * `data-mode`, and per-mode operator overrides on top of both, so a hardcoded
- * palette would be wrong three different ways.
+ * anything at all). Odysseus has two themes and per-theme operator accent overrides on
+ * top of them, so a hardcoded palette would be wrong two different ways.
  *
  * So the values are *read back out of the cascade* — `getComputedStyle` on
- * `<html>`, which is where every one of those three layers has already resolved —
+ * `<html>`, which is where every one of those layers has already resolved —
  * and re-emitted as literals. Nothing in here declares a colour of its own; the
  * fallbacks exist only for the case where a property is missing entirely, and
  * they are the Ink shipped values.
@@ -60,8 +59,7 @@ const FALLBACK = {
 const MONO_STACK = `"JetBrains Mono", ui-monospace, "SFMono-Regular", monospace`;
 
 /** The resolved palette one diagram is drawn with. Every field is a literal
- *  `#rrggbb`, already through the theme, the session mode and any operator
- *  override. */
+ *  `#rrggbb`, already through the theme and any operator override. */
 export interface DiagramTheme {
   /** The ground a diagram sits on — the console group's body. */
   bg: string;
@@ -79,7 +77,7 @@ export interface DiagramTheme {
   line: string;
   /** The emphasized neutral fill a demoted accent falls back to. */
   lineStrong: string;
-  /** The session-mode signature. */
+  /** The signature accent. */
   accent: string;
   warn: string;
   alert: string;
@@ -227,10 +225,9 @@ function readHex(
  * Read the live palette off `<html>`.
  *
  * `<html>` specifically, and not the diagram's own container: `data-theme` and
- * `data-mode` both live on the root element, the operator's override sheet is
- * written at `html[data-theme][data-mode]`, and the root is therefore the one
- * node where all three layers have already resolved into a single value per
- * token.
+ * lives on the root element, the operator's override sheet is written at
+ * `html[data-theme]`, and the root is therefore the one node where both layers have
+ * already resolved into a single value per token.
  */
 export function readDiagramTheme(): DiagramTheme {
   if (typeof document === "undefined")
@@ -691,12 +688,8 @@ export function showsLiteralBreak(svg: SVGSVGElement): boolean {
 /**
  * Call `onChange` whenever the palette a diagram is drawn with could have moved.
  *
- * `data-theme` (Ink/Paper) and `data-mode` (the session's signature accent) are
- * both attributes on `<html>`, and the operator's override sheet is keyed on the
- * pair, so one observer on the root's attributes covers all three layers. The
- * sheet swap itself is a stylesheet change rather than an attribute change, but
- * it only ever happens alongside one of these two — the store writes the rule
- * and the root carries the selector it is keyed to.
+ * `data-theme` (Ink/Paper) is an attribute on `<html>`, and the operator's override
+ * sheet is keyed on it, so one observer on the root's attributes covers both layers.
  *
  * Returns the disconnect function.
  */
@@ -709,7 +702,7 @@ export function observeDiagramTheme(onChange: () => void): () => void {
   const observer = new MutationObserver(onChange);
   observer.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["data-theme", "data-mode"],
+    attributeFilter: ["data-theme"],
   });
   return () => observer.disconnect();
 }

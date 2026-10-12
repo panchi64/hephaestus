@@ -1,4 +1,4 @@
-"""The code-mode shell, and the fence it will not run without.
+"""The project-folder shell, and the fence it will not run without.
 
 Two things are pinned here and they fail in opposite directions. The **shape** is the
 harness `Shell`'s — a `cd` that persists, a denylisted command that comes back as a retry,
@@ -114,7 +114,7 @@ def _ctx(tmp_path: Path, root: Path, *, egress=None) -> RunContext[RunDeps]:
             caps=caps,
             conversation_id="conv-a",
             project_id="proj-1",
-            mode="code",
+            workspace_kind="worktree",
         ),
         model=TestModel(),
         usage=RunUsage(),

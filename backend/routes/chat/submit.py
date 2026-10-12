@@ -60,7 +60,7 @@ async def _command_context(
     spec = await deps.commands(request).resolve(
         OPERATOR_ID,
         command.name,
-        mode=binding.mode,
+        workspace_kind=binding.workspace_kind,
         has_conversation=True,
         disabled_tools=disabled_tools,
         # The same tree the picker listed from, resolved the same way — a project's own
@@ -93,12 +93,11 @@ async def turn_scope(request: Request, conversation_id: str, *, vision: bool) ->
 
     ``vision`` is the resolved main model's image fact: a tool that answers with an image
     is withheld from a model that can't read one."""
-    # Read once and used twice — the mode decides which tools belong in this run as well
-    # as where its file work happens, and the two must never be resolved separately.
+    # Read once: where the run works and how far it may go must never be resolved apart.
     binding = await deps.store(request).binding(conversation_id)
     return TurnScope(
         binding=binding,
-        disabled_tools=await deps.disabled_tools(request, binding.mode, vision=vision),
+        disabled_tools=await deps.disabled_tools(request, vision=vision),
         # The app's one agent-facing capability bag — assembled at startup from every
         # feature manifest's `capabilities` export, so a turn never enumerates handles.
         capabilities=deps.capabilities(request),
@@ -166,8 +165,8 @@ async def submit_turn(
         auto_compact=await _resolve_auto_compact(request, conversation_id),
         # Resolved here rather than at each caller so every interactive turn — send,
         # regenerate, edit — runs under the operator's ceiling without threading it
-        # through three call sites. The *override*, not the effective number: a mode's
-        # floor may raise a bound nobody chose, and must not overrule one they did.
+        # through three call sites. The *override*, not the effective number: a sub-agent
+        # spec's floor may raise a bound nobody chose, and must not overrule one they did.
         request_limit=await get_agent_request_limit_override(
             deps.settings_store(request), OPERATOR_ID
         ),

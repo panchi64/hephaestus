@@ -1,5 +1,5 @@
 /**
- * A code thread's branch, fetched once for everyone who wants it.
+ * A worktree thread's branch, fetched once for everyone who wants it.
  *
  * The header's chip owned this resource, which was right while the chip was the only
  * thing that showed a branch. The Diff surface shows the same patch, and two components
@@ -13,10 +13,10 @@
  */
 
 import { createMemo, createResource } from "solid-js";
-import type { SessionMode } from "~/lib/modes";
 import { settled } from "~/lib/resource";
 import { branchWanted } from "./branchWanted";
 import { fetchBranch, type BranchState } from "./data";
+import type { WorkspaceKind } from "./model";
 
 export interface BranchStateApi {
   /** What both consumers should read while a re-fetch is in flight — see below. */
@@ -44,13 +44,16 @@ export interface BranchStateApi {
 export function createBranchState(
   conversationId: () => string | null,
   revision: () => number,
-  loadedMode: () => { id: string; mode: SessionMode } | null,
+  workspaceKind: () => WorkspaceKind | undefined,
 ): BranchStateApi {
-  // Only a thread loaded in a worktree mode owns a branch to ask about. Asking for a
-  // sandbox thread's is a request the backend can only answer 404, three times per open.
-  // The mode is the *loaded* thread's, tagged with its id, so a thread switch asks
-  // nothing until the new thread says what it is.
-  const wanted = createMemo(() => branchWanted(conversationId(), loadedMode()));
+  // Only a thread in a worktree owns a branch to ask about. Asking for a sandbox
+  // thread's is a request the backend can only answer 404, three times per open. The
+  // kind is the open thread's own current answer, so a thread switch asks nothing until
+  // the new thread says what it is, and a thread the agent moves into a worktree starts
+  // asking the moment the listing says so.
+  const wanted = createMemo(() =>
+    branchWanted(conversationId(), workspaceKind()),
+  );
   const [branch, { refetch }] = createResource(
     () => {
       const id = wanted();

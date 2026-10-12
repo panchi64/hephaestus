@@ -1,11 +1,8 @@
 /**
  * Pointing the rail at a directory on the operator's machine.
  *
- * This is the whole of how code work begins now, so it lives on its own rather than
- * inside whichever control happens to call it: the rail's header button calls it, the
- * empty state's button calls it, and the keyboard path reaches it by focusing the first
- * of those. Three callers of one act, which is what it was already — it was simply
- * buried in a line under the mode switch, where the directory came *second*.
+ * It lives on its own rather than inside whichever control happens to call it, so any
+ * surface that offers a directory runs the same act and stages the same project.
  *
  * Any directory does. Projects are still the storage and the git machinery, but they are
  * not paperwork the operator files before they can start: the native chooser hands back
@@ -17,7 +14,7 @@ import { toast } from "~/ui";
 import { usePathPicker } from "~/lib/hostPicker";
 import { pathLabel } from "~/lib/format";
 import { ensureProjectForPath, type Project } from "~/lib/stores/projects";
-import { setCodeProjectId } from "~/lib/stores/sessionMode";
+import { setStagedProjectId } from "~/lib/stores/stagedProject";
 
 /** What to call a directory, wherever it is named.
  *
@@ -33,7 +30,7 @@ export function directoryLabel(project: Project): string {
 }
 
 export interface AddDirectory {
-  /** Open the chooser, file what comes back, and stage it for the next code thread.
+  /** Open the chooser, file what comes back, and stage it as the project of the next thread.
    *  Resolves to null when the operator cancelled, when this host has no chooser, or
    *  when the backend refused the path. */
   add: () => Promise<Project | null>;
@@ -66,7 +63,7 @@ export function useAddDirectory(): AddDirectory {
       });
       if (!path) return null;
       const project = await ensureProjectForPath(path);
-      setCodeProjectId(project.id);
+      setStagedProjectId(project.id);
       // Said once, here, rather than discovered halfway through a session: a worktree
       // is cut from the project's base ref, so work the operator has not committed in
       // their own checkout is invisible to the agent. The rail's heading carries the
@@ -74,7 +71,7 @@ export function useAddDirectory(): AddDirectory {
       // property of the directory rather than of the moment it was added.
       if (!project.repo.isGitRepo)
         toast.error(
-          `${project.name} isn't a git repository yet — create one under projects first`,
+          `${project.name} isn't a git repository yet — create one under projects before the agent can use a worktree there`,
         );
       else if ((project.repo.uncommittedChanges ?? 0) > 0)
         toast.info(
@@ -94,34 +91,4 @@ export function useAddDirectory(): AddDirectory {
   };
 
   return { add, busy };
-}
-
-/* ── Reaching the button from the keyboard ────────────────────────────────────
-   `mod+shift+o` means "start a thread", and in a worktree mode with no directory
-   there is nothing yet to start one *in*. It could raise the chooser itself, but a
-   modal OS dialog from a reflex keystroke is the wrong answer — the operator hit a
-   key without looking. So it moves focus to the rail's button and stops: the next
-   Enter opens the chooser, and it was asked for.
-
-   A module-level seam because the two live in different components — the rail owns the
-   button, the chat room owns the keymap — and this mirrors the module-level handoffs
-   the viewport already uses for exactly that shape. */
-
-let addButton: HTMLButtonElement | undefined;
-
-/** The rail's ADD DIRECTORY button, as a `ref` callback. */
-export function registerAddDirectoryButton(el: HTMLButtonElement): void {
-  addButton = el;
-}
-
-/** Put the operator in front of the chooser without opening it. Returns whether
- *  there was a button to focus — false on a surface where the rail isn't mounted. */
-export function focusAddDirectory(): boolean {
-  // `isConnected`, not merely non-undefined: Solid does not call a `ref` with null on
-  // cleanup, so this can still hold a button that has left the document. Focusing a
-  // detached node silently does nothing, and returning true for it would tell the
-  // caller the operator had been handed off when nothing happened at all.
-  if (!addButton?.isConnected) return false;
-  addButton.focus();
-  return true;
 }

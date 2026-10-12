@@ -1,4 +1,4 @@
-"""The files a code thread can name — what the composer's `@` picker browses.
+"""The files a worktree thread can name — what the composer's `@` picker browses.
 
 **Operator-facing only, and agent-unreachable by construction.** The agent already reaches
 this filesystem through ``files_list_directory`` and ``files_search_files``, rooted at the

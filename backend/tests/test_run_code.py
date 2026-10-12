@@ -38,6 +38,7 @@ from core.config import Settings
 from runs import Run, RunStream
 from services.conversation_view import project_tree
 from services.permissions import blocked_message
+from services.workspace_kind import WorkspaceKind
 from tools import RunDeps, build_agent_toolsets, core_categories
 
 
@@ -64,11 +65,13 @@ def _probe_category() -> FunctionToolset[RunDeps]:
     return toolset
 
 
-async def _script_catalog(permission: str, mode: str = "normal") -> tuple[set[str], set[str]]:
+async def _script_catalog(
+    permission: str, kind: WorkspaceKind = "sandbox"
+) -> tuple[set[str], set[str]]:
     """``(what a script may call, what the model is offered directly)`` at this level."""
     categories = {**core_categories(), "x": _probe_category()}
     stack = build_agent_toolsets(categories)[0]
-    deps = RunDeps(run=_run(), owner_id="operator", permission=permission, mode=mode)
+    deps = RunDeps(run=_run(), owner_id="operator", permission=permission, workspace_kind=kind)
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
     tools = await code_mode_capability().get_wrapper_toolset(stack).get_tools(ctx)
     return set(tools[RUN_CODE].callable_defs), set(tools) - {RUN_CODE}
@@ -97,9 +100,10 @@ class TestWhatAScriptMayCall:
             assert "plan_enter" in direct, level
 
     async def test_the_code_runners_stay_direct(self):
-        folded, direct = await _script_catalog("yolo", mode="code")
-        assert "shell_run_command" in direct and "shell_run_command" not in folded
-        assert "shell_start_command" not in folded
+        for kind in ("checkout", "worktree"):
+            folded, direct = await _script_catalog("yolo", kind)
+            assert "shell_run_command" in direct and "shell_run_command" not in folded
+            assert "shell_start_command" not in folded
         folded, direct = await _script_catalog("yolo")
         assert "code_execute" in direct and "code_execute" not in folded
 

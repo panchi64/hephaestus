@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  ACCENT_DEFAULTS,
-  ACCENT_TOKENS,
-  SESSION_ACCENT_DEFAULTS,
-  hasSessionSignature,
-  isAccentToken,
-} from "./accents";
+import { ACCENT_DEFAULTS, ACCENT_TOKENS, isAccentToken } from "./accents";
 
 /**
  * `ACCENT_DEFAULTS` restates hexes that tokens.css already declares, because the
@@ -70,48 +64,6 @@ describe("ACCENT_DEFAULTS mirrors tokens.css", () => {
     expect(declaredValue("phosphor", "accent")).not.toBe(
       declaredValue("paper", "accent"),
     );
-  });
-});
-
-/** The value a `[data-theme=…][data-mode=…]` rule declares for `--accent`, or
- *  null when tokens.css has no such rule. Matched on the whole rule rather than
- *  sliced out of a block: these are standalone one-declaration rules, not part
- *  of either theme's token block. */
-function declaredSessionAccent(
-  mode: "phosphor" | "paper",
-  sessionMode: string,
-): string | null {
-  const match = CSS.match(
-    new RegExp(
-      `\\[data-theme="${mode}"\\]\\[data-mode="${sessionMode}"\\]\\s*\\{[^}]*--accent\\s*:\\s*(#[0-9a-fA-F]{3,8})\\s*;`,
-    ),
-  );
-  return match ? match[1].toLowerCase() : null;
-}
-
-describe("SESSION_ACCENT_DEFAULTS mirrors tokens.css", () => {
-  for (const mode of ["phosphor", "paper"] as const)
-    for (const sessionMode of ["research", "code"] as const)
-      test(`${mode} · ${sessionMode}`, () => {
-        expect(declaredSessionAccent(mode, sessionMode)).toBe(
-          SESSION_ACCENT_DEFAULTS[mode][sessionMode],
-        );
-      });
-
-  test("Normal has no rule of its own", () => {
-    // It is the base `--accent`, and a `[data-mode="normal"]` rule would be a
-    // second declaration of the same token — the serializer refuses to emit one
-    // for exactly this reason, and the stylesheet must not contain one either.
-    for (const mode of ["phosphor", "paper"] as const)
-      expect(declaredSessionAccent(mode, "normal")).toBeNull();
-  });
-});
-
-describe("hasSessionSignature", () => {
-  test("is true for every mode except Normal", () => {
-    expect(hasSessionSignature("normal")).toBe(false);
-    expect(hasSessionSignature("research")).toBe(true);
-    expect(hasSessionSignature("code")).toBe(true);
   });
 });
 

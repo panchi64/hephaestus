@@ -13,15 +13,14 @@
  * single main room is this long-lived singleton.
  *
  * **What this module owns that the stream does not:** the *binding* the operator is
- * currently pointed at. Only the permission level, and only because unlike the mode it is
- * sent on every turn and persisted per conversation, so it belongs to the thread on screen
- * rather than to the window.
+ * currently pointed at. Only the permission level, and only because unlike the project it
+ * is sent on every turn and persisted per conversation, so it belongs to the thread on
+ * screen rather than to the window.
  *
- * The mode is deliberately **not** re-exposed here. It is the app-wide store's
- * (`lib/stores/sessionMode`) — the theme and the shell read it too — and aliasing it onto
- * this handle meant a surface that only wanted to read a plain signal had to instantiate
- * the whole never-disposed stream singleton, its SSE effects and its visibility listeners
- * to get at it. The mode switch and the rail import the store directly.
+ * The project a new thread will be scoped to is deliberately **not** re-exposed here. It
+ * is the app-wide store's (`lib/stores/stagedProject`), and aliasing it onto this handle
+ * would make a surface that only wanted to read a plain signal instantiate the whole
+ * never-disposed stream singleton, its SSE effects and its visibility listeners.
  */
 
 import {
@@ -38,14 +37,9 @@ import {
   setChatBusy,
   setRunErrored,
 } from "~/lib/stores/chatActivity";
-import type { SessionMode } from "~/lib/modes";
 import { markConversationRead } from "~/lib/stores/notifications";
 import { moveDraft } from "~/ui";
-import {
-  activeSessionMode,
-  codeProjectId,
-  setActiveSessionMode,
-} from "~/lib/stores/sessionMode";
+import { stagedProjectId } from "~/lib/stores/stagedProject";
 import { refreshSessions } from "./data/sessions";
 import { createHistoryLoad, watchLateRuns } from "./historyLoad";
 import type { HistoryStatus } from "./historyStatus";
@@ -77,21 +71,15 @@ export interface MainChat {
    *  the thread still uses `currentId`; this is a read-side answer to "which thread am
    *  I looking at", not a second seat. */
   openId: Accessor<string | null>;
-  /** The mode of the thread the room last loaded, tagged with that thread's id — what
-   *  the thread *is*, as opposed to the app-wide mode the operator has staged. Held
-   *  across a re-read of the same thread, so a reload does not look like a different
-   *  kind of thread for a moment. */
-  loadedMode: Accessor<{ id: string; mode: SessionMode } | null>;
   stream: ReturnType<typeof createChatStream>;
   /** Whether the one-time warm-resume entry intent has run this app session. The
    *  flag is part of the singleton so it survives navigation — see the screen. */
   warmResolved: Accessor<boolean>;
   markWarmResolved: () => void;
-  /** How far the model may go in the open thread. Unlike the mode this is sent on
-   *  every turn and persisted per conversation, so the composer's control moves it
-   *  mid-thread; seeded from the loaded thread so a reload comes back where the
-   *  operator left it, and reset to the mode's default when a new thread is
-   *  staged. */
+  /** How far the model may go in the open thread. Sent on every turn and persisted
+   *  per conversation, so the composer's control moves it mid-thread; seeded from the
+   *  loaded thread so a reload comes back where the operator left it, and reset to the
+   *  default when a new thread is staged. */
   permission: Accessor<PermissionLevel>;
   setPermission: (level: PermissionLevel) => void;
   /** Whether the level above is a stand-in for one still loading (`seatPermission`'s
@@ -113,10 +101,6 @@ export function mainChat(): MainChat {
   if (_mainChat) return _mainChat;
   return (_mainChat = createRoot(() => {
     const [currentId, setCurrentId] = createSignal<string | null>(null);
-    const [loadedMode, setLoadedMode] = createSignal<{
-      id: string;
-      mode: SessionMode;
-    } | null>(null);
     const [permission, setLevel] = createSignal<PermissionLevel>(
       DEFAULT_PERMISSION_LEVEL,
     );
@@ -167,8 +151,7 @@ export function mainChat(): MainChat {
         // Same lockstep: the loaded thread's git-style snapshot history.
         initialSnapshots: fromLoaded((s) => s.snapshots),
         // Read only when a send creates the conversation.
-        mode: activeSessionMode,
-        projectId: codeProjectId,
+        projectId: stagedProjectId,
         // Read on every send — the level is the one binding fact that moves.
         permission,
         // ...and it can now move from the *other* end too: `plan_enter` narrows it and
@@ -182,12 +165,8 @@ export function mainChat(): MainChat {
         },
       },
     );
-    // Opening a thread points the client at what that thread *is*: its mode moves the
-    // rail and the signature accent, its level seats the composer's control. Both are
-    // seeded from the load rather than left on the previous thread's values, which is
-    // what stops the window from claiming to be in a code session while a normal one
-    // is on screen. Staging a new thread (`currentId === null`) leaves the mode where
-    // the operator put it — that choice is the whole point of the switch.
+    // Opening a thread seats the composer's level control from what the thread
+    // stored, rather than leaving it on the previous thread's value.
     //
     // The level is re-seated on *every* pass, not only once the load lands: the gap
     // between the click and the fetch is exactly when a send would carry the previous
@@ -207,10 +186,6 @@ export function mainChat(): MainChat {
         permissionOwner = seat.owner;
         setLevel(seat.level);
         setPermissionPending(seat.provisional);
-      }
-      if (thread) {
-        setActiveSessionMode(thread.mode);
-        if (id) setLoadedMode({ id, mode: thread.mode });
       }
     });
     // Reattach when the tab returns to the foreground or the network comes back.
@@ -265,7 +240,7 @@ export function mainChat(): MainChat {
       const id = currentId();
       if (id) markConversationRead(id);
     });
-    // Runs begun out of sight (another tab, a scheduled task, a research launch) are
+    // Runs begun out of sight (another tab, a scheduled task) are
     // found by re-reading the open thread — see `watchLateRuns`.
     watchLateRuns({
       currentId,
@@ -289,7 +264,6 @@ export function mainChat(): MainChat {
       history,
       reloadHistory,
       openId: () => currentId() ?? stream.conversationId(),
-      loadedMode,
       stream,
       warmResolved,
       markWarmResolved: () => setWarmResolved(true),

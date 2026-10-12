@@ -250,7 +250,6 @@ class SubagentWake:
             self._settings,
             self._offline,
             owner_id,
-            mode=binding.mode,
             vision=models[4],
             # Nobody is in front of a wake turn, so it is not offered the tools that stop
             # and wait for someone — the same footing every unattended turn runs on.

@@ -9,8 +9,8 @@ from sqlmodel import Session, select
 
 from core.db import in_session
 from models.conversation import Conversation, Message
-from services.modes import mode_spec
 from services.projects import project_clause
+from services.workspace_kind import workspace_kind
 
 from .core import _StoreCore
 from .paths import _active_path_model
@@ -92,10 +92,7 @@ class _ListingMixin(_StoreCore):
             preview=preview[:140] if preview else None,
             work_summary=self._open_work_summary(conversation),
             model=model,
-            # Normalised through the registry for the same reason `binding` does it: the
-            # column is a plain string, and a listing that grouped rows under a mode this
-            # build has no rule for would show the operator a section they cannot reach.
-            mode=mode_spec(conversation.mode).id,
+            workspace_kind=workspace_kind(conversation.workspace_kind),
             project_id=conversation.project_id,
         )
 

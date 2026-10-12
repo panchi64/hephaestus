@@ -9,7 +9,7 @@ exit is the allowlisting proxy in ``sidecar``.
 
 ``host`` is the other half — the OS-level confinement everything that runs *outside*
 a container is wrapped in, reading the same domain allowlist. Two callers land there:
-the code-mode shell, which refuses without a fence, and the approval-gated escape
+the project shell, which refuses without a fence, and the approval-gated escape
 hatch for when the operator's own machine has to change, which degrades and says so.
 """
 

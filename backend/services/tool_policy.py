@@ -5,15 +5,13 @@ disabled tool from the catalog the model is offered, so the agent can neither se
 invoke it. This module is the **operator's half** — which tools they turned off, made
 durable, and composed with the suspensions the system decides on its own.
 
-Six independent sources feed one set:
+Five independent sources feed one set:
 
 - **the operator's explicit choices**, persisted through ``settings_store`` under
   ``tools.disabled`` as a plain JSON list of namespaced tool names. Policy, not content,
   so it stays in the clear like every other app preference;
 - **offline mode's automatic web-tool suspension** (``services/offline``), derived from
   connectivity rather than chosen;
-- **the run's mode** — whether a tool belongs in this kind of thread, read off the mode
-  registry (``services/modes.py``) rather than restated here;
 - **the model's own reach** — a tool that answers with an image is withheld from a model
   that cannot see one;
 - **whether anyone is watching** — a tool that suspends the turn on the operator is
@@ -27,24 +25,16 @@ run path can apply one source and silently drop the others. Every site that fill
 ``RunDeps.disabled_tools`` calls it — the live chat turn, the approval-resume path, and
 the scheduler's unattended task executor.
 
-**The permission level is deliberately not one of them**, though it withholds too
-(:func:`permission_disabled_tools`, Plan only). It is applied *live*, at the enabled gate,
-from ``RunDeps.permission`` — because unlike the six above it can **move inside a turn**:
+**The permission level and the workspace kind are deliberately not among them**, though
+both withhold too (:func:`permission_disabled_tools`, Plan only, and
+``services/workspace_kind.workspace_disabled_tools``). They are applied *live*, at the
+enabled gate, because unlike the five above they can **move inside a turn**:
 ``tools/plan.py`` narrows a thread to Plan and an approved plan widens it again, both
 taking effect on the next model request. A union cannot be undone — nothing in a set of
 names records *which* source put each one there — so a level folded in here could be added
 but never correctly removed, and taking the Plan set back out would lift every other
-source's hold on the same names with it: a tool the operator switched off by hand, or one
-this mode has no business offering, would come back the moment a plan was approved.
-
-**Mode is a filter, not a second catalog.** ``app.state.tool_categories`` is assembled
-once at startup and ``tools/catalog.py`` derives the operator's settings list from it;
-building a different mapping per mode would let the settings page and the agent's real
-stack disagree, which is the exact failure the namespacing was built to prevent. So the
-`shell` and `repo` categories are registered like every other, listed like every other,
-and simply withheld from a run that is not in their mode. **Which** categories a mode
-admits is the registry's answer, not this module's — mode is one axis of a thread, and
-this module only knows how to turn an axis into a withheld set.
+source's hold on the same names with it: a tool the operator switched off by hand would
+come back the moment a plan was approved.
 """
 
 from __future__ import annotations
@@ -58,7 +48,6 @@ from typing import TYPE_CHECKING
 
 from core.container import ServiceContainer
 from runs.lanes import lane_for
-from services.modes import DEFAULT_MODE, MODE_SCOPED_TOOLS, mode_spec
 from services.permissions import (
     ApprovalPolicy,
     permission_spec,
@@ -118,7 +107,7 @@ async def _store(settings: SettingsStore, owner_id: str, names: Iterable[str]) -
 
 
 # Tools whose *result* only a vision model can read — they return image content rather
-# than text. Written out here for the same reason the mode sets are: `services/` sits
+# than text. Written out here because `services/` sits
 # below `tools/`, so importing the category that owns them would invert the dependency
 # order. `tests/test_tool_policy.py` checks the literal against the real catalog.
 VISION_ONLY_TOOLS = frozenset({"browse_screenshot"})
@@ -167,24 +156,6 @@ def lane_disabled_tools(kind: str) -> frozenset[str]:
     return frozenset() if lane_for(kind) == "interactive" else ATTENDED_ONLY_TOOLS
 
 
-def mode_disabled_tools(mode: str) -> frozenset[str]:
-    """The tools that do not belong in ``mode`` — every mode-scoped category the mode's
-    spec does not admit, flattened to namespaced names.
-
-    Derived from the registry rather than written out per mode, so a fourth mode withholds
-    the right tools the moment its row exists. An unrecognised mode resolves to Normal
-    (``services/modes.py``), which is the conservative direction: Normal is the mode that
-    never reaches the host, so a corrupt stored value cannot open the shell up.
-    """
-    admitted = mode_spec(mode).categories
-    return frozenset(
-        name
-        for category, names in MODE_SCOPED_TOOLS.items()
-        if category not in admitted
-        for name in names
-    )
-
-
 def permission_disabled_tools(level: str) -> frozenset[str]:
     """The tools a run at ``level`` must not even be offered.
 
@@ -201,7 +172,7 @@ def permission_disabled_tools(level: str) -> frozenset[str]:
     in any case: its ceiling is above every class, so the set below comes back empty
     through the same comparison rather than through a second rule about that level.
 
-    Withholding rather than prompt-toggling is deliberate. A mode that only *asks* the
+    Withholding rather than prompt-toggling is deliberate. A level that only *asks* the
     model to stay read-only is enforcement by cooperation, which stops working precisely
     when it matters. A tool that is not in the catalog cannot be called by a model that
     decides otherwise.
@@ -299,40 +270,31 @@ async def effective_disabled_tools(
     offline: OfflineModeService,
     owner_id: str,
     *,
-    mode: str = DEFAULT_MODE,
     vision: bool = True,
     kind: str = "chat",
     availability: Sequence[CategoryAvailability] = (),
     caps: ServiceContainer | None = None,
 ) -> frozenset[str]:
     """Everything hidden from the agent this run *for reasons that cannot change mid-turn*:
-    the operator's set **unioned** with offline mode's automatic web suspension, the tools
-    that don't belong in ``mode``, the ones whose results this run's model cannot read, the
-    ones that need an operator this run doesn't have, and the ones whose feature the
-    operator has never set up.
+    the operator's set **unioned** with offline mode's automatic web suspension, the ones
+    whose results this run's model cannot read, the ones that need an operator this run
+    doesn't have, and the ones whose feature the operator has never set up.
 
-    A union, never a replacement — the six answer different questions ("the operator does
-    not want this tool", "this tool cannot work right now", "this tool is not part of this
-    kind of thread", "this model cannot read what this tool returns", "nobody is sitting in
-    front of this run", "there is no mailbox for this tool to read"), and any one of them
-    alone is enough to withhold a tool.
-
-    The **permission level is not here** and is applied live at the gate instead; the
-    module note says why, and it is the one thing about this function worth knowing before
-    adding a seventh source: anything that can move inside a turn does not belong in a
-    union, because a union cannot be taken apart again.
+    A union, never a replacement: any one source alone is enough to withhold a tool. The
+    permission level and the workspace kind are not here and are applied live at the gate;
+    anything that can move inside a turn does not belong in a union, because a union cannot
+    be taken apart again.
 
     ``vision`` defaults to True — permissive — because the callers that cannot know (a
     background agent that resolves its own model) should not have tools taken away by an
     assumption; the interactive paths, which do know, pass the resolved answer. ``kind``
     defaults to the operator's own turn for the same reason, and the two unattended
-    composers (the scheduler, the research threads) name themselves. ``availability`` and
+    composers (the scheduler, the agent's own threads) name themselves. ``availability`` and
     ``caps`` travel together and default to asking nothing.
     """
     return (
         await get_disabled_tools(settings, owner_id)
         | offline.web_tools_disabled()
-        | mode_disabled_tools(mode)
         | vision_disabled_tools(vision)
         | lane_disabled_tools(kind)
         | await unavailable_tools(availability, caps, owner_id)

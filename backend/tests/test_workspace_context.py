@@ -62,12 +62,12 @@ async def _caps(tmp_path, **overrides) -> tuple[ServiceContainer, SandboxSession
     return caps, manager
 
 
-def _request(caps: ServiceContainer, *, mode: str = "normal", key: str = "conv-a"):
+def _request(caps: ServiceContainer, *, kind: str = "sandbox", key: str = "conv-a"):
     return PromptContextRequest(
         caps=caps,
         owner_id="operator",
         conversation_id="conv-a",
-        mode=mode,
+        workspace_kind=kind,
         project_id=None,
         workspace_key=key,
     )
@@ -216,14 +216,15 @@ async def test_an_empty_workspace_means_no_block(tmp_path):
     assert await workspace_context(_request(caps)) == ""
 
 
-async def test_a_worktree_thread_gets_no_block(tmp_path):
-    """A checkout is the operator's own repository, with git in it and
+@pytest.mark.parametrize("kind", ["checkout", "worktree"])
+async def test_a_project_folder_thread_gets_no_block(tmp_path, kind):
+    """A project folder is the operator's own repository, with git in it and
     `repo_instructions` already describing it — listing thousands of tracked files every
     turn would be this idea's whole cost with none of its benefit."""
     caps, manager = await _caps(tmp_path)
     _populate(manager, "conv-a", {"analysis.py": "x"})
 
-    assert await workspace_context(_request(caps, mode="code")) == ""
+    assert await workspace_context(_request(caps, kind=kind)) == ""
 
 
 async def test_no_sandbox_capability_means_no_block():
@@ -381,7 +382,7 @@ async def test_a_live_turn_carries_the_block_at_the_tail(tmp_path):
         categories={},
         capabilities=caps,
         prompt_context_providers=[workspace_context],
-        binding=ConversationBinding(mode="normal"),
+        binding=ConversationBinding(workspace_kind="sandbox"),
         workspace_key="conv-a",
         context_window=100_000,
     )
@@ -398,7 +399,8 @@ async def test_a_live_turn_carries_the_block_at_the_tail(tmp_path):
     assert all(e.seq < first_answer for e in injected)
 
 
-async def test_a_live_worktree_turn_carries_no_block(tmp_path):
+@pytest.mark.parametrize("kind", ["checkout", "worktree"])
+async def test_a_live_project_folder_turn_carries_no_block(tmp_path, kind):
     from pydantic_ai.models.test import TestModel  # noqa: PLC0415
 
     from agent import build_chat_orchestrator  # noqa: PLC0415
@@ -414,7 +416,7 @@ async def test_a_live_worktree_turn_carries_no_block(tmp_path):
         categories={},
         capabilities=caps,
         prompt_context_providers=[workspace_context],
-        binding=ConversationBinding(mode="code", project_id="proj-1"),
+        binding=ConversationBinding(workspace_kind=kind, project_id="proj-1"),
         workspace_key="conv-a",
         context_window=100_000,
     )
@@ -422,7 +424,11 @@ async def test_a_live_worktree_turn_carries_no_block(tmp_path):
     await run.wait()
     assert run.status is RunStatus.done
 
-    contributors = {
-        e.body.contributor for e in run.stream.replay() if e.body.type == "context.injected"
-    }
-    assert "workspace" not in contributors
+    listings = [
+        e
+        for e in run.stream.replay()
+        if e.body.type == "context.injected"
+        and e.body.contributor == "workspace"
+        and e.body.placement == "prompt"
+    ]
+    assert listings == []

@@ -7,12 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import {
-  bucketOf,
-  buildInventory,
-  collectSources,
-  type SourceItem,
-} from "./sourceItems";
+import { buildInventory, collectSources, type SourceItem } from "./sourceItems";
 import type { ChatMessage, Citation } from "../model";
 
 const turn = (...citations: Citation[]): ChatMessage =>
@@ -138,29 +133,11 @@ describe("shelving", () => {
     ...over,
   });
 
-  test("being contested outranks how thoroughly it was read", () => {
-    const contested = new Set(["https://example.com/a"]);
-    expect(bucketOf(item({ engagement: "cited" }), contested)).toBe(
-      "contradicted",
-    );
-    expect(bucketOf(item({ engagement: "listed" }), contested)).toBe(
-      "contradicted",
-    );
-  });
-
-  test("a corpus passage is matched on its bare ref", () => {
-    const contested = new Set(["chapter-4"]);
-    expect(
-      bucketOf(
-        item({ url: null, ref: "chapter-4", kind: "corpus" }),
-        contested,
-      ),
-    ).toBe("contradicted");
-  });
-
-  test("unmatched sources fall back to their engagement, never to contested", () => {
-    expect(bucketOf(item({ engagement: "listed" }), new Set())).toBe("listed");
-    expect(bucketOf(item({ engagement: "read" }), new Set())).toBe("read");
+  test("a source is shelved by how far the run got with it", () => {
+    for (const engagement of ["cited", "read", "listed"] as const)
+      expect(
+        buildInventory([item({ engagement })]).groups.map((g) => g.bucket),
+      ).toEqual([engagement]);
   });
 
   test("a bucket with nothing in it is absent rather than empty", () => {
@@ -172,16 +149,13 @@ describe("shelving", () => {
   });
 
   test("groups read strongest first, whatever order the items arrived in", () => {
-    const inv = buildInventory(
-      [
-        item({ key: "a", engagement: "listed", url: "https://a.test/" }),
-        item({ key: "b", engagement: "read", url: "https://b.test/" }),
-        item({ key: "c", engagement: "read", url: "https://c.test/" }),
-      ],
-      new Set(["https://c.test/"]),
-    );
+    const inv = buildInventory([
+      item({ key: "a", engagement: "listed", url: "https://a.test/" }),
+      item({ key: "b", engagement: "read", url: "https://b.test/" }),
+      item({ key: "c", engagement: "cited", url: "https://c.test/" }),
+    ]);
     expect(inv.groups.map((g) => g.bucket)).toEqual([
-      "contradicted",
+      "cited",
       "read",
       "listed",
     ]);

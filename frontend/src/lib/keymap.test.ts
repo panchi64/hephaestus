@@ -1,8 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import {
-  modeShortcutCombo,
-  modeShortcutLabel,
-} from "~/features/chat/modeShortcuts";
 import { combosFor, type KeyEventLike } from "./keymap";
 
 const ev = (over: Partial<KeyEventLike>): KeyEventLike => ({
@@ -23,22 +19,26 @@ const ctrlShift2 = ev({
   shiftKey: true,
 });
 
-describe("mode shortcuts", () => {
+/** A Control+Shift+digit chord, matched on the physical key because Shift changes what
+ *  `event.key` reads. */
+const chord = (digit: number): string => `ctrl+shift+code:digit${digit}`;
+
+describe("physical-key chords", () => {
   test("Ctrl+Shift+digit matches on the physical key, on mac and elsewhere", () => {
-    expect(combosFor(ctrlShift2, true)).toContain(modeShortcutCombo(1));
-    expect(combosFor(ctrlShift2, false)).toContain(modeShortcutCombo(1));
+    expect(combosFor(ctrlShift2, true)).toContain(chord(2));
+    expect(combosFor(ctrlShift2, false)).toContain(chord(2));
   });
 
-  test("the old mod+digit chords no longer match the mode combos", () => {
+  test("mod+digit does not match the Control+Shift chord", () => {
     const mac = ev({ key: "1", code: "Digit1", metaKey: true });
     const win = ev({ key: "1", code: "Digit1", ctrlKey: true });
-    expect(combosFor(mac, true)).not.toContain(modeShortcutCombo(0));
-    expect(combosFor(win, false)).not.toContain(modeShortcutCombo(0));
+    expect(combosFor(mac, true)).not.toContain(chord(1));
+    expect(combosFor(win, false)).not.toContain(chord(1));
   });
 
   test("Command+Shift+digit on mac is not the chord", () => {
     const e = ev({ key: "!", code: "Digit1", metaKey: true, shiftKey: true });
-    expect(combosFor(e, true)).not.toContain(modeShortcutCombo(0));
+    expect(combosFor(e, true)).not.toContain(chord(1));
   });
 
   test("a bare modifier press yields no combo", () => {
@@ -57,10 +57,5 @@ describe("mode shortcuts", () => {
     expect(
       combosFor(ev({ key: "p", code: "KeyP", ctrlKey: true }), false),
     ).toContain("mod+p");
-  });
-
-  test("tooltip labels", () => {
-    expect(modeShortcutLabel(0, true)).toBe("⌃⇧1");
-    expect(modeShortcutLabel(2, false)).toBe("Ctrl+Shift+3");
   });
 });

@@ -12,9 +12,9 @@ from sqlmodel import Session
 from core.db import in_session
 from models.conversation import Conversation
 from runs.overhead import TurnOverhead
-from services.modes import mode_spec
 from services.permissions import PermissionLevel, permission_level
 from services.sealing import open_sealed
+from services.workspace_kind import workspace_kind
 
 from .core import _StoreCore
 from .records import ConversationBinding
@@ -100,8 +100,8 @@ class _MetadataMixin(_StoreCore):
         """This thread's binding — the facts a run needs to know where it works and how far
         it may go, read together so no path can pick up one and default the others.
 
-        A missing conversation reads as an unfiled Normal thread at the default level,
-        which is the same answer a stateless turn gets and the safe one: Normal never
+        A missing conversation reads as an unfiled sandbox thread at the default level,
+        which is the same answer a stateless turn gets and the safe one: a sandbox never
         touches the host.
         """
 
@@ -110,11 +110,10 @@ class _MetadataMixin(_StoreCore):
             if conversation is None:
                 return ConversationBinding()
             # Both columns are plain strings, so an unrecognised value (a restored backup
-            # from a future version, a hand-edited row) is normalised through its registry
-            # rather than reaching the resolver as something it has no row for. They
-            # degrade in opposite directions and each towards the answer that does least.
+            # from a future version, a hand-edited row) is normalised towards the answer
+            # that does least.
             return ConversationBinding(
-                mode=mode_spec(conversation.mode).id,
+                workspace_kind=workspace_kind(conversation.workspace_kind),
                 project_id=conversation.project_id,
                 permission=permission_level(conversation.permission_level),
             )
@@ -134,6 +133,21 @@ class _MetadataMixin(_StoreCore):
         def work(session: Session) -> bool:
             conversation = session.get(Conversation, conversation_id)
             return True if conversation is None else bool(conversation.ephemeral)
+
+        return await in_session(self._engine, work)
+
+    async def open_worktree(self, conversation_id: str) -> bool:
+        """Move this thread from its sandbox to its project's worktree. One-way.
+
+        False when the thread does not exist or has no project to check out.
+        """
+
+        def work(session: Session) -> bool:
+            conversation = session.get(Conversation, conversation_id)
+            if conversation is None or conversation.project_id is None:
+                return False
+            conversation.workspace_kind = "worktree"
+            return True
 
         return await in_session(self._engine, work)
 

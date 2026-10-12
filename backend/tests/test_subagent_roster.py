@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from services.modes import mode_spec
+from core.config import Settings
 from services.subagents import BUILTIN, SubagentSpec, builtin_roster, merged_roster
 from services.subagents.definitions import (
     AgentFileError,
@@ -92,9 +92,8 @@ class TestTheBuiltIns:
 class TestTheResearcher:
     """The one built-in that replaced a whole feature.
 
-    Research used to be its own launcher, its own abstraction and two tools of its own
-    (`research_start` / `research_read`) that the model polled. It is now one row in the
-    roster, which only works if the row carries everything the deleted module enforced.
+    Research is one row in the roster, which only works if the row carries everything a
+    dedicated research launcher would enforce.
     """
 
     def test_it_refuses_rather_than_answering_from_memory(self):
@@ -107,23 +106,15 @@ class TestTheResearcher:
 
     def test_it_reads_and_therefore_launches_without_asking(self):
         # Reading the web changes nothing, so the operator is not asked. What they rule on
-        # is the *plan* the research thread submits before it fans out.
+        # is the plan the launching thread submits before it fans out.
         assert builtin_roster()["researcher"].permission_ceiling == "plan"
 
-    def test_it_does_not_run_in_research_mode(self):
-        """The mode named `research` is the *orchestrator's*.
-
-        Its prompt is written for a thread with an operator to ask and a plan to submit,
-        and a sub-agent has neither tool (`ATTENDED_ONLY_TOOLS` withholds both from every
-        linked run). A researcher reading that prompt would be told to do two things it
-        cannot, so it runs in the mode research mode is otherwise identical to and carries
-        its whole job in its brief instead.
-        """
-        spec = builtin_roster()["researcher"]
-        assert spec.mode == "normal"
-        # And the floor research mode would have supplied comes with it explicitly, since
-        # the mode that used to is not this sub-agent's.
-        assert spec.request_limit == mode_spec("research").request_limit
+    def test_it_carries_its_own_request_limit(self):
+        # Reading enough sources to see where they disagree is many more round trips than
+        # the operator's default turn budget allows for.
+        limit = builtin_roster()["researcher"].request_limit
+        assert limit is not None
+        assert limit > Settings().agent_request_limit
 
     def test_it_works_nowhere_near_the_launching_threads_files(self):
         # It is reading the open web, which is the case `own` exists for. Sharing would

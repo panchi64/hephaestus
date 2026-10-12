@@ -23,7 +23,6 @@ import { StatusFlag, Text } from "~/ui";
 import { plural } from "~/lib/format";
 import { SubagentsSurface } from "../components/SubagentsSurface";
 import { CommandsSurface } from "../components/CommandsSurface";
-import { CoverageSurface } from "../components/CoverageSurface";
 import { SourcesSurface } from "../components/SourcesSurface";
 import { DiffSurface } from "../components/DiffSurface";
 import { FilesSurface } from "../components/FilesSurface";
@@ -76,16 +75,7 @@ export const SURFACE_RENDERERS: Record<
       softWrap={ctx.viewport.state().softWrap}
     />
   ),
-  sources: (ctx) => (
-    <SourcesSurface
-      inventory={ctx.viewport.sources}
-      claims={ctx.viewport.claims}
-      canExtract={ctx.viewport.canExtractClaims}
-      onExtract={ctx.viewport.extractClaims}
-      extracting={ctx.viewport.extractingClaims}
-    />
-  ),
-  coverage: (ctx) => <CoverageSurface coverage={ctx.viewport.coverage} />,
+  sources: (ctx) => <SourcesSurface inventory={ctx.viewport.sources} />,
   files: (ctx) => (
     <FilesSurface
       branch={ctx.viewport.branch}
@@ -200,35 +190,6 @@ export const SURFACE_META: Partial<
       <Show when={count().total > 0}>
         <Text variant="micro" tone="dim" class="tabular-nums">
           {`${plural(count().total, "source")} · ${plural(count().origins, "origin")}`}
-        </Text>
-      </Show>
-    );
-  },
-  coverage: (ctx) => {
-    // **What is missing, then what is contested, then what is merely there.** A header
-    // has room for one figure, and the ranking is by which of them would make an
-    // operator open the pane — a named gap is the thing the map exists to surface, and
-    // a topic count is what they read once they are already inside.
-    const count = createMemo(() => {
-      const c = ctx.viewport.coverage();
-      return {
-        topics: c.topics.length,
-        gaps: c.topics.reduce((n, t) => n + t.gaps.length, 0),
-        conflicts: c.conflicts.length,
-      };
-    });
-    return (
-      <Show when={count().topics > 0 || count().conflicts > 0}>
-        <Text
-          variant="micro"
-          tone={count().gaps > 0 || count().conflicts > 0 ? "warn" : "dim"}
-          class="tabular-nums"
-        >
-          {count().gaps > 0
-            ? plural(count().gaps, "gap")
-            : count().conflicts > 0
-              ? `${count().conflicts} contested`
-              : plural(count().topics, "topic")}
         </Text>
       </Show>
     );

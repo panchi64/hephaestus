@@ -85,14 +85,14 @@ export interface ComposerHeaderAsideProps {
   runClock: () => RunClock | null;
   /** Operator messages waiting in the run. */
   queued: () => number;
-  /** A code thread's branch, when it has one. */
+  /** A worktree thread's branch, when it has one. */
   branch: () => string | undefined;
 }
 
 /**
  * The right of the composer's plate: the run's clock while one streams (from the
  * backend's own `run.started` instant — never estimated), queued messages waiting on
- * the operator's say-so, and otherwise the branch a code thread writes to.
+ * the operator's say-so, and otherwise the branch a worktree thread writes to.
  */
 export function ComposerHeaderAside(
   props: ComposerHeaderAsideProps,

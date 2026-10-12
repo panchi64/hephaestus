@@ -1,8 +1,8 @@
 """Which queue a run waits in.
 
 One pool of eight slots shared by everything was a bound on the *host*, not a policy
-about *whose work matters*: a scheduled task firing at nine and two research threads the
-agent opened for itself could hold every slot, and the operator's next message sat at the
+about *whose work matters*: a scheduled task firing at nine and two sub-agents the agent
+launched for itself could hold every slot, and the operator's next message sat at the
 gate behind them — queued, silent, and indistinguishable from a slow model.
 
 So the pool is **carved into lanes** rather than replaced by them: the host ceiling stays
@@ -22,8 +22,8 @@ hold are, by arithmetic, always there for a turn somebody is waiting on.
 same chat orchestrator over the same tools; they differ in whether somebody is sitting in
 front of the answer. ``interactive`` is the operator's own turn and gets the widest lane.
 ``background`` is unattended work — a scheduled task, whose whole point is that nobody is
-watching it. ``linked`` is a thread the agent opened for itself (research started from
-another conversation), which is foreground for the model and background for the operator,
+watching it. ``linked`` is a thread the agent opened for itself (a sub-agent, or a turn its report
+woke), which is foreground for the model and background for the operator,
 and gets its own lane so a burst of them can neither starve the operator nor be starved
 by the scheduler.
 

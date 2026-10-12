@@ -1,4 +1,4 @@
-"""The mechanics behind the code-mode shell: one persistent working directory, the
+"""The mechanics behind the project shell: one persistent working directory, the
 background processes started from it, and the fence every command is wrapped in.
 
 **The behaviour is the harness `Shell`'s on purpose.** The model has been trained on those

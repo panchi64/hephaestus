@@ -12,10 +12,7 @@ read/resolved state) is structural metadata the DB can index and order by, so it
 the clear. ``task_id`` links a notification back to the scheduled task it's about — a
 reminder's own fire, or an agent task's outcome when its output channel is
 ``notification`` (`app.py`'s task executor/notify closures write it; see
-`services/scheduler.py`). ``research_id`` is a retired link nothing writes any more —
-research stopped being an entity of its own and became a *mode a conversation is in*, so a
-research notification is now conversation-linked like every other. The column stays for
-the rows that already carry one; see its own comment below.
+`services/scheduler.py`).
 """
 
 from __future__ import annotations
@@ -62,13 +59,6 @@ class Notification(SQLModel, table=True):
     run_id: str | None = Field(default=None, index=True)
     # Nullable seam for the scheduler's task outcomes (a later phase) — unused until then.
     task_id: str | None = Field(default=None, index=True)
-    # Retired: this linked a notification to a deep-research *entity*, back when research
-    # was a pipeline with a store of its own rather than a conversation in research mode.
-    # Nothing writes it and nothing reads it — a research thread's completion is an
-    # ordinary `conversation_id`-linked notice now. Kept because dropping a nullable
-    # column gains nothing and costs a migration that would have to rewrite the table,
-    # and because the rows that already carry one are the operator's own history.
-    research_id: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utcnow, index=True)
     # Set when the operator has seen it (a REST mark-read, or opening the conversation
     # it's linked to). Independent of resolution — a read notification can still be

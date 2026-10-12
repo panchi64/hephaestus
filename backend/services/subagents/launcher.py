@@ -1,7 +1,7 @@
 """The seam that lets the *agent* launch a sub-agent.
 
-Same structural constraint that created the research seam, and the same answer: composing
-a chat turn happens *above* ``tools/`` in the dependency order, so a tool cannot import it.
+Composing a chat turn happens *above* ``tools/`` in the dependency order, so a tool cannot
+import it.
 What a tool can do is resolve a capability by type out of the run's bag, and this is the
 type it resolves — declared down here in ``services/``, implemented at the wiring layer
 (``harness/manifests/_subagents.py``), and registered under this abstract type so the
@@ -53,11 +53,11 @@ class SubagentParent:
     conversation_id: str | None = None
     #: The project the parent is filed under, inherited so a child works on the same code.
     project_id: str | None = None
-    #: The parent's own mode, which a spec naming no mode of its own inherits.
-    mode: str | None = None
+    #: Where the parent works, which a sub-agent sharing or forking its files inherits.
+    workspace_kind: str | None = None
     #: How much rope the *parent* has. A sub-agent runs at the stricter of this and what
     #: its spec asks for, so one approved launch cannot buy a level the operator never
-    #: chose. None means the caller had no level to hand over and the mode's default stands.
+    #: chose. None means the caller had no level to hand over and the default stands.
     permission: str | None = None
     #: The parent's workspace key. The child's own is derived from it — the same key to
     #: share those files, or ``<parent>/<delegation>`` to work in a fork of them — so this

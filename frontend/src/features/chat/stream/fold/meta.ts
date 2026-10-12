@@ -6,7 +6,6 @@
 
 import { produce } from "solid-js/store";
 import type { RunEvent } from "~/lib/stream";
-import { toast } from "~/ui";
 import {
   toVersionChipBlock,
   toViewSnapshotRef,
@@ -20,7 +19,7 @@ import type { FoldContext } from "./types";
 
 /** Fold one content or conversation-scoped event; false when it is not in this family. */
 export function foldMeta(ev: RunEvent, c: FoldContext): boolean {
-  const { deps, assistantId, announce } = c;
+  const { deps, assistantId } = c;
   const { state, patchById, setMessages } = deps;
   switch (ev.type) {
     case "thinking.delta":
@@ -144,10 +143,9 @@ export function foldMeta(ev: RunEvent, c: FoldContext): boolean {
       // Conversation-level, not message-level: hand it to the typewriter reveal
       // rather than folding onto the assistant message.
       revealTitle(ev.conversation_id, ev.title);
-      // And pull the list now rather than at the end of the turn, as
-      // `conversation.linked` does below and for the same reason: the thread
-      // exists, it has a name, and the rail claiming otherwise for the length of a
-      // long run is a lie about state the backend has already settled. It is also
+      // And pull the list now rather than at the end of the turn: the thread exists,
+      // it has a name, and the rail claiming otherwise for the length of a long run is
+      // a lie about state the backend has already settled. It is also
       // what the header's static title falls back to once the reveal finishes.
       refreshSessions();
       // The throbber answers "is the backend naming this thread", and it has just
@@ -157,19 +155,6 @@ export function foldMeta(ev: RunEvent, c: FoldContext): boolean {
       // The surfaces resolve against the live id now, so the name arrives in the
       // same beat the throbber goes.
       deps.setTitlePending(false);
-      return true;
-    case "conversation.linked":
-      // The turn spawned a thread of its own. Pull the list now rather than at
-      // the end of the turn: the new thread is already running, and a session
-      // that exists but isn't listed for another few minutes reads as work that
-      // went nowhere. The toast is the account of *why* a row appeared.
-      refreshSessions();
-      if (announce)
-        toast.info(
-          ev.title
-            ? `Research thread started — ${ev.title}`
-            : "Research thread started.",
-        );
       return true;
     case "citation.added":
       patchById(assistantId, (m) => {

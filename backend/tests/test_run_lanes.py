@@ -1,7 +1,7 @@
 """Lanes — the operator's turn never queues behind unattended work.
 
 The bug this replaces was invisible rather than loud: one pool of eight slots, a
-scheduled task and a few agent-opened research threads filling it, and the operator's
+scheduled task and a few agent-opened background threads filling it, and the operator's
 next message sitting at the gate looking exactly like a slow model. So what is pinned
 here is the *separation*, not the numbers — that a saturated autonomous lane leaves the
 interactive one untouched, and that every kind the composition path actually submits

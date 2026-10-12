@@ -1,5 +1,5 @@
 /**
- * Every source a research thread touched, folded into one inventory.
+ * Every source a thread touched, folded into one inventory.
  *
  * Derived from the transcript's own `citations`, exactly as `commandItems.ts` derives the
  * command log from its terminal blocks — and for the same reason. The fold and the cold
@@ -55,20 +55,16 @@ export interface SourceItem {
   sightings: number;
 }
 
-/** Which shelf of the inventory a source sits on.
- *
- *  Four buckets over two facts, because the two questions the operator brings here are
- *  "what did this rest on" and "what did it look at and put down". `contradicted`
- *  outranks the engagement ladder: a source standing on one side of a disagreement is
- *  the most interesting thing that can be true of it, and filing it by how thoroughly it
- *  was read would bury that. */
-export type SourceBucket = "contradicted" | "cited" | "read" | "listed";
+/** Which shelf of the inventory a source sits on — how far the run got with it, because
+ *  the two questions the operator brings here are "what did this rest on" and "what did
+ *  it look at and put down". */
+export type SourceBucket = Engagement;
 
 /** The whole inventory, in one shape, so the panel reads it once rather than filtering
  *  the same list four times. */
 export interface SourceInventory {
   /** Every source, in order of first sighting. Chronological, never ranked — the same
-   *  argument the command log makes: research is read as a sequence. */
+   *  argument the command log makes: a thread's reading is a sequence. */
   items: SourceItem[];
   /** The buckets, in the order the panel stacks them. A bucket with nothing in it is
    *  absent rather than empty: nothing emits `cited` yet, and a permanently empty
@@ -82,12 +78,7 @@ export interface SourceInventory {
 }
 
 /** The order the buckets read in — strongest standing first. */
-const BUCKET_ORDER: readonly SourceBucket[] = [
-  "contradicted",
-  "cited",
-  "read",
-  "listed",
-];
+const BUCKET_ORDER: readonly SourceBucket[] = ["cited", "read", "listed"];
 
 /** The heading each bucket carries, and what it means in the operator's terms.
  *
@@ -96,14 +87,12 @@ const BUCKET_ORDER: readonly SourceBucket[] = [
  *  the structural one: a search returned it and nothing ever opened it. Writing a richer
  *  reason would mean inventing one, so the heading says exactly what is known. */
 export const BUCKET_LABEL: Record<SourceBucket, string> = {
-  contradicted: "Contradicted",
   cited: "Cited",
   read: "Read",
   listed: "Listed, never opened",
 };
 
 export const BUCKET_HINT: Record<SourceBucket, string> = {
-  contradicted: "Named on more than one side of a disagreement a report found.",
   cited: "Carried into the answer.",
   read: "Its text went in front of the model.",
   listed: "A search returned it and nothing opened it.",
@@ -205,38 +194,15 @@ export function collectSources(messages: ChatMessage[]): SourceItem[] {
   return [...byKey.values()];
 }
 
-/** Which shelf a source sits on, given what the reports said about it.
- *
- *  `contradicted` is a **join**, and it is a lenient one on purpose: a report names its
- *  sources as `{url, ref, title}` while a citation is keyed by url or by
- *  `source_id:ref`, so the two only line up on the halves they share. Matching on the
- *  url and on the bare ref is what those halves are. A source the join misses is filed
- *  by its engagement, which is the right failure: it reads as one source among many
- *  rather than as one the reports proved consistent. */
-export function bucketOf(
-  item: SourceItem,
-  contested: ReadonlySet<string>,
-): SourceBucket {
-  if (
-    (item.url && contested.has(item.url)) ||
-    (item.ref && contested.has(item.ref))
-  )
-    return "contradicted";
-  return item.engagement;
-}
-
 /** The inventory the panel renders — the items, their shelves, and the two figures at
  *  the top. One pass, because the same list is otherwise walked four times to answer
  *  four questions about it. */
-export function buildInventory(
-  items: SourceItem[],
-  contested: ReadonlySet<string> = new Set(),
-): SourceInventory {
+export function buildInventory(items: SourceItem[]): SourceInventory {
   const bucketed = new Map<SourceBucket, SourceItem[]>();
   const origins = new Set<string>();
   let newest: string | undefined;
   for (const item of items) {
-    const bucket = bucketOf(item, contested);
+    const bucket = item.engagement;
     const list = bucketed.get(bucket);
     if (list) list.push(item);
     else bucketed.set(bucket, [item]);

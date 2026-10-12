@@ -13,7 +13,7 @@ import { SURFACES } from "../viewport/surfaces";
  *
  * **Only available surfaces render.** A button for a surface with nothing behind it is a
  * button that opens onto an empty frame, and the operator learns to distrust the row. In
- * an ordinary chat thread that leaves one button or none; a code thread with a plan and a
+ * an ordinary chat thread that leaves one button or none; a worktree thread with a plan and a
  * diff shows three. The row is therefore usually shorter than the registry, which is what
  * keeps it from crowding a header that also carries the title, the workspace hint, the
  * branch chip and the session menu.

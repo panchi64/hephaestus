@@ -13,7 +13,7 @@ import {
  *
  *  **This is the backend `main` role binding, not a per-surface preference.** The
  *  store writes `PUT /models/roles/main`, which is the same fact every server-initiated
- *  consumer resolves — titling, research, scheduled tasks. Changing it here changes it
+ *  consumer resolves — titling, scheduled tasks. Changing it here changes it
  *  for all of them, deliberately: there is one operator and one active model, and a
  *  device-local override would be a second answer to a question the backend already
  *  owns. Every instance of this component is therefore a view of one value and they

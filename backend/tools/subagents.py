@@ -376,7 +376,7 @@ def _parent(ctx: RunContext[RunDeps]) -> SubagentParent:
     return SubagentParent(
         conversation_id=ctx.deps.conversation_id,
         project_id=ctx.deps.project_id,
-        mode=ctx.deps.mode,
+        workspace_kind=ctx.deps.workspace_kind,
         permission=ctx.deps.permission,
         workspace_key=ctx.deps.workspace_key,
         run_id=ctx.deps.run.id,

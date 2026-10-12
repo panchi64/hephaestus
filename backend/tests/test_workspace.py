@@ -29,6 +29,7 @@ from core.config import Settings
 from core.container import ServiceContainer
 from runs import Run, RunStream
 from services.projects import ProjectStore, WorktreeManager
+from services.projects.checkout import CheckoutHolders
 from services.sandbox import HostConfinement, SandboxError, SandboxSessionManager
 from services.workspace import (
     SANDBOX_MOUNT,
@@ -117,6 +118,7 @@ def _caps(tmp_path: Path, roots: dict[str, Path] | None = None) -> ServiceContai
     if roots is not None:
         caps.add(_FakeProjects(roots), as_type=ProjectStore)
         caps.add(WorktreeManager(tmp_path / "worktrees"), as_type=WorktreeManager)
+        caps.add(CheckoutHolders())
     return caps
 
 
@@ -129,10 +131,10 @@ def _ctx(caps: ServiceContainer, **deps) -> RunContext[RunDeps]:
     )
 
 
-# --- normal mode: unchanged, and the /work translation is the resolver's --------------
+# --- sandbox: unchanged, and the /work translation is the resolver's --------------
 
 
-class TestNormalMode:
+class TestSandbox:
     async def test_resolves_the_conversations_own_sandbox_workspace(self, tmp_path):
         ctx = _ctx(_caps(tmp_path), conversation_id="conv-a")
         workspace = await run_workspace(ctx)
@@ -182,10 +184,10 @@ class TestNormalMode:
         assert sessions.holders["conv-a"] is ctx.deps.run
 
 
-# --- code mode: the worktree, and the one-workspace invariant ------------------------
+# --- worktree: the worktree, and the one-workspace invariant ------------------------
 
 
-class TestCodeMode:
+class TestWorktree:
     async def _ctx(self, tmp_path, *, conversation_id="conv-a", run_id="run-1"):
         root = await _repo(tmp_path / "project")
         caps = _caps(tmp_path, {"proj-1": root})
@@ -194,7 +196,7 @@ class TestCodeMode:
             conversation_id=conversation_id,
             run_id=run_id,
             project_id="proj-1",
-            mode="code",
+            workspace_kind="worktree",
         )
 
     async def test_resolves_the_projects_worktree_not_the_operators_tree(self, tmp_path):
@@ -230,15 +232,18 @@ class TestCodeMode:
         assert code == 0
         assert WORKTREE_SCRATCH not in out
 
-    async def test_code_without_a_project_has_no_workspace_rather_than_a_sandbox(self, tmp_path):
+    async def test_a_worktree_without_a_project_has_no_workspace_not_a_sandbox(self, tmp_path):
         # Falling back to the sandbox would be the worst answer: the agent would edit
         # files in a container while its shell tools are refused, and nothing would say
-        # why. `project_id` is required at thread creation precisely so this cannot
-        # happen; if it does, it degrades visibly.
+        # why. a worktree thread always has a project, so if one does not it degrades
+        # visibly.
         caps = _caps(tmp_path, {})
-        assert await run_workspace(_ctx(caps, conversation_id="c", mode="code")) is None
+        bare = _ctx(caps, conversation_id="c", workspace_kind="worktree")
+        assert await run_workspace(bare) is None
         # ...and likewise when the project id names nothing.
-        ctx = _ctx(caps, conversation_id="c", mode="code", project_id="gone", run_id="r2")
+        ctx = _ctx(
+            caps, conversation_id="c", workspace_kind="worktree", project_id="gone", run_id="r2"
+        )
         assert await run_workspace(ctx) is None
 
 
@@ -255,15 +260,15 @@ async def _status(cwd: Path) -> tuple[int, str]:
     return proc.returncode or 0, out.decode()
 
 
-# --- the shell refuses to run outside the mode it belongs to -------------------------
+# --- the shell refuses to run outside the workspaces it belongs to ------------------
 
 
-class TestShellIsCodingOnly:
-    async def test_a_chat_run_is_refused_even_if_the_tool_is_reachable(self, tmp_path):
-        # `mode_disabled_tools` normally hides these from a chat run. That is a filter,
-        # and a filter is the wrong last line of defence between a host command and a chat
-        # thread — so the toolset checks too. Calling it directly is exactly the scenario
-        # a filter regression would produce.
+class TestShellIsProjectFolderOnly:
+    async def test_a_sandbox_run_is_refused_even_if_the_tool_is_reachable(self, tmp_path):
+        # The enabled gate normally hides these from a sandbox run. That is a filter,
+        # and a filter is the wrong last line of defence between a host command and a
+        # sandbox thread — so the toolset checks too. Calling it directly is exactly the
+        # scenario a filter regression would produce.
         ctx = _ctx(_caps(tmp_path), conversation_id="conv-a")
         result = await shell_toolset(confiner=unfenced).call_tool(
             "run_command",
@@ -271,11 +276,12 @@ class TestShellIsCodingOnly:
             ctx,
             None,  # type: ignore[arg-type]
         )
-        assert "only available in a code conversation" in str(result)
+        assert "only available in a conversation filed under a project" in str(result)
 
 
 class TestShellRecoverableFailures:
-    async def test_a_command_the_os_wont_spawn_is_a_retry_not_a_dead_run(self, tmp_path):
+    @pytest.mark.parametrize("kind", ["checkout", "worktree"])
+    async def test_a_command_the_os_wont_spawn_is_a_retry_not_a_dead_run(self, tmp_path, kind):
         """What the model can act on — a refused command, a working directory that
         vanished, a command the OS will not spawn — comes back as `ModelRetry`, so the turn
         continues and the agent tries something else. Only failures it could do nothing
@@ -287,7 +293,7 @@ class TestShellRecoverableFailures:
         """
         root = await _repo(tmp_path / "project")
         caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", mode="code")
+        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind=kind)
         toolset = shell_toolset(confiner=unfenced)
         tools = await toolset.get_tools(ctx)
 
@@ -345,7 +351,7 @@ class TestShellDeclaresAndEnforcesItsReach:
 
         root = await _repo(tmp_path / "project")
         caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", mode="code")
+        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
         ctx.tool_call_approved = True
         toolset = shell_toolset(confiner=recording)
         tools = await toolset.get_tools(ctx)
@@ -367,7 +373,7 @@ class TestShellDeclaresAndEnforcesItsReach:
         self, tmp_path
     ):
         caps = _caps(tmp_path, {"proj-1": tmp_path})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", mode="code")
+        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
         tool = (await shell_toolset().get_tools(ctx))["run_command"]
         schema = tool.tool_def.parameters_json_schema
         reach = schema["properties"]["reach"]
@@ -434,7 +440,7 @@ class TestShellDeclaresAndEnforcesItsReach:
         shells: list = []
         root = await _repo(tmp_path / "project")
         caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", mode="code")
+        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
         ctx.tool_call_approved = True
         toolset = shell_toolset(confiner=unfenced, shells=shells)
         tools = await toolset.get_tools(ctx)
@@ -461,7 +467,7 @@ class TestShellDeclaresAndEnforcesItsReach:
         # command, so it degrades and says so.
         root = await _repo(tmp_path / "project")
         caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", mode="code")
+        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
         ctx.tool_call_approved = True
         toolset = shell_toolset()
         tools = await toolset.get_tools(ctx)
@@ -486,7 +492,7 @@ class TestShellDeclaresAndEnforcesItsReach:
 
         root = await _repo(tmp_path / "project")
         caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", mode="code")
+        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
         ctx.tool_call_approved = True
         toolset = shell_toolset(confiner=recording)
         tools = await toolset.get_tools(ctx)
@@ -523,7 +529,7 @@ class TestAFencedCommandStillBehavesLikeAShell:
         monkeypatch.setattr(shell_module, "get_settings", lambda: settings)
         root = await _repo(tmp_path / "project")
         caps = _caps(tmp_path, {"proj-1": root})
-        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", mode="code")
+        ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
         ctx.tool_call_approved = True
         toolset = shell_toolset()
         tools = await toolset.get_tools(ctx)
@@ -591,7 +597,7 @@ class TestResolveWorkspace:
     async def test_no_handles_at_all_is_no_workspace(self):
         assert (
             await resolve_workspace(
-                mode="normal",
+                workspace_kind="sandbox",
                 project_id=None,
                 conversation_id="c",
                 workspace_key="c",

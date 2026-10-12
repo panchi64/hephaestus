@@ -206,10 +206,9 @@ class TestTheRouteCarriesIt:
                 await client.post("/projects", json={"name": "work", "rootPath": str(root)})
             ).json()
             patch_model_resolution(monkeypatch)
-            created = await client.post(
-                "/chat", json={"prompt": "hi", "mode": "code", "project_id": project["id"]}
-            )
+            created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
             conversation_id = created.json()["conversation_id"]
+            assert await app.state.conversations.open_worktree(conversation_id)
             state = await app.state.worktrees.acquire(
                 project_id=project["id"],
                 root=root,
@@ -238,17 +237,16 @@ class TestTheRouteCarriesIt:
             ]
 
     async def test_a_thread_with_no_branch_answers_with_empty_rows(self, tmp_path, monkeypatch):
-        async with client_app() as (client, _app):
+        async with client_app() as (client, app):
             root = await _repo(tmp_path)
             project = (
                 await client.post("/projects", json={"name": "work", "rootPath": str(root)})
             ).json()
             patch_model_resolution(monkeypatch)
-            created = await client.post(
-                "/chat", json={"prompt": "hi", "mode": "code", "project_id": project["id"]}
-            )
+            created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
 
             conversation_id = created.json()["conversation_id"]
+            assert await app.state.conversations.open_worktree(conversation_id)
             body = (await client.get(f"/worktrees/{conversation_id}")).json()
 
             assert body["files"] == []

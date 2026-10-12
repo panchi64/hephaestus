@@ -1,7 +1,7 @@
 """The OS-level fence for everything that runs outside a container, and the escape hatch.
 
-Two paths execute on the operator's real machine: the code-mode shell, working in a
-project's throwaway worktree, and ``code_run_host_command``, the approval-gated exception
+Two paths execute on the operator's real machine: the project shell, working in a
+project's folder or worktree, and ``code_run_host_command``, the approval-gated exception
 that exists for when the host itself must change. Both are fenced the same way, by
 ``sandbox-runtime`` (seatbelt on macOS, bubblewrap on Linux, no container): credential
 paths and the data directory are unreadable, writes are deny-by-default, and egress to the
@@ -78,7 +78,7 @@ def host_scratch_dir() -> Path:
     application's source tree — its `.env`, its config, its database url — so a command
     approved to read "a file here" would be reading those, and every relative path the
     model wrote would mean something in a directory nobody described to it. The run's
-    workspace is no better: a `normal`/`research` thread's is inside ``data_dir``, which
+    workspace is no better: a sandbox thread's is inside ``data_dir``, which
     the fence below denies outright, so a command started there cannot resolve its own
     working directory, let alone write in it.
 
@@ -307,8 +307,8 @@ async def confine(
 
     :func:`resolve_confinement` settles the machinery once per process — the platform
     probe, the proxy listeners — but not where a particular command may write, because the
-    two callers do not agree on that: the code-mode shell writes into one conversation's
-    worktree, the approved host command wherever the operator allowed. Those rules are
+    two callers do not agree on that: the project shell writes into one conversation's
+    project folder, the approved host command wherever the operator allowed. Those rules are
     genuinely per-call, because they go into the wrapper the OS itself enforces.
 
     **The network half is coarser, and that is a property of the runtime, not a choice

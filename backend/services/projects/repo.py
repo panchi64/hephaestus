@@ -16,7 +16,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-#: Branch namespace. One per coding conversation, so a branch is self-describing and a
+#: Branch namespace. One per worktree conversation, so a branch is self-describing and a
 #: stale one is obvious.
 BRANCH_PREFIX = "ody/"
 

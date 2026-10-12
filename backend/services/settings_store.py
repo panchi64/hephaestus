@@ -166,11 +166,10 @@ async def get_agent_request_limit_override(
 ) -> int | None:
     """The operator's per-turn ceiling **only if they set one**, else None.
 
-    The distinction is load-bearing where a mode carries a floor of its own
-    (``services/modes.py``): a floor may raise a default nobody chose, but it must not
-    overrule a number the operator explicitly lowered — otherwise the settings page says
-    10 while a research turn runs at 60. Collapsing "unset" into the config default here
-    would make those two cases indistinguishable downstream."""
+    The distinction is load-bearing where a sub-agent spec carries a floor of its own: a floor may
+    raise a default nobody chose, but it must not overrule a number the operator explicitly lowered
+    — otherwise the settings page says 10 while a sub-agent runs at 60. Collapsing "unset" into the
+    config default here would make those two cases indistinguishable downstream."""
     raw = await store.get(owner_id, AGENT_REQUEST_LIMIT_KEY)
     if raw is None:
         return None

@@ -65,55 +65,10 @@ describe("serializeOverrides", () => {
     expect(css).toBe('html[data-theme="phosphor"]{--accent:#aabbcc;}');
   });
 
-  test("emits a session-mode rule for the signature token", () => {
+  test("ignores a session-signature blob left by an older build", () => {
     const css = serializeOverrides({
       sessionAccent: { phosphor: { code: "#112233" } },
-    });
-    expect(css).toBe(
-      'html[data-theme="phosphor"][data-mode="code"]{--accent:#112233;}',
-    );
-  });
-
-  test("a session rule outranks the same theme's base accent", () => {
-    // (0,2,1) against (0,1,1). The operator sets a base accent AND a code
-    // signature; in a code thread the signature has to win, and it must win on
-    // specificity rather than on which of the two was emitted last.
-    const css = serializeOverrides({
-      phosphor: { accent: "#111111" },
-      sessionAccent: { phosphor: { code: "#222222" } },
-    });
-    expect(css).toBe(
-      'html[data-theme="phosphor"]{--accent:#111111;}' +
-        'html[data-theme="phosphor"][data-mode="code"]{--accent:#222222;}',
-    );
-  });
-
-  test("never emits a rule for Normal", () => {
-    // Normal *is* the base accent in the cascade. A `[data-mode="normal"]` rule
-    // would be a second declaration claiming the same token, and the two would
-    // disagree the moment one of them was edited.
-    const css = serializeOverrides({
-      sessionAccent: { phosphor: { normal: "#112233" } as never },
-    });
-    expect(css).toBe("");
-  });
-
-  test("drops session values that are not hex colours", () => {
-    const css = serializeOverrides({
-      sessionAccent: {
-        phosphor: { code: "#000;}html{display:none}", research: "#3ddbd9" },
-      } as never,
-    });
-    expect(css).not.toContain("display:none");
-    expect(css).toBe(
-      'html[data-theme="phosphor"][data-mode="research"]{--accent:#3ddbd9;}',
-    );
-  });
-
-  test("drops session keys that are not session modes", () => {
-    const css = serializeOverrides({
-      sessionAccent: { phosphor: { admin: "#ff0000" } as never },
-    });
+    } as never);
     expect(css).toBe("");
   });
 

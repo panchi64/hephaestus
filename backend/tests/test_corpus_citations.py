@@ -1,7 +1,7 @@
 """The operator's own knowledge base, attributed.
 
 For a long time `corpus_retrieve` returned plain dicts and therefore cited nothing, so a
-research thread reading a folder on the operator's own disk showed no sources for it while
+background thread reading a folder on the operator's own disk showed no sources for it while
 attributing every page it read on the web. That is the defect these pin, plus the two
 things that made it fixable: a citation that does not have to be a URL, and one untrusted
 preamble per batch rather than one per hit.

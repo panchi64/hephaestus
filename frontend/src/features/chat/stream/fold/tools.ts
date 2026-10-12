@@ -96,7 +96,7 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
         // command's output, one of them worse.
         const outcome = toTerminalOutcome(ev.result);
         // No outcome and a sentence back means a guard refused the call outright —
-        // the wrong mode, a host that cannot fence — and it never ran. The cold read
+        // a tool the thread cannot use, a host that cannot fence — and it never ran. The cold read
         // projects the same string the same way, so a reload agrees with what the
         // operator watched; without this arm a refused command sat lit as running
         // for the rest of the thread.

@@ -1,6 +1,6 @@
 """Projects — a directory on the operator's machine, and the scope the app filters by.
 
-A `Project` is one host path the operator works in, plus the git facts code mode
+A `Project` is one host path the operator works in, plus the git facts a worktree
 needs to work on it safely. Two things about the shape are load-bearing:
 
 **`root_path_enc` is sealed.** A filesystem path names the operator's clients, employers

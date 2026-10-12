@@ -11,11 +11,10 @@ with ``ReinjectSystemPrompt(replace_existing=True)`` at the engine.
 
 Two things it deliberately does **not** describe. The sandbox — what machine a
 code run happens on, and what is installed there — belongs to the tool that runs
-the code, said once where the model is deciding whether to call it; a thread in
-code mode has no sandbox at all, so saying it here would be false half the time.
-Likewise the rule that a file path renders as a control the operator can click,
-which is only true when the files are theirs: it lives in :mod:`prompts.modes` as
-part of what code mode *is*.
+the code, said once where the model is deciding whether to call it; a thread working
+in a project folder has no sandbox at all. Likewise the rule that a file path renders
+as a control the operator can click, which is only true when the files are theirs: it
+lives in :mod:`prompts.workspace`.
 
 ``INSTRUCTIONS`` is wired in as the agent's ``instructions``, which Pydantic AI
 keeps *out* of history and rebuilds from the live agent on every model request —

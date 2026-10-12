@@ -96,7 +96,7 @@ class TestTheProfileIsTwoListsOfPaths:
             assert str(git.common / name) in _deny(profile)
 
     def test_another_branch_is_out_of_reach_without_a_rule_saying_so(self, tmp_path):
-        # In a linked worktree — the shape code mode always produces — the common directory
+        # In a linked worktree — the shape a worktree always has — the common directory
         # is outside every allow, so the operator's other branches need no deny entry: they
         # need only not be allowed.
         git = GitDirs(private=tmp_path / "private", common=tmp_path / "common")

@@ -412,14 +412,14 @@ async def test_confinement_is_off_when_the_operator_disables_it():
 async def test_a_disabled_confinement_still_runs_the_command():
     # The inverse of the sandbox rule, on purpose: the operator approved *this* command,
     # so a missing (or switched-off) fence means it runs unconfined and says so — not
-    # that an approved command silently refuses. (The code-mode shell is the other way
+    # that an approved command silently refuses. (The project-folder shell is the other way
     # round; see `test_shell_fence.py`.)
     result = await run_on_host("echo ran", confinement=HostConfinement(False, "disabled"))
     assert result.ok and "ran" in result.stdout
 
 
 async def test_the_hatch_runs_where_and_with_what_it_was_told(tmp_path):
-    # `cwd` and `env` exist so the code-mode shell can share this spawn; the hatch itself
+    # `cwd` and `env` exist so the project-folder shell can share this spawn; the hatch itself
     # passes neither, and a regression that dropped them would be silent there.
     result = await run_on_host("pwd; echo $ODYSSEUS_TEST_MARKER", cwd=tmp_path, env={
         "PATH": os.environ["PATH"],
@@ -434,7 +434,7 @@ async def test_the_hatch_does_not_hand_the_operators_model_keys_to_the_command(m
     # The fence denies the paths those keys are *stored* at and says nothing about the
     # environment, so an inherited one puts them in the transcript of the single command
     # the operator approved without ever being shown that it could read them. The
-    # code-mode shell already filters; the hatch is the more guarded path of the two.
+    # project-folder shell already filters; the hatch is the more guarded path of the two.
     monkeypatch.setenv("OPENAI_API_KEY", "sk-not-for-the-command")
     monkeypatch.setenv("ODYSSEUS_TEST_MARKER", "kept")
     result = await run_on_host("echo [$OPENAI_API_KEY] [$ODYSSEUS_TEST_MARKER]")

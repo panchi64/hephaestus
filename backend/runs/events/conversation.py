@@ -136,24 +136,3 @@ class ConversationCompacted(_Body):
         stored text, so the divider a live client draws and the one a reload draws are the
         same divider."""
         return summary_sections(self.summary)
-
-
-class ConversationLinked(_Body):
-    """This turn opened another conversation, and the operator should know why.
-
-    A thread that spawns a thread is the one case where work leaves the surface the
-    operator is watching: the new one appears in their session list a moment later, and
-    without this it appears with no account of where it came from. ``relation`` names what
-    the new thread is *for* rather than what created it — today only ``"research"``, and
-    stated as a string rather than an enum because a second kind of linked thread should
-    be a new value, not a protocol change.
-
-    Emitted by the tool that opened it, mid-run, so a live client sees it as it happens.
-    Additive to v1; no bump."""
-
-    type: Literal["conversation.linked"] = "conversation.linked"
-    conversation_id: str
-    relation: str
-    # What the new thread was opened to do — its title, which for a research thread is the
-    # question. Null only if it was opened without one.
-    title: str | None = None

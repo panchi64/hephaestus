@@ -26,9 +26,8 @@ from models.subagent import SubagentRecord
 from routes.chat import compose_turn, resolve_turn_models
 from runs import RunRegistry, RunStatus
 from services.conversations import ConversationBinding, ConversationStore
-from services.modes import DEFAULT_MODE, mode_spec
 from services.offline import OfflineModeService
-from services.permissions import stricter_permission
+from services.permissions import DEFAULT_PERMISSION, stricter_permission
 from services.registry import ModelRegistry
 from services.settings_store import (
     SettingsStore,
@@ -50,6 +49,7 @@ from services.subagents.spec import SubagentSpec, WorkspacePolicy
 from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
 from services.workspace import DELEGATION_SEP
+from services.workspace_kind import workspace_kind
 
 logger = logging.getLogger(__name__)
 
@@ -142,23 +142,18 @@ class ConversationSubagents(SubagentLauncher):
             # has to be told, in words it can act on, that none can be served.
             raise SubagentUnavailableError(f"No usable model is configured: {exc}") from exc
 
-        mode = spec.mode or parent.mode or DEFAULT_MODE
         # The level the sub-agent runs at, settled before anything is created: what the
-        # spec asks for (else the mode's default), capped by what the *parent* was allowed
-        # to do. A sub-agent that could act further than the thread that launched it would
-        # turn one launch into a standing grant the operator never gave.
-        permission = spec.permission_ceiling or mode_spec(mode).default_permission
+        # spec asks for (else the default), capped by what the *parent* was allowed to do.
+        # A sub-agent that could act further than the thread that launched it would turn
+        # one launch into a standing grant the operator never gave.
+        permission = spec.permission_ceiling or DEFAULT_PERMISSION
         if parent.permission is not None:
             permission = stricter_permission(parent.permission, permission)
 
-        binding = ConversationBinding(
-            mode=mode, project_id=parent.project_id, permission=permission
-        )
         disabled = await effective_disabled_tools(
             self._settings,
             self._offline,
             owner_id,
-            mode=binding.mode,
             vision=models[4],
             # Nobody is in the sub-agent's conversation, so it is not offered the tools
             # that would stop and wait for someone.
@@ -193,11 +188,25 @@ class ConversationSubagents(SubagentLauncher):
             policy = "own"
         workspace_key = _workspace_key(base, policy, delegation_id)
 
+        # Where the files are follows from the policy: a workspace of its own is a
+        # sandbox, and sharing or forking the parent's keeps the parent's kind. The
+        # operator's own folder cannot be forked; that takes a worktree.
+        parent_kind = workspace_kind(parent.workspace_kind)
+        if policy == "isolated" and parent_kind == "checkout":
+            raise SubagentUnavailableError(
+                "This conversation works directly in the project's folder, which cannot "
+                "be copied for a sub-agent. Call `project_open_worktree` first, or launch "
+                "it without isolation."
+            )
+        child_kind = "sandbox" if policy == "own" else parent_kind
+        binding = ConversationBinding(
+            workspace_kind=child_kind, project_id=parent.project_id, permission=permission
+        )
         conversation_id = await self._conversations.create_conversation(
             owner_id,
             title=_title_for(handle, task),
             project_id=parent.project_id,
-            mode=mode,
+            workspace_kind=child_kind,
             permission=permission,
             # Hidden from the session list: nobody can type into a sub-agent, so a thread
             # they cannot use would be noise in the one place they look for their own work.
@@ -233,8 +242,7 @@ class ConversationSubagents(SubagentLauncher):
             # rule its permission ceiling is read under — so a sub-agent asking for 60
             # round trips on an installation whose operator deliberately lowered theirs to
             # 10 gets 10. Where the operator set nothing, the spec's number stands: that is
-            # a floor raised over a default nobody chose, which is what the engine's own
-            # mode floor does and for the same reason.
+            # a floor raised over a default nobody chose.
             request_limit=_lower_of(
                 spec.request_limit,
                 await get_agent_request_limit_override(self._settings, owner_id),
@@ -249,7 +257,7 @@ class ConversationSubagents(SubagentLauncher):
             # cared to.
             wall_clock_timeout_s=_lower_of(
                 spec.wall_clock_timeout_s,
-                self._ctx.settings.research_wall_clock_timeout_s,
+                self._ctx.settings.subagent_wall_clock_timeout_s,
             ),
             # A sub-agent's thread is hidden, so auto-titling it is invisible work that
             # only holds the run open after the answer — it is named from its task above.
@@ -271,8 +279,8 @@ class ConversationSubagents(SubagentLauncher):
             workspace_key=workspace_key,
             delegation_id=delegation_id if policy == "isolated" else None,
             # Stored, not re-derived later: the fork is landed from a terminal hook, long
-            # after the binding and the mode registry that knew these are out of reach.
-            workspace_kind=mode_spec(mode).workspace,
+            # after the binding that knew these is out of reach.
+            workspace_kind=child_kind,
             project_id=parent.project_id,
         )
         return LaunchedSubagent(

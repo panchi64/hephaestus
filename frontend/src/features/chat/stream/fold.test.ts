@@ -612,15 +612,6 @@ describe("a replay folds into state but announces nothing", () => {
       message: "the model fell over",
       kind: null,
     }) as RunEvent;
-  const linked = (): RunEvent =>
-    ({
-      type: "conversation.linked",
-      seq: ++seq,
-      ts: "",
-      conversation_id: "c2",
-      relation: "research",
-      title: "Tides",
-    }) as RunEvent;
   const limit = (): RunEvent =>
     ({
       type: "limit.notice",
@@ -651,17 +642,13 @@ describe("a replay folds into state but announces nothing", () => {
     err.mockRestore();
   });
 
-  test("a replayed limit and a replayed research launch say nothing", () => {
+  test("a replayed limit says nothing", () => {
     const err = spyOn(toast, "error");
-    const info = spyOn(toast, "info");
     const h = harness(turn());
     h.state.replayThrough = 10_000;
     h.fold(limit());
-    h.fold(linked());
     expect(err).not.toHaveBeenCalled();
-    expect(info).not.toHaveBeenCalled();
     err.mockRestore();
-    info.mockRestore();
   });
 
   test("a replayed fold seats its checkpoint without the toast", () => {

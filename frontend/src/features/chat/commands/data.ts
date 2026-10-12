@@ -9,7 +9,6 @@
 
 import { createResource, type Resource } from "solid-js";
 import { api } from "~/lib/api";
-import type { SessionMode } from "~/lib/modes";
 import type { CommandCatalog } from "./model";
 
 interface CatalogOut {
@@ -40,14 +39,14 @@ function toCatalog(dto: CatalogOut): CommandCatalog {
 }
 
 async function fetchCatalog(
-  key: readonly [SessionMode, string | null, string | null],
+  key: readonly [string | null, string | null],
 ): Promise<CommandCatalog> {
-  const [mode, conversationId, projectId] = key;
-  const query = new URLSearchParams({ mode });
+  const [conversationId, projectId] = key;
+  const query = new URLSearchParams();
   // Presence *and* identity, for two different questions. The backend drops the actions
   // that need a thread to act on when there is none, so a launchpad composer is simply
   // offered fewer rows — that part is presence. It is also what says which worktree the
-  // project's own `.claude/commands` are read from, since a code thread works in a
+  // project's own `.claude/commands` are read from, since a worktree thread works in a
   // branch cut from the project rather than in the operator's checkout.
   if (conversationId) query.set("conversation_id", conversationId);
   // And which project declared them at all. Sent separately because a thread's binding
@@ -56,15 +55,14 @@ async function fetchCatalog(
   return toCatalog(await api.get<CatalogOut>(`/commands?${query}`));
 }
 
-/** The commands offerable in this composer. Re-reads when the mode, the thread or the
- *  project changes, since all three narrow what the backend will offer. */
+/** The commands offerable in this composer. Re-reads when the thread or the project
+ *  changes, since both narrow what the backend will offer. */
 export function useCommands(
-  mode: () => SessionMode,
   conversationId: () => string | null,
   projectId: () => string | null,
 ): Resource<CommandCatalog> {
   const [data] = createResource(
-    () => [mode(), conversationId(), projectId()] as const,
+    () => [conversationId(), projectId()] as const,
     fetchCatalog,
   );
   return data;

@@ -38,6 +38,7 @@ from services.commands.spec import Invocation
 from services.conversation_view import estimate_tokens
 from services.conversations import ConversationBinding, ConversationStore
 from services.projects import ProjectStore, WorktreeManager
+from services.projects.checkout import CheckoutHolders
 from services.sandbox import SandboxSessionManager
 from services.uploads import UploadStore
 from services.workspace import resolve_workspace
@@ -195,7 +196,7 @@ async def prepare_turn(
     # What this turn may fold with. None ⇒ it cannot fold: a stateless run. The policy is
     # resolved either way, because the verifier's size guard measures against the same
     # threshold on every turn. The summary is written on this turn's own agent, with the
-    # deps the turn will run it with — the same mode, level, disabled set and capability
+    # deps the turn will run it with — the same workspace, level, disabled set and capability
     # bag — so the request renders the brief and offers the tools the turn's first request
     # will, and the engine's cached prefix is the one it reads.
     policy = auto_compact or build_auto_compact_policy(settings)
@@ -248,13 +249,13 @@ async def prepare_turn(
 
     # Resolved the one way the file tools resolve it, so an attachment lands in — and a
     # reference points at — the very workspace the agent is about to work in: the
-    # conversation's sandbox, or its project worktree in code mode. Resolved **once**
+    # conversation's sandbox, or its project folder or worktree. Resolved **once**
     # and shared, since both halves below need the same answer and a turn that resolved
     # it twice could resolve it differently under a concurrent acquire.
     workspace = None
     if prompt is not None and (attachment_ids or file_refs):
         workspace = await resolve_workspace(
-            mode=binding.mode,
+            workspace_kind=binding.workspace_kind,
             project_id=binding.project_id,
             conversation_id=conversation_id,
             workspace_key=workspace_key or default_workspace_key(conversation_id, run),
@@ -262,6 +263,7 @@ async def prepare_turn(
             sessions=caps.get_optional(SandboxSessionManager),
             projects=caps.get_optional(ProjectStore),
             worktrees=caps.get_optional(WorktreeManager),
+            checkouts=caps.get_optional(CheckoutHolders),
             holder=run,
         )
 
@@ -315,7 +317,7 @@ async def prepare_turn(
         caps=caps,
         owner_id=run.owner_id,
         conversation_id=conversation_id,
-        mode=binding.mode,
+        workspace_kind=binding.workspace_kind,
         project_id=binding.project_id,
         # The same derivation the file tools use, for the reason `default_workspace_key`
         # exists: a delegated run must be described its own fork, not its parent's files.

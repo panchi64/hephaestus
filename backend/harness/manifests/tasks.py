@@ -169,7 +169,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             ),
             # Same reasoning for the per-turn model-request ceiling: an unattended task
             # runs under the operator's own setting when they set one, and otherwise
-            # under whatever the config default and the mode's floor work out to.
+            # under the config default.
             request_limit=await get_agent_request_limit_override(
                 settings_store, view.owner_id
             ),

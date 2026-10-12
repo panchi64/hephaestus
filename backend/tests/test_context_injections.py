@@ -136,10 +136,10 @@ async def test_our_own_fixed_brief_is_not_announced():
 
 
 async def test_a_provider_that_resolved_to_nothing_injected_nothing():
-    """Most providers no-op on most threads (`repo` outside a worktree, `mode` where the
-    mode has nothing of its own to say). An empty row would be a row about nothing."""
+    """Most providers no-op on most threads (`repo` outside a project folder, `workspace` in
+    a sandbox). An empty row would be a row about nothing."""
     run = _run()
-    _announce(AnnounceInjections(), run, [_part("mode", "")])
+    _announce(AnnounceInjections(), run, [_part("workspace", "")])
     assert _injections(run) == []
 
 

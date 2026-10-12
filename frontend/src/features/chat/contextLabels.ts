@@ -25,9 +25,9 @@ const LABELS: Record<string, string> = {
   skill_catalog: "Skills",
   tasks: "Task list",
   date: "Today's date",
-  mode: "Mode posture",
-  // The thread's second axis beside its mode, and the pair reads as a pair only if the
-  // words match: "Level" alone names a scale without saying what is on it.
+  workspace_posture: "Workspace posture",
+  // The thread's second axis beside its workspace, and the pair reads as a pair only if
+  // the words match: "Level" alone names a scale without saying what is on it.
   level: "Permission posture",
   // An adjective is not a thing. What the block actually carries is the short index of
   // the tool groups the agent is *not* holding, which is what the noun has to say.

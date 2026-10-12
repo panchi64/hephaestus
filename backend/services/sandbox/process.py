@@ -1,6 +1,6 @@
 """Running a command on the operator's real machine, and reaping the tree it starts.
 
-Two paths land here — the code-mode shell and ``code_run_host_command``, the approval-gated
+Two paths land here — the project shell and ``code_run_host_command``, the approval-gated
 escape hatch — and they differ only in what they do with the streams afterwards. The
 mechanics live beside the fence rather than inside it (``host.py``) so that *what a command
 may reach* and *how a process is started and killed* have separate reasons to change.

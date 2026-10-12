@@ -366,7 +366,7 @@ class TestASpecAsksRatherThanGrants:
 
     ``or`` is the shape that looks right here and is wrong: it takes the spec's number
     whenever the spec has one, which is a sub-agent overruling the operator. The engine
-    already refuses to let a *mode* do that — ``get_agent_request_limit_override`` exists
+    already refuses to let a floor do that — ``get_agent_request_limit_override`` exists
     only so an explicitly lowered ceiling can be told apart from an unset one — and a spec
     must not be the way around it.
     """
@@ -382,7 +382,7 @@ class TestASpecAsksRatherThanGrants:
         from harness.manifests._subagents import _lower_of
 
         # No operator ceiling: the spec's number stands. That is a floor over a shipped
-        # default, which is exactly what a mode's own floor does.
+        # default, which is a floor rather than an override.
         assert _lower_of(60, None) == 60
 
     def test_a_spec_that_asks_for_nothing_takes_the_bound(self):
@@ -390,16 +390,6 @@ class TestASpecAsksRatherThanGrants:
 
         assert _lower_of(None, 10) == 10
         assert _lower_of(None, None) is None
-
-    def test_the_researcher_asks_for_the_floor_research_mode_used_to_supply(self):
-        # Carried explicitly because the mode that supplied it is not this sub-agent's —
-        # and now genuinely a request, which is the only reason it is safe to carry.
-        from services.modes import mode_spec
-
-        assert (
-            builtin_roster()["researcher"].request_limit
-            == mode_spec("research").request_limit
-        )
 
 
 class TestASubAgentCannotReachItsSiblings:

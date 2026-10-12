@@ -4,9 +4,9 @@
  * Simpler than its `/` counterpart, because there is only one kind of row: picking a file
  * completes the token and stages a reference that rides the next send. Nothing acts.
  *
- * **Only where there is a filesystem to browse.** A sandbox thread works in a container
- * with nothing in it the operator has ever seen, so `@` means nothing there and the menu
- * stays shut rather than opening empty.
+ * **Only where there is a filesystem to browse.** A thread with no project works in a
+ * container with nothing in it the operator has ever seen, so `@` means nothing there and
+ * the menu stays shut rather than opening empty.
  */
 
 import { createSignal } from "solid-js";
@@ -15,7 +15,6 @@ import type {
   ComposerMenuItem,
   ComposerTrigger,
 } from "~/ui";
-import { sessionModeSpec, type SessionMode } from "~/lib/modes";
 import { settled } from "~/lib/resource";
 import { useProjectFiles } from "./data";
 
@@ -73,15 +72,12 @@ export function pickedPath(
 }
 
 export function createComposerFileRefs(
-  mode: () => SessionMode,
   projectId: () => string | null,
   conversationId: () => string | null,
 ): ComposerFileRefs {
   const [query, setQuery] = createSignal<string | null>(null);
   const [staged, setStaged] = createSignal<string[]>([]);
   const files = useProjectFiles(projectId, conversationId, query);
-
-  const rooted = () => sessionModeSpec(mode()).workspace === "worktree";
 
   const groups = (): ComposerMenuGroup[] => {
     // `settled`, not a bare `.latest`: the menu opens on a keystroke and must not suspend
@@ -113,10 +109,9 @@ export function createComposerFileRefs(
   return {
     groups,
     onQuery: (token) => {
-      // `/` is the command menu's trigger, not this one's; and a sandbox thread has no
-      // filesystem the operator has ever seen. Reporting null rather than ignoring keeps
-      // one menu open at a time.
-      setQuery(token?.trigger === "@" && rooted() ? token.query : null);
+      // `/` is the command menu's trigger, not this one's. Reporting null rather than
+      // ignoring keeps one menu open at a time.
+      setQuery(token?.trigger === "@" ? token.query : null);
     },
     onPick: (item) => {
       const path = pickedPath(settled(files)?.entries ?? [], item.id);

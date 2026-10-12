@@ -50,7 +50,6 @@ from routes.deps import OPERATOR_ID
 from runs import LaneLimits, PrefixLedger, RunRegistry
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
-from services.attributions import ConversationAttributions
 from services.conversations import ConversationStore
 from services.credential_store import CredentialStore
 from services.egress import EgressPolicy
@@ -69,6 +68,7 @@ from services.settings_store import SettingsStore
 from services.task_list import ConversationTasks
 from services.tool_policy import AvailabilityCheck, CategoryAvailability
 from services.work_summaries import WorkSummaryService
+from services.worktree_switch import WorktreeSwitch
 from tools import (
     CORE_GATED_TOOLS,
     InstructionProvider,
@@ -368,17 +368,8 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     app.state.conversation_tasks = ConversationTasks(engine, vault)
     container.add(app.state.conversation_tasks)
     agent_capabilities.add(app.state.conversation_tasks)
-    # Claim-level attribution. In the agent bag because the engine's post-answer window
-    # resolves it from the run's own bag like every other handle, and absent there means
-    # "no claim arm on the panel" rather than a failure — the pass is additive and every
-    # path through it degrades to the message-level sources the product already had. No
-    # *tool* reaches it: nothing the model can call reads or writes an attribution, which
-    # is the point of a second reader.
-    app.state.attributions = ConversationAttributions(engine, vault)
-    container.add(app.state.attributions)
-    agent_capabilities.add(app.state.attributions)
-    # Plan mode, beside it and for the same reason. It is handed the conversation store and
-    # the task list rather than the tools reaching for either: approving a plan moves the
+    # Plan mode. It is handed the conversation store and the task list rather than the
+    # tools reaching for either: approving a plan moves the
     # thread's permission level and seeds its tasks, and this is the only seam through which
     # a tool may do either. The whole `ConversationStore` deliberately stays out of the
     # agent's capability bag — a tool that could read every thread is not a capability
@@ -388,6 +379,8 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     )
     container.add(app.state.plan_mode)
     agent_capabilities.add(app.state.plan_mode)
+    # Opening a worktree moves a thread's workspace, through the same narrow seam.
+    agent_capabilities.add(WorktreeSwitch(app.state.conversations))
     # The prefix-cache diagnostic's cross-turn memory: the last request fingerprint each
     # conversation sent, so the first request of a turn can say what moved in the head since
     # the previous one. In the agent bag rather than on `app.state` because the capability

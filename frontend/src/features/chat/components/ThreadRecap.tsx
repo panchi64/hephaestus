@@ -33,9 +33,9 @@ function Cell(props: {
 /**
  * What this thread was, for an operator who has just come back to it.
  *
- * **It is a summary now, and it used to be a row of figures.** Mode, age, turn count
+ * **It is a summary now, and it used to be a row of figures.** Age, turn count
  * and the branch diffstat were all things the interface could already answer — the
- * rail says the mode, the header chip says the branch — so the band spent a strip of
+ * rail says when, the header chip says the branch — so the band spent a strip of
  * the screen restating them and answered the actual re-entry question, *what was I
  * doing here*, not at all. That question needs prose, and prose is not something the
  * client can derive: the backend's utility model writes it once a thread has been

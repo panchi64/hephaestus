@@ -1,4 +1,3 @@
-import type { SessionMode } from "~/lib/modes";
 import type { ThemeMode } from "./theme-store";
 
 /** The five accent tokens, by their CSS custom-property name minus the `--`.
@@ -81,44 +80,6 @@ export const ACCENT_DEFAULTS: Record<ThemeMode, Record<AccentToken, string>> = {
     "accent-info": "#0f5fa8",
   },
 };
-
-/**
- * The signature accent per (theme, session mode) — **the same hexes tokens.css
- * declares** in its SESSION MODE block, mirrored here for the same reason
- * `ACCENT_DEFAULTS` is: the store has to tell "overridden" from "untouched", and
- * the cascade cannot answer that once an override is applied on top of it.
- *
- * Only `accent` appears here, and that is a design decision rather than a
- * shortcut. The other four are a closed set of *meanings*; rebinding "alert" per
- * mode would make red mean something different depending on which thread you are
- * looking at. The signature token is the one whose job is to say *where you
- * are*, so the mode is exactly the thing it should carry.
- *
- * Normal resolves to `ACCENT_DEFAULTS[theme].accent` — the base value, not a
- * copy of it, so retuning the shipped palette moves the ordinary mode with it.
- */
-export const SESSION_ACCENT_DEFAULTS: Record<
-  ThemeMode,
-  Record<SessionMode, string>
-> = {
-  phosphor: {
-    normal: ACCENT_DEFAULTS.phosphor.accent,
-    research: "#3ddbd9",
-    code: "#b98cff",
-  },
-  paper: {
-    normal: ACCENT_DEFAULTS.paper.accent,
-    research: "#0e7490",
-    code: "#6d28d9",
-  },
-};
-
-/** Whether this (theme, session mode) pair carries a signature of its own, or
- *  simply inherits the base palette. Normal is the base by construction, so it
- *  never needs a rule emitted for it. */
-export function hasSessionSignature(mode: SessionMode): boolean {
-  return mode !== "normal";
-}
 
 /** The set, for validating whatever comes back out of localStorage. */
 export const ACCENT_TOKEN_NAMES: readonly AccentToken[] = ACCENT_TOKENS.map(

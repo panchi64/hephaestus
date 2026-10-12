@@ -53,7 +53,7 @@ class TestCatalog:
         async with client_app() as (_client, app):
             registry: CommandRegistry = app.state.commands
             entries = await registry.catalog(
-                "operator", mode="normal", has_conversation=True
+                "operator", workspace_kind="sandbox", has_conversation=True
             )
             sources = {e.spec.source for e in entries}
             assert "action" in sources
@@ -65,7 +65,7 @@ class TestCatalog:
             names = {
                 e.spec.name
                 for e in await registry.catalog(
-                    "operator", mode="normal", has_conversation=False
+                    "operator", workspace_kind="sandbox", has_conversation=False
                 )
             }
             assert "compact" not in names
@@ -78,7 +78,7 @@ class TestCatalog:
             registry: CommandRegistry = app.state.commands
             entries = await registry.catalog(
                 "operator",
-                mode="normal",
+                workspace_kind="sandbox",
                 has_conversation=True,
                 disabled_tools={LAUNCH_TOOL},
             )
@@ -94,7 +94,7 @@ class TestCatalog:
 
             async def skill_names() -> set[str]:
                 entries = await registry.catalog(
-                    "operator", mode="normal", has_conversation=True
+                    "operator", workspace_kind="sandbox", has_conversation=True
                 )
                 return {e.spec.name for e in entries if e.spec.source == "skill"}
 
@@ -113,7 +113,7 @@ class TestResolve:
         async with client_app() as (_client, app):
             registry: CommandRegistry = app.state.commands
             spec = await registry.resolve(
-                "operator", "reviewer", mode="normal", has_conversation=True
+                "operator", "reviewer", workspace_kind="sandbox", has_conversation=True
             )
             assert spec is not None
             assert spec.source == "agent"
@@ -123,7 +123,7 @@ class TestResolve:
         async with client_app() as (_client, app):
             registry: CommandRegistry = app.state.commands
             spec = await registry.resolve(
-                "operator", "agent:test-runner", mode="normal", has_conversation=True
+                "operator", "agent:test-runner", workspace_kind="sandbox", has_conversation=True
             )
             assert spec is not None
             # The command name hyphenates; the roster name it launches does not.
@@ -134,7 +134,7 @@ class TestResolve:
             registry: CommandRegistry = app.state.commands
             assert (
                 await registry.resolve(
-                    "operator", "not-a-command", mode="normal", has_conversation=True
+                    "operator", "not-a-command", workspace_kind="sandbox", has_conversation=True
                 )
                 is None
             )
@@ -148,7 +148,7 @@ class TestResolve:
                 await registry.resolve(
                     "operator",
                     "compact",
-                    mode="normal",
+                    workspace_kind="sandbox",
                     has_conversation=False,
                 )
                 is None
@@ -158,7 +158,7 @@ class TestResolve:
 class TestRoute:
     async def test_groups_are_served_with_the_rows(self):
         async with client_app() as (client, _app):
-            body = (await client.get("/commands?mode=normal")).json()
+            body = (await client.get("/commands")).json()
             assert body["groups"], "the picker's headings come from the backend"
             offered = {c["group"] for c in body["commands"]}
             # No heading without rows under it — an empty group is a promise the operator
@@ -167,7 +167,7 @@ class TestRoute:
 
     async def test_rows_are_camel_case_and_carry_a_qualified_name(self):
         async with client_app() as (client, _app):
-            body = (await client.get("/commands?mode=normal")).json()
+            body = (await client.get("/commands")).json()
             row = next(c for c in body["commands"] if c["name"] == "reviewer")
             assert row["qualifiedName"] == "agent:reviewer"
             assert row["kind"] == "prompt"
@@ -176,7 +176,7 @@ class TestRoute:
 
     async def test_an_action_row_names_an_id_and_never_a_route(self):
         async with client_app() as (client, _app):
-            body = (await client.get("/commands?mode=normal&conversation_id=c1")).json()
+            body = (await client.get("/commands?conversation_id=c1")).json()
             row = next(c for c in body["commands"] if c["name"] == "compact")
             assert row["kind"] == "action"
             assert row["actionId"] == "compact"
@@ -184,7 +184,7 @@ class TestRoute:
 
     async def test_the_level_action_offers_the_levels_in_a_stable_order(self):
         async with client_app() as (client, _app):
-            body = (await client.get("/commands?mode=normal")).json()
+            body = (await client.get("/commands")).json()
             row = next(c for c in body["commands"] if c["name"] == "level")
             # A set has no order to offer, and string hashing is randomised per process —
             # so a picker built from one would list the levels differently each boot.

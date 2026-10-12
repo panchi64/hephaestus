@@ -15,9 +15,10 @@ from core.vault import Vault
 from core.worker import WriteBehindWorker
 from models.conversation import Conversation, Message
 from services.embeddings import Embedder
-from services.modes import DEFAULT_MODE, mode_spec
-from services.permissions import permission_level
+from services.permissions import DEFAULT_PERMISSION, permission_level
 from services.sealing import open_sealed
+from services.workspace_kind import DEFAULT_WORKSPACE_KIND
+from services.workspace_kind import workspace_kind as normalise_workspace_kind
 
 from .projection import _MESSAGE
 from .rows import _defer_fk, _HydratedRow, _PersistJob
@@ -137,17 +138,15 @@ class _StoreCore:
         ephemeral: bool = False,
         *,
         project_id: str | None = None,
-        mode: str = DEFAULT_MODE,
+        workspace_kind: str = DEFAULT_WORKSPACE_KIND,
         permission: str | None = None,
     ) -> str:
         """Start a thread. ``project_id`` files it (null is unfiled, which is visible
-        under every scope) and ``mode`` decides where its file work happens; both are
-        set here and never afterwards — see `models/conversation.py`.
+        under every scope). ``workspace_kind`` is where its file work happens; only a fork
+        of a worktree thread starts in one (see `models/conversation.py`).
 
         ``permission`` is the level it *starts* at and moves freely afterwards; absent, the
-        mode's own default applies, which is how a mode gets to say what a fresh thread in
-        it should be allowed to do without every caller repeating the answer."""
-        spec = mode_spec(mode)
+        default level applies."""
 
         def work(session: Session) -> str:
             conversation = Conversation(
@@ -155,9 +154,9 @@ class _StoreCore:
                 title_enc=self._seal_title(title),
                 ephemeral=ephemeral,
                 project_id=project_id,
-                mode=mode,
+                workspace_kind=normalise_workspace_kind(workspace_kind),
                 permission_level=(
-                    spec.default_permission if permission is None else permission_level(permission)
+                    DEFAULT_PERMISSION if permission is None else permission_level(permission)
                 ),
             )
             session.add(conversation)

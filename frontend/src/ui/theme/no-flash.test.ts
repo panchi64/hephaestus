@@ -1,17 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { SESSION_MODE_IDS, type SessionMode } from "~/lib/modes";
 import { NO_FLASH_SCRIPT } from "./no-flash";
 import {
   serializeOverrides,
   THEMES,
-  SESSION_KEY,
   type AccentOverrides,
 } from "./accent-overrides";
-import {
-  ACCENT_TOKEN_NAMES,
-  hasSessionSignature,
-  type AccentToken,
-} from "./accents";
+import { ACCENT_TOKEN_NAMES, type AccentToken } from "./accents";
 
 /**
  * The pre-paint script is hand-written ES5 that rebuilds, by eye, what
@@ -21,12 +15,12 @@ import {
  * its sheet to the store's, character for character.
  *
  * **The comparison is only as good as what is fed to it**, which is why the main
- * fixture is generated from `ACCENT_TOKEN_NAMES` and `SESSION_MODE_IDS` rather
- * than written out. Hand-written cases can only ever exercise the tokens and
- * modes that existed when someone wrote them: add a fifth accent meaning or a
- * fourth session mode, forget the script's own hard-coded copies of those lists,
- * and every hand-written case still passes while the shipped accent flashes on
- * every cold load of the thing that was added. Generated, that is a failure.
+ * fixture is generated from `ACCENT_TOKEN_NAMES` rather than written out.
+ * Hand-written cases can only ever exercise the tokens that existed when someone
+ * wrote them: add a sixth accent meaning, forget the script's own hard-coded copy
+ * of that list, and every hand-written case still passes while the shipped accent
+ * flashes on every cold load of the thing that was added. Generated, that is a
+ * failure.
  *
  * It is also the only test the script has at all, which matters because it
  * splices `localStorage` into a stylesheet. The injection cases below are the
@@ -44,24 +38,16 @@ function hexes(): () => string {
     `#${((n += 0x2a5f1b) % 0x1000000).toString(16).padStart(6, "0")}`;
 }
 
-/** An override on **every** token and every session mode that carries a signature,
- *  in both themes — the case that catches a list the pre-paint script did not grow
- *  with the constants. */
+/** An override on **every** token, in both themes — the case that catches a list the
+ *  pre-paint script did not grow with the constants. */
 function everyOverride(): AccentOverrides {
   const nextHex = hexes();
-  const session: Partial<Record<string, Partial<Record<SessionMode, string>>>> =
-    {};
   const value: AccentOverrides = {};
   for (const theme of THEMES) {
     const tokens: Partial<Record<AccentToken, string>> = {};
     for (const token of ACCENT_TOKEN_NAMES) tokens[token] = nextHex();
     value[theme] = tokens;
-    const modes: Partial<Record<SessionMode, string>> = {};
-    for (const mode of SESSION_MODE_IDS)
-      if (hasSessionSignature(mode)) modes[mode] = nextHex();
-    session[theme] = modes;
   }
-  value[SESSION_KEY] = session;
   return value;
 }
 
@@ -137,9 +123,8 @@ describe("the accent half agrees with serializeOverrides", () => {
       phosphor: { accent: "#112233", "accent-warn": "#445566" },
       paper: { "accent-alert": "#778899" },
     },
-    "a session signature": { sessionAccent: { phosphor: { code: "#b98cff" } } },
     // The one that has to keep passing as the constants grow — see the header.
-    "every token and every mode this build has": everyOverride(),
+    "every token this build has": everyOverride(),
   };
 
   for (const [name, overrides] of Object.entries(cases))
@@ -153,14 +138,10 @@ describe("the accent half agrees with serializeOverrides", () => {
     // Guards the guard: a generated fixture that stopped generating anything would
     // make the comparison above pass by having nothing to disagree about.
     const css = serializeOverrides(everyOverride());
-    for (const theme of THEMES) {
-      for (const token of ACCENT_TOKEN_NAMES)
-        expect(css).toContain(`--${token}:`);
-      for (const mode of SESSION_MODE_IDS.filter(hasSessionSignature))
-        expect(css).toContain(
-          `html[data-theme="${theme}"][data-mode="${mode}"]`,
-        );
-    }
+    for (const token of ACCENT_TOKEN_NAMES)
+      expect(css).toContain(`--${token}:`);
+    for (const theme of THEMES)
+      expect(css).toContain(`html[data-theme="${theme}"]`);
   });
 
   test("writes no sheet at all when nothing is overridden", () => {
@@ -185,31 +166,15 @@ describe("the accent half refuses what the store refuses", () => {
     expect(css).toBe('html[data-theme="phosphor"]{--accent-warn:#f2a93b;}');
   });
 
-  test("the same injection through the session axis", () => {
-    const css = paint({
-      accents: {
-        sessionAccent: { phosphor: { code: "#000;}html{display:none" } },
-      },
-    }).css;
-    expect(css).toBeNull();
-  });
-
   test("a key that is not an accent token", () => {
     // A `--bg` override would repaint the entire product from localStorage.
     const css = paint({ accents: { phosphor: { bg: "#ff0000" } } }).css;
     expect(css).toBeNull();
   });
 
-  test("a session mode this build does not have", () => {
+  test("a session-signature blob left by an older build", () => {
     const css = paint({
-      accents: { sessionAccent: { phosphor: { admin: "#ff0000" } } },
-    }).css;
-    expect(css).toBeNull();
-  });
-
-  test("Normal, which has no rule of its own", () => {
-    const css = paint({
-      accents: { sessionAccent: { phosphor: { normal: "#ff0000" } } },
+      accents: { sessionAccent: { phosphor: { code: "#b98cff" } } },
     }).css;
     expect(css).toBeNull();
   });

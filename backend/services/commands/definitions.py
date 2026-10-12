@@ -15,7 +15,7 @@ quietly do not would be impossible to explain.
 and nobody editing one is watching this process. A file that cannot be read costs its own
 command and nothing else.
 
-**Worktree modes only**, which is enforced by the spec's ``modes`` rather than here: a
+**Project folders only**, which is enforced by the spec's ``workspaces`` rather than here: a
 sandbox thread has no repository to have declared anything, and a picker offering a command
 whose body came from a checkout the thread cannot see would be offering nothing.
 """
@@ -30,7 +30,6 @@ from pydantic_ai_harness.repo_context import RepoContext
 
 from core.exceptions import CommandValidationError
 from core.frontmatter import FrontmatterError, split_frontmatter
-from services.modes import MODES
 
 from .authoring import (
     ARGUMENT_HINT_MAX_CHARS,
@@ -57,13 +56,9 @@ ASSET_ROOTS: tuple[str, ...] = tuple(RepoContext.asset_roots)
 #: — a project that put ``standup.md`` straight in here meant a command by it.
 FLAT_ROOT = ".commands"
 
-#: The modes a project-declared command is offered in: the ones whose workspace is a git
-#: worktree, since those are the threads that have the checkout the file came from. Derived
-#: from the mode registry rather than listed, so a fourth mode is not a place these silently
-#: fail to appear.
-WORKTREE_MODES: tuple[str, ...] = tuple(
-    mode for mode, spec in MODES.items() if spec.workspace == "worktree"
-)
+#: Where a project-declared command is offered: the threads that work in the project's
+#: files the command came from.
+PROJECT_WORKSPACES: tuple[str, ...] = ("checkout", "worktree")
 
 
 class CommandFileError(ValueError):
@@ -146,7 +141,7 @@ def parse_command_file(text: str, *, name: str) -> CommandSpec:
         argument_hint=clip(_line(fields.get("argument-hint")), ARGUMENT_HINT_MAX_CHARS)
         or None,
         body=clip(template, BODY_MAX_CHARS),
-        modes=WORKTREE_MODES,
+        workspaces=PROJECT_WORKSPACES,
     )
 
 

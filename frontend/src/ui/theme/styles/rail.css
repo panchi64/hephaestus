@@ -1,14 +1,9 @@
 /* ==========================================================================
-   THE RAIL (direction C). The mode bar is the one strong element; search and
-   New recede into the strip under it; the list is square ruled rows whose
+   THE RAIL (direction C). Search and New sit in a receded strip over the list;
+   the list is square ruled rows whose
    glyph column carries each thread's state, and a thread waiting on the
    operator takes the action tier's echo — an inset amber edge, a tint, a tag.
    ========================================================================== */
-.ody-rail-modes {
-  display: grid;
-  grid-template-columns: repeat(var(--rail-modes, 3), minmax(0, 1fr));
-  border-top: var(--line-w) solid var(--line-strong);
-}
 /* The rail is a size container, so at its 208px minimum a part can shed a word
    rather than overflow: the project filter collapses to its funnel, the strip's
    key hints go, and the workspace id stacks under the brand. */
@@ -57,44 +52,6 @@
     margin-left: 0;
   }
 }
-.ody-rail-modes > * {
-  display: grid;
-  min-width: 0;
-}
-.ody-rail-modes > * + * {
-  border-left: var(--line-w) solid var(--line);
-}
-.ody-rail-mode {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  min-width: 0;
-  padding: 11px 0;
-  font-family: var(--font-mono);
-  font-size: var(--type-meta-size);
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--text-dim);
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ody-rail-mode[aria-checked="true"] {
-  background: var(--text-bright);
-  color: var(--bg);
-}
-.ody-rail-mode:hover:not([aria-checked="true"]) {
-  background: var(--surface-raised);
-  color: var(--text);
-}
-.ody-rail-mode:focus-visible {
-  outline: 2px solid var(--accent-info);
-  outline-offset: -2px;
-  box-shadow: none;
-}
-
 /* A plate naming a run of rows: mono uppercase, a count, and — for a group
    heading — a hairline running out to the edge. */
 .ody-list-plate {

@@ -25,7 +25,6 @@ from runs import ConversationBusyError, RunRegistry
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
 from services.artifacts import ArtifactStore
-from services.attributions import ConversationAttributions
 from services.backup import BackupService
 from services.browser import BrowserSessionManager
 from services.calendar import CalendarService
@@ -41,7 +40,6 @@ from services.integrations import IntegrationService
 from services.mail import MailService
 from services.mcp import McpRegistry
 from services.memory import MemoryStore
-from services.modes import DEFAULT_MODE
 from services.notifications import NotificationService
 from services.offline import OfflineModeService
 from services.plan_mode import PlanMode
@@ -186,12 +184,6 @@ def conversation_tasks(request: Request) -> ConversationTasks:
     return request.app.state.conversation_tasks
 
 
-def attributions(request: Request) -> ConversationAttributions:
-    """Claim-level attribution for a thread's answers — the triples a second reader
-    extracted, keyed by the branch node the detail route already numbers turns by."""
-    return request.app.state.attributions
-
-
 def plan_mode(request: Request) -> PlanMode:
     return request.app.state.plan_mode
 
@@ -289,28 +281,24 @@ def offline(request: Request) -> OfflineModeService:
 
 async def disabled_tools(
     request: Request,
-    mode: str = DEFAULT_MODE,
     *,
     vision: bool = True,
     kind: str = "chat",
 ) -> frozenset[str]:
     """Everything withheld from the agent on this run — the operator's own disabled set
-    (`AE-3.3`) unioned with offline mode's automatic web suspension, the tools that don't
-    belong in ``mode``, the ones this run's model can't read the results of, the ones that
-    need an operator a run of this ``kind`` doesn't have, and the ones whose feature the
-    operator has never set up. Every route that fills ``RunDeps.disabled_tools`` resolves
-    it here, so a run path can't apply one source and drop the others; ``app.py``'s task
-    executor calls the service directly (it has no ``Request``).
+    (`AE-3.3`) unioned with offline mode's automatic web suspension, the ones this run's model can't
+    read the results of, the ones that need an operator a run of this ``kind`` doesn't have, and the
+    ones whose feature the operator has never set up. Every route that fills
+    ``RunDeps.disabled_tools`` resolves it here, so a run path can't apply one source and drop the
+    others; ``app.py``'s task executor calls the service directly (it has no ``Request``).
 
-    The thread's **permission level is not part of this** — it rides on ``RunDeps`` and is
-    applied live at the enabled gate, because it is the one axis a turn can move itself
-    (``services/tool_policy.py`` explains why that keeps it out of the union). Every caller
-    here already sets ``RunDeps.permission``; nothing else is needed."""
+    The thread's **permission level and workspace kind are not part of this**: both ride on
+    ``RunDeps`` and are applied live at the enabled gate, because a turn can move them
+    itself (``services/tool_policy.py`` explains why that keeps them out of the union)."""
     return await effective_disabled_tools(
         settings_store(request),
         offline(request),
         OPERATOR_ID,
-        mode=mode,
         vision=vision,
         kind=kind,
         availability=category_availability(request),

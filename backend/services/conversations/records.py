@@ -10,8 +10,8 @@ from datetime import datetime
 from pydantic_ai import ModelMessage
 
 from services.commands.spec import Invocation
-from services.modes import DEFAULT_MODE, ModeId
 from services.permissions import DEFAULT_PERMISSION, PermissionLevel
+from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
 
 
 @dataclass(frozen=True)
@@ -19,14 +19,12 @@ class ConversationBinding:
     """How a thread works: where its file work happens, and how far the model may go on
     its own.
 
-    Read as one record because the parts are only meaningful together — a worktree mode
-    with no project and a project with no worktree mode are both nonsense and both
-    silently plausible if the two are fetched separately, and a run that resolved its
-    workspace from the conversation but its permission level from somewhere else would be
-    two threads wearing one name.
+    Read as one record because the parts are only meaningful together: a worktree with no
+    project is nonsense, and a run that resolved its workspace from the conversation but
+    its permission level from somewhere else would be two threads wearing one name.
     """
 
-    mode: ModeId = DEFAULT_MODE
+    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     project_id: str | None = None
     permission: PermissionLevel = DEFAULT_PERMISSION
 
@@ -90,12 +88,10 @@ class ConversationSummaryView:
     # The model the conversation last ran on (the most recent response's
     # model_name). None for a conversation with no answer yet.
     model: str | None = None
-    # What kind of work this thread is, normalised through the mode registry. On the
-    # *listing* projection and not only the detail, because the sidebar's shape depends
-    # on it: the rail shows one mode at a time and groups code threads by the directory
-    # they work in, neither of which it can do by opening every thread.
-    mode: str = DEFAULT_MODE
-    # The project a code thread works in, or None for an unfiled thread. The id, not the
+    # Where its file work happens. On the listing so the rail can mark worktree threads
+    # without opening each one.
+    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
+    # The project the thread is filed under, or None for an unfiled thread. The id, not the
     # path — the route resolves it to a directory basename, which is the only part of a
     # host path a listing should ever carry.
     project_id: str | None = None

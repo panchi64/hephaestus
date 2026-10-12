@@ -233,7 +233,7 @@ class ProjectStore:
     async def ensure_for_path(self, owner_id: str, root_path: str) -> ProjectView:
         """The project for this directory, creating one the first time it is used.
 
-        A project is the storage and the git machinery a code thread needs; it was never
+        A project is the storage and the git machinery a worktree thread needs; it was never
         meant to be a thing the operator files paperwork for before they can start
         working. This is the difference: point at any directory and it *is* a project,
         named after itself, with whatever git facts it already has.
@@ -313,7 +313,7 @@ class ProjectStore:
     async def workspace_names(self, owner_id: str) -> dict[str, str]:
         """Each project id mapped to the **basename** of its directory.
 
-        What the sidebar groups code threads under. Deliberately not the path: a
+        What the sidebar groups worktree threads under. Deliberately not the path: a
         conversation listing is the one screen that is always on display, and the full
         path names the operator's clients across the whole width of the rail. The
         basename is the part that identifies the work.

@@ -152,9 +152,8 @@ export const icons: Record<IconName, IconEntry> = {
       <path d="M10 10l4 4M7 5v4M5 7h4" />
     </>
   ),
-  /* Redrawn, and moved off the 24 grid to sit beside `research` — the two are
-     adjacent in the mode switch, which is where the borrowed glyph gave itself
-     away. Iconoir's bubble was a circle of r=10 with a nub: the one fully round
+  /* Redrawn, and moved off the 24 grid to sit beside the other glyphs, which is
+     where the borrowed one gave itself away. Iconoir's bubble was a circle of r=10 with a nub: the one fully round
      form in a system whose corners are chamfered, filling 83% of its box against
      `code`'s 75%, so it read a full size step larger than the glyph next to it
      (§9). Both faults are the same fault — it was a stock mark, and a round

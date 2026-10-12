@@ -1,13 +1,8 @@
 import { createSignal } from "solid-js";
-import { SESSION_MODE_IDS, isSessionMode, type SessionMode } from "~/lib/modes";
 import { isServer } from "solid-js/web";
 import { readLS, removeLS, writeLS } from "~/lib/storage";
 import { sanitizeAxis } from "./accent-axis";
-import {
-  ACCENT_TOKEN_NAMES,
-  hasSessionSignature,
-  isAccentToken,
-} from "./accents";
+import { ACCENT_TOKEN_NAMES, isAccentToken } from "./accents";
 import type { AccentToken } from "./accents";
 import { normalizeHex } from "./contrast";
 import type { ThemeMode } from "./theme-store";
@@ -27,14 +22,8 @@ import type { ThemeMode } from "./theme-store";
  * stylesheet carrying both rules lets the existing `[data-theme]` switch do the
  * selecting, which means `applyTheme` needs no knowledge of accents at all.
  *
- * The same trick carries the second axis. `data-mode` on the root says which
- * kind of thread is open (`session-mode.ts`), and the sheet emits
- * `html[data-theme=…][data-mode=…]` rules for the signature token — so switching
- * threads repaints the signature with no code running at all.
- *
- * `html[data-theme="…"]` is specificity (0,1,1) and the session rule (0,2,1),
- * which beat tokens.css's `:root` / `[data-theme="paper"]` (0,1,0) and its
- * session block (0,2,0) regardless of where the sheet lands in source order — so
+ * `html[data-theme="…"]` is specificity (0,1,1), which beats tokens.css's `:root` /
+ * `[data-theme="paper"]` (0,1,0) regardless of where the sheet lands in source order — so
  * none of this depends on load timing.
  *
  * Because theme.css maps the tokens with Tailwind's `@theme inline`, overriding
@@ -43,11 +32,8 @@ import type { ThemeMode } from "./theme-store";
  * `color-mix`es of `--accent`), the reasoning wall's tint, and the action tier's
  * band and tint. Nothing else needs to know this feature exists.
  *
- * The per-axis accessors live next door — `accent-store.ts` for the five accent
- * meanings, `session-accent-store.ts` for the signature per session mode. Both
- * write through `update` here, because there is one sheet and one stored blob:
- * two modules each owning half of a single `<style>` element would leave the
- * winner up to whichever wrote last.
+ * The accessors live next door in `accent-store.ts`; they write through `update` here,
+ * because there is one sheet and one stored blob.
  */
 
 export const ACCENT_STORAGE_KEY = "odysseus:accents";
@@ -58,59 +44,21 @@ export const ACCENT_STORAGE_KEY = "odysseus:accents";
 const STYLE_ELEMENT_ID = "ody-accent-overrides";
 
 /** The theme modes, spelled out so the emitted sheet has a stable order and
- *  nothing unvetted can reach it. Named `THEMES` rather than `MODES` now that a
- *  second axis also calls itself a mode. */
+ *  nothing unvetted can reach it. */
 export const THEMES: readonly ThemeMode[] = ["phosphor", "paper"];
-
-/** The reserved key the session-mode signatures live under. It cannot collide
- *  with a `ThemeMode`, which is what lets the shape grow without a stored-format
- *  migration — a blob written before this axis existed still loads, and its five
- *  tokens still apply. */
-export const SESSION_KEY = "sessionAccent";
-
-/** The signature accent per (theme, session mode). Sparse like everything else
- *  here, and confined to `accent` on purpose — see `SESSION_ACCENT_DEFAULTS`.
- *  Normal is absent by construction: it *is* the base token, so overriding it
- *  there is what changes it. */
-export type SessionAccentOverrides = Partial<
-  Record<ThemeMode, Partial<Record<SessionMode, string>>>
->;
 
 /** Sparse by design: only what the operator actually changed is stored, so a
  *  token left alone keeps following the shipped palette if that palette is ever
- *  retuned.
- *
- *  Two axes, side by side rather than nested: the five accent *meanings* per
- *  theme, and — under a reserved key — the signature accent per session mode.
- *  Growing the existing per-theme record instead would have meant a key that is
- *  sometimes a token and sometimes a mode, which `isAccentToken` could no longer
- *  guard on its own. */
+ *  retuned. */
 export type AccentOverrides = Partial<
   Record<ThemeMode, Partial<Record<AccentToken, string>>>
-> & { [SESSION_KEY]?: SessionAccentOverrides };
+>;
 
-/** Where each axis lives in the stored blob, and which keys it will accept. The two
- *  descriptions are the whole of what separates the axes; the walking, the pruning and
- *  the clear-on-default rule are `accent-axis.ts`'s, written once. */
-export const BASE_AXIS = {
-  path: (theme: ThemeMode) => [theme] as const,
-  accepts: isAccentToken,
-};
-
-export const SESSION_AXIS = {
-  path: (theme: ThemeMode) => [SESSION_KEY, theme] as const,
-  // Never Normal: its value *is* the base token, so it has no rule of its own to
-  // write and a stored one would be a second claim on the same declaration.
-  accepts: (key: string): key is SessionMode =>
-    isSessionMode(key) && hasSessionSignature(key),
-};
-
-/** Drop anything that isn't a known key holding a real hex colour, on either axis.
+/** Drop anything that isn't a known token holding a real hex colour.
  *  This runs over `localStorage`, which is user-writable and is concatenated into a
  *  stylesheet below — so the guard is load-bearing, not tidiness. */
 export function sanitize(raw: unknown): AccentOverrides {
-  const base = sanitizeAxis(raw, {}, THEMES, BASE_AXIS);
-  return sanitizeAxis(raw, base, THEMES, SESSION_AXIS);
+  return sanitizeAxis(raw, THEMES, isAccentToken);
 }
 
 function readStored(): AccentOverrides {
@@ -142,20 +90,6 @@ export function serializeOverrides(value: AccentOverrides): string {
       if (hex) body += `--${token}:${hex};`;
     }
     if (body) css += `html[data-theme="${theme}"]{${body}}`;
-  }
-  // The session rules are more specific — (0,2,1) against (0,1,1) — so a mode
-  // signature wins over a hand-set base accent in the same theme on specificity
-  // rather than on which of the two happened to be written last.
-  for (const theme of THEMES) {
-    const perTheme = value[SESSION_KEY]?.[theme];
-    if (!perTheme) continue;
-    for (const sessionMode of SESSION_MODE_IDS) {
-      if (!hasSessionSignature(sessionMode)) continue;
-      const raw = perTheme[sessionMode];
-      const hex = raw ? normalizeHex(raw) : null;
-      if (!hex) continue;
-      css += `html[data-theme="${theme}"][data-mode="${sessionMode}"]{--accent:${hex};}`;
-    }
   }
   return css;
 }
@@ -195,16 +129,11 @@ export function update(
   if (options?.persist !== false) persist(next);
 }
 
-/** Whether anything at all is overridden, in any theme — on either axis, so the
- *  RESET ALL control appears for a hand-set code accent as readily as for a
- *  hand-set alert red. */
+/** Whether anything at all is overridden, in any theme, so the RESET ALL control
+ *  appears. */
 export function hasAccentOverrides(): boolean {
   const value = overrides();
-  return THEMES.some(
-    (theme) =>
-      Object.keys(value[theme] ?? {}).length > 0 ||
-      Object.keys(value[SESSION_KEY]?.[theme] ?? {}).length > 0,
-  );
+  return THEMES.some((theme) => Object.keys(value[theme] ?? {}).length > 0);
 }
 
 /** Clear every override in every theme. Returns what was cleared, so the caller

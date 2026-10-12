@@ -44,7 +44,6 @@ from core.container import ServiceContainer
 from core.exceptions import ModelLoadError
 from runs import LimitNotice, Run
 from services.conversations import ConversationBinding, ConversationStore
-from services.modes import mode_spec
 from services.notifications import NotificationService
 from services.permissions import ReviewBudget
 from tools import RunDeps
@@ -104,7 +103,7 @@ def turn_deps(
     A function rather than a construction inside :func:`drive_turn` because a compaction
     summary is written on the turn's own agent (``agent/compaction_summary.py``), and the
     request it sends has to render the same brief and offer the same tools a turn would —
-    the mode, the level, the disabled set and the capability bag all shape one or the
+    the workspace, the level, the disabled set and the capability bag all shape one or the
     other. Two constructions of the same deps would be two answers to that question."""
     return RunDeps(
         run=run,
@@ -118,7 +117,7 @@ def turn_deps(
         # binding by the caller, never from a live request — switching the active project
         # must not change what an already-running thread is doing.
         project_id=binding.project_id,
-        mode=binding.mode,
+        workspace_kind=binding.workspace_kind,
         # And how far it may go on its own. The toolset stack reads this to mark the tools
         # that reach past it, so the level is enforced before a call runs rather than
         # apologised for afterwards.
@@ -173,22 +172,10 @@ async def drive_turn(
     corrective re-attempt, where a fold is refused: the correction's drop range is a pair
     of absolute indices into the pre-fold history, and folding underneath it would leave
     the persist dropping two messages that are no longer the ones it meant."""
-    spec = mode_spec(binding.mode)
-    # ``request_limit`` is the operator's runtime setting *when they set one*; None means
-    # nobody chose a number here (they never touched the control, or this is a stateless
-    # eval turn / an older parked payload). It bounds *model round-trips*, so every tool
-    # call spends one.
-    #
-    # The mode's floor applies to the number nobody chose, and only to that one. A mode
-    # whose work genuinely cannot fit inside the shipped default would otherwise stop at a
-    # bound nothing about this deployment picked; but an operator who deliberately lowered
-    # the ceiling to 10 must not find a research turn taking 60 round trips while the
-    # settings page still reads 10. Unset is a floor to raise; set is an answer to honour.
-    resolved_limit = (
-        max(settings.agent_request_limit, spec.request_limit or 0)
-        if request_limit is None
-        else request_limit
-    )
+    # The operator's runtime setting when they set one; None means nobody chose a number
+    # (an untouched control, a stateless eval turn, an older parked payload). It bounds
+    # *model round-trips*, so every tool call spends one.
+    resolved_limit = settings.agent_request_limit if request_limit is None else request_limit
     limits = UsageLimits(
         request_limit=resolved_limit,
         tool_calls_limit=settings.agent_tool_calls_limit,

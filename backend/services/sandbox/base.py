@@ -10,7 +10,7 @@ interface's own one-shot path. Outputs return explicitly (stdout/stderr +
 copied-out files); nothing escapes the box as a side effect.
 
 Not everything the agent runs arrives here, and saying otherwise would overstate
-the invariant: a coding thread's shell and the approved host command execute on
+the invariant: a project thread's shell and the approved host command execute on
 the operator's own machine under OS-level confinement
 (:mod:`services.sandbox.host`), which fences the same domains and hides the
 credential paths, but is a different boundary from this one.

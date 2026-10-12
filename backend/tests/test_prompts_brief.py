@@ -21,13 +21,14 @@ from core.container import ServiceContainer
 from core.timezone import local_zone_key
 from prompts.agent import SYSTEM_PROMPT
 from prompts.levels import AUTO_LEVEL, MANUAL_LEVEL, PLAN_LEVEL
-from prompts.modes import CODE_MODE
+from prompts.workspace import CHECKOUT_WORKSPACE, WORKTREE_WORKSPACE
 from runs import Run, RunStream
+from services.workspace_kind import WorkspaceKind
 from tools.builtin import builtin_toolset
 from tools.deps import RunDeps
 
 
-async def _brief(*, mode: str = "normal", permission: str = "edit") -> str:
+async def _brief(*, kind: WorkspaceKind = "sandbox", permission: str = "edit") -> str:
     """The instructions a turn in this thread would actually ship with.
 
     Driven through a real agent rather than read off the registries, because the thing
@@ -39,7 +40,7 @@ async def _brief(*, mode: str = "normal", permission: str = "edit") -> str:
         owner_id="operator",
         caps=ServiceContainer(),
         conversation_id="conv-1",
-        mode=mode,  # type: ignore[arg-type]
+        workspace_kind=kind,
         permission=permission,  # type: ignore[arg-type]
     )
     agent = build_agent(TestModel(), categories={})
@@ -78,12 +79,12 @@ class TestTheLevelPart:
         self,
     ):
         """Auto is every fresh thread's level, and the tools that take a `reach` are the
-        shell's — which only a `code` thread is offered
-        (`services/modes.MODE_SCOPED_TOOLS`). So the fragment has to be true in a normal
-        or research thread too: it asks the model to answer the question *where a tool
+        shell's — which only a project-folder thread is offered
+        (`services/workspace_kind.WORKSPACE_TOOLS`). So the fragment has to be true in a
+        sandbox thread too: it asks the model to answer the question *where a tool
         asks it*, rather than asserting that every command carries one."""
-        for mode in ("normal", "research", "code"):
-            assert AUTO_LEVEL in await _brief(mode=mode, permission="auto")
+        for kind in ("sandbox", "checkout", "worktree"):
+            assert AUTO_LEVEL in await _brief(kind=kind, permission="auto")
         assert "Where a tool asks how far a command needs to reach" in AUTO_LEVEL
         assert "Every shell command" not in AUTO_LEVEL
 
@@ -101,23 +102,30 @@ class TestTheLevelPart:
         assert "on purpose" in PLAN_LEVEL
 
 
-class TestTheCodeModePart:
-    async def test_only_code_mode_claims_the_files_are_the_operators(self):
-        assert CODE_MODE in await _brief(mode="code")
-        for mode in ("normal", "research"):
-            assert CODE_MODE not in await _brief(mode=mode)
+class TestTheWorkspacePart:
+    async def test_only_a_project_folder_claims_the_files_are_the_operators(self):
+        assert CHECKOUT_WORKSPACE in await _brief(kind="checkout")
+        assert WORKTREE_WORKSPACE in await _brief(kind="worktree")
+        sandbox = await _brief(kind="sandbox")
+        assert CHECKOUT_WORKSPACE not in sandbox
+        assert WORKTREE_WORKSPACE not in sandbox
+
+    async def test_each_project_folder_gets_its_own_fragment(self):
+        assert WORKTREE_WORKSPACE not in await _brief(kind="checkout")
+        assert CHECKOUT_WORKSPACE not in await _brief(kind="worktree")
 
     async def test_the_path_link_rule_left_the_system_prompt(self):
         """It renders a control only when the files are the operator's own, so in a sandbox
         thread the same syntax produces a link that opens nothing."""
-        assert "opens that file in their editor" in CODE_MODE
+        assert "opens that file in their editor" in CHECKOUT_WORKSPACE
+        assert "opens that file in their editor" in WORKTREE_WORKSPACE
         assert "editor" not in SYSTEM_PROMPT
 
 
 class TestTheSystemPrompt:
     def test_it_no_longer_describes_a_machine_that_may_not_exist(self):
         """The sandbox is `code_execute`'s to describe, said once where the model is
-        deciding whether to run something — and a code-mode thread has no sandbox at all,
+        deciding whether to run something — and a project-folder thread has no sandbox at all,
         so the paragraph was false in a third of threads."""
         lowered = SYSTEM_PROMPT.lower()
         for claim in ("pip", "immutable", "apt", "home directory"):

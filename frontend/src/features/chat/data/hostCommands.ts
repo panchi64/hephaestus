@@ -27,7 +27,7 @@ import type { HostResult, ToolCallDTO } from "./wire";
  *  shell declares no such thing and relies on the `narration` every tool is offered
  *  (`tools/narration.py`).
  *
- *  Reading only the first is what this used to do, and it meant code mode's primary tool —
+ *  Reading only the first is what this used to do, and it meant the worktree shell —
  *  the one whose terminal the operator watches most — was the one place the narration never
  *  appeared. The approval copy still wins where both exist: it is the sentence the operator
  *  was actually shown when they said yes. */
@@ -88,8 +88,8 @@ function boundaryOf(r: HostResult): CommandBoundaryFacts | undefined {
  * result carries no outcome at all.
  *
  * **An object means it executed; a string means it did not.** Both command tools
- * answer with a record when they actually run, and a guard refusal — the wrong mode,
- * a host that cannot fence — comes back as a plain sentence the model was handed.
+ * answer with a record when they actually run, and a guard refusal — a tool the thread
+ * cannot use, a host that cannot fence — comes back as a plain sentence the model was handed.
  * That is the whole test, and it is one test rather than two because the worktree
  * shell stopped composing its own labelled transcript: it reports the streams, the
  * exit code, the duration and its fence verdict as fields, the same way the sandboxed

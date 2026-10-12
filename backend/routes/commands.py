@@ -29,7 +29,6 @@ from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
 from services.commands import GROUPS, CatalogEntry
 from services.commands.store import CommandView
-from services.modes import DEFAULT_MODE, ModeId
 
 router = APIRouter(prefix="/commands", tags=["commands"])
 
@@ -132,29 +131,27 @@ def _out(entry: CatalogEntry) -> CommandOut:
 @router.get("", response_model=CommandsOut)
 async def list_commands(
     request: Request,
-    mode: ModeId = DEFAULT_MODE,
     conversation_id: str | None = None,
     project_id: str | None = None,
 ) -> CommandsOut:
-    """The commands offerable in a composer in ``mode``, with or without a thread.
+    """The commands offerable in a composer, with or without a thread.
 
-    ``conversation_id`` is presence *and* identity, for two different questions. A composer
-    that has not started a thread yet cannot compact or fork one, so those rows are simply
-    absent rather than shipped and then refused — that part is presence. It is also what
-    says which worktree the project's declarations should be read from, since a code thread
-    works in a branch cut from the project rather than in the operator's own checkout.
-
-    The thread's own mode is not read from it — the caller passes ``mode``, because the
-    launchpad's composer is choosing one rather than reporting one. ``project_id`` is the
-    same: a thread's binding is settled at creation, and before then the composer is the
-    only thing that knows which project is about to be picked.
+    ``conversation_id`` is presence *and* identity. A composer that has not started a
+    thread yet cannot compact or fork one, so those rows are simply absent rather than
+    shipped and then refused. It also says which tree the project's declarations are read
+    from (a worktree thread works on a branch cut from the project) and where the thread
+    works. Before a thread exists, ``project_id`` is the only thing that knows which
+    project is about to be picked, and a project chat starts in the project's folder.
     """
-    withheld = await deps.disabled_tools(request, mode)
+    if conversation_id is not None:
+        workspace_kind = (await deps.store(request).binding(conversation_id)).workspace_kind
+    else:
+        workspace_kind = "checkout" if project_id else "sandbox"
     entries = await deps.commands(request).catalog(
         OPERATOR_ID,
-        mode=mode,
+        workspace_kind=workspace_kind,
         has_conversation=conversation_id is not None,
-        disabled_tools=withheld,
+        disabled_tools=await deps.disabled_tools(request),
         root=await deps.composer_root(request, project_id, conversation_id),
     )
     offered = {entry.spec.source for entry in entries}

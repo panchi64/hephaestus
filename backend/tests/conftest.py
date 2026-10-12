@@ -88,7 +88,7 @@ def egress_policy(data_dir, domains: tuple[str, ...] = ("pypi.org",)):
 async def unfenced(command: str, *, profile=None) -> str:
     """A ``Confiner`` that rewrites nothing — the shell's fence, stood down for a test.
 
-    The code-mode shell refuses to run anything unfenced, and the platform's confinement
+    The project-folder shell refuses to run anything unfenced, and the platform's confinement
     is switched off for the whole suite (above), so every test that wants a command to
     actually execute passes this. Wrapping in the real one instead would mean testing
     seatbelt, on whichever machines happen to have it.

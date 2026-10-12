@@ -26,7 +26,7 @@ kinds of reach, not degrees of danger:
 
 **Why the names are written out.** ``tools/`` sits above ``services/`` in the dependency
 order, so walking the live catalog from here would invert it — the same constraint
-``services/modes.py`` works under. The literal is not left to rot:
+``services/workspace_kind.py`` works under. The literal is not left to rot:
 ``tests/test_tool_sensitivity.py`` pins it against the catalog a real run resolves, in both
 directions, so a renamed tool fails a test rather than silently losing its class.
 
@@ -171,6 +171,9 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # it over `mail_reply`.
             "mail_draft_reply",
             "memory_remember",
+            # A branch and a checkout beside the operator's repository, which reach their
+            # own folder only through a merge they press.
+            "project_open_worktree",
             # Moving the thread's own permission level, and recording the plan that moves
             # it. Both change a row this installation owns and the operator watches; what
             # stops `plan_submit` raising the level unasked is its own approval marking,

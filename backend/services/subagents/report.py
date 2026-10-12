@@ -137,11 +137,6 @@ def direction_body(text: str) -> str | None:
 # degrade is the whole reason this parses leniently and logs rather than raising: a
 # report is the only thing that survives a sub-agent, and losing one to a stray comma
 # would be the worst possible trade.
-#
-# **It is a shape, not attribution.** A finding names the sources it rests on; it does not
-# link a sentence of the launching agent's eventual answer to a sentence of a source.
-# Claim-level attribution is an open design question with real trade-offs, and nothing
-# here should be read as having pre-empted it.
 
 #: Bounds the JSON block inside the report. Its own markers rather than a ``` fence: a
 #: research report quotes code and quotes markdown, and a delimiter a source can contain is

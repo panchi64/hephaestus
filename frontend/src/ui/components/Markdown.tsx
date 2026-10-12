@@ -115,7 +115,7 @@ function makeCopyButton(): HTMLButtonElement {
 
 /**
  * Renders markdown as structured, token-styled prose. Used for assistant
- * replies, research reports, and document bodies. Each fenced code block gets a
+ * replies, reports, and document bodies. Each fenced code block gets a
  * hover copy button (top-right) that copies the block's clean source — no fences.
  *
  * The source is model- or user-authored and the result is injected as HTML, so

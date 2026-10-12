@@ -7,31 +7,15 @@
  */
 
 import { Show, type JSX } from "solid-js";
-import { Chip, StatusFlag, Text, type Status } from "~/ui";
+import { Chip, Text } from "~/ui";
 import { hostLabel, relativeTime } from "~/lib/format";
-import {
-  BUCKET_LABEL,
-  type SourceBucket,
-  type SourceItem,
-} from "../viewport/sourceItems";
+import type { SourceItem } from "../viewport/sourceItems";
 import { Sep, createAdoptedOpen } from "./ProcessRow";
 import { SurfaceCard } from "./surfaceChrome";
 
-/** The shelves whose rows repeat the shelf's name as a flag. **Only contradicted does**:
- *  every other shelf reports how thoroughly a source was read, which is process and is
- *  already said once by the heading above the rows — on every row it was the same words
- *  ten times over, eating the width the title needed. A contradiction is a finding about
- *  *this* source, so it keeps its word and tone on the row itself. */
-const rowFlag: Partial<Record<SourceBucket, Status>> = {
-  contradicted: "warn",
-};
-
 /** One source: what it is, where it came from, and — opened — the passage the run
  *  actually saw. */
-export function SourceRow(props: {
-  item: SourceItem;
-  bucket: SourceBucket;
-}): JSX.Element {
+export function SourceRow(props: { item: SourceItem }): JSX.Element {
   const s = () => props.item;
   const { open, toggle } = createAdoptedOpen({});
   const hasBody = () =>
@@ -64,13 +48,6 @@ export function SourceRow(props: {
             <Text variant="micro" tone="dim" class="tabular-nums">
               ×{s().sightings}
             </Text>
-          </Show>
-          <Show when={rowFlag[props.bucket]}>
-            {(status) => (
-              <StatusFlag status={status()} dot>
-                {BUCKET_LABEL[props.bucket]}
-              </StatusFlag>
-            )}
           </Show>
         </>
       }

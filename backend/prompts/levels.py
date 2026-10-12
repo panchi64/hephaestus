@@ -16,13 +16,12 @@ At **Yolo** that same declaration is still what the sandbox is built from, and i
 the *only* thing reading it — so the fragment has to say both that nothing will stop the
 work and that the one statement the model makes about it is still load-bearing.
 
-**A fragment is delivered at its level in every mode, so it may claim nothing about the
-catalog.** The tools that take a ``reach`` are the shell's, and the shell is code mode's
-alone (``services/modes.MODE_SCOPED_TOOLS``); Auto is now every fresh thread's level, so a
-sentence beginning "every shell command" would be a false premise on the majority of
-threads, about tools they were never offered. It is written as the conditional it actually
-is — *where* a tool asks how far a command reaches — which costs a clause and is true
-everywhere the fragment is delivered.
+**A fragment is delivered at its level in every workspace, so it may claim nothing about the
+catalog.** The tools that take a ``reach`` are the shell's, and the shell exists only in a project
+folder (``services/workspace_kind.py``); a sentence beginning "every shell command" would be a false
+premise on every sandbox thread, about tools they were never offered. It is written as the
+conditional it actually is — *where* a tool asks how far a command reaches — which costs a clause
+and is true everywhere the fragment is delivered.
 
 **Edit says nothing.** It is the level the base prompt was written for — act, the approval
 gate catches what is genuinely dangerous — and repeating that here would spend

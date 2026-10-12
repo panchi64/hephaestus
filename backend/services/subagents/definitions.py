@@ -268,7 +268,7 @@ def _declared_ceiling(fields: dict[str, Any], *, name: str) -> str | None:
         # launching thread's own — so the failure mode of guessing is a narrower sub-agent,
         # never a wider one.
         logger.info(
-            "subagents: agent %r declared unknown permission %r; using the mode's default",
+            "subagents: agent %r declared unknown permission %r; using the default level",
             name,
             declared,
         )

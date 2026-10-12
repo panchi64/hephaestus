@@ -35,27 +35,22 @@ class Conversation(SQLModel, table=True):
     # The project this belongs to, or null for **unfiled** — visible in every scope,
     # not orphaned. See models/project.py for the one scope rule.
     project_id: str | None = Field(default=None, index=True)
-    # What kind of work this thread is — "normal", "research" or "code". What each
-    # implies (its workspace, the tool categories it admits, its prompt fragment) is the
-    # mode registry's answer, `services/modes.py`; the column stores only the name.
-    # Deliberately a plain string rather than an enum: a restored backup or a row written
-    # by another build must still load, and the registry normalises an unrecognised value
-    # to the mode that reaches the least.
-    # **The mode belongs to the thread, not the message**, and it is set at creation and
-    # immutable after: a code thread owns a branch, and re-pointing it mid-flight would
-    # strand that branch and leave the transcript describing a tree that isn't there.
-    # Structural, not user content, so it stays in the clear like `model`/`ephemeral`.
-    mode: str = Field(default="normal")
+    # Where its file work happens: "sandbox" or "worktree" (`services/workspace_kind.py`).
+    # A plain string so a restored backup or a row from another build still loads; an
+    # unrecognised value reads as the sandbox. Moves one way only, sandbox to worktree,
+    # when the agent opens one: a worktree thread owns a branch, and moving it back would
+    # strand that branch. Structural, not user content, so it stays in the clear.
+    workspace_kind: str = Field(default="sandbox")
     # How much rope the model gets in this thread — "plan", "manual", "edit", "auto" or
     # "yolo".
     # What each permits is the permission registry's answer (`services/permissions`); the
-    # column stores only the name, and a plain string for the same reason `mode` is one.
-    # **Unlike the mode, this moves.** It is the operator's live control over a thread
+    # column stores only the name, as a plain string for the same reason as `workspace_kind`.
+    # **This moves freely.** It is the operator's live control over a thread
     # already in flight: a Plan thread that produced a plan is raised to Edit and carries
     # on in place, and a thread that is about to touch something delicate is dropped to
     # Manual mid-conversation. Nothing structural hangs off it — no branch, no workspace —
     # so re-pointing it strands nothing. Policy, not user content, so it stays in the
-    # clear like `model`/`mode`/`ephemeral`.
+    # clear like `model`/`workspace_kind`/`ephemeral`.
     # **The Python default only** — deliberately not a `server_default` change, so no
     # migration re-points a thread the operator already set. Existing rows keep whatever
     # they were stored with; a row written from here on starts where a fresh thread starts.
@@ -129,7 +124,7 @@ class Conversation(SQLModel, table=True):
     # provider's own number, and every figure derived from this renders with a `~`.
     #
     # Slugs and character counts — structural metadata, not user content — so it stays in
-    # the clear like `model`/`mode`/`ephemeral`. Null until the thread's first turn.
+    # the clear like `model`/`workspace_kind`/`ephemeral`. Null until the thread's first turn.
     context_overhead: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

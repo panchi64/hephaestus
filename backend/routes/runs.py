@@ -522,13 +522,10 @@ async def approve_run(
         # on resume. This is the only path an approval-gated tool ever actually runs on,
         # so a gate missing here would be a gate that never applies to the calls that
         # matter most.
-        # ...and the mode the parked turn ran in, read off the payload rather than the
-        # conversation, so the resumed turn is offered the same tools it parked with. The
-        # level rides on the payload too and reaches the gate through `RunDeps.permission`
+        # The level and the workspace kind reach the gate through `RunDeps`
         # (`build_resume_orchestrator`), not through this set — see `routes/deps.py`.
         disabled_tools=await deps.disabled_tools(
             request,
-            parked.binding.mode,
             # ...and the run's own kind, so a resumed unattended turn is offered the same
             # stack it parked with rather than gaining the attended-only tools back on
             # the one path that continues it.

@@ -30,7 +30,6 @@ from core.db import init_db, make_engine
 from core.vault import Vault
 from runs import Run, RunRegistry, RunStatus, RunStream
 from services.conversations import ConversationBinding, ConversationStore
-from services.modes import MODES
 from services.permissions import (
     ACTING_PERMISSIONS,
     DEFAULT_PERMISSION,
@@ -55,6 +54,7 @@ from services.tool_sensitivity import (
     declared_sensitivity,
     sensitivity_of,
 )
+from services.workspace_kind import WORKSPACE_TOOLS
 from tools import RunDeps, build_agent_toolsets
 
 from ._helpers import (
@@ -186,9 +186,6 @@ class TestTheKnobs:
             for tool in PLANNING_TOOLS:
                 assert not beyond_scope(level, tool)
 
-    def test_every_mode_starts_a_thread_at_a_level_that_exists(self):
-        assert all(spec.default_permission in PERMISSION_LEVELS for spec in MODES.values())
-
     def test_a_fresh_thread_starts_at_auto(self):
         """The default reaches no further than Edit — the two share a ceiling — and moves
         only *who answers* at that boundary: a structural judge and a fence rule on the
@@ -291,7 +288,6 @@ class TestTheDecisionMatrix:
         assert DEFAULT_PERMISSION != "yolo"
         assert STRICTEST_PERMISSION != "yolo"
         assert permission_level("nonsense") != "yolo"
-        assert all(spec.default_permission != "yolo" for spec in MODES.values())
         # ...including the spawn path, where a thread opened from inside another one takes
         # the stricter of the two, so an approved spawn can never buy this level.
         for level in PERMISSION_LEVELS - {"yolo"}:
@@ -317,6 +313,7 @@ async def _resolved_kinds(permission: str) -> dict[str, str]:
         run=run,
         owner_id=OWNER,
         permission=permission,
+        workspace_kind="checkout",
         # Plan's catalog narrowing is `tool_policy`'s half and is tested there; apply it
         # here too so this resolves the stack a Plan run really resolves.
         disabled_tools=permission_disabled_tools(permission),
@@ -397,8 +394,8 @@ class TestTheToolsetElevation:
 
 
 class TestTheThreadRemembers:
-    """The level lives on the conversation: set at creation from the mode, moved by the
-    operator, and read back as one binding with the mode and the project."""
+    """The level lives on the conversation: set at creation, moved by the operator, and
+    read back as one binding with the workspace kind and the project."""
 
     async def _store(self, tmp_path) -> ConversationStore:
         engine = make_engine("sqlite:///:memory:")
@@ -407,25 +404,27 @@ class TestTheThreadRemembers:
         await vault.setup("pw")
         return ConversationStore(engine, vault)
 
-    async def test_a_fresh_thread_starts_at_its_modes_default(self, tmp_path):
+    async def test_a_fresh_thread_starts_at_the_default_in_every_workspace(self, tmp_path):
         store = await self._store(tmp_path)
-        for mode, spec in MODES.items():
-            conversation_id = await store.create_conversation(OWNER, mode=mode)
+        for kind in WORKSPACE_TOOLS:
+            conversation_id = await store.create_conversation(OWNER, workspace_kind=kind)
             binding = await store.binding(conversation_id)
-            assert binding.permission == spec.default_permission
+            assert binding.permission == DEFAULT_PERMISSION
 
-    async def test_an_explicit_level_beats_the_modes_default(self, tmp_path):
+    async def test_an_explicit_level_beats_the_default(self, tmp_path):
         store = await self._store(tmp_path)
         conversation_id = await store.create_conversation(OWNER, permission="plan")
         assert (await store.binding(conversation_id)).permission == "plan"
 
     async def test_the_level_moves_and_the_rest_of_the_binding_does_not(self, tmp_path):
         store = await self._store(tmp_path)
-        conversation_id = await store.create_conversation(OWNER, mode="code", project_id="p1")
+        conversation_id = await store.create_conversation(
+            OWNER, workspace_kind="worktree", project_id="p1"
+        )
         assert await store.set_permission_level(conversation_id, "manual") == "manual"
         binding = await store.binding(conversation_id)
         assert binding.permission == "manual"
-        assert binding.mode == "code"
+        assert binding.workspace_kind == "worktree"
         assert binding.project_id == "p1"
 
     async def test_a_corrupt_stored_level_reads_as_the_strictest(self, tmp_path):

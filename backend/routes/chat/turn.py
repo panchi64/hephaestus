@@ -202,7 +202,7 @@ def compose_turn(
         # While offline mode is active the web containers are down, so hide the web
         # tools from the agent rather than let it discover they're unavailable.
         disabled_tools=disabled_tools,
-        # The thread's mode and project. Absent ⇒ an unfiled chat thread, which is what
+        # The thread's workspace and project. Absent ⇒ an unfiled sandbox thread, which is what
         # a stateless or unattended turn is.
         binding=binding or ConversationBinding(),
         # Which workspace this turn's file work happens in. Empty — every turn an operator

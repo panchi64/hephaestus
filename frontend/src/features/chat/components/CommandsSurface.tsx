@@ -33,7 +33,7 @@ const iconTone: Record<HostCommandPhase, string> = {
 };
 
 /**
- * Everything a code thread has run, as one readout.
+ * Everything a thread has run, as one readout.
  *
  * The transcript already shows each command where it happened, and that is the right
  * place to *watch* one — but it is the wrong place to answer the question this panel

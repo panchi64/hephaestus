@@ -58,10 +58,6 @@ export const AREAS: NavArea[] = [
  * chat. Placement and existence are not the same fact and no longer share a
  * declaration.
  *
- * Research is deliberately **not** here. It stopped being a surface that produces
- * reports and became a *mode a thread can be in*, so its home is the thread list —
- * a page of its own would list the same conversations twice under two names.
- *
  * MCP is deliberately **not** here. Registering a tool server and deciding which
  * of its tools may run is configuration — a value you set and leave — so it is a
  * section of the settings dialog, beside the other connections.
@@ -108,12 +104,11 @@ export const LOOSE_SURFACES: NavItem[] = [CHAT, KNOWLEDGE_BASE, COMPARE];
  * Rows carry the surface itself rather than an href to look up, so a row for a
  * surface that does not exist cannot be written.
  *
- * **Chat has no row.** One pointing at `/chat` sat directly above the mode
- * switch, the project switcher and the thread list — three controls that are all
- * *about* chat — so it read as a fourth sibling rather than as the destination
- * containing them. The mode switch is the honest entry point: picking a kind of
- * work is how you get to the work, and it files the list underneath at the same
- * time.
+ * **Chat has no row.** One pointing at `/chat` sat directly above the project
+ * switcher and the thread list — controls that are both *about* chat — so it read
+ * as a third sibling rather than as the destination containing them. The thread
+ * list is the honest entry point: opening or starting a thread is how you get to
+ * the work.
  *
  * **The other two sit in the footer**, on the same footing as COMMS and for the
  * same reason: a corpus and a compare bench are things you go and check, not the

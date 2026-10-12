@@ -1,10 +1,11 @@
 """Toolsets whose tools are fixed but whose *backing object* is not.
 
-Several categories wrap a `pydantic_ai_harness` toolset that is constructed around
-something a run resolves rather than the app: `files`, `shell` and `repo` around a
-directory, `browse` around a conversation's live browser. Categories are assembled once at
-app startup and shared by every conversation, so none of them can bake that in at
-construction.
+Several categories act on something a run resolves rather than the app: `files`, `shell`
+and `repo` on a directory, `browse` on a conversation's live browser. Categories are
+assembled once at app startup and shared by every conversation, so none of them can bake
+that in at construction. `files` and `repo` only need the run's workspace handed to them
+as ``ctx.workspace``; `shell` and `browse` hold per-binding state, so they are rebuilt per
+binding.
 
 `AbstractToolset.for_run(ctx)` is not the hook for this, and it is worth saying why since
 it looks like it: the library does call it once per run, but a harness toolset's `for_run`

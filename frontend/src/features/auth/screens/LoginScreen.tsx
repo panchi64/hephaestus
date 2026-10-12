@@ -50,7 +50,7 @@ export function LoginScreen(): JSX.Element {
       confirmLabel: "Delete and start over",
       requireText: "RESET",
       detail:
-        "This permanently deletes the encryption key and everything stored on top of the database, under data/ — uploaded files and their extracted text, the knowledge base and its index, sandbox workspaces, saved View snapshots, and the browser profile. All of it is sealed under the key being removed, so none of it is readable afterwards, by this app or anything else. Your project directories and code-mode worktrees live outside data/ and are not touched. This cannot be undone.",
+        "This permanently deletes the encryption key and everything stored on top of the database, under data/ — uploaded files and their extracted text, the knowledge base and its index, sandbox workspaces, saved View snapshots, and the browser profile. All of it is sealed under the key being removed, so none of it is readable afterwards, by this app or anything else. Your project directories and worktrees live outside data/ and are not touched. This cannot be undone.",
     });
     if (!ok) return;
     setError("");

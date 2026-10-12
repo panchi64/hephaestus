@@ -62,35 +62,27 @@ class TestWorkflowStore:
 
     async def test_a_name_that_could_not_be_typed_names_its_field(self):
         async with client_app() as (client, _app):
-            resp = await client.post(
-                "/commands/workflows", json={"name": "what?!", "body": "b"}
-            )
+            resp = await client.post("/commands/workflows", json={"name": "what?!", "body": "b"})
         assert resp.status_code == 422
         # The editor marks a box rather than printing "invalid" over the whole form.
         assert resp.json()["detail"]["field"] == "name"
 
     async def test_a_workflow_with_no_template_is_refused(self):
         async with client_app() as (client, _app):
-            resp = await client.post(
-                "/commands/workflows", json={"name": "empty", "body": "   "}
-            )
+            resp = await client.post("/commands/workflows", json={"name": "empty", "body": "   "})
         assert resp.status_code == 422
         assert resp.json()["detail"]["field"] == "body"
 
     async def test_two_workflows_cannot_share_a_name(self):
         async with client_app() as (client, _app):
             await client.post("/commands/workflows", json={"name": "dup", "body": "b"})
-            resp = await client.post(
-                "/commands/workflows", json={"name": "dup", "body": "b"}
-            )
+            resp = await client.post("/commands/workflows", json={"name": "dup", "body": "b"})
         assert resp.status_code == 422
         assert resp.json()["detail"]["field"] == "name"
 
     async def test_a_disabled_workflow_leaves_the_menu_but_not_the_editor(self):
         async with client_app() as (client, app):
-            created = await client.post(
-                "/commands/workflows", json={"name": "draft", "body": "b"}
-            )
+            created = await client.post("/commands/workflows", json={"name": "draft", "body": "b"})
             await client.patch(
                 f"/commands/workflows/{created.json()['id']}", json={"enabled": False}
             )
@@ -142,9 +134,7 @@ class TestWorkflowStore:
 
     async def test_a_deleted_workflow_is_gone_from_both(self):
         async with client_app() as (client, app):
-            created = await client.post(
-                "/commands/workflows", json={"name": "temp", "body": "b"}
-            )
+            created = await client.post("/commands/workflows", json={"name": "temp", "body": "b"})
             resp = await client.delete(f"/commands/workflows/{created.json()['id']}")
             assert resp.status_code == 204
             specs = await app.state.command_store.specs("operator")
@@ -215,9 +205,9 @@ class TestProjectFiles:
 
     def test_a_project_command_is_offered_only_where_the_checkout_is(self, tmp_path: Path):
         _write(tmp_path, ".claude/commands/deploy.md", "body")
-        # Worktree modes only. A sandbox thread has no repository to have declared this,
+        # Project folders only. A sandbox thread has no repository to have declared this,
         # and the body it would carry came from files that thread cannot see.
-        assert project_specs(tmp_path)[0].modes == ("code",)
+        assert project_specs(tmp_path)[0].workspaces == ("checkout", "worktree")
 
     def test_a_long_template_is_clipped_rather_than_dropped(self, tmp_path: Path):
         _write(tmp_path, ".claude/commands/essay.md", "x" * 20_000)
@@ -275,7 +265,10 @@ class TestTheCatalogReadsTheCheckout:
     the route. Without it they contribute nothing — which is the right answer for a thread
     that has no checkout, and the wrong one to reach by accident."""
 
-    async def test_a_project_declares_both_a_command_and_a_sub_agent(self, tmp_path: Path):
+    @pytest.mark.parametrize("kind", ["checkout", "worktree"])
+    async def test_a_project_declares_both_a_command_and_a_sub_agent(
+        self, tmp_path: Path, kind: str
+    ):
         _write(tmp_path, ".claude/commands/deploy.md", "ship it")
         _write(
             tmp_path,
@@ -284,7 +277,7 @@ class TestTheCatalogReadsTheCheckout:
         )
         async with client_app() as (_client, app):
             entries = await app.state.commands.catalog(
-                "operator", mode="code", has_conversation=True, root=tmp_path
+                "operator", workspace_kind=kind, has_conversation=True, root=tmp_path
             )
         by_name = {e.spec.name: e.spec for e in entries}
         assert by_name["deploy"].source == "project"
@@ -292,7 +285,10 @@ class TestTheCatalogReadsTheCheckout:
         # roster across two headings in the menu.
         assert by_name["scout"].source == "agent"
 
-    async def test_a_project_agent_replaces_the_builtin_of_that_name(self, tmp_path: Path):
+    @pytest.mark.parametrize("kind", ["checkout", "worktree"])
+    async def test_a_project_agent_replaces_the_builtin_of_that_name(
+        self, tmp_path: Path, kind: str
+    ):
         _write(
             tmp_path,
             ".claude/agents/explorer.md",
@@ -300,7 +296,7 @@ class TestTheCatalogReadsTheCheckout:
         )
         async with client_app() as (_client, app):
             entries = await app.state.commands.catalog(
-                "operator", mode="code", has_conversation=True, root=tmp_path
+                "operator", workspace_kind=kind, has_conversation=True, root=tmp_path
             )
         rows = [e.spec for e in entries if e.spec.name == "explorer"]
         # One row, not two: this is the roster's own shadowing, which is also what resolves
@@ -311,13 +307,11 @@ class TestTheCatalogReadsTheCheckout:
     async def test_without_a_root_the_project_sources_are_simply_absent(self):
         async with client_app() as (_client, app):
             entries = await app.state.commands.catalog(
-                "operator", mode="code", has_conversation=True
+                "operator", workspace_kind="worktree", has_conversation=True
             )
         assert all(e.spec.source != "project" for e in entries)
 
-    async def test_a_project_sub_agent_is_withheld_outside_a_worktree_mode(
-        self, tmp_path: Path
-    ):
+    async def test_a_project_sub_agent_is_withheld_outside_a_project_folder(self, tmp_path: Path):
         _write(
             tmp_path,
             ".claude/agents/scout.md",
@@ -325,19 +319,20 @@ class TestTheCatalogReadsTheCheckout:
         )
         async with client_app() as (_client, app):
             entries = await app.state.commands.catalog(
-                "operator", mode="normal", has_conversation=True, root=tmp_path
+                "operator", workspace_kind="sandbox", has_conversation=True, root=tmp_path
             )
-        # A thread files under a project in *every* mode, so a resolvable root is not the
-        # question — `tools/project_agents.run_roster` reads a project's declarations only
-        # in a worktree mode. Offering `/scout` here would put a row in the menu whose
-        # launch resolves to nothing, and the operator would meet that as a failed tool
-        # call mid-turn rather than as an option that was never there.
+        # A thread files under a project in *every* kind of workspace, so a resolvable root
+        # is not the question — `tools/project_agents.run_roster` reads a project's
+        # declarations only in a project folder. Offering `/scout` here would put a row in
+        # the menu whose launch resolves to nothing, and the operator would meet that as a
+        # failed tool call mid-turn rather than as an option that was never there.
         assert all(e.spec.name != "scout" for e in entries)
         # The built-ins are still offered — it is the project layer that is withheld.
         assert any(e.spec.name == "explorer" for e in entries)
 
+    @pytest.mark.parametrize("kind", ["checkout", "worktree"])
     async def test_two_roster_names_differing_only_by_separator_ship_once(
-        self, tmp_path: Path
+        self, tmp_path: Path, kind: str
     ):
         _write(
             tmp_path,
@@ -346,7 +341,7 @@ class TestTheCatalogReadsTheCheckout:
         )
         async with client_app() as (_client, app):
             entries = await app.state.commands.catalog(
-                "operator", mode="code", has_conversation=True, root=tmp_path
+                "operator", workspace_kind=kind, has_conversation=True, root=tmp_path
             )
         rows = [e for e in entries if e.spec.name == "test-runner"]
         # The built-in is `test_runner` and the underscore folds to a hyphen, so both
@@ -356,21 +351,22 @@ class TestTheCatalogReadsTheCheckout:
         assert len(rows) == 1
         assert rows[0].shadowed_by is None
 
-    async def test_a_project_command_is_withheld_outside_a_worktree_mode(
-        self, tmp_path: Path
-    ):
+    async def test_a_project_command_is_withheld_outside_a_project_folder(self, tmp_path: Path):
         _write(tmp_path, ".claude/commands/deploy.md", "ship it")
         async with client_app() as (_client, app):
             entries = await app.state.commands.catalog(
-                "operator", mode="normal", has_conversation=True, root=tmp_path
+                "operator", workspace_kind="sandbox", has_conversation=True, root=tmp_path
             )
         assert all(e.spec.name != "deploy" for e in entries)
 
-    async def test_a_project_command_resolves_by_name_on_the_way_out(self, tmp_path: Path):
+    @pytest.mark.parametrize("kind", ["checkout", "worktree"])
+    async def test_a_project_command_resolves_by_name_on_the_way_out(
+        self, tmp_path: Path, kind: str
+    ):
         _write(tmp_path, ".claude/commands/deploy.md", "ship it carefully")
         async with client_app() as (_client, app):
             spec = await app.state.commands.resolve(
-                "operator", "deploy", mode="code", has_conversation=True, root=tmp_path
+                "operator", "deploy", workspace_kind=kind, has_conversation=True, root=tmp_path
             )
         # The send has to reach the same tree the menu listed from, or a picked command
         # would expand to nothing the moment the operator pressed enter.

@@ -1,19 +1,16 @@
 import { ACCENT_DEFAULTS, type AccentToken } from "./accents";
 import { createAccentAxis } from "./accent-axis";
-import { BASE_AXIS, accentOverrides, update } from "./accent-overrides";
+import { accentOverrides, update } from "./accent-overrides";
 
 /**
  * The five accent **meanings**, read and written per theme mode.
  *
- * The storage, the guard and the stylesheet are `accent-overrides.ts`; the walking,
- * pruning and clear-on-default rules are `accent-axis.ts`. What is left here is the
- * vocabulary of the first axis — which keys it holds and what they fall back to.
- * `session-accent-store.ts` is its opposite number for the signature-per-session-mode
- * axis, and the two write through the same `update` because there is one sheet and one
- * stored blob.
+ * The storage, the guard and the stylesheet are `accent-overrides.ts`; the pruning and
+ * clear-on-default rules are `accent-axis.ts`. What is left here is the vocabulary —
+ * which keys are held and what they fall back to.
  */
 const axis = createAccentAxis<AccentToken>(
-  { ...BASE_AXIS, shipped: (theme, token) => ACCENT_DEFAULTS[theme][token] },
+  { shipped: (theme, token) => ACCENT_DEFAULTS[theme][token] },
   { read: accentOverrides, update },
 );
 

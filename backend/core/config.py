@@ -46,7 +46,7 @@ class Settings(BaseSettings):
         # relative one is read as a named volume, which forbids path separators.
         return value.expanduser().resolve()
 
-    # Where code mode's git worktrees are checked out. **Deliberately outside
+    # Where the chats' git worktrees are checked out. **Deliberately outside
     # `data_dir`**: an approved host command is fenced by `services/sandbox/host.py`,
     # which denies reads of the whole data directory (the vault, the sealed workspaces
     # and the DB live there). A worktree under `data_dir` would therefore be unreadable
@@ -77,8 +77,8 @@ class Settings(BaseSettings):
     # is volume, and slots they can never hold are slots the operator always can.
     run_max_concurrency: int = 8
     run_background_concurrency: int = 2
-    # Also the number of sub-agents that actually *execute* at once, since they share the
-    # linked lane with the research threads. Deliberately left as one knob rather than
+    # Also the number of sub-agents that actually *execute* at once, since they run in the
+    # linked lane. Deliberately left as one knob rather than
     # widened for them: the lane's narrowness is what guarantees the operator's own turn a
     # floor of slots, so a burst of sub-agents queues instead of crowding the person out.
     # The operator's `chat.subagent_max_concurrent` setting is a different bound and does
@@ -120,14 +120,13 @@ class Settings(BaseSettings):
     code_mode_max_memory_mb: int = 256
     code_mode_max_tool_calls: int = 25
 
-    # How long a research thread the *agent* opened may run before the substrate ends it.
-    # The one place a wall clock is on by default, because it is the one turn nobody is
-    # sitting in front of: the inactivity watchdog cannot end it (a model streaming tokens
-    # refreshes that clock on every frame), the request limit only bounds round trips, and
-    # the linked lane is `run_linked_concurrency` wide — so unbounded threads would block
-    # every later `research_start` for as long as they cared to run. Eighteen minutes: a
-    # thorough read of a dozen sources fits comfortably, a stuck one does not.
-    research_wall_clock_timeout_s: float | None = 1080.0
+    # How long a sub-agent's turn may run before the substrate ends it. The one place a wall
+    # clock is on by default, because nobody is sitting in front of it: the inactivity
+    # watchdog cannot end it (a model streaming tokens refreshes that clock on every
+    # frame), the request limit only bounds round trips, and the linked lane is
+    # `run_linked_concurrency` wide. Eighteen minutes: a thorough read of a dozen sources
+    # fits comfortably, a stuck one does not.
+    subagent_wall_clock_timeout_s: float | None = 1080.0
 
     # Execution sandbox. Agent code/shell runs isolated from the host; when no
     # runtime is available the capability is disabled (fail closed — never a host
@@ -289,25 +288,6 @@ class Settings(BaseSettings):
     # artifact (made a tool call) — chitchat that called no tools is skipped.
     # Set False to judge every answer.
     verify_heuristic: bool = True
-
-    # Claim-level attribution. After a research answer lands, a second reader on the
-    # utility model reads the finished prose against the sources the turn actually
-    # retained and returns claim → source → passage triples. It is a *second* reader
-    # rather than the writer's own account of itself, which is the whole point: the
-    # question it answers is whether the synthesis is honest, and the synthesizer
-    # cannot settle that about itself.
-    #
-    # One background round trip per research answer, bounded by `attribution_timeout_s`
-    # so a stuck utility model cannot hold a finished run open; the whole pass is
-    # best-effort and an expired one costs the panel its claim arm, never the answer.
-    # `attribution_max_sources` and `attribution_source_chars` bound what it is handed —
-    # a wide-reading thread can retain dozens of pages, and the reader's own window is
-    # the utility model's, not the chat model's.
-    attribution_enabled: bool = True
-    attribution_timeout_s: float = 90.0
-    attribution_max_tokens: int = 8192
-    attribution_max_sources: int = 24
-    attribution_source_chars: int = 4000
 
     # Approval grants. When the operator approves a deferred tool call with the
     # "allow for this conversation" option, that tool auto-approves in that

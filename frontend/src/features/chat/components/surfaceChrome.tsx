@@ -18,8 +18,8 @@ import { ProcessRow, Sep } from "./ProcessRow";
 /** The frame a surface row sits in: square, one hairline, no fill and no shadow — the
  *  console register's ruled cell (design §6, §7). Contents of a framed region are bare,
  *  so a rounded, lifted card inside the pane's own frame was a container in a
- *  container. Exported for the coverage surface's plain blocks. */
-export const SURFACE_CARD = "overflow-hidden border border-line";
+ *  container. */
+const SURFACE_CARD = "overflow-hidden border border-line";
 
 /** Surfaces respond to the pane, never the viewport: the operator drags the pane from
  *  320 to 1200px on one screen, so a list goes to two columns where the *pane* has room
@@ -123,20 +123,11 @@ export function SurfaceSection(props: {
   );
 }
 
-/** Grid wrapper for card lists outside a `SurfaceSection`. */
-export function SurfaceColumns(props: {
-  gap?: 1 | 1.5;
-  children: JSX.Element;
-}): JSX.Element {
-  return <div class={cx(COLUMNS, GAP[props.gap ?? 1.5])}>{props.children}</div>;
-}
-
 /**
  * One collapsible row on a surface: a `ProcessRow` on a card, opening onto a body.
  *
  * The open state stays with the caller, because callers rest differently — a failed
- * command opens itself whenever it fails, a topic with gaps rests open, everything else
- * rests shut — and each of those is a `createAdoptedOpen` call the card should not
+ * command opens itself whenever it fails, everything else rests shut — and each of those is a `createAdoptedOpen` call the card should not
  * second-guess.
  */
 export function SurfaceCard(props: {

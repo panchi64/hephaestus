@@ -147,12 +147,6 @@ export const SURFACES = [
     defaultWidth: 420,
   },
   {
-    // The research pair, and they sit **after** the code thread's surfaces rather than
-    // among them because the two sets never appear together: a thread reads the web or
-    // it runs a worktree, and a research thread's header offers Tasks, Plan, Agents and
-    // these two with nothing in between. Ordering them here rather than interleaved
-    // keeps the registry readable as the two arcs it actually holds.
-    //
     // A **panel**: an inventory is read at length and every row can open onto a passage.
     // As a strip it would be the first three sources again, which is the exact failure
     // this surface exists to fix.
@@ -166,18 +160,6 @@ export const SURFACES = [
     minWidth: 340,
     minHeight: 260,
     defaultWidth: 480,
-  },
-  {
-    // A **panel**, and the widest of the two: a disagreement renders its positions side
-    // by side, which is the whole reason it is legible, and a surface that could only
-    // ever stack them would be showing two paragraphs instead of a comparison.
-    id: "coverage",
-    shape: "panel",
-    label: "Coverage",
-    icon: "layers",
-    minWidth: 360,
-    minHeight: 280,
-    defaultWidth: 520,
   },
 ] as const satisfies readonly SurfaceSpec[];
 

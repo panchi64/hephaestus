@@ -22,7 +22,6 @@ import type { HostCommand, PlanDocument } from "../model";
 import type { TaskItem } from "~/lib/stream/events";
 import type { Subagent } from "../data";
 import type { BranchState } from "../data";
-import { hasCoverage } from "./coverageItems";
 import type { SourceInventory } from "./sourceItems";
 import { SURFACE_IDS, type SurfaceId } from "./surfaces";
 import type { ViewItem } from "./viewItems";
@@ -163,20 +162,7 @@ export function createSurfaceSources(
       // **Announce.** The answer being written above is what the operator is reading,
       // and the sources are what they check it against *afterwards*. A panel that
       // opened itself on the first search hit would take the screen away from the turn
-      // producing it, on every research thread, at the earliest possible moment.
-      arrival: () => "announce",
-      claimKey: () => "",
-    },
-    // **Only once a report has structure in it.** A thread with sub-agents still out
-    // has an Agents panel saying so; a Coverage panel with no coverage in it is a
-    // heading over nothing, and the arrival state it would show is the one fact the
-    // other panel already carries. Once one report lands, this is where the outstanding
-    // ones are named — because there the absence is load-bearing.
-    coverage: {
-      available: () => hasCoverage(deps.subagents()),
-      // A report landing is the fan-out working as designed, not something waiting on
-      // the operator. What *is* waiting on them — a parked sub-agent — interrupts
-      // through the approval dock, which is where they answer it.
+      // producing it, at the earliest possible moment.
       arrival: () => "announce",
       claimKey: () => "",
     },

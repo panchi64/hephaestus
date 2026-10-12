@@ -4,11 +4,11 @@ What a sub-agent *is* is almost nothing: a hidden conversation, composed by the 
 ``compose_turn`` an operator's own message goes through, running the same engine over the
 same tools. So this manifest contributes three small things and no machinery.
 
-The **launcher** (built in ``_subagents.py`` beside this file), so ``tools/subagents.py``
-can start one from inside a run without importing turn composition, which sits above
-``tools/``. It is built here for the same reason the research launcher and the scheduler's
-task executor are: a tool has no ``Request``, and a launcher that closed over one could
-never be reached from inside a run, while here every handle it needs is already resolved.
+The **launcher** (built in ``_subagents.py`` beside this file), so ``tools/subagents.py`` can start
+one from inside a run without importing turn composition, which sits above ``tools/``. It is built
+here for the same reason the scheduler's task executor is: a tool has no ``Request``, and a launcher
+that closed over one could never be reached from inside a run, while here every handle it needs is
+already resolved.
 
 The **register** (``services/subagent_store.py``), which is what keeps a sub-agent's
 transcript reachable by name once the process that ran it is gone. Its startup pass closes

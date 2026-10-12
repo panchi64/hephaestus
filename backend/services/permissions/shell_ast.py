@@ -199,7 +199,7 @@ def escapes_workspace(root: Path | None, raw: str) -> bool:
     whatever the rest of the path says — and resolving it would only turn the question
     into one about a directory this process may not even share.
 
-    With no known root — a stateless turn, a mode whose workspace never opened — an
+    With no known root — a stateless turn, a workspace that never opened — an
     absolute or upward path is treated as escaping. There is nothing to measure it
     against, and "we could not tell" has to read the same as "it left".
     """

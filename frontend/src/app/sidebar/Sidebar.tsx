@@ -14,7 +14,6 @@ import { createInFlight } from "~/lib/inFlight";
 import { useSession } from "~/lib/stores/session";
 import { useSettingsRoute } from "~/app/settings-dialog";
 import { RecentsRail } from "~/features/chat/components/RecentsRail";
-import { SessionModeSwitch } from "~/features/chat/components/SessionModeSwitch";
 import { AREAS, areaForPath, railRows, type NavItem } from "../nav";
 import { AreaSection } from "./AreaSection";
 import { navMeta } from "./navMeta";
@@ -98,28 +97,13 @@ export function Sidebar(): JSX.Element {
     <nav class="ody-rail flex h-full min-h-0 flex-col bg-surface">
       <div class="sticky top-0 z-30 bg-surface">
         {/* The wordmark in the machine's voice, wide-tracked, with the workspace id
-            dim beside it — a quiet line over the mode bar, which is the one strong
-            element at the rail's head. It stacks under the brand at the rail's
-            narrowest. */}
+            dim beside it. It stacks under the brand at the rail's narrowest. */}
         <a href="/" class="ody-rail-brand hover:bg-raised">
           <span class="ody-rail-wordmark">Odysseus</span>
           <Text variant="micro" tone="dim">
             ody-workspace-02.1
           </Text>
         </a>
-
-        {/* What kind of work you are looking at — and, since the Chat row went,
-            the way into it. It sits directly under the wordmark because it is
-            now the rail's first control rather than one of several: everything
-            below it is the work it files.
-
-            It was a dropdown in the composer, offered only while a thread was
-            unsaved — which is where a property of the *message* would belong.
-            The mode is a property of the thread, so it belongs to the list of
-            threads: it files what the rail shows, decides what the next new
-            thread is, and repaints the signature accent, which are one fact at
-            three ranges. */}
-        <SessionModeSwitch />
       </div>
 
       {/* The threads, with the search strip over them and the project filter at

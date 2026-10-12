@@ -1,5 +1,4 @@
 import {
-  Show,
   createEffect,
   createMemo,
   createSignal,
@@ -22,7 +21,6 @@ import {
 } from "~/ui";
 import { registerKeymap } from "~/lib/keymap";
 import { useNotifications } from "~/lib/stores/notifications";
-import { sessionModeSpec } from "~/lib/modes";
 import {
   activeProjectId,
   deleteProject,
@@ -31,11 +29,9 @@ import {
   type Project,
 } from "~/lib/stores/projects";
 import {
-  activeSessionMode,
-  codeProjectId,
-  setActiveSessionMode,
-  setCodeProjectId,
-} from "~/lib/stores/sessionMode";
+  setStagedProjectId,
+  stagedProjectId,
+} from "~/lib/stores/stagedProject";
 import {
   isPinned,
   mainChat,
@@ -48,11 +44,7 @@ import {
   retitleConversation,
 } from "../conversationActions";
 import { createRenameConversation } from "./RenameConversationModal";
-import {
-  directoryLabel,
-  registerAddDirectoryButton,
-  useAddDirectory,
-} from "../addDirectory";
+import { directoryLabel, useAddDirectory } from "../addDirectory";
 import { settled } from "~/lib/resource";
 import type { ChatActivity } from "../model";
 import type { WorkspaceDirectory } from "../sessionGroups";
@@ -73,13 +65,11 @@ const ACTIVITY_POLL_MS = 3000;
  *  `currentId` the room renders; opening from off the chat route navigates there
  *  first.
  *
- *  **In a worktree mode the header button adds a directory rather than a thread.** A
- *  code thread is cut from a directory's repository, so there is no such thing as one
- *  that names no directory — the backend refuses the send outright. Threads start from
- *  their directory's own section below; this button is how a directory gets there. It is
- *  the same position in every mode and it makes two different things, which is the one
- *  risk in the arrangement, so it does not also share a glyph: a folder here, a bare
- *  plus on the row. */
+ *  **The header has two buttons that make different things.** NEW starts a thread with
+ *  no project; ADD DIRECTORY points the app at a directory and stages it as the project
+ *  of the next thread. A thread is started in a project from the project's own section
+ *  below, or by choosing it in the composer. They do not share a glyph: a plus here and
+ *  on the section's row, a folder for the directory. */
 export function RecentsRail(props: {
   /** The project filter, at the right end of the list's heading. The shell's to
    *  supply — the project scope is app-wide, not chat's. */
@@ -88,13 +78,9 @@ export function RecentsRail(props: {
   const sessions = useChatSessions();
   const projects = useProjects();
   const { currentId, openId, setCurrentId, stream } = mainChat();
-  const mode = activeSessionMode;
-  const setMode = setActiveSessionMode;
   const location = useLocation();
   const navigate = useNavigate();
   const addDirectory = useAddDirectory();
-
-  const rooted = () => sessionModeSpec(mode()).workspace === "worktree";
 
   /** The rows to render: the server's list, plus an echo of the run this client
    *  is already streaming.
@@ -125,14 +111,8 @@ export function RecentsRail(props: {
     );
   });
 
-  /** The rail shows one mode at a time. Filtering here rather than inside the list
-   *  keeps the list a layout: it arranges what it is handed and does not decide
-   *  what belongs in it. Held as `undefined` while the fetch is in flight, so the
-   *  list keeps rendering its loading state rather than an empty one. */
-  const inMode = createMemo(() => rows()?.filter((s) => s.mode === mode()));
-
-  /** The projects a worktree mode files under, or undefined while the listing is in
-   *  flight — the list treats the two differently, and must.
+  /** The projects threads file under, or undefined while the listing is in flight — the
+   *  list treats the two differently, and must.
    *
    *  Scoped the way the backend scopes the conversations listing: with a project
    *  active it returns that project's threads and the unfiled ones and nothing else, so
@@ -195,24 +175,13 @@ export function RecentsRail(props: {
     if (location.pathname !== "/chat") navigate("/chat");
   };
   const select = (id: string) => {
-    // Point the client at the thread's own mode before opening it. It is a no-op
-    // from the rail (which only lists the current mode), and it is not from a
-    // notification's deep link or a restored selection — where without it the
-    // window would keep the previous mode's accent while showing another mode's
-    // thread. The loaded thread reasserts this either way; doing it here means the
-    // rail does not flash the wrong section on the way.
-    const opened = rows()?.find((s) => s.id === id);
-    if (opened) setMode(opened.mode);
     setCurrentId(id);
     toChat();
   };
-  const startNew = () => {
+  const startNew = (projectId?: string) => {
+    setStagedProjectId(projectId);
     setCurrentId(null);
     toChat();
-  };
-  const newThreadIn = (projectId: string) => {
-    setCodeProjectId(projectId);
-    startNew();
   };
 
   /* ── The per-thread actions menu ────────────────────────────────────────────
@@ -322,7 +291,7 @@ export function RecentsRail(props: {
    *  before it happens, because the threads are the part that surprises: they are not
    *  deleted and they are not loose in the list — they come back with the directory. */
   const archive = async (projectId: string, name: string) => {
-    const held = inMode()?.filter((s) => s.projectId === projectId).length ?? 0;
+    const held = rows()?.filter((s) => s.projectId === projectId).length ?? 0;
     const ok = await confirm({
       title: `Archive ${name}?`,
       detail: held
@@ -333,7 +302,7 @@ export function RecentsRail(props: {
     if (!ok) return;
     try {
       await updateProject(projectId, { archived: true });
-      if (codeProjectId() === projectId) setCodeProjectId(undefined);
+      if (stagedProjectId() === projectId) setStagedProjectId(undefined);
       // The open thread goes with its directory. Archiving hides the section *and* the
       // threads under it, so leaving one mounted in the room would strand it: a
       // transcript on screen with no row anywhere in the rail, and no way back to it
@@ -355,13 +324,13 @@ export function RecentsRail(props: {
     const ok = await confirm({
       title: `Delete ${name}?`,
       detail:
-        "The directory on disk is untouched. Its threads are kept and move to Unfiled.",
+        "The directory on disk is untouched. Its threads are kept, with no project.",
       tone: "alert",
     });
     if (!ok) return;
     try {
       await deleteProject(projectId);
-      if (codeProjectId() === projectId) setCodeProjectId(undefined);
+      if (stagedProjectId() === projectId) setStagedProjectId(undefined);
       refreshSessions();
     } catch (err) {
       toast.error(
@@ -377,8 +346,7 @@ export function RecentsRail(props: {
   let searchField: HTMLInputElement | undefined;
   registerKeymap(() => [{ combo: "/", run: () => searchField?.focus() }]);
 
-  const count = () =>
-    rooted() ? (directories()?.length ?? 0) : (inMode()?.length ?? 0);
+  const count = () => rows()?.length ?? 0;
 
   // The unread set, from the backend's own notification read state: a thread with an
   // unread notification has something the operator has not seen.
@@ -395,9 +363,7 @@ export function RecentsRail(props: {
   return (
     <div class="flex min-h-0 flex-1 flex-col">
       {/* The command strip: the composer's own receded strip turned upside down —
-          dim mono cells, no dividers, brightening only under the pointer or focus. In
-          a worktree mode the button adds a directory rather than a thread, and says
-          so with a different glyph. */}
+          dim mono cells, no dividers, brightening only under the pointer or focus. */}
       <StatusBar
         variant="recede"
         edge="block"
@@ -419,32 +385,29 @@ export function RecentsRail(props: {
           />
         }
         end={
-          <Show
-            when={rooted()}
-            fallback={
-              <Tooltip label="New thread (⌘⇧O)" side="bottom" delay={600}>
-                <StatusCell onClick={startNew} class="px-3">
-                  <Icon name="plus" size={16} />
-                  new
-                </StatusCell>
-              </Tooltip>
-            }
-          >
-            <StatusCell
-              ref={registerAddDirectoryButton}
-              disabled={addDirectory.busy()}
-              onClick={() => void addDirectory.add()}
-              class="px-3"
-            >
-              <Icon name="library" size={16} />
-              add directory
-            </StatusCell>
-          </Show>
+          <>
+            <Tooltip label="New thread (⌘⇧O)" side="bottom" delay={600}>
+              <StatusCell onClick={() => startNew()} class="px-3">
+                <Icon name="plus" size={16} />
+                new
+              </StatusCell>
+            </Tooltip>
+            <Tooltip label="Add directory" side="bottom" delay={600}>
+              <StatusCell
+                aria-label="Add directory"
+                disabled={addDirectory.busy()}
+                onClick={() => void addDirectory.add()}
+                class="px-3"
+              >
+                <Icon name="library" size={16} />
+              </StatusCell>
+            </Tooltip>
+          </>
         }
       />
       <ListGroupHeader
         variant="section"
-        label={rooted() ? "Directories" : "Recents"}
+        label="Recents"
         count={count()}
         aside={props.filter}
       />
@@ -458,25 +421,23 @@ export function RecentsRail(props: {
           a divider under the header. The header's own spacing separates them. */}
       <div class="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
         <SessionList
-          sessions={inMode}
-          mode={mode()}
+          sessions={rows}
           // Which row is *marked* open — `openId`, so a thread created by the turn
           // still running is highlighted the moment it is listed, rather than sitting
           // unselected under a transcript that is plainly its own.
           currentId={openId()}
           menu={threadMenu}
           onSelect={select}
-          directories={rooted() ? directories() : undefined}
-          status={rooted() ? status : undefined}
-          actions={rooted() ? actions : undefined}
-          onNewThread={rooted() ? newThreadIn : undefined}
-          onAddDirectory={rooted() ? () => void addDirectory.add() : undefined}
+          directories={directories()}
+          status={status}
+          actions={actions}
+          onNewThread={startNew}
           // `openId` for the same reason the selection above uses it: a thread the
           // running turn has already created is not staged anywhere, and marking its
           // directory as staging while highlighting its row is the rail naming two
           // places for the next turn to land.
           stagedProjectId={
-            rooted() && openId() === null ? (codeProjectId() ?? null) : null
+            openId() === null ? (stagedProjectId() ?? null) : null
           }
           query={query}
           unread={(id) => unreadIds().has(id)}

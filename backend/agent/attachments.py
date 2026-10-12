@@ -87,7 +87,7 @@ async def resolve_attachments(
     """Resolve attached upload ids into the live and durable content for this turn.
 
     Every non-image upload's **original bytes** are staged into the run's ``workspace``
-    (the conversation's sandbox, or a code thread's worktree — see
+    (the conversation's sandbox, or a worktree thread's worktree — see
     ``services/workspace.py``); an image's are staged too, and it additionally goes in as
     ``BinaryContent`` when the model can see (``vision``). Both returned shapes then carry
     one short marker block naming each file and its staged path — no extracted text.
@@ -195,7 +195,7 @@ def _marker(staged: list[_Staged], workspace: RunWorkspace | None) -> str:
         return ""
     lines = [_line(item) for item in staged]
     body = "\n".join(lines)
-    # A code run's files sit in a git worktree that is not recycled and is not the
+    # A worktree run's files sit in a git worktree that is not recycled and is not the
     # model's own scratch space, so the recycling warning would be untrue there — and
     # telling it these are throwaway paths in a directory it is about to commit from is
     # exactly the wrong picture.

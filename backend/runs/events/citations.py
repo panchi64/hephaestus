@@ -31,11 +31,7 @@ class CitationAdded(_Body):
     ``snippet`` is the text the source was seen through, already unfenced and capped.
 
     Deliberately **not** carried: any link from this source to a particular sentence of
-    the answer. That link exists, but it is not a property of a source — it is a reading
-    of the finished answer, produced after the turn by a second model pass and served
-    from its own route (``GET /conversations/{id}/attributions``). What reaches this frame
-    from it is one thing: ``engagement="cited"``, emitted once per source a claim was
-    actually grounded in, which is the first honest use of that rung anywhere.
+    the answer. That is a reading of the finished answer, not a property of a source.
     """
 
     type: Literal["citation.added"] = "citation.added"

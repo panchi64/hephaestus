@@ -24,7 +24,6 @@ from pydantic_ai import RunContext
 
 from core.container import ServiceContainer
 from runs import Run
-from services.modes import DEFAULT_MODE, ModeId
 from services.permissions import (
     DEFAULT_PERMISSION,
     PermissionLevel,
@@ -33,6 +32,7 @@ from services.permissions import (
 )
 from services.search import DedupeSets
 from services.workspace import RunWorkspace
+from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
 
 
 def default_workspace_key(conversation_id: str | None, run: Run | None) -> str:
@@ -59,23 +59,19 @@ class RunDeps:
     caps: ServiceContainer = field(default_factory=ServiceContainer)
     # Operator-disabled tools, by namespaced name. Empty ⇒ all enabled. Carries the
     # union of every reason a tool is withheld this run — the operator's own set,
-    # offline mode's web suspension, and the tools that do not belong in `mode`.
+    # offline mode's web suspension, and the rest of `services/tool_policy.py`'s union.
     disabled_tools: frozenset[str] = field(default_factory=frozenset)
     conversation_id: str | None = None
     # The project this run works in, or None for unfiled. Resolved from the
     # *conversation's* stored binding, never from the live request — switching the
     # active project must not change what an already-running thread is doing.
     project_id: str | None = None
-    # What kind of work this thread is: "normal" and "research" run in the conversation's
-    # host-isolated container, "code" in the project's git worktree on the host. What each
-    # implies — the workspace, the tools, the prompt — is the registry's answer
-    # (`services/modes.py`), never a comparison written out at a tool. This is the one
-    # channel the mode reaches a tool through: a tool executes inside a Run, long after
-    # the request that chose the mode is gone.
-    mode: ModeId = DEFAULT_MODE
+    # Where this run's file work happens. Mutable: `projects_open_worktree` moves a chat
+    # from its sandbox to a worktree mid-turn, and the enabled gate reads it live.
+    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     # How far this run may go before it has to ask: "plan", "manual", "edit", "auto" or
     # "yolo" — the last of which is the operator saying it never has to.
-    # Here for exactly the reason `mode` is — a tool is offered and executed inside a Run,
+    # Here because a tool is offered and executed inside a Run,
     # long after the request that chose the level is gone — and read by the toolset stack,
     # which marks every tool reaching past the level's write scope as needing approval so
     # the engine sees the call before it runs (`services/permissions`).
@@ -140,9 +136,7 @@ class PromptContextRequest:
     caps: ServiceContainer
     owner_id: str
     conversation_id: str | None
-    #: The thread's mode, which decides whether its workspace is a container or a
-    #: checkout (`mode_spec(...).workspace`).
-    mode: str
+    workspace_kind: WorkspaceKind
     project_id: str | None
     #: This run's workspace key — a delegation's own, where it has one, so a sub-agent
     #: is described its fork rather than its parent's files.

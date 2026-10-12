@@ -40,98 +40,15 @@ export interface Subagent {
   status: SubagentStatus;
   /** Its report once it has one; while it runs, its latest answer instead.
    *
-   *  **The prose alone** — the backend strips the machine-readable block out before
-   *  serving it, so a card cannot end in forty lines of JSON. That block arrives beside
-   *  it as `findings`. */
+   *  **The prose alone** — the backend strips any machine-readable block out before
+   *  serving it, so a card cannot end in forty lines of JSON. */
   summary: string | null;
-  /** The same report as data, when the sub-agent emitted a findings block and it
-   *  parsed. `null` for one that did not, which is the ordinary case for every
-   *  sub-agent whose brief does not ask for one — and is why nothing may treat its
-   *  absence as a failed report. */
-  findings: SubagentFindings | null;
   error: string | null;
   contextUsed: number | null;
   contextWindow: number | null;
   startedAt: string;
   endedAt: string | null;
 }
-
-/**
- * A sub-agent's report, read as data rather than as prose.
- *
- * A **mirror** of `services/subagents/report.ReportStructure`, and mirrored rather than
- * inferred for the same reason the citation shape is: the vocabulary here — what counts
- * as a conflict, how deep a topic was covered, how confident a finding is — belongs to
- * the backend that asked the sub-agent for it. The frontend renders these words and
- * coins none of them.
- *
- * **Every list may be empty, and an empty one is an answer.** A sub-agent that found
- * nothing, hit no contradiction and covered one topic is reporting honestly. Nothing
- * here may read an empty list as a failure.
- *
- * **This is a shape, not attribution.** A finding names the sources it rests on; it
- * does not link a sentence of the answer to a sentence of a source. Claim-level
- * attribution is an open design question, and nothing in this file has pre-empted it.
- */
-export interface SubagentFindings {
-  findings: Finding[];
-  conflicts: Conflict[];
-  coverage: TopicCoverage[];
-  /** Questions the sub-agent could not settle, in its own words. */
-  unresolved: string[];
-}
-
-/** Where a sub-agent read something — the same web/corpus split `Citation` carries,
- *  so a report naming its sources and the run stream naming them are talking about the
- *  same things. */
-export interface ReportSource {
-  url: string | null;
-  /** The locator within a corpus source, for a passage out of the operator's own
-   *  knowledge base — which has no address to open. */
-  ref: string | null;
-  title: string | null;
-}
-
-/** One thing the sub-agent established, and what it rests on. `sources` is what makes
- *  it a finding rather than an assertion. */
-export interface Finding {
-  statement: string;
-  confidence: Confidence;
-  sources: ReportSource[];
-  /** Matched by name against `TopicCoverage.topic`. Free text — the topics are the
-   *  launching agent's own words. `null` for a finding filed under none. */
-  topic: string | null;
-}
-
-export type Confidence = "high" | "medium" | "low";
-
-/** A question the sources answer differently, kept rather than synthesized away: a
- *  summary that picks a side silently is indistinguishable from sources that agreed. */
-export interface Conflict {
-  question: string;
-  positions: ConflictPosition[];
-  /** Which side the sub-agent finds more credible, and why. It may take a side — the
-   *  point is that the taking is visible. */
-  assessment: string | null;
-}
-
-export interface ConflictPosition {
-  claim: string;
-  sources: ReportSource[];
-}
-
-/** How far the investigation actually got on one topic. */
-export interface TopicCoverage {
-  topic: string;
-  depth: Depth;
-  sourceCount: number;
-  /** What is missing, in the sub-agent's own words. */
-  gaps: string[];
-}
-
-/** `none` is a real answer and the most useful row a coverage map can carry — a topic
- *  nobody reached is exactly what one exists to show. */
-export type Depth = "none" | "thin" | "adequate" | "deep";
 
 /** `blocked` is waiting on the operator rather than on the machine, which is the one
  *  state worth putting in front of them. */
@@ -154,53 +71,11 @@ interface SubagentDTO {
   tasks: TaskItem[];
   status: SubagentStatus;
   summary: string | null;
-  findings: FindingsDTO | null;
   error: string | null;
   context_used: number | null;
   context_window: number | null;
   started_at: string;
   ended_at: string | null;
-}
-
-/** The report block on the wire. One field differs in case (`source_count`), which is
- *  the whole reason this is mapped rather than passed through. */
-interface FindingsDTO {
-  findings?: Finding[];
-  conflicts?: Conflict[];
-  coverage?: {
-    topic: string;
-    depth: Depth;
-    source_count?: number;
-    gaps?: string[];
-  }[];
-  unresolved?: string[];
-}
-
-/** **Defensive about every list**, because the block's author is a model writing JSON
- *  by hand at the end of a long task and the backend parses it leniently on purpose: a
- *  field it omitted arrives absent rather than empty. A surface that has to guard each
- *  read would eventually forget one. */
-function toFindings(dto: FindingsDTO): SubagentFindings {
-  return {
-    findings: (dto.findings ?? []).map((f) => ({
-      ...f,
-      sources: f.sources ?? [],
-    })),
-    conflicts: (dto.conflicts ?? []).map((c) => ({
-      ...c,
-      positions: (c.positions ?? []).map((p) => ({
-        ...p,
-        sources: p.sources ?? [],
-      })),
-    })),
-    coverage: (dto.coverage ?? []).map((c) => ({
-      topic: c.topic,
-      depth: c.depth,
-      sourceCount: c.source_count ?? 0,
-      gaps: c.gaps ?? [],
-    })),
-    unresolved: dto.unresolved ?? [],
-  };
 }
 
 function toSubagent(dto: SubagentDTO): Subagent {
@@ -216,7 +91,6 @@ function toSubagent(dto: SubagentDTO): Subagent {
     tasks: dto.tasks ?? [],
     status: dto.status,
     summary: dto.summary,
-    findings: dto.findings ? toFindings(dto.findings) : null,
     error: dto.error,
     contextUsed: dto.context_used,
     contextWindow: dto.context_window,

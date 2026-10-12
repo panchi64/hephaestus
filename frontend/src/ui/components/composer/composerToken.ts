@@ -14,7 +14,7 @@
  *  a typed path would be wrong far more often than right.
  *
  *  `@` opens after any whitespace, or at the start. It has no such second life in prose —
- *  an operator typing `@` mid-sentence in a code thread means a file — but it *does* have
+ *  an operator typing `@` mid-sentence in a thread with a project means a file — but it *does* have
  *  one inside a word (`user@host`, `pkg@1.2.0`), which is why the character before it has
  *  to be whitespace rather than merely "not a letter".
  *

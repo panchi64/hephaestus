@@ -1,34 +1,27 @@
 import { parseInstant } from "~/lib/format";
-import { sessionModeSpec, type SessionMode } from "~/lib/modes";
 import type { ChatSummary } from "./model";
 
 /**
- * How the rail arranges a mode's threads.
+ * How the rail arranges its threads.
  *
- * The three modes do not want the same list, and the split is what there is to file
- * *under*. A Code thread has a directory, and after a fortnight of them the flat list
- * is a hundred rows whose titles all sound alike; what the operator is looking for is
- * "the threads in *this* repository", which is a heading, not a search. Normal and
- * Research threads work in their own sandbox and have no directory at all — so the
- * only heading that means anything for them is *when*.
+ * Two kinds of thread want two kinds of heading, and the split is what there is to file
+ * *under*. A thread scoped to a project has a directory, and after a fortnight of them
+ * the flat list is a hundred rows whose titles all sound alike; what the operator is
+ * looking for is "the threads in *this* repository", which is a heading, not a search. A
+ * thread with no project has no directory at all, so the only heading that means
+ * anything for it is *when*.
  *
  * That second heading replaced a per-row `3D AGO` stamp, and the trade is the point:
  * the stamp answered "when" once per row, in a column the eye had to visit for every
  * one of them, to separate threads that were mostly from the same week anyway. A
  * heading answers it once for a run and then stays out of the way.
  *
- * So this is a strategy over one input rather than two list components, and the two
- * strategies produce genuinely different headings rather than one shape wearing
- * different text — see `SessionGroup`. Pure: ordering is the caller's (it reads the
- * pin store), and the pin set and the clock arrive as arguments, which is what keeps
- * this testable without a DOM or a fixed today.
+ * So this is one pass that files each thread by what it has, and the two kinds of
+ * heading are genuinely different rather than one shape wearing different text — see
+ * `SessionGroup`. Pure: ordering is the caller's (it reads the pin store), and the pin
+ * set and the clock arrive as arguments, which is what keeps this testable without a DOM
+ * or a fixed today.
  */
-
-/** The heading a code thread lands under when its project is gone — deleting a
- *  project unfiles its conversations rather than deleting them, so this run is
- *  real and has to be reachable. Matches the projects vocabulary, where *unfiled*
- *  means visible everywhere rather than orphaned. */
-export const UNFILED_GROUP = "Unfiled";
 
 /** The heading for threads the operator has kept to hand. It leads the list, because
  *  the whole point of a pin is not to go looking. */
@@ -48,7 +41,7 @@ export interface WorkspaceDirectory {
 interface GroupBase {
   /** Stable identity for keying and for remembering which sections are open. */
   id: string;
-  /** The heading. Always present: every run the rail draws now says what it is. */
+  /** The heading. Always present: every run the rail draws says what it is. */
   label: string;
   sessions: ChatSummary[];
 }
@@ -60,10 +53,8 @@ interface GroupBase {
  */
 export interface DirectoryGroup extends GroupBase {
   kind: "directory";
-  /** The project behind the heading, or null for `Unfiled`. What the section's own
-   *  controls act on — none of which `Unfiled` has, because there is no directory
-   *  behind it. */
-  projectId: string | null;
+  /** The project behind the heading — what the section's own controls act on. */
+  projectId: string;
 }
 
 /**
@@ -84,13 +75,13 @@ export interface RecencyGroup extends GroupBase {
 
 export type SessionGroup = DirectoryGroup | RecencyGroup;
 
-/** What the strategies need from the caller. Each mode reads its own half: a worktree
- *  mode files under `directories`, a sandbox mode under the clock, and `pinned` lifts
- *  a run out in front of both. */
+/** What the grouping needs from the caller: the directories project threads file under,
+ *  the clock the rest file by, and the pins that lift a run out in front of the clock. */
 export interface GroupingContext {
-  /** The directories a worktree mode files threads under. */
+  /** The directories the operator works in. */
   directories?: readonly WorkspaceDirectory[];
-  /** Which threads the operator has kept to hand. */
+  /** Which threads the operator has kept to hand. Only a thread with no project is
+   *  lifted out by a pin; a project's threads stay under their directory. */
   pinned?: ReadonlySet<string>;
   /** Injectable clock — the bucket boundaries are the whole behaviour, so a test has
    *  to be able to stand at a known moment. */
@@ -100,113 +91,87 @@ export interface GroupingContext {
 const NO_PINS: ReadonlySet<string> = new Set();
 
 /**
- * Partition an **already ordered** list into the sections this mode shows.
+ * Partition an **already ordered** list into the sections the rail shows.
  *
- * Groups that hold threads appear in the order their first thread does, so the input's
- * ordering carries all the way through: a pinned thread floats its whole workspace to
- * the top, and otherwise the most recently touched repository leads. That is one rule
- * rather than two, and it means the rail never reorders itself for a reason the
- * operator cannot see in the rows.
- */
-export function groupSessions(
-  sessions: ChatSummary[],
-  mode: SessionMode,
-  context: GroupingContext = {},
-): SessionGroup[] {
-  // Having a workspace is what gives a mode directories to file under; everything else
-  // is filed by when it was last touched.
-  return sessionModeSpec(mode).workspace === "worktree"
-    ? byDirectory(sessions, context.directories ?? [])
-    : byRecency(sessions, context.pinned ?? NO_PINS, context.now ?? new Date());
-}
-
-/**
- * File a worktree mode's threads under the directory each works in.
+ * A thread with a project files under that project's directory; every other thread files
+ * by when it was last touched. Groups that hold threads appear in the order their first
+ * thread does, so the input's ordering carries all the way through: a pinned thread
+ * floats its whole workspace to the top, and otherwise the most recently touched
+ * repository leads. That is one rule rather than two, and it means the rail never
+ * reorders itself for a reason the operator cannot see in the rows.
  *
  * `directories` is what the operator works in, whether or not any of it has been worked
- * on yet — the directory now comes *first* and the thread is started from it, so a
- * directory with no threads is the normal beginning of a piece of work rather than an
- * empty row. Those trail the ones holding threads, in the order given (the projects
- * listing, already most-recently-opened first): a section with nothing in it has
- * nothing to say about how recently the operator was there.
+ * on yet — a thread is started from its directory, so a directory with no threads is the
+ * normal beginning of a piece of work rather than an empty row. Those trail the ones
+ * holding threads, in the order given (the projects listing, already most-recently-opened
+ * first): a section with nothing in it has nothing to say about how recently the
+ * operator was there.
  *
  * Filing is by **project id**, not by name. Two directories can be called `frontend`,
  * and filing by name would merge two repositories into one section whose controls would
  * then act on whichever won.
+ *
+ * A thread whose project is not among the directories is **left out**. That is the
+ * archived case, and dropping it is the point: archiving a directory is the operator
+ * saying they no longer work there, and a rail that hid the heading while keeping ten of
+ * its threads loose in the list would have honoured the letter of that and none of the
+ * intent. Nothing is lost — pointing at the directory again un-archives it and the
+ * threads come back under it. Callers must not render until the directory listing has
+ * resolved, or every filed thread would vanish for the width of a fetch.
+ *
+ * Pins come out into their own run rather than floating to the top of `Today`, where
+ * they were indistinguishable from anything else touched today. `orderSessions` has
+ * already floated them, so this only has to name what it finds. A bucket with nothing in
+ * it is never created, so the rail never draws a heading with nothing under it.
  */
-function byDirectory(
+export function groupSessions(
   sessions: ChatSummary[],
-  directories: readonly WorkspaceDirectory[],
-): DirectoryGroup[] {
+  context: GroupingContext = {},
+): SessionGroup[] {
+  const directories = context.directories ?? [];
+  const pinned = context.pinned ?? NO_PINS;
+  const now = context.now ?? new Date();
   const named = new Map(directories.map((d) => [d.id, d.label]));
-  const groups: DirectoryGroup[] = [];
-  const byId = new Map<string, DirectoryGroup>();
+  const groups: SessionGroup[] = [];
+  const byId = new Map<string, SessionGroup>();
 
-  const section = (id: string, label: string, projectId: string | null) => {
-    let group = byId.get(id);
-    if (!group) {
-      group = { kind: "directory", id, label, projectId, sessions: [] };
-      byId.set(id, group);
-      groups.push(group);
-    }
+  const section = (group: SessionGroup): SessionGroup => {
+    const existing = byId.get(group.id);
+    if (existing) return existing;
+    byId.set(group.id, group);
+    groups.push(group);
     return group;
   };
 
   for (const s of sessions) {
-    // Unfiled: the thread's project is gone (deleting one unfiles its conversations
-    // rather than deleting them), so there is no directory to file it under.
-    if (!s.projectId) {
-      section(UNFILED_GROUP, UNFILED_GROUP, null).sessions.push(s);
+    if (s.projectId) {
+      const label = named.get(s.projectId);
+      if (label !== undefined)
+        section({
+          kind: "directory",
+          id: s.projectId,
+          label,
+          projectId: s.projectId,
+          sessions: [],
+        }).sessions.push(s);
       continue;
     }
-    // A thread whose project *exists* but isn't among the directories is **left out**,
-    // not swept into Unfiled. That is the archived case, and dropping it is the point:
-    // archiving a directory is the operator saying they no longer work there, and a
-    // rail that hid the heading while keeping ten of its threads loose in the list
-    // would have honoured the letter of that and none of the intent. Nothing is lost —
-    // pointing at the directory again un-archives it and the threads come back under
-    // it. Callers must not render until the directory listing has resolved, or every
-    // filed thread would vanish for the width of a fetch.
-    const label = named.get(s.projectId);
-    if (label !== undefined)
-      section(s.projectId, label, s.projectId).sessions.push(s);
-  }
-
-  for (const d of directories) section(d.id, d.label, d.id);
-  return groups;
-}
-
-/**
- * File a sandbox mode's threads by when they were last touched.
- *
- * Pins come out into their own run rather than floating to the top of `Today`, where
- * they were indistinguishable from anything else touched today. `orderSessions` has
- * already floated them, so this only has to name what it finds.
- *
- * Like the directory strategy, a bucket appears where its first thread does and one
- * with nothing in it is never created — so the input's ordering carries through and the
- * rail never draws a heading with nothing under it.
- */
-function byRecency(
-  sessions: ChatSummary[],
-  pinned: ReadonlySet<string>,
-  now: Date,
-): RecencyGroup[] {
-  const groups: RecencyGroup[] = [];
-  const byLabel = new Map<string, RecencyGroup>();
-
-  for (const s of sessions) {
     const label = pinned.has(s.id)
       ? PINNED_GROUP
       : recencyLabel(s.updatedAt, now);
-    let group = byLabel.get(label);
-    if (!group) {
-      group = { kind: "recency", id: label, label, sessions: [] };
-      byLabel.set(label, group);
-      groups.push(group);
-    }
-    group.sessions.push(s);
+    section({ kind: "recency", id: label, label, sessions: [] }).sessions.push(
+      s,
+    );
   }
+
+  for (const d of directories)
+    section({
+      kind: "directory",
+      id: d.id,
+      label: d.label,
+      projectId: d.id,
+      sessions: [],
+    });
   return groups;
 }
 

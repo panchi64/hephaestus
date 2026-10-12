@@ -160,7 +160,7 @@ Approval is **consent, not containment**: a misjudged click, a destructive comma
 | Extra contract | — | `domains` + a `reason` in the model's own words; the domain is remembered for the workspace once approved, the *act of widening* never is | a plain-language **`explanation`** arg, shown to the operator, describing what it does and its effect on the host (`AE-3.4`) |
 | If capability absent | returns "code execution is unavailable" — the model adapts | reports no allowlist is configured | n/a |
 | In a sub-agent's run | available | **withheld** — a child has nobody to ask | **withheld** |
-| In code mode | **withheld** — the worktree is the one workspace, and the fenced shell is the one way to run in it (`services/modes.py`) | **withheld** — a grant widens a container's proxy, and there is no container; the host fence reads `egress_allowed_domains` alone | **withheld** — the fenced shell already is that path |
+| In a project folder (checkout or worktree) | **withheld** — the folder is the one workspace, and the fenced shell is the one way to run in it (`services/workspace_kind.py`) | **withheld** — a grant widens a container's proxy, and there is no container; the host fence reads `egress_allowed_domains` alone | **withheld** — the fenced shell already is that path |
 
 The inversion is the point: **routine code-exec has no approval friction at all**, and the approval prompts are the genuine exits — changing the operator's host, and reaching somewhere nobody approved.
 

@@ -5,7 +5,7 @@ approval resume inherits exactly the agent its park was built with). It is the s
 place that decides what the model is *told* and what it is *offered*: the two prompt
 seams split by durability, the capabilities that observe or rewrite a request on its way
 out, the feature-contributed instruction providers, the standing index of the groups this
-installation withholds, and the three parts that are the thread's own — its mode, its
+installation withholds, and the three parts that are the thread's own — its workspace, its
 permission level and today's date.
 
 It lives apart from ``engine.py`` because it changes for a different reason: a new
@@ -36,8 +36,8 @@ from prompts.agent import (
     INSTRUCTIONS,
     SYSTEM_PROMPT,
 )
+from prompts.workspace import CHECKOUT_WORKSPACE, WORKTREE_WORKSPACE
 from services.llm import TOOL_CALL_SETTINGS
-from services.modes import mode_spec
 from services.permissions import permission_spec
 from tools import (
     InstructionProvider,
@@ -60,6 +60,9 @@ from .prefix_watch import WatchPrefix, watch_prefix_enabled
 # become one turn's leftovers on the next.
 NO_DORMANT: Mapping[str, str] = MappingProxyType({})
 
+
+
+_WORKSPACE_POSTURE = {"checkout": CHECKOUT_WORKSPACE, "worktree": WORKTREE_WORKSPACE}
 
 def build_agent(
     model: Model,
@@ -189,21 +192,18 @@ def build_agent(
     dormant_index = dormant_index_instructions(dormant, names_by_category)
     agent.instructions(name=contributor_id(dormant_index))(dormant_index)
 
-    @agent.instructions(name="mode")
-    def _mode_posture(ctx: RunContext[RunDeps]) -> str:
-        """The thread's mode, where it has something of its own to say — read off the
-        registry, so a mode's prose lives with the rest of that mode's declaration rather
-        than in a branch here. Most modes add nothing and resolve to "" (see
-        `prompts/modes.py`), which is why this is unconditional."""
-        return mode_spec(ctx.deps.mode).instructions
+    @agent.instructions(name="workspace_posture")
+    def _workspace_posture(ctx: RunContext[RunDeps]) -> str:
+        """What is true only in the operator's own files; "" in a sandbox."""
+        return _WORKSPACE_POSTURE.get(ctx.deps.workspace_kind, "")
 
     @agent.instructions(name="level")
     def _level_posture(ctx: RunContext[RunDeps]) -> str:
-        """What the thread's permission level means for how the model works — read off the
-        registry beside the mode, for the same reason. The level is *enforced* whether or
-        not the model is told (Plan by withholding the tools, the rest by parking), so this
-        is not a control; it is the explanation for what the model is about to run into.
-        Two of the four levels have nothing to add and resolve to "" (see
+        """What the thread's permission level means for how the model works, read off the
+        level's registry so its prose lives with the rest of its declaration. The level is
+        *enforced* whether or not the model is told (Plan by withholding the tools, the rest by
+        parking), so this is not a control; it is the explanation for what the model is about to run
+        into. Two of the four levels have nothing to add and resolve to "" (see
         `prompts/levels.py`), which is why this is unconditional."""
         return permission_spec(ctx.deps.permission).instructions
 

@@ -1,7 +1,7 @@
 """What a sub-agent *is*, as data.
 
 A sub-agent is not a class and not a run loop. It is a handful of values that decide how
-one ordinary turn is composed — which mode it runs in, how far it may reach, what standing
+one ordinary turn is composed — where it works, how far it may reach, what standing
 brief it is given, whether it gets a copy of the workspace. Everything else about it is the
 engine every other turn uses.
 
@@ -56,12 +56,8 @@ class SubagentSpec:
     #: opening message: instructions are rebuilt each turn and never read back out of
     #: history, so nothing the sub-agent later reads can rewrite what it was told to do.
     brief: str
-    #: The mode it runs in. None inherits the parent's, which is usually right — a
-    #: sub-agent of a code thread is working on that code. A spec names one only when it
-    #: genuinely belongs elsewhere (research, which needs the open web).
-    mode: str | None = None
     #: The furthest this sub-agent may reach, before the parent's own level is folded in.
-    #: None takes the mode's default. Never raises what the operator allowed.
+    #: None takes the default level. Never raises what the operator allowed.
     permission_ceiling: str | None = None
     #: Where this sub-agent works by default. The launch call may ask for ``isolated``
     #: whatever this says — the model knows whether *this* task is one the launching thread
@@ -69,7 +65,7 @@ class SubagentSpec:
     #: declares, so a sub-agent written to stay out of the way cannot be talked into the
     #: operator's own tree.
     workspace: WorkspacePolicy = "shared"
-    #: Tools withheld from this sub-agent on top of everything mode, level and the
+    #: Tools withheld from this sub-agent on top of everything the workspace, level and the
     #: operator's own switches already withhold. For narrowing a sub-agent to its job —
     #: a reviewer that reads and reports has no business editing.
     withheld: frozenset[str] = field(default_factory=frozenset)
@@ -78,7 +74,7 @@ class SubagentSpec:
     #: operator, exactly as though it had looked. The launcher refuses instead.
     required: frozenset[str] = field(default_factory=frozenset)
     #: Model round-trips it may spend, and how long it may take in total. None leaves both
-    #: to the engine's own defaults (the operator's ceiling, the mode's floor).
+    #: to the engine's own defaults (the operator's ceiling, else the config default).
     request_limit: int | None = None
     wall_clock_timeout_s: float | None = None
 

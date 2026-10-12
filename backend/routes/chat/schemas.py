@@ -6,7 +6,6 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.commands import Invocation
-from services.modes import DEFAULT_MODE, ModeId
 from services.permissions import PermissionLevel
 from services.settings_store import WORK_SUMMARY_IDLE_MINUTES_MAX
 
@@ -53,23 +52,14 @@ class ChatCreate(BaseModel):
     # hides (the side-by-side compare panes set this). Ignored when continuing an
     # existing conversation.
     ephemeral: bool = False
-    # What kind of work a *new* thread is — the vocabulary and everything each mode
-    # implies live in the registry (`services/modes.py`). "normal" and "research" run in
-    # the conversation's own sandbox container; "code" runs in a git worktree of
-    # `project_id`'s repository on the host. Both this and `project_id` are ignored when
-    # continuing an existing conversation — the binding is set once, at creation, and a
-    # thread's branch would be stranded if it could move.
-    #
-    # Deliberately **not** `code_mode`: `pydantic_ai_harness` ships a capability called
-    # `CodeMode`, and it is an unrelated thing (a context-saving trick where the model
-    # writes one script that calls many tools). This is a mode of the chat.
-    mode: ModeId = DEFAULT_MODE
+    # The project a *new* thread is filed under; ignored when continuing one. A filed
+    # thread works in that project's folder.
     project_id: str | None = None
-    # How far the model may go this turn — and, unlike `mode`, from this turn onwards:
+    # How far the model may go this turn, and from this turn onwards:
     # the level is persisted on the thread, so switching mid-conversation is a plain send
     # rather than a separate call, and a reload comes back at the level the operator left
-    # it. Absent means "whatever the thread is already at" (a new thread starts at its
-    # mode's default), so a client that never learned about levels keeps working.
+    # it. Absent means "whatever the thread is already at" (a new thread starts at the
+    # default), so a client that never learned about levels keeps working.
     permission_level: PermissionLevel | None = None
     # Set when this turn is the operator resuming a turn a bound stopped (the
     # "Continue" button under a stop marker): the branch node id of the turn that

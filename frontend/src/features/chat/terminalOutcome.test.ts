@@ -6,7 +6,7 @@ import { isTerminalTool } from "./toolPresentation";
  * Which tools render as a terminal, and how a command's result becomes one.
  *
  * The table is the point. The fold used to ask `name === code_run_host_command` in four
- * separate event cases, so the worktree shell — code mode's only way to run anything at
+ * separate event cases, so the worktree shell — a worktree thread's only way to run anything at
  * all — fell through to a generic tool card while carrying the terminal glyph.
  *
  * The **second** point is the object/string split. Both command tools answer with a

@@ -87,16 +87,13 @@ SCOPE_DEFS: tuple[ScopeDef, ...] = (
         "Knowledge",
         "Documents, uploads, images, skills, and the retrieval corpus.",
     ),
-    # Research stopped being a surface of its own when it became a *mode* a conversation
-    # can be in: a research thread is created, streamed and read through `/chat` and
-    # `/conversations`, so this scope claims no prefix and grants no reach on its own. It
-    # stays in the vocabulary rather than being deleted because tokens the operator
-    # already issued carry it, and an id no scope table knows is an id that fails
-    # validation — a name kept costs nothing, a name withdrawn breaks a working token.
+    # Claims no prefix and grants no reach: research happens in ordinary chats. Kept in
+    # the vocabulary because tokens the operator already issued carry it, and an id no
+    # scope table knows fails validation and would break a working token.
     ScopeDef(
         "research",
         "Research",
-        "Research threads. Reached through the chat scope — this grants no reach itself.",
+        "Retired. Research happens in ordinary chats; this grants no reach.",
     ),
     ScopeDef("search", "Search", "Query the web through the managed search provider."),
     ScopeDef(

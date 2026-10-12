@@ -1,23 +1,14 @@
 """One answer to "where does this run's file work happen".
 
-Four subsystems used to hard-assume the agent's workspace *is* the container sandbox:
-the file tools, `code_execute`, attachment staging, and the skills bundler. Each stated
-it slightly differently, and one of them — `tools/files.py` — stated the invariant that
-made the set coherent: *these tools reach exactly what `code_execute` reaches and nothing
-else*.
-
-Code mode moves the file work to a git worktree on the host. Re-rooting only the file
-tools would break that invariant **silently**: the agent would edit a file it cannot run,
-attachments would land where its file tools can't see them, and an opened skill's scripts
-would point at a container that isn't in play. So the workspace stops being an assumption
-scattered across four modules and becomes one resolved value:
+The file tools, `code_execute` or the shell, attachment staging and the skills bundler all
+act on one resolved value, so the agent never edits a file it cannot run:
 
     workspace "sandbox"  → the conversation's own container, mounted at ``/work``
+    workspace "checkout" → the project's own folder, on the host, on its current branch
     workspace "worktree" → the project's git worktree, on the host, by absolute path
 
-Which of the two a thread gets is the mode registry's answer (``services/modes.py``), read
-off ``ModeSpec.workspace`` rather than compared against a mode name here — the resolver's
-job is to *build* a workspace, not to know which modes are which.
+Which of the two a run gets is the conversation's ``workspace_kind``
+(``services/workspace_kind.py``).
 
 :class:`RunWorkspace` carries both halves — the host directory to act on, and
 :meth:`RunWorkspace.display`, the path *string the model is told*. Those differ in a
@@ -35,9 +26,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 
-from services.modes import mode_spec
+from services.projects.checkout import CheckoutHolders
+from services.projects.repo import run_git
 from services.projects.store import ProjectStore
 from services.projects.worktree import WorktreeBusyError, WorktreeManager
 from services.sandbox import (
@@ -47,6 +39,7 @@ from services.sandbox import (
     SandboxSessionManager,
 )
 from services.sandbox.base import contained_path
+from services.workspace_kind import WorkspaceKind
 
 logger = logging.getLogger(__name__)
 
@@ -97,15 +90,15 @@ class RunWorkspace:
     """This run's workspace: the host directory, and how a path in it is named aloud."""
 
     root: Path
-    kind: Literal["sandbox", "worktree"]
+    kind: WorkspaceKind
     files: WorkspaceFiles
     #: The branch a worktree run is working on; None in a sandbox.
     branch: str | None = None
 
     @property
     def stage_prefix(self) -> str:
-        """Where staged files go, relative to the root. A worktree keeps them out of the
-        operator's diff; a sandbox workspace is ours entirely and needs no prefix."""
+        """Where staged files go, relative to the root. A project folder keeps them out of
+        the operator's diff; a sandbox workspace is ours entirely and needs no prefix."""
         return "" if self.kind == "sandbox" else f"{WORKTREE_SCRATCH}/"
 
     def display(self, relpath: str) -> str:
@@ -276,7 +269,7 @@ def prepare_worktree_workspace(path: Path) -> None:
 
 async def resolve_workspace(
     *,
-    mode: str,
+    workspace_kind: str,
     project_id: str | None,
     conversation_id: str | None,
     workspace_key: str,
@@ -284,6 +277,7 @@ async def resolve_workspace(
     sessions: SandboxSessionManager | None,
     projects: ProjectStore | None,
     worktrees: WorktreeManager | None,
+    checkouts: CheckoutHolders | None = None,
     holder: LiveWork | None = None,
 ) -> RunWorkspace | None:
     """This run's workspace, or None when there isn't one.
@@ -293,12 +287,29 @@ async def resolve_workspace(
     time, before the run exists, to stage attachments. One resolution, two entry points.
 
     Returns None rather than raising, for the two shapes of "no workspace" the callers
-    already handle: a worktree mode without the pieces it needs, and a sandbox that will
-    not open. A busy worktree is *not* one of those — that is a real conflict the operator
-    has to see, so `WorktreeBusyError` propagates.
+    already handle: a project workspace without the pieces it needs, and a sandbox that
+    will not open. A busy worktree or checkout is *not* one of those — that is a real
+    conflict the operator has to see, so `WorktreeBusyError` propagates.
     """
-    if mode_spec(mode).workspace == "worktree":
-        # Never fall back to the sandbox. A code run that quietly got a container
+    if workspace_kind == "checkout":
+        if projects is None or checkouts is None or not project_id or not conversation_id:
+            return None
+        owner_conversation, _ = split_workspace_key(workspace_key)
+        try:
+            project = await projects.get(owner_id, project_id)
+        except Exception:
+            logger.warning("workspace: could not open the project folder", exc_info=True)
+            return None
+        root = Path(project.root_path)
+        if not root.is_dir():
+            return None
+        await checkouts.acquire(project_id, owner_conversation or conversation_id, holder)
+        prepare_worktree_workspace(root)
+        code, out, _ = await run_git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
+        branch = out.strip() if code == 0 and out.strip() else None
+        return RunWorkspace(root=root, kind="checkout", files=HostFiles(root), branch=branch)
+    if workspace_kind == "worktree":
+        # Never fall back to the sandbox. A worktree run that quietly got a container
         # workspace would edit files its shell tools are refused access to, and nothing
         # would say why — the failure the one-workspace rule exists to prevent. No
         # worktree means no workspace, and the tool layer says so in words.

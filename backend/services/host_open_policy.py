@@ -55,7 +55,7 @@ _OPENABLE: frozenset[str] = frozenset(
         ".properties", ".env", ".csv", ".tsv", ".xml", ".plist", ".lock", ".diff",
         ".patch", ".gitignore", ".gitattributes", ".gitmodules", ".dockerignore",
         ".editorconfig", ".npmrc", ".nvmrc", ".prettierrc", ".eslintrc",
-        # Source. The feature exists for these: a file a code thread just wrote, opened
+        # Source. The feature exists for these: a file a worktree thread just wrote, opened
         # in whatever the operator has registered for it.
         ".py", ".pyi", ".ipynb", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts",
         ".cts", ".go", ".rs", ".rb", ".php", ".java", ".kt", ".kts", ".swift", ".m",

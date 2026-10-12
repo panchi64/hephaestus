@@ -41,10 +41,10 @@ from core.db import init_db, make_engine
 from core.text import CHARS_PER_TOKEN_JSON
 from harness.discovery import discover_manifests
 from runs import Run, RunStream
-from services.modes import MODES
 from services.permissions import PERMISSION_LEVELS
 from services.settings_store import SettingsStore
 from services.tool_policy import effective_disabled_tools
+from services.workspace_kind import WORKSPACE_TOOLS, WorkspaceKind
 from tools import RunDeps, build_agent_toolsets, core_categories
 
 from ._helpers import full_tool_categories
@@ -108,10 +108,10 @@ def _dormant_categories() -> tuple[str, ...]:
 
 
 async def _catalog(
-    mode: str, permission: str, *, scripts: bool = True
+    kind: WorkspaceKind, permission: str, *, scripts: bool = True
 ) -> tuple[tuple[int, int], tuple[int, int]]:
     """``((tools, chars) on a fresh request, (tools, chars) with every group revealed)`` for
-    a real run in this mode and at this level — resolved through the composed toolset stack
+    a real run in this workspace and at this level — resolved through the composed toolset stack
     the engine hands the Agent, and through the same ``effective_disabled_tools`` every run
     path fills ``RunDeps.disabled_tools`` from. Re-deriving the withheld set here would
     measure a narrowing this file invented rather than the one the app performs, and would
@@ -124,15 +124,13 @@ async def _catalog(
     init_db(engine)
     # The level is deliberately absent here and rides on `RunDeps.permission` below: it is
     # applied live at the enabled gate, not folded into this set (`services/tool_policy`).
-    disabled = await effective_disabled_tools(
-        SettingsStore(engine), _AllOnline(), "operator", mode=mode
-    )
+    disabled = await effective_disabled_tools(SettingsStore(engine), _AllOnline(), "operator")
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     deps = RunDeps(
         run=run,
         owner_id="operator",
         disabled_tools=disabled,
-        mode=mode,
+        workspace_kind=kind,
         permission=permission,
     )
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
@@ -152,13 +150,13 @@ async def _catalog(
     )
 
 
-async def _corpus_chars(mode: str, permission: str) -> int:
-    _, (_, chars) = await _catalog(mode, permission)
+async def _corpus_chars(kind: WorkspaceKind, permission: str) -> int:
+    _, (_, chars) = await _catalog(kind, permission)
     return chars
 
 
 async def test_a_fresh_request_stays_inside_its_ceiling():
-    (count, chars), _ = await _catalog("normal", "auto")
+    (count, chars), _ = await _catalog("sandbox", "auto")
     assert count > 0
     assert chars < CATALOG_CEILING_CHARS, (
         f"a fresh request's tool catalog now costs {chars} characters "
@@ -168,7 +166,7 @@ async def test_a_fresh_request_stays_inside_its_ceiling():
 
 
 async def test_the_whole_corpus_stays_inside_its_ceiling():
-    _, (count, chars) = await _catalog("normal", "auto")
+    _, (count, chars) = await _catalog("sandbox", "auto")
     assert count > 0
     assert chars < CORPUS_CEILING_CHARS, (
         f"the tool corpus now costs {chars} characters "
@@ -180,7 +178,7 @@ async def test_the_whole_corpus_stays_inside_its_ceiling():
 async def test_the_dormant_groups_are_most_of_what_a_turn_no_longer_pays():
     """The saving is the whole reason the groups are dormant, so it is pinned rather than
     left to be re-derived from two ceilings that move independently."""
-    fresh, corpus = await _catalog("normal", "auto")
+    fresh, corpus = await _catalog("sandbox", "auto")
     assert fresh[1] < corpus[1] * 0.6, (
         f"a fresh request carries {fresh[1]} characters of the corpus' {corpus[1]} — "
         "deferral has stopped deferring most of what it used to"
@@ -191,11 +189,11 @@ async def test_plan_hands_the_model_a_fraction_of_the_catalog():
     # Measured over the corpus: the narrowing is the permission level withholding tools
     # outright, and reading it off the fresh request would net it against deferral, which
     # withholds for an unrelated reason and hands everything back on request.
-    for mode in MODES:
-        acting = await _corpus_chars(mode, "auto")
-        planning = await _corpus_chars(mode, "plan")
+    for kind in WORKSPACE_TOOLS:
+        acting = await _corpus_chars(kind, "auto")
+        planning = await _corpus_chars(kind, "plan")
         assert planning < acting * 0.6, (
-            f"{mode} at plan level costs {planning} characters against {acting} acting — "
+            f"{kind} at plan level costs {planning} characters against {acting} acting — "
             "the read-only narrowing has stopped narrowing"
         )
 

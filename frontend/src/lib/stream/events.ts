@@ -377,17 +377,6 @@ export interface ConversationCompacted extends Base {
    *  an older backend still renders — the divider falls back to `summary` then. */
   sections?: SummarySection[];
 }
-/** This turn opened another conversation — today only a research thread, started
- *  by `research_start`. The new thread appears in the session list a moment
- *  later; without this it would appear with no account of where it came from.
- *  `relation` says what the new thread is *for*, as a string rather than a union
- *  so a second kind of linked thread is a new value and not a wire change. */
-export interface ConversationLinked extends Base {
-  type: "conversation.linked";
-  conversation_id: string;
-  relation: string;
-  title: string | null;
-}
 
 // --- Context ---------------------------------------------------------------
 /** Something the chassis put in front of the model that nobody in the conversation
@@ -717,7 +706,6 @@ export type RunEvent =
   | CompactionDelta
   | CompactionFailed
   | ConversationCompacted
-  | ConversationLinked
   | ContextInjected
   | CitationAdded
   | ApprovalRequired

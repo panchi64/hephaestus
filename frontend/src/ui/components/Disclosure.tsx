@@ -177,7 +177,7 @@ export interface DisclosureToggleProps {
   open: boolean;
   onToggle: () => void;
   /** What the section is called — the toggle carries no visible text, so this is
-   *  the whole of its accessible name ("Expand Research"). */
+   *  the whole of its accessible name ("Expand Sources"). */
   label: string;
   class?: string;
 }

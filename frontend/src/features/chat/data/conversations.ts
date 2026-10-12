@@ -12,7 +12,6 @@
 
 import { createResource, createSignal, type Resource } from "solid-js";
 import { api } from "~/lib/api";
-import { sessionMode } from "~/lib/modes";
 import type { TaskItem } from "~/lib/stream";
 import {
   permissionLevel,
@@ -43,7 +42,6 @@ async function fetchSession(id: string): Promise<ChatSession> {
     stats: dto.stats ? toStats(dto.stats) : null,
     activeRun: toActiveRun(dto.active_run),
     snapshots: (dto.snapshots ?? []).map(toViewSnapshotRef),
-    mode: sessionMode(dto.mode ?? undefined),
     permission: permissionLevel(dto.permission_level ?? undefined),
   };
 }

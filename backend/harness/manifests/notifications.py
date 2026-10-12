@@ -66,12 +66,6 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         to deep-link to); cancelled and blocked outcomes stay silent — the operator asked
         for the cancel, and a bound/limit stop isn't a noteworthy failure.
 
-        This is also what announces a **research thread** finishing, which used to need a
-        policy of its own: research was a conversation-less run against a store, so its
-        completion had to be special-cased. A research thread is a thread, nobody is
-        streaming the run the agent started in the background, and so the ordinary
-        "finished while you weren't watching" branch says exactly the right thing.
-
         A **hidden** thread is the exception. A notification is a deep link, and an
         ephemeral conversation is deliberately kept out of the session list — so one
         finishing announces a thread the operator cannot find their way back to.

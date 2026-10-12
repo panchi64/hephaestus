@@ -83,7 +83,7 @@ export interface LateRunWatch {
 /** Find a run that started out of sight. Call inside a reactive root. */
 export function watchLateRuns(w: LateRunWatch): void {
   // A run started somewhere this room is not watching — another tab, a scheduled
-  // task, a research launch — has no stream here to hear it on, and the history read
+  // task — has no stream here to hear it on, and the history read
   // at open said the thread was idle. The rail already knows: each row's activity
   // edge is server-derived. So when a poll reports the open thread as busy while this
   // room is attached to nothing, read the thread again; its `active_run` is what the

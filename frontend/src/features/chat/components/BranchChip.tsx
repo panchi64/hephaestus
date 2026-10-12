@@ -3,9 +3,9 @@ import { Button, StatusFlag } from "~/ui";
 import type { BranchState } from "../data";
 
 /**
- * What a code thread has changed, as a readout you can open.
+ * What a worktree thread has changed, as a readout you can open.
  *
- * A sandbox thread renders nothing here — the branch read answers 404 for one, which is
+ * A thread with no worktree renders nothing here — the branch read answers 404 for one, which is
  * the ordinary case and not an error.
  *
  * **It no longer owns the patch.** The chip used to fetch the branch itself and show the

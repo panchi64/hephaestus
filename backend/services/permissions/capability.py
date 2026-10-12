@@ -201,7 +201,7 @@ _PATH_ARG: dict[str, str] = {
 #: Shell-shaped tools whose command does **not** run in the run's workspace.
 #: `code_run_host_command` runs on the operator's own machine, where a sandbox thread's
 #: workspace is a directory the host fence denies outright and a worktree does not exist
-#: at all (the mode registry scopes this tool out of code mode). So there is no root its
+#: at all (it is withheld from worktree chats). So there is no root its
 #: paths can honestly be placed against — and placing them against one anyway is exactly
 #: what let `cat .env` read as a workspace file.
 _HOST_COMMAND_TOOLS = frozenset({"code_run_host_command"})

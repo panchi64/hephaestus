@@ -22,12 +22,11 @@ def _injections(events: list[dict], contributor: str) -> list[dict]:
     ]
 
 
-async def _code_turn(client, project_id: str, refs: list[str]) -> list[dict]:
+async def _project_turn(client, project_id: str, refs: list[str]) -> list[dict]:
     resp = await client.post(
         "/chat",
         json={
             "prompt": "look at these",
-            "mode": "code",
             "project_id": project_id,
             "file_refs": refs,
         },
@@ -43,7 +42,7 @@ class TestWhatReachesTheModel:
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
             project = await _project(client, tmp_path)
-            events = await _code_turn(client, project["id"], ["hello.txt"])
+            events = await _project_turn(client, project["id"], ["hello.txt"])
         rows = _injections(events, "file_refs")
         assert len(rows) == 1
         assert rows[0]["placement"] == "prompt"
@@ -59,7 +58,7 @@ class TestWhatReachesTheModel:
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
             project = await _project(client, tmp_path)
-            events = await _code_turn(
+            events = await _project_turn(
                 client, project["id"], ["../../../etc/passwd", "hello.txt"]
             )
         rows = _injections(events, "file_refs")
@@ -72,7 +71,7 @@ class TestWhatReachesTheModel:
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
             project = await _project(client, tmp_path)
-            events = await _code_turn(client, project["id"], ["does/not/exist.ts"])
+            events = await _project_turn(client, project["id"], ["does/not/exist.ts"])
         # The operator still has their typed message; refusing the turn over a file they
         # can simply mention again is the worse trade.
         assert events[-1]["type"] == "run.ended"
@@ -84,7 +83,7 @@ class TestWhatReachesTheModel:
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
             project = await _project(client, tmp_path)
-            events = await _code_turn(client, project["id"], [])
+            events = await _project_turn(client, project["id"], [])
         assert _injections(events, "file_refs") == []
 
 
@@ -105,7 +104,6 @@ class TestWhatIsWrittenDown:
             "/chat",
             json={
                 "prompt": "look at these",
-                "mode": "code",
                 "project_id": project["id"],
                 "file_refs": ["hello.txt"],
             },

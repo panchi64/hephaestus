@@ -23,7 +23,6 @@ from .conversation import (
     CompactionFailed,
     CompactionStarted,
     ConversationCompacted,
-    ConversationLinked,
     ConversationTitled,
 )
 from .lifecycle import (
@@ -79,7 +78,6 @@ EventBody = Annotated[
     | CompactionDelta
     | CompactionFailed
     | ConversationCompacted
-    | ConversationLinked
     | ContextInjected
     | ApprovalRequired
     | QuestionAsked

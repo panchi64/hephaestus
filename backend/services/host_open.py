@@ -96,7 +96,7 @@ def resolve_within(roots: Sequence[Path], path: str) -> Path:
     or a refusal.
 
     ``path`` is whatever the model wrote into its answer, so both spellings it uses have
-    to work and neither may be trusted: the absolute path a code thread is told its files
+    to work and neither may be trusted: the absolute path a worktree thread is told its files
     are called, and the workspace-relative one its file tools take. Both go through the
     sandbox's own containment check, which is what makes one loop enough: ``root /
     "/etc/passwd"`` *is* ``/etc/passwd`` and ``root / "../../.ssh/id_rsa"`` resolves out

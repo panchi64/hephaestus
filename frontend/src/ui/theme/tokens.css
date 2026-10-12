@@ -94,7 +94,7 @@
   --type-display-lh: 44px;
 
   /* ---- READING scale — rendered prose only (`.ody-prose`) ----
-     Assistant messages, research reports, documents: everything the operator
+     Assistant messages, reports, documents: everything the operator
      READS rather than scans. Anchored on 16px/1.5, the browser default and the
      size long-form reading is standardized around; 13px is a defensible size for
      a rail row and an indefensible one for a five-paragraph answer.
@@ -306,52 +306,6 @@
   --shadow-2:
     0 0 0 1px rgb(0 0 0 / 0.08), 0 12px 32px -8px rgb(0 0 0 / 0.16),
     0 2px 6px rgb(0 0 0 / 0.06);
-}
-
-/* ==========================================================================
-   SESSION MODE — the signature accent, and only the signature accent.
-
-   `data-mode` on the root says what kind of work the open thread is (normal /
-   research / code). The signature accent is the *primary-focus* token — the live
-   run, the composer's edge, the approval that is blocking — so binding it to the
-   mode makes the whole screen say which of the three you are in without adding a
-   badge to anything.
-
-   **The other four accents do not move, and must not.** They are a closed set of
-   MEANINGS (§5.2): `alert` is "wrong", `nominal` is "OK". Re-pointing those per
-   mode would mean red meaning one thing in a code thread and another in a
-   research thread, which is the entire failure the closed set exists to prevent.
-
-   Normal is deliberately absent: it is the base value declared above, so a
-   thread in the ordinary mode paints the palette the product ships with and this
-   block is purely additive. Every value clears §12's 4.5:1 floor against its own
-   background, pinned by `contrast.test.ts` across all six (theme, mode) pairs,
-   and mirrored in `accents.ts` — `accents.test.ts` reads this file to prove the
-   two still agree.
-
-   Specificity: each rule is (0,2,0), so it beats the base blocks above without
-   a tie, and the operator's override sheet (`html[data-theme][data-mode]`, at
-   (0,2,1)) still beats it — see `accent-store.ts`.
-   ========================================================================== */
-[data-theme="phosphor"][data-mode="research"] {
-  /* Cyan: reading rather than doing. Next to phosphor green on the wheel, which
-     is the point — a research thread is a sibling of ordinary work, not a
-     different product. 12.3:1 on black. */
-  --accent: #3ddbd9;
-}
-
-[data-theme="phosphor"][data-mode="code"] {
-  /* Violet: the one hue nothing else in the system uses, for the one mode that
-     reaches outside the sandbox and onto the operator's own disk. 8.3:1. */
-  --accent: #b98cff;
-}
-
-[data-theme="paper"][data-mode="research"] {
-  --accent: #0e7490; /* 5.4:1 on white */
-}
-
-[data-theme="paper"][data-mode="code"] {
-  --accent: #6d28d9; /* 7.1:1 on white */
 }
 
 /* ==========================================================================

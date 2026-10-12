@@ -17,7 +17,6 @@ from routes.chat.submit import resolve_models, submit_turn
 from routes.deps import OPERATOR_ID
 from runs import CHAT_TURN_KINDS, ConversationBusyError, RunRegistry
 from services.conversations import ConversationStore
-from services.modes import mode_spec
 from services.turn_stamps import still_named
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -56,7 +55,7 @@ def _enqueue_steering(
     composition exists.
 
     "Is a chat turn" is membership in the composed kinds, not equality with ``chat``: a
-    scheduled task's run and a research thread the agent opened both drive a conversation
+    scheduled task's run and a sub-agent's or woken turn both drive a conversation
     the operator can open and both drain the queued-message inbox, so both take steering.
     Only a run some other orchestrator submitted — which would never read the queue — is
     refused."""
@@ -90,30 +89,15 @@ async def _retire_stop_marker(
 
 
 async def _validate_new_thread_binding(request: Request, body: ChatCreate) -> None:
-    """Reject a thread that could not work, before anything is created.
-
-    A mode whose workspace is a git worktree needs a real project the operator owns,
-    because that is what supplies the repository the worktree is cut from. And an
-    **ephemeral** thread cannot have one: the compare panes are throwaway scratch threads,
-    and each one would mint a git branch nobody ever looks at.
-    """
-    if body.project_id is not None:
-        # 404 rather than a silent unfiled thread: filing work under a project that
-        # doesn't exist would put it somewhere the operator will never look for it.
-        try:
-            await deps.projects(request).get(OPERATOR_ID, body.project_id)
-        except NotFoundError:
-            raise HTTPException(status_code=404, detail="project not found") from None
-    if mode_spec(body.mode).workspace != "worktree":
-        return
-    if body.ephemeral:
-        raise HTTPException(
-            status_code=422, detail=f"an ephemeral conversation cannot use {body.mode} mode"
-        )
+    """Reject a thread filed under a project that does not exist, before anything is
+    created: 404 rather than a silent unfiled thread, which would put the work somewhere
+    the operator will never look for it."""
     if body.project_id is None:
-        raise HTTPException(
-            status_code=422, detail=f"{body.mode} mode requires a project_id"
-        )
+        return
+    try:
+        await deps.projects(request).get(OPERATOR_ID, body.project_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="project not found") from None
 
 
 @router.post("", status_code=202, response_model=ChatCreated)
@@ -138,16 +122,17 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated:
             raise HTTPException(status_code=404, detail="conversation not found")
         conversation_id = body.conversation_id
     else:
+        # A thread files itself under whatever the request scope resolved: the explicit
+        # `project_id` when the client sent one, else the operator's active project, else
+        # unfiled. Filed under a project, it works in that project's folder; a throwaway
+        # compare pane stays in a sandbox of its own.
+        project_id = body.project_id or await deps.active_project(request)
         conversation_id = await store.create_conversation(
             OPERATOR_ID,
             ephemeral=body.ephemeral,
-            mode=body.mode,
-            # Absent, the mode's own default decides what a fresh thread may do.
+            workspace_kind="checkout" if project_id and not body.ephemeral else "sandbox",
             permission=body.permission_level,
-            # A thread files itself under whatever the request scope resolved — the
-            # explicit `project_id` when the client sent one (code mode always does),
-            # else the operator's active project, else unfiled.
-            project_id=body.project_id or await deps.active_project(request),
+            project_id=project_id,
         )
 
     # Claim now, before the remaining awaits (the auto-compaction policy resolve) and

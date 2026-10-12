@@ -121,9 +121,9 @@ export function ChatRoomHeader(props: ChatRoomHeaderProps): JSX.Element {
         </Show>
       </span>
       <div class="flex shrink-0 items-center gap-2">
-        {/* A code thread's branch and diffstat, and the way into the patch.
-            Renders nothing for a sandbox thread — the backend answers 404 for
-            one, which is the ordinary case. */}
+        {/* A worktree thread's branch and diffstat, and the way into the patch.
+            Renders nothing for a thread with no worktree — the backend answers 404
+            for one, which is the ordinary case. */}
         <BranchChip
           branch={props.branch}
           onOpen={() => props.viewport.toggleSurface("diff")}

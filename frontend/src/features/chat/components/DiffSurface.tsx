@@ -23,7 +23,7 @@ import {
 import { PaneToolbar } from "./PaneFrame";
 
 /**
- * What a code thread has changed, and the two ways it ends.
+ * What a worktree thread has changed, and the two ways it ends.
  *
  * This was a modal over a raw `<pre>`, opened from the header chip. Two things were
  * wrong with that. A patch is something you read *against* the conversation that
@@ -336,7 +336,7 @@ export function DiffSurface(props: {
         <EmptyState
           icon="branch"
           message="No branch"
-          hint="Only a code thread works on a branch of its own."
+          hint="Only a worktree thread works on a branch of its own."
         />
       }
     >

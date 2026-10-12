@@ -12,10 +12,10 @@ typed.
 
 **Availability is decided here, never in the picker.** Three things narrow the catalog and
 all three are facts only the backend holds: a sub-agent command is pointless where
-``subagents_launch`` has been withheld (the operator's own switch, offline mode, the
-thread's mode — ``services/tool_policy`` unions them), an action that acts on a
-conversation is pointless in a composer that has none, and a mode-scoped command is
-pointless outside its mode. A client that filtered any of these would be deciding, and it
+``subagents_launch`` has been withheld (the operator's own switch, offline mode —
+``services/tool_policy`` unions them), an action that acts on a conversation is pointless
+in a composer that has none, and a project-declared command is pointless outside the
+project's files. A client that filtered any of these would be deciding, and it
 would be deciding from a stale copy.
 
 **A collision drops nothing.** Sources are merged by locality — what the installation
@@ -31,10 +31,10 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from services.modes import mode_spec
 from services.skills import SkillStore
 from services.subagents import BUILTIN, SubagentSpec, merged_roster
 from services.subagents.definitions import project_specs as project_agent_specs
+from services.workspace_kind import is_project_folder
 
 from .actions import BUILTIN_ACTIONS, NEEDS_CONVERSATION
 from .definitions import project_specs as project_command_specs
@@ -42,7 +42,7 @@ from .spec import CommandSpec
 from .store import CommandStore
 
 #: The tool a sub-agent command exists to ask for. Withheld — by the operator's switch, by
-#: offline mode, by the thread's mode — and the command is an offer the turn cannot honour.
+#: offline mode — and the command is an offer the turn cannot honour.
 LAUNCH_TOOL = "subagents_launch"
 
 #: How the picker groups what it is given, in the order the headings appear. The labels
@@ -78,7 +78,7 @@ class CommandRegistry:
         self,
         owner_id: str,
         *,
-        mode: str,
+        workspace_kind: str,
         has_conversation: bool,
         disabled_tools: Iterable[str] = (),
         root: Path | None = None,
@@ -88,7 +88,7 @@ class CommandRegistry:
         ``root`` is the checkout this thread is looking at, resolved by the caller
         (``routes/deps.composer_root``) because *which tree* is a question about worktrees
         and projects that a catalog has no business answering. Absent — an unfiled thread,
-        a sandbox mode, a composer with no project yet — the two project-declared sources
+        a sandbox thread, a composer with no project yet — the two project-declared sources
         simply contribute nothing, which is the honest answer rather than a degraded one.
         """
         withheld = frozenset(disabled_tools)
@@ -99,19 +99,19 @@ class CommandRegistry:
         # above skills and workflows, both tier 1, for that to remain true.
         specs: list[CommandSpec] = [
             *_actions(has_conversation=has_conversation),
-            *_agent_specs(root, mode, withheld=withheld),
+            *_agent_specs(root, workspace_kind, withheld=withheld),
             *await self._skill_specs(owner_id),
             *await self._commands.specs(owner_id),
             *(project_command_specs(root) if root is not None else ()),
         ]
-        return _merge([spec for spec in specs if _in_mode(spec, mode)])
+        return _merge([spec for spec in specs if _offered_in(spec, workspace_kind)])
 
     async def resolve(
         self,
         owner_id: str,
         name: str,
         *,
-        mode: str,
+        workspace_kind: str,
         has_conversation: bool,
         disabled_tools: Iterable[str] = (),
         root: Path | None = None,
@@ -125,7 +125,7 @@ class CommandRegistry:
         """
         entries = await self.catalog(
             owner_id,
-            mode=mode,
+            workspace_kind=workspace_kind,
             has_conversation=has_conversation,
             disabled_tools=disabled_tools,
             root=root,
@@ -169,7 +169,7 @@ def _actions(*, has_conversation: bool) -> list[CommandSpec]:
 
 
 def _agent_specs(
-    root: Path | None, mode: str, *, withheld: frozenset[str]
+    root: Path | None, workspace_kind: str, *, withheld: frozenset[str]
 ) -> list[CommandSpec]:
     """One command per sub-agent on the roster — the built-ins, plus what the project says.
 
@@ -181,17 +181,16 @@ def _agent_specs(
     resolved the same way — which is the only reason it is safe for the command's block to
     name a sub-agent by name and stop there.
 
-    **And it is why the project layer is gated on the same mode check the launcher makes.**
-    ``run_roster`` reads a project's declarations only in a worktree mode; offering them in a
-    sandbox thread would put a row in the menu whose launch resolves to nothing, and the
+    **And it is why the project layer is gated on the same check the launcher makes.**
+    ``run_roster`` reads a project's declarations only in a project folder; offering them in
+    a sandbox thread would put a row in the menu whose launch resolves to nothing, and the
     operator would meet that as a failed tool call mid-turn rather than as an absent option.
-    A thread files under a project in every mode, so a root alone is not the question.
 
-    One residual, inherent rather than fixable here: in a worktree mode before the thread's
-    first turn, ``root`` is still the operator's own checkout, so an agent file they have not
+    One residual, inherent rather than fixable here: in a worktree thread before its first
+    turn, ``root`` is still the operator's own checkout, so an agent file they have not
     committed is offered and will not be in the worktree the launcher resolves against. The
     command carries only the *name*, which is what makes that recoverable — the same
-    uncommitted-work gap code mode already has, rather than a new one.
+    uncommitted-work gap worktrees already have, rather than a new one.
 
     Every entry stays ``source="agent"``: a project's *agent* is still an agent, and filing
     it under "Project" would split one roster across two headings in the menu.
@@ -200,7 +199,7 @@ def _agent_specs(
         return []
     declared = (
         project_agent_specs(root)
-        if root is not None and mode_spec(mode).workspace == "worktree"
+        if root is not None and is_project_folder(workspace_kind)
         else ()
     )
     roster = merged_roster(BUILTIN, declared)
@@ -232,8 +231,8 @@ def _agent_command(spec: SubagentSpec) -> CommandSpec:
     )
 
 
-def _in_mode(spec: CommandSpec, mode: str) -> bool:
-    return not spec.modes or mode in spec.modes
+def _offered_in(spec: CommandSpec, workspace_kind: str) -> bool:
+    return not spec.workspaces or workspace_kind in spec.workspaces
 
 
 def _merge(specs: Sequence[CommandSpec]) -> tuple[CatalogEntry, ...]:

@@ -162,7 +162,7 @@ class GitDirs:
             private = (root / private).resolve()
         # A missing `commondir` raises past this method: it means this is not the
         # linked-worktree shape the check below can verify — a `--separate-git-dir`
-        # checkout, a submodule, or a forgery. None of the three is what code mode
+        # checkout, a submodule, or a forgery. None of the three is what a worktree
         # creates, so none of them gets git paths.
         common_text = (private / "commondir").read_text(encoding="utf-8", errors="replace")
         common = Path(common_text.strip())
@@ -214,7 +214,7 @@ def workspace_profile(
     subcommands: `git config`, a shell redirect and a Python script are the same write.
 
     **How far "the operator's other branches are out of reach" actually goes.** In a linked
-    worktree — the shape code mode always produces — the whole common directory is outside
+    worktree — the shape a worktree thread always gets — the whole common directory is outside
     every allow, so another branch's ref is unreachable because nothing named it. In a plain
     checkout the common directory *is* ``<root>/.git``, inside the worktree allow, and the
     one ref a commit must write lives under ``refs/heads`` beside all the others: deny beats

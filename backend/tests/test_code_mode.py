@@ -1,9 +1,8 @@
-"""Code mode over HTTP: the binding, the branch surface, and the delete gate.
+"""Workspace kinds over HTTP: the binding, the branch surface, and the delete gate.
 
-The binding is set once and never again, so what these assert is mostly *refusal*: a
-code thread with no project, an ephemeral one, a delete that would silently destroy
-unmerged work. Each of those is a state the rest of the system has no answer for, and the
-cheapest place to make them impossible is the route that would otherwise create them.
+A thread filed under a project starts in that project's folder and moves to a worktree
+on its own branch. What these assert is where a new thread lands, which kinds have a
+branch to report, and that a delete never silently destroys unmerged work.
 """
 
 from __future__ import annotations
@@ -53,46 +52,36 @@ async def _project(client, tmp_path, name="work") -> dict:
 
 
 class TestTheBinding:
-    async def test_a_code_thread_needs_a_project(self, tmp_path):
-        async with client_app() as (client, _app):
-            resp = await client.post("/chat", json={"prompt": "hi", "mode": "code"})
-            assert resp.status_code == 422
-            assert "project_id" in resp.text
-
-    async def test_an_ephemeral_thread_cannot_code(self, tmp_path):
-        async with client_app() as (client, _app):
-            project = await _project(client, tmp_path)
-            resp = await client.post(
-                "/chat",
-                json={
-                    "prompt": "hi",
-                    "mode": "code",
-                    "project_id": project["id"],
-                    "ephemeral": True,
-                },
-            )
-            # A compare pane is scratch; it must not mint a git branch.
-            assert resp.status_code == 422
-
     async def test_an_unknown_project_is_refused_rather_than_filed_nowhere(self):
         async with client_app() as (client, _app):
             resp = await client.post("/chat", json={"prompt": "hi", "project_id": "nope"})
             assert resp.status_code == 404
 
-    async def test_the_binding_is_stored_on_the_thread(self, tmp_path, monkeypatch):
+    async def test_a_project_thread_starts_in_the_projects_own_folder(self, tmp_path, monkeypatch):
+        async with client_app() as (client, app):
+            project = await _project(client, tmp_path)
+            patch_model_resolution(monkeypatch)
+            created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
+            assert created.status_code == 202, created.text
+            conversation_id = created.json()["conversation_id"]
+
+            binding = await app.state.conversations.binding(conversation_id)
+            assert binding.workspace_kind == "checkout"
+            assert binding.project_id == project["id"]
+
+    async def test_an_ephemeral_thread_never_works_in_the_projects_folder(
+        self, tmp_path, monkeypatch
+    ):
         async with client_app() as (client, app):
             project = await _project(client, tmp_path)
             patch_model_resolution(monkeypatch)
             created = await client.post(
                 "/chat",
-                json={"prompt": "hi", "mode": "code", "project_id": project["id"]},
+                json={"prompt": "hi", "project_id": project["id"], "ephemeral": True},
             )
             assert created.status_code == 202, created.text
-            conversation_id = created.json()["conversation_id"]
-
-            binding = await app.state.conversations.binding(conversation_id)
-            assert binding.mode == "code"
-            assert binding.project_id == project["id"]
+            binding = await app.state.conversations.binding(created.json()["conversation_id"])
+            assert binding.workspace_kind == "sandbox"
 
     async def test_a_plain_thread_files_itself_under_the_active_project(
         self, tmp_path, monkeypatch
@@ -105,14 +94,20 @@ class TestTheBinding:
             conversation_id = created.json()["conversation_id"]
 
             binding = await app.state.conversations.binding(conversation_id)
-            # Filed, but still a Normal thread — activating a project must not silently
-            # start putting the agent on the operator's host.
             assert binding.project_id == project["id"]
-            assert binding.mode == "normal"
+            assert binding.workspace_kind == "checkout"
+
+    async def test_a_thread_with_no_project_works_in_its_sandbox(self, monkeypatch):
+        async with client_app() as (client, app):
+            patch_model_resolution(monkeypatch)
+            created = await client.post("/chat", json={"prompt": "hi"})
+            binding = await app.state.conversations.binding(created.json()["conversation_id"])
+            assert binding.workspace_kind == "sandbox"
+            assert binding.project_id is None
 
 
 class TestTheBranchSurface:
-    async def test_a_normal_thread_has_no_branch(self, tmp_path, monkeypatch):
+    async def test_a_sandbox_thread_has_no_branch(self, tmp_path, monkeypatch):
         async with client_app() as (client, _app):
             patch_model_resolution(monkeypatch)
             created = await client.post("/chat", json={"prompt": "hi"})
@@ -120,17 +115,24 @@ class TestTheBranchSurface:
             resp = await client.get(f"/worktrees/{conversation_id}")
             assert resp.status_code == 404
 
-    async def test_a_code_thread_with_no_work_yet_reports_an_empty_diff(
-        self, tmp_path, monkeypatch
-    ):
+    async def test_a_checkout_thread_has_no_branch_of_its_own(self, tmp_path, monkeypatch):
         async with client_app() as (client, _app):
             project = await _project(client, tmp_path)
             patch_model_resolution(monkeypatch)
-            created = await client.post(
-                "/chat",
-                json={"prompt": "hi", "mode": "code", "project_id": project["id"]},
-            )
+            created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
             conversation_id = created.json()["conversation_id"]
+            resp = await client.get(f"/worktrees/{conversation_id}")
+            assert resp.status_code == 404
+
+    async def test_a_worktree_thread_with_no_work_yet_reports_an_empty_diff(
+        self, tmp_path, monkeypatch
+    ):
+        async with client_app() as (client, app):
+            project = await _project(client, tmp_path)
+            patch_model_resolution(monkeypatch)
+            created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
+            conversation_id = created.json()["conversation_id"]
+            assert await app.state.conversations.open_worktree(conversation_id)
 
             body = (await client.get(f"/worktrees/{conversation_id}")).json()
             # An empty diff, not an error: a thread that hasn't touched a file is a
@@ -144,13 +146,12 @@ class TestDeletingAThread:
     async def _with_work(self, client, app, tmp_path, monkeypatch):
         project = await _project(client, tmp_path)
         patch_model_resolution(monkeypatch)
-        created = await client.post(
-            "/chat", json={"prompt": "hi", "mode": "code", "project_id": project["id"]}
-        )
+        created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
         conversation_id = created.json()["conversation_id"]
         await _settled(app, created.json()["run_id"])
+        assert await app.state.conversations.open_worktree(conversation_id)
 
-        # Do what a code turn actually does: acquire the worktree and edit files.
+        # Do what a worktree turn actually does: acquire the worktree and edit files.
         # **No commit** — the agent has no `git commit`, so this is the state every real
         # session is in when the operator opens the diff. Committing here by hand is what
         # made an earlier version of these tests pass against inert code.

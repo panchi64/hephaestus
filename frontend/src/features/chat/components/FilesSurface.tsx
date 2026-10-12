@@ -35,8 +35,8 @@ const SIDE_BY_SIDE = 560;
  *
  * **It reads the worktree, not a snapshot of one.** It used to list the newest View
  * version's files, which meant the panel was empty — and unavailable — until the agent
- * happened to call `view_show`. A code thread that edits ten files and never captures a
- * version is an ordinary code thread, and it showed nothing. The tree now comes from the
+ * happened to call `view_show`. A worktree thread that edits ten files and never captures a
+ * version is an ordinary worktree thread, and it showed nothing. The tree now comes from the
  * same listing the composer's `@` picker reads, resolved by the backend against this
  * thread's own worktree.
  *
@@ -235,7 +235,7 @@ export function FilesSurface(props: {
           <EmptyState
             icon="file"
             message="No workspace yet"
-            hint="A code thread's files appear here once it has a branch to work on."
+            hint="A worktree thread's files appear here once it has a branch to work on."
           />
         }
       >

@@ -5,10 +5,10 @@ Thin over `services/projects`. Two shapes deserve a note:
 `repo` on every listing is **probed live**, not stored. Whether a directory is a git
 repository, and how many changes are uncommitted, are facts about the world that change
 without us; caching them would mean showing the operator a stale answer to the one
-question that decides whether code mode is safe to start.
+question that decides whether a worktree is safe to open.
 
-`uncommittedChanges` is surfaced deliberately, and the UI is expected to show it. Code
-mode branches a worktree from the project's base ref, so uncommitted work in the
+`uncommittedChanges` is surfaced deliberately, and the UI is expected to show it. A
+worktree branches from the project's base ref, so uncommitted work in the
 operator's own tree is **invisible to the agent**. That is the price of never touching
 their tree, and it should be read on the project screen rather than discovered halfway
 through a session.
@@ -168,7 +168,7 @@ async def list_project_files(
     query: str = "",
     limit: int = 200,
 ) -> FilesOut:
-    """The files a code thread can reference — what the composer's `@` picker browses.
+    """The files a worktree thread can reference — what the composer's `@` picker browses.
 
     **Rooted on the project, upgraded by the conversation.** `conversation_id` is
     optional because the operator types `@` in a composer that may not have started a
@@ -202,7 +202,7 @@ async def list_project_files(
     )
 
 
-#: How much of a file the operator's viewer will be handed. A code thread's tree is
+#: How much of a file the operator's viewer will be handed. A worktree thread's tree is
 #: browsable now, so a path can be asked for directly rather than only picked out of a
 #: listing that already honours `.gitignore` — and a worktree holds whatever the agent
 #: built in it. Generous for source, far under what would make the response the problem.
@@ -288,7 +288,7 @@ async def delete_project(request: Request, project_id: str) -> None:
 async def init_repo(request: Request, project_id: str) -> ProjectOut:
     """Make the project's directory a git repository, with the operator's explicit yes.
 
-    Code mode needs one — a worktree is cut from it — but running `git init` and
+    A worktree needs one — a worktree is cut from it — but running `git init` and
     committing someone's whole directory is a real, visible side effect, so it is never
     implicit. This route *is* the confirmation: the UI asks, the operator answers, and
     only then does anything happen. The agent has no path to it.

@@ -4,22 +4,23 @@
  *  responses/events to them, so screens don't change when the mapping behind
  *  them does. */
 
-import type { SessionMode } from "~/lib/modes";
 import type {
   CompactionReason,
   ContextWindow,
   SummarySection,
 } from "~/lib/stream";
 
-/** Why a fold happened, as the wire spells it. Re-exported for the same reason
- *  `SessionMode` is: chat code reads its seam types from one place. */
+/** Why a fold happened, as the wire spells it. Re-exported so chat code reads its seam
+ *  types from one place. */
 export type { CompactionReason };
 
-/** The mode vocabulary lives in `~/lib/modes` — the theme layer and the app shell
- *  need it too, and a type owned by this feature and imported by the design system
- *  would be a dependency pointing the wrong way. Re-exported here so chat code can
- *  keep reading its seam types from one place. */
-export type { SessionMode };
+/** Where a thread does its work: `sandbox` is the thread's own container, `checkout` is
+ *  the project's own folder on the operator's machine (on the branch they have checked
+ *  out), and `worktree` is an isolated git worktree of that repository. A project thread
+ *  starts in the checkout and the agent may move it to a worktree mid-conversation,
+ *  never back — so this is read off the backend's current answer, never held from
+ *  creation. */
+export type WorkspaceKind = "sandbox" | "checkout" | "worktree";
 
 /** The context-window state, derived and emitted by the backend (live over the
  *  run stream, or reconstructed on conversation load). Purely a carrier — the
@@ -713,9 +714,6 @@ export interface ChatSession {
   /** Workspace snapshots captured across the thread (newest last), seeding the
    *  viewport's git-style history on load. */
   snapshots: ViewSnapshotRef[];
-  /** What kind of work this thread is, so opening it moves the rail and the
-   *  signature accent to match rather than leaving them on the last thread's. */
-  mode: SessionMode;
   /** How far the model may go in it. Seeded on load so the composer's control comes
    *  back where the operator left it instead of at the default. */
   permission: PermissionLevel;
@@ -763,22 +761,24 @@ export interface ChatSummary {
    *  two can be set at once (a thread that finished and has already been sent to
    *  again). See `ChatOutcome` for why absence says nothing. */
   lastOutcome?: ChatOutcome;
-  /** What kind of work this thread is. The rail shows one mode at a time, so a
-   *  summary that didn't carry it could not be filed anywhere. */
-  mode: SessionMode;
-  /** The **basename** of the directory a code thread works in. Absent for every other
-   *  mode, and for a code thread whose project has since been deleted. Never a path:
+  /** Where the thread works right now. It can change under the operator — the agent
+   *  moves a thread into a worktree mid-conversation — so every reader takes it from the
+   *  latest listing. */
+  workspaceKind: WorkspaceKind;
+  /** The **basename** of the directory a checkout or worktree thread works in. Absent
+   *  for a sandbox thread, and for one whose project has since been deleted. Never a path:
    *  the backend resolves it and the full path stays there. */
   workspace?: string;
-  /** The project that directory belongs to — what the rail actually files the thread
-   *  under. The rail lists every directory the operator works in, including ones with
-   *  no threads yet, so it groups by joining on this rather than on the name above;
-   *  two directories can share a basename and filing by name would merge them. */
+  /** The project the thread is scoped to — what the rail files it under, whether or not
+   *  it has a worktree yet. The rail lists every directory the operator works in,
+   *  including ones with no threads yet, so it groups by joining on this rather than on
+   *  the name above; two directories can share a basename and filing by name would merge
+   *  them. */
   projectId?: string;
 }
 
 /** How far the model may go in a thread — the backend's `services/permissions`
- *  vocabulary, and the second axis of a conversation. Unlike the mode it **moves**:
+ *  vocabulary, and the second axis of a conversation. It **moves**:
  *  it is persisted on the thread and changed by sending at a different level, so a
  *  reload comes back where the operator left it. */
 export type PermissionLevel = "plan" | "manual" | "edit" | "auto" | "yolo";

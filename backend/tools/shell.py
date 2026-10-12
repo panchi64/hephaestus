@@ -52,7 +52,7 @@ What makes that affordable is everything around it: the throwaway branch the edi
 on, the merge the operator has to approve, one approval on the conversation's first
 command, `denied_env_patterns` keeping the operator's model keys out of every spawned
 environment, the git config pins that take the keys turning an ordinary `git status` into
-an execution back off the repository (``services/sandbox/gitenv.py``), and code mode being
+an execution back off the repository (``services/sandbox/gitenv.py``), and a worktree being
 chosen for a thread bound to a project they named. An allowlist of programs was considered
 instead of all of it and rejected twice over: an agent writing code needs whatever build
 tool the project uses, so any allowlist honest enough to be useful is long enough to be
@@ -60,10 +60,9 @@ meaningless, and it would still be bypassable through an allowed interpreter. Bo
 what a spawned program may *do* covers `make`, `npm run` and a test suite without naming
 any of them.
 
-**Refused outright outside a worktree mode.** `mode_disabled_tools` already hides these
-tools from every mode whose spec does not admit the `shell` category, but that is a
-filter, and a filter is the wrong place for the only thing standing between a host command
-and a sandbox thread. The check is here too.
+**Refused outright outside a worktree.** The enabled gate already hides these tools from
+sandbox chats (``services/workspace_kind.py``), but a filter is the wrong place for the
+only thing standing between a host command and a sandbox thread. The check is here too.
 
 **What a command hands back says where it ran, at every permission level.** The result is
 structure (``services/sandbox/shell_runner.ShellResult``) with the boundary on it: the
@@ -97,7 +96,6 @@ from pydantic_ai.exceptions import ApprovalRequired
 from core.config import Settings, get_settings
 from runs import ToolProgress
 from services.egress import EgressPolicy
-from services.modes import mode_spec
 from services.permissions import Reach, capability_of
 from services.sandbox import denied_read_paths, fence
 from services.sandbox.shell_runner import (
@@ -108,6 +106,7 @@ from services.sandbox.shell_runner import (
     ShellResult,
 )
 from services.workspace import RunWorkspace
+from services.workspace_kind import is_project_folder
 
 from .deps import RunDeps
 from .emit import RunEventEmitted
@@ -153,9 +152,9 @@ _NAMESPACE = "shell_"
 _TEMPLATE_ROOT = Path("/nonexistent-template-root")
 
 _WRONG_MODE = (
-    "Shell commands are only available in a code conversation, which runs in a "
-    "project's git worktree. This conversation runs in a container — use `code_execute` "
-    "instead."
+    "Shell commands are only available in a conversation filed under a project, which "
+    "works in that project's folder. This conversation runs in a container — use "
+    "`code_execute` instead."
 )
 
 _NO_FENCE = (
@@ -186,7 +185,7 @@ async def _guard(
     *,
     confiner: Confiner | None,
 ) -> str | None:
-    """Refuse outside a worktree mode or without a fence; otherwise pause for approval on
+    """Refuse outside a worktree or without a fence; otherwise pause for approval on
     the first command.
 
     Both refusals are plain strings rather than `ModelRetry`: neither is something the
@@ -195,7 +194,7 @@ async def _guard(
     fires once and then lets the command run — and a conversation-scoped grant means the
     operator is asked once per thread, not once per command.
     """
-    if mode_spec(ctx.deps.mode).workspace != "worktree" or workspace.kind != "worktree":
+    if not is_project_folder(ctx.deps.workspace_kind) or workspace.kind == "sandbox":
         return _WRONG_MODE
     gap = await _fence_gap(confiner)
     if gap:

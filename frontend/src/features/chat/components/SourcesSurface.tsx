@@ -1,5 +1,5 @@
 /**
- * Everything a research thread read, as one inventory.
+ * Everything a thread read, as one inventory.
  *
  * The transcript already shows the handful of links an answer leaned on, and that is the
  * right place to *follow* one. It is the wrong place to answer the question this panel
@@ -14,9 +14,9 @@
  *
  * - **It does not number.** The turn's Sources row numbers within the turn; numbering
  *   again across the thread would make `[3]` there and `[17]` here the same page.
- * - **`Listed, never opened` says exactly what is known.** The requirement asks for
- *   discarded sources *with reasons*, and the only reason the system holds is the
- *   structural one. A richer sentence would be invented.
+ * - **`Listed, never opened` says exactly what is known.** The only reason the system
+ *   holds for an unopened source is the structural one. A richer sentence would be
+ *   invented.
  * - **`origins` is printed beside the source count, never instead of it.** Five pages off
  *   one site are five sources and one origin, and an inventory that reported only the
  *   first figure would read as five times the corroboration it has.
@@ -34,18 +34,10 @@ import {
   type SourceInventory,
 } from "../viewport/sourceItems";
 import { SourceRow } from "./SourceRow";
-import { ClaimsSection } from "./ClaimsSection";
 import { SurfaceBody, SurfaceSection, SurfaceSummary } from "./surfaceChrome";
-import type { ClaimInventory } from "../viewport/claimItems";
 
 export function SourcesSurface(props: {
   inventory: () => SourceInventory;
-  /** What a second reader found in this thread's answers — empty for most threads. */
-  claims: () => ClaimInventory;
-  /** Whether asking for a reading is worth offering here. */
-  canExtract: () => boolean;
-  onExtract: () => void;
-  extracting: () => boolean;
 }): JSX.Element {
   const inv = () => props.inventory();
   return (
@@ -61,15 +53,6 @@ export function SourcesSurface(props: {
         }
       >
         <InventoryHead inventory={inv()} />
-        {/* **Above the inventory, deliberately.** The inventory answers "what did this
-            read"; the claims answer "is what it wrote actually in there", which is the
-            harder question and the one an operator opens this panel carrying. */}
-        <ClaimsSection
-          claims={props.claims()}
-          canExtract={props.canExtract()}
-          onExtract={props.onExtract}
-          extracting={props.extracting()}
-        />
         <For each={inv().groups}>
           {(group) => (
             <SurfaceSection
@@ -80,7 +63,7 @@ export function SourcesSurface(props: {
               columns
             >
               <For each={group.items}>
-                {(item) => <SourceRow item={item} bucket={group.bucket} />}
+                {(item) => <SourceRow item={item} />}
               </For>
             </SurfaceSection>
           )}
@@ -95,7 +78,7 @@ export function SourcesSurface(props: {
  *  The two figures it is read against — sources, and the independent origins behind
  *  them — ride the pane header (`SURFACE_META.sources`), which is there whether the pane
  *  is a leaf or a tab. Printing them here as well put the same count twice in one inch.
- *  Per-*claim* independence is a different figure, carried by the claims section. */
+ */
 function InventoryHead(props: { inventory: SourceInventory }): JSX.Element {
   return (
     <Show when={props.inventory.newestRetrieval}>

@@ -29,11 +29,11 @@ from services.tool_policy import (
     effective_disabled_tools,
     get_disabled_tools,
     lane_disabled_tools,
-    mode_disabled_tools,
     set_tool_enabled,
     unavailable_tools,
     vision_disabled_tools,
 )
+from services.workspace_kind import WORKSPACE_TOOLS, WorkspaceKind
 from tools import RunDeps, build_agent_toolsets
 from tools.catalog import tool_catalog
 
@@ -57,7 +57,7 @@ def _store() -> SettingsStore:
     return SettingsStore(engine)
 
 
-async def _agent_visible(disabled: frozenset[str]) -> set[str]:
+async def _agent_visible(disabled: frozenset[str], kind: WorkspaceKind = "sandbox") -> set[str]:
     """Every tool name the composed stack the engine hands the Agent can resolve — not a
     re-derivation of the naming rule, so this is the ground truth the catalog is measured
     against.
@@ -67,7 +67,7 @@ async def _agent_visible(disabled: frozenset[str]) -> set[str]:
     them. Which of them a given request actually carries, and the library-owned
     ``search_tools`` that reveals the rest, are ``test_tool_search.py``'s subject."""
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
-    deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled)
+    deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled, workspace_kind=kind)
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
     return set(await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx))
 
@@ -79,9 +79,10 @@ async def test_catalog_matches_the_names_the_agent_is_offered():
     # Pins the namespacing convention (`category_tool`) against what Pydantic AI's
     # prefixing actually produces: if the library ever changed it, every toggle in the
     # settings screen would quietly stop matching, and this fails instead.
-    assert {t.name for t in tool_catalog(full_tool_categories())} == await _agent_visible(
-        frozenset()
-    )
+    offered: set[str] = set()
+    for kind in WORKSPACE_TOOLS:
+        offered |= await _agent_visible(frozenset(), kind)
+    assert {t.name for t in tool_catalog(full_tool_categories())} == offered
 
 
 # The full catalog, frozen. The registry is now assembled from the manifests'
@@ -143,6 +144,7 @@ _PINNED_CATALOG = {
     "plan_submit",
     "project_active",
     "project_list",
+    "project_open_worktree",
     "repo_inventory_agent_context",
     "shell_check_command",
     "shell_run_command",
@@ -241,26 +243,28 @@ class _StubOffline:
         return self._disabled
 
 
-# The third source — the run's mode — is covered by `test_mode_tools.py`; these two
-# assert the other two compose, so they subtract the mode's contribution rather than
-# restate it (which would make them fail on every new mode-scoped tool).
 async def test_operator_and_offline_sets_union_rather_than_overwrite():
     store = _store()
     await set_tool_enabled(store, OWNER, "builtin_now", False)
     offline = _StubOffline(frozenset({"web_search", "web_fetch"}))
     disabled = await effective_disabled_tools(store, offline, OWNER)
-    assert disabled - mode_disabled_tools("normal") == {
+    assert disabled == {
         "builtin_now",
         "web_search",
         "web_fetch",
     }
 
 
+async def test_the_workspace_kind_is_not_folded_into_the_union():
+    disabled = await effective_disabled_tools(_store(), _StubOffline(frozenset()), OWNER)
+    assert not disabled & {"code_execute", "shell_run_command"}
+
+
 async def test_offline_alone_still_applies_with_no_operator_choices():
     store = _store()
     offline = _StubOffline(frozenset({"web_search"}))
     disabled = await effective_disabled_tools(store, offline, OWNER)
-    assert disabled - mode_disabled_tools("normal") == {"web_search"}
+    assert disabled == {"web_search"}
 
 
 async def test_a_model_that_cannot_see_is_not_offered_an_image_tool():
@@ -303,7 +307,7 @@ async def _unconfigured(app) -> frozenset[str]:
     """What a fresh test app withholds because nothing is set up behind it — no mailbox,
     no calendar, no secrets vault. The availability axis withholds those categories exactly
     as the operator's own switch does, so a test about two named tools subtracts them the
-    way it subtracts the mode and vision sets rather than restating fourteen names."""
+    way it subtracts the vision set rather than restating fourteen names."""
     return await unavailable_tools(
         app.state.category_availability, app.state.capabilities, OWNER
     )
@@ -360,7 +364,7 @@ async def test_chat_turn_composes_with_the_operator_set(monkeypatch):
     # The stub model the test app resolves declares no vision, so the image-returning
     # tools are withheld too; subtract the automatic sources to leave the two this test
     # is actually about (one the operator turned off, one offline mode suspended).
-    automatic = mode_disabled_tools("normal") | vision_disabled_tools(False) | unconfigured
+    automatic = vision_disabled_tools(False) | unconfigured
     assert captured["disabled"] - automatic == {
         "builtin_now",
         "web_search",
@@ -463,7 +467,7 @@ async def test_resume_applies_the_operator_set_and_the_offline_set(monkeypatch):
         assert resp.status_code == 202
         unconfigured = await _unconfigured(app)
 
-    assert captured["disabled"] - mode_disabled_tools("normal") - unconfigured == {
+    assert captured["disabled"] - unconfigured == {
         "danger_safe_thing",
         "web_search",
     }

@@ -11,11 +11,8 @@ Two domains:
   voice anchored in history; its ``INSTRUCTIONS``, autonomy, tool posture and
   safety guardrails re-asserted fresh every turn; the date line; the verifier's
   nudge), plus the two files holding what is true of *this thread* rather than of
-  every thread: :mod:`prompts.modes` (what kind of work it is) and
-  :mod:`prompts.levels` (how far the model may go before it asks). Those two are
-  reached through the registries that own the rows — ``services.modes`` and
-  ``services.permissions`` — so a mode's or a level's prose sits beside the rest
-  of its declaration instead of in a branch at the engine.
+  every thread: :mod:`prompts.workspace` (whose files it works in) and
+  :mod:`prompts.levels` (how far the model may go before it asks).
 - :mod:`prompts.utility` — the cheap background calls (the thread **namer**, the
   deliverable **judge**) that run on the utility model.
 - :mod:`prompts.compaction` — the request that asks the main model to fold its own

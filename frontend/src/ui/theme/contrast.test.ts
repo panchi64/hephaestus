@@ -8,12 +8,7 @@ import {
   normalizeHex,
   relativeLuminance,
 } from "./contrast";
-import { SESSION_MODE_IDS } from "~/lib/modes";
-import {
-  ACCENT_DEFAULTS,
-  ACCENT_TOKENS,
-  SESSION_ACCENT_DEFAULTS,
-} from "./accents";
+import { ACCENT_DEFAULTS, ACCENT_TOKENS } from "./accents";
 import {
   CAUTION_TINT,
   DIAGRAM_CONTRAST_PAIRS,
@@ -164,47 +159,6 @@ describe("meetsAccentFloor", () => {
         ).toBeGreaterThanOrEqual(ACCENT_CONTRAST_FLOOR);
       }
   });
-
-  test("every shipped signature clears the floor in every session mode", () => {
-    // The second axis, held to the same bar: a mode accent is the token the live
-    // run, the composer edge and the blocking approval all paint with, so one
-    // that fails 4.5:1 is illegible exactly where legibility matters most. Six
-    // pairs — two themes by three modes — because a hue tuned for black is the
-    // classic thing to forget to re-check on white.
-    for (const mode of ["phosphor", "paper"] as const)
-      for (const sessionMode of SESSION_MODE_IDS) {
-        const hex = SESSION_ACCENT_DEFAULTS[mode][sessionMode];
-        const ratio = accentContrast(hex, mode)!;
-        expect(
-          ratio,
-          `${sessionMode} signature (${hex}) on ${mode} ${MODE_BG[mode]} is ${ratio}:1`,
-        ).toBeGreaterThanOrEqual(ACCENT_CONTRAST_FLOOR);
-      }
-  });
-
-  test("each mode's signature is genuinely its own", () => {
-    // Three identical hexes would pass the floor check above while the feature
-    // did nothing — the accent is what tells the operator which kind of thread
-    // they are in, so the three have to differ.
-    for (const mode of ["phosphor", "paper"] as const) {
-      const hexes = SESSION_MODE_IDS.map(
-        (sessionMode) => SESSION_ACCENT_DEFAULTS[mode][sessionMode],
-      );
-      expect(new Set(hexes).size, `${mode}: ${hexes.join(", ")}`).toBe(
-        SESSION_MODE_IDS.length,
-      );
-    }
-  });
-
-  test("Normal's signature is the base accent, not a copy of it", () => {
-    // Normal has no rule of its own in the cascade — it IS `--accent`. If this
-    // ever diverged, retuning the shipped palette would move every mode except
-    // the ordinary one.
-    for (const mode of ["phosphor", "paper"] as const)
-      expect(SESSION_ACCENT_DEFAULTS[mode].normal).toBe(
-        ACCENT_DEFAULTS[mode].accent,
-      );
-  });
 });
 
 /* ==========================================================================
@@ -336,21 +290,19 @@ describe("severity fills", () => {
     expect(chosen.phosphor).not.toBe(chosen.paper);
   });
 
-  test("a focused node's label is legible on every shipped signature", () => {
-    // The signature moves with `data-mode`, so this is six fills, not two.
-    for (const mode of ["phosphor", "paper"] as const)
-      for (const sessionMode of SESSION_MODE_IDS) {
-        const fill = SESSION_ACCENT_DEFAULTS[mode][sessionMode];
-        const label = legibleOn(fill, [
-          token(mode, "bg"),
-          token(mode, "text-bright"),
-        ]);
-        const ratio = contrastRatio(label, fill)!;
-        expect(
-          ratio,
-          `${mode}/${sessionMode}: ${label} on ${fill} is ${ratio.toFixed(2)}:1`,
-        ).toBeGreaterThanOrEqual(ACCENT_CONTRAST_FLOOR);
-      }
+  test("a focused node's label is legible on the shipped signature", () => {
+    for (const mode of ["phosphor", "paper"] as const) {
+      const fill = ACCENT_DEFAULTS[mode].accent;
+      const label = legibleOn(fill, [
+        token(mode, "bg"),
+        token(mode, "text-bright"),
+      ]);
+      const ratio = contrastRatio(label, fill)!;
+      expect(
+        ratio,
+        `${mode}: ${label} on ${fill} is ${ratio.toFixed(2)}:1`,
+      ).toBeGreaterThanOrEqual(ACCENT_CONTRAST_FLOOR);
+    }
   });
 });
 

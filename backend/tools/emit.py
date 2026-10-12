@@ -1,7 +1,7 @@
 """How a tool says something on the operator's stream.
 
 A tool sometimes has news that is not its return value: a live view came up, a sandbox
-image is still downloading, this turn opened a research thread. The model does not need
+image is still downloading. The model does not need
 any of it — it is for the person watching — so it does not belong in the tool's result.
 
 The old way was to reach through ``ctx.deps`` for the ``Run`` and call ``run.emit``.

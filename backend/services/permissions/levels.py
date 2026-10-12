@@ -1,8 +1,9 @@
 """How much rope the model gets — two knobs, and five names over them.
 
-A permission level is the second axis of a thread. The mode says what kind of work this
-is; the level says how far the model may go without stopping to ask. They are orthogonal
-on purpose: every mode carries all five levels, and a level means the same thing in each.
+A permission level is the second axis of a thread. The workspace says whose files it works
+in; the level says how far the model may go without stopping to ask. They are orthogonal
+on purpose: every workspace carries all five levels, and a level means the same thing in
+each.
 
 **Why two knobs rather than a branch per name.** The obvious shape is named levels and a
 decision function that switches on the name — which works until one more combination is
@@ -79,7 +80,7 @@ from services.tool_sensitivity import (
     tools_above,
 )
 
-#: The stored vocabulary. A plain string on the conversation row, like the mode: a
+#: The stored vocabulary. A plain string on the conversation row, like the workspace kind: a
 #: restored backup or a row written by another build must still load.
 type PermissionLevel = Literal["plan", "manual", "edit", "auto", "yolo"]
 
@@ -100,8 +101,7 @@ PERMISSION_LADDER: tuple[PermissionLevel, ...] = ("plan", "manual", "edit", "aut
 #: them and the two cannot disagree.
 PERMISSION_LEVELS: frozenset[str] = frozenset(PERMISSION_LADDER)
 
-#: What a mode that names no level of its own starts a thread at, and what a caller with
-#: no level to pass gets.
+#: What a fresh thread starts at, and what a caller with no level to pass gets.
 #:
 #: ``auto`` reaches no further than ``edit`` — the two share a ceiling — and differs only
 #: in who answers at that boundary: Edit stops and asks, Auto rules first and asks about
@@ -243,11 +243,11 @@ def permission_level(level: str) -> PermissionLevel:
 
     The two axes of a thread degrade in the same direction and for the same reason — a
     value that reaches this comes off a database row or a parked run's payload, both of
-    which outlive a rename — but the conservative answer differs. An unknown *mode* is
-    Normal because Normal reaches the least; an unknown *level* is Plan because Plan does
-    the least. A corrupt value leaves the model able to read and to plan, and unable to
-    act, which is a failure the operator can see and correct rather than one that quietly
-    grants.
+    which outlive a rename — but the conservative answer differs. An unknown *workspace
+    kind* is a sandbox because a sandbox reaches the least; an unknown *level* is Plan
+    because Plan does the least. A corrupt value leaves the model able to read and to
+    plan, and unable to act, which is a failure the operator can see and correct rather
+    than one that quietly grants.
     """
     return level if level in PERMISSION_LEVELS else STRICTEST_PERMISSION
 
@@ -269,8 +269,8 @@ def stricter_permission(a: str, b: str) -> PermissionLevel:
     """Whichever of ``a`` and ``b`` permits the less.
 
     For the caller that opens a thread *from inside another one*: the spawned thread must
-    never be able to do more than the thread that spawned it, whatever level its mode
-    would start a fresh thread at. Taking the stricter of the two is what stops one
+    never be able to do more than the thread that spawned it, whatever level a fresh
+    thread would start at. Taking the stricter of the two is what stops one
     approved spawn from buying a standing level the operator never chose. A tie resolves
     to ``a``, since neither permits more than the other."""
     return min(

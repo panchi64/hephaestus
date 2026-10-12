@@ -2,7 +2,7 @@
 
 `services/tool_sensitivity.py` names every tool as a literal string, because `tools/` sits
 above `services/` and importing the catalog there would invert the dependency order — the
-same constraint `services/modes.py` works under, and the same tripwire: the literal is
+same constraint `services/workspace_kind.py` works under, and the same tripwire: the literal is
 checked against the catalog a real run resolves, in both directions. The direction that
 actually rots is the second one. A tool added without a class would keep running under a
 level that was supposed to withhold it, and nothing else in the system would notice.
@@ -18,7 +18,6 @@ from __future__ import annotations
 from services.permissions import PERMISSION_LEVELS, PLANNING_TOOLS
 from services.tool_policy import (
     effective_disabled_tools,
-    mode_disabled_tools,
     permission_disabled_tools,
     set_tool_enabled,
 )
@@ -88,8 +87,8 @@ class TestTheClassesAgreeWithTheExistingMarkings:
             if getattr(tool, "requires_approval", False):
                 assert sensitivity_of(info.name).above(Sensitivity.READ), info.name
 
-    def test_the_tools_a_mode_withholds_are_all_effects(self):
-        # `shell`, `repo` and `code` are scoped by mode because of what they reach; the
+    def test_the_tools_a_workspace_withholds_are_all_effects(self):
+        # `shell`, `repo` and `code` are scoped by workspace kind because of what they reach; the
         # one read among them (`shell_check_command`) is scoped by the category it lives
         # in, not by its own class.
         assert sensitivity_of("shell_run_command") is Sensitivity.HOST_EXEC
@@ -230,10 +229,9 @@ class TestTheUnion:
         store = _store()
         await set_tool_enabled(store, OWNER, "builtin_now", False)
         offline = _StubOffline(frozenset({"web_search"}))
-        disabled = await effective_disabled_tools(store, offline, OWNER, mode="code")
+        disabled = await effective_disabled_tools(store, offline, OWNER)
         assert "builtin_now" in disabled  # the operator's
         assert "web_search" in disabled  # offline's
-        assert "code_execute" in disabled  # the mode's
         # ...and nothing takes back what nothing withheld.
         assert "files_read_file" not in disabled
 
@@ -254,6 +252,4 @@ class TestTheUnion:
     async def test_a_caller_with_no_level_is_unaffected(self):
         store = _store()
         offline = _StubOffline(frozenset())
-        assert await effective_disabled_tools(store, offline, OWNER) == mode_disabled_tools(
-            "normal"
-        )
+        assert await effective_disabled_tools(store, offline, OWNER) == frozenset()

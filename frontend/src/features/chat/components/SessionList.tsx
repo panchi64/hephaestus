@@ -7,7 +7,6 @@ import {
   on,
   type JSX,
 } from "solid-js";
-import { sessionModeSpec, type SessionMode } from "~/lib/modes";
 import {
   Button,
   Disclosure,
@@ -45,7 +44,7 @@ import { SessionRow } from "./SessionRow";
 /** What a directory's heading reports about the repository under it. Resolved by the
  *  caller from the live project listing — this component renders it and reads nothing. */
 export interface WorkspaceStatus {
-  /** The directory is not a git repository. A code thread cannot start here, so this
+  /** The directory is not a git repository. A worktree cannot be cut here, so this
    *  outranks everything else the heading could say. */
   notARepo?: boolean;
   /** Uncommitted work in the operator's own checkout, which a worktree cut from the
@@ -57,20 +56,17 @@ export interface SessionListProps {
   /** Resource accessor for the session summaries (undefined while loading). */
   sessions: () => ChatSummary[] | undefined;
   currentId: string | null;
-  /** Which mode's list this is — it decides the arrangement, not the contents.
-   *  Filtering happens upstream; this only knows how to lay out what it is given. */
-  mode: SessionMode;
   /** The rail's one menu instance, shared by every row. Owned upstream because these
    *  are the rail's actions on a thread; the list arranges rows and does not decide
    *  what can be done to one. */
   menu: ContextMenuApi;
   onSelect: (id: string) => void;
-  /** The directories a worktree mode files threads under, or undefined while the
-   *  listing is still in flight. **Undefined is not the same as empty**: a filed thread
-   *  whose directory this list does not carry is left out (see `groupSessions`), so
-   *  rendering an empty list against a loaded set of threads would blank the rail for
-   *  the width of a fetch. Held back as a loading state instead. */
-  directories?: readonly WorkspaceDirectory[];
+  /** The directories project threads file under, or undefined while the listing is
+   *  still in flight. **Undefined is not the same as empty**: a filed thread whose
+   *  directory this list does not carry is left out (see `groupSessions`), so rendering
+   *  an empty list against a loaded set of threads would blank the rail for the width of
+   *  a fetch. Held back as a loading state instead. */
+  directories: readonly WorkspaceDirectory[] | undefined;
   /** What each directory's heading reports, by project id. */
   status?: (projectId: string) => WorkspaceStatus | undefined;
   /** Start a thread in this directory. */
@@ -78,10 +74,7 @@ export interface SessionListProps {
   /** The per-directory menu, built by the caller — archiving and deleting a project are
    *  its business, not this list's. */
   actions?: (projectId: string) => MenuItem[];
-  /** Point at the chooser. The empty state's only offer, since a worktree mode with no
-   *  directories has nothing else it can do. */
-  onAddDirectory?: () => void;
-  /** The directory a staged (not yet sent) thread will work in. Its heading opens and
+  /** The project a staged (not yet sent) thread will be scoped to. Its heading opens and
    *  takes the selected paint, so a click in the rail is answered in the rail. */
   stagedProjectId?: string | null;
   /** What the rail's search cell holds. The field lives in the rail's command strip,
@@ -94,13 +87,13 @@ export interface SessionListProps {
 /** Searchable, pinnable thread list shared by the desktop rail and mobile
  *  drawer. Pinned threads sort first; the rest stay newest-first.
  *
- *  The arrangement varies by mode (`sessionGroups.ts`), and so does what a heading
- *  *is*. Code gets one collapsible section per working directory — including the
- *  directories holding nothing yet, because in code mode the directory is where work
- *  *starts* — and those headings are places, with controls. Normal and Research have
- *  no directory to file under, so they get recency captions instead: `Today`,
- *  `Yesterday`, and so on, which say once per run what a per-row stamp used to repeat
- *  on every row.
+ *  The arrangement follows what a thread has (`sessionGroups.ts`), and so does what a
+ *  heading *is*. A thread with a project gets one collapsible section per working
+ *  directory — including the directories holding nothing yet, because the directory is
+ *  where work *starts* — and those headings are places, with controls. A thread with no
+ *  project has no directory to file under, so it gets recency captions instead: `Today`,
+ *  `Yesterday`, and so on, which say once per run what a per-row stamp used to repeat on
+ *  every row.
  *
  *  A search collapses the difference — while a query is active the directory sections
  *  stay but every one of them opens, because a match the operator cannot see is the
@@ -114,17 +107,13 @@ export function SessionList(props: SessionListProps): JSX.Element {
     search: (s) => `${s.title} ${s.preview ?? ""} ${s.workspace ?? ""}`,
   });
   createEffect(() => view.setQuery(props.query()));
-  /** The grouping, or undefined while a worktree mode is still waiting on its
-   *  directories. One value rather than a second flag the render has to keep in step
-   *  with the first — see `directories` above for why the wait matters. */
+  /** The grouping, or undefined while the directories are still loading. One value
+   *  rather than a second flag the render has to keep in step with the first — see
+   *  `directories` above for why the wait matters. */
   const grouped = createMemo(() => {
     const dirs = props.directories;
-    // Keyed on the mode, not on whether a caller happened to pass an add handler: it
-    // is filing under directories that makes the wait necessary, and a caller that
-    // groups without offering to add would otherwise skip it and blank the list.
-    if (sessionModeSpec(props.mode).workspace === "worktree" && !dirs)
-      return undefined;
-    const all = groupSessions(orderSessions(view.items()), props.mode, {
+    if (!dirs) return undefined;
+    const all = groupSessions(orderSessions(view.items()), {
       directories: dirs,
       pinned: pinnedIds(),
     });
@@ -137,18 +126,18 @@ export function SessionList(props: SessionListProps): JSX.Element {
     };
   });
   const groups = createMemo(() => grouped()?.shown ?? []);
-  /** The section that opens itself when the operator has expressed no preference: the
-   *  first one, which is the most recently touched directory.
+  /** The directory section that opens itself when the operator has expressed no
+   *  preference: the first one, which is the most recently touched directory.
    *
    *  Read off the **unfiltered** run, or it would move as the operator types — and a
    *  section's resting state must not be a function of a query it is about to clear. */
-  const leadId = createMemo(() => grouped()?.all[0]?.id);
+  const leadId = createMemo(
+    () => grouped()?.all.find((g) => g.kind === "directory")?.id,
+  );
   const total = createMemo(() =>
     groups().reduce((n, group) => n + group.sessions.length, 0),
   );
-  /** Nothing at all to show — no threads *and* nowhere to start one. In a worktree
-   *  mode that is the first-run screen and it gets its own offer; elsewhere it is the
-   *  ordinary empty list. */
+  /** Nothing at all to show — no threads *and* no directory to start one in. */
   const barren = createMemo(() => total() === 0 && groups().length === 0);
 
   return (
@@ -163,30 +152,9 @@ export function SessionList(props: SessionListProps): JSX.Element {
       <Show
         when={!barren()}
         fallback={
-          <Show
-            when={props.onAddDirectory && !view.isFiltered()}
-            fallback={
-              <EmptyState
-                message={view.isFiltered() ? "No matches" : "No threads"}
-              />
-            }
-          >
-            <EmptyState
-              icon="library"
-              message="No directories yet"
-              hint="A code thread works in a git worktree of a directory on this machine — pick one to start."
-              action={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  leading="library"
-                  onClick={() => props.onAddDirectory?.()}
-                >
-                  Add directory
-                </Button>
-              }
-            />
-          </Show>
+          <EmptyState
+            message={view.isFiltered() ? "No matches" : "No threads"}
+          />
         }
       >
         {/* A group's kind is fixed for the life of the object, and `<For>` mints a new
@@ -202,19 +170,9 @@ export function SessionList(props: SessionListProps): JSX.Element {
                 menu={props.menu}
                 forceOpen={view.isFiltered()}
                 lead={group.id === leadId()}
-                // A directory match, never a null one: `Unfiled` has no project, and
-                // comparing null to the "nothing staged" null would mark it as the
-                // place the next thread lands — the one section it cannot be.
-                staged={
-                  group.projectId !== null &&
-                  group.projectId === props.stagedProjectId
-                }
-                status={
-                  group.projectId ? props.status?.(group.projectId) : undefined
-                }
-                actions={
-                  group.projectId ? props.actions?.(group.projectId) : undefined
-                }
+                staged={group.projectId === props.stagedProjectId}
+                status={props.status?.(group.projectId)}
+                actions={props.actions?.(group.projectId)}
                 onNewThread={props.onNewThread}
                 onSelect={props.onSelect}
                 unread={props.unread}
@@ -272,7 +230,8 @@ function SessionRows(props: {
 }
 
 /**
- * A run of threads under a plain caption — the sandbox modes' recency buckets.
+ * A run of threads under a plain caption — the recency buckets of threads with no
+ * project.
  *
  * No disclosure, and that is the whole difference from a directory section. A bucket is
  * not somewhere the operator goes, so there is nothing to navigate to and nothing to
@@ -319,7 +278,7 @@ function DirectorySection(props: {
   currentId: string | null;
   menu: ContextMenuApi;
   forceOpen: boolean;
-  /** The first section in the list — the most recently touched directory. */
+  /** The first directory in the list — the most recently touched. */
   lead: boolean;
   staged: boolean;
   status?: WorkspaceStatus;
@@ -339,9 +298,7 @@ function DirectorySection(props: {
   // opened — the one place work is likeliest to continue). Everything else starts shut,
   // because a cold load that opened all twelve would be a screen of headings with the
   // threads pushed off the bottom.
-  // Keyed by the group's own id — the project id for a directory, and the literal
-  // `Unfiled` for the run that has none. A section without a project is still a section
-  // the operator can close and expect to stay closed.
+  // Keyed by the group's own id, which is the project id.
   const stored = () => workspaceOpen(props.group.id);
   const holdsCurrent = () =>
     props.group.sessions.some((s) => s.id === props.currentId);
@@ -404,50 +361,37 @@ function DirectorySection(props: {
           </>
         }
         actions={
-          <Show
-            when={props.group.projectId}
-            // `Unfiled` has no directory, so neither control means anything on
-            // it — but the gutter has to stay, or its count would sit where every
-            // other section's buttons are. Two `size-7` slots, which is why both
-            // controls below are pinned to that size rather than sized by their
-            // own contents: a gutter that tracked the label inside a button would
-            // shift the column the day that label changed.
-            fallback={<span aria-hidden class="h-7 w-14 shrink-0" />}
-          >
-            {(projectId) => (
-              <>
-                <Tooltip label={`New thread in ${label()}`} side="right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    leading="plus"
-                    aria-label={`New thread in ${label()}`}
-                    class="size-7 shrink-0"
-                    onClick={() => props.onNewThread?.(projectId())}
-                  />
-                </Tooltip>
-                <Show when={props.actions}>
-                  {(items) => (
-                    <Menu
-                      items={items()}
-                      trigger={
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`${label()} actions`}
-                          // Quiet at rest — the plus is the one control this row
-                          // is for. Keyboard focus and touch still reach it.
-                          class={cx("size-7 shrink-0", REVEAL_ON_GROUP_HOVER)}
-                        >
-                          ···
-                        </Button>
-                      }
-                    />
-                  )}
-                </Show>
-              </>
-            )}
-          </Show>
+          <>
+            <Tooltip label={`New thread in ${label()}`} side="right">
+              <Button
+                variant="ghost"
+                size="sm"
+                leading="plus"
+                aria-label={`New thread in ${label()}`}
+                class="size-7 shrink-0"
+                onClick={() => props.onNewThread?.(props.group.projectId)}
+              />
+            </Tooltip>
+            <Show when={props.actions}>
+              {(items) => (
+                <Menu
+                  items={items()}
+                  trigger={
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`${label()} actions`}
+                      // Quiet at rest — the plus is the one control this row is
+                      // for. Keyboard focus and touch still reach it.
+                      class={cx("size-7 shrink-0", REVEAL_ON_GROUP_HOVER)}
+                    >
+                      ···
+                    </Button>
+                  }
+                />
+              )}
+            </Show>
+          </>
         }
       >
         <SessionRows
@@ -519,7 +463,7 @@ function WorkspaceStatusMark(props: { status?: WorkspaceStatus }): JSX.Element {
         >
           <Tooltip
             side="right"
-            label="Not a git repository — a code thread can't start here"
+            label="Not a git repository — a worktree can't be cut here"
           >
             <Icon name="warning" size={12} class="shrink-0 text-warn" />
           </Tooltip>

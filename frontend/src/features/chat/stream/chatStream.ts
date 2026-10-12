@@ -31,7 +31,6 @@ import { createStore, produce, reconcile } from "solid-js/store";
 import { api, isApiError } from "~/lib/api";
 import { effectiveSelection, type ModelSelection } from "~/lib/stores/models";
 import type { TaskItem } from "~/lib/stream";
-import type { SessionMode } from "~/lib/modes";
 import type { PlanDocument } from "../model";
 import { toast } from "~/ui";
 import { CONTINUE_PROMPT } from "../data/constants";
@@ -70,14 +69,12 @@ export interface ChatStreamOptions {
   /** Mark a freshly-created conversation as scratch (hidden from the sidebar
    *  listing). Used by compare panes — throwaway threads, not saved history. */
   ephemeral?: boolean;
-  /** What kind of thread the *next new* conversation should be — an ordinary one, a
-   *  research thread, or a code thread working in `projectId`'s git worktree. Read
-   *  only when a send creates the conversation — the binding is immutable afterwards,
-   *  and the backend owns it from then on. */
-  mode?: () => SessionMode;
+  /** The project the *next new* conversation is scoped to, if any. Read only when a
+   *  send creates the conversation — the binding is immutable afterwards, and the
+   *  backend owns it from then on. */
   projectId?: () => string | undefined;
   /** How far the model may go this turn — and from this turn onwards. Unlike the
-   *  mode, sent on **every** send: the level is the operator's live control, so
+   *  project, sent on **every** send: the level is the operator's live control, so
    *  switching it mid-thread is a plain message rather than a separate call, and the
    *  backend persists whatever the last send named. */
   permission?: () => PermissionLevel;
@@ -401,10 +398,9 @@ export function createChatStream(
         // Only meaningful when this turn creates the conversation; the backend
         // ignores it when continuing one.
         ephemeral: wasNew && options.ephemeral ? true : undefined,
-        // Likewise: a thread's mode and project are set once, at creation. The
-        // backend re-reads them off the conversation for every later turn, so
-        // sending them again would be a second source for one fact.
-        mode: wasNew ? options.mode?.() : undefined,
+        // Likewise: a thread's project is set once, at creation. The backend
+        // re-reads it off the conversation for every later turn, so sending it again
+        // would be a second source for one fact.
         project_id: wasNew ? options.projectId?.() : undefined,
         // The level, on the other hand, is sent every time: it is the one binding
         // fact that moves, and the composer's control moves it by being read here on

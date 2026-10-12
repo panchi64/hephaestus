@@ -3,7 +3,7 @@
 A workspace key has always been able to name a *delegation* of a workspace rather than the
 workspace itself — a forked sandbox is keyed ``<parent>/<child>`` — but only the sandbox
 half read it that way. The worktree half keyed off the conversation instead, which is why a
-delegated run in code mode could be handed its own container and never its own checkout:
+delegated run in a project folder could be handed its own container and never its own checkout:
 its conversation does not hold the project, so it was refused as a rival for it.
 
 These hold the two halves of that: that the split is read the same way everywhere, and that

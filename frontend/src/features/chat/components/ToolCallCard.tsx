@@ -36,7 +36,7 @@ const iconTone: Record<ToolInvocation["status"], string> = {
  *
  *  Six characters, not five: `num(s, 2)` plus the `S` suffix is `0.38S` for a fast
  *  call but `12.34S` for anything over ten seconds, and a shell command or a
- *  research call is routinely over ten seconds. Reserving five put the shift back
+ *  web fetch is routinely over ten seconds. Reserving five put the shift back
  *  exactly where the reservation was supposed to remove it. (A call over 100s
  *  still gains a character; at that point the operator has not had a pointer
  *  resting on the row for two minutes.) */

@@ -14,7 +14,7 @@ whole turn's prefix cache. Keyed by the run rather than by the directory so the 
 still re-reads — a later turn is exactly where a project's agent files may legitimately
 have changed since.
 
-**Worktree modes only.** A sandbox workspace is scratch space with no repository in it to
+**Project folders only.** A sandbox workspace is scratch space with no repository in it to
 declare anything, so outside a worktree this is the built-ins and nothing else — and, more
 to the point, no filesystem walk at all.
 """
@@ -26,10 +26,10 @@ from pathlib import Path
 
 from pydantic_ai import RunContext
 
-from services.modes import mode_spec
 from services.projects.worktree import WorktreeBusyError
 from services.subagents import BUILTIN, SubagentSpec, merged_roster
 from services.subagents.definitions import project_specs
+from services.workspace_kind import is_project_folder
 
 from .deps import RunDeps
 from .workspace import run_workspace
@@ -54,7 +54,7 @@ async def run_roster(ctx: RunContext[RunDeps]) -> dict[str, SubagentSpec]:
 
 
 async def _project_specs(ctx: RunContext[RunDeps]) -> tuple[SubagentSpec, ...]:
-    if mode_spec(ctx.deps.mode).workspace != "worktree":
+    if not is_project_folder(ctx.deps.workspace_kind):
         return ()
     try:
         workspace = await run_workspace(ctx)

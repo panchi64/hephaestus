@@ -8,7 +8,7 @@ told about. Calling this re-stages the original bytes at the same path. It also 
 attachment from an older turn the agent wants to compute on now.
 
 *Which* workspace comes from the run's resolver (``tools/workspace.py``), not from the
-sandbox directly — a code thread stages into its worktree, where its file and shell
+sandbox directly — a worktree thread stages into its worktree, where its file and shell
 tools can actually reach the file.
 
 It **provisions**, never reads: the file's bytes go into the workspace, not through the
