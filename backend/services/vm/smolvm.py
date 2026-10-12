@@ -42,6 +42,13 @@ logger = logging.getLogger(__name__)
 PROVISION_SCRIPT = Path(__file__).resolve().parents[2] / "vm" / "provision.sh"
 _GUEST_OS = "ubuntu"
 _MACHINE = "q35"
+#: Every guest command starts from this environment. smolvm's vsock agent passes on its
+#: init's, which exports no PATH, while its SSH channel passes a login's; neither is ours.
+_GUEST_ENV = (
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "HOME=/root",
+    "LANG=C.UTF-8",
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,10 @@ class CleanImage:
     disk: Path
     kernel: Path
     boot_args: str
+
+
+def _guest_command(argv: list[str]) -> str:
+    return shlex.join(["/usr/bin/env", "-i", *_GUEST_ENV, *argv])
 
 
 def image_fingerprint(ca_bundle: Path | None = None) -> str:
@@ -109,7 +120,7 @@ class SmolvmDriver:
         vm = self._require()
         try:
             result = await asyncio.to_thread(
-                vm.run, shlex.join(argv), timeout=math.ceil(timeout_s), shell="raw"
+                vm.run, _guest_command(argv), timeout=math.ceil(timeout_s), shell="raw"
             )
         except SmolVMError as exc:
             raise VMError(f"the platform VM did not run the command: {exc}") from exc
@@ -228,10 +239,11 @@ class SmolvmDriver:
             vm.upload_file(PROVISION_SCRIPT, "/root/provision.sh")
             if self._ca_bundle is not None:
                 vm.upload_file(self._ca_bundle, "/root/extra-ca.crt")
+            argv = ["bash", "/root/provision.sh"]
+            if self._ca_bundle is not None:
+                argv.append("/root/extra-ca.crt")
             result = vm.run(
-                "bash /root/provision.sh /root/extra-ca.crt"
-                if self._ca_bundle is not None
-                else "bash /root/provision.sh",
+                _guest_command(argv),
                 timeout=math.ceil(self._provision_timeout_s),
                 shell="raw",
             )
