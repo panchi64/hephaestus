@@ -56,11 +56,6 @@ export const SKILL_DESCRIPTION_MAX = 1024;
 /** Lowercase letters, numbers, and hyphens. */
 export const SKILL_NAME_PATTERN = /^[a-z0-9-]+$/;
 
-/** `"12 / 64"` — the live count under a length-limited field. */
-export function charCount(value: string, max: number): string {
-  return `${value.length} / ${max}`;
-}
-
 /** Maps a skill's published state to its StatusFlag accent — the same active /
  *  inactive pair the document library uses (`active: nominal`, `archived: idle`).
  *  A draft is **`idle`, not `warn`**: amber means caution system-wide, and an

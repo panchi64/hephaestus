@@ -1,5 +1,6 @@
 import { createEffect, createSignal, For, on, Show, type JSX } from "solid-js";
-import { Disclosure, Input, ListRow, Text, Tooltip } from "~/ui";
+import { Disclosure, Icon, Input, ListRow, Text, Tooltip, cx } from "~/ui";
+import { readLS, writeLS } from "~/lib/storage";
 import { SETTINGS_GROUPS, type SettingsSection } from "./sections";
 import { searchSettingsSections } from "./sections-search";
 
@@ -7,6 +8,39 @@ import { searchSettingsSections } from "./sections-search";
  *  looks the way they left it the next time the dialog opens. Not persisted:
  *  it is a view state, not a preference, and the backend owns preferences. */
 const [collapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
+
+const NAV_COLLAPSED_KEY = "ody.settings.navCollapsed";
+
+/** Whether the column is folded to its icon rail. Remembered across opens, and
+ *  across reloads where storage allows; unreadable storage reads as expanded. */
+const [navCollapsed, setNavCollapsed] = createSignal(
+  readLS(NAV_COLLAPSED_KEY) === "1",
+);
+
+function toggleNav(): void {
+  const next = !navCollapsed();
+  setNavCollapsed(next);
+  writeLS(NAV_COLLAPSED_KEY, next ? "1" : "0");
+}
+
+function NavToggle(): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={toggleNav}
+      aria-label={
+        navCollapsed()
+          ? "Expand settings navigation"
+          : "Collapse settings navigation"
+      }
+      aria-expanded={!navCollapsed()}
+      title={navCollapsed() ? "Expand navigation" : "Collapse navigation"}
+      class="flex size-8 shrink-0 items-center justify-center text-dim transition-colors hover:bg-raised hover:text-bright"
+    >
+      <Icon name="panel-right" size={16} class="-scale-x-100" />
+    </button>
+  );
+}
 
 function toggleGroup(id: string): void {
   setCollapsed((prev) => {
@@ -89,69 +123,118 @@ export function SectionList(props: {
 
   return (
     <nav
-      class="scrollbar-thin flex w-56 shrink-0 flex-col gap-2 overflow-y-auto p-2"
+      class={cx(
+        "scrollbar-thin flex shrink-0 flex-col gap-2 overflow-y-auto p-2",
+        navCollapsed() ? "w-12 items-center" : "w-56",
+      )}
       aria-label="Settings sections"
     >
-      <div class="px-1 pt-1">
-        <Input
-          leading="search"
-          placeholder="Search settings…"
-          aria-label="Search settings"
-          value={query()}
-          onInput={(e) => setQuery(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            // Enter takes the top hit — the field is the fastest path to a pane,
-            // and making the operator leave the keyboard to click would undo that.
-            if (e.key === "Enter") {
-              const first = hits()[0];
-              if (first) props.onSelect(first.section.id);
-              return;
-            }
-            // Escape clears the query before it closes the dialog: a typed
-            // search is the thing on screen, so it is the thing Escape undoes.
-            if (e.key === "Escape" && searching()) {
-              e.stopPropagation();
-              setQuery("");
-            }
-          }}
-        />
-      </div>
-
-      <Show
-        when={searching()}
-        fallback={
-          <div class="flex flex-col gap-2">
-            <For each={SETTINGS_GROUPS}>
-              {(group) => (
-                <Disclosure
-                  label={group.label}
-                  open={!collapsed().has(group.id)}
-                  onToggle={() => toggleGroup(group.id)}
-                  triggerClass="w-full px-2 py-1"
-                  class="mt-0.5 flex flex-col gap-0.5"
-                >
-                  <For each={group.sections}>{(section) => row(section)}</For>
-                </Disclosure>
-              )}
-            </For>
+      <Show when={navCollapsed()}>
+        <NavToggle />
+        <Tooltip label="Search settings" side="right" class="block">
+          <button
+            type="button"
+            aria-label="Search settings"
+            onClick={toggleNav}
+            class="flex size-8 items-center justify-center text-dim transition-colors hover:bg-raised hover:text-bright"
+          >
+            <Icon name="search" size={16} />
+          </button>
+        </Tooltip>
+        <For each={SETTINGS_GROUPS}>
+          {(group) => (
+            <div class="flex flex-col gap-0.5 border-t border-line pt-2">
+              <For each={group.sections}>
+                {(section) => (
+                  <Tooltip label={section.label} side="right" class="block">
+                    <button
+                      type="button"
+                      aria-label={section.label}
+                      aria-current={
+                        section.id === props.active.id ? "page" : undefined
+                      }
+                      onClick={() => props.onSelect(section.id)}
+                      class={cx(
+                        "flex size-8 items-center justify-center transition-colors hover:bg-raised hover:text-bright",
+                        section.id === props.active.id
+                          ? "bg-raised text-bright"
+                          : "text-dim",
+                      )}
+                    >
+                      <Icon name={section.icon} size={16} />
+                    </button>
+                  </Tooltip>
+                )}
+              </For>
+            </div>
+          )}
+        </For>
+      </Show>
+      <Show when={!navCollapsed()}>
+        <div class="flex items-center gap-1 px-1 pt-1">
+          <div class="min-w-0 flex-1">
+            <Input
+              leading="search"
+              placeholder="Search settings…"
+              aria-label="Search settings"
+              value={query()}
+              onInput={(e) => setQuery(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                // Enter takes the top hit — the field is the fastest path to a pane,
+                // and making the operator leave the keyboard to click would undo that.
+                if (e.key === "Enter") {
+                  const first = hits()[0];
+                  if (first) props.onSelect(first.section.id);
+                  return;
+                }
+                // Escape clears the query before it closes the dialog: a typed
+                // search is the thing on screen, so it is the thing Escape undoes.
+                if (e.key === "Escape" && searching()) {
+                  e.stopPropagation();
+                  setQuery("");
+                }
+              }}
+            />
           </div>
-        }
-      >
+          <NavToggle />
+        </div>
+
         <Show
-          when={hits().length}
+          when={searching()}
           fallback={
-            <div class="px-3 py-2">
-              <Text variant="micro" tone="dim">
-                Nothing matches “{query().trim()}”.
-              </Text>
+            <div class="flex flex-col gap-2">
+              <For each={SETTINGS_GROUPS}>
+                {(group) => (
+                  <Disclosure
+                    label={group.label}
+                    open={!collapsed().has(group.id)}
+                    onToggle={() => toggleGroup(group.id)}
+                    triggerClass="w-full px-2 py-1"
+                    class="mt-0.5 flex flex-col gap-0.5"
+                  >
+                    <For each={group.sections}>{(section) => row(section)}</For>
+                  </Disclosure>
+                )}
+              </For>
             </div>
           }
         >
-          <div class="flex flex-col gap-0.5">
-            <For each={hits()}>
-              {(hit) => row(hit.section, hit.group.label)}
-            </For>
-          </div>
+          <Show
+            when={hits().length}
+            fallback={
+              <div class="px-3 py-2">
+                <Text variant="micro" tone="dim">
+                  Nothing matches “{query().trim()}”.
+                </Text>
+              </div>
+            }
+          >
+            <div class="flex flex-col gap-0.5">
+              <For each={hits()}>
+                {(hit) => row(hit.section, hit.group.label)}
+              </For>
+            </div>
+          </Show>
         </Show>
       </Show>
     </nav>

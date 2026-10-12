@@ -8,23 +8,26 @@ import {
   type Agent,
 } from "../model";
 
-/** The agent's published / draft / shadowed state, and for an agent-authored
- *  draft the plain statement that it is waiting on the operator. */
-export function AgentStateFlags(props: { agent: Agent }): JSX.Element {
+/** The agent's published / draft state, a SHADOWED marker when a published
+ *  agent's name resolves to a higher-precedence one, and — where `awaiting` is
+ *  set — the plain statement that an agent-authored draft is waiting on the
+ *  operator. */
+export function AgentStateFlags(props: {
+  agent: Agent;
+  awaiting?: boolean;
+}): JSX.Element {
   const state = () => agentState(props.agent);
   return (
     <>
-      <Show when={isAwaitingPublish(props.agent)}>
+      <Show when={props.awaiting && isAwaitingPublish(props.agent)}>
         <StatusFlag status="info">AWAITING PUBLISH</StatusFlag>
       </Show>
-      <Show
-        when={state() === "shadowed"}
-        fallback={
-          <StatusFlag status={agentStateFlag(state())}>
-            {agentStateLabel(state())}
-          </StatusFlag>
-        }
+      <StatusFlag
+        status={agentStateFlag(props.agent.published ? "published" : "draft")}
       >
+        {agentStateLabel(props.agent.published ? "published" : "draft")}
+      </StatusFlag>
+      <Show when={state() === "shadowed"}>
         <Text variant="micro" tone="dim">
           SHADOWED
         </Text>

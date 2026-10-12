@@ -1,7 +1,8 @@
 import { createEffect, createSignal, Show, type JSX } from "solid-js";
-import { Button, Input, Modal, Stack, Text, Textarea } from "~/ui";
+import { Button, Modal, Stack, Text } from "~/ui";
+import { IdentityFields } from "~/features/library";
 import { agentErrorField, agentErrorMessage, createAgent } from "../data";
-import { AGENT_NAME_PATTERN } from "../model";
+import { AGENT_DESCRIPTION_MAX, AGENT_NAME_PATTERN } from "../model";
 
 type Errors = Partial<Record<"name" | "description", string>>;
 
@@ -26,7 +27,6 @@ export function NewAgentDialog(props: {
     setFormError("");
   });
 
-  const malformed = () => name() !== "" && !AGENT_NAME_PATTERN.test(name());
   const canSubmit = () =>
     name().trim() !== "" && description().trim() !== "" && !busy();
 
@@ -80,30 +80,19 @@ export function NewAgentDialog(props: {
           A new agent starts as a draft. Publish it once its instructions and
           limits read right.
         </Text>
-        <Input
-          label="Name"
-          value={name()}
+        <IdentityFields
+          name={name()}
+          description={description()}
+          onNameInput={setName}
+          onDescriptionInput={setDescription}
+          namePattern={AGENT_NAME_PATTERN}
+          patternHint="lowercase letters, digits, hyphens and underscores only"
+          descriptionMax={AGENT_DESCRIPTION_MAX}
+          namePlaceholder="code-reviewer"
+          descriptionPlaceholder="What this agent is for and when to hand work to it."
+          errors={errors()}
+          disabled={busy()}
           autofocus
-          disabled={busy()}
-          invalid={Boolean(errors().name) || malformed()}
-          hint={
-            errors().name ??
-            (malformed()
-              ? "Lowercase letters, digits, hyphens and underscores only"
-              : undefined)
-          }
-          placeholder="code-reviewer"
-          onInput={(e) => setName(e.currentTarget.value)}
-        />
-        <Textarea
-          label="Description"
-          value={description()}
-          disabled={busy()}
-          invalid={Boolean(errors().description)}
-          hint={errors().description}
-          placeholder="What this agent is for and when to hand work to it."
-          rows={3}
-          onInput={(e) => setDescription(e.currentTarget.value)}
         />
         <Show when={formError()}>
           <Text variant="micro" tone="alert">

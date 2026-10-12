@@ -1,32 +1,28 @@
-import { createSignal, For, Show, Suspense, type JSX } from "solid-js";
+import { createSignal, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
-import {
-  Button,
-  EmptyState,
-  ListGroupHeader,
-  ListRow,
-  LoadingText,
-  Menu,
-  PageHeader,
-  Panel,
-  Stack,
-  Text,
-  InstrumentBand,
-  confirm,
-  toast,
-} from "~/ui";
+import { StatusFlag, confirm, toast } from "~/ui";
+import { compareByName, LibraryDirectory } from "~/features/library";
 import {
   agentErrorMessage,
   deleteAgent,
+  exportAgent,
+  importAgent,
   setAgentPublished,
   useAgents,
 } from "../data";
-import { groupAgentsBySource, isAwaitingPublish, type Agent } from "../model";
+import {
+  compareAgentsBySource,
+  agentSourceTag,
+  isAwaitingPublish,
+  type Agent,
+} from "../model";
 import { AgentStateFlags } from "../components/AgentStateFlags";
 import { NewAgentDialog } from "../components/NewAgentDialog";
 
 export function AgentsDirectoryScreen(props: {
   onOpen: (id: string) => void;
+  /** Open an agent straight into editing. */
+  onEdit: (id: string) => void;
 }): JSX.Element {
   const agentsResource = useAgents();
   const agents = (): Agent[] => settled(agentsResource) ?? [];
@@ -34,14 +30,29 @@ export function AgentsDirectoryScreen(props: {
     agentsResource.error
       ? agentErrorMessage(agentsResource.error, "Could not load agents.")
       : null;
-  const groups = () => groupAgentsBySource(agents());
   const [newOpen, setNewOpen] = createSignal(false);
+  const [importing, setImporting] = createSignal(false);
+
+  async function handleImport(file: File | undefined): Promise<void> {
+    if (!file || importing()) return;
+    setImporting(true);
+    try {
+      const agent = await importAgent(file);
+      toast.success(`Imported "${agent.name}" as a draft`, {
+        action: { label: "Open", onClick: () => props.onOpen(agent.id) },
+      });
+    } catch (err) {
+      toast.error(agentErrorMessage(err, "Could not import the agent file."));
+    } finally {
+      setImporting(false);
+    }
+  }
 
   async function handleDelete(agent: Agent): Promise<void> {
     const ok = await confirm({
       title: `Delete "${agent.name}"?`,
       detail:
-        "The agent is permanently removed. Threads already running as it keep their record, but can no longer be sent to it.",
+        "The agent is permanently removed. Threads already running as it keep their record, but can no longer be sent to it. Export it first if you want a copy.",
       confirmLabel: "Delete",
       tone: "alert",
     });
@@ -58,11 +69,6 @@ export function AgentsDirectoryScreen(props: {
     const next = !agent.published;
     try {
       await setAgentPublished(agent.id, next);
-      toast.success(
-        next
-          ? `"${agent.name}" published — threads can run as it now.`
-          : `"${agent.name}" unpublished — back to draft.`,
-      );
     } catch (err) {
       toast.error(
         agentErrorMessage(
@@ -70,140 +76,121 @@ export function AgentsDirectoryScreen(props: {
           `Could not ${next ? "publish" : "unpublish"} "${agent.name}"`,
         ),
       );
+      return;
+    }
+    toast.success(
+      next
+        ? `"${agent.name}" published — threads can run as it now.`
+        : `"${agent.name}" unpublished — back to draft.`,
+      {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            setAgentPublished(agent.id, !next).catch(() =>
+              toast.error("Could not undo"),
+            );
+          },
+        },
+      },
+    );
+  }
+
+  async function handleExport(agent: Agent): Promise<void> {
+    try {
+      await exportAgent(agent.id, agent.name);
+    } catch (err) {
+      toast.error(agentErrorMessage(err, `Could not export "${agent.name}"`));
     }
   }
 
   const awaiting = () => agents().filter(isAwaitingPublish).length;
-  const published = () => agents().filter((a) => a.published).length;
 
   return (
-    <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Agents"
-        subtitle="Named agents a thread can run as — their own instructions, tools and limits."
-        assetId="ODY-AGT-01.0"
-        actions={
-          <Button
-            variant="primary"
-            leading="plus"
-            onClick={() => setNewOpen(true)}
-          >
-            New agent
-          </Button>
-        }
-      />
-
-      <InstrumentBand
-        items={[
-          { label: "Total", value: String(agents().length) },
-          { label: "Published", value: String(published()), tone: "nominal" },
-          {
-            label: "Awaiting you",
-            value: String(awaiting()),
-            tone: awaiting() > 0 ? "bright" : "dim",
-          },
-        ]}
-      />
-
-      <Panel flush>
-        <Suspense
-          fallback={
-            <div class="p-4">
-              <LoadingText />
-            </div>
-          }
-        >
-          <Show
-            when={groups().length}
-            fallback={
-              <EmptyState
-                icon="layers"
-                message={loadError() ? "Agents unavailable" : "No agents"}
-                hint={loadError() ?? "Create an agent to get started."}
-              />
-            }
-          >
-            <For each={groups()}>
-              {(group) => (
-                <>
-                  <ListGroupHeader
-                    variant="plate"
-                    label={group.label}
-                    count={group.agents.length}
-                  />
-                  <For each={group.agents}>
-                    {(agent) => (
-                      <ListRow
-                        label={agent.name}
-                        description={agent.description}
-                        leading="layers"
-                        onClick={() => props.onOpen(agent.id)}
-                        right={
-                          <span class="flex shrink-0 items-center gap-3">
-                            <AgentStateFlags agent={agent} />
-                            <Show when={!agent.editable}>
-                              <Text variant="micro" tone="dim">
-                                READ-ONLY
-                              </Text>
-                            </Show>
-                            <Show when={agent.editable}>
-                              <span
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                              >
-                                <Menu
-                                  trigger={
-                                    <span class="px-1 text-dim hover:text-bright">
-                                      <Text variant="micro">···</Text>
-                                    </span>
-                                  }
-                                  items={[
-                                    {
-                                      label: "Edit",
-                                      icon: "edit",
-                                      onSelect: () => props.onOpen(agent.id),
-                                    },
-                                    {
-                                      label: agent.published
-                                        ? "Unpublish"
-                                        : "Publish",
-                                      icon: "check",
-                                      onSelect: () =>
-                                        void handlePublishToggle(agent),
-                                    },
-                                    {
-                                      label: "Delete",
-                                      icon: "trash",
-                                      danger: true,
-                                      onSelect: () => void handleDelete(agent),
-                                    },
-                                  ]}
-                                />
-                              </span>
-                            </Show>
-                          </span>
-                        }
-                      />
-                    )}
-                  </For>
-                </>
-              )}
-            </For>
+    <LibraryDirectory
+      title="Agents"
+      subtitle="Named agents a thread can run as — their own instructions, tools and limits."
+      assetId="ODY-AGT-01.0"
+      noun="agent"
+      nouns="agents"
+      icon="layers"
+      items={agents()}
+      loadError={loadError()}
+      sorts={{
+        name: { label: "Name", compare: compareByName },
+        source: { label: "Source", compare: compareAgentsBySource },
+      }}
+      initialSort="name"
+      initialDir="asc"
+      bandExtra={[
+        {
+          label: "Awaiting you",
+          value: String(awaiting()),
+          tone: awaiting() > 0 ? "bright" : "dim",
+        },
+      ]}
+      draftHint="A draft is not offered to threads. Publishing is what lets a thread run as the agent — imported files and agent-drafted agents always land as drafts so you can read them first."
+      importHint="Accepts an agent file (.md) — a name and description in frontmatter, with the instructions as the body. It lands as a draft."
+      importAccept=".md"
+      importing={importing()}
+      onImport={(file) => void handleImport(file)}
+      onNew={() => setNewOpen(true)}
+      onOpen={(agent) => props.onOpen(agent.id)}
+      emptyCreateHint="Create an agent or import an agent file."
+      rowRight={(agent) => (
+        <>
+          <Show when={agentSourceTag(agent.source)}>
+            {(tag) => <StatusFlag status="idle">{tag()}</StatusFlag>}
           </Show>
-        </Suspense>
-      </Panel>
-
+          <AgentStateFlags agent={agent} />
+        </>
+      )}
+      menuItems={(agent) =>
+        agent.editable
+          ? [
+              {
+                label: "Edit",
+                icon: "edit",
+                onSelect: () => props.onEdit(agent.id),
+              },
+              {
+                label: "Export",
+                icon: "download",
+                onSelect: () => void handleExport(agent),
+              },
+              {
+                label: agent.published ? "Unpublish" : "Publish",
+                icon: "check",
+                onSelect: () => void handlePublishToggle(agent),
+              },
+              {
+                label: "Delete",
+                icon: "trash",
+                danger: true,
+                onSelect: () => void handleDelete(agent),
+              },
+            ]
+          : [
+              {
+                label: "Open",
+                icon: "eye",
+                onSelect: () => props.onOpen(agent.id),
+              },
+              {
+                label: "Export",
+                icon: "download",
+                onSelect: () => void handleExport(agent),
+              },
+            ]
+      }
+    >
       <NewAgentDialog
         open={newOpen()}
         onClose={() => setNewOpen(false)}
         onCreated={(id) => {
           setNewOpen(false);
-          props.onOpen(id);
+          props.onEdit(id);
         }}
       />
-    </Stack>
+    </LibraryDirectory>
   );
 }

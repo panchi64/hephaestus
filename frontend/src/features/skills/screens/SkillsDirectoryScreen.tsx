@@ -1,28 +1,11 @@
-import { createSignal, For, Show, Suspense, type JSX } from "solid-js";
+import { createSignal, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
+import { StatusFlag, Text, confirm, toast } from "~/ui";
 import {
-  Button,
-  EmptyState,
-  HIDDEN_FILE_INPUT,
-  InfoHint,
-  InstrumentBand,
-  ListRow,
-  ListToolbar,
-  LoadingText,
-  Menu,
-  PageHeader,
-  Panel,
-  Row,
-  Stack,
-  StatusFlag,
-  Tabs,
-  Text,
-  confirm,
-  toast,
-  useFileDrop,
-} from "~/ui";
-import { createListView } from "~/lib/list";
-import { useTabParam } from "~/lib/useTabParam";
+  compareByName,
+  compareByUpdated,
+  LibraryDirectory,
+} from "~/features/library";
 import { bytes, relativeTime } from "~/lib/format";
 import {
   deleteSkill,
@@ -40,20 +23,13 @@ import {
 } from "../model";
 import { NewSkillDialog } from "../components/NewSkillDialog";
 
-const STATUS_TABS = [
-  { value: "all", label: "All" },
-  { value: "published", label: "Published" },
-  { value: "draft", label: "Draft" },
-];
-const STATUS_VALUES = ["all", "published", "draft"] as const;
-type StatusFilter = (typeof STATUS_VALUES)[number];
-
 export function SkillsDirectoryScreen(props: {
-  /** Open a skill's editor. The directory used to navigate to `/skills/{id}`;
-   *  it now lives inside the settings dialog, which owns that second level, so
-   *  where "open" goes is the caller's business rather than a route this
-   *  component hard-codes. */
+  /** Open a skill's read view. The directory lives inside the settings dialog,
+   *  which owns that second level, so where "open" goes is the caller's
+   *  business rather than a route this component hard-codes. */
   onOpen: (id: string) => void;
+  /** Open a skill straight into editing. */
+  onEdit: (id: string) => void;
 }): JSX.Element {
   const skillsResource = useSkills();
   // Reading a Solid resource accessor re-throws its error (same hazard GalleryScreen
@@ -66,18 +42,10 @@ export function SkillsDirectoryScreen(props: {
     skillsResource.error
       ? skillErrorMessage(skillsResource.error, "Could not load skills.")
       : null;
-  const [statusFilter, setStatusFilter] = useTabParam<StatusFilter>(
-    "tab",
-    STATUS_VALUES,
-    "all",
-  );
   const [newOpen, setNewOpen] = createSignal(false);
   const [importing, setImporting] = createSignal(false);
 
   // ── import ──────────────────────────────────────────────────────────────
-
-  /** The endpoint takes one bundle per call, so only the first pick is sent. */
-  const picker = useFileDrop((files) => void handleImport(files[0]));
 
   async function handleImport(file: File | undefined): Promise<void> {
     if (!file || importing()) return;
@@ -159,227 +127,88 @@ export function SkillsDirectoryScreen(props: {
 
   // ── derived ─────────────────────────────────────────────────────────────
 
-  const publishedCount = () => skills().filter((s) => s.published).length;
-  const draftCount = () => skills().length - publishedCount();
   const totalBytes = () => skills().reduce((sum, s) => sum + s.sizeBytes, 0);
 
-  const inTab = () => {
-    const f = statusFilter();
-    if (f === "all") return skills();
-    return skills().filter((s) => s.published === (f === "published"));
-  };
-
-  /** Why the list is empty, when the load itself succeeded. */
-  const emptyHint = (): string => {
-    if (view.isFiltered()) return "No skills match your search.";
-    return statusFilter() === "all"
-      ? "Create a skill or import an Agent Skills bundle."
-      : "No skills match the current filter.";
-  };
-
-  const view = createListView({
-    source: inTab,
-    search: (s) => `${s.name} ${s.description}`,
-    sorts: {
-      recent: {
-        label: "Newest",
-        compare: (a, b) => a.updatedAt.localeCompare(b.updatedAt),
-      },
-      name: {
-        label: "Name",
-        compare: (a, b) => a.name.localeCompare(b.name),
-      },
-    },
-    initialSort: "recent",
-    initialDir: "desc",
-  });
-
   return (
-    <Stack gap={6}>
-      <PageHeader
-        variant="section"
-        title="Skills"
-        subtitle="Agent Skills bundles — reusable procedures the assistant can follow."
-        assetId="ODY-SKL-01.0"
-        actions={
-          <Row gap={2}>
-            <input
-              ref={picker.bindInput}
-              {...HIDDEN_FILE_INPUT}
-              multiple={false}
-              accept=".zip,.md"
-              {...picker.inputHandlers}
-            />
-            <Button
-              variant="default"
-              leading="upload"
-              disabled={importing()}
-              onClick={picker.openPicker}
-            >
-              {importing() ? "Importing…" : "Import"}
-            </Button>
-            <Button
-              variant="primary"
-              leading="plus"
-              onClick={() => setNewOpen(true)}
-            >
-              New skill
-            </Button>
-          </Row>
-        }
-      />
-
-      <InstrumentBand
-        items={[
-          { label: "Total", value: String(skills().length) },
-          {
-            label: "Published",
-            value: String(publishedCount()),
-            tone: "nominal",
-          },
-          { label: "Draft", value: String(draftCount()), tone: "dim" },
-          { label: "Bundles", value: bytes(totalBytes()) },
-        ]}
-      />
-
-      <Panel flush>
-        <div class="flex items-center justify-between gap-3 pr-3">
-          <Tabs
-            items={STATUS_TABS}
-            value={statusFilter()}
-            onChange={(v) => setStatusFilter(v as StatusFilter)}
-          />
-          <Row align="center" gap={3}>
-            <Row align="center" gap={1}>
-              <Text variant="micro" tone="dim">
-                Draft
-              </Text>
-              <InfoHint label="A draft is invisible to the agent. Publishing is what makes a skill's instructions something the assistant will follow — imported bundles always land as drafts so you can read them first." />
-            </Row>
-            <Row align="center" gap={1}>
-              <Text variant="micro" tone="dim">
-                Import
-              </Text>
-              <InfoHint label="Accepts an Agent Skills bundle (.zip) or a lone SKILL.md. The bundle keeps its supporting files, and anything unusual about it is reported as a warning." />
-            </Row>
-          </Row>
-        </div>
-
-        <div class="p-3">
-          <ListToolbar
-            query={view.query()}
-            onQueryChange={view.setQuery}
-            placeholder="Search by name or description…"
-            sortKey={view.sortKey()}
-            sortOptions={view.sortOptions}
-            onSortChange={view.setSort}
-            dir={view.dir()}
-            onToggleDir={view.toggleDir}
-            count={view.count()}
-            total={view.total()}
-          />
-        </div>
-
-        <Suspense
-          fallback={
-            <div class="p-4">
-              <LoadingText />
-            </div>
-          }
-        >
-          <Show
-            when={view.items().length}
-            fallback={
-              <EmptyState
-                icon="layers"
-                message={loadError() ? "Skills unavailable" : "No skills"}
-                hint={loadError() ?? emptyHint()}
-              />
-            }
-          >
-            <For each={view.items()}>
-              {(skill) => (
-                <ListRow
-                  label={skill.name}
-                  leading="layers"
-                  onClick={() => props.onOpen(skill.id)}
-                  right={
-                    <span class="flex shrink-0 items-center gap-3">
-                      {/* Shown for any bundle that has files at all — a row that
-                          drops the field at one file would make the column jump. */}
-                      <Show when={skill.fileCount > 0}>
-                        <Text variant="micro" tone="dim">
-                          {skill.fileCount}{" "}
-                          {skill.fileCount === 1 ? "File" : "Files"} ·{" "}
-                          {bytes(skill.sizeBytes)}
-                        </Text>
-                      </Show>
-                      <Show when={skill.source !== "authored"}>
-                        <StatusFlag status={skillSourceFlag[skill.source]}>
-                          {skill.source.toUpperCase()}
-                        </StatusFlag>
-                      </Show>
-                      <StatusFlag status={skillStatusFlag(skill.published)}>
-                        {skillStatusLabel(skill.published)}
-                      </StatusFlag>
-                      <Text variant="micro" tone="dim">
-                        {relativeTime(skill.updatedAt)}
-                      </Text>
-                      {/* Stop row navigation when interacting with the menu. */}
-                      <span
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                      >
-                        <Menu
-                          trigger={
-                            <span class="px-1 text-dim hover:text-bright">
-                              <Text variant="micro">···</Text>
-                            </span>
-                          }
-                          items={[
-                            {
-                              label: "Edit",
-                              icon: "edit",
-                              onSelect: () => props.onOpen(skill.id),
-                            },
-                            {
-                              label: "Export",
-                              icon: "download",
-                              onSelect: () => void handleExport(skill),
-                            },
-                            {
-                              label: skill.published ? "Unpublish" : "Publish",
-                              icon: "check",
-                              onSelect: () => void handlePublishToggle(skill),
-                            },
-                            {
-                              label: "Delete",
-                              icon: "trash",
-                              danger: true,
-                              onSelect: () => void handleDelete(skill),
-                            },
-                          ]}
-                        />
-                      </span>
-                    </span>
-                  }
-                />
-              )}
-            </For>
+    <LibraryDirectory
+      title="Skills"
+      subtitle="Agent Skills bundles — reusable procedures the assistant can follow."
+      assetId="ODY-SKL-01.0"
+      noun="skill"
+      nouns="skills"
+      icon="layers"
+      items={skills()}
+      loadError={loadError()}
+      sorts={{
+        recent: { label: "Newest", compare: compareByUpdated },
+        name: { label: "Name", compare: compareByName },
+      }}
+      initialSort="recent"
+      initialDir="desc"
+      bandExtra={[{ label: "Bundles", value: bytes(totalBytes()) }]}
+      draftHint="A draft is invisible to the agent. Publishing is what makes a skill's instructions something the assistant will follow — imported bundles always land as drafts so you can read them first."
+      importHint="Accepts an Agent Skills bundle (.zip) or a lone SKILL.md. The bundle keeps its supporting files, and anything unusual about it is reported as a warning."
+      importAccept=".zip,.md"
+      importing={importing()}
+      onImport={(file) => void handleImport(file)}
+      onNew={() => setNewOpen(true)}
+      onOpen={(skill) => props.onOpen(skill.id)}
+      emptyCreateHint="Create a skill or import an Agent Skills bundle."
+      rowRight={(skill) => (
+        <>
+          {/* Shown for any bundle that has files at all — a row that drops the
+              field at one file would make the column jump. */}
+          <Show when={skill.fileCount > 0}>
+            <Text variant="micro" tone="dim">
+              {skill.fileCount} {skill.fileCount === 1 ? "File" : "Files"} ·{" "}
+              {bytes(skill.sizeBytes)}
+            </Text>
           </Show>
-        </Suspense>
-      </Panel>
-
+          <Show when={skill.source !== "authored"}>
+            <StatusFlag status={skillSourceFlag[skill.source]}>
+              {skill.source.toUpperCase()}
+            </StatusFlag>
+          </Show>
+          <StatusFlag status={skillStatusFlag(skill.published)}>
+            {skillStatusLabel(skill.published)}
+          </StatusFlag>
+          <Text variant="micro" tone="dim">
+            {relativeTime(skill.updatedAt)}
+          </Text>
+        </>
+      )}
+      menuItems={(skill) => [
+        {
+          label: "Edit",
+          icon: "edit",
+          onSelect: () => props.onEdit(skill.id),
+        },
+        {
+          label: "Export",
+          icon: "download",
+          onSelect: () => void handleExport(skill),
+        },
+        {
+          label: skill.published ? "Unpublish" : "Publish",
+          icon: "check",
+          onSelect: () => void handlePublishToggle(skill),
+        },
+        {
+          label: "Delete",
+          icon: "trash",
+          danger: true,
+          onSelect: () => void handleDelete(skill),
+        },
+      ]}
+    >
       <NewSkillDialog
         open={newOpen()}
         onClose={() => setNewOpen(false)}
         onCreated={(id) => {
           setNewOpen(false);
-          props.onOpen(id);
+          props.onEdit(id);
         }}
       />
-    </Stack>
+    </LibraryDirectory>
   );
 }

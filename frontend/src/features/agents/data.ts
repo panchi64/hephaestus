@@ -1,5 +1,5 @@
 import { createResource, createSignal, type Resource } from "solid-js";
-import { api, isApiError } from "~/lib/api";
+import { api, downloadContent, isApiError } from "~/lib/api";
 import { ALL_PROJECTS, getProjectScope } from "~/lib/api/projectScope";
 import type {
   Agent,
@@ -157,6 +157,48 @@ export async function setAgentPublished(
 export async function deleteAgent(id: string): Promise<void> {
   await api.del(`/agents/${encodeURIComponent(id)}`);
   refreshAll();
+}
+
+/* ── Document, import, export ─────────────────────────────────────────────── */
+
+/** The agent as its `.md` file — frontmatter and instructions. Works for any
+ *  id, including declared ones such as `builtin:reviewer`. */
+export async function getAgentDocument(id: string): Promise<string> {
+  const doc = await api.get<{ content: string }>(
+    `/agents/${encodeURIComponent(id)}/document`,
+  );
+  return doc.content;
+}
+
+/** Rewrite a stored agent from its edited file. A rejection is a 422 naming
+ *  the field (`file` for text that is not an agent file at all). */
+export async function putAgentDocument(
+  id: string,
+  content: string,
+): Promise<Agent> {
+  const dto = await api.put<AgentOut>(
+    `/agents/${encodeURIComponent(id)}/document`,
+    { content },
+  );
+  refreshAll();
+  return toAgent(dto);
+}
+
+/** Import an agent `.md` file. The result is always a draft. */
+export async function importAgent(file: File): Promise<Agent> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const dto = await api.postForm<AgentOut>("/agents/import", form);
+  refreshAll();
+  return toAgent(dto);
+}
+
+/** Download the agent as `<name>.md`. */
+export async function exportAgent(id: string, name: string): Promise<void> {
+  await downloadContent(
+    `/agents/${encodeURIComponent(id)}/export`,
+    `${name}.md`,
+  );
 }
 
 /* ── Errors ───────────────────────────────────────────────────────────────── */

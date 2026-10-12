@@ -231,6 +231,26 @@ export async function exportSkill(id: string, name: string): Promise<void> {
   await downloadContent(`/skills/${id}/export`, `${name}.zip`);
 }
 
+/* ── Document (the whole SKILL.md) ────────────────────────────────────────── */
+
+/** The full `SKILL.md` — frontmatter and body — as the backend renders it. */
+export async function getSkillDocument(id: string): Promise<string> {
+  const doc = await api.get<{ content: string }>(`/skills/${id}/document`);
+  return doc.content;
+}
+
+/** Replace the skill from an edited `SKILL.md`. The backend validates it as an
+ *  import would be; a rejection is a 422 naming the field. */
+export async function putSkillDocument(
+  id: string,
+  content: string,
+): Promise<Skill> {
+  const dto = await api.put<SkillOut>(`/skills/${id}/document`, { content });
+  refreshSkills();
+  refreshSkillDetail();
+  return toSkill(dto);
+}
+
 /* ── Bundle files ─────────────────────────────────────────────────────────── */
 
 /** A file's path is its identity and may contain `/`, so encode per segment
@@ -252,6 +272,14 @@ export async function putSkillFile(
   refreshSkills();
   refreshSkillDetail();
   return toSkill(dto);
+}
+
+/** A bundle file's text. */
+export async function getSkillFileText(
+  id: string,
+  relpath: string,
+): Promise<string> {
+  return (await api.getBlob(filePath(id, relpath))).text();
 }
 
 export async function deleteSkillFile(

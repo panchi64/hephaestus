@@ -2,14 +2,9 @@ import { describe, expect, it } from "bun:test";
 import {
   agentState,
   agentToSend,
-  buildAgentPatch,
-  draftOf,
-  draftToWrite,
-  groupAgentsBySource,
+  agentSourceTag,
+  compareAgentsBySource,
   isAwaitingPublish,
-  isDraftDirty,
-  parseLimit,
-  parseList,
   pickableAgents,
   threadAgentName,
   type Agent,
@@ -40,23 +35,23 @@ function agent(over: Partial<Agent> = {}): Agent {
   };
 }
 
-describe("groupAgentsBySource", () => {
-  it("orders groups built-in, project, yours, agent-drafted and drops empty ones", () => {
-    const groups = groupAgentsBySource([
-      agent({ id: "1", name: "z", source: "agent" }),
-      agent({ id: "2", name: "default", source: "builtin" }),
-      agent({ id: "3", name: "mine", source: "user" }),
-    ]);
-    expect(groups.map((g) => g.label)).toEqual([
-      "Built-in",
-      "Yours",
-      "Drafted by agents",
-    ]);
-    expect(groups[0].agents.map((a) => a.name)).toEqual(["default"]);
+describe("agentSourceTag", () => {
+  it("names every provenance except the operator's own", () => {
+    expect(agentSourceTag("builtin")).toBe("BUILT-IN");
+    expect(agentSourceTag("project")).toBe("PROJECT");
+    expect(agentSourceTag("agent")).toBe("AGENT-DRAFTED");
+    expect(agentSourceTag("user")).toBeNull();
   });
+});
 
-  it("returns nothing for an empty list", () => {
-    expect(groupAgentsBySource([])).toEqual([]);
+describe("compareAgentsBySource", () => {
+  it("puts built-in first and agent-drafted after the operator's own", () => {
+    const sorted = [
+      agent({ id: "1", source: "agent" }),
+      agent({ id: "2", source: "user" }),
+      agent({ id: "3", source: "builtin" }),
+    ].sort(compareAgentsBySource);
+    expect(sorted.map((a) => a.source)).toEqual(["builtin", "user", "agent"]);
   });
 });
 
@@ -124,73 +119,5 @@ describe("agentToSend", () => {
     expect(threadAgentName(null)).toBe("default");
     expect(threadAgentName(undefined)).toBe("default");
     expect(threadAgentName("reviewer")).toBe("reviewer");
-  });
-});
-
-describe("lists and limits", () => {
-  it("parses comma and newline lists, trimming and de-duplicating", () => {
-    expect(parseList(" a, b ,,a\nc ")).toEqual(["a", "b", "c"]);
-    expect(parseList("")).toEqual([]);
-  });
-
-  it("clears on blank and omits on non-numeric text", () => {
-    expect(parseLimit("")).toBeNull();
-    expect(parseLimit(" 30 ")).toBe(30);
-    expect(parseLimit("abc")).toBeUndefined();
-  });
-});
-
-describe("buildAgentPatch", () => {
-  it("is empty for an untouched draft", () => {
-    const a = agent({ tools: ["read"], denyTools: ["bash"], requestLimit: 5 });
-    expect(buildAgentPatch(draftOf(a), a)).toEqual({});
-    expect(isDraftDirty(draftOf(a), a)).toBe(false);
-  });
-
-  it("sends only the fields that changed, snake_case", () => {
-    const a = agent();
-    const draft = { ...draftOf(a), description: "New", canDelegate: true };
-    expect(buildAgentPatch(draft, a)).toEqual({
-      description: "New",
-      can_delegate: true,
-    });
-  });
-
-  it("sends explicit nulls to clear a field", () => {
-    const a = agent({
-      tools: ["read"],
-      permissionCeiling: "edit",
-      requestLimit: 10,
-      endpointId: "e1",
-      model: "m",
-    });
-    const draft = {
-      ...draftOf(a),
-      allTools: true,
-      permissionCeiling: null,
-      requestLimit: "",
-      endpointId: null,
-      model: null,
-    };
-    expect(buildAgentPatch(draft, a)).toEqual({
-      tools: null,
-      permission_ceiling: null,
-      request_limit: null,
-      endpoint_id: null,
-      model: null,
-    });
-  });
-
-  it("sends the allow-list as an array once all-tools is off", () => {
-    const a = agent();
-    const draft = { ...draftOf(a), allTools: false, toolsText: "read, grep" };
-    expect(buildAgentPatch(draft, a)).toEqual({ tools: ["read", "grep"] });
-  });
-
-  it("leaves a half-typed number out instead of coercing it", () => {
-    const a = agent({ requestLimit: 3 });
-    const draft = { ...draftOf(a), requestLimit: "x" };
-    expect(draftToWrite(draft).request_limit).toBeUndefined();
-    expect(buildAgentPatch(draft, a)).toEqual({});
   });
 });
