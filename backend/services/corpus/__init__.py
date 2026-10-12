@@ -10,20 +10,24 @@ content (folders now, more later) lands in the generic ``corpus_chunk`` store vi
 
 from __future__ import annotations
 
-from services.corpus.adapter import CorpusHit, SourceAdapter, SourceStatus
+from services.corpus.adapter import CorpusDocument, CorpusHit, SourceAdapter, SourceStatus
 from services.corpus.chunk_store import CorpusChunkStore
 from services.corpus.folder import FolderAdapter
 from services.corpus.index import CorpusIndex, CorpusStats
+from services.corpus.records import RecordAdapter, record_adapters
 from services.corpus.wrappers import ConversationAdapter, MemoryAdapter
 
 __all__ = [
     "ConversationAdapter",
     "CorpusChunkStore",
+    "CorpusDocument",
     "CorpusHit",
     "CorpusIndex",
     "CorpusStats",
     "FolderAdapter",
     "MemoryAdapter",
+    "RecordAdapter",
     "SourceAdapter",
     "SourceStatus",
+    "record_adapters",
 ]

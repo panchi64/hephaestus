@@ -68,10 +68,7 @@ async def test_conditionally_gated_tools_are_scopes():
         body = (await client.get("/tools/approval-scopes")).json()
         catalog = {t["name"] for t in (await client.get("/tools")).json()}
     names = _names(body)
-    assert {
-        "corpus_retrieve",
-        "conversations_search",
-    } <= names
+    assert "platform_search" in names
     assert names <= catalog | {n for n in names if n.startswith("external_")}
 
 

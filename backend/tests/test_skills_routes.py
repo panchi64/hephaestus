@@ -97,6 +97,19 @@ async def test_publish_then_unpublish():
         assert (await client.get("/skills?published_only=true")).json() == []
 
 
+async def test_pin_then_unpin():
+    async with client_app() as (client, _app):
+        created = await _create(client)
+        assert created["pinned"] is False
+        pinned = await client.post(f"/skills/{created['id']}/pin")
+        assert pinned.status_code == 200
+        assert pinned.json()["pinned"] is True
+        assert (await client.get("/skills")).json()[0]["pinned"] is True
+
+        await client.post(f"/skills/{created['id']}/unpin")
+        assert (await client.get(f"/skills/{created['id']}")).json()["pinned"] is False
+
+
 async def test_publishing_an_empty_skill_is_a_422():
     async with client_app() as (client, _app):
         created = await _create(client, body="")

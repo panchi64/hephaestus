@@ -18,6 +18,7 @@ correction that shortens the text must not strand orphan chunks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
 from sqlalchemy import Engine
@@ -106,9 +107,16 @@ class UploadsAdapter(SourceAdapter):
         query_tokens: set[str],
         *,
         limit: int,
+        since: datetime | None = None,
     ) -> list[CorpusHit]:
         return await self._chunks.retrieve(
-            owner_id, self.source_kind, query_vec, query_model, query_tokens, limit=limit
+            owner_id,
+            self.source_kind,
+            query_vec,
+            query_model,
+            query_tokens,
+            limit=limit,
+            since=since,
         )
 
     async def status(self, owner_id: str) -> SourceStatus:

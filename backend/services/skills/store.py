@@ -61,6 +61,7 @@ class SkillCatalogEntry:
 
     name: str
     description: str
+    pinned: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class SkillSummaryView:
     name: str
     description: str
     published: bool
+    pinned: bool
     source: str
     file_count: int
     size_bytes: int
@@ -86,6 +88,7 @@ class SkillView:
     source: str
     created_at: datetime
     updated_at: datetime
+    pinned: bool = False
     license: str | None = None
     compatibility: str | None = None
     metadata: dict[str, Any] | None = None
@@ -276,6 +279,16 @@ class SkillStore:
 
         return await in_session(self._engine, work)
 
+    async def set_pinned(self, owner_id: str, skill_id: str, pinned: bool) -> SkillView:
+        def work(session: Session) -> SkillView:
+            skill = _require(session, owner_id, skill_id)
+            skill.pinned = pinned
+            session.add(skill)
+            session.flush()
+            return self._view(session, skill)
+
+        return await in_session(self._engine, work)
+
     async def delete(self, owner_id: str, skill_id: str) -> None:
         """Delete the skill and its whole bundle — no soft-archive; a skill is a tool, and an
         unwanted tool is removed rather than shelved."""
@@ -457,6 +470,7 @@ class SkillStore:
                     name=skill.name,
                     description=self._vault.decrypt_str(skill.description_enc),
                     published=skill.published,
+                    pinned=skill.pinned,
                     source=skill.source,
                     file_count=stats.get(skill.id, (0, 0))[0],
                     size_bytes=stats.get(skill.id, (0, 0))[1],
@@ -481,7 +495,9 @@ class SkillStore:
             ).all()
             return [
                 SkillCatalogEntry(
-                    name=skill.name, description=self._vault.decrypt_str(skill.description_enc)
+                    name=skill.name,
+                    description=self._vault.decrypt_str(skill.description_enc),
+                    pinned=skill.pinned,
                 )
                 for skill in skills
             ]
@@ -522,6 +538,7 @@ class SkillStore:
             source=skill.source,
             created_at=skill.created_at,
             updated_at=skill.updated_at,
+            pinned=skill.pinned,
             license=skill.license,
             compatibility=self._open(skill.compatibility_enc),
             metadata=self._open_json(skill.metadata_json_enc),

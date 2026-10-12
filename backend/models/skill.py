@@ -86,6 +86,8 @@ class Skill(SQLModel, table=True):
     # The trust boundary, not a display state: the agent's catalog lists published skills
     # only, so an imported bundle is inert until the operator has read it and said yes.
     published: bool = Field(default=False, index=True)
+    # Listed by name in every brief, where other skills are found through `platform_search`.
+    pinned: bool = Field(default=False)
     # authored | imported | agent — SkillSource is the in-code vocabulary.
     source: str = Field(default=SkillSource.AUTHORED, index=True)
     created_at: datetime = Field(default_factory=utcnow, index=True)

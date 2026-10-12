@@ -84,10 +84,13 @@ deciding: write what this does and why, not a restatement of the arguments they 
 already see. When you are paused you will be resumed with the decision; proceed \
 naturally from there.
 
-Reach for your tools rather than guessing. Recall from memory before claiming you don't \
-know something about the operator or their work, and remember a durable fact when you \
-learn one — a preference, a project, a person, a standing constraint — unprompted, so a \
-later turn carries it instead of re-asking. Search the web for anything time-sensitive, \
+Reach for your tools rather than guessing. This conversation is all you hold; the rest of \
+the operator's work — other conversations, memory, their files, agent reports, routine \
+outputs, saved skills and agents — is reached with `platform_search`. Search it when this \
+conversation can't answer, before claiming you don't know something about the operator or \
+their work, and say what you drew on. Remember a durable fact when you learn one — a \
+preference, a project, a person, a standing constraint — unprompted, so a later turn \
+carries it instead of re-asking. Search the web for anything time-sensitive, \
 fast-moving, or that you are not confident about rather than answering from stale \
 memory, and attribute what you pull from it — link the page a claim came from, inline, \
 so the operator can check it in one click. Only ever link a URL a tool actually \
@@ -133,22 +136,19 @@ didn't work, here's why" is worth more to the operator than a confident fabricat
 CURRENT_DATE = "The current date is {date} ({zone})."
 
 
-# The published-skill catalog (`SKILL-2`), surfaced as a dynamic instruction so it is
-# re-resolved fresh each turn and never accumulates in history. This is the Agent Skills
-# standard's first level of progressive disclosure: the model sees only each skill's name
-# and description here, and pays for the full instructions only when it opens one.
-# ``{entries}`` is the only field — one ``- name: description`` line per skill.
+# The published-skill catalog (`SKILL-2`), surfaced as a dynamic instruction. Its size is
+# fixed whatever the library holds: a count and a pointer to `platform_search`, plus the
+# few skills the operator pinned. ``{count}`` is "N saved skills"; ``{pinned}`` is empty or
+# a "Pinned:" list of ``- name: description`` lines.
 SKILL_CATALOG = """\
-You have skills — procedures the operator saved for tasks like these:
+You have {count} — procedures the operator keeps for tasks like these. When a task might \
+match one, find it with `platform_search` (sources `skills`), then call `skills_open` with \
+its name and follow what it returns before working.{pinned}"""
 
-{entries}
+SKILL_PINNED = "\n\nPinned:\n{entries}"
 
-When a task matches one, call `skills_open` with its name and follow what it returns \
-before working. Only these skills exist; don't guess at others."""
-
-# How much of the turn's context the catalog may occupy. Skills past the budget are
-# dropped (newest kept) with a count, rather than silently truncating mid-entry.
-SKILL_CATALOG_BUDGET_CHARS = 4000
+# How many pinned skills the catalog lists by name; the rest are found by search.
+SKILL_PINNED_LIMIT = 5
 
 
 # The verifier's corrective nudge. When the deliverable judge rules a turn fell

@@ -68,6 +68,7 @@ class SkillSummaryOut(CamelModel):
     name: str
     description: str
     published: bool
+    pinned: bool
     source: str
     file_count: int
     size_bytes: int
@@ -81,6 +82,7 @@ class SkillOut(CamelModel):
     description: str
     body: str
     published: bool
+    pinned: bool
     source: str
     created_at: datetime
     updated_at: datetime
@@ -107,6 +109,7 @@ def _summary_out(view: SkillSummaryView) -> SkillSummaryOut:
         name=view.name,
         description=view.description,
         published=view.published,
+        pinned=view.pinned,
         source=view.source,
         file_count=view.file_count,
         size_bytes=view.size_bytes,
@@ -122,6 +125,7 @@ def _out(view: SkillView) -> SkillOut:
         description=view.description,
         body=view.body,
         published=view.published,
+        pinned=view.pinned,
         source=view.source,
         created_at=view.created_at,
         updated_at=view.updated_at,
@@ -255,6 +259,16 @@ async def _set_published(skill_id: str, request: Request, published: bool) -> Sk
     except SkillValidationError as exc:
         raise _invalid(exc) from None
     return _out(view)
+
+
+@router.post("/{skill_id}/pin", response_model=SkillOut)
+async def pin_skill(skill_id: str, request: Request) -> SkillOut:
+    return _out(await deps.skills(request).set_pinned(OPERATOR_ID, skill_id, True))
+
+
+@router.post("/{skill_id}/unpin", response_model=SkillOut)
+async def unpin_skill(skill_id: str, request: Request) -> SkillOut:
+    return _out(await deps.skills(request).set_pinned(OPERATOR_ID, skill_id, False))
 
 
 @router.delete("/{skill_id}", status_code=204)

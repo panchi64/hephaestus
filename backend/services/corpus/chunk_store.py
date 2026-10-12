@@ -2,11 +2,9 @@
 
 The shared backend for every *chunked* source (folders and uploads today). It is
 the corpus counterpart of ``MemoryStore`` /
-``ConversationSearch``: rows are encrypted at rest (text + vector), so recall is the
-same **hybrid, brute-force** pass — decrypt the owner's chunks for a source, score
-each dense (cosine over the per-chunk vector) and sparse (token overlap), and return
-the per-chunk scores *unfused* (``CorpusIndex`` fuses across sources). The scoring
-primitives are the shared ones in :mod:`services.ranking`.
+``ConversationSearch``: rows are encrypted at rest (text + vector) and ranked hybrid
+(cosine + BM25) on the memory-only :mod:`services.recall_index`; ``CorpusIndex`` fuses
+the result with the other sources.
 
 Inserts are **idempotent per item**: a re-crawl of an unchanged item hashes to the same
 values and is skipped, so reindex never dupes. The dedup key is ``(item, content)``, not
@@ -22,19 +20,22 @@ search and every hit on the shared text is cited to the other's path.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Hashable, Mapping
+from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
 from sqlalchemy import Engine, func, or_
-from sqlmodel import Session, delete, select, update
+from sqlmodel import Session, col, delete, select, update
 
 from core.db import in_session
 from core.vault import Vault
 from models.corpus import CorpusChunk
-from services import ranking
 from services.chunking import Chunk
 from services.corpus.adapter import CorpusHit
 from services.embeddings import Embedder, decode_vector, embed_and_seal_rows
+from services.recall_index import Collection as RecallCollection
+from services.recall_index import Doc, Loaded, Query, RecallIndex
 
 
 def content_hash(text: str) -> str:
@@ -57,11 +58,87 @@ def item_of(external_ref: str) -> str:
 _DELETE_BATCH = 500
 
 
+@dataclass(frozen=True)
+class ChunkMeta:
+    source_kind: str
+    source_id: str
+    external_ref: str
+    kb_excluded: bool
+
+
+class ChunkCollection(RecallCollection[ChunkMeta]):
+    name = "chunks"
+
+    def signature(self, session: Session, owner_id: str) -> Hashable:
+        stmt = (
+            select(
+                CorpusChunk.embedding_model,
+                CorpusChunk.kb_excluded,
+                func.count(),
+                func.max(CorpusChunk.updated_at),
+            )
+            .where(CorpusChunk.owner_id == owner_id)
+            .group_by(col(CorpusChunk.embedding_model), col(CorpusChunk.kb_excluded))
+        )
+        return frozenset(session.exec(stmt).all())
+
+    def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
+        stmt = select(
+            CorpusChunk.id,
+            CorpusChunk.updated_at,
+            CorpusChunk.embedding_model,
+            CorpusChunk.kb_excluded,
+        ).where(CorpusChunk.owner_id == owner_id)
+        return {cid: (at, model, excluded) for cid, at, model, excluded in session.exec(stmt).all()}
+
+    def load(
+        self, session: Session, vault: Vault, owner_id: str, ids: list[str]
+    ) -> list[Loaded[ChunkMeta]]:
+        rows = session.exec(select(CorpusChunk).where(col(CorpusChunk.id).in_(ids))).all()
+        return [
+            Loaded(
+                Doc(
+                    row.id,
+                    row.updated_at,
+                    ChunkMeta(row.source_kind, row.source_id, row.external_ref, row.kb_excluded),
+                ),
+                vault.decrypt_str(row.text_enc),
+                decode_vector(vault, row.embedding_enc) if row.embedding_enc else None,
+                row.embedding_model,
+            )
+            for row in rows
+        ]
+
+
+#: Longest run of words two consecutive chunks are checked for sharing.
+_MAX_OVERLAP = 256
+
+
+def _stitch(passages: list[str]) -> str:
+    """Join consecutive chunks back into one text, dropping the words each repeats from
+    the one before (chunk windows overlap)."""
+    words: list[str] = []
+    for passage in passages:
+        incoming = passage.split()
+        shared = next(
+            (
+                size
+                for size in range(min(len(words), len(incoming), _MAX_OVERLAP), 0, -1)
+                if words[-size:] == incoming[:size]
+            ),
+            0,
+        )
+        words.extend(incoming[shared:])
+    return " ".join(words)
+
+
 class CorpusChunkStore:
     def __init__(self, engine: Engine, vault: Vault, embedder: Embedder) -> None:
         self._engine = engine
         self._vault = vault
         self._embedder = embedder
+        self._index = RecallIndex(engine, vault)
+        self._collection = ChunkCollection()
 
     @property
     def vault(self) -> Vault:
@@ -173,9 +250,7 @@ class CorpusChunkStore:
             # Only the three structural columns — the sealed text and vector are never
             # needed to decide this, and they are by far the widest columns in the row.
             rows = session.exec(
-                select(
-                    CorpusChunk.id, CorpusChunk.external_ref, CorpusChunk.content_hash
-                ).where(
+                select(CorpusChunk.id, CorpusChunk.external_ref, CorpusChunk.content_hash).where(
                     CorpusChunk.owner_id == owner_id,
                     CorpusChunk.source_id == source_id,
                 )
@@ -277,6 +352,27 @@ class CorpusChunkStore:
 
     # --- read path --------------------------------------------------------
 
+    async def read_item(
+        self, owner_id: str, source_id: str, item: str
+    ) -> tuple[str, datetime] | None:
+        """One origin item's chunks joined in order, with when it last changed. A named
+        read, so an item scoped out of the knowledge base still reads."""
+
+        def work(session: Session) -> tuple[str, datetime] | None:
+            rows = session.exec(
+                select(CorpusChunk)
+                .where(CorpusChunk.owner_id == owner_id)
+                .where(CorpusChunk.source_id == source_id)
+                .order_by(col(CorpusChunk.ordinal))
+            ).all()
+            chunks = [row for row in rows if item_of(row.external_ref) == item]
+            if not chunks:
+                return None
+            text = _stitch([self._vault.decrypt_str(row.text_enc) for row in chunks])
+            return text, max(row.updated_at for row in chunks)
+
+        return await in_session(self._engine, work)
+
     async def count(self, owner_id: str, source_id: str) -> int:
         """How many chunks a source has indexed (never decrypts)."""
 
@@ -339,6 +435,7 @@ class CorpusChunkStore:
         limit: int,
         source_id: str | None = None,
         source_ids: list[str] | None = None,
+        since: datetime | None = None,
     ) -> list[CorpusHit]:
         """Hybrid recall over a source's chunks, scored but **unfused** (the index
         fuses across sources). Filtered to ``source_kind`` (pass ``None`` to span every
@@ -350,74 +447,45 @@ class CorpusChunkStore:
         stays out of every other chat's general recall. A degraded query vector collapses
         to sparse-only."""
 
+        wanted = set(source_ids) if source_ids is not None else None
+
+        def keep(doc: Doc[ChunkMeta]) -> bool:
+            meta = doc.meta
+            if source_kind is not None and meta.source_kind != source_kind:
+                return False
+            if source_id is not None and meta.source_id != source_id:
+                return False
+            if since is not None and (doc.at is None or doc.at < since):
+                return False
+            if wanted is not None:
+                return meta.source_id in wanted
+            return not meta.kb_excluded
+
+        ranked = await self._index.search(
+            self._collection,
+            owner_id,
+            Query(query_tokens, query_vec, query_model),
+            limit=limit,
+            keep=keep,
+        )
+        ids = [hit.doc.id for hit in ranked]
+
         def work(session: Session) -> list[CorpusHit]:
-            query = select(CorpusChunk).where(CorpusChunk.owner_id == owner_id)
-            if source_kind is not None:
-                query = query.where(CorpusChunk.source_kind == source_kind)
-            if source_id is not None:
-                query = query.where(CorpusChunk.source_id == source_id)
-            if source_ids is not None:
-                # Explicit by-id fetch — overrides exclusion (see docstring).
-                query = query.where(CorpusChunk.source_id.in_(source_ids))  # type: ignore[attr-defined]
-            else:
-                # Ambient recall: a file scoped out of the knowledge base is hidden.
-                query = query.where(CorpusChunk.kb_excluded == False)  # noqa: E712 — SQL boolean
-            rows = session.exec(query).all()
-            return self._rank(rows, query_vec, query_model, query_tokens, limit)
+            rows = session.exec(select(CorpusChunk).where(col(CorpusChunk.id).in_(ids))).all()
+            text = {row.id: self._vault.decrypt_str(row.text_enc) for row in rows}
+            return [
+                CorpusHit(
+                    gid=f"{hit.doc.meta.source_id}:{hit.doc.meta.external_ref}",
+                    source_id=hit.doc.meta.source_id,
+                    ref=hit.doc.meta.external_ref,
+                    text=text[hit.doc.id],
+                    dense_score=hit.dense,
+                    sparse_score=hit.sparse,
+                    matched_by=hit.matched_by,
+                    at=hit.doc.at,
+                )
+                for hit in ranked
+                if hit.doc.id in text
+            ]
 
         return await in_session(self._engine, work)
-
-    def _rank(
-        self,
-        rows: list[CorpusChunk],
-        query_vec: np.ndarray | None,
-        query_model: str | None,
-        query_tokens: set[str],
-        limit: int,
-    ) -> list[CorpusHit]:
-        dense: dict[str, float] = {}
-        sparse: dict[str, float] = {}
-        by_id: dict[str, CorpusChunk] = {}
-        text_by_id: dict[str, str] = {}
-        for row in rows:
-            text = self._vault.decrypt_str(row.text_enc)
-            if not text.strip():
-                continue
-            by_id[row.id] = row
-            text_by_id[row.id] = text
-            overlap = len(query_tokens & ranking.tokens(text))
-            if overlap:
-                sparse[row.id] = float(overlap)
-            # Dense only within the same embedding space (EMB-2), and only when there
-            # is actual similarity — a zero/orthogonal vector carries no signal.
-            if (
-                query_vec is not None
-                and row.embedding_enc is not None
-                and row.embedding_model == query_model
-            ):
-                vector = np.asarray(decode_vector(self._vault, row.embedding_enc))
-                score = ranking.cosine(query_vec, vector)
-                if score > 0:
-                    dense[row.id] = score
-
-        # Fuse this source's own dense + sparse signals with RRF (same hybrid memory
-        # and conversation recall use), so cosine and keyword overlap combine by rank
-        # rather than letting the larger raw number win. The index then fuses the
-        # already-ranked sources together.
-        fused = ranking.rrf(dense, sparse)
-        ordered = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
-        hits: list[CorpusHit] = []
-        for cid, _score in ordered:
-            row = by_id[cid]
-            hits.append(
-                CorpusHit(
-                    gid=f"{row.source_id}:{row.external_ref}",
-                    source_id=row.source_id,
-                    ref=row.external_ref,
-                    text=text_by_id[cid],
-                    dense_score=dense.get(cid),
-                    sparse_score=sparse.get(cid),
-                    matched_by=ranking.matched_by(cid, dense, sparse),
-                )
-            )
-        return hits

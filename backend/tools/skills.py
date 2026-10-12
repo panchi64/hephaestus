@@ -3,9 +3,8 @@
 Skills follow the **Agent Skills** standard's progressive disclosure, and these tools are
 levels two and three of it:
 
-1. Every *published* skill's name and description is already in the turn's instructions
-   (``agent/factory.py`` registers the catalog's instruction provider), so the model knows
-   what exists without a call.
+1. The turn's instructions say how many skills are published and list the pinned ones;
+   the rest are found by name and description through ``platform_search``.
 2. ``open`` returns the skill's full ``SKILL.md`` instructions — the level the model pays for
    only when a skill is actually relevant.
 3. ``open`` **also stages the bundle into the run's workspace** under ``skills/{name}/``,
@@ -34,7 +33,7 @@ from collections.abc import Sequence
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from core.exceptions import NotFoundError, SkillSpanError, SkillValidationError
-from prompts.agent import SKILL_CATALOG, SKILL_CATALOG_BUDGET_CHARS
+from prompts.agent import SKILL_CATALOG, SKILL_PINNED, SKILL_PINNED_LIMIT
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import SandboxError
 from services.skills import (
@@ -249,47 +248,30 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
 
 
 def _skill_catalog_block(entries: Sequence[SkillCatalogEntry]) -> str:
-    """Render the published-skill catalog under its character budget (`SKILL-2`).
-
-    Entries arrive newest-first, so a library larger than the budget keeps the skills the
-    operator most recently touched and reports how many were left out — the model is told the
-    list is partial rather than being handed a silently truncated one.
-
-    **Recency selects; the name orders.** This block renders at the *head* of every request,
-    so its bytes have to stay stable across the turns of a conversation. Rendering in
-    `updated_at` order meant publishing or editing any one skill reshuffled the whole list,
-    which invalidates the prompt-prefix cache for the entire history behind it — a full
-    re-prefill for a change to one line. Which entries *survive* the budget still follows
-    recency, because that is what the store's ordering is for; the survivors are then sorted
-    by name, so an edit that does not change the surviving *set* does not change the bytes."""
+    """The catalog line for the published skills (`SKILL-2`): a count, and the pinned ones
+    by name. Entries arrive newest first, so a pin past the limit drops the oldest; the
+    survivors are sorted by name so an edit that keeps the set keeps the bytes."""
     if not entries:
         return ""
-
-    def line_for(entry: SkillCatalogEntry) -> str:
-        return f"- {entry.name}: {entry.description}"
-
-    kept: list[SkillCatalogEntry] = []
-    used = 0
-    for entry in entries:
-        line = line_for(entry)
-        if used + len(line) > SKILL_CATALOG_BUDGET_CHARS and kept:
-            break
-        kept.append(entry)
-        used += len(line) + 1
-    lines = [line_for(entry) for entry in sorted(kept, key=lambda entry: entry.name)]
-    omitted = len(entries) - len(kept)
-    if omitted:
-        lines.append(f"- …and {omitted} more (open by name if you know it)")
-    return SKILL_CATALOG.format(entries="\n".join(lines))
+    count = f"{len(entries)} saved skill{'' if len(entries) == 1 else 's'}"
+    pinned = sorted(
+        [entry for entry in entries if entry.pinned][:SKILL_PINNED_LIMIT],
+        key=lambda entry: entry.name,
+    )
+    listed = (
+        SKILL_PINNED.format(
+            entries="\n".join(f"- {entry.name}: {entry.description}" for entry in pinned)
+        )
+        if pinned
+        else ""
+    )
+    return SKILL_CATALOG.format(count=count, pinned=listed)
 
 
 async def skill_catalog_instructions(ctx: RunContext[RunDeps]) -> str:
-    """Surface the operator's published skills to the agent automatically (`SKILL-2`) —
-    the standard's level-one disclosure: names and descriptions only, so the model knows
-    what procedures exist without paying for any of their instructions. A dynamic
-    instruction (registered via the skills feature manifest), so it is always current and
-    lives outside history. Empty (no-op) when there's no skill store or nothing is
-    published."""
+    """Tell the agent the operator's published skills exist and how to find them
+    (`SKILL-2`). A dynamic instruction, so it is always current and lives outside history.
+    Empty when there's no skill store or nothing is published."""
     store = ctx.deps.caps.get_optional(SkillStore)
     if store is None:
         return ""

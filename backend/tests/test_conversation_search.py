@@ -115,8 +115,8 @@ async def test_semantic_search_matches_paraphrase():
 
 async def test_search_hit_title_is_none_for_an_untitled_conversation():
     # A conversation the background titler hasn't named yet surfaces title=None from
-    # the service — the `conversations_search` tool fills a fallback so the model is
-    # never handed a null (see tools/conversations.py).
+    # the service — the corpus adapter fills a fallback so the model is never handed a
+    # null (see services/corpus/wrappers.py).
     _engine, _vault, store, search = await _setup(FakeEmbedder())
     cid = await _record(store, OWNER, ("about a cat", "a fluffy cat"))
 
@@ -286,64 +286,3 @@ async def test_reindex_heals_a_model_change():
     assert after and after[0].conversation_id == cid
     assert after[0].matched_by == "semantic"  # healed
     await store.stop()
-
-
-# --- the agent reaches the capability through the toolset stack ------------
-
-
-async def test_agent_conversation_tools_reach_the_service():
-    # A turn with only the conversations category and a TestModel (which calls every
-    # offered tool once) must drive search + read through without error — proving the
-    # tools are thin adapters over the same ConversationSearch.
-    from pydantic_ai.models.test import TestModel
-
-    from agent import build_chat_orchestrator
-    from core.container import ServiceContainer
-    from runs import RunRegistry, RunStatus
-    from tools.conversations import conversations_toolset
-
-    from ._helpers import granting_store
-
-    _engine, _vault, store, search = await _setup(FakeEmbedder())
-    await _record(store, OWNER, ("about a cat", "a fluffy cat"))
-
-    # search is AE-3.8-gated (read passes through); grant it so the TestModel's search
-    # call auto-approves inline and the turn drives both tools through without parking.
-    grants = await granting_store(OWNER, "c", "conversations_search")
-    orch = build_chat_orchestrator(
-        "look across my chats",
-        model=TestModel(custom_output_text="done"),
-        categories={"conversations": conversations_toolset()},
-        capabilities=ServiceContainer.of(search, grants),
-        conversation_id="c",
-    )
-    run = RunRegistry().submit(kind="chat", owner_id=OWNER, orchestrator=orch)
-    await run.wait()
-    assert run.status is RunStatus.done
-    await store.stop()
-
-
-async def test_conversation_tools_degrade_when_unwired():
-    # No conversation_search capability ⇒ the tools say so rather than failing the turn.
-    from pydantic_ai.models.test import TestModel
-
-    from agent import build_chat_orchestrator
-    from core.container import ServiceContainer
-    from runs import RunRegistry, RunStatus
-    from tools.conversations import conversations_toolset
-
-    from ._helpers import granting_store
-
-    # Grant search past its AE-3.8 gate so the turn reaches the degrade path (the gate
-    # fires before the tool sees that the capability is unwired) and reports unavailable.
-    grants = await granting_store(OWNER, "c", "conversations_search")
-    orch = build_chat_orchestrator(
-        "look across my chats",
-        model=TestModel(custom_output_text="done"),
-        categories={"conversations": conversations_toolset()},
-        capabilities=ServiceContainer.of(grants),
-        conversation_id="c",
-    )
-    run = RunRegistry().submit(kind="chat", owner_id=OWNER, orchestrator=orch)
-    await run.wait()
-    assert run.status is RunStatus.done

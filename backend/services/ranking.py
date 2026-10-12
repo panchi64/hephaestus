@@ -16,6 +16,7 @@ signal alone.
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 import numpy as np
 
@@ -26,6 +27,11 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 def tokens(text: str) -> set[str]:
     """The lowercase alphanumeric token set used for sparse (keyword) overlap."""
     return set(_TOKEN.findall(text.lower()))
+
+
+def term_counts(text: str) -> Counter[str]:
+    """Token frequencies, for BM25."""
+    return Counter(_TOKEN.findall(text.lower()))
 
 
 def cosine(a: np.ndarray, b: np.ndarray) -> float:

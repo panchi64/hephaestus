@@ -160,11 +160,18 @@ class FolderAdapter(SourceAdapter):
         query_tokens: set[str],
         *,
         limit: int,
+        since: datetime | None = None,
     ) -> list[CorpusHit]:
         # Chunks are scored directly from the pre-computed dense/sparse forms; the raw
         # query string isn't needed here.
         return await self._chunks.retrieve(
-            owner_id, self.source_kind, query_vec, query_model, query_tokens, limit=limit
+            owner_id,
+            self.source_kind,
+            query_vec,
+            query_model,
+            query_tokens,
+            limit=limit,
+            since=since,
         )
 
     async def status(self, owner_id: str) -> list[SourceStatus]:

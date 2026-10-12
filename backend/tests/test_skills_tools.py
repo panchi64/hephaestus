@@ -285,48 +285,45 @@ def test_catalog_block_is_empty_with_no_published_skills():
     assert _skill_catalog_block([]) == ""
 
 
-def test_catalog_block_lists_each_skill():
+def test_catalog_block_counts_the_skills_and_lists_only_the_pinned():
     block = _skill_catalog_block(
         [
-            SkillCatalogEntry(name="release-notes", description="Draft release notes."),
+            SkillCatalogEntry(
+                name="release-notes", description="Draft release notes.", pinned=True
+            ),
             SkillCatalogEntry(name="triage-bugs", description="Triage a bug report."),
         ]
     )
+    assert "2 saved skills" in block
     assert "- release-notes: Draft release notes." in block
-    assert "- triage-bugs: Triage a bug report." in block
-    assert "skills_open" in block
+    assert "triage-bugs" not in block
+    assert "platform_search" in block and "skills_open" in block
 
 
-def test_catalog_block_reports_what_the_budget_dropped():
+def test_catalog_block_stays_one_line_however_many_skills_there_are():
     entries = [SkillCatalogEntry(name=f"skill-{i}", description="d" * 200) for i in range(100)]
     block = _skill_catalog_block(entries)
-    assert "…and" in block and "more" in block
-    # Newest-first ordering means the first entries survive and the tail is what's dropped.
-    assert "skill-0" in block
-    assert "skill-99" not in block
+    assert "100 saved skills" in block
+    assert "skill-" not in block
+    assert len(block) < 400
 
 
 def test_the_block_reads_the_same_however_recently_each_skill_was_touched():
-    """The catalog renders at the *head* of every request, so touching one skill must not
-    reshuffle the list — a reordered head invalidates the prompt-prefix cache for the whole
-    history behind it. The store still hands them over newest-first (that is what decides
-    which survive the budget); the rendering is by name, so the same surviving *set* is the
-    same bytes whatever order it arrived in."""
+    """The catalog renders at the head of every request, so touching one skill must not
+    reorder the pinned list."""
     entries = [
-        SkillCatalogEntry(name="release-notes", description="Draft release notes."),
-        SkillCatalogEntry(name="triage-bugs", description="Triage a bug report."),
+        SkillCatalogEntry(name="release-notes", description="Draft release notes.", pinned=True),
+        SkillCatalogEntry(name="triage-bugs", description="Triage a bug report.", pinned=True),
     ]
     assert _skill_catalog_block(entries) == _skill_catalog_block(list(reversed(entries)))
 
 
-def test_the_budget_still_keeps_the_most_recently_touched():
-    """Recency selects even though the name orders: the survivors are the head of what the
-    store handed over, not the alphabetical head of it."""
-    entries = [SkillCatalogEntry(name=f"skill-{i:02d}", description="d" * 200) for i in range(100)]
+def test_past_the_pin_limit_the_most_recently_touched_pins_stay():
+    entries = [
+        SkillCatalogEntry(name=f"skill-{i:02d}", description="d", pinned=True) for i in range(10)
+    ]
     block = _skill_catalog_block(list(reversed(entries)))
-    # Reversed arrival means skill-99 is now the most recently touched, so it survives and
-    # skill-00 is what the budget drops — the opposite of the forward-order case above.
-    assert "skill-99" in block
+    assert "skill-09" in block
     assert "skill-00" not in block
 
 
@@ -334,9 +331,16 @@ async def test_catalog_reaches_the_block_with_published_skills_only():
     store = await _store()
     await store.create(OWNER, name="a-draft", description="Draft.", body="x")
     await _published(store)
-    block = _skill_catalog_block(await store.catalog(OWNER))
-    assert "release-notes" in block
-    assert "a-draft" not in block
+    entries = await store.catalog(OWNER)
+    assert [entry.name for entry in entries] == ["release-notes"]
+    assert "1 saved skill " in _skill_catalog_block(entries)
+
+
+async def test_a_pinned_skill_is_named_in_the_block():
+    store = await _store()
+    skill = await _published(store)
+    await store.set_pinned(OWNER, skill.id, True)
+    assert "- release-notes:" in _skill_catalog_block(await store.catalog(OWNER))
 
 
 # ── Regressions ──────────────────────────────────────────────────────────────────────────

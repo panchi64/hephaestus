@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, replace
+from datetime import datetime
 
 from sqlmodel import Session, select
 
@@ -25,8 +26,8 @@ from core.db import in_session
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from models.corpus import CorpusSource
 from services import ranking
-from services.corpus.adapter import CorpusHit, SourceAdapter, SourceStatus
-from services.corpus.chunk_store import CorpusChunkStore
+from services.corpus.adapter import CorpusDocument, CorpusHit, SourceAdapter, SourceStatus
+from services.corpus.chunk_store import CorpusChunkStore, item_of
 from services.corpus.folder import FolderAdapter
 from services.embeddings import Embedder, embed_query
 from services.registry import ModelRegistry
@@ -89,6 +90,7 @@ class CorpusIndex:
         source_ids: list[str] | None = None,
         limit: int = 8,
         visible_projects: tuple[str | None, ...] | None = None,
+        since: datetime | None = None,
     ) -> list[CorpusHit]:
         """Fan the query out to the selected sources and RRF-fuse the results.
 
@@ -106,6 +108,8 @@ class CorpusIndex:
         inside a project, because a project chat that could not reach the operator's
         general knowledge would be a worse assistant. What it excludes is the other
         direction: another project's sources, which is the contamination rule.
+
+        ``since`` drops anything written or changed before it.
         """
         query_vec, query_model = await embed_query(self._embedder, owner_id, query)
         query_tokens = ranking.tokens(query)
@@ -113,8 +117,14 @@ class CorpusIndex:
 
         if source_ids:
             hits = await self._chunks.retrieve(
-                owner_id, None, query_vec, query_model, query_tokens,
-                limit=limit, source_ids=source_ids,
+                owner_id,
+                None,
+                query_vec,
+                query_model,
+                query_tokens,
+                limit=limit,
+                source_ids=source_ids,
+                since=since,
             )
             return [hit for hit in hits if hit.source_id not in excluded]
 
@@ -126,7 +136,7 @@ class CorpusIndex:
         per_source = await asyncio.gather(
             *(
                 adapter.retrieve(
-                    owner_id, query, query_vec, query_model, query_tokens, limit=limit
+                    owner_id, query, query_vec, query_model, query_tokens, limit=limit, since=since
                 )
                 for adapter in selected
             )
@@ -149,6 +159,30 @@ class CorpusIndex:
         fused = ranking.rrf_lists(ranked_lists)
         ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
         return [replace(by_gid[gid], score=score) for gid, score in ranked]
+
+    async def read(
+        self,
+        owner_id: str,
+        gid: str,
+        *,
+        visible_projects: tuple[str | None, ...] | None = None,
+    ) -> CorpusDocument | None:
+        """One item in full by a hit's ``gid``: a surface's own record, or a whole file
+        stitched back from its chunks."""
+        source_id, sep, ref = gid.partition(":")
+        if not sep or not ref:
+            return None
+        surface = self._surface_adapter(source_id)
+        if surface is not None:
+            return await surface.read(owner_id, ref)
+        if source_id in await self._out_of_scope_source_ids(owner_id, visible_projects):
+            return None
+        item = item_of(ref)
+        found = await self._chunks.read_item(owner_id, source_id, item)
+        if found is None:
+            return None
+        text, at = found
+        return CorpusDocument(title=item, text=text, at=at)
 
     # --- the /rag surface -------------------------------------------------
 
@@ -180,7 +214,7 @@ class CorpusIndex:
     async def _embedding_facts(self, owner_id: str) -> tuple[str | None, int | None]:
         try:
             spec = await self._registry.resolve_embedding_spec(owner_id)
-        except (DegradedCapabilityError, NotFoundError):
+        except DegradedCapabilityError, NotFoundError:
             return None, None
         return spec.model, None
 

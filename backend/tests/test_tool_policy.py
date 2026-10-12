@@ -126,8 +126,6 @@ _PINNED_CATALOG = {
     "code_execute",
     "code_request_egress",
     "code_run_host_command",
-    "conversations_read",
-    "conversations_search",
     "corpus_retrieve",
     "files_create_directory",
     "files_edit_file",
@@ -149,6 +147,8 @@ _PINNED_CATALOG = {
     "plan_enter",
     "plan_read",
     "plan_submit",
+    "platform_read",
+    "platform_search",
     "project_active",
     "project_list",
     "project_open_worktree",
@@ -186,8 +186,7 @@ async def test_booted_app_assembles_the_same_catalog():
         # theirs). A name missing here is a tool that parks the run but can never be
         # granted for the conversation, so the operator is asked again on every call.
         assert app.state.gated_tools == {
-            "corpus_retrieve",
-            "conversations_search",
+            "platform_search",
             "plan_submit",
             "agents_write",
             "shell_run_command",

@@ -1,21 +1,11 @@
 """Long-term memory — store, recall by meaning, and manage memories.
 
 The capability behind `MEM-*`. A memory is encrypted at rest (content + vector);
-recall is **hybrid and brute-force**: at single-operator volumes we load the
-owner's memories, decrypt them, and score each against the query two ways —
-
-- **dense** (cosine over embeddings, the "by meaning" path), and
-- **sparse** (token overlap, the keyword path) —
-
-then fuse the two rankings with Reciprocal Rank Fusion. This satisfies `MEM-2`'s
-"recall by meaning, keyword fallback" in one pass: when the embedding capability
-is unavailable (or a memory has no vector), that item simply contributes via the
-sparse signal alone. Pinned memories are always included (`MEM-4`).
-
-Brute-force-in-Python (not an in-DB ANN index) is the deliberate consequence of
-encrypting vectors at rest. It is microseconds at this scale
-and keeps every vector sealed. The pluggable seam (a different store) stays open
-for when volume, not confidentiality, becomes the constraint.
+recall is **hybrid**: cosine over embeddings (the "by meaning" path) and BM25 (the keyword
+path), fused with Reciprocal Rank Fusion on the memory-only :mod:`services.recall_index`.
+This satisfies `MEM-2`'s "recall by meaning, keyword fallback" in one pass: a memory with
+no vector contributes through the keyword signal alone. Pinned memories are always
+included (`MEM-4`).
 
 Embeddings are compared **only within the same model/space** (`EMB-2`): a memory
 embedded by a different model than the current one falls back to sparse, so a
@@ -24,12 +14,13 @@ model change degrades recall rather than corrupting it.
 
 from __future__ import annotations
 
+from collections.abc import Hashable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import numpy as np
 from sqlalchemy import Engine, func, or_
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import get_owned, in_session
 from core.exceptions import DegradedCapabilityError
@@ -43,9 +34,8 @@ from services.embeddings import (
     encode_vector,
 )
 from services.ranking import cosine as _cosine
-from services.ranking import matched_by as _matched_by
-from services.ranking import rrf as _rrf
 from services.ranking import tokens as _tokens
+from services.recall_index import Collection, Doc, Loaded, Query, RecallIndex
 
 
 @dataclass(frozen=True)
@@ -76,11 +66,45 @@ class DuplicateGroup:
     similarity: float
 
 
+class MemoryCollection(Collection[None]):
+    name = "memories"
+
+    def signature(self, session: Session, owner_id: str) -> Hashable:
+        stmt = (
+            select(Memory.embedding_model, func.count(), func.max(Memory.updated_at))
+            .where(Memory.owner_id == owner_id)
+            .group_by(col(Memory.embedding_model))
+        )
+        return frozenset(session.exec(stmt).all())
+
+    def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
+        stmt = select(Memory.id, Memory.updated_at, Memory.embedding_model).where(
+            Memory.owner_id == owner_id
+        )
+        return {mid: (at, model) for mid, at, model in session.exec(stmt).all()}
+
+    def load(
+        self, session: Session, vault: Vault, owner_id: str, ids: list[str]
+    ) -> list[Loaded[None]]:
+        rows = session.exec(select(Memory).where(col(Memory.id).in_(ids))).all()
+        return [
+            Loaded(
+                Doc(row.id, row.created_at, None),
+                vault.decrypt_str(row.content_enc),
+                decode_vector(vault, row.embedding_enc) if row.embedding_enc else None,
+                row.embedding_model,
+            )
+            for row in rows
+        ]
+
+
 class MemoryStore:
     def __init__(self, engine: Engine, vault: Vault, embedder: Embedder) -> None:
         self._engine = engine
         self._vault = vault
         self._embedder = embedder
+        self._index = RecallIndex(engine, vault)
+        self._collection = MemoryCollection()
 
     # --- write path -------------------------------------------------------
 
@@ -145,11 +169,10 @@ class MemoryStore:
 
     async def list_memories(self, owner_id: str) -> list[MemoryView]:
         """The chronological timeline, newest first (`MEM-1`)."""
+
         def work(session: Session) -> list[MemoryView]:
             rows = session.exec(
-                select(Memory)
-                .where(Memory.owner_id == owner_id)
-                .order_by(Memory.created_at.desc())  # type: ignore[attr-defined]
+                select(Memory).where(Memory.owner_id == owner_id).order_by(Memory.created_at.desc())  # type: ignore[attr-defined]
             ).all()
             return [self._to_view(row, self._vault.decrypt_str(row.content_enc)) for row in rows]
 
@@ -158,6 +181,7 @@ class MemoryStore:
     async def count(self, owner_id: str) -> int:
         """How many memories the owner has — a scalar count that never decrypts
         (the overview readout, not the timeline)."""
+
         def work(session: Session) -> int:
             return session.exec(
                 select(func.count()).select_from(Memory).where(Memory.owner_id == owner_id)
@@ -169,19 +193,49 @@ class MemoryStore:
         memory = await self._require(owner_id, memory_id)
         return self._to_view(memory, self._vault.decrypt_str(memory.content_enc))
 
-    async def recall(self, owner_id: str, query: str, *, limit: int = 5) -> list[RecallHit]:
+    async def recall(
+        self, owner_id: str, query: str, *, limit: int = 5, since: datetime | None = None
+    ) -> list[RecallHit]:
         """Hybrid recall: dense (meaning) + sparse (keyword), fused, plus pins.
 
-        The query is embedded off the DB thread; scoring decrypts and ranks the
-        working set on it. A degraded embedder (or a query that can't embed)
-        collapses cleanly to keyword-only — the `MEM-2` fallback."""
+        A degraded embedder (or a query that can't embed) collapses cleanly to
+        keyword-only — the `MEM-2` fallback. ``since`` drops memories older than it,
+        pins included."""
         query_vec, query_model = await embed_query(self._embedder, owner_id, query)
-        query_tokens = _tokens(query)
+        ranked = await self._index.search(
+            self._collection,
+            owner_id,
+            Query(_tokens(query), query_vec, query_model),
+            limit=limit,
+            keep=None if since is None else lambda doc: doc.at is not None and doc.at >= since,
+        )
+        ids = [hit.doc.id for hit in ranked]
 
         def work(session: Session) -> list[RecallHit]:
-            rows = session.exec(select(Memory).where(Memory.owner_id == owner_id)).all()
-            decrypted = [(row, self._vault.decrypt_str(row.content_enc)) for row in rows]
-            return self._rank(decrypted, query_vec, query_model, query_tokens, limit)
+            stmt = select(Memory).where(Memory.owner_id == owner_id)
+            stmt = stmt.where(or_(col(Memory.id).in_(ids), col(Memory.pinned).is_(True)))
+            if since is not None:
+                stmt = stmt.where(Memory.created_at >= since)
+            rows = {
+                row.id: row
+                for row in session.exec(stmt.order_by(col(Memory.created_at).desc())).all()
+            }
+            views = {
+                mid: self._to_view(row, self._vault.decrypt_str(row.content_enc))
+                for mid, row in rows.items()
+            }
+            hits = [
+                RecallHit(memory=views[hit.doc.id], score=hit.score, matched_by=hit.matched_by)
+                for hit in ranked
+                if hit.doc.id in views
+            ]
+            present = {hit.memory.id for hit in hits}
+            hits.extend(
+                RecallHit(memory=views[mid], score=0.0, matched_by="pinned")
+                for mid, row in rows.items()
+                if row.pinned and mid not in present
+            )
+            return hits
 
         return await in_session(self._engine, work)
 
@@ -190,6 +244,7 @@ class MemoryStore:
 
         Pairs whose embeddings exceed ``threshold`` cosine similarity are grouped.
         Detection only — the operator decides what to merge or delete."""
+
         def work(session: Session) -> list[DuplicateGroup]:
             rows = session.exec(select(Memory).where(Memory.owner_id == owner_id)).all()
             embedded = [
@@ -214,6 +269,7 @@ class MemoryStore:
         falls back to keyword recall until this re-embeds it into the current space.
         Best-effort: a degraded embedder stops the run and leaves the rest for next
         time. Returns how many memories were re-embedded."""
+
         def pending(session: Session) -> list[tuple[str, str]]:
             # Filter stale rows in SQL so only those that need re-embedding are
             # loaded and decrypted (not the whole table).
@@ -256,47 +312,6 @@ class MemoryStore:
             return None, None, None
         vector = batch.vectors[0]
         return batch.model, batch.dim, encode_vector(self._vault, vector)
-
-    def _rank(
-        self,
-        decrypted: list[tuple[Memory, str]],
-        query_vec: np.ndarray | None,
-        query_model: str | None,
-        query_tokens: set[str],
-        limit: int,
-    ) -> list[RecallHit]:
-        dense: dict[str, float] = {}
-        sparse: dict[str, float] = {}
-        for memory, content in decrypted:
-            overlap = len(query_tokens & _tokens(content))
-            if overlap:
-                sparse[memory.id] = float(overlap)
-            # Dense only within the same embedding space (EMB-2), and only when
-            # there's actual similarity — a zero/orthogonal vector is no signal.
-            if (
-                query_vec is not None
-                and memory.embedding_enc is not None
-                and memory.embedding_model == query_model
-            ):
-                vector = np.asarray(decode_vector(self._vault, memory.embedding_enc))
-                score = _cosine(query_vec, vector)
-                if score > 0:
-                    dense[memory.id] = score
-
-        fused = _rrf(dense, sparse)
-        views = {m.id: self._to_view(m, c) for m, c in decrypted}
-        ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
-
-        hits = [
-            RecallHit(memory=views[mid], score=score, matched_by=_matched_by(mid, dense, sparse))
-            for mid, score in ranked
-        ]
-        # Pins are always included (MEM-4), appended if not already surfaced.
-        present = {h.memory.id for h in hits}
-        for memory, _content in decrypted:
-            if memory.pinned and memory.id not in present:
-                hits.append(RecallHit(memory=views[memory.id], score=0.0, matched_by="pinned"))
-        return hits
 
     def _duplicate_groups(
         self, embedded: list[tuple[str, str | None, np.ndarray]], threshold: float

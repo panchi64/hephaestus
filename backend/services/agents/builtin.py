@@ -215,11 +215,24 @@ def merged_roster(*layers: Iterable[AgentDefinition]) -> dict[str, AgentDefiniti
 
 def delegable(roster: Mapping[str, AgentDefinition]) -> dict[str, AgentDefinition]:
     """The agents other agents may hand work to."""
-    return {
-        name: agent for name, agent in roster.items() if agent.delegable and agent.published
-    }
+    return {name: agent for name, agent in roster.items() if agent.delegable and agent.published}
+
+
+#: Agents beyond the built-ins named in the launch tool; the rest are found by search.
+ROSTER_LISTED = 8
 
 
 def describe_roster(roster: Mapping[str, AgentDefinition]) -> str:
-    """The roster as the model reads it, inside the launch tool's own description."""
-    return "\n".join(f"`{name}` — {agent.description}." for name, agent in roster.items())
+    """The roster as the model reads it, inside the launch tool's own description: every
+    built-in, then up to ``ROSTER_LISTED`` others by name, and a count of the rest."""
+    builtin = [name for name, agent in roster.items() if agent.source == "builtin"]
+    others = sorted(name for name, agent in roster.items() if agent.source != "builtin")
+    lines = [
+        f"`{name}` — {roster[name].description}." for name in [*builtin, *others[:ROSTER_LISTED]]
+    ]
+    if len(others) > ROSTER_LISTED:
+        lines.append(
+            f"…and {len(others) - ROSTER_LISTED} more: find them with `platform_search` "
+            "(sources `agents`)."
+        )
+    return "\n".join(lines)

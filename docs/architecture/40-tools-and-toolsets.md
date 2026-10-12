@@ -104,7 +104,7 @@ Two deliberate omissions, each a settled decision rather than an oversight:
 |---|---|---|---|
 | `builtin` | `now` | — (starter category so the stack has something to compose) | ✅ built |
 | `memory` | `remember`, `recall` | `services/memory` (hybrid recall, `MEM-*`) | ✅ built |
-| `conversations` | `search`, `read` | `services/conversation_search` (cross-chat hybrid recall, `CHAT-7`) | ✅ built |
+| `platform` | `search`, `read` | `services/corpus` over every source, plus the skill and agent catalogs (D118) | ✅ built |
 | `code` | `execute`, `request_egress`, `run_host_command` | `services/sandbox` + `services/egress` (`XC-SEC-7`) | ✅ built |
 | `view` | `view_show` (file → version, or serve → live head), `view_close` | `services/artifacts` (version store) + `services/sandbox` (live head) | ✅ built |
 | `web` | `search`, `fetch` | `services/search` + `services/searxng` (`SEARCH-*`) | ✅ built |
@@ -119,7 +119,7 @@ Naming is `category_tool` (the `.prefixed(name)` step), so `recall` is offered a
 
 ### Progressive disclosure — how a large library stays three tools
 
-D3 fixed the catalog as lean and unfiltered: no runtime relevance step decides which tools a turn sees. `skills` is where that constraint met its hardest case — a library of a hundred procedures — and the answer is the Agent Skills standard's own: **the catalog carries tools, not content.** Every *published* skill's name and description rides in the turn's instructions (a budgeted `@agent.instructions` block, not a tool), the model calls `skills_open` for the full text of the one it needs, and that call also stages the skill's bundled files into the sandbox so its scripts and references are reachable through `code_execute`. A thousand skills is still three tools, and the only per-turn cost is one line per skill. See D32.
+D3 fixed the catalog as lean and unfiltered: no runtime relevance step decides which tools a turn sees. `skills` is where that constraint met its hardest case — a library of a hundred procedures — and the answer is the Agent Skills standard's own: **the catalog carries tools, not content.** The turn's instructions say how many skills are published and name only the few the operator pinned; the model finds the rest with `platform_search`, calls `skills_open` for the full text of the one it needs, and that call also stages the skill's bundled files into the sandbox so its scripts and references are reachable through `code_execute`. A thousand skills is still three tools and one fixed line. See D32 and D118.
 
 ---
 

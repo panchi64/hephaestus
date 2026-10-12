@@ -16,10 +16,13 @@ hold is just a source the operator can never index, so it went with it.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import numpy as np
 
+from core.exceptions import NotFoundError
 from services.conversation_search import ConversationSearch
-from services.corpus.adapter import CorpusHit, SourceAdapter, SourceStatus
+from services.corpus.adapter import CorpusDocument, CorpusHit, SourceAdapter, SourceStatus
 from services.memory import MemoryStore
 
 
@@ -41,11 +44,12 @@ class MemoryAdapter(SourceAdapter):
         query_tokens: set[str],
         *,
         limit: int,
+        since: datetime | None = None,
     ) -> list[CorpusHit]:
         # MemoryStore.recall embeds + hybrid-fuses internally, so it takes the raw query
         # string (not the index's pre-computed vector). Its hits come back ranked; the
         # index fuses this list with the others by rank.
-        hits = await self._store.recall(owner_id, query, limit=limit)
+        hits = await self._store.recall(owner_id, query, limit=limit, since=since)
         return [
             CorpusHit(
                 gid=f"{self.SOURCE_ID}:{hit.memory.id}",
@@ -54,9 +58,18 @@ class MemoryAdapter(SourceAdapter):
                 text=hit.memory.content,
                 score=hit.score,
                 matched_by=hit.matched_by,
+                at=hit.memory.created_at,
+                title="Memory",
             )
             for hit in hits
         ]
+
+    async def read(self, owner_id: str, ref: str) -> CorpusDocument | None:
+        try:
+            memory = await self._store.get(owner_id, ref)
+        except NotFoundError:
+            return None
+        return CorpusDocument(title="Memory", text=memory.content, at=memory.created_at)
 
     async def status(self, owner_id: str) -> SourceStatus:
         count = await self._store.count(owner_id)
@@ -92,10 +105,11 @@ class ConversationAdapter(SourceAdapter):
         query_tokens: set[str],
         *,
         limit: int,
+        since: datetime | None = None,
     ) -> list[CorpusHit]:
         # ConversationSearch.search embeds + hybrid-fuses internally; it takes the raw
         # query and returns hits already ranked (one per conversation).
-        hits = await self._search.search(owner_id, query, limit=limit)
+        hits = await self._search.search(owner_id, query, limit=limit, since=since)
         return [
             CorpusHit(
                 gid=f"{self.SOURCE_ID}:{hit.conversation_id}",
@@ -104,9 +118,19 @@ class ConversationAdapter(SourceAdapter):
                 text=hit.snippet,
                 score=hit.score,
                 matched_by=hit.matched_by,
+                at=hit.updated_at,
+                title=hit.title or "(untitled conversation)",
             )
             for hit in hits
         ]
+
+    async def read(self, owner_id: str, ref: str) -> CorpusDocument | None:
+        transcript = await self._search.read(owner_id, ref)
+        if transcript is None:
+            return None
+        return CorpusDocument(
+            title=transcript.title or "(untitled conversation)", text=transcript.text
+        )
 
     async def status(self, owner_id: str) -> SourceStatus:
         return SourceStatus(

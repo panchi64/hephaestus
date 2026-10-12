@@ -1,10 +1,8 @@
-"""Corpus tool — the agent's unified read across every knowledge source.
+"""Corpus tool — a search inside files the operator named.
 
-A single ``retrieve`` verb, a thin pass-through to :class:`~services.corpus.CorpusIndex`
-reached via ``RunDeps``. Because the index registers the memory + conversation adapters
-alongside the folder source, this one tool is the agent's read across *all* of them
-(memory's ``remember``/``recall`` stay as the write/fact surface — this augments, not
-replaces, them).
+A single ``retrieve`` verb over specific file sources by id (a file attached to the
+conversation, whose id is in its attachment marker), a thin pass-through to
+:class:`~services.corpus.CorpusIndex`. Searching the whole corpus is ``platform_search``.
 
 Each hit's text is folder/file content — **external data**, so it is fenced with
 :func:`core.untrusted.untrusted_fence` before it reaches the model (the corpus is an
@@ -32,7 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from core.citations import Citation
 from core.untrusted import new_nonce, unfence, untrusted_fence, untrusted_preamble
@@ -40,7 +38,6 @@ from services.corpus import CorpusIndex
 from services.projects import visible_project_ids
 
 from .deps import RunDeps
-from .recall_gate import gate_global_recall
 
 
 @dataclass(frozen=True)
@@ -106,23 +103,17 @@ def corpus_toolset() -> FunctionToolset[RunDeps]:
     async def retrieve(
         ctx: RunContext[RunDeps],
         query: str,
+        source_ids: list[str],
         limit: int = 8,
-        source_ids: list[str] | None = None,
     ) -> CorpusPassages | str:
-        """Retrieve relevant passages from the knowledge corpus (folders, memory, uploaded
-        files, and past conversations) by meaning, with a keyword fallback. ``source_ids``
-        scopes the search to specific file sources by id — e.g. a file attached to this
-        conversation, whose id appears in its attachment marker; an explicit-id read returns
-        the file even if it's been excluded from the knowledge base. Leave ``source_ids``
-        unset for normal recall across every source."""
-        # Global recall (no explicit source) pulls untrusted knowledge-base content into
-        # the operator's context, so it is approval-gated (AE-3.8) — the operator can deny
-        # a search they know is irrelevant before its hits reach the model. An explicit-id
-        # read is content the operator already chose to provide (an attached file), so it
-        # passes through. ``not source_ids`` covers both an unset list and an empty one,
-        # which the retrieve below also collapses to a global recall.
+        """Retrieve the passages most relevant to ``query`` from specific files by id —
+        e.g. a file attached to this conversation, whose id appears in its attachment
+        marker — by meaning, with a keyword fallback. A file excluded from the knowledge
+        base still reads by id. To search everything, use ``platform_search``."""
         if not source_ids:
-            gate_global_recall(ctx)
+            raise ModelRetry(
+                "Pass the ids of the files to search; to search everything, use platform_search."
+            )
         index = ctx.deps.caps.get_optional(CorpusIndex)
         if index is None:
             # A plain string, like the web tools' degrade: an empty batch would read to
@@ -135,7 +126,7 @@ def corpus_toolset() -> FunctionToolset[RunDeps]:
         hits = await index.retrieve(
             ctx.deps.owner_id,
             query,
-            source_ids=source_ids or None,
+            source_ids=source_ids,
             limit=limit,
             visible_projects=visible_project_ids(ctx.deps.project_id),
         )

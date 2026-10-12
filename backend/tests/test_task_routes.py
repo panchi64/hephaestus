@@ -129,15 +129,15 @@ async def test_create_and_patch_reject_unknown_pre_authorized_scope():
         resp = await _post_task(client, preAuthorized=["not_a_real_scope"])
         assert resp.status_code == 422
 
-        created = await _create_task(client, pre_authorized=["corpus_retrieve"])
+        created = await _create_task(client, pre_authorized=["agents_write"])
         bad_patch = await client.patch(f"/tasks/{created['id']}", json={"preAuthorized": ["nope"]})
         assert bad_patch.status_code == 422
 
         good_patch = await client.patch(
-            f"/tasks/{created['id']}", json={"preAuthorized": ["conversations_search"]}
+            f"/tasks/{created['id']}", json={"preAuthorized": ["platform_search"]}
         )
         assert good_patch.status_code == 200
-        assert good_patch.json()["preAuthorized"] == ["conversations_search"]
+        assert good_patch.json()["preAuthorized"] == ["platform_search"]
 
 
 async def test_interval_and_cron_schedules_compute_a_next_run_at():
@@ -177,7 +177,7 @@ async def test_run_now_creates_conversation_run_and_seeds_grants(monkeypatch):
     patch_model_resolution(monkeypatch, output_text="All set, nothing else to do.")
     async with client_app() as (client, app):
         created = await _create_task(
-            client, pre_authorized=["conversations_search", "corpus_retrieve"]
+            client, pre_authorized=["platform_search", "agents_write"]
         )
         task_id = created["id"]
 
@@ -192,7 +192,7 @@ async def test_run_now_creates_conversation_run_and_seeds_grants(monkeypatch):
         assert "All set" in row["summary"]
 
         granted = await app.state.approval_grants.list("operator", row["conversationId"])
-        assert {g.tool_name for g in granted} == {"conversations_search", "corpus_retrieve"}
+        assert {g.tool_name for g in granted} == {"platform_search", "agents_write"}
         # Whole-tool by shape, but never the operator's wider pick: nobody was in front of
         # this run to make it, and the thread it opened is one they can reopen later. A
         # seed promoted by its shape would go on answering past this single execution.
@@ -217,12 +217,12 @@ async def test_a_fire_drops_a_once_only_pre_authorization(monkeypatch):
             title="t",
             prompt="p",
             output="chat",
-            pre_authorized=["code_request_egress", "conversations_search"],
+            pre_authorized=["code_request_egress", "platform_search"],
         )
         result = await app.state.scheduler._executor(view)
         assert result.outcome == "ok"
         granted = await app.state.approval_grants.list("operator", result.conversation_id)
-        assert {g.tool_name for g in granted} == {"conversations_search"}
+        assert {g.tool_name for g in granted} == {"platform_search"}
 
 
 async def test_run_now_skips_when_previous_execution_still_live():

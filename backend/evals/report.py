@@ -34,6 +34,7 @@ from evals.test_endtoend import (
     ConsumerScores,
     _seed_conversations,
     _seed_memory,
+    platform_over,
     score_consumer,
 )
 from evals.test_retrieval import (
@@ -46,8 +47,8 @@ from evals.test_retrieval import (
 from services.conversation_search import ConversationSearch
 from services.conversations import ConversationStore
 from services.memory import MemoryStore
-from tools.conversations import conversations_toolset
 from tools.memory import memory_toolset
+from tools.platform import platform_toolset
 
 OWNER = "operator"
 FINDINGS = Path(__file__).with_name("FINDINGS.md")
@@ -95,9 +96,7 @@ async def _conversation_run(embedder: EnvEmbedder, chat) -> tuple[dict, Consumer
     search = ConversationSearch(engine, vault, embedder, store)
     try:
         hybrid = await _conversation_hybrid(store, search, corpus)
-        ablation = await run_ablation(
-            embedder, _conversation_texts(corpus), corpus.queries, hybrid
-        )
+        ablation = await run_ablation(embedder, _conversation_texts(corpus), corpus.queries, hybrid)
     finally:
         await store.stop()
 
@@ -112,8 +111,8 @@ async def _conversation_run(embedder: EnvEmbedder, chat) -> tuple[dict, Consumer
             consumer="conversations",
             retrieval_tool=CONVERSATION_RETRIEVAL_TOOL,
             model=chat,
-            categories={"conversations": conversations_toolset()},
-            capabilities_on=ServiceContainer.of(e2e_search),
+            categories={"platform": platform_toolset()},
+            capabilities_on=ServiceContainer.of(platform_over(e2e_search, embedder)),
             questions=corpus.questions,
         )
     finally:

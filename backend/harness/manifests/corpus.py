@@ -19,6 +19,7 @@ from services.corpus import (
     CorpusIndex,
     FolderAdapter,
     MemoryAdapter,
+    record_adapters,
 )
 from services.embeddings import RegistryEmbedder
 from services.memory import MemoryStore
@@ -34,6 +35,8 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     index.register(folder_adapter)
     index.register(MemoryAdapter(ctx.services.get(MemoryStore)))
     index.register(ConversationAdapter(ctx.services.get(ConversationSearch)))
+    for adapter in record_adapters(ctx.engine, ctx.vault):
+        index.register(adapter)
     await ctx.lifecycle.start(
         "corpus-folder", start=folder_adapter.start, stop=folder_adapter.stop
     )
@@ -54,8 +57,5 @@ MANIFEST = FeatureManifest(
     routers=(corpus_routes.router,),
     api_scopes=(ScopeClaim("knowledge", ("/corpus",)),),
     toolsets=(("corpus", corpus_toolset),),
-    # Retrieval with no explicit source ids is a global recall — approval-gated at
-    # call time (the recall gate), so the scope vocabulary carries the name.
-    gated_tools=frozenset({"corpus_retrieve"}),
     build=_build,
 )

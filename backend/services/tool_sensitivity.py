@@ -126,8 +126,6 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "browse_wait_for",
             "calendar_agenda",
             "calendar_list_calendars",
-            "conversations_read",
-            "conversations_search",
             "corpus_retrieve",
             "files_file_info",
             "files_find_files",
@@ -141,6 +139,8 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # The plan this thread is working from — a record we wrote and the operator
             # already read. Reading it reaches nothing.
             "plan_read",
+            "platform_read",
+            "platform_search",
             "project_active",
             "project_list",
             "repo_inventory_agent_context",

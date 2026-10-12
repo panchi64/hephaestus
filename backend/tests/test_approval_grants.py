@@ -30,9 +30,9 @@ from services.approval_grants import (
 from services.conversations import ConversationBinding
 from services.permissions import DEFAULT_PERMISSION, PERMISSION_LEVELS
 from tools import RunDeps, build_agent_toolsets
-from tools.conversations import conversations_toolset
 from tools.corpus import corpus_toolset
 from tools.memory import memory_toolset
+from tools.platform import platform_toolset
 
 OWNER = "operator"
 CONV = "conv-1"
@@ -247,7 +247,7 @@ async def test_granted_runaway_tool_still_trips_the_turn_guard():
     assert "limit.notice" in _types(run)
 
 
-# --- the corpus search gates only global recall -----------------------------
+# --- platform search gates only global recall -------------------------------
 
 
 def _call_once(tool_name: str, args: dict):
@@ -294,24 +294,6 @@ async def _drive(agent, run, deps, prompt: str):
         return agent_run.result.output
 
 
-async def test_global_corpus_search_defers_for_approval():
-    agent, run, deps = _corpus_agent({"query": "cats"})  # no source_ids ⇒ global recall
-    out = await _drive(agent, run, deps, "recall")
-    assert isinstance(out, DeferredToolRequests)
-    assert any(c.tool_name == "corpus_retrieve" for c in out.approvals)
-    assert "tool.completed" not in _types(run)
-
-
-async def test_empty_source_list_is_gated_like_global_recall():
-    # An empty list is still a global recall (line 53 collapses it to None), so it must
-    # gate — `is None` alone would let `source_ids=[]` slip an ungated full-corpus read in.
-    agent, run, deps = _corpus_agent({"query": "cats", "source_ids": []})
-    out = await _drive(agent, run, deps, "recall")
-    assert isinstance(out, DeferredToolRequests)
-    assert any(c.tool_name == "corpus_retrieve" for c in out.approvals)
-    assert "tool.completed" not in _types(run)
-
-
 async def test_explicit_source_read_is_not_gated():
     agent, run, deps = _corpus_agent({"query": "cats", "source_ids": ["s1"]})
     out = await _drive(agent, run, deps, "read the attached file")
@@ -332,15 +314,37 @@ async def test_memory_recall_never_defers(level):
     assert "tool.completed" in _types(run)
 
 
-async def test_conversations_search_defers_but_read_does_not():
-    cats = {"conversations": conversations_toolset()}
-    # search is global relevance recall across other threads ⇒ gated.
-    agent, run, deps = _recall_agent(cats, "conversations_search", {"query": "x"})
+def _platform(tool: str, args: dict):
+    return _recall_agent({"platform": platform_toolset()}, tool, args)
+
+
+async def test_platform_search_defers_for_approval():
+    agent, run, deps = _platform("platform_search", {"query": "x"})
     out = await _drive(agent, run, deps, "search")
     assert isinstance(out, DeferredToolRequests)
-    assert any(c.tool_name == "conversations_search" for c in out.approvals)
-    # read is an explicit-id read of one already-surfaced thread ⇒ ungated.
-    agent, run, deps = _recall_agent(cats, "conversations_read", {"conversation_id": "c9"})
+    assert any(c.tool_name == "platform_search" for c in out.approvals)
+    assert "tool.completed" not in _types(run)
+
+
+async def test_a_search_of_memory_and_the_catalogs_is_not_gated():
+    # Memory and the catalogs hold only what the operator kept or approved.
+    agent, run, deps = _platform(
+        "platform_search", {"query": "x", "sources": ["memory", "skills", "agents"]}
+    )
+    out = await _drive(agent, run, deps, "search")
+    assert not isinstance(out, DeferredToolRequests)
+    assert "tool.completed" in _types(run)
+
+
+async def test_a_search_that_reaches_files_is_gated():
+    agent, run, deps = _platform("platform_search", {"query": "x", "sources": ["memory", "files"]})
+    out = await _drive(agent, run, deps, "search")
+    assert isinstance(out, DeferredToolRequests)
+
+
+async def test_platform_read_is_not_gated():
+    # A read by ref opens one hit the search already surfaced.
+    agent, run, deps = _platform("platform_read", {"ref": "surf-conversations:c9"})
     out = await _drive(agent, run, deps, "read it")
     assert not isinstance(out, DeferredToolRequests)
     assert "tool.completed" in _types(run)
@@ -370,7 +374,7 @@ def _decisive(*scopes: tuple[str, tuple[str, ...]]) -> list[GrantInfo]:
 def test_covered_by_grant_is_the_single_rule():
     held = _grants(("corpus_retrieve", ()))
     assert covered_by_grant("corpus_retrieve", {}, held) is True
-    assert covered_by_grant("conversations_search", {}, held) is False
+    assert covered_by_grant("platform_search", {}, held) is False
     assert covered_by_grant(None, {}, held) is False
     assert covered_by_grant("corpus_retrieve", {}, []) is False
 

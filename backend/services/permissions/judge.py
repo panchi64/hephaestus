@@ -53,7 +53,7 @@ whenever one of them is missing.
 - a **classified read** (``ActionKind.READ``): the class is a claim about the tool itself —
   it returns something and leaves nothing different behind — so no argument set makes it
   into another kind of act and there is no reviewer question left to ask. This is what
-  keeps a self-gated recall (``corpus_retrieve``, ``conversations_search``) from costing a
+  keeps a self-gated recall (``platform_search``) from costing a
   model call every time, and what stops it from parking a run outright on an installation
   with no utility model bound. Only a *classified* name reaches it: an unknown one resolves
   to the class that reaches furthest, so nothing an operator's own MCP server names can

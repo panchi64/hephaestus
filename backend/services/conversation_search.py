@@ -1,18 +1,10 @@
 """Cross-chat search — find and read the operator's *other* conversations.
 
-The capability behind the ``conversations_search`` / ``conversations_read`` tools.
-Like long-term memory, recall is **hybrid and brute-force**: messages are
-encrypted at rest, so there is no DB full-text index — instead we load the owner's
-message projections, decrypt them, and score each against the query two ways —
-
-- **dense** (cosine over the per-message embedding, the "by meaning" path), and
-- **sparse** (token overlap, the keyword path) —
-
-then fuse the rankings with Reciprocal Rank Fusion and collapse to one hit per
-conversation (its best-scoring message becomes the snippet). A message with no
-comparable vector (older rows, or one persisted while the embedder was down)
-contributes via the sparse signal alone — the same `EMB-2` degrade memory uses.
-The scoring primitives are shared with memory in :mod:`services.ranking`.
+Recall is hybrid: BM25 over each message's text and cosine over its embedding, fused with
+Reciprocal Rank Fusion, then collapsed to one hit per conversation (its best message is the
+snippet). Ranking runs on the memory-only :mod:`services.recall_index`, so a query decrypts
+only the messages it returns. A message with no comparable vector contributes through the
+keyword signal alone (`EMB-2`).
 
 ``read`` reuses the conversation store's own active-path projection so there is no
 second copy of the tree/active-leaf logic here.
@@ -20,12 +12,12 @@ second copy of the tree/active-leaf logic here.
 
 from __future__ import annotations
 
+from collections.abc import Hashable
 from dataclasses import dataclass
 from datetime import datetime
 
-import numpy as np
-from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlalchemy import Engine, func
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.vault import Vault
@@ -33,9 +25,60 @@ from models.conversation import Conversation, Message
 from services import ranking
 from services.conversations import ConversationStore
 from services.embeddings import Embedder, decode_vector, embed_query
+from services.recall_index import Collection, Doc, Loaded, Query, RecallIndex
 from services.sealing import open_sealed
 
 _SNIPPET_LEN = 240
+#: Messages ranked per conversation asked for, before collapsing to one hit each.
+_FANOUT = 8
+
+
+class MessageCollection(Collection[str]):
+    """Searchable messages; ``meta`` is the conversation id. A compaction checkpoint is a
+    summary of turns still in the table, so it is never indexed."""
+
+    name = "messages"
+
+    @staticmethod
+    def _owned(stmt, owner_id: str):
+        return (
+            stmt.join(Conversation, col(Message.conversation_id) == col(Conversation.id))
+            .where(Conversation.owner_id == owner_id)
+            .where(col(Message.compacted).is_(False))
+        )
+
+    def signature(self, session: Session, owner_id: str) -> Hashable:
+        stmt = self._owned(
+            select(Message.embedding_model, func.count(), func.max(Message.created_at)),
+            owner_id,
+        ).group_by(col(Message.embedding_model))
+        return frozenset(session.exec(stmt).all())
+
+    def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
+        stmt = self._owned(select(Message.id, Message.embedding_model), owner_id)
+        return {mid: model for mid, model in session.exec(stmt).all()}
+
+    def load(
+        self, session: Session, vault: Vault, owner_id: str, ids: list[str]
+    ) -> list[Loaded[str]]:
+        rows = session.exec(select(Message).where(col(Message.id).in_(ids))).all()
+        loaded = []
+        for row in rows:
+            text = vault.decrypt_str(row.text)
+            if not text.strip():
+                continue
+            vector = (
+                decode_vector(vault, row.embedding_enc) if row.embedding_enc is not None else None
+            )
+            loaded.append(
+                Loaded(
+                    Doc(row.id, row.created_at, row.conversation_id),
+                    text,
+                    vector,
+                    row.embedding_model,
+                )
+            )
+        return loaded
 
 
 @dataclass(frozen=True)
@@ -67,6 +110,8 @@ class ConversationSearch:
         self._vault = vault
         self._embedder = embedder
         self._store = store
+        self._index = RecallIndex(engine, vault)
+        self._collection = MessageCollection()
 
     async def search(
         self,
@@ -75,6 +120,7 @@ class ConversationSearch:
         *,
         limit: int = 5,
         exclude_conversation_id: str | None = None,
+        since: datetime | None = None,
     ) -> list[ChatSearchHit]:
         """Hybrid recall across the owner's conversations, best hit per conversation.
 
@@ -83,22 +129,58 @@ class ConversationSearch:
         collapses cleanly to keyword-only."""
         query_vec, query_model = await embed_query(self._embedder, owner_id, query)
         query_tokens = ranking.tokens(query)
+        searchable = await self._searchable(owner_id, exclude_conversation_id, since)
+        ranked = await self._index.search(
+            self._collection,
+            owner_id,
+            Query(query_tokens, query_vec, query_model),
+            limit=limit * _FANOUT,
+            keep=lambda doc: doc.meta in searchable,
+        )
+        best: dict[str, tuple[str, float, str]] = {}
+        for hit in ranked:
+            if hit.doc.meta not in best:
+                best[hit.doc.meta] = (hit.doc.id, hit.score, hit.matched_by)
+        chosen = list(best.items())[:limit]
 
         def work(session: Session) -> list[ChatSearchHit]:
+            hits = []
+            for conversation_id, (message_id, score, matched_by) in chosen:
+                message = session.get(Message, message_id)
+                conversation = session.get(Conversation, conversation_id)
+                if message is None or conversation is None:
+                    continue
+                hits.append(
+                    ChatSearchHit(
+                        conversation_id=conversation_id,
+                        title=open_sealed(self._vault, conversation.title_enc, conversation.title),
+                        snippet=snippet(self._vault.decrypt_str(message.text), query_tokens),
+                        score=score,
+                        matched_by=matched_by,
+                        updated_at=conversation.updated_at,
+                    )
+                )
+            return hits
+
+        return await in_session(self._engine, work)
+
+    async def _searchable(
+        self, owner_id: str, exclude: str | None, since: datetime | None
+    ) -> frozenset[str]:
+        """The owner's conversations a search may surface: not ephemeral, not the
+        caller's own thread, and touched since ``since``."""
+
+        def work(session: Session) -> frozenset[str]:
             stmt = (
-                select(Message, Conversation)
-                .join(Conversation, Message.conversation_id == Conversation.id)  # type: ignore[arg-type]
+                select(Conversation.id)
                 .where(Conversation.owner_id == owner_id)
-                .where(Conversation.ephemeral == False)  # noqa: E712 — SQL boolean compare
-                # A compaction checkpoint is a machine-written summary of turns that are
-                # themselves still in the table. Ranking it would double-count them and
-                # surface a paraphrase as if it were something the operator wrote.
-                .where(Message.compacted == False)  # noqa: E712 — SQL boolean compare
+                .where(col(Conversation.ephemeral).is_(False))
             )
-            if exclude_conversation_id is not None:
-                stmt = stmt.where(Message.conversation_id != exclude_conversation_id)
-            rows = session.exec(stmt).all()
-            return self._rank(rows, query_vec, query_model, query_tokens, limit)
+            if exclude is not None:
+                stmt = stmt.where(Conversation.id != exclude)
+            if since is not None:
+                stmt = stmt.where(Conversation.updated_at >= since)
+            return frozenset(session.exec(stmt).all())
 
         return await in_session(self._engine, work)
 
@@ -123,82 +205,21 @@ class ConversationSearch:
             conversation_id=conversation_id, title=summary.title, text="\n\n".join(lines)
         )
 
-    # --- internals --------------------------------------------------------
 
-    def _rank(
-        self,
-        rows: list[tuple[Message, Conversation]],
-        query_vec: np.ndarray | None,
-        query_model: str | None,
-        query_tokens: set[str],
-        limit: int,
-    ) -> list[ChatSearchHit]:
-        dense: dict[str, float] = {}
-        sparse: dict[str, float] = {}
-        text_by_id: dict[str, str] = {}
-        convo_by_id: dict[str, Conversation] = {}
-        for message, conversation in rows:
-            text = self._vault.decrypt_str(message.text)
-            if not text.strip():
-                continue
-            text_by_id[message.id] = text
-            convo_by_id[message.id] = conversation
-            overlap = len(query_tokens & ranking.tokens(text))
-            if overlap:
-                sparse[message.id] = float(overlap)
-            # Dense only within the same embedding space (EMB-2), and only when there
-            # is actual similarity — a zero/orthogonal vector carries no signal.
-            if (
-                query_vec is not None
-                and message.embedding_enc is not None
-                and message.embedding_model == query_model
-            ):
-                vector = np.asarray(decode_vector(self._vault, message.embedding_enc))
-                score = ranking.cosine(query_vec, vector)
-                if score > 0:
-                    dense[message.id] = score
-
-        fused = ranking.rrf(dense, sparse)
-        # Collapse to one hit per conversation: keep its best-scoring message.
-        best: dict[str, tuple[str, float]] = {}  # conversation_id -> (message_id, score)
-        for message_id, score in fused.items():
-            conversation_id = convo_by_id[message_id].id
-            if conversation_id not in best or score > best[conversation_id][1]:
-                best[conversation_id] = (message_id, score)
-
-        ranked = sorted(best.items(), key=lambda kv: kv[1][1], reverse=True)[:limit]
-        hits = []
-        for conversation_id, (message_id, score) in ranked:
-            conversation = convo_by_id[message_id]
-            hits.append(
-                ChatSearchHit(
-                    conversation_id=conversation_id,
-                    title=open_sealed(
-                        self._vault, conversation.title_enc, conversation.title
-                    ),
-                    snippet=self._snippet(text_by_id[message_id], query_tokens),
-                    score=score,
-                    matched_by=ranking.matched_by(message_id, dense, sparse),
-                    updated_at=conversation.updated_at,
-                )
-            )
-        return hits
-
-    @staticmethod
-    def _snippet(text: str, query_tokens: set[str]) -> str:
-        """A one-line excerpt, windowed around the first matching token when there
-        is one, else the head of the message."""
-        flat = " ".join(text.split())
-        if len(flat) <= _SNIPPET_LEN:
-            return flat
-        lowered = flat.lower()
-        positions = [lowered.find(token) for token in query_tokens]
-        hit = min((p for p in positions if p >= 0), default=-1)
-        if hit < 0:
-            return flat[:_SNIPPET_LEN].rstrip() + "…"
-        start = max(0, hit - _SNIPPET_LEN // 3)
-        end = start + _SNIPPET_LEN
-        excerpt = flat[start:end].strip()
-        prefix = "…" if start > 0 else ""
-        suffix = "…" if end < len(flat) else ""
-        return f"{prefix}{excerpt}{suffix}"
+def snippet(text: str, query_tokens: set[str]) -> str:
+    """A one-line excerpt, windowed around the first matching token when there is one,
+    else the head of the text."""
+    flat = " ".join(text.split())
+    if len(flat) <= _SNIPPET_LEN:
+        return flat
+    lowered = flat.lower()
+    positions = [lowered.find(token) for token in query_tokens]
+    hit = min((p for p in positions if p >= 0), default=-1)
+    if hit < 0:
+        return flat[:_SNIPPET_LEN].rstrip() + "…"
+    start = max(0, hit - _SNIPPET_LEN // 3)
+    end = start + _SNIPPET_LEN
+    excerpt = flat[start:end].strip()
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(flat) else ""
+    return f"{prefix}{excerpt}{suffix}"

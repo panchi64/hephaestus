@@ -10,7 +10,7 @@ turn twice:
 
 Each turn is submitted via ``RunRegistry().submit(...)`` + ``await run.wait()``;
 its event stream is read with ``run.stream.replay()`` to (a) detect whether the
-retrieval tool fired (``memory_recall`` / ``conversations_search``, from the
+retrieval tool fired (``memory_recall`` / ``platform_search``, from the
 ``tool.*`` events) and (b) capture the final answer text. Scored three ways per
 consumer:
 
@@ -26,7 +26,9 @@ outscores capability-off on should-trigger questions.
 
 from __future__ import annotations
 
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 from pydantic import BaseModel
 from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -35,6 +37,8 @@ from pydantic_ai.models import Model
 from agent import build_chat_orchestrator
 from agent.meta import make_utility_agent
 from core.container import ServiceContainer
+from core.db import init_db, make_engine
+from core.vault import Vault
 from evals.dataset import (
     Corpus,
     EndToEndQuestion,
@@ -43,15 +47,19 @@ from evals.dataset import (
 )
 from runs import RunRegistry, RunStatus
 from runs.events import AnswerDelta, ToolStarted
-from tools.conversations import conversations_toolset
+from services.conversation_search import ConversationSearch
+from services.corpus import ConversationAdapter, CorpusChunkStore, CorpusIndex, FolderAdapter
+from services.embeddings import Embedder
+from services.registry import ModelRegistry
 from tools.memory import memory_toolset
+from tools.platform import platform_toolset
 
 OWNER = "operator"
 
 # The namespaced retrieval tool each consumer's category exposes (the category name
 # prefixes the tool, per tools/toolsets.py).
 MEMORY_RETRIEVAL_TOOL = "memory_recall"
-CONVERSATION_RETRIEVAL_TOOL = "conversations_search"
+CONVERSATION_RETRIEVAL_TOOL = "platform_search"
 
 
 @dataclass(frozen=True)
@@ -151,12 +159,8 @@ class ConsumerScores:
 
 
 async def _judge(model: Model, q: EndToEndQuestion, answer: str) -> int:
-    agent = make_utility_agent(
-        model, output_type=_JudgeScore, instructions=_JUDGE_INSTRUCTIONS
-    )
-    result = await agent.run(
-        f"Question: {q.question}\nRubric: {q.rubric}\nAnswer:\n{answer}"
-    )
+    agent = make_utility_agent(model, output_type=_JudgeScore, instructions=_JUDGE_INSTRUCTIONS)
+    result = await agent.run(f"Question: {q.question}\nRubric: {q.rubric}\nAnswer:\n{answer}")
     return max(0, min(2, result.output.score))
 
 
@@ -224,8 +228,7 @@ def _assert_agent_benefits(scores: ConsumerScores) -> None:
     # The agent must call retrieval when the question needs it and stay quiet on
     # generic world-knowledge controls.
     assert scores.trigger_recall >= 0.6, (
-        f"{scores.consumer}: agent under-triggers retrieval "
-        f"(recall {scores.trigger_recall:.2f})"
+        f"{scores.consumer}: agent under-triggers retrieval (recall {scores.trigger_recall:.2f})"
     )
     assert scores.trigger_precision >= 0.6, (
         f"{scores.consumer}: agent over-triggers retrieval on controls "
@@ -237,8 +240,7 @@ def _assert_agent_benefits(scores: ConsumerScores) -> None:
         f"(delta {scores.grounding_delta:.2f})"
     )
     assert scores.judged_delta > 0.0, (
-        f"{scores.consumer}: judged on/off delta not positive "
-        f"({scores.judged_delta:.2f})"
+        f"{scores.consumer}: judged on/off delta not positive ({scores.judged_delta:.2f})"
     )
 
 
@@ -259,7 +261,19 @@ async def test_memory_end_to_end_benefit(chat_model, memory_store):
     _assert_agent_benefits(scores)
 
 
-async def test_conversation_end_to_end_benefit(chat_model, conversation_search):
+def platform_over(search: ConversationSearch, embedder: Embedder) -> CorpusIndex:
+    """A corpus index whose one source is ``search``, for scoring ``platform_search``."""
+    engine = make_engine("sqlite:///:memory:")
+    init_db(engine)
+    vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
+    chunks = CorpusChunkStore(engine, vault, embedder)
+    folder = FolderAdapter(engine, chunks, vault.unlocked_event)
+    index = CorpusIndex(embedder, ModelRegistry.__new__(ModelRegistry), chunks, folder)
+    index.register(ConversationAdapter(search))
+    return index
+
+
+async def test_conversation_end_to_end_benefit(chat_model, embedder, conversation_search):
     store, search = conversation_search
     corpus = conversation_corpus()
     await _seed_conversations(store, corpus)
@@ -267,8 +281,8 @@ async def test_conversation_end_to_end_benefit(chat_model, conversation_search):
         consumer="conversations",
         retrieval_tool=CONVERSATION_RETRIEVAL_TOOL,
         model=chat_model,
-        categories={"conversations": conversations_toolset()},
-        capabilities_on=ServiceContainer.of(search),
+        categories={"platform": platform_toolset()},
+        capabilities_on=ServiceContainer.of(platform_over(search, embedder)),
         questions=corpus.questions,
     )
     _assert_agent_benefits(scores)
