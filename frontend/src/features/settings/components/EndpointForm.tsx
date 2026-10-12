@@ -20,6 +20,7 @@ export interface EndpointFormValues {
   model: string;
   apiKey: string;
   contextWindow: string;
+  maxConcurrentRuns: string;
   nativeTools: boolean;
   vision: boolean;
   thinking: boolean;
@@ -98,6 +99,16 @@ export function EndpointForm(props: EndpointFormProps): JSX.Element {
         value={v().contextWindow}
         onInput={(e) => props.onChange("contextWindow", e.currentTarget.value)}
         placeholder="32768"
+      />
+      <Input
+        label="Concurrent runs"
+        value={v().maxConcurrentRuns}
+        onInput={(e) =>
+          props.onChange("maxConcurrentRuns", e.currentTarget.value)
+        }
+        placeholder="auto"
+        inputMode="numeric"
+        hint="How many runs may use this endpoint at once; others wait in line. Empty uses the server's slot count when it reports one, otherwise no limit."
       />
       <Row gap={4} align="center" justify="between">
         <Field label="Native tools" orientation="row" value="" />

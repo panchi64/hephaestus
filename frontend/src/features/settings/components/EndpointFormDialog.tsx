@@ -15,6 +15,7 @@ const BLANK_FORM: EndpointFormValues = {
   model: "",
   apiKey: "",
   contextWindow: "",
+  maxConcurrentRuns: "",
   nativeTools: true,
   vision: false,
   thinking: false,
@@ -28,6 +29,8 @@ function formFor(ep: ModelEndpoint): EndpointFormValues {
     model: ep.model ?? "",
     apiKey: "",
     contextWindow: ep.contextWindow != null ? String(ep.contextWindow) : "",
+    maxConcurrentRuns:
+      ep.maxConcurrentRuns != null ? String(ep.maxConcurrentRuns) : "",
     nativeTools: ep.nativeTools,
     vision: ep.vision,
     thinking: ep.thinking,
@@ -95,6 +98,7 @@ export function EndpointFormDialog(props: {
     setSaving(true);
     const f = values();
     const cw = f.contextWindow.trim();
+    const mcr = f.maxConcurrentRuns.trim();
     const model = f.model.trim();
     const fields = {
       name: f.name.trim(),
@@ -112,6 +116,7 @@ export function EndpointFormDialog(props: {
         // only sent when typed (blank = leave the stored key unchanged).
         await updateEndpoint(target.id, {
           ...fields,
+          maxConcurrentRuns: mcr ? Number(mcr) : 0,
           model,
           ...(f.apiKey ? { apiKey: f.apiKey } : {}),
         });
@@ -119,6 +124,7 @@ export function EndpointFormDialog(props: {
       } else {
         await createEndpoint({
           ...fields,
+          maxConcurrentRuns: mcr ? Number(mcr) : null,
           model: model || undefined,
           apiKey: f.apiKey || undefined,
         });

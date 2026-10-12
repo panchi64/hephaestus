@@ -22,6 +22,9 @@ export interface EndpointInput {
   model?: string;
   apiKey?: string;
   contextWindow: number | null;
+  /** Null on create is automatic; on update 0 clears a stored limit back to automatic
+   *  and omitting it leaves the limit as it was. */
+  maxConcurrentRuns?: number | null;
   nativeTools: boolean;
   vision: boolean;
   thinking: boolean;

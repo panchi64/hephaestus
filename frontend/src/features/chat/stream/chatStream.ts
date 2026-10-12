@@ -53,7 +53,12 @@ import {
   type TranscriptStore,
 } from "./branching";
 import { attachOptions, createRunDrive } from "./drive";
-import { createFolder, type FoldState, type RunClock } from "./fold";
+import {
+  createFolder,
+  type FoldState,
+  type RunClock,
+  type RunQueue,
+} from "./fold";
 import { createPatchById, nextId } from "./patch";
 import { createResumeOps } from "./resume";
 import { createSteeringOps } from "./steering";
@@ -148,6 +153,7 @@ export function createChatStream(
   // The streaming run's start instant and step, for the composer's header — read off
   // the run's own events, so the clock it drives measures the backend's run.
   const [runClock, setRunClock] = createSignal<RunClock | null>(null);
+  const [runQueue, setRunQueue] = createSignal<RunQueue | null>(null);
   // The run-scoped bookkeeping the fold advances and the drive resets: the high-water
   // seq, the bubble events land on, the two backfill-race counters, and the run
   // currently streaming. One object, shared by reference with the folder.
@@ -211,6 +217,7 @@ export function createChatStream(
     setErrored,
     setTitlePending,
     setRunClock,
+    setRunQueue,
     // A checkpoint that names a turn this transcript does not hold: the persisted
     // thread is ahead of it, so take its word rather than a guessed position. Reached
     // at call time — the resume ops are built below, and need the drive that needs this.
@@ -296,6 +303,7 @@ export function createChatStream(
       // The clock is the run's, and the run is the thread's: a switch supersedes the
       // drive whose `run.ended` would have cleared it.
       setRunClock(null);
+      setRunQueue(null);
     },
     supersede: drive.supersede,
     setSending,
@@ -635,6 +643,8 @@ export function createChatStream(
     plan,
     /** When the streaming run started and which step it is on, or null between runs. */
     runClock,
+    /** Where the run waits for its model endpoint, or null when it is not waiting. */
+    runQueue,
     /** The run currently streaming into this store, or null. */
     activeRunId: () => foldState.activeRunId,
     /** Highest event seq folded so far — the resume point for a reattach. */

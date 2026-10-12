@@ -54,6 +54,8 @@ function toBody(input: Partial<EndpointInput>): Record<string, unknown> {
   if (input.apiKey !== undefined) body.api_key = input.apiKey;
   if (input.contextWindow !== undefined)
     body.context_window = input.contextWindow;
+  if (input.maxConcurrentRuns !== undefined)
+    body.max_concurrent_runs = input.maxConcurrentRuns;
   if (input.nativeTools !== undefined) body.native_tools = input.nativeTools;
   if (input.vision !== undefined) body.vision = input.vision;
   if (input.thinking !== undefined) body.thinking = input.thinking;

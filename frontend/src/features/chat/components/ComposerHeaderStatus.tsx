@@ -1,7 +1,7 @@
 import { Match, Show, Switch, createMemo, type JSX } from "solid-js";
 import { MetClock, type Status } from "~/ui";
 import type { ChatActivity, ChatOutcome } from "../model";
-import type { RunClock } from "../stream/fold";
+import type { RunClock, RunQueue } from "../stream/fold";
 import { resolveRunState, runStateSpec } from "../runState";
 
 export interface ComposerHeaderStatusProps {
@@ -15,6 +15,8 @@ export interface ComposerHeaderStatusProps {
   detached: () => boolean;
   /** The run's own start instant and newest step, as the stream reported them. */
   runClock: () => RunClock | null;
+  /** Where the run waits for its model endpoint, when it is waiting. */
+  runQueue: () => RunQueue | null;
   /** The backend's status for this thread's live run, when it has one. */
   activity: () => ChatActivity | undefined;
   /** How this thread's last terminal run ended, when the backend still remembers. */
@@ -40,6 +42,8 @@ const STATUS_CLASS: Record<Status, string> = {
  * **Precedence, highest first**, and each rung says why it outranks the next:
  * - `Disconnected` — a run whose transport gave up is still guarded as in flight, so the
  *   plate would otherwise go on claiming a run nothing is listening to.
+ * - A run waiting in line for its model endpoint: `waiting for <endpoint> · #<place>`,
+ *   until `run.started` ends the wait.
  * - The live run: `Streaming` (or `Folding` for a hand-started fold, which is a run of
  *   its own) and the step it is on, once the stream has reported one. The plate turns
  *   info with a blinking square around it; the clock is the plate's aside.
@@ -61,6 +65,9 @@ export function ComposerHeaderStatus(
     <Switch fallback={`${name()} · ready`}>
       <Match when={props.detached()}>
         <span class="text-alert">Disconnected</span>
+      </Match>
+      <Match when={props.streaming() && props.runQueue()}>
+        {(queue) => `waiting for ${queue().endpoint} · #${queue().position}`}
       </Match>
       <Match when={props.streaming()}>
         {props.compacting() ? "Folding" : "Streaming"}

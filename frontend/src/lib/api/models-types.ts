@@ -33,6 +33,7 @@ export interface EndpointViewDTO {
   model: string | null;
   has_api_key: boolean;
   context_window: number | null;
+  max_concurrent_runs: number | null;
   native_tools: boolean;
   vision: boolean;
   thinking: boolean;

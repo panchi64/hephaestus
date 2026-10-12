@@ -40,7 +40,7 @@ import { foldTools } from "./fold/tools";
 import type { FoldContext, FoldDeps } from "./fold/types";
 
 export { FOLD_RUN_KIND };
-export type { FoldDeps, FoldState, RunClock } from "./fold/types";
+export type { FoldDeps, FoldState, RunClock, RunQueue } from "./fold/types";
 
 /** The event families, each a handler that says whether the event was its own. */
 const FAMILIES: ((ev: RunEvent, c: FoldContext) => boolean)[] = [

@@ -642,6 +642,7 @@ export function ChatRoomScreen(): JSX.Element {
                     compacting={stream.compacting}
                     detached={stream.detached}
                     runClock={stream.runClock}
+                    runQueue={stream.runQueue}
                     activity={() => currentSummary()?.activity}
                     lastOutcome={() => currentSummary()?.lastOutcome}
                   />

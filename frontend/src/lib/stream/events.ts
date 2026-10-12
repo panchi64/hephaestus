@@ -14,6 +14,13 @@ interface Base {
 }
 
 // --- Run lifecycle ---------------------------------------------------------
+/** The run is waiting for its model endpoint to have room; re-sent whenever its place
+ *  in line moves. `position` counts from 1. `run.started` ends the wait. */
+export interface RunQueued extends Base {
+  type: "run.queued";
+  position: number;
+  endpoint: string;
+}
 export interface RunStarted extends Base {
   type: "run.started";
   run_id: string;
@@ -683,6 +690,7 @@ export const CONTEXT_OVERFLOW_AFTER_FOLD_DETAIL =
   "context window exceeded after compaction";
 
 export type RunEvent =
+  | RunQueued
   | RunStarted
   | RunMetrics
   | RunEnded

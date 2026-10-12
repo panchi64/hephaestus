@@ -62,6 +62,9 @@ export interface ModelEndpoint {
    *  not the window the endpoint runs under. That belongs to the binding, which is
    *  where the model is decided: see `RoleBinding.contextWindow`. */
   contextWindow: number | null;
+  /** How many runs may use this endpoint at once; null is automatic — the server's
+   *  slot count when it reports one, otherwise unlimited. */
+  maxConcurrentRuns: number | null;
   nativeTools: boolean;
   vision: boolean;
   thinking: boolean;
@@ -196,6 +199,7 @@ function toEndpoint(dto: EndpointViewDTO): ModelEndpoint {
     model: dto.model,
     hasApiKey: dto.has_api_key,
     contextWindow: dto.context_window,
+    maxConcurrentRuns: dto.max_concurrent_runs,
     nativeTools: dto.native_tools,
     vision: dto.vision,
     thinking: dto.thinking,

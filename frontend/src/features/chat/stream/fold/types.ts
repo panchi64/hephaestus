@@ -90,6 +90,9 @@ export interface FoldDeps {
    *  which model round-trip it is on. Optional — a caller with no header to put it in
    *  (the compare pane) leaves it out, and the fold then drops both facts. */
   setRunClock?: (next: (prev: RunClock | null) => RunClock | null) => void;
+  /** Where the run waits for its model endpoint, or null once it has started or ended.
+   *  Optional for the same reason as the clock. */
+  setRunQueue?: (queue: RunQueue | null) => void;
   /** A settled fold named a boundary turn this transcript does not hold — it is behind
    *  the backend. The fold will not guess a position; the caller re-reads the
    *  persisted thread instead. Optional for a caller that never folds. */
@@ -103,6 +106,13 @@ export interface FoldDeps {
 export interface RunClock {
   startedAt: string;
   step: number | null;
+}
+
+/** A run waiting in line for its model endpoint: the endpoint's name and the run's
+ *  1-based place, as the latest `run.queued` said. */
+export interface RunQueue {
+  endpoint: string;
+  position: number;
 }
 
 /** What a family handler is handed for one event, after the dispatcher's guards have let

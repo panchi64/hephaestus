@@ -21,6 +21,7 @@ export function foldLifecycle(ev: RunEvent, c: FoldContext): boolean {
       if (announce) toast.error(ev.message || "The run failed.");
       patchById(assistantId, (m) => (m.streaming = false));
       deps.setErrored(true);
+      deps.setRunQueue?.(null);
       return true;
     case "run.metrics":
       // The backend derives the window's fullness; the meter just renders it.
@@ -89,9 +90,14 @@ export function foldLifecycle(ev: RunEvent, c: FoldContext): boolean {
       // `run.started` must not inherit this one's.
       deps.state.runKind = null;
       deps.setRunClock?.(() => null);
+      deps.setRunQueue?.(null);
+      return true;
+    case "run.queued":
+      deps.setRunQueue?.({ endpoint: ev.endpoint, position: ev.position });
       return true;
     case "run.started":
       deps.state.runKind = ev.kind;
+      deps.setRunQueue?.(null);
       deps.setRunClock?.(() => ({ startedAt: ev.ts, step: null }));
       return true;
     case "step.started":
