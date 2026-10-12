@@ -93,10 +93,10 @@ export function RecentsRail(props: {
    *  to already know something is running in order to find out that something is
    *  running can never light the first one.
    *
-   *  So echo what this client plainly knows about its own stream. This is a
-   *  presentation echo, not a decision — the next poll replaces it with the
-   *  server's answer, and a run started on another device still arrives the
-   *  normal way. */
+   *  So echo what this client plainly knows about its own stream, over whatever
+   *  the listing last said: the stream hears a run leave the queue the moment it
+   *  does, where the listing is a poll behind. A run started on another device
+   *  still arrives the normal way. */
   const rows = createMemo(() => {
     const list = sessions();
     // `openId`, not `currentId`: a new thread's first turn is not seated until it ends,
@@ -105,10 +105,10 @@ export function RecentsRail(props: {
     if (!list || !id || !stream.sending()) return list;
     const echo: ChatActivity = stream.awaitingInput()
       ? "awaiting_input"
-      : "running";
-    return list.map((s) =>
-      s.id === id && !s.activity ? { ...s, activity: echo } : s,
-    );
+      : stream.runQueue()
+        ? "queued"
+        : "running";
+    return list.map((s) => (s.id === id ? { ...s, activity: echo } : s));
   });
 
   /** The projects threads file under, or undefined while the listing is in flight — the

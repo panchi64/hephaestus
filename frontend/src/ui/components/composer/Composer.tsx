@@ -124,6 +124,7 @@ export function Composer(props: ComposerProps): JSX.Element {
       data-live={
         props.streaming && !props.waiting && !recalling() ? "" : undefined
       }
+      data-queued={props.queued ? "" : undefined}
       data-bare={props.bare ? "" : undefined}
       {...dropAttrs()}
     >

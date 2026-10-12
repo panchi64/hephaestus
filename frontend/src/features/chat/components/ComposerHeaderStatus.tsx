@@ -32,6 +32,7 @@ const STATUS_CLASS: Record<Status, string> = {
   warn: "text-warn",
   alert: "text-alert",
   info: "text-info",
+  queue: "text-queue",
 };
 
 /**

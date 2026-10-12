@@ -44,7 +44,7 @@ What deliberately survived, because it was the good part: the 4px grid, the hair
 1. **Volume is hierarchy.** The old system's failure was that everything was equally loud. Most of the interface should sit at a *low* volume — recessive, neutral, unhurried — so the one thing that matters can be the only thing that is bright, elevated, or colored. If two things on a screen are both shouting, one of them is wrong.
 2. **Two voices, never blurred.** The interface speaks in sans. The machine speaks in mono. This is a semantic distinction, not a decorative one (§2).
 3. **Precision without density theater.** Numbers align, fields don't reflow, state is always visible rather than implied. But density is no longer a goal in itself — whitespace is a legitimate tool, and an empty region is not wasted ink.
-4. **Semantic color only.** The resting palette is pure neutral. Color appears to *mean* something — nominal, warning, alert, info — or to mark the single element holding primary focus. A screen with nothing happening is grayscale.
+4. **Semantic color only.** The resting palette is pure neutral. Color appears to *mean* something — nominal, warning, alert, info, queued — or to mark the single element holding primary focus. A screen with nothing happening is grayscale.
 5. **Systematic, not bespoke.** Spacing, naming, iconography, and microcopy follow consistent rules, so a screen the operator has never seen still reads as familiar.
 6. **Not a generic AI app.** The signature devices — the hairline grid, registration marks, diegetic telemetry, the mono/sans split, hard-cut machine motion — are what keep this from resolving into another rounded-card chat interface. Restraint is the goal; anonymity is not.
 
@@ -270,6 +270,7 @@ The base is pure neutral. Both modes are built on true black and true white — 
 | `accent-warn` | `#F2A93B` | Caution, degraded |
 | `accent-alert` | `#FF5C5C` | Error, critical, destructive |
 | `accent-info` | `#5AA2FF` | Live data, secondary signal |
+| `accent-queue` | `#B48CFF` | Waiting in line for capacity — a run that has not started |
 
 ### 5.2 Paper (light)
 
@@ -292,6 +293,7 @@ The base is pure neutral. Both modes are built on true black and true white — 
 | `accent-warn` | `#9A6510` | Caution, degraded |
 | `accent-alert` | `#C0342B` | Error, critical, destructive |
 | `accent-info` | `#0F5FA8` | Live data, secondary signal |
+| `accent-queue` | `#6A3FB5` | Waiting in line for capacity — a run that has not started |
 
 > **The signature accent is mode-dependent and that is intentional.** Phosphor green is the product's lineage and it belongs on black — it is also, literally, what a mission-control console displayed, which is why Ink keeps it. On white it turns acidic and illegible, so Paper carries the same idea executed for a light substrate: a deep instrument blue, cool and precise. `accent-nominal` stays green in both modes because green *means* "OK" independently of the theme.
 >
@@ -861,6 +863,7 @@ A licensed moment is a single expressive device — the `DeepField`'s graticule,
   --accent: #34d67f;
   --accent-nominal: #34d67f;  --accent-warn: #f2a93b;
   --accent-alert: #ff5c5c;    --accent-info: #5aa2ff;
+  --accent-queue: #b48cff;
   /* Each carries a 1px hairline ring first — the surface's edge, folded into the
      shadow so it costs no layout (§6). Floating things only. */
   --shadow-1: 0 0 0 1px rgb(255 255 255 / 0.05), 0 1px 2px rgb(0 0 0 / 0.6);
@@ -877,6 +880,7 @@ A licensed moment is a single expressive device — the `DeepField`'s graticule,
   --accent: #0b3d91;
   --accent-nominal: #0e7a46;  --accent-warn: #9a6510;
   --accent-alert: #c0342b;    --accent-info: #0f5fa8;
+  --accent-queue: #6a3fb5;
   --shadow-1: 0 0 0 1px rgb(0 0 0 / 0.07), 0 1px 2px rgb(0 0 0 / 0.05),
     0 1px 1px rgb(0 0 0 / 0.04);
   --shadow-2: 0 0 0 1px rgb(0 0 0 / 0.08), 0 12px 32px -8px rgb(0 0 0 / 0.16),

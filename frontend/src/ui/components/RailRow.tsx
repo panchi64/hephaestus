@@ -4,7 +4,7 @@ import { Icon } from "../primitives/Icon";
 
 /** What a rail row's glyph column says. `waiting` is the action tier's echo: the run is
  *  parked on the operator. */
-export type RailRowState = "idle" | "running" | "waiting" | "failed";
+export type RailRowState = "idle" | "queued" | "running" | "waiting" | "failed";
 
 export interface RailRowProps {
   state?: RailRowState;

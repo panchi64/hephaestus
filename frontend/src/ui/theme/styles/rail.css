@@ -182,6 +182,12 @@
     animation: ody-action-blink 1s steps(2, jump-none) infinite;
   }
 }
+.ody-rail-row[data-state="queued"] .ody-rail-glyph {
+  background: var(--accent-queue);
+}
+.ody-rail-row[data-state="queued"] .ody-rail-readout {
+  color: var(--accent-queue);
+}
 .ody-rail-row[data-state="failed"] .ody-rail-glyph {
   background: var(--accent-alert);
 }

@@ -1,11 +1,16 @@
 import type { ThemeMode } from "./theme-store";
 
-/** The five accent tokens, by their CSS custom-property name minus the `--`.
+/** The six accent tokens, by their CSS custom-property name minus the `--`.
  *  This list is closed: an accent is a *meaning* (§5.2), and the set of meanings
  *  is a design decision, not a preference. What the operator chooses is the hue
  *  each meaning wears — see `accent-store`. */
 export type AccentToken =
-  "accent" | "accent-nominal" | "accent-warn" | "accent-alert" | "accent-info";
+  | "accent"
+  | "accent-nominal"
+  | "accent-warn"
+  | "accent-alert"
+  | "accent-info"
+  | "accent-queue";
 
 export interface AccentTokenSpec {
   token: AccentToken;
@@ -16,8 +21,8 @@ export interface AccentTokenSpec {
   description: string;
 }
 
-/** Render order for the editor: the signature first, then the four semantics in
- *  the order §5 lists them. */
+/** Render order for the editor: the signature first, then the semantics in the
+ *  order §5 lists them. */
 export const ACCENT_TOKENS: readonly AccentTokenSpec[] = [
   {
     token: "accent",
@@ -45,6 +50,12 @@ export const ACCENT_TOKENS: readonly AccentTokenSpec[] = [
     label: "Info",
     description: "Live data and secondary signal — streaming, in flight.",
   },
+  {
+    token: "accent-queue",
+    label: "Queued",
+    description:
+      "Waiting in line for capacity — work that has not started yet.",
+  },
 ];
 
 /**
@@ -71,6 +82,7 @@ export const ACCENT_DEFAULTS: Record<ThemeMode, Record<AccentToken, string>> = {
     "accent-warn": "#f2a93b",
     "accent-alert": "#ff5c5c",
     "accent-info": "#5aa2ff",
+    "accent-queue": "#b48cff",
   },
   paper: {
     accent: "#0b3d91",
@@ -78,6 +90,7 @@ export const ACCENT_DEFAULTS: Record<ThemeMode, Record<AccentToken, string>> = {
     "accent-warn": "#9a6510",
     "accent-alert": "#c0342b",
     "accent-info": "#0f5fa8",
+    "accent-queue": "#6a3fb5",
   },
 };
 

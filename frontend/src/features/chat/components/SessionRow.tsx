@@ -39,7 +39,7 @@ export interface SessionRowProps {
  *  from across the room get one: live work, a wait on the operator, a failure or a
  *  limit. Everything else is the idle grey square. */
 const ROW_STATE: Record<RunState, RailRowState> = {
-  queued: "running",
+  queued: "queued",
   running: "running",
   awaiting_input: "waiting",
   done: "idle",
@@ -59,6 +59,7 @@ const FAILURE_WORD: Partial<Record<RunState, string>> = {
  *
  * - **idle** — a grey square and the thread's age (only inside 30 days);
  * - **unread** — a bright square and a bright title;
+ * - **queued** — the queue square, still, and `queued` in the queue tone;
  * - **running** — the accent square blinking and the elapsed clock;
  * - **waiting** — the action tier's echo: an amber inset edge, a tint, `WAITING`;
  * - **failed / limit** — a red square and the word in red.
@@ -111,6 +112,9 @@ export function SessionRow(props: SessionRowProps): JSX.Element {
       </Show>
       <Show when={rowState() === "waiting"}>
         <RailTag>Waiting</RailTag>
+      </Show>
+      <Show when={rowState() === "queued"}>
+        <span>queued</span>
       </Show>
       <Show when={rowState() === "running" && props.updatedAt}>
         {(startedAt) => (

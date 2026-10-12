@@ -621,6 +621,7 @@ export function ChatRoomScreen(): JSX.Element {
               <Composer
                 autofocus
                 streaming={stream.sending()}
+                queued={stream.sending() && stream.runQueue() !== null}
                 onStop={(correction) => void stopRun(correction)}
                 onSend={sendTurn}
                 menu={composerMenu}

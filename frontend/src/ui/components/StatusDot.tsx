@@ -3,7 +3,8 @@ import { cx } from "../cx";
 import { type TextTone } from "../primitives/Text";
 
 /** Semantic status. Each maps to exactly one accent (§4 color discipline). */
-export type Status = "idle" | "live" | "nominal" | "warn" | "alert" | "info";
+export type Status =
+  "idle" | "live" | "nominal" | "warn" | "alert" | "info" | "queue";
 
 /** The one Status → accent mapping. Every status indicator (the StatusFlag chip,
  *  the system strip, fallback-chain rows) reads from here so the color of a state
@@ -15,6 +16,7 @@ export const statusTone: Record<Status, TextTone> = {
   warn: "warn",
   alert: "alert",
   info: "info",
+  queue: "queue",
 };
 
 export interface StatusDotProps {

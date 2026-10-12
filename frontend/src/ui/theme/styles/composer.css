@@ -53,6 +53,13 @@
     animation: ody-action-blink 1s steps(2, jump-none) infinite;
   }
 }
+.ody-composer[data-live][data-queued] .ody-composer-plate {
+  color: var(--accent-queue);
+}
+.ody-composer[data-live][data-queued] .ody-composer-plate-sq {
+  background: var(--accent-queue);
+  animation: none;
+}
 /* The echo of the action tier (§10.18): while the thread waits on the
    operator the plate is replaced by a solid amber strip with the tier's own
    blinking square, and its Jump takes the operator to the ask. */

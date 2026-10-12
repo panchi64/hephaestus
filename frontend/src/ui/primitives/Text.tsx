@@ -23,6 +23,7 @@ export type TextTone =
   | "warn"
   | "alert"
   | "info"
+  | "queue"
   /** The ground colour, for text set ON a filled accent — the action tier's
    *  band. Never on the page's own ground, where it is invisible. */
   | "inverse";
@@ -75,6 +76,7 @@ const toneClass: Record<TextTone, string> = {
   accent: "text-accent",
   nominal: "text-nominal",
   warn: "text-warn",
+  queue: "text-queue",
   alert: "text-alert",
   info: "text-info",
   inverse: "text-bg",

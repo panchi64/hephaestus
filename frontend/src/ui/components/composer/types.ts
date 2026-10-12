@@ -120,6 +120,8 @@ export interface ComposerProps {
    *  into the live run (mid-run steering); a disabled field shows STOP alone.
    *  Attaching, dropping and pasting files are unavailable while streaming. */
   streaming?: boolean;
+  /** The run is waiting in line for capacity: the plate takes the queue tone, still. */
+  queued?: boolean;
   /**
    * Invoked when STOP is pressed mid-stream (see `streaming`), with whatever was in
    * the field at that moment — **stop and correct in one act**.

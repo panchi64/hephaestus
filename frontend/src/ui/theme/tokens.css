@@ -207,6 +207,7 @@
   --accent-warn: #f2a93b;
   --accent-alert: #ff5c5c;
   --accent-info: #5aa2ff;
+  --accent-queue: #b48cff;
 
   /* ---- glass (§10) ----
      A translucent surface for a panel that should read as sitting OVER the page
@@ -291,6 +292,7 @@
   --accent-warn: #9a6510;
   --accent-alert: #c0342b;
   --accent-info: #0f5fa8;
+  --accent-queue: #6a3fb5;
 
   /* Glass, for Paper — see the note on the Ink definition. Slightly more opaque
      and it *dims* rather than lifts, because there is nowhere above white to go. */

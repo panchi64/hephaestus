@@ -51,7 +51,7 @@ const SPECS = {
   queued: {
     readout: "QUEUED",
     spoken: "queued",
-    status: "info",
+    status: "queue",
     live: true,
     loud: true,
   },

@@ -31,6 +31,7 @@
   --color-warn: var(--accent-warn);
   --color-alert: var(--accent-alert);
   --color-info: var(--accent-info);
+  --color-queue: var(--accent-queue);
 
   /* ---- spacing base (p-1=4px, p-2=8px, p-4=16px, p-6=24px, p-8=32px) ---- */
   --spacing: var(--space-1);
