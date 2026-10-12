@@ -54,22 +54,21 @@ _MAX_BRIEFS = 32
 _briefs: OrderedDict[tuple[str, str], str] = OrderedDict()
 
 
-def _capability(root: Path) -> RepoContext[RunDeps]:
-    return RepoContext[RunDeps](
-        workspace_dir=root,
-        # No walk-up: `home_dir=None` scans the worktree only. Climbing above it would
-        # read instruction files from directories the operator never put in a project —
-        # ultimately their home directory — which is not something to do quietly.
-        home_dir=None,
-        # Off: it hooks the file tools' results to surface a nested directory's
-        # instruction file, and those results ride into context untrimmed here.
-        nested_traversal=False,
-        # Off because it is *ours*: the capability would load the instruction files whole,
-        # and the prompt head is the one place a file of unbounded size must not land.
-        # `repo_instructions.py` does the same load under a byte budget; what remains of
-        # the capability's own brief is the inventory tool's one-line hint.
-        autoload_instructions=False,
-    )
+_CAPABILITY = RepoContext[RunDeps](
+    # No walk-up: `home_dir=None` scans the worktree only. Climbing above it would
+    # read instruction files from directories the operator never put in a project —
+    # ultimately their home directory — which is not something to do quietly.
+    home_dir=None,
+    # Off: it hooks the file tools' results to surface a nested directory's
+    # instruction file, and those results ride into context untrimmed here.
+    nested_traversal=False,
+    # Off because it is *ours*: the capability would load the instruction files whole,
+    # and the prompt head is the one place a file of unbounded size must not land.
+    # `repo_instructions.py` does the same load under a byte budget; what remains of
+    # the capability's own brief is the inventory tool's one-line hint.
+    autoload_instructions=False,
+    expose_inventory_tool=True,
+)
 
 
 async def repo_instructions(ctx: RunContext[RunDeps]) -> str:
@@ -82,10 +81,10 @@ async def repo_instructions(ctx: RunContext[RunDeps]) -> str:
         return ""
     if workspace is None or workspace.kind != "worktree":
         return ""
-    return _run_brief(ctx.deps.run.id, workspace.root)
+    return await _run_brief(ctx.deps.run.id, workspace.root)
 
 
-def _run_brief(run_id: str, root: Path) -> str:
+async def _run_brief(run_id: str, root: Path) -> str:
     """This run's brief for this worktree, built once and reused for every later request
     the run makes. Keyed by the run rather than by the root so a later turn — the one
     place a project's instruction file may legitimately have changed since it was read —
@@ -94,14 +93,14 @@ def _run_brief(run_id: str, root: Path) -> str:
     key = (run_id, str(root))
     brief = _briefs.pop(key, None)
     if brief is None:
-        brief = _brief(root)
+        brief = await _brief(root)
         if len(_briefs) >= _MAX_BRIEFS:
             _briefs.popitem(last=False)
     _briefs[key] = brief
     return brief
 
 
-def _brief(root: Path) -> str:
+async def _brief(root: Path) -> str:
     """The budgeted instruction files, then the capability's own inventory hint — the
     same order and the same joiner its `get_instructions` uses, so moving the loading out
     from under it changed what is *bounded*, not what the model reads.
@@ -111,21 +110,15 @@ def _brief(root: Path) -> str:
     is not on offer is worse than one pointing at nothing. `describe.py` fixes the same
     mismatch inside tool *descriptions* — instructions are the other seam, and they do not
     pass through it."""
-    hint = (_capability(root).get_instructions() or "").replace(
+    hint = str(_CAPABILITY.get_instructions() or "").replace(
         INVENTORY_TOOL, f"repo_{INVENTORY_TOOL}"
     )
-    parts = (repo_instruction_text(root), hint)
+    parts = (await repo_instruction_text(root), hint)
     return "\n\n".join(part for part in parts if part)
-
-
-def _toolset_for(root: Path) -> AbstractToolset[RunDeps]:
-    toolset = _capability(root).get_toolset()
-    assert toolset is not None  # `expose_inventory_tool` defaults on
-    return toolset
 
 
 def repo_toolset() -> AbstractToolset[RunDeps]:
     """The `repo` category, built once at app assembly and shared by every run."""
-    return WorkspaceToolset(
-        "repo", _toolset_for(Path("/nonexistent-template-root")), _toolset_for
-    )
+    toolset = _CAPABILITY.get_toolset()
+    assert toolset is not None  # `expose_inventory_tool` is on
+    return WorkspaceToolset("repo", toolset)

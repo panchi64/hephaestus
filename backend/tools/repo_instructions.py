@@ -26,6 +26,8 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+
 # Discovery, dedup and rendering are the capability's own, reached through its loader
 # module: re-deriving them here would mean a second implementation of symlink dedup and
 # of the `<context-file>` framing, and the two would disagree the first time either moved.
@@ -94,13 +96,14 @@ def within_budget(files: list[ContextFile], budget: int) -> list[ContextFile]:
     return kept
 
 
-def repo_instruction_text(root: Path, *, budget: int = INSTRUCTIONS_BYTE_BUDGET) -> str:
+async def repo_instruction_text(root: Path, *, budget: int = INSTRUCTIONS_BYTE_BUDGET) -> str:
     """The project's instruction files, budgeted and rendered, or ``""`` when it has none.
 
     ``home_dir=None``: the walk-up is deliberately not taken (see ``tools/repo.py``), so
     what is discovered here is what the worktree root itself carries.
     """
-    files = discover_instruction_files(root, None, INSTRUCTION_FILENAMES)
+    workspace = Workspace(LocalWorkspaceBackend(root))
+    files = await discover_instruction_files(workspace, root, None, INSTRUCTION_FILENAMES)
     if not files:
         return ""
     return render_context_files(within_budget(files, budget), relative_to=root)

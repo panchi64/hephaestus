@@ -33,10 +33,12 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from pydantic_ai import AbstractToolset, RunContext, ToolsetTool
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 
 from services.projects.worktree import WorktreeBusyError
 from services.workspace import RunWorkspace
@@ -87,6 +89,13 @@ class ReboundToolset(AbstractToolset[RunDeps]):
         instead, when the capability is unavailable or the call is refused."""
         raise NotImplementedError
 
+    async def resolve(
+        self, name: str, ctx: RunContext[RunDeps]
+    ) -> tuple[AbstractToolset[RunDeps], RunContext[RunDeps]] | str:
+        """The bound toolset and the context to call it with, or a refusal string."""
+        bound = await self.bind(name, ctx)
+        return bound if isinstance(bound, str) else (bound, ctx)
+
     async def call_tool(
         self,
         name: str,
@@ -94,9 +103,10 @@ class ReboundToolset(AbstractToolset[RunDeps]):
         ctx: RunContext[RunDeps],
         tool: ToolsetTool[RunDeps],
     ) -> Any:
-        bound = await self.bind(name, ctx)
-        if isinstance(bound, str):
-            return bound
+        resolved = await self.resolve(name, ctx)
+        if isinstance(resolved, str):
+            return resolved
+        bound, ctx = resolved
         # Re-resolve the tool against the bound toolset: the object handed in carries the
         # template's function, which would act on the template's binding. Resolved from
         # the per-key cache rather than by rebuilding the whole dict — the set is fixed
@@ -138,13 +148,18 @@ class ReboundToolset(AbstractToolset[RunDeps]):
 
 
 class WorkspaceToolset(ReboundToolset):
-    """A harness toolset, rebound to each run's workspace."""
+    """A toolset dispatched against each run's workspace.
+
+    Every call sees the run's workspace as ``ctx.workspace``, which is all a harness
+    toolset needs. ``build`` is for toolsets that also hold per-directory state of their
+    own (the shell's process handles); without it the template serves every run.
+    """
 
     def __init__(
         self,
         name: str,
         template: AbstractToolset[RunDeps],
-        build: Callable[[Path], AbstractToolset[RunDeps]],
+        build: Callable[[Path], AbstractToolset[RunDeps]] | None = None,
         *,
         guard: Guard | None = None,
     ) -> None:
@@ -152,7 +167,9 @@ class WorkspaceToolset(ReboundToolset):
         self._build = build
         self._guard = guard
 
-    async def bind(self, name: str, ctx: RunContext[RunDeps]) -> AbstractToolset[RunDeps] | str:
+    async def resolve(
+        self, name: str, ctx: RunContext[RunDeps]
+    ) -> tuple[AbstractToolset[RunDeps], RunContext[RunDeps]] | str:
         try:
             workspace = await run_workspace(ctx)
         except WorktreeBusyError as exc:
@@ -163,4 +180,10 @@ class WorkspaceToolset(ReboundToolset):
             refusal = await self._guard(name, ctx, workspace)
             if refusal is not None:
                 return refusal
-        return self.cached(str(workspace.root), lambda: self._build(workspace.root))
+        build = self._build
+        bound = (
+            self._template
+            if build is None
+            else self.cached(str(workspace.root), lambda: build(workspace.root))
+        )
+        return bound, replace(ctx, workspace=Workspace(LocalWorkspaceBackend(workspace.root)))

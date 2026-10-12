@@ -61,7 +61,6 @@ I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loo
 
 - **Task automation depth** — predefined actions and chaining, natural-language schedule parsing, and event triggers beyond the inbound webhook.
 - **The health screen** — it's the one surface still on fixtures. It wants per-service latency, a baseline and a status history, and the backend measures none of those yet. Real capability health lives at `/overview` and the home page renders it.
-- **A deployable frontend build** — `bun run dev` is fine, but `bun run build`'s server output is blocked on a `@solidjs/start` alpha upgrade. See `frontend/CLAUDE.md`.
 
 ## Out of scope, on purpose
 
@@ -130,7 +129,6 @@ bun run typecheck   # tsc --noEmit (scoped to src/)
 bun run lint        # eslint + prettier --check
 bun run test        # the fast unit suite
 ```
-> **NOTE — `bun run build` does not currently produce a working server bundle.** Its Nitro output returns HTTP 500 on every request, via an exact-pinned transitive dependency of the `@solidjs/start` 2.0 alpha. Development is unaffected; anything needing a deployable artifact is blocked on that upgrade. Details in `frontend/CLAUDE.md`.
 
 **A disposable instance to develop against.** A second Odysseus with its own data directory, its own ports, its own containers and a scripted model behind it — seeded on first use, safe to break, and separate from the workspace above:
 ```bash

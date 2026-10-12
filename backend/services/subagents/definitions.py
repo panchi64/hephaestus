@@ -36,7 +36,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_ai_harness.repo_context._inventory import scan_assets
 
 from core.frontmatter import FrontmatterError, split_frontmatter
 from services.permissions import PERMISSION_LEVELS, STRICTEST_PERMISSION
@@ -48,8 +47,8 @@ logger = logging.getLogger(__name__)
 #: than restated, so this and the inventory tool describe one filesystem layout.
 ASSET_ROOTS: tuple[str, ...] = tuple(RepoContext.asset_roots)
 
-#: The directory whose name says what is in it, read flat as well as through the scan
-#: above. A project that put ``reviewer.md`` straight in here meant an agent by it.
+#: The directory whose name says what is in it, read flat as well as through
+#: ``<root>/agents/``. A project that put ``reviewer.md`` straight in here meant an agent by it.
 FLAT_ROOT = ".agents"
 
 #: What a name may be. Deliberately looser than the skills' own rule in one way — an
@@ -131,11 +130,9 @@ def agent_files(root: Path) -> list[Path]:
     caches.
     """
     found: set[Path] = set()
-    for entry in scan_assets(root, ASSET_ROOTS).roots:
-        found.update((root / path).resolve() for path in entry.agents)
-    flat = root / FLAT_ROOT
-    if flat.is_dir():
-        found.update(path.resolve() for path in flat.glob("*.md") if path.is_file())
+    for directory in [*(root / name / "agents" for name in ASSET_ROOTS), root / FLAT_ROOT]:
+        if directory.is_dir():
+            found.update(path.resolve() for path in directory.glob("*.md") if path.is_file())
     return sorted(found)
 
 

@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "start": "vite start",
+    "start": "node .output/server/index.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "bun test --path-ignore-patterns \"**/*.smoke.test.ts\"",
@@ -17,27 +17,27 @@
     "build:fonts": "python3 scripts/build-mono-font.py"
   },
   "dependencies": {
-    "@solidjs/router": "^0.15.4",
-    "@solidjs/start": "2.0.0-alpha.2",
-    "@solidjs/vite-plugin-nitro-2": "^0.1.0",
-    "katex": "^0.17.0",
-    "marked": "^18.0.14",
-    "mermaid": "^12.0.0",
-    "pdfjs-dist": "^6.3.289",
-    "shiki": "^4.4.3",
-    "solid-js": "^1.9.15",
-    "vite": "^7.3.6"
+    "@solidjs/router": "^1.0.0",
+    "@solidjs/start": "2.0.6",
+    "katex": "^0.19.0",
+    "marked": "^18.1.1",
+    "mermaid": "^12.1.0",
+    "nitro": "^3.0.260903-beta",
+    "pdfjs-dist": "^6.4.299",
+    "shiki": "^4.5.0",
+    "solid-js": "^1.9.17",
+    "vite": "^8.3.4"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
-    "@types/bun": "^1.4.2",
+    "@types/bun": "^1.4.3",
     "@types/katex": "^0.16.8",
-    "eslint": "^9.39.5",
-    "eslint-plugin-solid": "^0.14.5",
-    "prettier": "^3.9.8",
+    "eslint": "^10.12.0",
+    "eslint-plugin-solid": "^0.18.1",
+    "prettier": "^3.9.10",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.70.1"
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.1"
   },
   "engines": {
     "node": ">=22"

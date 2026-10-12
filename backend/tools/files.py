@@ -16,8 +16,8 @@ directory this run may touch.
 once at app startup (see ``app.py``) and shared by every conversation, while the workspace
 belongs to the run. So the root cannot be baked in at construction:
 this category is a :class:`~tools.rebound.WorkspaceToolset`, which asks
-``tools/workspace.py``'s resolver per call and dispatches into a ``FileSystemToolset``
-bound to *that* directory.
+``tools/workspace.py``'s resolver per call and hands that directory to the harness
+toolset as ``ctx.workspace``.
 
 **The invariant is that these tools reach exactly what this run can execute in, and
 nothing else.** In a sandbox mode that is the conversation's sandbox workspace at
@@ -34,11 +34,8 @@ confined either way, they need no approval, exactly as sandboxed execution doesn
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from pydantic_ai import AbstractToolset
 from pydantic_ai_harness import FileSystem
-from pydantic_ai_harness.filesystem._toolset import FileSystemToolset
 
 from core.config import get_settings
 
@@ -54,18 +51,10 @@ from .rebound import WorkspaceToolset
 # key files, `**/secrets*`) stay in force; they protect things worth protecting.
 
 
-def _toolset_for(root: Path) -> FileSystemToolset[RunDeps]:
-    settings = get_settings()
-    return FileSystem[RunDeps](
-        root_dir=root,
-        max_read_lines=settings.sandbox_files_max_read_lines,
-    ).get_toolset()
-
-
 def files_toolset() -> AbstractToolset[RunDeps]:
     """The ``files`` category, built once at app assembly and shared by every run."""
-    # The template's root is never read from or written to — only `call_tool` acts, and it
-    # always rebinds first (see `tools/rebound.py`). It carries the tool definitions.
-    return WorkspaceToolset(
-        "files", _toolset_for(Path("/nonexistent-template-root")), _toolset_for
-    )
+    toolset = FileSystem[RunDeps](
+        max_read_lines=get_settings().sandbox_files_max_read_lines,
+    ).get_toolset()
+    assert toolset is not None
+    return WorkspaceToolset("files", toolset)
