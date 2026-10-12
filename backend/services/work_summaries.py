@@ -7,17 +7,21 @@ a finished question, so this hangs off a timer instead and asks it of threads th
 been quiet for a while (:func:`services.settings_store.get_work_summary_idle_minutes`, the
 operator's own dial).
 
-Three things the sweep refuses to do, each of which would be a real defect rather than
+Four things the sweep refuses to do, each of which would be a real defect rather than
 merely wasted work:
 
 - **It does not run while the vault is locked.** The history it would read and the summary
   it would write are both sealed, so there is no key and nothing to do — the pass returns
   immediately rather than raising its way through a decrypt, the same posture
   :class:`services.scheduler.SchedulerService` takes for the same reason.
-- **It does not summarize a thread with a live run.** The registry is asked before each
-  candidate, because "idle for fifteen minutes" is measured off ``updated_at``, which a
-  run that has not persisted its turn yet has not moved. A summary written under a
-  streaming answer would describe the thread as it was before the turn it is watching.
+- **It does not run while any run is live.** A summary is a model call on the same
+  servers the operator chats on, and on a local server it can take the only slot or make
+  the server swap models under the chat. So a pass starts only when nothing is running,
+  and a summary in flight is cancelled the moment a run starts; the thread is simply a
+  candidate again next pass.
+- **It does not retry a failing thread every minute.** A summary that fails stores
+  nothing, so the thread stays a candidate; it waits out a growing back-off
+  (:data:`_BACKOFF`) instead of hitting the endpoint on every pass.
 - **It does not empty the queue in one pass.** A workspace full of threads that predate the
   feature is a backfill, not an emergency: the candidate query is capped
   (``work_summary_max_per_sweep``) so the first sweep after an upgrade spreads its model
@@ -33,7 +37,10 @@ pass that fails outright leaves the loop up.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -50,6 +57,15 @@ from services.registry import ModelRegistry
 from services.settings_store import SettingsStore, get_work_summary_idle_minutes
 
 logger = logging.getLogger(__name__)
+
+#: How long a thread whose summary failed waits before the next try, by failures so far.
+_BACKOFF = (15 * 60.0, 60 * 60.0, 6 * 60 * 60.0)
+#: How often a summary in flight checks whether a run has started.
+_YIELD_POLL_S = 0.5
+
+
+class _Yielded(Exception):
+    """A run started while a summary was being written."""
 
 
 class SummarizeWork(Protocol):
@@ -99,6 +115,8 @@ class WorkSummaryService:
         self._settings = settings
         self._owner_id = owner_id
         self._summarize_work = summarize
+        #: Failed threads: failures so far, and when the next try may run (monotonic).
+        self._failures: dict[str, tuple[int, float]] = {}
         self._task = PeriodicTask(
             "work-summaries",
             interval_s=settings.work_summary_sweep_interval_s,
@@ -131,19 +149,42 @@ class WorkSummaryService:
             limit=self._settings.work_summary_max_per_sweep,
         )
         written = 0
+        now = time.monotonic()
         for conversation_id in candidates:
-            if self._runs.active_run_for(conversation_id, self._owner_id) is not None:
-                # Idle is measured off `updated_at`, which an in-flight turn has not moved
-                # yet — so a thread can look quiet while an answer is streaming into it.
+            if self._runs.busy(self._owner_id):
+                break
+            failures, retry_at = self._failures.get(conversation_id, (0, 0.0))
+            if now < retry_at:
                 continue
             try:
-                if await self._summarize(conversation_id):
-                    written += 1
+                stored = await self._yielding(self._summarize(conversation_id))
+            except _Yielded:
+                break
             except Exception:  # noqa: BLE001 — one bad thread must not end the pass
                 logger.warning(
                     "work summary: conversation %s failed", conversation_id, exc_info=True
                 )
+                stored = False
+            if stored:
+                written += 1
+                self._failures.pop(conversation_id, None)
+            else:
+                delay = _BACKOFF[min(failures, len(_BACKOFF) - 1)]
+                self._failures[conversation_id] = (failures + 1, time.monotonic() + delay)
         return written
+
+    async def _yielding[T](self, work: Awaitable[T]) -> T:
+        """Await ``work``, cancelling it and raising :class:`_Yielded` if a run starts."""
+        task = asyncio.ensure_future(work)
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=_YIELD_POLL_S)
+                if done:
+                    return task.result()
+                if self._runs.busy(self._owner_id):
+                    raise _Yielded
+        finally:
+            task.cancel()
 
     async def _summarize(self, conversation_id: str) -> bool:
         """Summarize one thread and store the result; False when there was nothing to store.

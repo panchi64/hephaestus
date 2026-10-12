@@ -31,6 +31,7 @@ from core.config import Settings, get_settings
 from core.db import init_db, make_engine
 from core.vault import Vault
 from runs import RunRegistry
+from services import work_summaries as work_summaries_module
 from services.conversations import ConversationStore
 from services.settings_store import (
     WORK_SUMMARY_IDLE_MINUTES_KEY,
@@ -415,6 +416,76 @@ class TestTheSweep:
             return ModelResponse(parts=[TextPart(content="the second one")])
 
         assert await _service(store, FunctionModel(respond)).sweep() == 1
+
+    async def test_a_run_anywhere_holds_the_whole_pass(self, tmp_path):
+        """A summary is a model call on the servers the operator chats on, so a turn in any
+        other thread puts every summary off until nothing is running."""
+        store = await _store(tmp_path)
+        await _seeded(store, messages=4, age_minutes=60)
+        busy_thread = await store.create_conversation(OWNER)
+        runs = RunRegistry()
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def orch(run):
+            started.set()
+            await release.wait()
+
+        run = runs.submit(
+            kind="chat", owner_id=OWNER, orchestrator=orch, conversation_id=busy_thread
+        )
+        await started.wait()
+        model, seen = _replies("never called")
+        assert await _service(store, model, runs).sweep() == 0
+        assert seen == []
+        release.set()
+        await run.wait()
+
+    async def test_a_failing_thread_is_not_retried_every_pass(self, tmp_path):
+        store = await _store(tmp_path)
+        await _seeded(store, messages=4, age_minutes=60)
+        calls = {"n": 0}
+
+        async def respond(messages, info: AgentInfo) -> ModelResponse:
+            calls["n"] += 1
+            raise RuntimeError("the endpoint is down")
+
+        service = _service(store, FunctionModel(respond))
+        assert await service.sweep() == 0
+        assert await service.sweep() == 0
+        assert calls["n"] == 1
+
+    async def test_a_summary_in_flight_yields_to_a_run_that_starts(self, tmp_path, monkeypatch):
+        """The chat must never share a model with a summary: one already running is
+        cancelled, and the thread is simply a candidate again once the run is over."""
+        monkeypatch.setattr(work_summaries_module, "_YIELD_POLL_S", 0.01)
+        store = await _store(tmp_path)
+        conversation_id = await _seeded(store, messages=4, age_minutes=60)
+        other = await store.create_conversation(OWNER)
+        runs = RunRegistry()
+        asked, release = asyncio.Event(), asyncio.Event()
+        replies = {"n": 0}
+
+        async def respond(messages, info: AgentInfo) -> ModelResponse:
+            replies["n"] += 1
+            if replies["n"] == 1:
+                asked.set()
+                await asyncio.Event().wait()
+            return ModelResponse(parts=[TextPart(content="after the turn")])
+
+        async def orch(run):
+            await release.wait()
+
+        service = _service(store, FunctionModel(respond), runs)
+        sweep = asyncio.create_task(service.sweep())
+        await asyncio.wait_for(asked.wait(), 5)
+        run = runs.submit(kind="chat", owner_id=OWNER, orchestrator=orch, conversation_id=other)
+        assert await asyncio.wait_for(sweep, 5) == 0
+        release.set()
+        await run.wait()
+
+        assert await service.sweep() == 1
+        summary = await store.get_summary(conversation_id, OWNER)
+        assert summary is not None and summary.work_summary == "after the turn"
 
 
 # --- the operator setting ---------------------------------------------------

@@ -171,6 +171,12 @@ class RunRegistry:
             return None
         return max(candidates, key=lambda r: r.created_at)
 
+    def busy(self, owner_id: str) -> bool:
+        """Whether any of the owner's runs is live or about to start."""
+        return any(key[0] == owner_id for key in self._claims) or any(
+            r.owner_id == owner_id and not r.is_terminal for r in self._runs.values()
+        )
+
     # --- claim (pre-submit / pre-mutation mutual exclusion) --------------------
     def claim(self, conversation_id: str, owner_id: str) -> None:
         """Atomically check-and-claim ``conversation_id`` for a request that is about
