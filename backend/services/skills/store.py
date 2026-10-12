@@ -38,6 +38,7 @@ from .bundle import (
     NAME_MAX_CHARS,
     ImportedBundle,
     ParsedSkill,
+    parse_skill_md,
     read_import,
     validate_description,
     validate_name,
@@ -215,6 +216,23 @@ class SkillStore:
             return self._view(session, skill)
 
         return await in_session(self._engine, work)
+
+    async def replace_document(self, owner_id: str, skill_id: str, text: str) -> SkillView:
+        """Rewrite the skill from a whole ``SKILL.md``. A field the new frontmatter drops is
+        cleared."""
+        parsed = parse_skill_md(text)
+        return await self.update(
+            owner_id,
+            skill_id,
+            name=parsed.name,
+            description=parsed.description,
+            body=parsed.body,
+            license=parsed.license or "",
+            compatibility=parsed.compatibility or "",
+            metadata=parsed.metadata or {},
+            allowed_tools=parsed.allowed_tools or [],
+            extras=parsed.extras or {},
+        )
 
     async def replace_span(
         self, owner_id: str, skill_id: str, old_text: str, new_text: str

@@ -146,3 +146,28 @@ async def test_an_unreadable_import_is_a_422():
         )
         assert resp.status_code == 422
         assert resp.json()["detail"]["field"] == "file"
+
+
+async def test_an_agent_is_edited_as_its_whole_file():
+    async with client_app() as (client, _app):
+        agent_id = (await client.post("/agents", json=_BODY)).json()["id"]
+        document = (await client.get(f"/agents/{agent_id}/document")).json()["content"]
+        assert document.startswith("---\nname: scout\n")
+        edited = document.replace("Look around.", "Look harder.").replace(
+            "description: Looks around.", "description: Looks around.\npermission: plan"
+        )
+        saved = await client.put(f"/agents/{agent_id}/document", json={"content": edited})
+        assert saved.status_code == 200
+        assert saved.json()["instructions"] == "Look harder."
+        assert saved.json()["permission_ceiling"] == "plan"
+        broken = await client.put(f"/agents/{agent_id}/document", json={"content": "nope"})
+        assert broken.status_code == 422
+        assert broken.json()["detail"]["field"] == "file"
+
+
+async def test_a_builtin_reads_as_a_document_but_cannot_be_written():
+    async with client_app() as (client, _app):
+        got = await client.get("/agents/builtin:explorer/document")
+        assert got.status_code == 200
+        put = await client.put("/agents/builtin:explorer/document", json={"content": "x"})
+        assert put.status_code == 404

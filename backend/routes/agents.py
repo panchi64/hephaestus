@@ -91,6 +91,32 @@ async def get_agent(request: Request, agent_id: str, project_id: str | None = No
     return _out(agent, active=effective.get(agent.name) == agent)
 
 
+class AgentDocument(BaseModel):
+    """An agent as its whole file: frontmatter and instructions."""
+
+    content: str
+
+
+@router.get("/{agent_id}/document", response_model=AgentDocument)
+async def get_agent_document(
+    request: Request, agent_id: str, project_id: str | None = None
+) -> AgentDocument:
+    root = await deps.composer_root(request, project_id, None)
+    return AgentDocument(content=render_agent_file(await _find(request, agent_id, root)))
+
+
+@router.put("/{agent_id}/document", response_model=AgentOut)
+async def put_agent_document(request: Request, agent_id: str, body: AgentDocument) -> AgentOut:
+    """Rewrite a stored agent from its edited file, validated as an import would be."""
+    try:
+        agent = await deps.agent_store(request).replace_document(
+            OPERATOR_ID, agent_id, body.content
+        )
+    except AgentValidationError as exc:
+        raise _invalid(exc) from None
+    return await _resolved(request, agent)
+
+
 @router.get("/{agent_id}/export")
 async def export_agent(request: Request, agent_id: str, project_id: str | None = None) -> Response:
     """The agent as a `.claude/agents` file, which a project or another installation reads."""

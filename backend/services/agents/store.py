@@ -149,14 +149,13 @@ class AgentStore:
 
     async def import_file(self, owner_id: str, text: str, *, filename: str) -> AgentDefinition:
         """Store an agent file (``.claude/agents`` format) as a draft."""
-        try:
-            parsed = parse_agent_file(text, name=Path(filename).stem)
-        except AgentFileError as exc:
-            raise AgentValidationError("file", str(exc)) from None
-        values = {
-            name: getattr(parsed, name) for name in EDITABLE if name not in {"endpoint_id", "model"}
-        }
-        return await self.create(owner_id, values)
+        return await self.create(owner_id, _file_values(text, Path(filename).stem))
+
+    async def replace_document(self, owner_id: str, agent_id: str, text: str) -> AgentDefinition:
+        """Rewrite the agent from an edited agent file. Its model is kept: the file format
+        does not carry one."""
+        current = await self.get(owner_id, agent_id)
+        return await self.update(owner_id, agent_id, _file_values(text, current.name))
 
     async def set_published(
         self, owner_id: str, agent_id: str, published: bool
@@ -220,6 +219,14 @@ class AgentStore:
             source="agent" if row.source == "agent" else "user",
             published=row.published,
         )
+
+
+def _file_values(text: str, name: str) -> dict[str, Any]:
+    try:
+        parsed = parse_agent_file(text, name=name, clip=False)
+    except AgentFileError as exc:
+        raise AgentValidationError("file", str(exc)) from None
+    return {key: getattr(parsed, key) for key in EDITABLE - {"endpoint_id", "model"}}
 
 
 def _apply(agent: AgentDefinition, values: Mapping[str, Any]) -> AgentDefinition:

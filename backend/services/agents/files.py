@@ -137,11 +137,13 @@ def agent_files(root: Path) -> list[Path]:
     return sorted(found)
 
 
-def parse_agent_file(text: str, *, name: str) -> AgentDefinition:
+def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinition:
     """One agent definition file as a spec.
 
     ``name`` is the filename's stem, used when the frontmatter does not name the agent
     itself — the standard allows either, and the file is usually named for what is in it.
+    ``clip`` trims an over-long description or brief to what a project file may cost; a
+    file the operator wrote keeps its text and is validated by the store instead.
     """
     try:
         fields, body = split_frontmatter(text)
@@ -162,8 +164,8 @@ def parse_agent_file(text: str, *, name: str) -> AgentDefinition:
 
     return AgentDefinition(
         name=spec_name,
-        description=_clip(description, DESCRIPTION_MAX_CHARS),
-        instructions=_clip(brief, BRIEF_MAX_CHARS),
+        description=_clip(description, DESCRIPTION_MAX_CHARS) if clip else description,
+        instructions=_clip(brief, BRIEF_MAX_CHARS) if clip else brief,
         tools=_declared_tools(fields),
         permission_ceiling=_declared_ceiling(fields, name=spec_name),
         workspace=_declared_workspace(fields, name=spec_name),

@@ -27,7 +27,7 @@ from core.exceptions import SkillSpanError, SkillValidationError
 from routes import deps
 from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
-from services.skills import BUNDLE_MAX_BYTES, SkillSummaryView, SkillView
+from services.skills import BUNDLE_MAX_BYTES, SkillSummaryView, SkillView, render_skill_md
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -180,6 +180,28 @@ async def import_skill(
     except SkillValidationError as exc:
         raise _invalid(exc) from None
     return SkillImportOut(skill=_out(view), warnings=warnings)
+
+
+class SkillDocument(BaseModel):
+    """A skill's whole ``SKILL.md``: frontmatter and instructions."""
+
+    content: str
+
+
+@router.get("/{skill_id}/document", response_model=SkillDocument)
+async def get_skill_document(skill_id: str, request: Request) -> SkillDocument:
+    view = await deps.skills(request).get(OPERATOR_ID, skill_id)
+    return SkillDocument(content=render_skill_md(view.parsed()))
+
+
+@router.put("/{skill_id}/document", response_model=SkillOut)
+async def put_skill_document(skill_id: str, body: SkillDocument, request: Request) -> SkillOut:
+    """Rewrite the skill from an edited ``SKILL.md``, validated as an import would be."""
+    try:
+        view = await deps.skills(request).replace_document(OPERATOR_ID, skill_id, body.content)
+    except SkillValidationError as exc:
+        raise _invalid(exc) from None
+    return _out(view)
 
 
 @router.get("/{skill_id}", response_model=SkillOut)

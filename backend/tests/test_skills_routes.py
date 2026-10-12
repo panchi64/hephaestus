@@ -201,3 +201,23 @@ async def test_an_unsafe_bundle_path_is_refused():
             files={"file": ("escape.sh", b"x", "text/plain")},
         )
         assert response.status_code in {404, 422}
+
+
+async def test_a_skill_is_edited_as_its_whole_skill_md():
+    async with client_app() as (client, _app):
+        created = await _create(client)
+        await client.patch(f"/skills/{created['id']}", json={"license": "MIT"})
+        document = (await client.get(f"/skills/{created['id']}/document")).json()["content"]
+        assert document.startswith("---\nname: release-notes\n")
+        assert "license: MIT" in document
+        edited = document.replace("license: MIT\n", "").replace("by area", "by team")
+        saved = await client.put(f"/skills/{created['id']}/document", json={"content": edited})
+        assert saved.status_code == 200, saved.text
+        body = saved.json()
+        assert "by team" in body["body"]
+        assert body["license"] is None
+        broken = await client.put(
+            f"/skills/{created['id']}/document", json={"content": "no frontmatter"}
+        )
+        assert broken.status_code == 422
+        assert broken.json()["detail"]["field"] == "frontmatter"
