@@ -40,7 +40,7 @@ import {
   type WorkspaceDirectory,
 } from "../sessionGroups";
 import { SessionRow } from "./SessionRow";
-import { ThreadLog } from "./ThreadLog";
+import { ThreadLog, createThreadFold } from "./ThreadLog";
 
 /** What a directory's heading reports about the repository under it. Resolved by the
  *  caller from the live project listing — this component renders it and reads nothing. */
@@ -214,36 +214,54 @@ function SessionRows(props: {
   );
   return (
     <For each={top()}>
-      {(s) => (
-        <>
-          <SessionRow
-            title={s.title}
-            selected={s.id === props.currentId}
-            pinned={isPinned(s.id)}
-            unread={props.unread?.(s.id)}
-            reveal={titleReveals[s.id]}
-            retitling={isRetitling(s.id)}
-            activity={s.activity}
-            lastOutcome={s.lastOutcome}
-            updatedAt={s.updatedAt}
-            onOpen={() => props.onSelect(s.id)}
-            // The thread's id is the menu's key, which is what lets one panel serve the
-            // whole list: it tells the rail which thread to build items for, and tells
-            // the row whether the open menu is its own.
-            onContextMenu={(e) => props.menu.openAt(e, s.id)}
-            menuTrigger={props.menu.triggerProps(s.id)}
-            menuOpen={props.menu.isOpen(s.id)}
-          />
-          <Show when={childrenOf(s.id).length > 0}>
-            <ThreadLog
-              threads={childrenOf(s.id)}
-              childrenOf={childrenOf}
-              currentId={props.currentId}
-              onSelect={props.onSelect}
+      {(s) => {
+        const threads = () => childrenOf(s.id);
+        const fold = createThreadFold(
+          threads,
+          childrenOf,
+          () => props.currentId,
+        );
+        return (
+          <>
+            <SessionRow
+              title={s.title}
+              selected={s.id === props.currentId}
+              pinned={isPinned(s.id)}
+              unread={props.unread?.(s.id)}
+              reveal={titleReveals[s.id]}
+              retitling={isRetitling(s.id)}
+              activity={s.activity}
+              lastOutcome={s.lastOutcome}
+              updatedAt={s.updatedAt}
+              onOpen={() => props.onSelect(s.id)}
+              // The thread's id is the menu's key, which is what lets one panel serve the
+              // whole list: it tells the rail which thread to build items for, and tells
+              // the row whether the open menu is its own.
+              onContextMenu={(e) => props.menu.openAt(e, s.id)}
+              menuTrigger={props.menu.triggerProps(s.id)}
+              menuOpen={props.menu.isOpen(s.id)}
+              fold={
+                threads().length > 0
+                  ? {
+                      open: fold.open(),
+                      onToggle: fold.toggle,
+                      label: `Agent threads of ${s.title}`,
+                    }
+                  : undefined
+              }
             />
-          </Show>
-        </>
-      )}
+            <Show when={threads().length > 0}>
+              <ThreadLog
+                threads={threads()}
+                open={fold.open()}
+                childrenOf={childrenOf}
+                currentId={props.currentId}
+                onSelect={props.onSelect}
+              />
+            </Show>
+          </>
+        );
+      }}
     </For>
   );
 }

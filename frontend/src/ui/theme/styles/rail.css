@@ -135,6 +135,20 @@
 .ody-selected-edge-b {
   box-shadow: inset 0 -2px 0 var(--text-bright);
 }
+/* In the row's left gutter, so a row that folds keeps its title in the column. */
+.ody-rail-fold {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 1px;
+  display: flex;
+  align-items: center;
+  color: var(--text-dim);
+}
+.ody-rail-fold:hover,
+.ody-rail-fold:focus-visible {
+  color: var(--text-bright);
+}
 .ody-rail-glyph {
   width: 7px;
   height: 7px;

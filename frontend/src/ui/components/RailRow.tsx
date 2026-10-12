@@ -1,5 +1,6 @@
 import { Show, type JSX } from "solid-js";
 import { cx } from "../cx";
+import { Icon } from "../primitives/Icon";
 
 /** What a rail row's glyph column says. `waiting` is the action tier's echo: the run is
  *  parked on the operator. */
@@ -23,6 +24,9 @@ export interface RailRowProps {
   menuOpen?: boolean;
   onOpen: () => void;
   onContextMenu?: (e: MouseEvent) => void;
+  /** Rows nested under this one, folded by a chevron in the row's left gutter. Absent
+   *  when there is nothing to fold, and then no chevron is drawn. */
+  fold?: { open: boolean; onToggle: () => void; label: string };
   class?: string;
 }
 
@@ -48,6 +52,25 @@ export function RailRow(props: RailRowProps): JSX.Element {
       onClick={() => props.onOpen()}
       onContextMenu={(e) => props.onContextMenu?.(e)}
     >
+      <Show when={props.fold}>
+        {(fold) => (
+          <button
+            type="button"
+            aria-expanded={fold().open}
+            aria-label={fold().label}
+            class="ody-rail-fold"
+            onClick={(e) => {
+              e.stopPropagation();
+              fold().onToggle();
+            }}
+          >
+            <Icon
+              name={fold().open ? "chevron-down" : "chevron-right"}
+              size={10}
+            />
+          </button>
+        )}
+      </Show>
       <span class="ody-rail-glyph" aria-hidden="true" />
       <button
         type="button"

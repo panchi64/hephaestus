@@ -7,6 +7,7 @@ import {
   RailTag,
   TypewriterText,
   type ContextMenuTriggerProps,
+  type RailRowProps,
   type RailRowState,
 } from "~/ui";
 import { REVEAL_SPEED_MS } from "../data";
@@ -30,6 +31,8 @@ export interface SessionRowProps {
   onContextMenu: (e: MouseEvent) => void;
   menuTrigger: ContextMenuTriggerProps;
   menuOpen?: boolean;
+  /** The chevron folding the agent threads opened under this one. */
+  fold?: RailRowProps["fold"];
 }
 
 /** A run state as what the row's glyph column says. Only the states worth marking
@@ -154,6 +157,7 @@ export function SessionRow(props: SessionRowProps): JSX.Element {
       menuOpen={props.menuOpen}
       onOpen={props.onOpen}
       onContextMenu={props.onContextMenu}
+      fold={props.fold}
     />
   );
 }
