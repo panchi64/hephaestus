@@ -178,12 +178,27 @@ class SmolvmDriver:
         self._discard_leftover()
         image = self._clean_image()
         self.phase, self.step = "booting", None
-        private, public = ensure_ssh_key(self._state / "keys")
+        private, _public = ensure_ssh_key(self._state / "keys")
         vm_id = f"odysseus-{secrets.token_hex(4)}"
-        config = VMConfig(
+        config = self._config(vm_id, image, internet=False)
+        self._current.parent.mkdir(parents=True, exist_ok=True)
+        self._current.write_text(vm_id)
+        try:
+            vm = SmolVM(config=config, data_dir=self._smolvm_dir, ssh_key_path=str(private))
+            vm.start(boot_timeout=self._boot_timeout_s)
+            vm.wait_for_ready(timeout=self._boot_timeout_s)
+        except SmolVMError as exc:
+            raise VMError(f"the platform VM did not boot: {exc}") from exc
+        self._vm = vm
+
+    def _config(self, vm_id: str, image: CleanImage, *, internet: bool) -> VMConfig:
+        """A VM booted from ``image``: the platform VM, with no network of its own, or a
+        build resumed from a partial disk, with internet and the full disk size."""
+        _private, public = ensure_ssh_key(self._state / "keys")
+        return VMConfig(
             vm_id=vm_id,
             vcpu_count=self._cpus,
-            memory=self._memory_mb,
+            memory=self._memory_mb if not internet else max(self._memory_mb, 2048),
             guest_os=_GUEST_OS,
             boot_mode="direct_kernel",
             kernel_path=image.kernel,
@@ -194,18 +209,10 @@ class SmolvmDriver:
             backend="qemu",
             qemu_machine=_MACHINE,
             disk_mode="isolated",
-            internet_settings=InternetSettings(mode="off"),
+            disk_size_mib=self._disk_mb if internet else None,
+            internet_settings=None if internet else InternetSettings(mode="off"),
             ssh_public_key=public.read_text().strip(),
         )
-        self._current.parent.mkdir(parents=True, exist_ok=True)
-        self._current.write_text(vm_id)
-        try:
-            vm = SmolVM(config=config, data_dir=self._smolvm_dir, ssh_key_path=str(private))
-            vm.start(boot_timeout=self._boot_timeout_s)
-            vm.wait_for_ready(timeout=self._boot_timeout_s)
-        except SmolVMError as exc:
-            raise VMError(f"the platform VM did not boot: {exc}") from exc
-        self._vm = vm
 
     def _stop(self) -> None:
         vm, self._vm = self._vm, None
@@ -238,22 +245,36 @@ class SmolvmDriver:
         return _read_image(target)
 
     def _build_image(self, target: Path) -> None:
+        """Provision a clean image into ``target``. A build that fails keeps its disk as
+        the partial image the next attempt resumes from; the provision script skips the
+        stages that disk already finished."""
         logger.info("platform VM: building the clean image (once per provision script)")
         self.phase = "building"
         building = target.with_name(f".{target.name}.building")
         shutil.rmtree(building, ignore_errors=True)
         building.mkdir(parents=True)
+        partial = self._partial_image()
         private, _public = ensure_ssh_key(self._state / "keys")
         try:
-            vm = SmolVM(
-                backend="qemu",
-                os=_GUEST_OS,
-                qemu_machine=_MACHINE,
-                memory=max(self._memory_mb, 2048),
-                disk_size=self._disk_mb,
-                data_dir=self._smolvm_dir,
-                ssh_key_path=str(private),
-            )
+            if partial is not None:
+                logger.info("platform VM: resuming the image build from its partial disk")
+                vm = SmolVM(
+                    config=self._config(
+                        f"odysseus-build-{secrets.token_hex(4)}", partial, internet=True
+                    ),
+                    data_dir=self._smolvm_dir,
+                    ssh_key_path=str(private),
+                )
+            else:
+                vm = SmolVM(
+                    backend="qemu",
+                    os=_GUEST_OS,
+                    qemu_machine=_MACHINE,
+                    memory=max(self._memory_mb, 2048),
+                    disk_size=self._disk_mb,
+                    data_dir=self._smolvm_dir,
+                    ssh_key_path=str(private),
+                )
         except SmolVMError as exc:
             raise VMError(f"could not create the provisioning VM: {exc}") from exc
         try:
@@ -265,13 +286,14 @@ class SmolvmDriver:
             argv = ["bash", "/root/provision.sh"]
             if self._ca_bundle is not None:
                 argv.append("/root/extra-ca.crt")
-            provision(vm, argv, timeout_s=self._provision_timeout_s, on_step=self._on_step)
+            try:
+                provision(vm, argv, timeout_s=self._provision_timeout_s, on_step=self._on_step)
+            except VMError:
+                self._keep_partial(vm)
+                raise
             config = vm.info.config
             vm.stop()
-            _flatten(Path(config.rootfs_path), building / "disk.qcow2")
-            kernel = building / "vmlinux"
-            shutil.copyfile(Path(str(config.kernel_path)), kernel)
-            (building / "image.json").write_text(json.dumps({"boot_args": config.boot_args}))
+            _save_image(config, building)
         except SmolVMError as exc:
             raise VMError(f"building the platform VM image failed: {exc}") from exc
         finally:
@@ -279,6 +301,38 @@ class SmolvmDriver:
                 vm.delete()
         shutil.rmtree(target, ignore_errors=True)
         building.rename(target)
+        shutil.rmtree(self._partial_dir, ignore_errors=True)
+
+    @property
+    def _partial_dir(self) -> Path:
+        return self._state / "images" / ".partial"
+
+    def _partial_image(self) -> CleanImage | None:
+        """The disk a failed build left, if it was made by this smolvm release."""
+        try:
+            meta = json.loads((self._partial_dir / "image.json").read_text())
+        except OSError, ValueError:
+            return None
+        if meta.get("smolvm") != version("smolvm"):
+            shutil.rmtree(self._partial_dir, ignore_errors=True)
+            return None
+        return _read_image(self._partial_dir)
+
+    def _keep_partial(self, vm: SmolVM) -> None:
+        """Save a failed build's disk for the next attempt. Best-effort: without it the
+        next attempt starts from scratch."""
+        saving = self._partial_dir.with_name(".partial.saving")
+        try:
+            config = vm.info.config
+            vm.stop()
+            shutil.rmtree(saving, ignore_errors=True)
+            saving.mkdir(parents=True)
+            _save_image(config, saving)
+            shutil.rmtree(self._partial_dir, ignore_errors=True)
+            saving.rename(self._partial_dir)
+        except SmolVMError, OSError, subprocess.CalledProcessError:
+            logger.warning("platform VM: could not keep the partial image", exc_info=True)
+            shutil.rmtree(saving, ignore_errors=True)
 
 
 def provision(
@@ -292,6 +346,7 @@ def provision(
             [
                 "sh",
                 "-c",
+                f"rm -f {_PROVISION_LOG} {_PROVISION_EXIT}; "
                 f"setsid sh -c '{script} > {_PROVISION_LOG} 2>&1; "
                 f"echo $? > {_PROVISION_EXIT}' > /dev/null 2>&1 < /dev/null &",
             ]
@@ -330,6 +385,14 @@ def provision(
                 raise VMError(f"provisioning the platform VM failed: {tail.stdout.strip()}")
             return
     raise VMError("provisioning the platform VM timed out")
+
+
+def _save_image(config: VMConfig, directory: Path) -> None:
+    _flatten(Path(config.rootfs_path), directory / "disk.qcow2")
+    shutil.copyfile(Path(str(config.kernel_path)), directory / "vmlinux")
+    (directory / "image.json").write_text(
+        json.dumps({"boot_args": config.boot_args, "smolvm": version("smolvm")})
+    )
 
 
 def _read_image(directory: Path) -> CleanImage:
