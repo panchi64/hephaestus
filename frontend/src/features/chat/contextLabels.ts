@@ -26,6 +26,7 @@ const LABELS: Record<string, string> = {
   tasks: "Task list",
   date: "Today's date",
   workspace_posture: "Workspace posture",
+  agent_brief: "Agent brief",
   // The thread's second axis beside its workspace, and the pair reads as a pair only if
   // the words match: "Level" alone names a scale without saying what is on it.
   level: "Permission posture",

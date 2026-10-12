@@ -214,9 +214,7 @@ async def test_a_cancelled_command_takes_its_process_tree_with_it(tmp_path):
     started = tmp_path / "started"
     orphan = tmp_path / "orphan-ran"
     task = asyncio.create_task(
-        shell.call(
-            "run_command", command=f"( sleep 2; touch {orphan} ) & touch {started}; wait"
-        )
+        shell.call("run_command", command=f"( sleep 2; touch {orphan} ) & touch {started}; wait")
     )
     for _ in range(100):
         if started.exists():

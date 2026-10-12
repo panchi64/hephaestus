@@ -180,6 +180,10 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # not this class (`tools/plan.py`).
             "plan_enter",
             "plan_submit",
+            # Agents and skills an agent writes. A draft runs nowhere; publishing one, or
+            # rewriting a published one, is gated on the tool itself.
+            "agents_publish",
+            "agents_write",
             "skills_create",
             "skills_edit",
             "tasks_update_statuses",

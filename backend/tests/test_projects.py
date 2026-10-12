@@ -201,9 +201,7 @@ class TestWorkspaceRootsAreMemoised:
 
         store._vault.decrypt_str = explode  # type: ignore[method-assign]
         assert await store.workspace_roots("operator") == first
-        assert await store.workspace_names("operator") == {
-            pid: "acme" for pid in first
-        }
+        assert await store.workspace_names("operator") == {pid: "acme" for pid in first}
 
     async def test_a_caller_cannot_edit_the_memo_through_what_it_was_handed(self, tmp_path):
         store = await _store(tmp_path)

@@ -170,9 +170,7 @@ class TestTheZoneLookup:
         monkeypatch.setenv("TZ", ":/usr/share/zoneinfo/Europe/Madrid")
         assert local_zone_key() == "Europe/Madrid"
 
-    def test_a_posix_rule_string_answers_with_the_offset_it_puts_the_host_on(
-        self, monkeypatch
-    ):
+    def test_a_posix_rule_string_answers_with_the_offset_it_puts_the_host_on(self, monkeypatch):
         """`TZ` can hold a rule rather than a name. Handed back verbatim it is a key no
         caller can build a zone from; falling back to `/etc/localtime` would name the very
         zone this `TZ` overrides, so the offset is the only answer still on this clock."""

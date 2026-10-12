@@ -28,10 +28,10 @@ import pytest
 from agent.injected import injected_text
 from runs.events import MessageSource, now_utc
 from runs.run import QueuedMessage
+from services.agents import builtin_roster
 from services.subagents import (
     SubagentParent,
     SubagentUnavailableError,
-    builtin_roster,
 )
 from services.subagents.report import (
     DIRECTION_OPEN,
@@ -120,9 +120,7 @@ class TestDelivery:
             await _settle(app, started.run_id)
 
             with pytest.raises(SubagentUnavailableError) as refused:
-                await _launcher(app).steer(
-                    "operator", "c-parent", "parser-finder", "actually…"
-                )
+                await _launcher(app).steer("operator", "c-parent", "parser-finder", "actually…")
             # Not a failure of the caller's — it is racing something that finished. The
             # answer it wanted is already on its way, so say that rather than just "no".
             detail = str(refused.value)
@@ -141,9 +139,7 @@ class TestDelivery:
             assert "'nope'" in detail
             assert "subagents_list" in detail
 
-    async def test_one_threads_handle_does_not_address_anothers_sub_agent(
-        self, monkeypatch
-    ):
+    async def test_one_threads_handle_does_not_address_anothers_sub_agent(self, monkeypatch):
         """A handle is unique inside a thread and says nothing outside one.
 
         The lookup is scoped to the launching conversation for the same reason the listing
@@ -177,9 +173,7 @@ class TestDelivery:
                 parent=_parent_thread(),
             )
             with pytest.raises(SubagentUnavailableError):
-                await _launcher(app).steer(
-                    "someone-else", "c-parent", "parser-finder", "stop"
-                )
+                await _launcher(app).steer("someone-else", "c-parent", "parser-finder", "stop")
             await _settle(app, started.run_id)
 
     async def test_a_direction_with_nothing_in_it_is_refused(self, monkeypatch):
@@ -372,21 +366,21 @@ class TestASpecAsksRatherThanGrants:
     """
 
     def test_an_operator_who_lowered_the_ceiling_is_not_overruled(self):
-        from harness.manifests._subagents import _lower_of
+        from services.agents import lower_of as _lower_of
 
         # The researcher asks for 60; the operator said 10. They get 10, and the settings
         # page keeps telling the truth.
         assert _lower_of(60, 10) == 10
 
     def test_a_spec_may_still_raise_a_default_nobody_chose(self):
-        from harness.manifests._subagents import _lower_of
+        from services.agents import lower_of as _lower_of
 
         # No operator ceiling: the spec's number stands. That is a floor over a shipped
         # default, which is a floor rather than an override.
         assert _lower_of(60, None) == 60
 
     def test_a_spec_that_asks_for_nothing_takes_the_bound(self):
-        from harness.manifests._subagents import _lower_of
+        from services.agents import lower_of as _lower_of
 
         assert _lower_of(None, 10) == 10
         assert _lower_of(None, None) is None

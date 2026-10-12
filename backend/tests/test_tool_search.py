@@ -33,6 +33,7 @@ OWNER = "operator"
 #: costs. Pinned against the booted app below, and only ever a *subset* claim about the
 #: catalog — this file has no business asserting the whole of it.
 DORMANT = {
+    "agents": "draft a new agent",
     "browse": "drive a real browser",
     "calendar": "the operator's calendars",
     "mail": "the operator's email",
@@ -275,9 +276,7 @@ def _defs_model(defs: list[list]):
 
 async def _search_tools_def(model=None):
     defs: list[list] = []
-    await _agent(full_tool_categories(), model=model or _defs_model(defs)).run(
-        "hi", deps=_deps()
-    )
+    await _agent(full_tool_categories(), model=model or _defs_model(defs)).run("hi", deps=_deps())
     return next(d for d in defs[0] if d.name == "search_tools")
 
 

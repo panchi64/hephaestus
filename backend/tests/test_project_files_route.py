@@ -14,7 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from services.projects.listing import list_files, worktree_root
+from services.projects.listing import list_files
+from services.projects.tree import worktree_root
 from services.sandbox.base import contained_file
 
 from ._helpers import client_app
@@ -137,9 +138,7 @@ class TestContainment:
 class TestRoute:
     async def test_it_answers_camel_case_and_names_its_root(self, repo: Path):
         async with client_app() as (client, _app):
-            created = await client.post(
-                "/projects/ensure", json={"rootPath": str(repo)}
-            )
+            created = await client.post("/projects/ensure", json={"rootPath": str(repo)})
             pid = created.json()["id"]
             body = (await client.get(f"/projects/{pid}/files?query=app")).json()
         assert body["root"] == "project"
@@ -152,9 +151,7 @@ class TestRoute:
 
     async def test_listing_never_creates_a_worktree(self, repo: Path, tmp_path: Path):
         async with client_app() as (client, app):
-            created = await client.post(
-                "/projects/ensure", json={"rootPath": str(repo)}
-            )
+            created = await client.post("/projects/ensure", json={"rootPath": str(repo)})
             pid = created.json()["id"]
             await client.get(f"/projects/{pid}/files?conversation_id=c1")
             # Acquiring the project's single checkout as a side effect of typing a
@@ -236,9 +233,7 @@ class TestReadRoute:
     async def test_reading_never_creates_a_worktree(self, repo: Path):
         async with client_app() as (client, app):
             pid = await self._project(client, repo)
-            await client.get(
-                f"/projects/{pid}/file?path=README.md&conversation_id=c1"
-            )
+            await client.get(f"/projects/{pid}/file?path=README.md&conversation_id=c1")
             # Same rule the listing keeps, and for the same reason: opening a file must
             # not take the project's single checkout from whatever holds it.
             assert app.state.worktrees.holder(pid) is None
@@ -246,6 +241,4 @@ class TestReadRoute:
 
     async def test_an_unknown_project_is_a_404(self, repo: Path):
         async with client_app() as (client, _app):
-            assert (
-                await client.get("/projects/nope/file?path=README.md")
-            ).status_code == 404
+            assert (await client.get("/projects/nope/file?path=README.md")).status_code == 404

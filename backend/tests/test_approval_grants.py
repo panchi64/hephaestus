@@ -132,9 +132,7 @@ async def test_revoking_one_command_leaves_the_other_standing():
     await s.grant(OWNER, CONV, "shell_run_command", ("uv", "run", "pytest"))
     await s.grant(OWNER, CONV, "shell_run_command", ("git", "commit"))
     await s.revoke(OWNER, CONV, "shell_run_command", ("git", "commit"))
-    assert [g.command_prefix for g in await s.list(OWNER, CONV)] == [
-        ("uv", "run", "pytest")
-    ]
+    assert [g.command_prefix for g in await s.list(OWNER, CONV)] == [("uv", "run", "pytest")]
 
 
 async def test_a_command_scoped_grant_is_not_revoked_by_the_whole_tool_form():
@@ -450,9 +448,7 @@ class TestACommandScopedGrant:
             "LD_PRELOAD=/tmp/evil.so uv run pytest",
         ],
     )
-    def test_the_same_words_reaching_outside_the_worktree_are_not_the_same_act(
-        self, command
-    ):
+    def test_the_same_words_reaching_outside_the_worktree_are_not_the_same_act(self, command):
         # The redirect destination and the environment value are where the command stops
         # being one the fence can hold — and the leading words say nothing about either.
         assert self._covers(command) is False
@@ -537,8 +533,7 @@ class TestACommandScopedGrant:
         )
         both = held + _grants(("shell_run_command", ("head", "-20")))
         assert (
-            covered_by_grant("shell_run_command", {"command": "git diff | head -20"}, both)
-            is True
+            covered_by_grant("shell_run_command", {"command": "git diff | head -20"}, both) is True
         )
 
     def test_a_whole_tool_grant_still_covers_everything(self):

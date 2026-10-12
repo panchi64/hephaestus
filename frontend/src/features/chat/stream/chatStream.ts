@@ -78,6 +78,12 @@ export interface ChatStreamOptions {
    *  switching it mid-thread is a plain message rather than a separate call, and the
    *  backend persists whatever the last send named. */
   permission?: () => PermissionLevel;
+  /** The custom agent to name in this send, if the operator changed it. Asked with
+   *  whether the send creates the thread, since the default is only worth naming on
+   *  an existing one. Omitted fields leave the thread's agent as it is. */
+  agent?: (isNewThread: boolean) => string | undefined;
+  /** Fired once a send that named an agent was accepted. */
+  onAgentSent?: (name: string) => void;
   /** Fired when the **run** moved the level — `plan_enter` narrowing it, or an approved
    *  plan raising it. Necessary rather than informational: the level above is sent back
    *  on every message, so a caller that did not hear this would write the stale one over
@@ -388,6 +394,7 @@ export function createChatStream(
     setMessages(produce((m) => m.push(userMsg, assistantMsg)));
 
     let created: ChatCreatedDTO;
+    const agent = options.agent?.(wasNew);
     try {
       created = await api.post<ChatCreatedDTO>("/chat", {
         prompt: text.trim(),
@@ -406,6 +413,7 @@ export function createChatStream(
         // fact that moves, and the composer's control moves it by being read here on
         // the next send rather than by a write of its own.
         permission_level: options.permission?.(),
+        agent,
         continues_message_id: continuesMessageId,
         // Never an expansion — what a command *means* is the backend's to decide, and a
         // client that sent one would be sending a turn the operator never wrote.
@@ -441,6 +449,7 @@ export function createChatStream(
       return false;
     }
     bindConversation(created.conversation_id);
+    if (agent !== undefined) options.onAgentSent?.(agent);
     // A brand-new thread exists the moment the backend accepts the send. The list read
     // fired when `sending` flipped went out before this id did, so it cannot have
     // listed the thread; read it again now so the row (and its running echo) appears

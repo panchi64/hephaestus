@@ -4,14 +4,14 @@ The roster is the model's whole view of sub-agents: the launch tool's descriptio
 generated from it, and a name the description does not carry is one nothing will ever ask
 for. So these hold two kinds of property.
 
-**The built-ins are real.** A spec names tools in `withheld` and `required`, and those
+**The built-ins are real.** A spec names tools in `tools.deny` and `required`, and those
 names are strings against a catalog that moves. A `required` name that no longer exists
-makes the sub-agent permanently unlaunchable; a `withheld` one silently stops withholding.
+makes the sub-agent permanently unlaunchable; a `deny` one silently stops withholding.
 Neither fails anywhere else, so they are pinned here against the catalog a real run
 resolves — the same guard `tests/test_tool_sensitivity.py` keeps over its own literal.
 
 **A project's own definitions are the same record.** A file under `.claude/agents/` becomes
-a `SubagentSpec` and nothing downstream can tell it from a built-in — which is the claim
+an `AgentDefinition` and nothing downstream can tell it from a built-in — which is the claim
 that makes the feature worth having, and the one that would quietly stop being true.
 
 The last group is the one worth reading twice: a declaration is a **request**. A project
@@ -22,17 +22,20 @@ with a checkout and nobody approved it.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from core.config import Settings
-from services.subagents import BUILTIN, SubagentSpec, builtin_roster, merged_roster
-from services.subagents.definitions import (
-    AgentFileError,
-    agent_files,
-    parse_agent_file,
-    project_specs,
+from services.agents import (
+    BUILTIN,
+    AgentDefinition,
+    builtin_roster,
+    delegable,
+    merged_roster,
+    project_agents,
 )
+from services.agents.files import AgentFileError, agent_files, parse_agent_file
 from tools.catalog import tool_catalog
 
 from ._helpers import full_tool_categories
@@ -57,9 +60,9 @@ class TestTheBuiltIns:
     def test_every_tool_a_spec_names_is_a_tool_that_exists(self):
         catalog = {tool.name for tool in tool_catalog(full_tool_categories())}
         for spec in BUILTIN:
-            named = spec.withheld | spec.required
+            named = spec.tools.deny | spec.required
             # A `required` name that has been renamed makes the sub-agent permanently
-            # unlaunchable; a `withheld` one silently stops withholding. Both are strings
+            # unlaunchable; a `deny` one silently stops withholding. Both are strings
             # against a catalog that moves, and neither fails anywhere else.
             assert named <= catalog, f"{spec.name} names tools that are not in the catalog"
 
@@ -71,7 +74,7 @@ class TestTheBuiltIns:
         assert roster["reviewer"].permission_ceiling == "plan"
         # The test runner has to *run* things, so a read-only level would leave it
         # reporting on a suite it never executed — it is narrowed by tool instead.
-        assert "files_edit_file" in roster["test_runner"].withheld
+        assert "files_edit_file" in roster["test_runner"].tools.deny
 
     def test_a_test_runner_without_a_shell_refuses_rather_than_recites(self):
         # The whole point of `required`: a sub-agent missing the capability its job rests
@@ -80,10 +83,10 @@ class TestTheBuiltIns:
         assert "shell_run_command" in builtin_roster()["test_runner"].required
 
     def test_the_description_the_model_reads_names_every_one_of_them(self):
-        from services.subagents import describe_roster
+        from services.agents import describe_roster
 
         described = describe_roster(builtin_roster())
-        for spec in BUILTIN:
+        for spec in delegable(builtin_roster()).values():
             # Generated rather than written out, so a sub-agent added to the roster is one
             # the model can actually see. A name missing here may as well not exist.
             assert f"`{spec.name}`" in described
@@ -100,9 +103,7 @@ class TestTheResearcher:
         # The direct port of the deleted `_REQUIRED_WEB_TOOLS` check. A researcher with no
         # way to reach the web still answers — from the model's own memory — and reads, in
         # a report, exactly as though it had gone and looked.
-        assert builtin_roster()["researcher"].required == frozenset(
-            {"web_search", "web_fetch"}
-        )
+        assert builtin_roster()["researcher"].required == frozenset({"web_search", "web_fetch"})
 
     def test_it_reads_and_therefore_launches_without_asking(self):
         # Reading the web changes nothing, so the operator is not asked. What they rule on
@@ -128,10 +129,10 @@ class TestReadingAProjectsOwnFiles:
 
         # The claim the whole feature rests on: past the parser there is no such thing as
         # a "project sub-agent", only a spec.
-        assert isinstance(spec, SubagentSpec)
+        assert isinstance(spec, AgentDefinition)
         assert spec.name == "house-reviewer"
         assert "conventions" in spec.description
-        assert "docs/style.md" in spec.brief
+        assert "docs/style.md" in spec.instructions
 
     def test_the_filename_names_it_when_the_frontmatter_does_not(self):
         spec = parse_agent_file(
@@ -157,14 +158,14 @@ class TestReadingAProjectsOwnFiles:
         _write(tmp_path, ".claude/agents/good.md", _AGENT_FILE)
         _write(tmp_path, ".claude/agents/broken.md", "this is not an agent definition")
 
-        specs = project_specs(tmp_path)
+        specs = project_agents(tmp_path)
 
         # These are hand-written, they arrive with a checkout, and nobody editing one is
         # watching this process. One bad file must not cost the roster the others.
         assert [spec.name for spec in specs] == ["house-reviewer"]
 
     def test_a_project_with_no_agent_files_adds_nothing(self, tmp_path):
-        assert project_specs(tmp_path) == ()
+        assert project_agents(tmp_path) == ()
 
 
 class TestWhereTheFilesAre:
@@ -248,37 +249,55 @@ class TestADeclarationIsARequestNotAGrant:
 class TestReadingItOncePerRun:
     """`get_tools` runs on every model request, up to the request limit in a single turn."""
 
-    def test_a_runs_files_are_read_once_however_many_requests_it_makes(self, tmp_path):
-        from tools.project_agents import _cached
+    @staticmethod
+    def _ctx(run_id):
+        return SimpleNamespace(
+            deps=SimpleNamespace(
+                run=SimpleNamespace(id=run_id), caps=SimpleNamespace(get_optional=lambda _: None)
+            )
+        )
 
+    @staticmethod
+    def _tree(monkeypatch, root):
+        async def tree(_ctx):
+            return root
+
+        monkeypatch.setattr("tools.project_agents.project_tree", tree)
+
+    async def test_a_runs_files_are_read_once_however_many_requests_it_makes(
+        self, tmp_path, monkeypatch
+    ):
+        from tools.project_agents import run_catalog
+
+        self._tree(monkeypatch, tmp_path)
         _write(tmp_path, ".claude/agents/one.md", _AGENT_FILE)
-        first = _cached("run-1", tmp_path)
+        first = await run_catalog(self._ctx("run-1"))
         _write(tmp_path, ".claude/agents/one.md", _AGENT_FILE.replace("house-", "other-"))
 
-        # Twenty-five directory walks and twenty-five YAML parses over an unchanged
-        # checkout is waste; a description that changed mid-turn is worse, because it
-        # rewrites the prompt head under the turn and invalidates its prefix cache.
-        assert _cached("run-1", tmp_path) == first
+        # A description that changed mid-turn rewrites the prompt head under the turn and
+        # invalidates its prefix cache.
+        assert await run_catalog(self._ctx("run-1")) == first
 
-    def test_the_next_turn_reads_them_again(self, tmp_path):
-        from tools.project_agents import _cached
+    async def test_the_next_turn_reads_them_again(self, tmp_path, monkeypatch):
+        from tools.project_agents import run_catalog
 
+        self._tree(monkeypatch, tmp_path)
         _write(tmp_path, ".claude/agents/one.md", _AGENT_FILE)
-        _cached("run-1", tmp_path)
+        await run_catalog(self._ctx("run-1"))
         _write(tmp_path, ".claude/agents/one.md", _AGENT_FILE.replace("house-", "other-"))
 
-        # A later turn is exactly where a project's agent files may legitimately have
-        # changed — the agent itself may have just written one.
-        assert [spec.name for spec in _cached("run-2", tmp_path)] == ["other-reviewer"]
+        assert "other-reviewer" in await run_catalog(self._ctx("run-2"))
 
-    def test_the_memo_does_not_grow_with_every_run_the_process_serves(self, tmp_path):
-        from tools.project_agents import _MAX_ROSTERS, _cached, _rosters
+    async def test_the_memo_does_not_grow_with_every_run_the_process_serves(
+        self, tmp_path, monkeypatch
+    ):
+        from tools.project_agents import _MAX_CATALOGS, _catalogs, run_catalog
 
-        for n in range(_MAX_ROSTERS + 10):
-            _cached(f"bounded-{n}", tmp_path)
+        self._tree(monkeypatch, tmp_path)
+        for n in range(_MAX_CATALOGS + 10):
+            await run_catalog(self._ctx(f"bounded-{n}"))
 
-        # A long-lived process must not retain an entry per thread it ever served.
-        assert len(_rosters) <= _MAX_ROSTERS
+        assert len(_catalogs) <= _MAX_CATALOGS
 
 
 class TestWhatTheModelActuallySees:
@@ -289,9 +308,7 @@ class TestWhatTheModelActuallySees:
     the feature does nothing.
     """
 
-    async def test_the_launch_tool_is_described_against_the_runs_own_roster(
-        self, monkeypatch
-    ):
+    async def test_the_launch_tool_is_described_against_the_runs_own_roster(self, monkeypatch):
         mine = parse_agent_file(
             "---\nname: house-style\ndescription: Checks our house style.\n---\n\nCheck it.",
             name="house-style",

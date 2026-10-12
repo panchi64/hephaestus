@@ -64,6 +64,7 @@ def test_a_provider_is_filed_under_its_own_name_minus_the_convention():
     """One derivation for the instruction name, the gauge's block id and the injection's
     contributor — which is what stops the popover and the work log from naming the same
     block two different things."""
+
     def skill_catalog_instructions() -> str: ...
     def repo_instructions() -> str: ...
     def plan_context() -> str: ...
@@ -129,9 +130,7 @@ async def test_our_own_fixed_brief_is_not_announced():
     parts with: identical on every turn of every thread, already reported by the gauge as
     `base`, and the one injection an operator can neither act on nor switch off."""
     run = _run()
-    _announce(
-        AnnounceInjections(), run, [_part(None, "B" * 400), _part("repo", "CLAUDE.md says")]
-    )
+    _announce(AnnounceInjections(), run, [_part(None, "B" * 400), _part("repo", "CLAUDE.md says")])
     assert [i.contributor for i in _injections(run)] == ["repo"]
 
 

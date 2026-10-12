@@ -79,8 +79,9 @@ def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
     """Withheld tools are not offered to or invoked by the agent.
 
     ``disabled_tools`` is the union of everything settled for the whole turn
-    (``services/tool_policy.py``). The **level** and the **workspace kind** can both move
-    inside a turn (``tools/plan.py`` narrows and widens the level; ``projects_open_worktree``
+    (``services/tool_policy.py``), and ``tool_access`` is what the run's agent is offered at
+    all. The **level** and the **workspace kind** can both move
+    inside a turn (``tools/plan.py`` narrows and widens the level; ``project_open_worktree``
     moves the workspace), so they are read live on every request rather than folded into
     that union, where they could be added and never correctly taken back out.
     """
@@ -88,6 +89,7 @@ def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
     deps = ctx.deps
     return (
         name not in deps.disabled_tools
+        and deps.tool_access.permits(name)
         and name not in permission_disabled_tools(deps.permission)
         and name not in workspace_disabled_tools(deps.workspace_kind)
     )

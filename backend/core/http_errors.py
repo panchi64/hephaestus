@@ -46,6 +46,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from core.exceptions import (
+    AgentValidationError,
     ApprovalRequiredError,
     DegradedCapabilityError,
     InvalidInputError,
@@ -67,6 +68,7 @@ _STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (ApprovalRequiredError, 409),
     (InvalidInputError, 422),
     (SkillValidationError, 422),
+    (AgentValidationError, 422),
     (SpanEditError, 409),
     (SSRFError, 422),
     (RateLimitedError, 429),

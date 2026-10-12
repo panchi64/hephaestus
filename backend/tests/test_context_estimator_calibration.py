@@ -198,9 +198,7 @@ def test_the_dominant_part_is_never_misidentified(encoder):
     # A thread that has barely said anything, against a large tool catalog: the tools
     # are the reason this window is filling, and the readout has to say so.
     messages = [ModelRequest(parts=[UserPromptPart(content="hello")])]
-    split = compose(
-        50_000, TurnOverhead(system=len(brief), tools=len(schemas)), messages
-    )
+    split = compose(50_000, TurnOverhead(system=len(brief), tools=len(schemas)), messages)
     assert split is not None
     assert split.tools > split.messages
     assert split.tools > split.system
@@ -208,12 +206,9 @@ def test_the_dominant_part_is_never_misidentified(encoder):
     # And the reverse: a long conversation against the same catalog is a messages
     # problem, not a tools problem.
     talkative = [
-        ModelResponse(parts=[TextPart(content=_PROSE * 12)], usage=RequestUsage())
-        for _ in range(4)
+        ModelResponse(parts=[TextPart(content=_PROSE * 12)], usage=RequestUsage()) for _ in range(4)
     ]
-    split = compose(
-        50_000, TurnOverhead(system=len(brief), tools=len(schemas)), talkative
-    )
+    split = compose(50_000, TurnOverhead(system=len(brief), tools=len(schemas)), talkative)
     assert split is not None
     assert split.messages > split.tools
 

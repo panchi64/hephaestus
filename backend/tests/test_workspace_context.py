@@ -286,9 +286,7 @@ async def test_a_capped_listing_is_not_described_as_whole(tmp_path):
     model told "this is everything", not finding `report.md` among the 200 shown,
     concludes it was never written and writes it again — the redo this exists to stop."""
     caps, manager = await _caps(tmp_path)
-    _populate(
-        manager, "conv-a", {f"generated/f{i:04d}.txt": "x" for i in range(_MAX_ENTRIES + 5)}
-    )
+    _populate(manager, "conv-a", {f"generated/f{i:04d}.txt": "x" for i in range(_MAX_ENTRIES + 5)})
 
     block = await workspace_context(_request(caps))
 
@@ -338,9 +336,7 @@ async def test_the_cap_keeps_what_was_touched_most_recently(tmp_path):
     # If something has to go, the file the agent was last working in is the one it is
     # most likely to reach for next.
     caps, manager = await _caps(tmp_path)
-    root = _populate(
-        manager, "conv-a", {f"old/f{i:04d}.txt": "x" for i in range(_MAX_ENTRIES + 5)}
-    )
+    root = _populate(manager, "conv-a", {f"old/f{i:04d}.txt": "x" for i in range(_MAX_ENTRIES + 5)})
     fresh = root / "the-one-i-just-wrote.py"
     fresh.write_text("y")
     os.utime(fresh, (2_000_000_000, 2_000_000_000))

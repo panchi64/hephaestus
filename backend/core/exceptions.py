@@ -83,6 +83,10 @@ class SkillValidationError(FieldValidationError):
     the operator is told *which* part of their bundle to fix, not merely that it failed."""
 
 
+class AgentValidationError(FieldValidationError):
+    """An agent definition the operator or an agent wrote is not usable as one."""
+
+
 class CommandValidationError(FieldValidationError):
     """A workflow the operator wrote is not usable as a command — a name that could not be
     typed, a missing body, a field over its cap."""

@@ -16,6 +16,8 @@ from routes import deps
 from routes.chat.schemas import ChatCreated
 from routes.chat.turn import TurnModels, compose_turn, resolve_turn_models
 from routes.deps import OPERATOR_ID
+from services.agents import AgentDefinition, lower_of
+from services.agents.thread import ThreadAgent, resolve_thread_agent
 from services.commands import Invocation, expand
 from services.conversations import ConversationBinding
 from services.settings_store import (
@@ -28,9 +30,40 @@ from tools import InstructionProvider
 
 
 async def resolve_models(
-    request: Request, endpoint_id: str | None, model: str | None
+    request: Request,
+    endpoint_id: str | None,
+    model: str | None,
+    *,
+    agent: AgentDefinition | None = None,
 ) -> TurnModels:
+    """The turn's models: the request's own pick, else the agent's, else the ``main``
+    role."""
+    if endpoint_id is None and model is None and agent is not None:
+        endpoint_id, model = agent.endpoint_id, agent.model
     return await resolve_turn_models(deps.models(request), endpoint_id, model)
+
+
+async def thread_models(
+    request: Request, conversation_id: str, endpoint_id: str | None, model: str | None
+) -> TurnModels:
+    """The models a turn on an existing thread runs on, its agent's pick included."""
+    binding = await deps.store(request).binding(conversation_id)
+    applied = await thread_agent(request, binding, conversation_id)
+    return await resolve_models(request, endpoint_id, model, agent=applied.agent)
+
+
+async def thread_agent(
+    request: Request, binding: ConversationBinding, conversation_id: str | None
+) -> ThreadAgent:
+    """The agent this thread runs, applied to its binding."""
+    return await resolve_thread_agent(
+        deps.agents(request),
+        OPERATOR_ID,
+        binding,
+        conversation_id,
+        projects=deps.projects(request),
+        worktrees=deps.worktrees(request),
+    )
 
 
 async def _command_context(
@@ -81,6 +114,7 @@ class TurnScope:
     its request matches the one the model last served."""
 
     binding: ConversationBinding
+    agent: AgentDefinition
     disabled_tools: frozenset[str]
     capabilities: ServiceContainer
     categories: Mapping[str, Any]
@@ -95,9 +129,11 @@ async def turn_scope(request: Request, conversation_id: str, *, vision: bool) ->
     is withheld from a model that can't read one."""
     # Read once: where the run works and how far it may go must never be resolved apart.
     binding = await deps.store(request).binding(conversation_id)
+    applied = await thread_agent(request, binding, conversation_id)
     return TurnScope(
-        binding=binding,
-        disabled_tools=await deps.disabled_tools(request, vision=vision),
+        binding=applied.binding,
+        agent=applied.agent,
+        disabled_tools=await deps.disabled_tools(request, vision=vision) | applied.withheld,
         # The app's one agent-facing capability bag — assembled at startup from every
         # feature manifest's `capabilities` export, so a turn never enumerates handles.
         capabilities=deps.capabilities(request),
@@ -105,7 +141,7 @@ async def turn_scope(request: Request, conversation_id: str, *, vision: bool) ->
         # request so the turn always runs against what the app assembled.
         categories=deps.tool_categories(request),
         dormant=deps.dormant_summaries(request),
-        instruction_providers=deps.instruction_providers(request),
+        instruction_providers=(*deps.instruction_providers(request), *applied.instructions),
     )
 
 
@@ -167,8 +203,9 @@ async def submit_turn(
         # regenerate, edit — runs under the operator's ceiling without threading it
         # through three call sites. The *override*, not the effective number: a sub-agent
         # spec's floor may raise a bound nobody chose, and must not overrule one they did.
-        request_limit=await get_agent_request_limit_override(
-            deps.settings_store(request), OPERATOR_ID
+        request_limit=lower_of(
+            scope.agent.request_limit,
+            await get_agent_request_limit_override(deps.settings_store(request), OPERATOR_ID),
         ),
         # Same again for the context gauge's boundaries: resolved once here so send,
         # regenerate and edit all report severity against the operator's own pair.
@@ -180,8 +217,9 @@ async def submit_turn(
         ),
         # And the wall clock, which is normally absent — resolved here anyway so that an
         # operator who does set one gets it on every interactive turn, not just send.
-        wall_clock_timeout_s=await get_wall_clock_timeout(
-            deps.settings_store(request), OPERATOR_ID
+        wall_clock_timeout_s=lower_of(
+            scope.agent.wall_clock_timeout_s,
+            await get_wall_clock_timeout(deps.settings_store(request), OPERATOR_ID),
         ),
     )
 

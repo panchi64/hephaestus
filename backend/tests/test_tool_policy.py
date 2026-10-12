@@ -90,6 +90,8 @@ async def test_catalog_matches_the_names_the_agent_is_offered():
 # shrinks the agent's world without any other test noticing — this literal set is the
 # tripwire. A deliberate tool addition/removal updates this list in the same change.
 _PINNED_CATALOG = {
+    "agents_publish",
+    "agents_write",
     "attachments_provision",
     "browse_click",
     "browse_console_messages",
@@ -186,6 +188,7 @@ async def test_booted_app_assembles_the_same_catalog():
             "corpus_retrieve",
             "conversations_search",
             "plan_submit",
+            "agents_write",
             "shell_run_command",
             "shell_start_command",
             "subagents_launch",
@@ -308,9 +311,7 @@ async def _unconfigured(app) -> frozenset[str]:
     no calendar, no secrets vault. The availability axis withholds those categories exactly
     as the operator's own switch does, so a test about two named tools subtracts them the
     way it subtracts the vision set rather than restating fourteen names."""
-    return await unavailable_tools(
-        app.state.category_availability, app.state.capabilities, OWNER
-    )
+    return await unavailable_tools(app.state.category_availability, app.state.capabilities, OWNER)
 
 
 def _force_offline(monkeypatch, app, *names: str) -> None:

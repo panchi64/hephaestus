@@ -22,6 +22,7 @@ from core.exceptions import NotFoundError
 from core.ratelimit import RateLimiter
 from core.vault import Vault
 from runs import ConversationBusyError, RunRegistry
+from services.agents import AgentCatalog, AgentStore
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
 from services.artifacts import ArtifactStore
@@ -44,7 +45,7 @@ from services.notifications import NotificationService
 from services.offline import OfflineModeService
 from services.plan_mode import PlanMode
 from services.projects import ProjectStore, WorktreeManager, visible_project_ids
-from services.projects.listing import worktree_root
+from services.projects.tree import worktree_root
 from services.registry import ModelRegistry
 from services.reindex import EmbeddingReindexer
 from services.sandbox import SandboxSessionManager
@@ -198,6 +199,14 @@ def egress(request: Request) -> EgressPolicy:
 
 def skills(request: Request) -> SkillStore:
     return request.app.state.skills
+
+
+def agents(request: Request) -> AgentCatalog:
+    return request.app.state.agents
+
+
+def agent_store(request: Request) -> AgentStore:
+    return request.app.state.agent_store
 
 
 def commands(request: Request) -> CommandRegistry:

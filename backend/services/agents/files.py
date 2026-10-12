@@ -1,30 +1,16 @@
-"""Sub-agents a project declares for itself, in its own files.
+"""Agents a project declares for itself, in its own files.
 
-A repository that has written down how *its* reviewer should work knows something this
-installation cannot, and the convention for writing it down already exists: a markdown
-file with YAML frontmatter under ``.claude/agents/`` — the shape Claude Code reads, and
-the one the repo-inventory tool already reports to the model. So a project definition is
-not a second kind of sub-agent. It is a :class:`SubagentSpec` built from a file instead of
-from :mod:`services.subagents.roster`, and past this module nothing can tell the two apart.
+The convention is Claude Code's: a markdown file with YAML frontmatter under
+``.claude/agents/`` (or the other asset roots the repo-inventory tool reports, or flat in
+``.agents/``). A project definition is an :class:`AgentDefinition` built from a file, and
+past this module nothing can tell it from a built-in.
 
-**Where the files are found is not decided here.** The harness's own asset scan
-(``.claude``, ``.agents``, ``.codex``, ``.grok``, each with an ``agents/`` directory) is
-what the inventory tool reports, and reusing it is what keeps "where your agent files are"
-and "which agent files were loaded" from ever disagreeing. Files sitting directly in
-``.agents/`` are picked up as well, because a directory named that is an agents directory
-whatever the scan's shape suggests.
+**A bad file is skipped, never fatal.** These arrive with a checkout and nobody editing
+one is watching this process, so a file that cannot be read costs its own agent and is
+logged.
 
-**A bad file is skipped, never fatal.** These are hand-written, they arrive with a
-checkout, and nobody editing one is watching this process. A file that cannot be read
-costs its own sub-agent and nothing else — the roster is still the built-ins plus whatever
-parsed, and what went wrong is logged rather than raised into a turn the operator was in
-the middle of.
-
-**A declaration is a request, never a grant.** ``permission`` here is folded against the
-launching thread's own level at launch, so a file asking for the run of the place gets
-exactly what the operator already allowed. That is enforced in the launcher rather than
-trusted here — this module's job is to read the file honestly, including honestly
-reporting what it asks for.
+**A declaration is a request, never a grant.** What a file asks for is reported honestly
+here and folded against the launching thread's own level at launch.
 """
 
 from __future__ import annotations
@@ -38,8 +24,13 @@ from typing import Any
 from pydantic_ai_harness.repo_context import RepoContext
 
 from core.frontmatter import FrontmatterError, split_frontmatter
+from services.agents.definition import (
+    AgentDefinition,
+    ToolAccess,
+    WorkspacePolicy,
+    workspace_policy,
+)
 from services.permissions import PERMISSION_LEVELS, STRICTEST_PERMISSION
-from services.subagents.spec import SubagentSpec, WorkspacePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +74,21 @@ _READ_ONLY_FOREIGN_TOOLS = frozenset(
     }
 )
 
-_WORKSPACES: frozenset[str] = frozenset({"shared", "isolated", "own"})
+#: Every tool name in the foreign standard. A ``tools`` list made only of these is read for
+#: its reach (see :func:`_declared_ceiling`); one naming anything else is ours.
+_FOREIGN_TOOLS = _READ_ONLY_FOREIGN_TOOLS | frozenset(
+    {
+        "bash",
+        "edit",
+        "multiedit",
+        "notebookedit",
+        "task",
+        "todowrite",
+        "write",
+        "killshell",
+        "bashoutput",
+    }
+)
 
 
 class AgentNameError(ValueError):
@@ -103,19 +108,14 @@ class AgentFileError(ValueError):
     """The file is not a usable agent definition."""
 
 
-def project_specs(root: Path) -> tuple[SubagentSpec, ...]:
-    """Every sub-agent this project declares, by name, in discovery order.
-
-    Never raises. A project whose agent files are all broken has the roster it started
-    with, which is the only behaviour that makes sense for a file nobody is looking at
-    while the model is mid-turn.
-    """
-    specs: dict[str, SubagentSpec] = {}
+def project_agents(root: Path) -> tuple[AgentDefinition, ...]:
+    """Every agent this project declares, by name, in discovery order. Never raises."""
+    specs: dict[str, AgentDefinition] = {}
     for path in agent_files(root):
         try:
             spec = parse_agent_file(path.read_text(encoding="utf-8"), name=path.stem)
         except (AgentFileError, OSError, UnicodeDecodeError) as exc:
-            logger.info("subagents: skipped agent file %s (%s)", path, exc)
+            logger.info("agents: skipped agent file %s (%s)", path, exc)
             continue
         specs[spec.name] = spec
     return tuple(specs.values())
@@ -136,7 +136,7 @@ def agent_files(root: Path) -> list[Path]:
     return sorted(found)
 
 
-def parse_agent_file(text: str, *, name: str) -> SubagentSpec:
+def parse_agent_file(text: str, *, name: str) -> AgentDefinition:
     """One agent definition file as a spec.
 
     ``name`` is the filename's stem, used when the frontmatter does not name the agent
@@ -159,12 +159,14 @@ def parse_agent_file(text: str, *, name: str) -> SubagentSpec:
         # of what it is told to do, and an empty one is an agent with no instructions.
         raise AgentFileError(f"agent {spec_name!r} has no instructions below its frontmatter")
 
-    return SubagentSpec(
+    return AgentDefinition(
         name=spec_name,
         description=_clip(description, DESCRIPTION_MAX_CHARS),
-        brief=_clip(brief, BRIEF_MAX_CHARS),
+        instructions=_clip(brief, BRIEF_MAX_CHARS),
+        tools=_declared_tools(fields),
         permission_ceiling=_declared_ceiling(fields, name=spec_name),
         workspace=_declared_workspace(fields, name=spec_name),
+        source="project",
     )
 
 
@@ -235,12 +237,11 @@ def _declared_workspace(fields: dict[str, Any], *, name: str) -> WorkspacePolicy
     declared = _text(fields.get("workspace")).lower()
     if not declared:
         return "shared"
-    if declared not in _WORKSPACES:
-        logger.info(
-            "subagents: agent %r declared unknown workspace %r; using shared", name, declared
-        )
+    policy = workspace_policy(declared)
+    if policy is None:
+        logger.info("agents: agent %r declared unknown workspace %r; using shared", name, declared)
         return "shared"
-    return declared  # type: ignore[return-value]
+    return policy
 
 
 def _declared_ceiling(fields: dict[str, Any], *, name: str) -> str | None:
@@ -268,7 +269,7 @@ def _declared_ceiling(fields: dict[str, Any], *, name: str) -> str | None:
         # launching thread's own — so the failure mode of guessing is a narrower sub-agent,
         # never a wider one.
         logger.info(
-            "subagents: agent %r declared unknown permission %r; using the default level",
+            "agents: agent %r declared unknown permission %r; using the default level",
             name,
             declared,
         )
@@ -276,6 +277,21 @@ def _declared_ceiling(fields: dict[str, Any], *, name: str) -> str | None:
     if listed and listed <= _READ_ONLY_FOREIGN_TOOLS:
         return STRICTEST_PERMISSION
     return None
+
+
+def _declared_tools(fields: dict[str, Any]) -> ToolAccess:
+    """The tools this agent is offered, when the file names them in this catalog's terms.
+
+    A list made only of the foreign standard's names (``Read``, ``Bash``) cannot be
+    applied literally — it would withhold every tool here — so it is read for reach only,
+    by :func:`_declared_ceiling`. ``disallowed-tools`` is read the same way.
+    """
+    allow = _tool_names(fields.get("tools"))
+    deny = _tool_names(fields.get("disallowed-tools") or fields.get("disallowedTools"))
+    return ToolAccess(
+        allow=allow if allow and not allow <= _FOREIGN_TOOLS else None,
+        deny=deny if deny and not deny <= _FOREIGN_TOOLS else frozenset(),
+    )
 
 
 def _tool_names(raw: Any) -> frozenset[str]:

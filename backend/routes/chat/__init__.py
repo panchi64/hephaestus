@@ -18,7 +18,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from routes.chat import send, settings
-from routes.chat.submit import TurnScope, turn_scope
+from routes.chat.submit import TurnScope, thread_models, turn_scope
 from routes.chat.turn import TurnModels, compose_turn, resolve_turn_models
 from runs import ConversationBusyError
 
@@ -33,5 +33,6 @@ __all__ = [
     "compose_turn",
     "resolve_turn_models",
     "router",
+    "thread_models",
     "turn_scope",
 ]

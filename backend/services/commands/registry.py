@@ -31,9 +31,15 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from services.agents import (
+    BUILTIN,
+    AgentCatalog,
+    AgentDefinition,
+    delegable,
+    merged_roster,
+    project_agents,
+)
 from services.skills import SkillStore
-from services.subagents import BUILTIN, SubagentSpec, merged_roster
-from services.subagents.definitions import project_specs as project_agent_specs
 from services.workspace_kind import is_project_folder
 
 from .actions import BUILTIN_ACTIONS, NEEDS_CONVERSATION
@@ -70,9 +76,12 @@ class CatalogEntry:
 class CommandRegistry:
     """Assembles the catalog per request. Holds no state of its own."""
 
-    def __init__(self, skills: SkillStore, commands: CommandStore) -> None:
+    def __init__(
+        self, skills: SkillStore, commands: CommandStore, agents: AgentCatalog | None = None
+    ) -> None:
         self._skills = skills
         self._commands = commands
+        self._agents = agents
 
     async def catalog(
         self,
@@ -99,7 +108,9 @@ class CommandRegistry:
         # above skills and workflows, both tier 1, for that to remain true.
         specs: list[CommandSpec] = [
             *_actions(has_conversation=has_conversation),
-            *_agent_specs(root, workspace_kind, withheld=withheld),
+            *_agent_specs(
+                await self._roster(owner_id, root, workspace_kind), withheld=withheld
+            ),
             *await self._skill_specs(owner_id),
             *await self._commands.specs(owner_id),
             *(project_command_specs(root) if root is not None else ()),
@@ -138,6 +149,18 @@ class CommandRegistry:
                 return entry.spec
         return None
 
+    async def _roster(
+        self, owner_id: str, root: Path | None, workspace_kind: str
+    ) -> dict[str, AgentDefinition]:
+        """The agents a launch from this thread could reach — the same catalog
+        ``tools/project_agents.run_roster`` resolves, so the picker never offers a name the
+        launch would not find. A project's files count only in a project folder."""
+        project_root = root if root is not None and is_project_folder(workspace_kind) else None
+        if self._agents is None:
+            declared = project_agents(project_root) if project_root is not None else ()
+            return delegable(merged_roster(BUILTIN, declared))
+        return delegable(await self._agents.agents(owner_id, project_root=project_root))
+
     async def _skill_specs(self, owner_id: str) -> list[CommandSpec]:
         """One command per **published** skill.
 
@@ -169,63 +192,40 @@ def _actions(*, has_conversation: bool) -> list[CommandSpec]:
 
 
 def _agent_specs(
-    root: Path | None, workspace_kind: str, *, withheld: frozenset[str]
+    roster: dict[str, AgentDefinition], *, withheld: frozenset[str]
 ) -> list[CommandSpec]:
-    """One command per sub-agent on the roster — the built-ins, plus what the project says.
+    """One command per agent the thread could delegate to.
 
-    Merged through ``merged_roster``, which is the roster's own locality rule rather than a
-    second one written here: a project that declares ``reviewer`` replaces the built-in of
-    that name, because a repository that has written down how *its* reviewer works knows
-    something this installation cannot. That is also what ``tools/project_agents.run_roster``
-    does at launch, so the name the picker offers and the sub-agent that actually starts are
-    resolved the same way — which is the only reason it is safe for the command's block to
-    name a sub-agent by name and stop there.
+    Deduplicated on the *command* name: two agents whose names differ only by ``_`` versus
+    ``-`` collapse onto one typed handle, and the first (the more local) wins. Every entry
+    stays ``source="agent"``, wherever the agent was declared.
 
-    **And it is why the project layer is gated on the same check the launcher makes.**
-    ``run_roster`` reads a project's declarations only in a project folder; offering them in
-    a sandbox thread would put a row in the menu whose launch resolves to nothing, and the
-    operator would meet that as a failed tool call mid-turn rather than as an absent option.
-
-    One residual, inherent rather than fixable here: in a worktree thread before its first
-    turn, ``root`` is still the operator's own checkout, so an agent file they have not
-    committed is offered and will not be in the worktree the launcher resolves against. The
-    command carries only the *name*, which is what makes that recoverable — the same
-    uncommitted-work gap worktrees already have, rather than a new one.
-
-    Every entry stays ``source="agent"``: a project's *agent* is still an agent, and filing
-    it under "Project" would split one roster across two headings in the menu.
+    In a worktree thread before its first turn, ``root`` is still the operator's own
+    checkout, so an agent file they have not committed is offered and will not be in the
+    worktree the launcher resolves against; the command carries only the name, which keeps
+    that recoverable.
     """
     if LAUNCH_TOOL in withheld:
         return []
-    declared = (
-        project_agent_specs(root)
-        if root is not None and is_project_folder(workspace_kind)
-        else ()
-    )
-    roster = merged_roster(BUILTIN, declared)
-    # Deduplicated on the *command* name, not the roster's: two entries whose names differ
-    # only by `_` versus `-` collapse onto one typed handle, and shipping both would give
-    # the loser a `shadowed_by` pointing at its own qualified name. First wins, which within
-    # `merged_roster`'s ordering is the more local declaration.
     commands: dict[str, CommandSpec] = {}
-    for spec in roster.values():
-        command = _agent_command(spec)
+    for agent in roster.values():
+        command = _agent_command(agent)
         commands.setdefault(command.name, command)
     return list(commands.values())
 
 
-def _agent_command(spec: SubagentSpec) -> CommandSpec:
+def _agent_command(agent: AgentDefinition) -> CommandSpec:
     return CommandSpec(
-        name=spec.name.replace("_", "-"),
+        name=agent.name.replace("_", "-"),
         source="agent",
         kind="prompt",
-        title=spec.name.replace("_", " "),
+        title=agent.name.replace("_", " "),
         # Taken verbatim. A roster line is written as a fragment that follows the
         # sub-agent's name ("explorer: searches and reads the workspace…"), which is
         # exactly how the picker stacks a title over a description — so rewriting it
         # here would mean two descriptions of one sub-agent, drifting apart.
-        description=spec.description,
-        target=spec.name,
+        description=agent.description,
+        target=agent.name,
         argument_hint="the brief for this sub-agent",
         argument_required=True,
     )

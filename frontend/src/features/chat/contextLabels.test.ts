@@ -22,6 +22,7 @@ describe("a slug becomes a label without a registry to maintain", () => {
     // scale; the second one has to say what it is a level of.
     expect(segmentLabel("workspace_posture")).toBe("Workspace posture");
     expect(segmentLabel("level")).toBe("Permission posture");
+    expect(segmentLabel("agent_brief")).toBe("Agent brief");
     // The block is an index of tool groups, not a state — "Dormant" alone labels a
     // row with an adjective and leaves the operator to supply the noun.
     expect(segmentLabel("dormant")).toBe("Dormant tools");

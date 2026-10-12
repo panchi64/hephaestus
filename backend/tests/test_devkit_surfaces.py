@@ -108,17 +108,16 @@ def test_the_block_updates_when_the_instance_moves(instance, tmp_path):
     # worktrees, and a stale block would aim a session at the wrong instance.
     path = tmp_path / "CLAUDE.md"
     surfaces.write_claude_md(instance, CONFIG, path)
-    surfaces.write_claude_md(DevInstance(name="other", slot=7, root=tmp_path, password="pw"),
-                             CONFIG, path)
+    surfaces.write_claude_md(
+        DevInstance(name="other", slot=7, root=tmp_path, password="pw"), CONFIG, path
+    )
     assert path.read_text().count(surfaces._BEGIN) == 1
     assert "a-worktree" not in path.read_text()
 
 
 def test_the_operators_notes_survive_around_the_block(instance, tmp_path):
     path = tmp_path / "CLAUDE.md"
-    path.write_text(
-        f"# Before\n\n{surfaces._BEGIN}\nstale\n{surfaces._END}\n\n# After\n"
-    )
+    path.write_text(f"# Before\n\n{surfaces._BEGIN}\nstale\n{surfaces._END}\n\n# After\n")
     surfaces.write_claude_md(instance, CONFIG, path)
     text = path.read_text()
     assert text.startswith("# Before")

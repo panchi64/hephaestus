@@ -349,3 +349,48 @@ async def test_a_turn_that_fails_to_submit_leaves_the_stop_marker_alone(monkeypa
         )
         assert lost.status_code == 409
         assert (await store.messages_view(conv))[-1].blocked_reason is not None
+
+
+async def test_chat_with_an_unknown_agent_is_refused(monkeypatch):
+    patch_model_resolution(monkeypatch)
+
+    async with client_app() as (client, _app):
+        resp = await client.post("/chat", json={"prompt": "hi", "agent": "nobody"})
+        assert resp.status_code == 422
+
+
+async def test_chat_with_an_unpublished_agent_is_refused(monkeypatch):
+    patch_model_resolution(monkeypatch)
+
+    async with client_app() as (client, _app):
+        await client.post(
+            "/agents", json={"name": "wip", "description": "Not yet.", "instructions": "x"}
+        )
+        resp = await client.post("/chat", json={"prompt": "hi", "agent": "wip"})
+        assert resp.status_code == 422
+
+
+async def test_a_new_thread_stores_the_agent_it_runs(monkeypatch):
+    patch_model_resolution(monkeypatch)
+
+    async with client_app() as (client, app):
+        made = await client.post(
+            "/agents", json={"name": "scout", "description": "Looks.", "instructions": "x"}
+        )
+        await client.post(f"/agents/{made.json()['id']}/publish")
+
+        resp = await client.post("/chat", json={"prompt": "hi", "agent": "scout"})
+        assert resp.status_code == 202
+        await collect_sse_events(client, resp.json()["run_id"])
+
+        listed = (await client.get("/conversations")).json()
+        assert [c["agent_name"] for c in listed] == ["scout"]
+        conversation_id = listed[0]["id"]
+
+        again = await client.post(
+            "/chat",
+            json={"prompt": "again", "conversation_id": conversation_id, "agent": "default"},
+        )
+        assert again.status_code == 202
+        await collect_sse_events(client, again.json()["run_id"])
+        assert (await app.state.conversations.binding(conversation_id)).agent_name is None

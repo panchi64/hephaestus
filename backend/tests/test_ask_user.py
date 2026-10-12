@@ -337,9 +337,7 @@ def _install_asking_model(monkeypatch, args: dict, *, also_danger: bool = False)
         yield {0: DeltaToolCall(name=ASK, json_args=json.dumps(args))}
         if also_danger:
             yield {
-                1: DeltaToolCall(
-                    name="danger_delete_thing", json_args=json.dumps({"name": "x"})
-                )
+                1: DeltaToolCall(name="danger_delete_thing", json_args=json.dumps({"name": "x"}))
             }
 
     async def fake_resolve_detailed(self, role, **kwargs):
@@ -613,9 +611,7 @@ async def test_answering_a_run_that_is_not_parked_conflicts(monkeypatch):
     async def fake_resolve_detailed(self, role, **kwargs):
         # `call_tools=[]` or the model calls every tool it is offered — including
         # `ask_user`, which would park the very run this test needs to have finished.
-        return await stub_resolution(
-            self, TestModel(custom_output_text="done", call_tools=[])
-        )
+        return await stub_resolution(self, TestModel(custom_output_text="done", call_tools=[]))
 
     register_stub_provider(monkeypatch)
     monkeypatch.setattr(ModelRegistry, "resolve_detailed", fake_resolve_detailed)

@@ -263,8 +263,8 @@ class TestAWordThatIsAWholeCommandLine:
         "command",
         [
             "bash -c 'cat /etc/passwd > leak.txt'",
-            'python3 -c \'print(open("/etc/passwd").read())\'',
-            'python3 -c"print(open(\'/etc/passwd\').read())"',  # glued to the flag, no space
+            "python3 -c 'print(open(\"/etc/passwd\").read())'",
+            "python3 -c\"print(open('/etc/passwd').read())\"",  # glued to the flag, no space
             "awk 'BEGIN{while((getline l < \"/etc/passwd\")>0) print l}'",
             "sh -c 'cat${IFS}/etc/passwd'",
             "sh -c 'ls; cat /etc/passwd'",
@@ -399,9 +399,7 @@ class TestTheWordsACommandLeadsWith:
     def test_the_cap_counts_operands_and_stops_the_reading(self):
         # Three operands in, nothing more is read — not the flags either. That is what
         # keeps `uv run pytest` a standing yes to the *act* rather than to one invocation.
-        assert command_prefixes("uv run pytest -k thing tests/a.py") == (
-            ("uv", "run", "pytest"),
-        )
+        assert command_prefixes("uv run pytest -k thing tests/a.py") == (("uv", "run", "pytest"),)
 
     @pytest.mark.parametrize(
         ("command", "prefixes"),
@@ -837,9 +835,10 @@ class TestTheOtherKindsOfAction:
         assert capability.kind is ActionKind.OPAQUE
         assert not capability.bounded
         # ...but the bash form is a command line, and reads like one.
-        assert capability_of(
-            "code_execute", {"code": "ls -la", "language": "bash"}, root=ROOT
-        ).kind is ActionKind.SHELL
+        assert (
+            capability_of("code_execute", {"code": "ls -la", "language": "bash"}, root=ROOT).kind
+            is ActionKind.SHELL
+        )
 
     def test_widening_the_egress_allowlist_is_never_cleared_here(self):
         # `code_request_egress` carries no command and no path, so it falls through to the

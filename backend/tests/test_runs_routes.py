@@ -161,33 +161,25 @@ async def test_hold_queued_message_matrix():
         message = run.enqueue_message("still writing this")
 
         # Hold while live and pending → 200, the message stays queued and held.
-        resp = await client.post(
-            f"/runs/{run.id}/messages/{message.id}/hold", json={"held": True}
-        )
+        resp = await client.post(f"/runs/{run.id}/messages/{message.id}/hold", json={"held": True})
         assert resp.status_code == 200
         assert [(m.id, m.held) for m in run.pending_messages] == [(message.id, True)]
         assert run.drain_messages() == []
 
         # Holding again is the state it is already in — a 200, and no second frame.
         assert (
-            await client.post(
-                f"/runs/{run.id}/messages/{message.id}/hold", json={"held": True}
-            )
+            await client.post(f"/runs/{run.id}/messages/{message.id}/hold", json={"held": True})
         ).status_code == 200
 
         # Released, and the drain takes it.
         assert (
-            await client.post(
-                f"/runs/{run.id}/messages/{message.id}/hold", json={"held": False}
-            )
+            await client.post(f"/runs/{run.id}/messages/{message.id}/hold", json={"held": False})
         ).status_code == 200
         assert [m.id for m in run.drain_messages()] == [message.id]
 
         # An injected message, an unknown id, and an unknown run → 404.
         assert (
-            await client.post(
-                f"/runs/{run.id}/messages/{message.id}/hold", json={"held": True}
-            )
+            await client.post(f"/runs/{run.id}/messages/{message.id}/hold", json={"held": True})
         ).status_code == 404
         assert (
             await client.post(f"/runs/{run.id}/messages/nope/hold", json={"held": True})
@@ -202,9 +194,7 @@ async def test_hold_queued_message_matrix():
         gate.set()
         await run.wait()
         assert (
-            await client.post(
-                f"/runs/{run.id}/messages/{stranded.id}/hold", json={"held": True}
-            )
+            await client.post(f"/runs/{run.id}/messages/{stranded.id}/hold", json={"held": True})
         ).status_code == 404
 
         types = [e.body.type for e in run.stream.replay()]

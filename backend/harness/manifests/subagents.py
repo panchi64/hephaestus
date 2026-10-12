@@ -70,10 +70,9 @@ MANIFEST = FeatureManifest(
     routers=(subagents_router,),
     # Launching one composes a full interactive turn, so every feature contributing to
     # that turn's capability set must have built first — the same list the scheduler's
-    # task executor works under, and for the same reason. Research is deliberately not on
-    # it: it contributes nothing to a turn any more, having handed its launcher to this
-    # feature and kept only a one-shot migration and a scope name.
+    # task executor works under, and for the same reason.
     after=(
+        "agents",
         "calendar",
         "corpus",
         "external",

@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import asyncio
 
-from services.subagents import SubagentLauncher, builtin_roster
+from services.agents import builtin_roster
+from services.subagents import SubagentLauncher
 from tests._helpers import client_app, patch_model_resolution
 
 EXPLORER = builtin_roster()["explorer"]

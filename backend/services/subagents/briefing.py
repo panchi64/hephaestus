@@ -15,7 +15,7 @@ sub-agent is in fact editing the operator's own tree — is the exact failure th
 
 from __future__ import annotations
 
-from services.subagents.spec import WorkspacePolicy
+from services.agents.definition import WorkspacePolicy
 
 #: True of every sub-agent, whatever it is for.
 STANDING = (

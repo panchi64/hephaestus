@@ -57,6 +57,8 @@ export interface ConversationSummaryDTO {
   workspace_kind?: string | null;
   workspace?: string | null;
   project_id?: string | null;
+  /** The custom agent the thread runs as; null is the default agent. */
+  agent_name?: string | null;
 }
 
 /** One image on the wire. The REST detail and the SSE `tool.completed` event carry the

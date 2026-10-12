@@ -36,8 +36,11 @@ from core.exceptions import NotFoundError
 from harness.manifest import DormantCategory, HarnessContext
 from routes.chat import ConversationBusyError, compose_turn, resolve_turn_models
 from runs import Run, RunRegistry, RunStatus
+from services.agents import AgentCatalog, lower_of
+from services.agents.thread import resolve_thread_agent
 from services.conversations import ConversationStore
 from services.offline import OfflineModeService
+from services.projects import ProjectStore, WorktreeManager
 from services.registry import ModelRegistry
 from services.settings_store import (
     SettingsStore,
@@ -80,6 +83,7 @@ class SubagentWake:
         self._settings = ctx.services.get(SettingsStore)
         self._offline = ctx.services.get(OfflineModeService)
         self._uploads = ctx.services.get(UploadStore)
+        self._agents = ctx.services.get(AgentCatalog)
         # One lock per parent thread, bounded like every other per-conversation cache a
         # long-lived process keeps.
         self._locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
@@ -237,8 +241,17 @@ class SubagentWake:
             )
             return
         try:
-            binding = await self._conversations.binding(conversation_id)
-            models = await resolve_turn_models(self._models, None, None, owner_id=owner_id)
+            applied = await resolve_thread_agent(
+                self._agents,
+                owner_id,
+                await self._conversations.binding(conversation_id),
+                conversation_id,
+                projects=self._ctx.services.get_optional(ProjectStore),
+                worktrees=self._ctx.services.get_optional(WorktreeManager),
+            )
+            models = await resolve_turn_models(
+                self._models, applied.agent.endpoint_id, applied.agent.model, owner_id=owner_id
+            )
         except Exception:
             # The thread is gone, or nothing can run it. The sub-agent's work survives in
             # its own transcript either way; there is simply nobody to hand it to.
@@ -268,16 +281,19 @@ class SubagentWake:
                 capabilities=self._ctx.capabilities,
                 categories=self._ctx.tool_categories,
                 dormant=DormantCategory.summaries(self._ctx.dormant_categories),
-                instruction_providers=self._ctx.instruction_providers,
+                instruction_providers=(*self._ctx.instruction_providers, *applied.instructions),
                 prompt_context_providers=self._ctx.prompt_context_providers,
                 registry=self._runs,
                 store=self._conversations,
                 uploads=self._uploads,
-                disabled_tools=disabled,
-                binding=binding,
+                disabled_tools=disabled | applied.withheld,
+                binding=applied.binding,
                 owner_id=owner_id,
                 kind=WAKE_KIND,
-                request_limit=await get_agent_request_limit_override(self._settings, owner_id),
+                request_limit=lower_of(
+                    applied.agent.request_limit,
+                    await get_agent_request_limit_override(self._settings, owner_id),
+                ),
                 context_thresholds=await get_context_thresholds(self._settings, owner_id),
                 auto_compact=await resolve_auto_compact_policy(self._settings, owner_id),
             )

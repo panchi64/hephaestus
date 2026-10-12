@@ -775,6 +775,8 @@ export interface ChatSummary {
    *  the name above; two directories can share a basename and filing by name would merge
    *  them. */
   projectId?: string;
+  /** The custom agent the thread runs as. Absent for the default agent. */
+  agentName?: string;
 }
 
 /** How far the model may go in a thread — the backend's `services/permissions`

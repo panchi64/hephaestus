@@ -421,10 +421,14 @@ async def test_a_disabled_confinement_still_runs_the_command():
 async def test_the_hatch_runs_where_and_with_what_it_was_told(tmp_path):
     # `cwd` and `env` exist so the project-folder shell can share this spawn; the hatch itself
     # passes neither, and a regression that dropped them would be silent there.
-    result = await run_on_host("pwd; echo $ODYSSEUS_TEST_MARKER", cwd=tmp_path, env={
-        "PATH": os.environ["PATH"],
-        "ODYSSEUS_TEST_MARKER": "carried",
-    })
+    result = await run_on_host(
+        "pwd; echo $ODYSSEUS_TEST_MARKER",
+        cwd=tmp_path,
+        env={
+            "PATH": os.environ["PATH"],
+            "ODYSSEUS_TEST_MARKER": "carried",
+        },
+    )
     assert result.ok
     assert str(tmp_path.resolve()) in result.stdout
     assert "carried" in result.stdout

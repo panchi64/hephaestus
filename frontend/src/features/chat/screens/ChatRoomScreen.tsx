@@ -47,7 +47,10 @@ import {
 import { createConversationStatus } from "../components/ConversationStatus";
 import { ParkDock } from "../components/ParkDock";
 import { PermissionControl } from "../components/PermissionControl";
+import { AgentControl } from "../components/AgentControl";
 import { ProjectControl } from "../components/ProjectControl";
+import { useAgents } from "~/features/agents/data";
+import { threadAgentName } from "~/features/agents/model";
 import { ThreadRecap } from "../components/ThreadRecap";
 import { TranscriptView } from "../components/TranscriptView";
 import { ModelPicker } from "~/app/ModelPicker";
@@ -98,6 +101,8 @@ export function ChatRoomScreen(): JSX.Element {
     permission,
     setPermission,
     permissionPending,
+    agentChoice,
+    setAgentChoice,
   } = mainChat();
   const projects = useProjects();
 
@@ -349,6 +354,10 @@ export function ChatRoomScreen(): JSX.Element {
   // — a command is a second way to reach a control, never a second implementation of
   // one. `fork` takes the newest turn, which is what "fork from here" means when the
   // operator is typing rather than pointing at a message.
+  const agents = useAgents(() => composerProjectId() ?? undefined);
+  const agentValue = (): string =>
+    agentChoice() ?? threadAgentName(currentSummary()?.agentName);
+
   const commands = createComposerCommands(currentId, composerProjectId, {
     compact: () => void stream.compactNow(),
     fork: () => {
@@ -671,6 +680,11 @@ export function ChatRoomScreen(): JSX.Element {
                       // holds the strictest one as a placeholder; the control reports
                       // that rather than naming a level the thread may not be at.
                       pending={permissionPending()}
+                    />
+                    <AgentControl
+                      agents={settled(agents) ?? []}
+                      value={agentValue()}
+                      onChange={setAgentChoice}
                     />
                     <Show
                       when={openId() === null}

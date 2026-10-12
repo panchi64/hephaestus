@@ -130,6 +130,6 @@ def test_the_instruction_names_the_markers_the_parser_looks_for():
 
 
 def test_the_researcher_is_actually_asked_for_one():
-    from services.subagents.roster import RESEARCHER, builtin_roster
+    from services.agents.builtin import RESEARCHER, builtin_roster
 
-    assert FINDINGS_OPEN in builtin_roster()[RESEARCHER].brief
+    assert FINDINGS_OPEN in builtin_roster()[RESEARCHER].instructions

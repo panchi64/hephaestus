@@ -26,7 +26,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 
-from services.subagents.spec import SubagentSpec
+from services.agents.definition import AgentDefinition
 
 
 class SubagentUnavailableError(Exception):
@@ -129,7 +129,7 @@ class SubagentLauncher(ABC):
     async def launch(
         self,
         owner_id: str,
-        spec: SubagentSpec,
+        agent: AgentDefinition,
         task: str,
         *,
         handle: str,

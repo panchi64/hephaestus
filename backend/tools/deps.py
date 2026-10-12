@@ -24,6 +24,7 @@ from pydantic_ai import RunContext
 
 from core.container import ServiceContainer
 from runs import Run
+from services.agents.definition import UNRESTRICTED, ToolAccess
 from services.permissions import (
     DEFAULT_PERMISSION,
     PermissionLevel,
@@ -61,12 +62,16 @@ class RunDeps:
     # union of every reason a tool is withheld this run — the operator's own set,
     # offline mode's web suspension, and the rest of `services/tool_policy.py`'s union.
     disabled_tools: frozenset[str] = field(default_factory=frozenset)
+    # The tools this run's agent is offered at all (`services/agents`).
+    tool_access: ToolAccess = UNRESTRICTED
+    # The furthest this run's agent may reach. A level raised mid-turn stays under it.
+    permission_ceiling: PermissionLevel | None = None
     conversation_id: str | None = None
     # The project this run works in, or None for unfiled. Resolved from the
     # *conversation's* stored binding, never from the live request — switching the
     # active project must not change what an already-running thread is doing.
     project_id: str | None = None
-    # Where this run's file work happens. Mutable: `projects_open_worktree` moves a chat
+    # Where this run's file work happens. Mutable: `project_open_worktree` moves a chat
     # from its sandbox to a worktree mid-turn, and the enabled gate reads it live.
     workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     # How far this run may go before it has to ask: "plan", "manual", "edit", "auto" or

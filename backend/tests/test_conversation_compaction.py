@@ -1116,9 +1116,7 @@ async def test_a_manual_fold_and_an_automatic_one_are_the_same_fold(monkeypatch)
         assert isinstance(auto, CompactionOutcome)
 
         manual = next(
-            e.body
-            for e in manual_run.stream.replay(0)
-            if e.body.type == "conversation.compacted"
+            e.body for e in manual_run.stream.replay(0) if e.body.type == "conversation.compacted"
         )
         assert _fold_frames(manual_run) == _fold_frames(run)
         assert (manual.messages_compacted, manual.tokens_before, manual.tokens_after) == (

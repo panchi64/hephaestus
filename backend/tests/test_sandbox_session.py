@@ -1282,11 +1282,22 @@ async def test_reconcile_removes_stale_named_containers_and_networks(tmp_path, m
     # up a container the operator merely named after the project.
     listing = [c for c in calls if c[1] in ("ps", "network")]
     assert listing[0] == [
-        "docker", "ps", "-a", "--filter", "name=^odysseus-(sbx|pre|egress)-",
-        "--format", "{{.Names}}",
+        "docker",
+        "ps",
+        "-a",
+        "--filter",
+        "name=^odysseus-(sbx|pre|egress)-",
+        "--format",
+        "{{.Names}}",
     ]
     assert listing[1] == [
-        "docker", "network", "ls", "--filter", "name=^odysseus-net-", "--format", "{{.Name}}",
+        "docker",
+        "network",
+        "ls",
+        "--filter",
+        "name=^odysseus-net-",
+        "--format",
+        "{{.Name}}",
     ]
     assert removed == [
         "odysseus-sbx-sconv-a",
@@ -1682,17 +1693,13 @@ async def test_unlisted_host_is_denied_with_marker(tmp_path):
     try:
         session = await manager.acquire("conv-denied")
         result = await session.run(
-            SandboxSpec(
-                command=["python", "-c", _FETCH, "http://example.com/"], timeout_s=60
-            )
+            SandboxSpec(command=["python", "-c", _FETCH, "http://example.com/"], timeout_s=60)
         )
         assert "403" in result.stdout
         assert "odysseus-egress: denied example.com" in result.stdout
         # And the tunnelled form is refused too — CONNECT is checked before it is opened.
         tunnelled = await session.run(
-            SandboxSpec(
-                command=["python", "-c", _FETCH, "https://example.com/"], timeout_s=60
-            )
+            SandboxSpec(command=["python", "-c", _FETCH, "https://example.com/"], timeout_s=60)
         )
         assert "200" not in tunnelled.stdout
     finally:
@@ -1705,9 +1712,7 @@ async def test_a_preview_is_published_by_the_sidecar_and_answers(tmp_path):
     # The preview container publishes nothing (it cannot, on an internal network): the
     # sidecar owns the loopback port and relays inward.
     vault = await _vault(tmp_path)
-    manager = _manager(
-        tmp_path, vault, backend=ContainerSandbox(), preview_startup_timeout_s=60.0
-    )
+    manager = _manager(tmp_path, vault, backend=ContainerSandbox(), preview_startup_timeout_s=60.0)
     try:
         handle = await manager.start_preview(
             "conv-preview", ["python", "-m", "http.server", "8000"], 8000

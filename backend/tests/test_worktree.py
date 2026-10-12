@@ -325,9 +325,7 @@ class TestFork:
         kept, _, _ = await run_git(root, "rev-parse", "--verify", child.branch)
         assert kept == 0
 
-    async def test_a_deletion_comes_back_named_rather_than_folded_into_the_changes(
-        self, tmp_path
-    ):
+    async def test_a_deletion_comes_back_named_rather_than_folded_into_the_changes(self, tmp_path):
         # "Your file changed" and "your file is gone" are not the same sentence, and the
         # caller must never have to infer the second one.
         root, manager, _parent, child = await self._forked(tmp_path)
@@ -375,16 +373,12 @@ class TestFork:
         await manager.merge(root, base_ref="main", conversation_id="c1", project_id="p")
 
         with pytest.raises(WorktreeError):
-            await manager.fork(
-                project_id="p", root=root, conversation_id="c1", delegation_id="d2"
-            )
+            await manager.fork(project_id="p", root=root, conversation_id="c1", delegation_id="d2")
 
     async def test_another_conversations_project_is_still_refused(self, tmp_path):
         root, manager, _parent, _child = await self._forked(tmp_path)
         with pytest.raises(WorktreeBusyError):
-            await manager.fork(
-                project_id="p", root=root, conversation_id="c2", delegation_id="d1"
-            )
+            await manager.fork(project_id="p", root=root, conversation_id="c2", delegation_id="d1")
 
     async def test_discarding_the_conversation_takes_its_delegated_checkouts_with_it(
         self, tmp_path

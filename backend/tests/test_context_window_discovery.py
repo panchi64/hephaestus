@@ -284,9 +284,7 @@ async def test_anthropic_unreachable_is_not_an_error():
 # ── Resolution: precedence, caching, and the gate ────────────────────────────────
 
 
-async def _registry(
-    tmp_path, monkeypatch, *, window: int | None, max_output: int | None = None
-):
+async def _registry(tmp_path, monkeypatch, *, window: int | None, max_output: int | None = None):
     """A registry whose stub provider reports ``window`` and ``max_output``."""
     from pydantic_ai.models.test import TestModel
 

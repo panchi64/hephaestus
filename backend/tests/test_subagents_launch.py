@@ -28,14 +28,13 @@ from uuid import uuid4
 
 import pytest
 
+from services.agents import AgentDefinition, builtin_roster
 from services.settings_store import set_subagent_limit
 from services.subagent_store import SubagentStore
 from services.subagents import (
     SubagentLauncher,
     SubagentParent,
-    SubagentSpec,
     SubagentUnavailableError,
-    builtin_roster,
 )
 from tests._helpers import client_app, patch_model_resolution
 
@@ -51,9 +50,7 @@ def _launcher(app) -> SubagentLauncher:
 
 def _records(app) -> SubagentStore:
     records = getattr(app.state, "subagent_records", None)
-    assert isinstance(records, SubagentStore), (
-        "the subagents manifest did not export its register"
-    )
+    assert isinstance(records, SubagentStore), "the subagents manifest did not export its register"
     return records
 
 
@@ -103,9 +100,7 @@ class TestLaunching:
             )
             await _settle(app, started.run_id)
 
-            summary = await app.state.conversations.get_summary(
-                started.conversation_id, "operator"
-            )
+            summary = await app.state.conversations.get_summary(started.conversation_id, "operator")
             # Nobody wrote this thread's opening message, so without the task in its name
             # a card reads "Untitled" and the operator cannot tell it from its neighbours.
             assert summary is not None
@@ -165,9 +160,7 @@ class TestWhatItMayDo:
             # unbounded blast radius, and nothing about the work needs one.
             assert "subagents_launch" in composed["disabled_tools"]
 
-    async def test_it_runs_in_the_lane_for_work_the_agent_opened_for_itself(
-        self, monkeypatch
-    ):
+    async def test_it_runs_in_the_lane_for_work_the_agent_opened_for_itself(self, monkeypatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             composed = _capture_composition(monkeypatch)
@@ -184,15 +177,13 @@ class TestWhatItMayDo:
             # cannot end a run that keeps streaming tokens.
             assert composed["wall_clock_timeout_s"]
 
-    async def test_a_spec_needing_a_withheld_tool_refuses_rather_than_pretends(
-        self, monkeypatch
-    ):
+    async def test_a_spec_needing_a_withheld_tool_refuses_rather_than_pretends(self, monkeypatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch)
-            impossible = SubagentSpec(
+            impossible = AgentDefinition(
                 name="impossible",
                 description="needs something that is not there",
-                brief="do the thing",
+                instructions="do the thing",
                 required=frozenset({"subagents_launch"}),
             )
             # `subagents_launch` is withheld from every sub-agent, so this can never be
@@ -212,9 +203,7 @@ class TestItsHandle:
     all be named by without any of them disagreeing.
     """
 
-    async def test_it_is_normalised_by_the_rule_agent_files_are_read_under(
-        self, monkeypatch
-    ):
+    async def test_it_is_normalised_by_the_rule_agent_files_are_read_under(self, monkeypatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = await _launcher(app).launch(
@@ -231,25 +220,19 @@ class TestItsHandle:
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch)
             with pytest.raises(SubagentUnavailableError, match="not a usable agent name"):
-                await _launcher(app).launch(
-                    "operator", EXPLORER, "find it", handle="find it!!"
-                )
+                await _launcher(app).launch("operator", EXPLORER, "find it", handle="find it!!")
 
     async def test_a_launch_naming_nothing_takes_its_specs_name(self, monkeypatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            started = await _launcher(app).launch(
-                "operator", EXPLORER, "find it", handle=""
-            )
+            started = await _launcher(app).launch("operator", EXPLORER, "find it", handle="")
             await _settle(app, started.run_id)
 
             # The same fallback the migration backfilled every pre-handle row to, so there
             # is one answer to "what is this sub-agent called" rather than two.
             assert started.handle == "explorer"
 
-    async def test_a_clash_inside_a_thread_is_suffixed_rather_than_refused(
-        self, monkeypatch
-    ):
+    async def test_a_clash_inside_a_thread_is_suffixed_rather_than_refused(self, monkeypatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             parent = SubagentParent(conversation_id="parent-handles")
@@ -293,9 +276,7 @@ class TestItsHandle:
             # handle would silently redirect that read to different work.
             assert second.handle == "looker-2"
 
-    async def test_launches_in_the_same_step_do_not_take_the_same_handle(
-        self, monkeypatch
-    ):
+    async def test_launches_in_the_same_step_do_not_take_the_same_handle(self, monkeypatch):
         """The case the suffix exists for, launched the way it actually happens.
 
         A fan-out is parallel tool calls, and a launch does not write its row until a whole
@@ -360,9 +341,7 @@ class TestItsHandle:
             )
             await _settle(app, started.run_id)
 
-            summary = await app.state.conversations.get_summary(
-                started.conversation_id, "operator"
-            )
+            summary = await app.state.conversations.get_summary(started.conversation_id, "operator")
             assert summary is not None
             # Three `explorer`s produce three titles that differ only in whatever survives
             # the width; three handles differ in the first word.
@@ -441,9 +420,7 @@ class TestTheCap:
             for one in started:
                 await _settle(app, one.run_id)
 
-    async def test_a_launch_over_the_cap_is_refused_with_something_to_do_instead(
-        self, monkeypatch
-    ):
+    async def test_a_launch_over_the_cap_is_refused_with_something_to_do_instead(self, monkeypatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             await set_subagent_limit(app.state.settings_store, "operator", 1)
@@ -547,10 +524,10 @@ class TestIsolation:
     async def test_isolation_only_ever_increases(self, monkeypatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            apart = SubagentSpec(
+            apart = AgentDefinition(
                 name="apart",
                 description="works apart",
-                brief="do it elsewhere",
+                instructions="do it elsewhere",
                 workspace="isolated",
             )
             started = await _launcher(app).launch(

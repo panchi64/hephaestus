@@ -146,6 +146,7 @@ class _NavigationMixin(_StoreCore):
             # The level rides along with the rest of the binding: a fork of a thread the
             # operator had dropped to Manual must not come back at the default.
             permission=binding.permission,
+            agent_name=binding.agent_name,
         )
 
         forked = self._cache_get(new_id_) or self._cache_put(new_id_, _Tree())

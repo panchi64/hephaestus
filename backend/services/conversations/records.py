@@ -9,6 +9,7 @@ from datetime import datetime
 
 from pydantic_ai import ModelMessage
 
+from services.agents.definition import UNRESTRICTED, ToolAccess
 from services.commands.spec import Invocation
 from services.permissions import DEFAULT_PERMISSION, PermissionLevel
 from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
@@ -27,6 +28,13 @@ class ConversationBinding:
     workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     project_id: str | None = None
     permission: PermissionLevel = DEFAULT_PERMISSION
+    #: The agent the thread runs, by name. None is the default agent.
+    agent_name: str | None = None
+    #: The tools that agent is offered. Not stored: applied from the agent's definition
+    #: by whoever resolves it for a turn.
+    tools: ToolAccess = UNRESTRICTED
+    #: The furthest that agent may reach, which a level raised mid-turn stays under.
+    permission_ceiling: PermissionLevel | None = None
 
 
 @dataclass(frozen=True)
@@ -95,3 +103,4 @@ class ConversationSummaryView:
     # path — the route resolves it to a directory basename, which is the only part of a
     # host path a listing should ever carry.
     project_id: str | None = None
+    agent_name: str | None = None

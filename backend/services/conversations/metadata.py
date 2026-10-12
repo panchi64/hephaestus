@@ -116,6 +116,7 @@ class _MetadataMixin(_StoreCore):
                 workspace_kind=workspace_kind(conversation.workspace_kind),
                 project_id=conversation.project_id,
                 permission=permission_level(conversation.permission_level),
+                agent_name=conversation.agent_name,
             )
 
         return await in_session(self._engine, work)
@@ -137,7 +138,7 @@ class _MetadataMixin(_StoreCore):
         return await in_session(self._engine, work)
 
     async def open_worktree(self, conversation_id: str) -> bool:
-        """Move this thread from its sandbox to its project's worktree. One-way.
+        """Move this thread from its project's folder to its own worktree. One-way.
 
         False when the thread does not exist or has no project to check out.
         """
@@ -173,6 +174,17 @@ class _MetadataMixin(_StoreCore):
 
         await in_session(self._engine, work)
         return resolved
+
+    async def set_agent_name(self, conversation_id: str, agent_name: str | None) -> None:
+        """Run ``agent_name`` on this thread from its next turn. None is the default agent.
+        Like the level, a choice about what runs next rather than activity in the thread."""
+
+        def work(session: Session) -> None:
+            conversation = session.get(Conversation, conversation_id)
+            if conversation is not None:
+                conversation.agent_name = agent_name
+
+        await in_session(self._engine, work)
 
     async def get_compaction_override(self, conversation_id: str) -> bool | None:
         """This conversation's auto-compaction override — ``None`` inherits the operator

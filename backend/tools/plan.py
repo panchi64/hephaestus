@@ -39,6 +39,7 @@ from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 
 from runs.lanes import lane_for
+from services.permissions import stricter_permission
 from services.plan_mode import ACTING_LEVEL, PLAN_SUBMIT_TOOL, PLANNING_LEVEL, PlanMode
 
 from .deps import RunDeps
@@ -94,8 +95,11 @@ def _retarget(ctx: RunContext[RunDeps], level: str) -> None:
     same names. Approving a plan handed back tools the operator had switched off by hand
     and shell tools to a thread whose mode must never reach the host. The level is read
     live at the gate instead (``services/tool_policy.py``), which leaves nothing to undo.
+
+    Never past the thread's agent's ceiling: approving a plan widens the level, not the
+    agent.
     """
-    ctx.deps.permission = level  # type: ignore[assignment]
+    ctx.deps.permission = stricter_permission(level, ctx.deps.permission_ceiling or level)
 
 
 def plan_toolset() -> FunctionToolset[RunDeps]:

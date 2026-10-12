@@ -591,9 +591,7 @@ async def test_the_hatch_is_fenced_with_the_installations_allowlist_not_the_thre
     monkeypatch.setattr("tools.code.resolve_confinement", active)
 
     run = Run(id="run-1", kind="chat", owner_id="operator", stream=RunStream())
-    ctx = RunContext(
-        deps=_one_tool_deps(run, None, egress), model=TestModel(), usage=RunUsage()
-    )
+    ctx = RunContext(deps=_one_tool_deps(run, None, egress), model=TestModel(), usage=RunUsage())
     toolset = code_toolset()
     tools = await toolset.get_tools(ctx)
     await toolset.call_tool(
@@ -608,9 +606,7 @@ async def test_the_hatch_is_fenced_with_the_installations_allowlist_not_the_thre
     assert confinement.allow_write == ("/tmp",)  # nothing else was disturbed
 
 
-async def test_an_approved_host_command_runs_in_its_own_scratch_directory(
-    monkeypatch, tmp_path
-):
+async def test_an_approved_host_command_runs_in_its_own_scratch_directory(monkeypatch, tmp_path):
     """Not the server process's working directory, which is this backend's source tree.
 
     That is where a host command used to start, so every relative path the model wrote

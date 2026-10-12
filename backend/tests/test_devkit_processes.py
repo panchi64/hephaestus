@@ -102,9 +102,12 @@ def test_stop_recorded_kills_the_whole_group_and_clears_the_file(tmp_path):
     # instance that is already healthy.
     supervisor.start(
         "backend",
-        [sys.executable, "-c",
-         "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c',"
-         "'import time; time.sleep(60)']); time.sleep(60)"],
+        [
+            sys.executable,
+            "-c",
+            "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c',"
+            "'import time; time.sleep(60)']); time.sleep(60)",
+        ],
         cwd=tmp_path,
         env={"PATH": "/usr/bin:/bin"},
         log_dir=tmp_path / "logs",
@@ -126,9 +129,7 @@ def test_the_log_handle_is_not_left_open_in_this_process(sleeper, tmp_path):
     # caller that started services in a loop would run out of descriptors.
     log = tmp_path / "logs" / "stub.log"
     assert log.is_file()
-    open_here = subprocess.run(
-        ["lsof", "-p", str(os.getpid())], capture_output=True, text=True
-    )
+    open_here = subprocess.run(["lsof", "-p", str(os.getpid())], capture_output=True, text=True)
     if open_here.returncode != 0:  # lsof is not everywhere; the assertion below is
         pytest.skip("lsof unavailable")
     assert str(log) not in open_here.stdout

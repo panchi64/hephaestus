@@ -88,8 +88,8 @@ CATALOG_CEILING_CHARS = 48_000
 #: cost from every turn to the turns that want it; it does not make the group free, and a
 #: ceiling that only watched the fresh request would let the dormant half grow unwatched.
 #: Raised from 50k, then from 60k, then from 72k, alongside the ceiling above and for the
-#: same reasons.
-CORPUS_CEILING_CHARS = 82_000
+#: same reasons; then from 82k for the dormant `agents` group (agents writing agents).
+CORPUS_CEILING_CHARS = 84_000
 
 
 class _AllOnline:
@@ -140,9 +140,7 @@ async def _catalog(
     # is the fresh request's: a dormant group joins it only once revealed, so the corpus
     # figure below counts a revealed group's signatures once, as schemas, not twice.
     tools = await code_mode_capability().get_wrapper_toolset(stack).get_tools(ctx)
-    corpus = [
-        tool.tool_def for name, tool in tools.items() if scripts or name != "run_code"
-    ]
+    corpus = [tool.tool_def for name, tool in tools.items() if scripts or name != "run_code"]
     fresh = [tool_def for tool_def in corpus if not tool_def.defer_loading]
     return (
         (len(fresh), measure_overhead(None, [], fresh).tools),

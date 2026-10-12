@@ -82,9 +82,7 @@ async def test_an_ordinary_diff_still_works_under_the_pins(tmp_path: Path):
     )
     (repo / "a.txt").write_text("one\ntwo\n")
 
-    result = await run_on_host(
-        "git diff", cwd=repo, env=git_config_pins(os.environ), timeout_s=30
-    )
+    result = await run_on_host("git diff", cwd=repo, env=git_config_pins(os.environ), timeout_s=30)
     assert result.exit_code == 0, result.stderr
     assert "+two" in result.stdout
 

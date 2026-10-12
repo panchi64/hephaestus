@@ -478,9 +478,7 @@ class TestTheLiveControl:
             detail = await client.get(f"/conversations/{conversation_id}")
             assert detail.json()["permission_level"] == "manual"
 
-    async def test_a_send_that_is_steered_into_a_live_run_leaves_the_level_alone(
-        self, monkeypatch
-    ):
+    async def test_a_send_that_is_steered_into_a_live_run_leaves_the_level_alone(self, monkeypatch):
         """The stored level is what the *next* turn runs at, and it is what the composer
         shows. A plain-text send onto a busy thread is queued into the run already going,
         which keeps running at the level it started at — so moving the stored one would
@@ -488,9 +486,7 @@ class TestTheLiveControl:
         hang, started = asyncio.Event(), asyncio.Event()
         _patch_hanging_model(monkeypatch, hang, started)
         async with client_app() as (client, app):
-            first = await client.post(
-                "/chat", json={"prompt": "hi", "permission_level": "manual"}
-            )
+            first = await client.post("/chat", json={"prompt": "hi", "permission_level": "manual"})
             conversation_id = first.json()["conversation_id"]
             await started.wait()
 
@@ -518,9 +514,7 @@ class TestTheLiveControl:
             upload = await client.post(
                 "/uploads", files={"file": ("note.txt", b"look at this", "text/plain")}
             )
-            first = await client.post(
-                "/chat", json={"prompt": "hi", "permission_level": "manual"}
-            )
+            first = await client.post("/chat", json={"prompt": "hi", "permission_level": "manual"})
             conversation_id = first.json()["conversation_id"]
             await started.wait()
 
@@ -547,7 +541,7 @@ class TestTheLiveControl:
             assert resp.status_code == 422
 
     async def test_a_thread_with_no_plan_reports_none_rather_than_missing(self, monkeypatch):
-        """"This thread has no plan" is the ordinary state of nearly every thread, not a
+        """ "This thread has no plan" is the ordinary state of nearly every thread, not a
         miss — so the backfill the panel reads answers `null` rather than 404, and the
         level stays exactly where the operator put it."""
         patch_model_resolution(monkeypatch, output_text="no plan here")

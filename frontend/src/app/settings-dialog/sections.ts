@@ -118,6 +118,13 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         keywords: ["prompt", "instructions", "playbook"],
       },
       {
+        id: "agents",
+        label: "Agents",
+        icon: "cpu",
+        description: "Named agents a thread can run as, with their own limits",
+        keywords: ["custom", "persona", "subagent", "delegate", "instructions"],
+      },
+      {
         id: "workflows",
         label: "Workflows",
         icon: "terminal",

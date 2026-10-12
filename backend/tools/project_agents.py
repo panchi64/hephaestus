@@ -1,22 +1,11 @@
-"""The sub-agent roster this run may launch from — built-ins plus the project's own.
+"""The agents this run can see — built-ins, the project's own files, and stored agents.
 
-A project declares sub-agents in files (``services/subagents/definitions.py``); which
-project that is depends on the run, so the roster cannot be assembled once at startup
-alongside the toolset. This is the same seam ``tools/repo.py`` uses for a project's
-instruction files, for the same reasons and with the same memoisation:
+Read where the model is deciding: inside ``get_tools``, on every model request of the turn.
+So it is cached per run, which also keeps an agent file edited mid-turn from rewriting the
+launch tool's description under the turn's own prefix cache; the next turn re-reads.
 
-**Resolved per run, cached per run.** The roster is read where the model is deciding —
-inside ``get_tools``, which is called on *every* model request, up to the request limit for
-a single turn. Re-walking ``.claude/agents`` and re-parsing every file twenty-five times
-over an unchanged checkout would be pure waste; worse, an agent that edited one of those
-files mid-turn would rewrite the launch tool's description under itself and invalidate the
-whole turn's prefix cache. Keyed by the run rather than by the directory so the next turn
-still re-reads — a later turn is exactly where a project's agent files may legitimately
-have changed since.
-
-**Project folders only.** A sandbox workspace is scratch space with no repository in it to
-declare anything, so outside a worktree this is the built-ins and nothing else — and, more
-to the point, no filesystem walk at all.
+A project's files are read from the thread's tree without resolving its workspace, so
+describing a tool never takes the project's checkout or creates a worktree.
 """
 
 from __future__ import annotations
@@ -26,53 +15,70 @@ from pathlib import Path
 
 from pydantic_ai import RunContext
 
-from services.projects.worktree import WorktreeBusyError
-from services.subagents import BUILTIN, SubagentSpec, merged_roster
-from services.subagents.definitions import project_specs
+from core.exceptions import NotFoundError
+from services.agents import (
+    BUILTIN,
+    AgentCatalog,
+    AgentDefinition,
+    delegable,
+    merged_roster,
+    project_agents,
+)
+from services.projects import ProjectStore, WorktreeManager
+from services.projects.tree import thread_tree
 from services.workspace_kind import is_project_folder
 
 from .deps import RunDeps
-from .workspace import run_workspace
 
-#: How many runs' rosters are held at once, most-recently-used last. Sized for the runs
-#: executing concurrently rather than for history, the same as the instruction briefs
-#: beside it: an entry is a handful of small records, and it is evicted long before a
-#: long-lived process has accumulated one per thread ever opened.
-_MAX_ROSTERS = 32
+#: How many runs' catalogs are held at once, sized for the runs executing concurrently.
+_MAX_CATALOGS = 32
 
-_rosters: OrderedDict[tuple[str, str], tuple[SubagentSpec, ...]] = OrderedDict()
+_catalogs: OrderedDict[str, dict[str, AgentDefinition]] = OrderedDict()
 
 
-async def run_roster(ctx: RunContext[RunDeps]) -> dict[str, SubagentSpec]:
-    """Every sub-agent this run may launch, by name.
-
-    Built-ins first so a project shadows one by declaring its own of the same name — a
-    repository that has written down how *its* reviewer works knows something this
-    installation does not.
-    """
-    return merged_roster(BUILTIN, await _project_specs(ctx))
+async def run_roster(ctx: RunContext[RunDeps]) -> dict[str, AgentDefinition]:
+    """Every agent this run may delegate to, by name."""
+    return delegable(await run_catalog(ctx))
 
 
-async def _project_specs(ctx: RunContext[RunDeps]) -> tuple[SubagentSpec, ...]:
-    if not is_project_folder(ctx.deps.workspace_kind):
-        return ()
+async def run_catalog(ctx: RunContext[RunDeps]) -> dict[str, AgentDefinition]:
+    """Every published agent this run can see, by name."""
+    run_id = ctx.deps.run.id
+    cached = _catalogs.pop(run_id, None)
+    if cached is None:
+        cached = await _resolve(ctx)
+        if len(_catalogs) >= _MAX_CATALOGS:
+            _catalogs.popitem(last=False)
+    _catalogs[run_id] = cached
+    return cached
+
+
+async def _resolve(ctx: RunContext[RunDeps]) -> dict[str, AgentDefinition]:
+    root = await project_tree(ctx)
+    catalog = ctx.deps.caps.get_optional(AgentCatalog)
+    if catalog is None:
+        return merged_roster(BUILTIN, project_agents(root) if root is not None else ())
+    return await catalog.agents(ctx.deps.owner_id, project_root=root)
+
+
+async def project_tree(ctx: RunContext[RunDeps]) -> Path | None:
+    """The project tree this run works in, without resolving (and so holding) it."""
+    deps = ctx.deps
+    if not is_project_folder(deps.workspace_kind) or deps.project_id is None:
+        return None
+    if deps.workspace is not None:
+        return deps.workspace.root
+    projects = deps.caps.get_optional(ProjectStore)
+    if projects is None:
+        return None
     try:
-        workspace = await run_workspace(ctx)
-    except WorktreeBusyError:
-        # Held by a sibling run. The built-ins are still launchable, and refusing the
-        # whole roster over a lock would be a worse answer than a slightly smaller one.
-        return ()
-    if workspace is None or workspace.kind != "worktree":
-        return ()
-    return _cached(ctx.deps.run.id, workspace.root)
-
-
-def _cached(run_id: str, root: Path) -> tuple[SubagentSpec, ...]:
-    key = (run_id, str(root))
-    specs = _rosters.pop(key, None)
-    if specs is None:
-        specs = project_specs(root)
-        if len(_rosters) >= _MAX_ROSTERS:
-            _rosters.popitem(last=False)
-    _rosters[key] = specs
-    return specs
+        project = await projects.get(deps.owner_id, deps.project_id)
+    except NotFoundError:
+        return None
+    root = Path(project.root_path)
+    worktrees = deps.caps.get_optional(WorktreeManager)
+    if worktrees is None:
+        return root
+    return await thread_tree(
+        root, worktrees.path_for(deps.project_id), deps.workspace_kind, deps.conversation_id
+    )

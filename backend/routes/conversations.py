@@ -26,7 +26,7 @@ from core.compaction_sections import SummarySection
 from core.config import get_settings
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from routes import deps
-from routes.chat import resolve_turn_models, turn_scope
+from routes.chat import thread_models, turn_scope
 from routes.deps import OPERATOR_ID
 from runs import ContextWindow, ConversationBusyError, Run, RunMetrics
 from services.approval_grants import COMMAND_SCOPED_TOOLS
@@ -97,6 +97,8 @@ class ConversationSummary(BaseModel):
     # Where its file work happens: "sandbox", "checkout" or "worktree". On the listing so
     # the rail can mark worktree threads without opening each one.
     workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
+    # The agent the thread runs, by name. Null is the default agent.
+    agent_name: str | None = None
     # The **basename** of the project directory a thread is filed under, and nothing else
     # about it. Null for an unfiled thread, and for one whose project has since been
     # deleted. Deliberately not the path: the rail groups project threads under this, it is
@@ -365,6 +367,7 @@ def _summary(
         activity=activity,
         last_outcome=last_outcome,
         workspace_kind=view.workspace_kind,
+        agent_name=view.agent_name,
         workspace=(workspaces or {}).get(view.project_id or ""),
         project_id=view.project_id,
     )
@@ -1185,8 +1188,8 @@ async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> 
     conversation_id = run.conversation_id
     assert conversation_id is not None  # noqa: S101 — set by the submit below
     try:
-        model, _, _, context_window, vision = await resolve_turn_models(
-            deps.models(request), pick.endpoint_id, pick.model
+        model, _, _, context_window, vision = await thread_models(
+            request, conversation_id, pick.endpoint_id, pick.model
         )
     except HTTPException as exc:
         # The resolve answers in HTTP because its other callers are routes; here the

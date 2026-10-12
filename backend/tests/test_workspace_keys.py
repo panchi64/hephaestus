@@ -37,9 +37,7 @@ async def _repo(tmp_path):
     (root / "hello.txt").write_text("original\n")
     await _run(root, "git", "init", "-b", "main")
     await _run(root, "git", "add", "-A")
-    await _run(
-        root, "git", "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-m", "first"
-    )
+    await _run(root, "git", "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-m", "first")
     return root
 
 
@@ -70,9 +68,7 @@ class TestOpeningAChildCheckout:
         )
         return root, manager, parent
 
-    async def test_a_child_opens_beside_its_parent_without_taking_the_project(
-        self, tmp_path
-    ):
+    async def test_a_child_opens_beside_its_parent_without_taking_the_project(self, tmp_path):
         root, manager, parent = await self._held(tmp_path)
         (parent.path / "hello.txt").write_text("mid-edit\n")
 
@@ -185,9 +181,7 @@ class _FakeSessions:
         if child_key in self.sessions:
             raise AssertionError(f"already forked {child_key!r}")
         self.forked.append((parent_key, child_key))
-        session = _FakeSession(
-            child_key, self._root / child_key.replace("/", "_"), ephemeral=True
-        )
+        session = _FakeSession(child_key, self._root / child_key.replace("/", "_"), ephemeral=True)
         session.hold(holder)
         self.sessions[child_key] = session
         return session
@@ -210,9 +204,7 @@ class TestOpeningADelegatedSandbox:
         assert sessions.acquired == ["c1"]
         assert sessions.forked == []
 
-    async def test_a_delegated_key_is_a_fork_of_the_workspace_it_delegates_from(
-        self, tmp_path
-    ):
+    async def test_a_delegated_key_is_a_fork_of_the_workspace_it_delegates_from(self, tmp_path):
         sessions = _FakeSessions(tmp_path)
 
         workspace = await sandbox_workspace(sessions, "c1/s-ab12")
@@ -249,9 +241,7 @@ class TestOpeningADelegatedSandbox:
         sessions = _FakeSessions(tmp_path)
         # Something non-ephemeral squatting the child key — adopting it would mean
         # merging a whole conversation's workspace into another's when this ends.
-        sessions.sessions["c1/s-ab12"] = _FakeSession(
-            "c1/s-ab12", tmp_path / "squatter"
-        )
+        sessions.sessions["c1/s-ab12"] = _FakeSession("c1/s-ab12", tmp_path / "squatter")
 
         with pytest.raises(AssertionError):
             await sandbox_workspace(sessions, "c1/s-ab12")

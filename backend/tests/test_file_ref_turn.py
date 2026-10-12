@@ -16,9 +16,7 @@ from tests.test_code_mode import _project
 
 def _injections(events: list[dict], contributor: str) -> list[dict]:
     return [
-        e
-        for e in events
-        if e["type"] == "context.injected" and e["contributor"] == contributor
+        e for e in events if e["type"] == "context.injected" and e["contributor"] == contributor
     ]
 
 
@@ -36,9 +34,7 @@ async def _project_turn(client, project_id: str, refs: list[str]) -> list[dict]:
 
 
 class TestWhatReachesTheModel:
-    async def test_a_reference_names_the_path_and_nothing_else(
-        self, monkeypatch, tmp_path: Path
-    ):
+    async def test_a_reference_names_the_path_and_nothing_else(self, monkeypatch, tmp_path: Path):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
             project = await _project(client, tmp_path)
@@ -52,9 +48,7 @@ class TestWhatReachesTheModel:
         assert "original" not in rows[0]["text"]
         assert "files_read_file" in rows[0]["text"]
 
-    async def test_a_path_outside_the_workspace_is_dropped(
-        self, monkeypatch, tmp_path: Path
-    ):
+    async def test_a_path_outside_the_workspace_is_dropped(self, monkeypatch, tmp_path: Path):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
             project = await _project(client, tmp_path)
@@ -77,9 +71,7 @@ class TestWhatReachesTheModel:
         assert events[-1]["type"] == "run.ended"
         assert _injections(events, "file_refs") == []
 
-    async def test_a_turn_with_no_references_announces_nothing(
-        self, monkeypatch, tmp_path: Path
-    ):
+    async def test_a_turn_with_no_references_announces_nothing(self, monkeypatch, tmp_path: Path):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
             project = await _project(client, tmp_path)

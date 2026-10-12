@@ -122,6 +122,9 @@ def turn_deps(
         # that reach past it, so the level is enforced before a call runs rather than
         # apologised for afterwards.
         permission=binding.permission,
+        # Which tools the thread's agent is offered at all, before anything else withholds.
+        tool_access=binding.tools,
+        permission_ceiling=binding.permission_ceiling,
         # Which workspace this run's file work happens in. Empty — every turn an operator
         # sends — fills itself in from the conversation, which is the ordinary case and
         # needs no argument anywhere. A sub-agent's run is the case that passes one: it

@@ -389,9 +389,7 @@ class TestShellDeclaresAndEnforcesItsReach:
         assert wrapped == ["echo ok"]
         assert "ok" in output
 
-    async def test_a_host_declaration_is_run_as_the_approver_read_it(
-        self, tmp_path, monkeypatch
-    ):
+    async def test_a_host_declaration_is_run_as_the_approver_read_it(self, tmp_path, monkeypatch):
         # `host` is the declaration that asks for no fence, and it has already been
         # approved *as that*: wrapping it in one anyway would break the act somebody said
         # yes to, which is the opposite of enforcing the declaration.
@@ -455,9 +453,7 @@ class TestShellDeclaresAndEnforcesItsReach:
         await run("cd /tmp")
         assert shell.cwd.resolve() == (worktree / "sub").resolve()  # ...and one out is not
 
-    async def test_without_a_primitive_the_tools_refuse_rather_than_running_bare(
-        self, tmp_path
-    ):
+    async def test_without_a_primitive_the_tools_refuse_rather_than_running_bare(self, tmp_path):
         # No confiner injected here, deliberately: passing one *asserts* that commands are
         # fenced, so it is never a way to observe the unfenced path. This probes the
         # platform, which the suite leaves switched off — and the answer is a refusal, not
@@ -496,9 +492,7 @@ class TestShellDeclaresAndEnforcesItsReach:
         ctx.tool_call_approved = True
         toolset = shell_toolset(confiner=recording)
         tools = await toolset.get_tools(ctx)
-        await toolset.call_tool(
-            "run_command", {"command": "echo ok"}, ctx, tools["run_command"]
-        )
+        await toolset.call_tool("run_command", {"command": "echo ok"}, ctx, tools["run_command"])
         [fenced] = captured
         assert fenced.startswith("echo ok\n")
         assert "pwd > " in fenced

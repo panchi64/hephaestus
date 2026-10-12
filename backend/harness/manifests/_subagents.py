@@ -25,6 +25,8 @@ from harness.manifest import DormantCategory, HarnessContext
 from models.subagent import SubagentRecord
 from routes.chat import compose_turn, resolve_turn_models
 from runs import RunRegistry, RunStatus
+from services.agents import AgentDefinition, AgentNameError, lower_of, normalize_agent_name
+from services.agents.definition import WorkspacePolicy
 from services.conversations import ConversationBinding, ConversationStore
 from services.offline import OfflineModeService
 from services.permissions import DEFAULT_PERMISSION, stricter_permission
@@ -37,7 +39,6 @@ from services.settings_store import (
 )
 from services.subagent_store import SubagentStore
 from services.subagents.briefing import brief_for
-from services.subagents.definitions import AgentNameError, normalize_agent_name
 from services.subagents.launcher import (
     LaunchedSubagent,
     SubagentLauncher,
@@ -45,7 +46,6 @@ from services.subagents.launcher import (
     SubagentUnavailableError,
     SubagentView,
 )
-from services.subagents.spec import SubagentSpec, WorkspacePolicy
 from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
 from services.workspace import DELEGATION_SEP
@@ -63,9 +63,9 @@ SUBAGENT_KIND = "linked"
 #: from the session list, but the card in the panel is one line wide.
 _TITLE_MAX_CHARS = 80
 
-#: How far the isolation asked for at launch may move a spec's own answer. Only one way:
-#: a spec that says it works apart cannot be talked into the operator's files, while a
-#: spec that shares by default can always be asked to step out of the way.
+#: How far the isolation asked for at launch may move a definition's own answer. Only one way:
+#: a definition that says it works apart cannot be talked into the operator's files, while a
+#: definition that shares by default can always be asked to step out of the way.
 _ISOLATION_RANK: dict[WorkspacePolicy, int] = {"shared": 0, "isolated": 1, "own": 2}
 
 
@@ -98,7 +98,7 @@ class ConversationSubagents(SubagentLauncher):
     async def launch(
         self,
         owner_id: str,
-        spec: SubagentSpec,
+        agent: AgentDefinition,
         task: str,
         *,
         handle: str,
@@ -111,10 +111,10 @@ class ConversationSubagents(SubagentLauncher):
         parent = parent or SubagentParent()
         await self._check_capacity(owner_id)
         thread = parent.conversation_id or ""
-        handle = await self._handle_for(owner_id, thread, handle, spec)
+        handle = await self._handle_for(owner_id, thread, handle, agent)
         try:
             return await self._launch(
-                owner_id, spec, task, handle=handle, parent=parent, isolate=isolate
+                owner_id, agent, task, handle=handle, parent=parent, isolate=isolate
             )
         finally:
             # Held only until the row exists — or until the launch gives up. After that
@@ -126,7 +126,7 @@ class ConversationSubagents(SubagentLauncher):
     async def _launch(
         self,
         owner_id: str,
-        spec: SubagentSpec,
+        agent: AgentDefinition,
         task: str,
         *,
         handle: str,
@@ -135,7 +135,9 @@ class ConversationSubagents(SubagentLauncher):
     ) -> LaunchedSubagent:
         """Everything a launch does once its name is settled — see :meth:`launch`."""
         try:
-            models = await resolve_turn_models(self._models, None, None, owner_id=owner_id)
+            models = await resolve_turn_models(
+                self._models, agent.endpoint_id, agent.model, owner_id=owner_id
+            )
         except Exception as exc:
             # `resolve_turn_models` answers in HTTP, because its other caller is a route.
             # Down here there is no response to shape — the model asked for a sub-agent and
@@ -143,10 +145,10 @@ class ConversationSubagents(SubagentLauncher):
             raise SubagentUnavailableError(f"No usable model is configured: {exc}") from exc
 
         # The level the sub-agent runs at, settled before anything is created: what the
-        # spec asks for (else the default), capped by what the *parent* was allowed to do.
+        # definition asks for (else the default), capped by what the *parent* was allowed to do.
         # A sub-agent that could act further than the thread that launched it would turn
         # one launch into a standing grant the operator never gave.
-        permission = spec.permission_ceiling or DEFAULT_PERMISSION
+        permission = agent.permission_ceiling or DEFAULT_PERMISSION
         if parent.permission is not None:
             permission = stricter_permission(parent.permission, permission)
 
@@ -161,18 +163,20 @@ class ConversationSubagents(SubagentLauncher):
             availability=self._ctx.category_availability,
             caps=self._ctx.capabilities,
         )
-        disabled = disabled | spec.withheld | _NO_RECURSION
+        disabled = disabled | _NO_RECURSION
         # Refuse rather than degrade. A sub-agent missing the one capability its whole
         # job rests on still answers — from the model's own memory — and reads, to
         # everyone downstream, exactly as though it had done the work.
-        withheld = spec.required & disabled
+        withheld = {
+            tool for tool in agent.required if tool in disabled or not agent.tools.permits(tool)
+        }
         if withheld:
             raise SubagentUnavailableError(
-                f"`{spec.name}` needs {', '.join(sorted(withheld))}, which "
+                f"`{agent.name}` needs {', '.join(sorted(withheld))}, which "
                 f"{'is' if len(withheld) == 1 else 'are'} switched off or unavailable."
             )
 
-        policy = _isolation(spec.workspace, isolate=isolate)
+        policy = _isolation(agent.workspace, isolate=isolate)
         delegation_id = f"s-{secrets.token_hex(4)}"
         base = parent.workspace_key or parent.conversation_id or ""
         if not base:
@@ -200,7 +204,12 @@ class ConversationSubagents(SubagentLauncher):
             )
         child_kind = "sandbox" if policy == "own" else parent_kind
         binding = ConversationBinding(
-            workspace_kind=child_kind, project_id=parent.project_id, permission=permission
+            workspace_kind=child_kind,
+            project_id=parent.project_id,
+            permission=permission,
+            agent_name=agent.name,
+            tools=agent.tools,
+            permission_ceiling=permission,
         )
         conversation_id = await self._conversations.create_conversation(
             owner_id,
@@ -208,6 +217,7 @@ class ConversationSubagents(SubagentLauncher):
             project_id=parent.project_id,
             workspace_kind=child_kind,
             permission=permission,
+            agent_name=agent.name,
             # Hidden from the session list: nobody can type into a sub-agent, so a thread
             # they cannot use would be noise in the one place they look for their own work.
             # It stays a whole real conversation underneath — readable and streamable by id
@@ -227,7 +237,7 @@ class ConversationSubagents(SubagentLauncher):
             dormant=DormantCategory.summaries(self._ctx.dormant_categories),
             instruction_providers=(
                 *self._ctx.instruction_providers,
-                _briefing(brief_for(spec.brief, policy)),
+                _briefing(brief_for(agent.instructions, policy)),
             ),
             prompt_context_providers=self._ctx.prompt_context_providers,
             registry=self._runs,
@@ -238,13 +248,13 @@ class ConversationSubagents(SubagentLauncher):
             # Which files it works on: the launching thread's own workspace, a delegated
             # fork of it, or one of its own (`services/workspace.py` reads the key).
             workspace_key=workspace_key,
-            # Folded, never substituted. A spec is a request and not a grant — the same
+            # Folded, never substituted. A definition is a request and not a grant — the same
             # rule its permission ceiling is read under — so a sub-agent asking for 60
             # round trips on an installation whose operator deliberately lowered theirs to
-            # 10 gets 10. Where the operator set nothing, the spec's number stands: that is
+            # 10 gets 10. Where the operator set nothing, the definition's number stands: that is
             # a floor raised over a default nobody chose.
-            request_limit=_lower_of(
-                spec.request_limit,
+            request_limit=lower_of(
+                agent.request_limit,
                 await get_agent_request_limit_override(self._settings, owner_id),
             ),
             context_thresholds=await get_context_thresholds(self._settings, owner_id),
@@ -255,8 +265,8 @@ class ConversationSubagents(SubagentLauncher):
             # watchdog cannot end it (a model streaming tokens refreshes that clock on
             # every frame), and a wedged sub-agent would hold its lane for as long as it
             # cared to.
-            wall_clock_timeout_s=_lower_of(
-                spec.wall_clock_timeout_s,
+            wall_clock_timeout_s=lower_of(
+                agent.wall_clock_timeout_s,
                 self._ctx.settings.subagent_wall_clock_timeout_s,
             ),
             # A sub-agent's thread is hidden, so auto-titling it is invisible work that
@@ -272,7 +282,7 @@ class ConversationSubagents(SubagentLauncher):
             child_conversation_id=conversation_id,
             run_id=created.run_id,
             parent_run_id=parent.run_id,
-            spec_name=spec.name,
+            spec_name=agent.name,
             handle=handle,
             task=task,
             workspace_policy=policy,
@@ -287,13 +297,13 @@ class ConversationSubagents(SubagentLauncher):
             subagent_id=subagent_id,
             conversation_id=conversation_id,
             run_id=created.run_id,
-            name=spec.name,
+            name=agent.name,
             handle=handle,
             task=task,
         )
 
     async def _handle_for(
-        self, owner_id: str, parent_conversation_id: str, requested: str, spec: SubagentSpec
+        self, owner_id: str, parent_conversation_id: str, requested: str, agent: AgentDefinition
     ) -> str:
         """The name this sub-agent will answer to — normalised, and unique in its thread.
 
@@ -319,7 +329,7 @@ class ConversationSubagents(SubagentLauncher):
         the name is claimed before this returns.
         """
         try:
-            base = normalize_agent_name(requested) if requested.strip() else spec.name
+            base = normalize_agent_name(requested) if requested.strip() else agent.name
         except AgentNameError as exc:
             # Defence in depth: the tool validates first, so this catches a caller inside
             # the process rather than the model. Reported as a state rather than raised as
@@ -480,27 +490,11 @@ _NO_RECURSION: frozenset[str] = frozenset(
 )
 
 
-def _lower_of[T: (int, float)](asked: T | None, bound: T | None) -> T | None:
-    """The smaller of what a spec asked for and what it is allowed, either alone, or None.
-
-    The bound-folding every numeric field on a spec needs, written once because ``or`` is
-    the shape that looks right and is wrong: it takes the spec's number whenever the spec
-    has one, which is a sub-agent overruling the operator rather than asking. ``None`` on
-    either side means *that* side set no number — not zero, and not a bound of nothing to
-    fold against.
-    """
-    if asked is None:
-        return bound
-    if bound is None:
-        return asked
-    return min(asked, bound)
-
-
 def _isolation(declared: WorkspacePolicy, *, isolate: bool) -> WorkspacePolicy:
-    """Where this launch works, folding the caller's request into the spec's own answer.
+    """Where this launch works, folding the caller's request into the definition's own answer.
 
     Isolation only ever increases. The launching model knows whether *this* task is one it
-    means to work alongside, which the spec cannot; what it does not get to do is pull a
+    means to work alongside, which the definition cannot; what it does not get to do is pull a
     sub-agent written to stay out of the way back into the operator's own files.
     """
     asked: WorkspacePolicy = "isolated" if isolate else declared
@@ -542,7 +536,7 @@ def _title_for(handle: str, task: str) -> str:
     exchange: nobody wrote this thread's opening message, and a card reading "Untitled" is
     a card the operator cannot tell from the three beside it.
 
-    Named by its *handle* and not by its spec, for the same reason: three ``explorer``s out
+    Named by its *handle* and not by its definition, for the same reason: three ``explorer``s out
     at once produce three titles beginning ``explorer:`` and differing only in however much
     of the task survives the width, while three handles differ in the first word.
     """

@@ -35,12 +35,15 @@ class Conversation(SQLModel, table=True):
     # The project this belongs to, or null for **unfiled** — visible in every scope,
     # not orphaned. See models/project.py for the one scope rule.
     project_id: str | None = Field(default=None, index=True)
-    # Where its file work happens: "sandbox" or "worktree" (`services/workspace_kind.py`).
-    # A plain string so a restored backup or a row from another build still loads; an
-    # unrecognised value reads as the sandbox. Moves one way only, sandbox to worktree,
-    # when the agent opens one: a worktree thread owns a branch, and moving it back would
-    # strand that branch. Structural, not user content, so it stays in the clear.
+    # Where its file work happens: "sandbox", "checkout" or "worktree"
+    # (`services/workspace_kind.py`). A plain string so a restored backup or a row from
+    # another build still loads; an unrecognised value reads as the sandbox. Moves one way
+    # only, checkout to worktree, when the agent opens one: a worktree thread owns a
+    # branch, and moving it back would strand that branch.
     workspace_kind: str = Field(default="sandbox")
+    # The agent this thread runs (`services/agents`), by name. Null is the default agent.
+    # A name that no longer resolves runs the default agent too.
+    agent_name: str | None = Field(default=None)
     # How much rope the model gets in this thread — "plan", "manual", "edit", "auto" or
     # "yolo".
     # What each permits is the permission registry's answer (`services/permissions`); the

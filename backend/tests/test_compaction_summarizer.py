@@ -128,9 +128,7 @@ class TestTheRequestIsTheTurns:
         the conversation the model was already being sent, and one more message."""
         seen: list = []
         history = [*_tool_turn("look it up", "the page"), *_turn("thanks", "any time")]
-        summary = await summarize_history(
-            _agent(_model("the story", seen=seen)), _deps(), history
-        )
+        summary = await summarize_history(_agent(_model("the story", seen=seen)), _deps(), history)
         assert summary == "the story"
         [(messages, _info)] = seen
         assert _texts(messages) == [
@@ -240,9 +238,7 @@ class TestItIsASideRun:
         ledger = PrefixLedger()
         caps = ServiceContainer()
         caps.add(ledger)
-        await summarize_history(
-            _agent(_model("s")), _deps(caps), _turn("hi", "hello")
-        )
+        await summarize_history(_agent(_model("s")), _deps(caps), _turn("hi", "hello"))
         assert ledger.recall("c") is None
 
     async def test_the_brief_is_still_announced_on_the_turn_after_a_side_run(self):
@@ -515,8 +511,7 @@ class TestSummarySections:
         checkpoint written before `fence_tool_facts` existed still repeats what a page
         said."""
         stored = (
-            f"{COMPACT_MARKER}\n\n"
-            f"## {COMPACT_TOOLS_SECTION}\nthe docs page listed three flags\n"
+            f"{COMPACT_MARKER}\n\n## {COMPACT_TOOLS_SECTION}\nthe docs page listed three flags\n"
         )
         tools = next(s for s in summary_sections(stored) if s.key == COMPACT_TOOLS_SECTION)
         assert tools.untrusted is True

@@ -8,15 +8,18 @@ leaf first; the launch is identical (``submit_turn``).
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from fastapi import APIRouter, HTTPException, Request
 
 from core.exceptions import NotFoundError
 from routes import deps
 from routes.chat.schemas import ChatCreate, ChatCreated, EditCreate, RegenerateCreate
-from routes.chat.submit import resolve_models, submit_turn
+from routes.chat.submit import resolve_models, submit_turn, thread_agent, thread_models
 from routes.deps import OPERATOR_ID
 from runs import CHAT_TURN_KINDS, ConversationBusyError, RunRegistry
-from services.conversations import ConversationStore
+from services.agents import DEFAULT_AGENT
+from services.conversations import ConversationBinding, ConversationStore
 from services.turn_stamps import still_named
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -110,29 +113,45 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated:
     if body.conversation_id is None:
         await _validate_new_thread_binding(request, body)
 
-    # Resolve before creating/continuing — a model failure shouldn't leave an
-    # empty orphan conversation behind.
-    models = await resolve_models(request, body.endpoint_id, body.model)
-
     store = deps.store(request)
+    agent_name = None if body.agent == DEFAULT_AGENT else body.agent
     if body.conversation_id is not None:
         # Continue an existing conversation, but only one the operator owns —
         # an unknown id must not silently spawn orphan messages.
         if not await store.exists(body.conversation_id, OPERATOR_ID):
             raise HTTPException(status_code=404, detail="conversation not found")
-        conversation_id = body.conversation_id
+        binding = await store.binding(body.conversation_id)
+        if body.agent is not None:
+            binding = replace(binding, agent_name=agent_name)
     else:
         # A thread files itself under whatever the request scope resolved: the explicit
         # `project_id` when the client sent one, else the operator's active project, else
         # unfiled. Filed under a project, it works in that project's folder; a throwaway
         # compare pane stays in a sandbox of its own.
         project_id = body.project_id or await deps.active_project(request)
+        binding = ConversationBinding(
+            workspace_kind="checkout" if project_id and not body.ephemeral else "sandbox",
+            project_id=project_id,
+            agent_name=agent_name,
+        )
+    applied = await thread_agent(request, binding, body.conversation_id)
+    if agent_name is not None and applied.agent.name != agent_name:
+        raise HTTPException(status_code=422, detail=f"no published agent named {agent_name!r}")
+
+    # Resolve before creating/continuing — a model failure shouldn't leave an
+    # empty orphan conversation behind.
+    models = await resolve_models(request, body.endpoint_id, body.model, agent=applied.agent)
+
+    if body.conversation_id is not None:
+        conversation_id = body.conversation_id
+    else:
         conversation_id = await store.create_conversation(
             OPERATOR_ID,
             ephemeral=body.ephemeral,
-            workspace_kind="checkout" if project_id and not body.ephemeral else "sandbox",
+            workspace_kind=binding.workspace_kind,
             permission=body.permission_level,
-            project_id=project_id,
+            project_id=binding.project_id,
+            agent_name=agent_name,
         )
 
     # Claim now, before the remaining awaits (the auto-compaction policy resolve) and
@@ -166,6 +185,8 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated:
         # actually running at.
         if body.conversation_id is not None and body.permission_level is not None:
             await store.set_permission_level(conversation_id, body.permission_level)
+        if body.conversation_id is not None and body.agent is not None:
+            await store.set_agent_name(conversation_id, agent_name)
         created = await submit_turn(
             request,
             prompt=body.prompt,
@@ -208,7 +229,7 @@ async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
     # lose (a failed resolve, a 404 message id, or a successful submit).
     deps.claim_conversation(request, body.conversation_id)
     try:
-        models = await resolve_models(request, body.endpoint_id, body.model)
+        models = await thread_models(request, body.conversation_id, body.endpoint_id, body.model)
         if not await store.regenerate_point(body.conversation_id, body.message_id):
             raise HTTPException(status_code=404, detail="message not found")
         return await submit_turn(
@@ -250,7 +271,7 @@ async def edit(body: EditCreate, request: Request) -> ChatCreated:
     # leaf-moving `edit_point` call.
     deps.claim_conversation(request, body.conversation_id)
     try:
-        models = await resolve_models(request, body.endpoint_id, body.model)
+        models = await thread_models(request, body.conversation_id, body.endpoint_id, body.model)
         # Read before `edit_point`, which reseats the leaf to this request's *parent* —
         # after it, the trailing request is the previous turn.
         stamped = await store.turn_stamps(body.conversation_id, body.message_id)

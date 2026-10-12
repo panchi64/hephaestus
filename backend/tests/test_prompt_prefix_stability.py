@@ -179,11 +179,7 @@ async def test_a_level_change_moves_the_level_block_and_the_tool_array(frozen_cl
 
     assert _blocks(acting)["level"] != _blocks(planning)["level"]
     assert set(_tool_names(planning)) < set(_tool_names(acting))
-    moved = {
-        name
-        for name, text in _blocks(acting).items()
-        if _blocks(planning).get(name) != text
-    }
+    moved = {name for name, text in _blocks(acting).items() if _blocks(planning).get(name) != text}
     assert moved == {"level"}, f"a level change also moved {moved - {'level'}}"
 
 

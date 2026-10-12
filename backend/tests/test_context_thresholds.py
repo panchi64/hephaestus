@@ -64,8 +64,13 @@ def test_alert_may_sit_at_a_full_window():
 
 @pytest.mark.parametrize(
     ("used", "expected"),
-    [(100_000, "nominal"), (119_999, "nominal"), (120_000, "warn"), (159_999, "warn"),
-     (160_000, "alert")],
+    [
+        (100_000, "nominal"),
+        (119_999, "nominal"),
+        (120_000, "warn"),
+        (159_999, "warn"),
+        (160_000, "alert"),
+    ],
 )
 def test_the_operators_boundaries_move_the_bands(used: int, expected: str):
     # 60% (120k) and 80% (160k) against a 200k window, in place of the stock 75/90.
@@ -107,9 +112,7 @@ def test_the_pair_stays_off_the_wire():
 async def test_a_stored_pair_round_trips():
     store = _store()
     await set_context_thresholds(store, "operator", ContextThresholds(warn=0.5, alert=0.8))
-    assert await get_context_thresholds(store, "operator") == ContextThresholds(
-        warn=0.5, alert=0.8
-    )
+    assert await get_context_thresholds(store, "operator") == ContextThresholds(warn=0.5, alert=0.8)
 
 
 async def test_unset_yields_the_defaults():

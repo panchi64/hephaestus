@@ -13,9 +13,7 @@ from __future__ import annotations
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
 
 
-async def _turn(
-    client, prompt: str, command: dict | None = None
-) -> tuple[list[dict], str]:
+async def _turn(client, prompt: str, command: dict | None = None) -> tuple[list[dict], str]:
     """Run one turn to its end; hand back its events and the thread it landed in."""
     payload: dict = {"prompt": prompt}
     if command is not None:
@@ -242,7 +240,5 @@ class TestResolutionFailure:
         async with client_app() as (client, _app):
             # `compact` needs a conversation to act on; it is also an action, which never
             # composes a turn at all. Either way there is nothing to put in the tail.
-            events, _ = await _turn(
-                client, "/compact", {"name": "compact", "argument": ""}
-            )
+            events, _ = await _turn(client, "/compact", {"name": "compact", "argument": ""})
         assert not [e for e in _injections(events) if e["contributor"] == "command"]

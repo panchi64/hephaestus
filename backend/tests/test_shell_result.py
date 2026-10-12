@@ -157,9 +157,7 @@ async def test_a_cancelled_command_does_not_leave_its_watcher_running(tmp_path):
         ticks.append(chunk)
 
     shell = _shell(tmp_path / "w")
-    task = asyncio.create_task(
-        shell.run("echo up; sleep 5", profile=None, on_progress=hook)
-    )
+    task = asyncio.create_task(shell.run("echo up; sleep 5", profile=None, on_progress=hook))
     await asyncio.sleep(0.7)  # past the first tick, so the watcher is certainly alive
     task.cancel()
     try:

@@ -58,9 +58,7 @@ async def _worktree_with_changes(tmp_path: Path) -> tuple[WorktreeManager, Path,
     """A branch holding one change of every band the merge gate separates."""
     root = await _repo(tmp_path)
     manager = _manager(tmp_path)
-    state = await manager.acquire(
-        project_id="p1", root=root, base_ref="main", conversation_id="c1"
-    )
+    state = await manager.acquire(project_id="p1", root=root, base_ref="main", conversation_id="c1")
     path = state.path
     (path / "app.py").write_text("print('hi')\nprint('there')\n")
     (path / "uv.lock").write_text("version = 2\n")
@@ -121,7 +119,7 @@ class TestTheVerdict:
         assert bands["README.md"] == ("docs", "normal")
 
     async def test_a_deletion_never_sits_at_normal(self, tmp_path):
-        """"Was this used?" is the question the gate exists to raise, and a file that is
+        """ "Was this used?" is the question the gate exists to raise, and a file that is
         gone cannot raise it for itself."""
         manager, root, _path = await _worktree_with_changes(tmp_path)
 

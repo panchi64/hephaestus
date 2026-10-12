@@ -41,17 +41,16 @@ from pydantic_ai import AbstractToolset, FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
-from services.permissions import STRICTEST_PERMISSION
-from services.subagents import (
+from services.agents import (
+    AgentDefinition,
     AgentNameError,
-    SubagentLauncher,
-    SubagentParent,
-    SubagentSpec,
-    SubagentUnavailableError,
     builtin_roster,
+    delegable,
     describe_roster,
     normalize_agent_name,
 )
+from services.permissions import STRICTEST_PERMISSION
+from services.subagents import SubagentLauncher, SubagentParent, SubagentUnavailableError
 from tools.deps import RunDeps
 from tools.project_agents import run_roster
 
@@ -127,8 +126,8 @@ def subagents_toolset() -> AbstractToolset[RunDeps]:
                 f"{exc} Name it for the job this sub-agent is for, like `helper-function-finder`."
             ) from exc
         roster = await run_roster(ctx)
-        spec = roster.get(agent_name)
-        if spec is None:
+        agent = roster.get(agent_name)
+        if agent is None:
             # Recoverable: the model very likely guessed a name. Naming the roster back
             # costs one retry, where failing the turn costs the whole thing.
             raise ModelRetry(
@@ -138,12 +137,12 @@ def subagents_toolset() -> AbstractToolset[RunDeps]:
         # Before anything else, and only for one that can change things: a launch that
         # ends in edits is the operator's to allow, and asking after a workspace has been
         # forked for it would be a side effect they never approved.
-        if _can_write(spec) and not ctx.tool_call_approved:
+        if _can_write(agent) and not ctx.tool_call_approved:
             raise ApprovalRequired()
         try:
             started = await launcher.launch(
                 ctx.deps.owner_id,
-                spec,
+                agent,
                 task,
                 handle=name,
                 parent=_parent(ctx),
@@ -175,7 +174,7 @@ def subagents_toolset() -> AbstractToolset[RunDeps]:
     # The built-ins alone, which is what the operator's catalog shows and what a run with
     # no project of its own is offered. A run that has one gets this same text with its
     # roster in it, rewritten in `get_tools` below.
-    launch.__doc__ = launch_description(builtin_roster())
+    launch.__doc__ = launch_description(delegable(builtin_roster()))
     # Deliberately *not* `requires_approval=True`. That marking defers the call before the
     # body runs, which would park every launch — including an explorer that can only read —
     # and leave the conditional gate below deciding nothing. Raising from inside is what
@@ -301,7 +300,7 @@ def subagents_toolset() -> AbstractToolset[RunDeps]:
     return _ProjectRoster(toolset)
 
 
-def launch_description(roster: Mapping[str, SubagentSpec]) -> str:
+def launch_description(roster: Mapping[str, AgentDefinition]) -> str:
     """What the model is told it may launch, for one roster."""
     return _LAUNCH_DOC.format(roster=describe_roster(roster))
 
@@ -350,14 +349,14 @@ class _ProjectRoster(WrapperToolset[RunDeps]):
         }
 
 
-def _can_write(spec: SubagentSpec) -> bool:
+def _can_write(agent: AgentDefinition) -> bool:
     """Whether launching this sub-agent is something the operator should rule on.
 
-    Read off the spec's own ceiling rather than from a list of names, so a sub-agent a
+    Read off the agent's own ceiling rather than from a list of names, so a sub-agent a
     project declares is gated by what it can actually do rather than by whether anyone
     remembered to add it somewhere.
     """
-    return spec.permission_ceiling != STRICTEST_PERMISSION
+    return agent.permission_ceiling != STRICTEST_PERMISSION
 
 
 def _parent(ctx: RunContext[RunDeps]) -> SubagentParent:

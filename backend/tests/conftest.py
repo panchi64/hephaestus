@@ -43,9 +43,7 @@ core.db.init_db = _schema.init_db
 core.crypto._KEK_TIME_COST = 1
 core.crypto._KEK_MEMORY_COST = 8
 core.crypto._KEK_PARALLELISM = 1
-core.crypto._PASSWORD_HASHER = core.crypto.PasswordHasher(
-    time_cost=1, memory_cost=8, parallelism=1
-)
+core.crypto._PASSWORD_HASHER = core.crypto.PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
 
 # Every agent carries `run_code` (`agent/code_mode.py`), and `TestModel`'s default of
 # calling *every* tool it is offered would call it too — with the placeholder string it

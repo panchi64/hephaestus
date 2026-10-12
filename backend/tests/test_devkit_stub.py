@@ -280,8 +280,8 @@ async def test_the_pydantic_ai_model_the_registry_builds_can_talk_to_it(stub):
     client, http = stub
     await _script(http, {"match": "ping", "text": "pong"})
     model = OpenAIChatModel(
-        MODEL_ID, provider=OpenAIProvider(base_url="http://stub/v1", api_key="unused",
-                                          http_client=http)
+        MODEL_ID,
+        provider=OpenAIProvider(base_url="http://stub/v1", api_key="unused", http_client=http),
     )
     result = await Agent(model).run("ping")
     assert result.output == "pong"

@@ -423,9 +423,7 @@ class TestTheFenceActuallyHolds:
         code, output = await _run("git log --oneline", worktree)
         assert "second" in output, output
 
-    async def test_a_command_cannot_move_the_tracked_directory_out_of_the_worktree(
-        self, tmp_path
-    ):
+    async def test_a_command_cannot_move_the_tracked_directory_out_of_the_worktree(self, tmp_path):
         # The hole this containment closes, driven through the real shell. The fenced
         # command records where it ended and the session adopts that as the directory the
         # *next* command starts in — so `cd /etc` inside a structurally-clean command
@@ -437,9 +435,7 @@ class TestTheFenceActuallyHolds:
         (worktree / "build.sh").write_text("cd /etc\n")
         (worktree / "sub").mkdir()
         profile = workspace_profile(worktree, dirs, BRANCH, linux=_linux())
-        shell = FencedShell(
-            worktree, confiner=wrap, default_timeout=30.0, max_output_chars=100_000
-        )
+        shell = FencedShell(worktree, confiner=wrap, default_timeout=30.0, max_output_chars=100_000)
         for command, expected in (("source build.sh", worktree), ("cd sub", worktree / "sub")):
             await shell.run(command, profile=profile)
             assert shell.cwd.resolve() == expected.resolve(), command

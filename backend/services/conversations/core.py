@@ -140,13 +140,14 @@ class _StoreCore:
         project_id: str | None = None,
         workspace_kind: str = DEFAULT_WORKSPACE_KIND,
         permission: str | None = None,
+        agent_name: str | None = None,
     ) -> str:
         """Start a thread. ``project_id`` files it (null is unfiled, which is visible
         under every scope). ``workspace_kind`` is where its file work happens; only a fork
         of a worktree thread starts in one (see `models/conversation.py`).
 
         ``permission`` is the level it *starts* at and moves freely afterwards; absent, the
-        default level applies."""
+        default level applies. ``agent_name`` is the agent it runs; absent, the default."""
 
         def work(session: Session) -> str:
             conversation = Conversation(
@@ -155,6 +156,7 @@ class _StoreCore:
                 ephemeral=ephemeral,
                 project_id=project_id,
                 workspace_kind=normalise_workspace_kind(workspace_kind),
+                agent_name=agent_name,
                 permission_level=(
                     DEFAULT_PERMISSION if permission is None else permission_level(permission)
                 ),

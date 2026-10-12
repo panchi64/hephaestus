@@ -11,7 +11,8 @@ something the model should know about. It is not: it is a phrase the operator ha
 name for their own typing, and an agent that could read the list would be reading their
 shortcuts. The tail block a command produces is the only thing about it the model ever sees.
 
-The registry reads the skill library, so this manifest builds after ``skills``.
+The registry reads the skill library and the agent catalog, so this manifest builds after
+both.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from __future__ import annotations
 from core.api_scopes import ScopeClaim
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from routes import commands as command_routes
+from services.agents import AgentCatalog
 from services.commands import CommandRegistry
 from services.commands.store import CommandStore
 from services.skills import SkillStore
@@ -26,7 +28,9 @@ from services.skills import SkillStore
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
     store = CommandStore(ctx.engine, ctx.vault)
-    registry = CommandRegistry(ctx.services.get(SkillStore), store)
+    registry = CommandRegistry(
+        ctx.services.get(SkillStore), store, ctx.services.get(AgentCatalog)
+    )
     # Both on `app.state`: the registry is what a composer and a turn read, the store is
     # what the settings pane writes. Separate handles because they are separate audiences —
     # nothing that offers a command should be able to edit one.
@@ -50,6 +54,6 @@ MANIFEST = FeatureManifest(
     # workflow does nothing until the operator types its name. A narrower claim here would
     # withhold the weaker of the two capabilities while granting the stronger.
     api_scopes=(ScopeClaim("knowledge", ("/commands",)),),
-    after=("skills",),
+    after=("agents", "skills"),
     build=_build,
 )

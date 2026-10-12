@@ -61,6 +61,10 @@ class ChatCreate(BaseModel):
     # it. Absent means "whatever the thread is already at" (a new thread starts at the
     # default), so a client that never learned about levels keeps working.
     permission_level: PermissionLevel | None = None
+    # The agent this thread runs (`services/agents`), by name. Like the level it persists
+    # and may change on any send; absent keeps the thread's, and a new thread starts on the
+    # default agent.
+    agent: str | None = None
     # Set when this turn is the operator resuming a turn a bound stopped (the
     # "Continue" button under a stop marker): the branch node id of the turn that
     # carries the marker. Accepting the turn retires that marker durably, so the

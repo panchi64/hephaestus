@@ -244,9 +244,7 @@ def test_a_tool_category_carries_how_many_tools_put_it_there():
     the first looks like a lot of text, the second like a catalog to prune."""
     split = compose(
         10_000,
-        _overhead(
-            blocks=[("base", 500)], groups=[("external", 68, 30_000), ("builtin", 1, 200)]
-        ),
+        _overhead(blocks=[("base", 500)], groups=[("external", 68, 30_000), ("builtin", 1, 200)]),
         _messages("x" * 1_000),
     )
     assert split is not None
@@ -354,9 +352,7 @@ def test_the_standing_brief_is_not_counted_twice():
     from services.conversation_view import message_chars
 
     with_brief = [
-        ModelRequest(
-            parts=[SystemPromptPart(content="B" * 5_000), UserPromptPart(content="hi")]
-        ),
+        ModelRequest(parts=[SystemPromptPart(content="B" * 5_000), UserPromptPart(content="hi")]),
     ]
     assert message_chars(with_brief).prose == len("hi")
 
@@ -647,9 +643,7 @@ def test_dict_keys_count_too():
     from services.conversation_view import estimate_tokens
 
     wide = {"a_long_field_name_here" * 4: "v", "another_long_field_name" * 4: "v"}
-    messages = [
-        ModelRequest(parts=[ToolReturnPart(tool_name="t", content=wide, tool_call_id="1")])
-    ]
+    messages = [ModelRequest(parts=[ToolReturnPart(tool_name="t", content=wide, tool_call_id="1")])]
     assert estimate_tokens(messages) > 40
 
 

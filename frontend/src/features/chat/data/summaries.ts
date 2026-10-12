@@ -95,5 +95,6 @@ export function toSummary(dto: ConversationSummaryDTO): ChatSummary {
     workspaceKind: toWorkspaceKind(dto.workspace_kind),
     workspace: dto.workspace ?? undefined,
     projectId: dto.project_id ?? undefined,
+    agentName: dto.agent_name ?? undefined,
   };
 }

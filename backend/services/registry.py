@@ -362,7 +362,8 @@ class ModelRegistry:
         server-initiated resolution (research, tasks, titling) sees the same model
         the operator pinned, not only the per-conversation override path. The pin
         names a model served by the head's provider, so it can't describe a fallback
-        tail; tail endpoints keep their own default."""
+        tail; tail endpoints keep their own default. A ``main`` model override with no
+        endpoint (an agent that names only a model) replaces the pin on the role's head."""
         if role not in llm.ROLES:
             raise ValueError(f"unknown model role: {role!r}")
 
@@ -379,6 +380,8 @@ class ModelRegistry:
             )
 
         chain_ids, pinned_model = await self.get_role_binding(owner_id, role)
+        if override_model is not None and role == "main":
+            pinned_model = override_model
         if not chain_ids and role == "main":
             # An unbound `main` with a usable model available resolves to it rather than
             # degrading. Nothing is written: the default is the state the workspace is
