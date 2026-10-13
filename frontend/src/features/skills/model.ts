@@ -90,3 +90,18 @@ export const skillSourceFlag: Record<SkillSource, Status> = {
   imported: "idle",
   agent: "idle",
 };
+
+/** A read-only skill shipped with the app. Its name is its identity. */
+export interface BuiltInSkill {
+  name: string;
+  description: string;
+  body: string;
+  enabled: boolean;
+  /** A published stored skill of the same name is used instead. */
+  shadowed: boolean;
+  files: string[];
+}
+
+/** Why a shadowed built-in row is inert. */
+export const SHADOWED_HINT =
+  "A saved skill with this name is used instead of this one.";

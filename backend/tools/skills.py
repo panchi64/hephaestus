@@ -3,8 +3,9 @@
 Skills follow the **Agent Skills** standard's progressive disclosure, and these tools are
 levels two and three of it:
 
-1. The turn's instructions say how many skills are published and list the pinned ones;
-   the rest are found by name and description through ``platform_search``.
+1. The turn's instructions list the platform's own skills, say how many others there are
+   (stored, the project's, and plugins'), and list the pinned ones; the rest are found by
+   name and description through ``platform_search``.
 2. ``open`` returns the skill's full ``SKILL.md`` instructions — the level the model pays for
    only when a skill is actually relevant.
 3. ``open`` **also stages the bundle into the run's workspace** under ``skills/{name}/``,
@@ -28,12 +29,20 @@ Thin like every tool here: the format rules, sealing, and validation live in
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from core.exceptions import NotFoundError, SkillSpanError, SkillValidationError
-from prompts.agent import SKILL_CATALOG, SKILL_PINNED, SKILL_PINNED_LIMIT
+from prompts.agent import (
+    SKILL_CATALOG,
+    SKILL_PINNED,
+    SKILL_PINNED_LIMIT,
+    SKILL_PLATFORM,
+    SKILL_SAVED,
+)
 from services.plugins import PluginSkill, PluginStore
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import SandboxError
@@ -45,41 +54,94 @@ from services.skills import (
     render_skill_md,
 )
 from services.skills.bundle import ParsedSkill
+from services.skills.platform import PlatformSkills
+from services.skills.sources import DiskSkill, project_skills
 from services.workspace import RunWorkspace
 
 from .deps import RunDeps
+from .project_agents import project_tree
 from .workspace import run_workspace
 
 #: Where a staged bundle lands inside the sandbox working directory (mirrors
 #: ``attachments/`` from the attachments tool).
 _STAGE_DIR = "skills"
 _UNAVAILABLE = "Skills are unavailable right now."
+#: How many runs' project skills are held at once, sized for the runs executing concurrently.
+_MAX_CACHED_RUNS = 32
+
+_project_cache: OrderedDict[str, tuple[DiskSkill, ...]] = OrderedDict()
+
+
+@dataclass(frozen=True)
+class _Resolved:
+    skill: ParsedSkill
+    #: Set for a stored skill, whose files are read from the store.
+    stored_id: str | None
+    files: tuple[tuple[str, bytes], ...]
 
 
 async def skill_catalog(ctx: RunContext[RunDeps]) -> list[SkillCatalogEntry]:
-    """The published skills, then those published plugins contribute under names no
-    stored skill has taken."""
+    """Every skill this run can open, by precedence: stored, then the project's, then the
+    platform's, then those published plugins contribute. A name is listed once, from the
+    source that wins it."""
     store = ctx.deps.caps.get_optional(SkillStore)
-    plugins = ctx.deps.caps.get_optional(PluginStore)
     entries = await store.catalog(ctx.deps.owner_id) if store is not None else []
     taken = {entry.name for entry in entries}
-    if plugins is not None:
-        entries += [
-            SkillCatalogEntry(entry.skill.name, entry.skill.description)
-            for entry in await plugins.skills(ctx.deps.owner_id)
-            if entry.skill.name not in taken
-        ]
+    for source, found in (
+        ("project", await _project_skills(ctx)),
+        ("platform", await _platform_skills(ctx)),
+        ("plugin", await _plugin_skills(ctx)),
+    ):
+        for entry in found:
+            if entry.skill.name not in taken:
+                taken.add(entry.skill.name)
+                entries.append(
+                    SkillCatalogEntry(entry.skill.name, entry.skill.description, source=source)
+                )
     return entries
 
 
-async def _plugin_skill(ctx: RunContext[RunDeps], name: str) -> PluginSkill | None:
+async def _resolve(ctx: RunContext[RunDeps], name: str) -> _Resolved | None:
+    store = ctx.deps.caps.get_optional(SkillStore)
+    if store is not None:
+        try:
+            view = await store.get_by_name(ctx.deps.owner_id, name, published_only=True)
+        except NotFoundError:
+            pass
+        else:
+            return _Resolved(view.parsed(), view.id, ())
+    for found in (
+        await _project_skills(ctx),
+        await _platform_skills(ctx),
+        await _plugin_skills(ctx),
+    ):
+        for entry in found:
+            if entry.skill.name == name:
+                return _Resolved(entry.skill, None, tuple(entry.files))
+    return None
+
+
+async def _platform_skills(ctx: RunContext[RunDeps]) -> tuple[DiskSkill, ...]:
+    platform = ctx.deps.caps.get_optional(PlatformSkills)
+    return await platform.enabled(ctx.deps.owner_id) if platform is not None else ()
+
+
+async def _plugin_skills(ctx: RunContext[RunDeps]) -> list[PluginSkill]:
     plugins = ctx.deps.caps.get_optional(PluginStore)
-    if plugins is None:
-        return None
-    return next(
-        (entry for entry in await plugins.skills(ctx.deps.owner_id) if entry.skill.name == name),
-        None,
-    )
+    return await plugins.skills(ctx.deps.owner_id) if plugins is not None else []
+
+
+async def _project_skills(ctx: RunContext[RunDeps]) -> tuple[DiskSkill, ...]:
+    """The bound project's skills, read once per run."""
+    run_id = ctx.deps.run.id
+    cached = _project_cache.pop(run_id, None)
+    if cached is None:
+        root = await project_tree(ctx)
+        cached = project_skills(root) if root is not None else ()
+        if len(_project_cache) >= _MAX_CACHED_RUNS:
+            _project_cache.popitem(last=False)
+    _project_cache[run_id] = cached
+    return cached
 
 
 async def _stage(
@@ -124,24 +186,11 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
 
         ``allowed_tools``, when present, is the author's advisory note about which tools
         the skill expects to use: it neither restricts you nor grants you anything."""
-        store = ctx.deps.caps.get_optional(SkillStore)
-        if store is None:
-            return {"ok": False, "error": _UNAVAILABLE}
-        try:
-            view = await store.get_by_name(ctx.deps.owner_id, name, published_only=True)
-            skill = view.parsed()
-            stored_id: str | None = view.id
-            bundled: list[tuple[str, bytes]] = []
-        except NotFoundError:
-            contributed = await _plugin_skill(ctx, name)
-            if contributed is None:
-                available = ", ".join(e.name for e in await skill_catalog(ctx)) or "none yet"
-                raise ModelRetry(
-                    f"No published skill named {name!r}. Available skills: {available}."
-                ) from None
-            skill = contributed.skill
-            stored_id = None
-            bundled = list(contributed.files)
+        resolved = await _resolve(ctx, name)
+        if resolved is None:
+            available = ", ".join(e.name for e in await skill_catalog(ctx)) or "none yet"
+            raise ModelRetry(f"No skill named {name!r}. Available skills: {available}.")
+        skill = resolved.skill
 
         result: dict = {
             "ok": True,
@@ -164,7 +213,12 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
             )
             return result
 
-        files = await store.file_contents(ctx.deps.owner_id, stored_id) if stored_id else bundled
+        store = ctx.deps.caps.get_optional(SkillStore)
+        files = (
+            await store.file_contents(ctx.deps.owner_id, resolved.stored_id)
+            if store is not None and resolved.stored_id is not None
+            else list(resolved.files)
+        )
         total = sum(len(blob) for _, blob in files)
         if total > BUNDLE_MAX_BYTES:
             result["note"] = (
@@ -279,9 +333,25 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
 
 
 def _skill_catalog_block(entries: Sequence[SkillCatalogEntry]) -> str:
-    """The catalog line for the published skills (`SKILL-2`): a count, and the pinned ones
-    by name. Entries arrive newest first, so a pin past the limit drops the oldest; the
-    survivors are sorted by name so an edit that keeps the set keeps the bytes."""
+    """The skills line of the brief (`SKILL-2`): the platform's skills by name, then a count
+    of the rest and the pinned ones. Entries arrive newest first, so a pin past the limit
+    drops the oldest; both lists are sorted by name so an edit that keeps the set keeps the
+    bytes."""
+    if not entries:
+        return ""
+    platform = sorted(
+        (entry for entry in entries if entry.source == "platform"), key=lambda e: e.name
+    )
+    saved = [entry for entry in entries if entry.source != "platform"]
+    listed = (
+        SKILL_PLATFORM.format(entries="\n".join(f"- {e.name}: {e.description}" for e in platform))
+        if platform
+        else ""
+    )
+    return SKILL_CATALOG.format(listed=listed, saved=_saved_block(saved))
+
+
+def _saved_block(entries: Sequence[SkillCatalogEntry]) -> str:
     if not entries:
         return ""
     count = f"{len(entries)} saved skill{'' if len(entries) == 1 else 's'}"
@@ -296,11 +366,10 @@ def _skill_catalog_block(entries: Sequence[SkillCatalogEntry]) -> str:
         if pinned
         else ""
     )
-    return SKILL_CATALOG.format(count=count, pinned=listed)
+    return SKILL_SAVED.format(count=count, pinned=listed)
 
 
 async def skill_catalog_instructions(ctx: RunContext[RunDeps]) -> str:
-    """Tell the agent the operator's published skills exist and how to find them
-    (`SKILL-2`). A dynamic instruction, so it is always current and lives outside history.
-    Empty when there's no skill store or nothing is published."""
+    """Tell the agent which skills exist and how to open them (`SKILL-2`). A dynamic
+    instruction, so it is always current and lives outside history."""
     return _skill_catalog_block(await skill_catalog(ctx))

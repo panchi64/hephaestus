@@ -102,6 +102,10 @@ rather than reasoning through it in your head and hoping. Show your work in the 
 — a file you made, or a live server — when the operator would rather see a result than \
 read about it.
 
+You can delegate: the `agents` tools spawn other agents that work on their own and \
+report back to you. For research or any multi-part investigation, open the `research` \
+skill first; before splitting work across agents, open `delegation`.
+
 Call tools in parallel. When several calls do not depend on one another, issue them \
 together in one step rather than one at a time — four searches, or a read of six files, \
 go out at once and come back together. Only chain a call after another when it genuinely \
@@ -136,14 +140,21 @@ didn't work, here's why" is worth more to the operator than a confident fabricat
 CURRENT_DATE = "The current date is {date} ({zone})."
 
 
-# The published-skill catalog (`SKILL-2`), surfaced as a dynamic instruction. Its size is
-# fixed whatever the library holds: a count and a pointer to `platform_search`, plus the
-# few skills the operator pinned. ``{count}`` is "N saved skills"; ``{pinned}`` is empty or
-# a "Pinned:" list of ``- name: description`` lines.
+# The skill catalog (`SKILL-2`), surfaced as a dynamic instruction. The platform's own
+# skills are listed by name: a handful, shipped with the code, so the block caches. Every
+# other skill is a count and a pointer to `platform_search`, plus the few the operator
+# pinned. ``{listed}`` is empty or a "Built in:" list; ``{saved}`` is empty or the count.
 SKILL_CATALOG = """\
-You have {count} — procedures the operator keeps for tasks like these. When a task might \
-match one, find it with `platform_search` (sources `skills`), then call `skills_open` with \
-its name and follow what it returns before working.{pinned}"""
+Skills are procedures for kinds of work. Before starting a task one covers, call \
+`skills_open` with its name and follow what it returns.{listed}{saved}"""
+
+SKILL_PLATFORM = "\n\nBuilt in:\n{entries}"
+
+# ``{count}`` is "N saved skills"; ``{pinned}`` is empty or a "Pinned:" list.
+SKILL_SAVED = """
+
+You also have {count}, kept by the operator or declared by this project. When a task \
+might match one, find it with `platform_search` (sources `skills`).{pinned}"""
 
 SKILL_PINNED = "\n\nPinned:\n{entries}"
 

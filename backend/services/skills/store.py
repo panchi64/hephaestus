@@ -65,6 +65,9 @@ class SkillCatalogEntry:
     name: str
     description: str
     pinned: bool = False
+    #: ``platform``, ``project`` or ``plugin`` for skills read from those; else the
+    #: stored skill's own source.
+    source: str = "authored"
 
 
 @dataclass(frozen=True)
@@ -544,6 +547,7 @@ class SkillStore:
                     name=skill.name,
                     description=self._vault.decrypt_str(skill.description_enc),
                     pinned=skill.pinned,
+                    source=skill.source,
                 )
                 for skill in skills
             ]

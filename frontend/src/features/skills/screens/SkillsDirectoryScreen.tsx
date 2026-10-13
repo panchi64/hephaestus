@@ -23,6 +23,7 @@ import {
   skillStatusLabel,
   type SkillSummary,
 } from "../model";
+import { BuiltInSkillsSection } from "../components/BuiltInSkillsSection";
 import { NewSkillDialog } from "../components/NewSkillDialog";
 
 export function SkillsDirectoryScreen(props: {
@@ -251,6 +252,7 @@ export function SkillsDirectoryScreen(props: {
           props.onEdit(id);
         }}
       />
+      <BuiltInSkillsSection />
     </LibraryDirectory>
   );
 }

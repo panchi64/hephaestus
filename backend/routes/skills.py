@@ -10,6 +10,8 @@ Two things this surface is deliberate about:
 * **Publish is a distinct endpoint, not a field on the update body.** It is the boundary
   between "a document the operator is drafting" and "instructions the agent will follow", so
   it takes its own call rather than riding along with a title change.
+* **Platform skills are read-only.** They ship with the code; the operator can only switch
+  one off, or shadow it with a stored skill of the same name.
 * **Validation errors name their field.** ``SkillValidationError`` carries which part of the
   bundle is wrong; that reaches the client as a 422 whose detail the editor renders verbatim,
   because the backend decides what's valid and the frontend only shows it.
@@ -98,6 +100,16 @@ class SkillOut(CamelModel):
     files: list[SkillFileOut] = []
 
 
+class PlatformSkillOut(CamelModel):
+    name: str
+    description: str
+    body: str
+    enabled: bool
+    #: A published stored skill of the same name is opened instead.
+    shadowed: bool
+    files: list[str] = []
+
+
 class SkillImportOut(CamelModel):
     """An import's result: the (draft) skill, plus what the operator should know about it."""
 
@@ -151,6 +163,34 @@ def _invalid(exc: SkillValidationError) -> HTTPException:
 async def list_skills(request: Request, published_only: bool = False) -> list[SkillSummaryOut]:
     views = await deps.skills(request).list_skills(OPERATOR_ID, published_only=published_only)
     return [_summary_out(view) for view in views]
+
+
+@router.get("/platform", response_model=list[PlatformSkillOut])
+async def list_platform_skills(request: Request) -> list[PlatformSkillOut]:
+    platform = deps.platform_skills(request)
+    disabled = await platform.disabled(OPERATOR_ID)
+    stored = {entry.name for entry in await deps.skills(request).catalog(OPERATOR_ID)}
+    return [
+        PlatformSkillOut(
+            name=entry.skill.name,
+            description=entry.skill.description,
+            body=entry.skill.body,
+            enabled=entry.skill.name not in disabled,
+            shadowed=entry.skill.name in stored,
+            files=[relpath for relpath, _ in entry.files],
+        )
+        for entry in platform.all()
+    ]
+
+
+@router.post("/platform/{name}/enable", status_code=204)
+async def enable_platform_skill(name: str, request: Request) -> None:
+    await deps.platform_skills(request).set_enabled(OPERATOR_ID, name, True)
+
+
+@router.post("/platform/{name}/disable", status_code=204)
+async def disable_platform_skill(name: str, request: Request) -> None:
+    await deps.platform_skills(request).set_enabled(OPERATOR_ID, name, False)
 
 
 @router.post("", response_model=SkillOut, status_code=201)

@@ -1,6 +1,12 @@
 import { createResource, createSignal, type Resource } from "solid-js";
 import { api, downloadContent, isApiError } from "~/lib/api";
-import type { Skill, SkillFile, SkillSource, SkillSummary } from "./model";
+import type {
+  BuiltInSkill,
+  Skill,
+  SkillFile,
+  SkillSource,
+  SkillSummary,
+} from "./model";
 
 /* ── Backend DTOs → seam types ────────────────────────────────────────────── */
 
@@ -316,6 +322,55 @@ export async function downloadSkillFile(
     filePath(id, relpath),
     relpath.split("/").pop() ?? relpath,
   );
+}
+
+/* ── Built in (platform skills) ───────────────────────────────────────────── */
+
+export interface PlatformSkillOut {
+  name: string;
+  description: string;
+  body: string;
+  enabled: boolean;
+  shadowed: boolean;
+  files: string[];
+}
+
+export function toBuiltIn(dto: PlatformSkillOut): BuiltInSkill {
+  return {
+    name: dto.name,
+    description: dto.description,
+    body: dto.body,
+    enabled: dto.enabled,
+    shadowed: dto.shadowed,
+    files: dto.files,
+  };
+}
+
+const [builtInTick, setBuiltInTick] = createSignal(0);
+
+async function fetchBuiltIns(): Promise<BuiltInSkill[]> {
+  const rows = await api.get<PlatformSkillOut[]>("/skills/platform");
+  return rows.map(toBuiltIn);
+}
+
+export function useBuiltInSkills(): Resource<BuiltInSkill[]> {
+  const [data] = createResource(builtInTick, fetchBuiltIns);
+  return data;
+}
+
+/** Invalidate the built-in list after a mutation. */
+export function refreshBuiltInSkills(): void {
+  setBuiltInTick((n) => n + 1);
+}
+
+export async function setBuiltInSkillEnabled(
+  name: string,
+  enabled: boolean,
+): Promise<void> {
+  await api.post(
+    `/skills/platform/${encodeURIComponent(name)}/${enabled ? "enable" : "disable"}`,
+  );
+  refreshBuiltInSkills();
 }
 
 /* ── Errors ───────────────────────────────────────────────────────────────── */

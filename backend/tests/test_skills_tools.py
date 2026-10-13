@@ -192,8 +192,9 @@ async def test_open_survives_a_sandbox_failure():
 
 
 async def test_tools_degrade_when_the_capability_is_absent():
+    with pytest.raises(ModelRetry):
+        await _tool("open")(_ctx(_deps()), "anything")
     for name, args in [
-        ("open", ("anything",)),
         ("create", ("a-skill", "desc", "body")),
         ("edit", ("a-skill", "old", "new", "why")),
     ]:
@@ -333,7 +334,7 @@ async def test_catalog_reaches_the_block_with_published_skills_only():
     await _published(store)
     entries = await store.catalog(OWNER)
     assert [entry.name for entry in entries] == ["release-notes"]
-    assert "1 saved skill " in _skill_catalog_block(entries)
+    assert "1 saved skill," in _skill_catalog_block(entries)
 
 
 async def test_a_pinned_skill_is_named_in_the_block():

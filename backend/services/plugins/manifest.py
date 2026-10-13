@@ -18,8 +18,9 @@ tools:
       required: [city]
 ```
 
-Beside it, ``agents/<name>.md`` files contribute agents and ``skills/<name>/SKILL.md``
-bundles contribute skills, available while the plugin is published.
+Beside it, ``agents/<name>.md`` files contribute agents, ``skills/<name>/SKILL.md``
+bundles contribute skills, and ``routines/<name>.md`` files routine templates, available
+while the plugin is published.
 
 A secret's value never reaches the plugin: its environment variable holds a placeholder
 that the egress gateway swaps for the value, in requests to the secret's own host only.

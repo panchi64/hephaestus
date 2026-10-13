@@ -57,6 +57,7 @@ from services.searxng import ManagedSearxng
 from services.secret_vault import SecretVaultService
 from services.settings_store import SettingsStore
 from services.skills import SkillStore
+from services.skills.platform import PlatformSkills
 from services.task_list import ConversationTasks
 from services.tool_policy import CategoryAvailability, effective_disabled_tools
 from services.uploads import UploadStore
@@ -201,6 +202,10 @@ def egress(request: Request) -> EgressPolicy:
 
 def skills(request: Request) -> SkillStore:
     return request.app.state.skills
+
+
+def platform_skills(request: Request) -> PlatformSkills:
+    return request.app.state.platform_skills
 
 
 def agents(request: Request) -> AgentCatalog:

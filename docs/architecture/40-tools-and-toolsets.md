@@ -121,7 +121,7 @@ Naming is `category_tool` (the `.prefixed(name)` step), so `recall` is offered a
 
 ### Progressive disclosure — how a large library stays three tools
 
-D3 fixed the catalog as lean and unfiltered: no runtime relevance step decides which tools a turn sees. `skills` is where that constraint met its hardest case — a library of a hundred procedures — and the answer is the Agent Skills standard's own: **the catalog carries tools, not content.** The turn's instructions say how many skills are published and name only the few the operator pinned; the model finds the rest with `platform_search`, calls `skills_open` for the full text of the one it needs, and that call also stages the skill's bundled files into the sandbox so its scripts and references are reachable through `code_execute`. A thousand skills is still three tools and one fixed line. See D32 and D118.
+D3 fixed the catalog as lean and unfiltered: no runtime relevance step decides which tools a turn sees. `skills` is where that constraint met its hardest case — a library of a hundred procedures — and the answer is the Agent Skills standard's own: **the catalog carries tools, not content.** The turn's instructions list the handful of platform skills that ship with the app, say how many other skills there are (stored, the project's, plugins'), and name only the few the operator pinned; the model finds the rest with `platform_search`, calls `skills_open` for the full text of the one it needs, and that call also stages the skill's bundled files into the sandbox so its scripts and references are reachable through `code_execute`. A thousand skills is still three tools and one fixed line. See D32, D118 and D124.
 
 ---
 

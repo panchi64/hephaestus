@@ -34,7 +34,7 @@ I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loo
 - **Knowledge Base.** Point it at folders of your own documents and retrieve from them by meaning; sources, index stats, reindex and rebuild are all yours to drive.
 - **Uploads.** Files as context, through a sealed file store with off-request text extraction, corpus-indexed.
 - **Compare.** One prompt fanned to two models side by side — each pane a real, resumable conversation rather than a preview.
-- **Skills.** Reusable know-how the agent accumulates and applies to later tasks.
+- **Skills.** Know-how the agent opens when a task calls for it: built-in skills that ship with the app (research, delegation, building agents and plugins), a project's own `.claude/skills`, and skills you or the agent save.
 
 **Reach.**
 
