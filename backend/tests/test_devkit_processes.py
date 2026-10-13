@@ -19,6 +19,8 @@ import pytest
 from devkit import processes
 from devkit.processes import Supervisor
 
+from ._helpers import group_running
+
 
 @pytest.fixture
 def sleeper(tmp_path):
@@ -117,7 +119,7 @@ def test_stop_recorded_kills_the_whole_group_and_clears_the_file(tmp_path):
 
     assert processes.stop_recorded(tmp_path) == ["backend"]
     assert not (tmp_path / processes.PIDFILE).exists()
-    assert not processes._group_alive(group)
+    assert not group_running(group)
 
 
 def test_stopping_an_instance_that_was_never_started_is_not_an_error(tmp_path):

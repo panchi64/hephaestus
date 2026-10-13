@@ -134,6 +134,8 @@ def test_the_spawn_environment_keeps_the_pins_and_still_drops_the_keys(monkeypat
     this process spawns on the host, so there is no base for a caller to supply and no way
     to get one control without the other.
     """
+    for name in [key for key in os.environ if key.startswith("GIT_CONFIG_")]:
+        monkeypatch.delenv(name)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
     env = filtered_env()
     assert env["GIT_CONFIG_KEY_0"] == "core.fsmonitor"

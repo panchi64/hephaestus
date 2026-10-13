@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from core.db import init_db, make_engine
@@ -171,17 +173,19 @@ async def test_materialise_creates_the_directory_when_it_is_missing(tmp_path):
 
 async def test_a_second_write_replaces_the_file_rather_than_rewriting_it(tmp_path):
     # Atomicity is the point: a reader mid-request sees the old list or the new one, never
-    # a truncated file. `os.replace` shows up as a *new inode* under the same name, and the
-    # mtime moves with it.
+    # a truncated file. A reader holding the old file keeps reading the old list whole.
+    # Holding it open also keeps its inode from being reused by a later write.
     policy = _policy(tmp_path)
     await policy.materialise(CONV)
     path = policy.allow_dir(CONV) / ALLOW_FILE
-    before = path.stat()
+    with path.open(encoding="utf-8") as reader:
+        before = os.fstat(reader.fileno())
 
-    await policy.allow(CONV, ["example.com"])
-    await policy.materialise(CONV)
-    after = path.stat()
+        await policy.allow(CONV, ["example.com"])
+        await policy.materialise(CONV)
+        after = path.stat()
 
+        assert "example.com" not in reader.read().split()
     assert "example.com" in _allow_text(policy, CONV).split()
     assert after.st_ino != before.st_ino
     assert after.st_mtime_ns != before.st_mtime_ns

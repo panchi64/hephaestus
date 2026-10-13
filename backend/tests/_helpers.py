@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -243,3 +244,23 @@ async def collect_sse_events(client, run_id, *, last_event_id=None):
             if line.startswith("data:"):
                 events.append(json.loads(line[len("data:") :].strip()))
     return events
+
+
+def group_running(pgid: int) -> bool:
+    """Whether a process group has a member that is not a zombie. A container whose init
+    does not reap orphans leaves a killed child as a zombie, which still answers signal 0."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return True
+    for stat in proc.glob("[0-9]*/stat"):
+        try:
+            state, _ppid, group = stat.read_text().rsplit(")", 1)[1].split()[:3]
+        except OSError, IndexError, ValueError:
+            continue
+        if int(group) == pgid and state != "Z":
+            return True
+    return False

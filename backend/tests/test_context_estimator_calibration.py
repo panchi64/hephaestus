@@ -36,7 +36,12 @@ tiktoken = pytest.importorskip("tiktoken", reason="calibration needs a real toke
 
 @pytest.fixture(scope="module")
 def encoder():
-    return tiktoken.get_encoding("cl100k_base")
+    # The encoding is downloaded on first use; without network access there is nothing to
+    # calibrate against.
+    try:
+        return tiktoken.get_encoding("cl100k_base")
+    except OSError as exc:
+        pytest.skip(f"cl100k could not be fetched: {exc}")
 
 
 # ── Representative content ───────────────────────────────────────────────────────

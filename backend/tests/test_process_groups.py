@@ -18,6 +18,8 @@ import pytest
 
 from services.sandbox import process
 
+from ._helpers import group_running
+
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
 
 
@@ -115,9 +117,7 @@ async def test_a_backgrounded_child_outliving_its_shell_is_still_stopped():
         await process.stop_all_groups(grace_s=2.0)
 
         for _ in range(100):
-            try:
-                os.killpg(pgid, 0)
-            except ProcessLookupError:
+            if not group_running(pgid):
                 break
             await asyncio.sleep(0.05)
         else:
