@@ -5,7 +5,7 @@
 owns the ``/rag`` surface reads (source list, stats, folder lifecycle). The existing
 rich stores (memory, conversations) enroll as wrapper adapters untouched; chunked
 content (folders now, more later) lands in the generic ``corpus_chunk`` store via
-:class:`CorpusChunkStore`. See ``services/CLAUDE.md``.
+:class:`CorpusChunkStore`.
 """
 
 from __future__ import annotations

@@ -9,12 +9,11 @@ picker, a card, a layout, a flow — those are either seen in the running produc
 on trust, and the only other running instance holds someone's real conversations and
 credentials.
 
-> **This file is the source of truth for the agent-facing copies.** `.claude/` and
-> `CLAUDE.md` are both gitignored on purpose, so neither travels to a new clone or a new
-> git worktree. `dev_instance.py up` materializes them from this file on every run — see
-> `backend/devkit/surfaces.py`. Edit the recipe here, not in the generated copies.
-
-<!-- claude-md:begin -->
+> **This file is the source of truth for the agent-facing copies.** `.claude/` is
+> gitignored on purpose, so it doesn't travel to a new clone or a new git worktree.
+> `dev_instance.py up` materializes the launch config and the project skill from this file
+> on every run (`backend/devkit/surfaces.py`). Edit the recipe here, not in the generated
+> copies.
 
 ## Running the app to see a change
 
@@ -32,9 +31,6 @@ browser pane. Ports differ per worktree — read them from
 
 This instance is **not** the operator's: separate data directory, separate ports,
 a separate VM, a stub model. Nothing in it is real, and breaking it costs nothing.
-Full recipe in `docs/dev-instance.md`.
-
-<!-- claude-md:end -->
 
 ## Getting it running
 

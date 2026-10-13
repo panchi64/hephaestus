@@ -2,8 +2,7 @@
  * Consume the app-lifetime notification Server-Sent Events stream
  * (`GET /notifications/stream`).
  *
- * A sibling to `./runStream.ts`, not a shared implementation — see that file's
- * CLAUDE.md note. It copies the proven transport shape (fetch + body reader for
+ * A sibling to `./runStream.ts`, not a shared implementation. It copies the proven transport shape (fetch + body reader for
  * a bearer header and `Last-Event-ID`, exponential backoff, a read-timeout
  * watchdog tolerant of the backend's keepalive comment) but deliberately
  * diverges in one way: this stream has **no give-up budget**. It is subscribed
@@ -15,8 +14,7 @@
  * plausible rather than waiting out the last scheduled delay.
  *
  * `runStream.ts` has no tests to extract against safely, so this is a
- * conservative copy rather than a shared-helper refactor — see frontend
- * CLAUDE.md / stream CLAUDE.md for the followup note if that changes.
+ * conservative copy rather than a shared-helper refactor.
  */
 import { API_BASE } from "~/lib/config";
 import { getToken } from "~/lib/api/token";

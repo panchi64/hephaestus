@@ -1,27 +1,14 @@
 """Writing the files a future session will actually read.
 
-Both surfaces a fresh Claude Code session reads — ``.claude/`` and ``CLAUDE.md`` — are
-gitignored, on purpose. That has a consequence worth stating plainly, because it is the
-whole reason this module exists: **writing them by hand solves this session and nothing
-after it.** A new clone does not have them. A new git worktree does not have them, and
-this project is developed in several worktrees at once, so a fresh worktree is the
-ordinary case rather than the rare one.
-
-So ``docs/dev-instance.md`` is committed and is the source of truth, and these are
-materialized from it on every ``up``. A fresh checkout gets them the first time anyone
-starts an instance, and they are rewritten afterwards — which matters more than it sounds,
-since they carry this instance's ports and a stale copy would aim a session at another
-worktree's instance.
-
-Writes are confined to the files named here, and the ``CLAUDE.md`` one is a delimited
-block replaced in place: the operator's own notes live in that file too, and a generator
-that rewrote it wholesale would be a generator nobody could leave switched on.
+``.claude/`` is gitignored, so a hand-written launch config or skill dies with its clone
+or worktree. ``docs/dev-instance.md`` is committed and is the source of truth; these are
+materialized from it on every ``up`` and rewritten each time, since they carry this
+instance's ports and a stale copy would aim a session at another worktree's instance.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from devkit import repo
@@ -29,11 +16,6 @@ from devkit.instance import DevInstance
 
 #: The committed recipe these are generated from.
 SOURCE = repo.ROOT / "docs" / "dev-instance.md"
-
-#: The stanza inside it that belongs in CLAUDE.md, and the markers that delimit the block
-#: in CLAUDE.md itself. The same names, because they mark the same passage at both ends.
-_BEGIN = "<!-- claude-md:begin -->"
-_END = "<!-- claude-md:end -->"
 
 #: What the skill is called, and so what a session finds when it looks for a way to run
 #: the app. The built-in `run` skill checks for a project skill covering app launch first.
@@ -86,27 +68,14 @@ def _recipe() -> str:
         )
 
 
-def claude_md_stanza(text: str) -> str:
-    """The passage between the markers — the short version, for the always-loaded file."""
-    start, end = text.find(_BEGIN), text.find(_END)
-    if start == -1 or end == -1 or end < start:
-        return ""
-    return text[start + len(_BEGIN) : end].strip()
-
-
-def launch_config(instance: DevInstance, config_name: str) -> dict[str, object]:
+def launch_entry(instance: DevInstance, config_name: str) -> dict[str, object]:
     """The Claude Code launch configuration that opens this instance in the browser pane.
 
     It carries no command: ``up`` owns starting the services, and a second launcher racing
     it would fight over ports. An entry with only a ``url`` attaches to what is already
     running, which is the relationship wanted here.
     """
-    return {
-        "version": "0.0.1",
-        "configurations": [
-            {"name": config_name, "url": instance.frontend_url, "port": instance.frontend_port}
-        ],
-    }
+    return {"name": config_name, "url": instance.frontend_url, "port": instance.frontend_port}
 
 
 def write_launch_json(instance: DevInstance, config_name: str, root: Path) -> Path:
@@ -114,8 +83,7 @@ def write_launch_json(instance: DevInstance, config_name: str, root: Path) -> Pa
     root.mkdir(parents=True, exist_ok=True)
     path = root / "launch.json"
 
-    ours = launch_config(instance, config_name)
-    configurations = list(ours["configurations"])  # type: ignore[arg-type]
+    configurations: list[object] = [launch_entry(instance, config_name)]
     if path.is_file():
         try:
             existing = json.loads(path.read_text())
@@ -144,28 +112,6 @@ def write_skill(instance: DevInstance, config_name: str, root: Path) -> Path:
     return path
 
 
-def write_claude_md(instance: DevInstance, config_name: str, path: Path) -> Path:
-    """Insert or replace the pointer block in ``CLAUDE.md``, leaving the rest untouched.
-
-    The short stanza rather than the recipe: this file is loaded into every session
-    whether or not the instance is wanted, so it earns only enough words to say the thing
-    exists, what it is for, and which command to run.
-    """
-    stanza = _substitute(claude_md_stanza(_recipe()), instance, config_name)
-    if not stanza:
-        return path
-    block = f"{_BEGIN}\n\n{stanza}\n\n{_END}"
-
-    existing = path.read_text() if path.is_file() else ""
-    pattern = re.compile(re.escape(_BEGIN) + ".*?" + re.escape(_END), re.DOTALL)
-    if pattern.search(existing):
-        updated = pattern.sub(lambda _: block, existing, count=1)
-    else:
-        updated = f"{existing.rstrip()}\n\n{block}\n" if existing.strip() else f"{block}\n"
-    path.write_text(updated)
-    return path
-
-
 def write_all(instance: DevInstance, root: Path | None = None) -> list[Path]:
     """Materialize every generated surface. Returns what was written, for reporting."""
     from devkit.launch import LAUNCH_CONFIG
@@ -174,5 +120,4 @@ def write_all(instance: DevInstance, root: Path | None = None) -> list[Path]:
     return [
         write_launch_json(instance, LAUNCH_CONFIG, claude_dir),
         write_skill(instance, LAUNCH_CONFIG, claude_dir),
-        write_claude_md(instance, LAUNCH_CONFIG, claude_dir.parent / "CLAUDE.md"),
     ]

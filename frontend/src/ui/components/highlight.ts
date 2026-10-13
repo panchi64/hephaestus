@@ -7,7 +7,7 @@
  *  strings that resolve the app's own tokens (`theme/tokens.css`), so highlighted
  *  code re-colors with the live Phosphor/Paper toggle exactly like everything
  *  else — and stays monochrome (base/dim/bright), since accent colors are
- *  reserved for diffs (`src/ui/CLAUDE.md`), not decorative token coloring.
+ *  reserved for diffs, not decorative token coloring.
  *
  *  `highlightToHtml` never throws: any failure (unknown language, a grammar that
  *  fails to load) resolves `null` so callers just keep their plain, unhighlighted

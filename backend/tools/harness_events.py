@@ -5,7 +5,7 @@ Several `pydantic_ai_harness` capabilities — `planning`, `filesystem`, `subage
 functions. This codebase registers those toolsets **directly** rather than registering the
 capabilities that own them, deliberately: a capability contributes its tools itself, which
 would put them outside the namespaced, operator-toggleable catalog whose whole promise is
-that the settings list and the agent's real stack cannot diverge (`tools/CLAUDE.md`).
+that the settings list and the agent's real stack cannot diverge.
 
 Pydantic AI now refuses a `CapabilityEvent` it cannot attribute to a registered capability,
 which turned that choice into a crash: the harness emits, the library cannot name an owner,

@@ -3,7 +3,7 @@
 One facade (:class:`~services.mail.service.MailService`) over a pluggable provider seam
 (:class:`~services.mail.transport.MailTransport`), with the AI parts — triage (`EMAIL-2`)
 and the writing-style profile (`EMAIL-3`) — layered on top of the cache rather than the
-network. See ``services/mail/CLAUDE.md``.
+network.
 """
 
 from __future__ import annotations

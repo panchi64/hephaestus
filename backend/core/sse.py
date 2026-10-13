@@ -37,8 +37,7 @@ KEEPALIVE_INTERVAL_S = 15.0
 # The relay queue between the pump and the response is bounded so a client that stops
 # draining (a backgrounded tab) can't make it buffer the whole stream. When it fills, the
 # pump blocks on ``put`` and stops draining the subscription, which the source then drops
-# the same way it drops any wedged consumer — keeping the "never grow unbounded"
-# invariant from ``runs/CLAUDE.md``.
+# the same way it drops any wedged consumer, so no buffer grows unbounded.
 RELAY_QUEUE_MAX = 256
 
 

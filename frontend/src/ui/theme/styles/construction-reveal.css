@@ -8,7 +8,7 @@
    the frame that has just been described. Closing runs the same gesture in
    reverse, so the panel is taken apart rather than switched off.
 
-   WHY THIS IS NOT A `Reveal` PRESET. The rule in ui/CLAUDE.md is "add a preset,
+   WHY THIS IS NOT A `Reveal` PRESET. The design-system rule is "add a preset,
    never a third keyframe", and it governs the `heph-reveal-*` family — anything
    whose whole vocabulary is `--reveal-y` / `--reveal-ms` / `--reveal-blur` over
    the two shared keyframes. This shares none of them: it animates position and

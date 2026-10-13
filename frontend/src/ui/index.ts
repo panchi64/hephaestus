@@ -2,7 +2,7 @@
  * Public surface of the design system. Everything outside `src/ui` imports
  * components and types from here (`~/ui`), never from deep paths.
  *
- * Rules (see src/ui/CLAUDE.md):
+ * Rules:
  *  - tokens.css is the single source of truth for colors/spacing/type.
  *  - Cosmetic differences are variant props, never forked components.
  *  - No eased/decorative spinners — use LoadingText / EmptyState. (The one live

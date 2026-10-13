@@ -6,9 +6,9 @@ instance and use it correctly. Nothing in the app breaks if these files stop bei
 written — the next session simply does not know the instance exists, discovers nothing,
 and takes its visual claims on trust again.
 
-The gitignore is what makes it fragile. ``.claude/`` and ``CLAUDE.md`` are both ignored on
-purpose, so a hand-written copy dies with its worktree. These generate from the committed
-recipe on every ``up``, and this is what keeps that true.
+The gitignore is what makes it fragile. ``.claude/`` is ignored on purpose, so a
+hand-written copy dies with its worktree. These generate from the committed recipe on every
+``up``, and this is what keeps that true.
 """
 
 from __future__ import annotations
@@ -28,15 +28,13 @@ def instance(tmp_path):
     return DevInstance(name="a-worktree", slot=3, root=tmp_path / "state", password="pw")
 
 
-def test_the_recipe_is_committed_and_holds_the_stanza():
+def test_the_recipe_is_committed():
     # The whole design rests on this file existing in git: it is the only copy that
     # survives a fresh clone, and everything a session reads is generated from it.
     assert surfaces.SOURCE.is_file()
     text = surfaces.SOURCE.read_text()
-    stanza = surfaces.claude_md_stanza(text)
-    assert stanza, "the CLAUDE.md markers are missing from docs/dev-instance.md"
-    assert "dev_instance.py up" in stanza
-    assert "status --json" in stanza, "the stanza must say not to assume the ports"
+    assert "dev_instance.py up" in text
+    assert "status --json" in text, "the recipe must say not to assume the ports"
 
 
 def test_the_launch_config_points_at_this_instances_frontend(instance, tmp_path):
@@ -90,55 +88,15 @@ def test_the_skill_names_this_instances_own_port(instance, tmp_path):
     assert "{{" not in body, "an unsubstituted placeholder reached the generated file"
 
 
-def test_the_claude_md_block_is_inserted_once_and_then_replaced_in_place(instance, tmp_path):
-    path = tmp_path / "CLAUDE.md"
-    path.write_text("# Notes\n\nSomething the operator wrote.\n")
-
-    surfaces.write_claude_md(instance, CONFIG, path)
-    first = path.read_text()
-    assert "Something the operator wrote." in first
-    assert first.count(surfaces._BEGIN) == 1
-
-    surfaces.write_claude_md(instance, CONFIG, path)
-    assert path.read_text() == first, "a second run must be a no-op, not an append"
-
-
-def test_the_block_updates_when_the_instance_moves(instance, tmp_path):
-    # The reason it is rewritten every run rather than only created: ports move between
-    # worktrees, and a stale block would aim a session at the wrong instance.
-    path = tmp_path / "CLAUDE.md"
-    surfaces.write_claude_md(instance, CONFIG, path)
-    surfaces.write_claude_md(
-        DevInstance(name="other", slot=7, root=tmp_path, password="pw"), CONFIG, path
-    )
-    assert path.read_text().count(surfaces._BEGIN) == 1
-    assert "a-worktree" not in path.read_text()
-
-
-def test_the_operators_notes_survive_around_the_block(instance, tmp_path):
-    path = tmp_path / "CLAUDE.md"
-    path.write_text(f"# Before\n\n{surfaces._BEGIN}\nstale\n{surfaces._END}\n\n# After\n")
-    surfaces.write_claude_md(instance, CONFIG, path)
-    text = path.read_text()
-    assert text.startswith("# Before")
-    assert text.rstrip().endswith("# After")
-    assert "stale" not in text
-
-
 def test_a_missing_recipe_degrades_to_a_pointer(instance, tmp_path, monkeypatch):
     # `up` must not refuse to start an instance because a document was renamed, and a
     # session told where to look beats one told nothing.
     monkeypatch.setattr(surfaces, "SOURCE", tmp_path / "gone.md")
     body = surfaces.write_skill(instance, CONFIG, tmp_path / ".claude").read_text()
     assert "status --json" in body
-    # With no recipe there is no stanza, so CLAUDE.md is left alone rather than emptied.
-    claude = tmp_path / "CLAUDE.md"
-    claude.write_text("# Notes\n")
-    surfaces.write_claude_md(instance, CONFIG, claude)
-    assert claude.read_text() == "# Notes\n"
 
 
 def test_write_all_produces_every_surface(instance, tmp_path):
     written = surfaces.write_all(instance, tmp_path / ".claude")
-    assert {path.name for path in written} == {"launch.json", "SKILL.md", "CLAUDE.md"}
+    assert {path.name for path in written} == {"launch.json", "SKILL.md"}
     assert all(path.is_file() for path in written)

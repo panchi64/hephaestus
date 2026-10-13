@@ -28,19 +28,22 @@ import asyncio
 import contextlib
 import weakref
 from collections.abc import AsyncIterator, Awaitable
+from enum import Enum
 from typing import Final
 
 
-class _Stopped:
-    """The type of :data:`STOPPED` — what a shutdown-aware wait returns instead of a value."""
+class _Stopped(Enum):
+    """The type of :data:`STOPPED` — what a shutdown-aware wait returns instead of a value.
 
-    __slots__ = ()
+    An enum member rather than a plain instance so ``x is STOPPED`` narrows for the checker."""
+
+    STOPPED = "STOPPED"
 
     def __repr__(self) -> str:
         return "STOPPED"
 
 
-STOPPED: Final = _Stopped()
+STOPPED: Final = _Stopped.STOPPED
 
 _flag = False
 # One event per loop that has ever waited. Weak keys, so a finished test loop is not kept.
@@ -132,7 +135,7 @@ async def ends_on_shutdown[T](source: AsyncIterator[T]) -> AsyncIterator[T]:
                 return
             if item is STOPPED:
                 return
-            yield item  # type: ignore[misc]
+            yield item
     finally:
         aclose = getattr(source, "aclose", None)
         if aclose is not None:

@@ -3,7 +3,7 @@
 Several `pydantic_ai_harness` capabilities emit `CapabilityEvent`s from inside their tool
 functions, and this codebase registers those toolsets *directly* rather than registering the
 capabilities that own them — so the tools stay inside the namespaced, operator-toggleable
-catalog (`tools/CLAUDE.md`). Pydantic AI refuses a capability event it cannot attribute to a
+catalog. Pydantic AI refuses a capability event it cannot attribute to a
 registered capability, which makes that choice load-bearing in a way nothing announces: get
 it wrong and the failure is not a boot error but a `UserError` mid-turn, on the first
 mutation, in whichever category was lifted.
@@ -29,7 +29,7 @@ async def test_a_turn_that_mutates_the_task_list_does_not_die_attributing_its_ev
     namespaced name restated on the way into the harness; drop either and this turn ends in
     a `UserError` rather than an answer."""
     from agent import stream_agent_run
-    from runs import Run, RunStream
+    from runs import Run, RunStream, ToolStarted
     from tools import RunDeps
 
     agent = build_agent(TestModel(custom_output_text="ok"), categories=core_categories())
@@ -37,7 +37,7 @@ async def test_a_turn_that_mutates_the_task_list_does_not_die_attributing_its_ev
     async with agent.iter("go", deps=RunDeps(run=run, owner_id="operator")) as agent_run:
         await stream_agent_run(agent_run, run)
 
-    started = [e.body.name for e in run.stream.replay() if e.body.type == "tool.started"]
+    started = [e.body.name for e in run.stream.replay() if isinstance(e.body, ToolStarted)]
     assert any(name.startswith("tasks_") for name in started), (
         "no task tool ran, so this turn never exercised the emit path it exists to cover"
     )

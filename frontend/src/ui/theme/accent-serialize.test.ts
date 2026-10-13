@@ -8,7 +8,7 @@ import { serializeOverrides } from "./accent-overrides";
  * must refuse to emit.
  *
  * The rest of the store touches `document` and `localStorage`, so it is not
- * unit-tested — per `frontend/CLAUDE.md`, only pure logic lives in `bun test`.
+ * unit-tested: only pure logic lives in `bun test`.
  */
 
 describe("serializeOverrides", () => {

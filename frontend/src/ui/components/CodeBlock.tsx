@@ -87,10 +87,8 @@ export function CodeBlock(props: CodeBlockProps): JSX.Element {
                         "w-full py-0 pr-3 align-top text-text",
                         cellWrap(),
                       )}
-                      // Shiki-escaped token spans over our own line text — never
-                      // the operator's raw markup (`ui/CLAUDE.md`'s innerHTML
-                      // rule targets untrusted markup, not our own highlighter
-                      // output over already-escaped code).
+                      // Shiki-escaped token spans over our own line text, never
+                      // the operator's raw markup.
                       innerHTML={html()}
                     />
                   )}

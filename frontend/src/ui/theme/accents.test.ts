@@ -8,8 +8,8 @@ import { ACCENT_DEFAULTS, ACCENT_TOKENS, isAccentToken } from "./accents";
  * holds the override. Duplication is the price; this file is what makes it safe.
  *
  * It parses tokens.css rather than importing it, since a stylesheet has no
- * runtime export. That keeps the test pure (one file read, no DOM), which is the
- * bar `frontend/CLAUDE.md` sets for what may live in `bun test`.
+ * runtime export. That keeps the test pure (one file read, no DOM), which is
+ * what `bun test` requires.
  */
 
 const CSS = await Bun.file(

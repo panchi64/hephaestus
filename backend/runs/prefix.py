@@ -186,7 +186,7 @@ class PrefixLedger:
     first turn after a restart onward. A migration to carry a diagnostic's fingerprint across
     a process boundary would buy one extra reading per restart at the price of a schema
     change and a stored blob nothing else reads. The per-run event replay buffer is already
-    in-memory for the same single-host reason (``runs/CLAUDE.md``).
+    in-memory for the same single-host reason.
 
     Registered as an agent capability handle so the code that measures a request resolves it
     from the run's bag like everything else, and degrades to within-turn comparison when it
