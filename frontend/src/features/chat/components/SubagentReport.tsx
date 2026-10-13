@@ -1,5 +1,5 @@
 import { type JSX } from "solid-js";
-import { Stack, Text } from "~/ui";
+import { Markdown, Stack, Text } from "~/ui";
 import type { ChatMessage } from "../model";
 
 /**
@@ -36,9 +36,7 @@ export function SubagentReport(props: { message: ChatMessage }): JSX.Element {
         </Text>
         <span class="h-px flex-1 bg-line" aria-hidden="true" />
       </div>
-      <Text variant="body" tone="default" class="whitespace-pre-wrap">
-        {props.message.content}
-      </Text>
+      <Markdown>{props.message.content}</Markdown>
     </Stack>
   );
 }
