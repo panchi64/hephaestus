@@ -1,185 +1,168 @@
 # Hephaestus
-───────────────────────────────────────────────
-
- ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Hephaestus (formerly Odysseus)
-
-───────────────────────────────────────────────
-
-A self-hosted agent platform that runs on your own hardware against your own data: a legion of language models that carry out your bidding, so you can build and ship things far larger than one person could alone. Local-first, encrypted at rest, built for personal use (1 user).
-
-![Hephaestus — the home overview: the launchpad composer, recent threads, in-flight runs, and live per-capability status along the bottom. Thread titles and previews are blurred; this is a live workspace.](md-assets/hephaestus-screenshot.png)
-
-I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loop is done and so is most of the workspace around it: chat with sub-agents, a knowledge base, email, calendar, routines, projects the agent works in directly, memory, MCP, a secrets vault, and encrypted backup all run today. What's left is a short list, and it's at the bottom.
-
-## The idea
-
-**Pydantic AI is the engine; the code I wrote around it is the chassis.** All agentic reasoning — the model call, tool selection, typed-arg validation, the within-turn tool→observe→continue loop, retries, fallback, output validation, history processing — runs *through* Pydantic AI. Everything that turns one model run into a durable, observable, resumable product — run lifecycle, the event stream, disconnect-survival and resume, cancellation, timeouts, persistence, access policy, the verifier/loop-break meta-loop — is what I built. Like I said up top, Hephaestus assumes one powerful local host, a single operator, and models capable of native tool calling.
-
-## What runs today
-
-**The core loop.**
-
-- **Chat.** Every message runs the full agent path rather than a pre-classified route: the model sees the whole permitted tool catalog and decides what to call. Replies stream incrementally, survive a disconnect, and resume on reconnect. Conversations branch through regenerate, edit, and rewind.
-- **The agent engine.** A Pydantic AI `Agent` driven node by node, wrapped in a meta-loop — an always-on no-progress guard plus an opt-in post-turn verifier — with first-turn auto-titling.
-- **Sensitive-action approval.** A powerful tool call parks the run and asks before it executes; approving or denying resumes it. Approvals can be scoped to a conversation, and those grants are listable and revocable.
-- **The agent's task list.** The model keeps a visible plan for the turn, streamed as it mutates.
-- **Conversation compaction.** The one context reduction in the product, and it fires on measured pressure: when a thread reaches your share of the model's context window, earlier turns fold into a utility-model summary and the chat carries on. The transcript keeps everything — only the model's replay narrows.
-
-**Work surfaces.**
-
-- **Projects.** A project is a directory you work in, and the whole app scopes to it. A chat filed under a project works in that folder, on the branch you have checked out, one chat at a time. When the work should stay apart from yours, the agent moves the chat onto a git worktree on a branch named for the thread, which reaches your folder only through a merge you press. Deleting a thread with unmerged commits is refused unless you say to discard it.
-- **Sandboxed code, the View, and previews.** The agent runs code in a platform microVM, confined to its own conversation's workspace, that fails closed and never touches the host, and publishes output to the View — one versioned surface where each result is a snapshot you can star and return to, optionally fronted by a live reverse-proxied head.
-- **Agents.** Write your own agents — a standing brief, a model, the tools it may use and how far it may reach — and run any chat with one, or let agents delegate to them. The agent can draft new ones too, which stay inert until you publish them. A project's `.claude/agents/*.md` files join the catalog while you work in it.
-- **Research, through sub-agents.** Any chat can investigate a question by fanning out parallel researcher sub-agents that cite the page behind every claim. It stays a conversation, so you can push back halfway through.
-- **Knowledge Base.** Point it at folders of your own documents and retrieve from them by meaning; sources, index stats, reindex and rebuild are all yours to drive.
-- **Uploads.** Files as context, through a sealed file store with off-request text extraction, corpus-indexed.
-- **Compare.** One prompt fanned to two models side by side — each pane a real, resumable conversation rather than a preview.
-- **Skills.** Know-how the agent opens when a task calls for it: built-in skills that ship with the app (research, delegation, building agents and plugins), a project's own `.claude/skills`, and skills you or the agent save.
-
-**Reach.**
-
-- **Web search and fetch.** A managed SearXNG instance with no operator setup, plus a headless browser in the platform VM that renders a page to Markdown. SSRF-guarded on every request; untrusted content is marked as data before it reaches a prompt.
-- **Email.** Multiple accounts over IMAP/SMTP, Gmail, Microsoft Graph or JMAP, with OAuth where the provider wants it — plus AI triage (urgency, tagging, summaries) and reply drafts that match how you actually write.
-- **Calendar.** Local-first, with CalDAV sync, `.ics` import/export, recurrence, and natural-language entry — "lunch Friday 1pm" becomes a draft, with the model reading the phrase and the code doing the date arithmetic.
-- **Routines.** Scheduled and webhook-triggered work that runs on time, each run by the agent you pick in a thread of its own, within a pre-authorized scope. Schedules can be typed as a phrase ("every weekday at 9"), agents can draft routines for you to approve, and plugins can offer them as templates. An out-of-scope sensitive action still parks for approval exactly like an interactive run.
-- **Notifications.** A second, separately-versioned event stream for approvals, failures, completions and reminders — and the two worth interrupting you for (an approval request and a reminder) also go out by email through your own connected mailbox and by push to whatever notifier you already run.
-- **MCP.** Register external tool servers; their tools are sensitive by default until you trust them.
-- **Integrations.** Preset connectors to third-party HTTP services, with encrypted credentials.
-
-**Your controls.**
-
-- **Model registry.** Named roles (`main`, `utility`, `embedding`) map to ordered fallback chains; endpoints discover their served models at runtime; conversations can override the model; keys are encrypted at rest. Each endpoint is typed by a provider adapter — OpenAI-compatible, or native Anthropic/Google.
-- **Long-term memory.** Store, view, edit and delete entries, with hybrid semantic-plus-keyword recall that degrades to keyword-only when the vector store is unavailable.
-- **Tool catalog.** Every registered tool is listed and individually switchable.
-- **Offline mode.** Manual or auto-detected; web capabilities suspend themselves and say so.
-- **Vault.** A password manager layered on the at-rest encryption; agent access is approval-gated.
-- **API tokens.** Scoped tokens and inbound webhooks for programmatic access.
-- **Backup and restore.** Encrypted export under a separate backup secret, with merge-import that avoids duplicates.
-- **Health.** Per-capability status covering model, embeddings, sandbox and search, derived in the backend and rendered on the home page.
-- **Auth and at-rest encryption.** A global auth gate (cookie or bearer); all user data AES-256 encrypted under a password-derived, memory-only, lock-until-unlocked key.
-
-## What's left
-
-- **Routine depth** — chaining one routine into another, and event triggers beyond the inbound webhook.
-- **The health screen** — it's the one surface still on fixtures. It wants per-service latency, a baseline and a status history, and the backend measures none of those yet. Real capability health lives at `/overview` and the home page renders it.
-
-## Out of scope, on purpose
-
-Some things were built and then deliberately removed, because they were redundant, better done elsewhere, or not worth their maintenance:
-
-- **Local model serving and the "Cookbook."** Hephaestus no longer downloads, quantizes or serves models. It works off **endpoints** — you point it at LM Studio, vLLM, llama.cpp or a hosted provider, and the registry takes it from there. Serving models was a second product wearing this one's clothes.
-- **The document editor, the gallery, the in-browser code runner, and the operator's host shell.** The agent still writes files, runs code, and works a real terminal inside a project worktree; what went away was the standalone UI for each.
-
-## Architecture
-
-There are two halves, kept cleanly separate: the frontend renders and captures intent, and **all the logic lives in the backend.** See [`docs/architecture/`](docs/architecture/README.md) for the full design and [`docs/architecture/decisions.md`](docs/architecture/decisions.md) for every decision and its trade-offs.
 
 ```
-frontend/     SolidJS / SolidStart SPA · TypeScript · Tailwind v4 · Vite
-              Instrument design system (Ink / Paper) · typed model.ts/data.ts seam;
-              every surface wired to the real backend except the health screen
-
-backend/      Pydantic AI + FastAPI  (Python 3.14, uv-managed)
-  app.py        FastAPI assembly: middleware, auth gate, router registration, shared singletons
-  harness/      app-assembly substrate: feature manifests, discovery, start/stop lifecycle ordering
-  core/         foundation: config · db · crypto/vault (at-rest encryption) · auth · write-behind
-                worker · untrusted-content marking · SSRF guard · exceptions
-  models/       SQLModel entities + schema (owner seam · per-column encryption · branch tree)
-  runs/         Pillars I+II — the Run substrate + the frozen v1 event protocol
-  agent/        Pillar III — the engine: orchestrator · node→event translator · meta-loop ·
-                namer · compaction
-  prompts/      the prompt library, split by durability (system_prompt vs instructions)
-  tools/        Pillar III — the agent's tool catalog: namespacing + enable gate + thin adapters
-  services/     capabilities: llm/registry · providers · memory · conversations · sandbox ·
-                search · webfetch · corpus · projects · mail · calendar · skills · mcp ·
-                integrations · backup · scheduler · notifications · vault
-  routes/       thin FastAPI routers, one per surface (overview is the home aggregate)
-  migrations/   Alembic — schema auto-upgraded to head on startup
-  evals/        retrieval + end-to-end evaluation harness
-  tests/
-
-docs/architecture/  backend design — the engine/chassis split, the three pillars, and the
-                    D-numbered decision register (including the angles that were rejected)
-docs/design-system.md  the frontend's visual language
+HEPH-HUD ── AGENT PLATFORM ─────────────────────────────────── ■ ALL SYSTEMS
+  HOST      self-hosted · single operator · your hardware
+  DATA      AES-256 at rest · key derived from your password, held in memory
+  AGENTS    define · delegate · message · open any sub-agent as a thread
+  EXTEND    plugins · skills · routines · workflows
+  CONTEXT   searched on demand · never injected
+  MODELS    any OpenAI-compatible, Anthropic or Google endpoint
+────────────────────────────────────────────────────────────────────────────
 ```
 
-The central abstraction is a **Run**: one server-side, background-executing unit of work for a single request. Chat turns and agent tasks are all Runs, so I only have to write continuity, resume, cancellation, timeouts, and metrics **once** — everything inherits them. The backend is an **origin-agnostic API**: it makes no assumption about who serves the frontend. The whole thing rests on three pillars — the Run substrate, the event protocol, and the agent engine plus tools — detailed in [`docs/architecture/README.md`](docs/architecture/README.md). The tool layer has its own write-up in [`docs/architecture/40-tools-and-toolsets.md`](docs/architecture/40-tools-and-toolsets.md).
+Hephaestus is a self-hosted agent platform. You hand it work; agents plan it, split it between them, carry it out, and write the tools they are missing along the way. One agent stays in charge of each conversation and answers to you. Nothing an agent builds for itself (a new agent, a plugin, a skill, a routine) goes live until you approve it.
+
+![The Hephaestus home page: the launch composer, recent threads, two runs in flight in the sequence panel, and per-capability status along the bottom.](md-assets/hephaestus-screenshot.png)
+
+<sub>Captured on the disposable dev instance with a scripted model. The amber cells are real: that instance runs without the platform VM.</sub>
+
+It is built for **one operator on one powerful machine**, and it assumes models capable of native tool calling.
+
+## What it does
+
+### Agents that work together
+
+- **One chat, every capability.** There are no modes. Every message runs the full agent loop over the whole tool catalog your permission level allows: files, a shell, web search, memory, email, calendar, and the rest. The tools a chat doesn't need yet stay out of its context until it searches for them.
+- **Agents you define.** An agent is a standing brief plus limits: its model, the tools it may use, how far it may reach without asking, and whether it may delegate. Write them yourself, drop them into a project's `.claude/agents/`, or let an agent draft one for you to publish. Start any chat with any agent.
+- **Delegation trees.** An agent can spawn others to do self-contained work in parallel, to any depth you allow. Spawning never blocks: reports arrive on their own and wake the thread that asked. Agents in one tree can message each other, so one can point a sibling at the gap it found.
+- **Every sub-agent is a thread.** Open any sub-agent as its own conversation, read what it did, and talk to it directly while its report still goes to its parent.
+- **Per-endpoint queueing.** Each model endpoint has a capacity. Runs past it wait their turn, your own messages first, and a parent can never deadlock against a child waiting on the same endpoint.
+
+### A platform that extends itself
+
+- **Plugins.** Agents write tools in Python, test them in the platform VM, and hand them to you. Once you publish one, its tools join the catalog. A plugin declares the only hosts it can reach and the secrets it needs. Its code never sees a secret's value: the egress gateway swaps it in, and only toward that secret's own host.
+- **Skills.** Know-how that loads on demand instead of living in the system prompt. Four ship with the app (`research`, `delegation`, `build-an-agent`, `build-a-plugin`). A project's `.claude/skills/` join them, and you or the agent can save more. The prompt names only the built-in four; the rest are found by search.
+- **Routines.** Scheduled or webhook-triggered work, run by the agent you choose, on time. Each run opens a thread of its own, runs in slots reserved for routines, and never waits behind your chats. Type a schedule as a phrase ("every weekday at 9"). Agents can draft routines for you to approve, and plugins can offer them as templates.
+- **Workflows.** Slash commands you write once and reuse in any chat.
+
+### Context on demand
+
+A conversation's context holds only that conversation. Everything else is searched when it's needed rather than injected up front, so the context doesn't grow with your history:
+
+- **`platform_search`** reaches other conversations, memory, your indexed files, work summaries, sub-agent reports, routine outputs, and the skill, agent and plugin catalogs. Its index is built in memory at unlock, so nothing is stored in plaintext on disk.
+- **Memory.** Durable facts the agent keeps unprompted (preferences, projects, people, constraints), and you can view, edit and delete them.
+- **Knowledge Base.** Point it at folders of your documents and retrieve from them by meaning.
+- **Compaction.** When a thread nears its model's context window, its earlier turns fold into a summary and the chat carries on. The transcript keeps everything.
+
+### Where the work happens
+
+- **Projects.** A chat filed under a project works directly in that folder, on the branch you have checked out, with writes governed by your permission level. When the work should stay apart, the agent moves the chat onto its own git worktree, which reaches your folder only through a merge you press.
+- **The platform VM.** One microVM runs the code sandbox, the project shell, headless Chromium and a managed SearXNG. No host directory is mounted into it: files are piped in for the task at hand and piped back out, and its only network exit is an allowlisting gateway on the host.
+- **The View.** One surface where the agent shows its output, a file or a live server, as snapshots you can star and come back to.
+- **Compare.** One prompt sent to two models side by side, each pane a real, resumable conversation.
+
+### Reach
+
+- **Web search and fetch** through the VM's SearXNG and browser, with SSRF guards on every request. Fetched content is marked as untrusted data before it reaches a prompt.
+- **Email** over IMAP/SMTP, Gmail, Microsoft Graph or JMAP, with AI triage and drafts that match how you write.
+- **Calendar**: local-first, with CalDAV sync, `.ics` import and export, recurrence, and natural-language entry.
+- **MCP servers** and **preset integrations**, sensitive by default until you trust them.
+- **Notifications** for approvals, failures, completions and reminders. The two worth interrupting you for also go out by email and push.
+
+### Your controls
+
+- **Permission levels**, from plan-only to fully autonomous, decide what the agent may do without asking. Anything that leaves the box (your host, your real files, email, the vault, a new domain) pauses for your approval.
+- **Model registry.** Named roles map to ordered fallback chains across OpenAI-compatible, Anthropic and Google endpoints, and each agent can run on its own.
+- **Vault, API tokens, backup.** A password manager the agent can reach only with approval, scoped tokens and inbound webhooks, and encrypted backup and restore.
+- **Offline mode**, manual or auto-detected. Web capabilities suspend themselves and say so.
+
+## How it's built
+
+**Pydantic AI is the engine, and the code around it is the chassis.** The model call, tool selection, argument validation, the tool loop, retries and fallback all run through Pydantic AI. Everything that turns a model run into a durable product is the chassis: run lifecycle, the event stream, surviving a disconnect, resume, cancellation, lanes and queues, persistence, access policy, and the verifier.
+
+The central abstraction is the **Run**: one server-side, background unit of work. Chat turns, sub-agent turns, routine runs and wakes are all Runs, so continuity, cancellation, timeouts and metrics are written once. The backend is an origin-agnostic API, and **all logic lives there**; the frontend renders and captures intent.
+
+```
+frontend/   SolidStart SPA · TypeScript · Tailwind v4 · Vite
+backend/    Pydantic AI + FastAPI (Python 3.14, uv)
+  agent/      the engine: orchestrator, event translation, meta-loop, compaction
+  runs/       the Run substrate, lanes, endpoint queues, the v1 event protocol
+  tools/      the agent's tool catalog and its gates
+  services/   capabilities: agents, plugins, skills, routines, vm, corpus, mail, …
+  harness/    feature manifests and start/stop lifecycle
+  skills/     the built-in skills
+  vm/         the platform VM's image and guest agent
+docs/       architecture, the decision register, the design system
+```
+
+The full design is in [`docs/architecture/`](docs/architecture/README.md). Every decision with real trade-offs is in [`docs/architecture/decisions.md`](docs/architecture/decisions.md), with the alternatives that were rejected. The visual language is in [`docs/design-system.md`](docs/design-system.md).
 
 ## Running it
 
-**Backend** (requires [uv](https://docs.astral.sh/uv/)) — platform-agnostic (Linux / macOS / POSIX), no OS-specific dependency:
+**Backend** (needs [uv](https://docs.astral.sh/uv/)):
+
 ```bash
 cd backend
-uv sync                                       # creates .venv (Python 3.14), installs deps
-uv run python dev.py                          # http://localhost:8000  (/health to check)
-uv run pytest                                 # the test suite (fans out across cores)
-uv run ruff check .                           # lint
+uv sync                 # Python 3.14 virtualenv and dependencies
+uv run python dev.py    # http://localhost:8000, with auto-reload
+uv run pytest           # the test suite
+uv run ruff check .     # lint
 ```
-`dev.py` is `uvicorn app:app` with auto-reload, minus the directories that hold runtime state rather than source. To run without reload (production), use `uv run uvicorn app:app` directly.
 
-On first run, create the operator account via the frontend (the password you choose also derives the at-rest encryption key). [QEMU](https://www.qemu.org) is needed for the platform VM, which runs the code sandbox, the project shell, web fetch and managed web search (KVM on Linux or Hypervisor.framework on macOS makes it fast; without either it still runs, slowly). The first boot builds the VM's image once, which takes several minutes and needs internet access. Without the VM, those capabilities report unavailable rather than falling back to the host.
+**Frontend** (needs [bun](https://bun.sh)):
 
-**Frontend** (requires [bun](https://bun.sh)):
 ```bash
 cd frontend
 bun install
-bun run dev         # http://localhost:5173
-bun run typecheck   # tsc --noEmit (scoped to src/)
-bun run lint        # eslint + prettier --check
-bun run test        # the fast unit suite
+bun run dev             # http://localhost:5173
+bun run typecheck && bun run lint && bun run test
 ```
 
-**A disposable instance to develop against.** A second Hephaestus with its own data directory, its own ports, its own platform VM (off unless `up --with-vm`) and a scripted model behind it — seeded on first use, safe to break, and separate from the workspace above:
+On first launch, create the operator account in the browser. The password you choose also derives the encryption key.
+
+The platform VM needs [QEMU](https://www.qemu.org). With KVM on Linux or Hypervisor.framework on macOS it is fast; without either it still runs, slowly. Its first boot builds the guest image once, which takes several minutes and needs internet access. Without the VM, the sandbox, project shell, web search and fetch report themselves unavailable; nothing falls back to the host.
+
+You point Hephaestus at model endpoints you already run (LM Studio, vLLM, llama.cpp) or at a hosted provider. It does not download or serve models itself.
+
+**A disposable instance for development.** A second Hephaestus with its own data, ports and VM, a scripted model behind it, seeded on first use and safe to break:
+
 ```bash
 cd backend
-uv run python dev_instance.py up --detach     # starts everything and prints the URLs
-uv run python dev_instance.py status --json   # its ports (they differ per git worktree)
+uv run python dev_instance.py up --detach     # start everything, print the URLs
+uv run python dev_instance.py status --json   # ports differ per git worktree
 uv run python dev_instance.py reset --yes     # wipe it; the next `up` re-seeds
 ```
-It lives under `~/.hephaestus/dev/<worktree>/`, needs no login, and points at a stub model unless `HEPH_DEV_CHAT_BASE_URL`/`_MODEL`/`_KEY` name a real endpoint. Full recipe in [`docs/dev-instance.md`](docs/dev-instance.md).
 
-> **NOTE — `alembic` by hand.** The CLI falls back to `alembic.ini`, which points at the live `data/app.db`. A command meant for a dev instance must carry that instance's `HEPHAESTUS_DB_URL` (`status --json` has the data directory) or it will migrate the real database.
+The full recipe, including scripting the model's replies, is in [`docs/dev-instance.md`](docs/dev-instance.md).
 
-> **NOTE — fonts.** UI typography is fully self-hosted: **JetBrains Mono** is served as a Nerd Font build (subset to the ranges the UI uses plus Braille Patterns), so the spinners' **Braille** glyphs render natively — nothing to install. The mono font is regenerated by `bun run build:fonts` in `frontend/` (needs `python3` with `fonttools` + `brotli`).
+> **Running `alembic` by hand:** the CLI falls back to `alembic.ini`, which points at the live `data/app.db`. Set `HEPHAESTUS_DB_URL` to aim it anywhere else.
 
-## Security & privacy
+## Security and privacy
 
-Hephaestus can do powerful things on your machine — sandboxed and (with approval) host code execution, file writes, email, web research — so I don't treat security as an afterthought. The full details are in [SECURITY.md](SECURITY.md).
+Hephaestus runs code, writes files and sends email on your behalf, so its security model is designed rather than bolted on. The details are in [SECURITY.md](SECURITY.md).
 
-- **Single operator.** All data and features belong to *you* — the sole user. Every request is authenticated before any feature is reached; every record is owner-stamped against a future multi-user seam.
-- **A blast radius, not a cage.** Every agent workspace is disposable — a copy in the platform VM, or a git worktree on a throwaway branch — so computing, installing packages and reaching a package registry cost nothing and feel like nothing. What is guarded is the small set of ways out of it.
-- **The exits require approval.** The agent pauses and asks before anything that leaves the box: changing your host, writing your real files, sending email, configuration, vault, or reaching a domain the allowlist doesn't name (asked per request, never granted standing). Running code in the agent's own workspace is *not* sensitive; a coding thread's shell asks once, at its first command, and then works freely on its own branch.
-- **One fence, tuned for exfiltration.** Agent commands run in a microVM that holds only the workspaces in use and has no network of its own: its one exit is an allowlisting gateway on the host, which also refuses your LAN and the host itself. An approved host command runs under OS-level confinement (seatbelt on macOS, bubblewrap on Linux) that hides your credential paths and the data directory, reading the same domain list. Where the VM can't start, the agent's shell refuses to run at all — but an approved host command still runs, and says so in its result, because that one command is one you read and approved.
-- **Edits to your checkout follow your permission level.** A project chat edits your folder directly, so Manual asks before every write and Edit and above write freely; only one chat holds a folder at a time. Work the agent moves to a worktree reaches your folder only through a merge you press. A delegated sub-agent can get its own fork of a worktree, and its work comes back through a merge that reports conflicts instead of overwriting.
-- **Encrypted at rest.** All user data is AES-256 encrypted; auth secrets are one-way hashed. The key is derived from your password and lives only in memory — no OS keystore, nothing readable on disk, re-locked on restart.
-- **Untrusted content is data, not instructions.** External content (web pages, fetched URLs, files) is wrapped and marked so the model treats it as data before it enters a prompt.
-- **Local-first.** Nothing leaves the machine unless you configure an external provider or integration.
-- Serve plain HTTP only on `localhost`/trusted LAN; put a TLS-terminating reverse proxy in front for anything reachable beyond your machine.
+- **One operator.** Every request is authenticated before it reaches a feature, and every record carries its owner.
+- **A blast radius, not a cage.** Agent workspaces are disposable, either a copy in the VM or a git worktree on a throwaway branch, so computing and installing cost nothing. What is guarded is the way out.
+- **The exits ask first.** Changing your host, writing your real files, sending mail, touching the vault or reaching a domain the allowlist doesn't name all pause for approval.
+- **What agents build waits for you.** New agents, plugins, skills and routines are drafts until you publish them, and changing a published one asks again.
+- **Encrypted at rest.** All user data is AES-256 encrypted under a key derived from your password that lives only in memory and is gone on restart.
+- **Untrusted content is data.** Web pages, files, tool output and other agents' reports are fenced so the model treats them as material, not instructions.
+- **Local-first.** Nothing leaves your machine unless you configure a provider or integration that sends it.
 
-## Data
+Serve plain HTTP only on `localhost` or a trusted LAN. Put a TLS-terminating reverse proxy in front of anything reachable beyond that.
 
-All user data lives under `data/` and is **gitignored** — databases, uploads, keys, generated media. Never commit anything from `data/`, `.env`, or `logs/`.
+All user data lives under `data/`, which is gitignored. Never commit anything from `data/`, `.env` or `logs/`.
+
+## What's left
+
+- **Routine depth:** chaining one routine into another, and event triggers beyond the inbound webhook.
+- **The health screen** still renders fixtures. Real capability health is on the home page.
 
 ## Contributing
 
-It's still early days, but help is more than welcome. There are exactly two authoritative inputs: the [architecture and its decision register](docs/architecture/README.md) (the *how* and the *why*), and the capabilities of FastAPI + Pydantic AI. The black-box spec this rebuild was seeded from has been **retired** — it kept the rebuild on track and the build outgrew it; a requirements document that no longer leads the code is one that quietly lies about it. Requirement ids (`XC-*`, `AE-*`, `DR-*`) still appear in docstrings here and there: they're historical, and where one disagrees with the code, **the code is right**. I don't use the deleted pre-reset code as a reference either — PewDiePie's original was vibe-coded.
+Help is welcome. The two sources of truth are the [architecture and its decision register](docs/architecture/README.md) and the capabilities of FastAPI and Pydantic AI. Requirement ids (`XC-*`, `AE-*`, `DR-*`) still appear in docstrings from the spec this rebuild started from. They are historical; where one disagrees with the code, the code is right.
 
-A decision with real trade-offs belongs in `docs/architecture/decisions.md`, along with the angles that were rejected — git is the audit trail, and the rejected angles are what a future reader would otherwise have to re-derive.
+A decision with real trade-offs belongs in `docs/architecture/decisions.md`, along with the angles that were rejected.
+
+## Lineage
+
+Hephaestus began as **Odysseus**, a rebuild of PewDiePie's original self-hosted workspace on Pydantic AI and FastAPI. It outgrew the name once it became a platform for agents rather than a workspace for one assistant. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
 
 ## License
-MIT — see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
+
+MIT. See [LICENSE](LICENSE).
 
 ```
-                                  |
-                                 |||
-                                |||||
-                  |    |    |   |||||||
-                 )_)  )_)  )_)   ~|~
-                )___))___))___)\  |
-               )____)____)_____)\\|
-             _____|____|____|_____\\\__
-             \                       /
-       ~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~
-               ~^~  all aboard!  ~^~
-       ~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~
+SYSTEM  HEPHAESTUS · MIT · SELF-HOSTED ─────────────────────────────── ■ READY
 ```

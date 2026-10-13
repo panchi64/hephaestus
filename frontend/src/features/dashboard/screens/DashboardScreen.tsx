@@ -195,7 +195,7 @@ export function DashboardScreen(): JSX.Element {
     <div class="flex min-h-full flex-col gap-6">
       <PageHeader
         title="Hephaestus"
-        subtitle="Your private, self-hosted AI workspace — chat, code, memory, and more."
+        subtitle="Self-hosted agent platform — your models, your data, your hardware."
         assetId="HEPH-HUD-00.1 EDITION 02"
         actions={
           <Show
