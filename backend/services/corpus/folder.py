@@ -40,11 +40,46 @@ logger = logging.getLogger(__name__)
 # Text-like extensions the crawler reads; everything else is skipped as a binary.
 _TEXT_EXTENSIONS = frozenset(
     {
-        ".txt", ".md", ".markdown", ".rst", ".text", ".log", ".csv", ".tsv",
-        ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
-        ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".htm", ".css", ".scss",
-        ".sh", ".bash", ".zsh", ".sql", ".xml", ".go", ".rs", ".java", ".c",
-        ".h", ".cpp", ".hpp", ".rb", ".php", ".swift", ".kt",
+        ".txt",
+        ".md",
+        ".markdown",
+        ".rst",
+        ".text",
+        ".log",
+        ".csv",
+        ".tsv",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".html",
+        ".htm",
+        ".css",
+        ".scss",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".sql",
+        ".xml",
+        ".go",
+        ".rs",
+        ".java",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".rb",
+        ".php",
+        ".swift",
+        ".kt",
     }
 )
 _MAX_FILE_BYTES = 2_000_000  # skip anything larger than ~2 MB (likely not a document)
@@ -190,9 +225,7 @@ class FolderAdapter(SourceAdapter):
                     label=self._path_of(source),
                     # Item (file) count, not chunk count, so the /rag "DOCS" column means
                     # the same thing across every source.
-                    doc_count=await self._chunks.count_items(
-                        owner_id, self.source_kind, source.id
-                    ),
+                    doc_count=await self._chunks.count_items(owner_id, self.source_kind, source.id),
                     status=source.status,
                     last_indexed_at=source.last_indexed_at,
                     error_hint=source.error_hint,

@@ -240,8 +240,7 @@ async def unavailable_tools(
         return frozenset()
     if caps is None:
         logger.warning(
-            "tool policy: no capability bag to check availability with; "
-            "withholding %d categor%s",
+            "tool policy: no capability bag to check availability with; withholding %d categor%s",
             len(availability),
             "y" if len(availability) == 1 else "ies",
         )

@@ -42,6 +42,7 @@ from services.settings_store import OFFLINE_AUTO_KEY, OFFLINE_MANUAL_KEY, Settin
 
 logger = logging.getLogger(__name__)
 
+
 def _flag(value: bool) -> str:
     """The on-disk form of a switch — settings are plain strings."""
     return "true" if value else "false"
@@ -210,9 +211,7 @@ class OfflineModeService:
             self._ok = 0
             if self._online and self._fail >= self._fail_threshold:
                 self._online = False
-                logger.info(
-                    "offline mode: connectivity lost (%d consecutive failures)", self._fail
-                )
+                logger.info("offline mode: connectivity lost (%d consecutive failures)", self._fail)
                 await self._apply()
 
     async def _apply(self) -> None:

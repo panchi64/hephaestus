@@ -67,9 +67,7 @@ HeadChange = Literal["first", "none", "instructions", "tools", "both"]
 #:   shape is what is observable here and a dangling call is only one way to reach it.)
 #: - ``unknown`` — a shape none of the above describes. Kept so the classifier can be honest
 #:   rather than forcing every reading into a bucket.
-DivergenceKind = Literal[
-    "first", "append", "tail", "clean_drop", "fold", "rewrite", "unknown"
-]
+DivergenceKind = Literal["first", "append", "tail", "clean_drop", "fold", "rewrite", "unknown"]
 
 #: How many conversations' fingerprints the ledger keeps. One entry is a few hundred bytes
 #: (a digest per replayed message), so this is a bound on nothing that matters; what it

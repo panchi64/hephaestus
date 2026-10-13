@@ -106,7 +106,7 @@ def _offset_label() -> str:
     """The host's current offset from UTC, written the way a reader expects to see one."""
     try:
         offset = datetime.now().astimezone().utcoffset()
-    except (OSError, ValueError):  # pragma: no cover — a host with no usable clock zone
+    except OSError, ValueError:  # pragma: no cover — a host with no usable clock zone
         offset = None
     if offset is None:
         return "UTC"

@@ -269,9 +269,7 @@ class McpRegistry:
         async with asyncio.timeout(self._timeout):
             async with client:
                 tools = await client.list_tools()
-        return [
-            {"name": t.name, "description": (t.description or "").strip()} for t in tools
-        ]
+        return [{"name": t.name, "description": (t.description or "").strip()} for t in tools]
 
     async def live_toolsets(self, owner_id: str) -> list[tuple[McpServerView, MCPToolset[Any]]]:
         """The connected, enabled servers as ready-to-compose Pydantic AI toolsets, each
@@ -348,9 +346,7 @@ class McpRegistry:
     @staticmethod
     def _select(session: Session, owner_id: str, server_id: str) -> McpServer:
         row = session.exec(
-            select(McpServer)
-            .where(McpServer.owner_id == owner_id)
-            .where(McpServer.id == server_id)
+            select(McpServer).where(McpServer.owner_id == owner_id).where(McpServer.id == server_id)
         ).first()
         if row is None:
             raise NotFoundError(f"MCP server {server_id!r} not found")
@@ -400,7 +396,7 @@ class McpRegistry:
             parsed = json.loads(self._vault.decrypt_str(sealed))
         except VaultLocked:
             return None
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             logger.warning("mcp: stored credentials could not be read")
             return None
         return parsed if isinstance(parsed, dict) else None
@@ -442,7 +438,7 @@ def _discovered(row: McpServer) -> list[dict[str, str]]:
     """The cached tool catalog, defensively decoded."""
     try:
         parsed = json.loads(row.tools_json or "[]")
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return []
     return [t for t in parsed if isinstance(t, dict) and "name" in t]
 

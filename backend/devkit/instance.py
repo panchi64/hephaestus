@@ -36,6 +36,7 @@ ROOT = Path("~/.odysseus/dev").expanduser()
 #: because it holds the vault passphrase.
 STATE_FILE = "instance.json"
 
+
 @dataclass(frozen=True, slots=True)
 class DevInstance:
     """A resolved instance — every value that distinguishes it from the operator's."""
@@ -104,7 +105,10 @@ class DevInstance:
         matters is set explicitly for the same reason: a ``backend/.env`` is read from
         the working directory, and anything left unset here would be answered by it.
         """
-        origins = [f"http://127.0.0.1:{self.frontend_port}", f"http://localhost:{self.frontend_port}"]
+        origins = [
+            f"http://127.0.0.1:{self.frontend_port}",
+            f"http://localhost:{self.frontend_port}",
+        ]
         return {
             **os.environ,
             "ODYSSEUS_DATA_DIR": str(self.data_dir),
@@ -175,7 +179,7 @@ def worktree_name() -> str:
             timeout=5.0,
             check=True,
         ).stdout.strip()
-    except (subprocess.SubprocessError, OSError):
+    except subprocess.SubprocessError, OSError:
         return Path.cwd().name
     return Path(top).name if top else Path.cwd().name
 
@@ -193,13 +197,16 @@ def claimed_slots(root: Path = ROOT) -> set[int]:
     for state in root.glob(f"*/{STATE_FILE}"):
         try:
             slots.add(int(json.loads(state.read_text())["slot"]))
-        except (OSError, ValueError, KeyError, TypeError):
+        except OSError, ValueError, KeyError, TypeError:
             continue  # an unreadable neighbour is not a reason to fail
     return slots
 
 
 def resolve(
-    *, root: Path = ROOT, name: str | None = None, auth: bool | None = None,
+    *,
+    root: Path = ROOT,
+    name: str | None = None,
+    auth: bool | None = None,
     vm: bool | None = None,
 ) -> DevInstance:
     """This worktree's instance, created on first use and read back on every later one.

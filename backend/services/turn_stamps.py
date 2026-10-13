@@ -65,9 +65,7 @@ def still_named(stamps: TurnStamps, prompt: str) -> TurnStamps:
 
 def _opens_with(text: str, token: str) -> bool:
     """``text`` begins with ``token`` and ends it there — not part of a longer name."""
-    return text.startswith(token) and (
-        len(text) == len(token) or text[len(token)].isspace()
-    )
+    return text.startswith(token) and (len(text) == len(token) or text[len(token)].isspace())
 
 
 #: The run of characters after a token that could still be part of the same path.

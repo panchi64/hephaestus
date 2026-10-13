@@ -141,9 +141,7 @@ class CalDavSync:
 
     # --- the remote conversation (blocking; runs in a worker thread) --------
 
-    def _read_remote(
-        self, url: str, username: str | None, password: str | None
-    ) -> RemoteListing:
+    def _read_remote(self, url: str, username: str | None, password: str | None) -> RemoteListing:
         """Every object on the collection as ``(ics, href, etag)``, up to the cap. One
         thread hop covers connect *and* list, because each is its own blocking
         round-trip. A listing that hit the cap comes back flagged rather than silently
@@ -277,9 +275,7 @@ class CalDavSync:
             skipped=skipped,
         )
 
-    async def _remove_vanished(
-        self, owner_id: str, calendar_id: str, seen_uids: set[str]
-    ) -> int:
+    async def _remove_vanished(self, owner_id: str, calendar_id: str, seen_uids: set[str]) -> int:
         """Delete local events that **came from** this server and are no longer on it. An
         event with no ``remote_href`` has never been pushed, so its absence upstream says
         nothing about it — it is left alone."""
@@ -309,9 +305,7 @@ class CalDavSync:
         if not pending:
             return result
 
-        documents = [
-            (event_id, export_ics([event]).decode()) for event_id, event in pending
-        ]
+        documents = [(event_id, export_ics([event]).decode()) for event_id, event in pending]
         stamped = await anyio.to_thread.run_sync(
             self._write_remote, url, username, password, documents
         )

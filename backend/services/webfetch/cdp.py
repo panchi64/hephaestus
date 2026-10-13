@@ -31,16 +31,14 @@ async def discover_cdp_ws(host_port: int, timeout_s: float) -> str | None:
     async with httpx.AsyncClient() as client:
         for _ in range(int(timeout_s / _POLL_INTERVAL_S) + 1):
             try:
-                resp = await client.get(
-                    f"http://127.0.0.1:{host_port}/json/version", timeout=2.0
-                )
+                resp = await client.get(f"http://127.0.0.1:{host_port}/json/version", timeout=2.0)
                 if resp.status_code == 200:
                     raw = json.loads(resp.text)["webSocketDebuggerUrl"]
                     parts = urllib.parse.urlsplit(raw)
                     return urllib.parse.urlunsplit(
                         (parts.scheme, f"127.0.0.1:{host_port}", parts.path, "", "")
                     )
-            except (httpx.HTTPError, KeyError, ValueError):
+            except httpx.HTTPError, KeyError, ValueError:
                 pass
             await asyncio.sleep(_POLL_INTERVAL_S)
     return None

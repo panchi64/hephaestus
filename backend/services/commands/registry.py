@@ -108,9 +108,7 @@ class CommandRegistry:
         # above skills and workflows, both tier 1, for that to remain true.
         specs: list[CommandSpec] = [
             *_actions(has_conversation=has_conversation),
-            *_agent_specs(
-                await self._roster(owner_id, root, workspace_kind), withheld=withheld
-            ),
+            *_agent_specs(await self._roster(owner_id, root, workspace_kind), withheld=withheld),
             *await self._skill_specs(owner_id),
             *await self._commands.specs(owner_id),
             *(project_command_specs(root) if root is not None else ()),
@@ -185,9 +183,7 @@ class CommandRegistry:
 def _actions(*, has_conversation: bool) -> list[CommandSpec]:
     """The built-in actions this composer can actually perform."""
     return [
-        spec
-        for spec in BUILTIN_ACTIONS
-        if has_conversation or spec.name not in NEEDS_CONVERSATION
+        spec for spec in BUILTIN_ACTIONS if has_conversation or spec.name not in NEEDS_CONVERSATION
     ]
 
 
@@ -251,11 +247,7 @@ def _merge(specs: Sequence[CommandSpec]) -> tuple[CatalogEntry, ...]:
     return tuple(
         CatalogEntry(
             spec=spec,
-            shadowed_by=(
-                None
-                if winners[spec.name] is spec
-                else winners[spec.name].qualified_name
-            ),
+            shadowed_by=(None if winners[spec.name] is spec else winners[spec.name].qualified_name),
         )
         for spec in specs
     )

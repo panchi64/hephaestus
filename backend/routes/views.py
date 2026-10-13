@@ -82,14 +82,10 @@ async def list_snapshots(conversation_id: str, request: Request) -> list[Snapsho
 
 
 @router.post("/snapshots/{snapshot_id}/keeper", status_code=204)
-async def set_snapshot_keeper(
-    snapshot_id: str, body: KeeperUpdate, request: Request
-) -> None:
+async def set_snapshot_keeper(snapshot_id: str, body: KeeperUpdate, request: Request) -> None:
     """Bookmark or unbookmark a version — a durable keeper in an otherwise disposable
     timeline."""
-    if not await deps.workspace_history(request).set_keeper(
-        OPERATOR_ID, snapshot_id, body.keeper
-    ):
+    if not await deps.workspace_history(request).set_keeper(OPERATOR_ID, snapshot_id, body.keeper):
         raise HTTPException(status_code=404, detail="snapshot not found")
 
 
@@ -158,8 +154,6 @@ async def get_preview_content(artifact_id: str, request: Request) -> Response:
         raise HTTPException(status_code=404, detail="view preview not found") from None
     headers = {
         **_VIEW_HEADERS,
-        "Content-Disposition": content_disposition(
-            blob.filename, inline=True, fallback="view"
-        ),
+        "Content-Disposition": content_disposition(blob.filename, inline=True, fallback="view"),
     }
     return Response(content=blob.content, media_type=blob.content_type, headers=headers)

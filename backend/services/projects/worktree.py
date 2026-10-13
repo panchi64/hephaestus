@@ -184,8 +184,7 @@ class WorktreeManager:
 
             if not await self.is_repo(root):
                 raise InvalidInputError(
-                    f"{root} is not a git repository — open the project's page to set "
-                    "one up."
+                    f"{root} is not a git repository — open the project's page to set one up."
                 )
 
             branch = branch_for(conversation_id)

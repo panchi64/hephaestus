@@ -35,7 +35,7 @@ async def _can_connect(host: str, port: int, timeout_s: float) -> bool:
         _reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port), timeout=timeout_s
         )
-    except (OSError, TimeoutError):
+    except OSError, TimeoutError:
         return False
     writer.close()
     with suppress(Exception):
@@ -53,16 +53,12 @@ async def check_online(anchors: list[str], timeout_s: float) -> bool:
     if not anchors:
         logger.warning("connectivity: no anchors configured — reporting offline")
         return False
-    tasks = [
-        asyncio.ensure_future(_can_connect(*_split_anchor(a), timeout_s)) for a in anchors
-    ]
+    tasks = [asyncio.ensure_future(_can_connect(*_split_anchor(a), timeout_s)) for a in anchors]
     try:
         online = False
         pending = set(tasks)
         while pending:
-            done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
-            )
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             if any(t.result() for t in done):
                 online = True
                 break

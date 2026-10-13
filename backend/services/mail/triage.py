@@ -123,9 +123,7 @@ class MailTriage:
         await self._alert(owner_id, detail, verdict)
         return verdict
 
-    async def _alert(
-        self, owner_id: str, detail: MessageDetail, verdict: TriageVerdict
-    ) -> None:
+    async def _alert(self, owner_id: str, detail: MessageDetail, verdict: TriageVerdict) -> None:
         """Raise an attention-surface notice for urgent, non-spam mail (`EMAIL-2`).
 
         Best-effort by design — an alert that fails must not undo a verdict that

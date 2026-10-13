@@ -112,9 +112,7 @@ async def merge_child_back(
     )
     if code != 0:
         # Read the conflicting paths *before* aborting — the abort is what clears them.
-        _code, unmerged, _err = await run_git(
-            parent_path, "diff", "--name-only", "--diff-filter=U"
-        )
+        _code, unmerged, _err = await run_git(parent_path, "diff", "--name-only", "--diff-filter=U")
         conflicts = _paths(unmerged)
         await run_git(parent_path, "merge", "--abort")
         if not conflicts:

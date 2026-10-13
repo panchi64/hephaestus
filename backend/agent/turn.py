@@ -376,9 +376,7 @@ async def drive_turn(
         # Two ways a turn can end without being finished: a call awaiting permission, and
         # a call awaiting an answer (`ask_user`). Both arrive on the same object, and
         # either one alone means there is more of this turn to run.
-        deferred = isinstance(output, DeferredToolRequests) and (
-            output.approvals or output.calls
-        )
+        deferred = isinstance(output, DeferredToolRequests) and (output.approvals or output.calls)
         if not deferred:
             # The model finished, but something queued while it was working: instead of
             # ending the run, continue it with the queued text as the next user

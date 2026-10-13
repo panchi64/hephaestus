@@ -347,5 +347,5 @@ def declared_sensitivity(metadata: Mapping[str, Any] | None) -> Sensitivity | No
         return None
     try:
         return Sensitivity(metadata[SENSITIVITY_METADATA_KEY])
-    except (KeyError, ValueError, TypeError):
+    except KeyError, ValueError, TypeError:
         return None

@@ -123,10 +123,7 @@ async def list_runs(request: Request, active: bool = Query(default=True)) -> lis
         [r.conversation_id for r in runs if r.conversation_id is not None],
         deps.OPERATOR_ID,
     )
-    return [
-        _view(r, titles.get(r.conversation_id) if r.conversation_id else None)
-        for r in runs
-    ]
+    return [_view(r, titles.get(r.conversation_id) if r.conversation_id else None) for r in runs]
 
 
 @router.get("/{run_id}", response_model=RunView)
@@ -186,9 +183,7 @@ async def edit_queued_message(
 
 
 @router.delete("/{run_id}/messages/{message_id}", status_code=200)
-async def withdraw_queued_message(
-    run_id: str, message_id: str, request: Request
-) -> dict[str, str]:
+async def withdraw_queued_message(run_id: str, message_id: str, request: Request) -> dict[str, str]:
     """Withdraw an operator message queued into a live run before the run consumes
     it. 404 covers every way the message can no longer be withdrawn: unknown id,
     already injected, already withdrawn, or the run is gone/terminal."""
@@ -291,9 +286,7 @@ class ApprovalOutcome(BaseModel):
     unscoped: list[str] = Field(default_factory=list)
 
 
-def _still_covered(
-    call: ToolCallPart, settled: GrantApproved, active: Sequence[GrantInfo]
-) -> bool:
+def _still_covered(call: ToolCallPart, settled: GrantApproved, active: Sequence[GrantInfo]) -> bool:
     """Whether the grant that settled this call still covers it, **at the width it needed**.
 
     A grant can be revoked, or lapse, while the run waits — so an allow made without the
@@ -313,9 +306,7 @@ def _still_covered(
 
 
 @router.post("/{run_id}/approve", status_code=202)
-async def approve_run(
-    run_id: str, body: ApprovalDecisions, request: Request
-) -> ApprovalOutcome:
+async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) -> ApprovalOutcome:
     """Settle everything a parked run is awaiting — permissions and answers — then
     resume it.
 
@@ -549,8 +540,7 @@ async def approve_run(
     already: set[tuple[str, tuple[str, ...]]] = set()
     if to_grant and conv_id is not None:
         already = {
-            (g.tool_name, g.command_prefix)
-            for g in await grants.list(deps.OPERATOR_ID, conv_id)
+            (g.tool_name, g.command_prefix) for g in await grants.list(deps.OPERATOR_ID, conv_id)
         }
         for tool_name, scope, decisive in to_grant:
             await grants.grant(deps.OPERATOR_ID, conv_id, tool_name, scope, decisive)

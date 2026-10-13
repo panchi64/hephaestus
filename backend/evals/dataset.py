@@ -432,9 +432,7 @@ def _assert_no_token_overlap() -> None:
     that is the whole property that makes "only dense can hit" a real test, not an
     assumption. Verified at import so a future edit that breaks it fails loudly."""
     mem_text = {m.id: m.content for m in MEMORIES}
-    conv_text = {
-        c.id: " ".join(f"{p} {a}" for p, a in c.turns) for c in CONVERSATIONS
-    }
+    conv_text = {c.id: " ".join(f"{p} {a}" for p, a in c.turns) for c in CONVERSATIONS}
     for queries, lookup in ((MEMORY_QUERIES, mem_text), (CONVERSATION_QUERIES, conv_text)):
         for q in queries:
             if q.slice != "paraphrase":

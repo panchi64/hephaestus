@@ -160,8 +160,7 @@ def _cmd_seed(args: argparse.Namespace) -> int:
     instance = resolve()
     if not launch.backend_healthy(instance):
         print(
-            "error: the backend is not running — start it with "
-            "`uv run python dev_instance.py up`",
+            "error: the backend is not running — start it with `uv run python dev_instance.py up`",
             file=sys.stderr,
         )
         return 1
@@ -174,8 +173,7 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     instance = resolve()
     if not args.yes:
         print(
-            f"this deletes everything under {instance.data_dir}.\n"
-            "re-run with --yes to confirm.",
+            f"this deletes everything under {instance.data_dir}.\nre-run with --yes to confirm.",
             file=sys.stderr,
         )
         return 1
@@ -275,9 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
     stop = subcommands.add_parser("stop", help="stop the services a previous `up` started")
     stop.set_defaults(handler=_cmd_stop)
 
-    seed = subcommands.add_parser(
-        "seed", help="run the fixture pack against the running instance"
-    )
+    seed = subcommands.add_parser("seed", help="run the fixture pack against the running instance")
     seed.add_argument(
         "--force", action="store_true", help="re-run even if the pack has not changed"
     )
@@ -289,9 +285,7 @@ def build_parser() -> argparse.ArgumentParser:
     reset.add_argument("--yes", action="store_true", help="confirm the deletion")
     reset.set_defaults(handler=_cmd_reset)
 
-    check = subcommands.add_parser(
-        "doctor", help="what is wrong and what to do about it"
-    )
+    check = subcommands.add_parser("doctor", help="what is wrong and what to do about it")
     check.set_defaults(handler=_cmd_doctor)
 
     for sub in subcommands.choices.values():

@@ -119,7 +119,7 @@ def write_launch_json(instance: DevInstance, config_name: str, root: Path) -> Pa
     if path.is_file():
         try:
             existing = json.loads(path.read_text())
-        except (OSError, ValueError):
+        except OSError, ValueError:
             existing = {}
         # Anything the operator added stays. Only the entry carrying our name is ours to
         # rewrite, and it has to be rewritten because it holds a port that can move.

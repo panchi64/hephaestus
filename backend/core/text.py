@@ -55,6 +55,7 @@ def chars_to_tokens(prose: int, structured: int = 0) -> float:
     each contribution would accumulate a bias in whichever direction the parts lean."""
     return prose / CHARS_PER_TOKEN_PROSE + structured / CHARS_PER_TOKEN_JSON
 
+
 # A reasoning model that the runtime didn't keep off inlines its chain-of-thought as a
 # ``<think>…</think>`` block in the *content* (rather than a separate reasoning channel
 # Pydantic AI would surface as a ``ThinkingPart``). The close is optional (``$`` under

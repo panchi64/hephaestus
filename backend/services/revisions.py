@@ -154,9 +154,7 @@ class RevisionStore:
         await in_session(self._engine, work)
 
 
-async def checkpoint[T: Published](
-    store: Versioned[T], owner_id: str, item: T, note: str
-) -> None:
+async def checkpoint[T: Published](store: Versioned[T], owner_id: str, item: T, note: str) -> None:
     """Record ``item`` if it is published. A no-op while a restore is rewriting it: the
     restore records the result once, under its own note."""
     if store.revisions is None or item.id is None or not item.published or _restoring.get():

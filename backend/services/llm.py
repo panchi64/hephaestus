@@ -474,9 +474,7 @@ def _native_posture(row: object) -> PromptCachePosture | None:
     """
     if not isinstance(row, dict):
         return None
-    backend = next(
-        (str(row[key]) for key in _BACKEND_KEYS if isinstance(row.get(key), str)), None
-    )
+    backend = next((str(row[key]) for key in _BACKEND_KEYS if isinstance(row.get(key), str)), None)
     window = _context_from_row(row, (*_LOADED_CONTEXT_KEYS, *_MAX_CONTEXT_KEYS))
     if backend is None and window is None:
         return None

@@ -320,8 +320,7 @@ async def review(
         return ReviewOutcome(
             Decision.ASK,
             "judge",
-            f"{verdict_of_judge.reason}; this turn has already spent its {budget.limit} "
-            "reviews",
+            f"{verdict_of_judge.reason}; this turn has already spent its {budget.limit} reviews",
         )
     request = ReviewRequest(capability=capability, transcript=transcript)
     verdict = await reviewer(replace(request, nonce=nonce) if nonce else request)
@@ -339,9 +338,7 @@ async def review(
     # counterfactual. Both axes are reset, not just the authorization — a grant that
     # cleared an unrecoverable act did so on the risk axis, and a counterfactual that left
     # the width in place would not notice it.
-    without_grant = _verdict_decision(
-        verdict, authorization=verdict.authorization, granted="none"
-    )
+    without_grant = _verdict_decision(verdict, authorization=verdict.authorization, granted="none")
     # The one clearance the risk axis owes the operator an explicit account of.
     unrecoverable = verdict.risk == "too_destructive" and decision is Decision.ALLOW
     return ReviewOutcome(
@@ -349,9 +346,7 @@ async def review(
         "reviewer",
         _verdict_reason(
             verdict,
-            grant=granted
-            if authorization != verdict.authorization or unrecoverable
-            else "none",
+            grant=granted if authorization != verdict.authorization or unrecoverable else "none",
             unrecoverable=unrecoverable,
         ),
         verdict,

@@ -78,7 +78,7 @@ class EmbeddingReindexer:
         self._status = ReindexStatus(state="running", memories=0, messages=0)
         try:
             spec = await self._registry.resolve_embedding_spec(owner_id)
-        except (DegradedCapabilityError, NotFoundError):
+        except DegradedCapabilityError, NotFoundError:
             # No embedding model, or its endpoint was deleted out from under us —
             # a terminal, non-"running" state so the UI stops polling/spinning.
             self._status = ReindexStatus(

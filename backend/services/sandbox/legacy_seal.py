@@ -66,9 +66,7 @@ def adopt_legacy_archive(archive: Path, workspace: Path, vault: Vault) -> bool:
     if not archive.exists():
         return False
     if not vault.is_unlocked:
-        raise SandboxError(
-            "cannot open this conversation's saved workspace: the vault is locked"
-        )
+        raise SandboxError("cannot open this conversation's saved workspace: the vault is locked")
     marker = partial_marker(workspace)
     try:
         raw = vault.decrypt_bytes(archive.read_bytes())

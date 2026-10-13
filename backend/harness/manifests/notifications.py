@@ -42,15 +42,11 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             ctx.vault,
         ),
     )
-    await ctx.lifecycle.start(
-        "notifications", start=notifications.start, stop=notifications.stop
-    )
+    await ctx.lifecycle.start("notifications", start=notifications.start, stop=notifications.stop)
     # In-flight run-terminal tasks are this surface's writers — cancel and await
     # them right before it stops (registered after ⇒ stops earlier), so a run
     # finishing at shutdown never leaves a task notifying through a stopped store.
-    ctx.lifecycle.on_stop(
-        "run-terminal-notifies", ctx.services.get(RunTerminalDispatcher).drain
-    )
+    ctx.lifecycle.on_stop("run-terminal-notifies", ctx.services.get(RunTerminalDispatcher).drain)
 
     async def _resolve_dangling_approvals(run: Run, watched: bool) -> None:
         """The backstop: a cancel-while-parked never reaches the approve route, and

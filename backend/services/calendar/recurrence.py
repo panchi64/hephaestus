@@ -69,7 +69,7 @@ def canonical_rrule(rule: str) -> str:
         text = text[len("RRULE:") :]
     try:
         return vRecur(vRecur.from_ical(text)).to_ical().decode()
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         # Canonicalization is cosmetic; a rule this serializer won't take is left as
         # written and rejected (or accepted) by the parse check that follows.
         return text
@@ -188,6 +188,6 @@ def _cancelled_instants(exdates: Iterable[str]) -> set[datetime]:
     for raw in exdates:
         try:
             cancelled.add(as_utc(datetime.fromisoformat(raw)))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return cancelled

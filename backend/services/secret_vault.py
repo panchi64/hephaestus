@@ -168,9 +168,7 @@ class SecretVaultService:
             raise SecretVaultNotConfigured("the password vault has not been set up")
         if not await asyncio.to_thread(crypto.verify_password, config.verifier, passphrase):
             return False
-        kek = await asyncio.to_thread(
-            crypto.derive_kek, passphrase, _b64d(config.kek_salt)
-        )
+        kek = await asyncio.to_thread(crypto.derive_kek, passphrase, _b64d(config.kek_salt))
         try:
             key = crypto.aead_decrypt(kek, _b64d(self._vault.decrypt_str(config.wrapped_key_enc)))
         except Exception:  # noqa: BLE001 — any unwrap failure is just a failed unlock

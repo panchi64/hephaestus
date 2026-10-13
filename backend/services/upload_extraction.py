@@ -159,13 +159,9 @@ class BasicExtractor:
             vision_used, ocr_notes = await self._ocr_pages(owner_id, needs_ocr, ocr_text)
             notes.extend(ocr_notes)
 
-        ordered = [
-            ocr_text.get(page.index, page.native_text).strip() for page in scan.pages
-        ]
+        ordered = [ocr_text.get(page.index, page.native_text).strip() for page in scan.pages]
         text = "\n\n".join(part for part in ordered if part)
-        return ExtractionResult(
-            text=text, vision=vision_used, note="; ".join(notes) or None
-        )
+        return ExtractionResult(text=text, vision=vision_used, note="; ".join(notes) or None)
 
     async def _ocr_pages(
         self, owner_id: str, pages: list[ScannedPage], out: dict[int, str]
@@ -278,7 +274,8 @@ class FallbackExtractor:
             return await self._primary.extract(owner_id, raw, mime, filename)
         except Exception:  # noqa: BLE001 — any primary failure degrades to the built-in
             logger.warning(
-                "primary extractor failed for %r; falling back to the built-in", filename,
+                "primary extractor failed for %r; falling back to the built-in",
+                filename,
                 exc_info=True,
             )
             return await self._fallback.extract(owner_id, raw, mime, filename)

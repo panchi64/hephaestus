@@ -1164,8 +1164,6 @@ async def set_auto_compact_override(
 _NOTHING_TO_FOLD = "Nothing to fold — there are no new turns since the last compaction."
 
 
-
-
 async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> None:
     """The operator's own fold, as a run.
 

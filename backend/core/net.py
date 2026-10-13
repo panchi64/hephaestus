@@ -44,7 +44,7 @@ async def await_listening(
             with suppress(Exception):
                 await writer.wait_closed()
             return
-        except (OSError, ConnectionError):
+        except OSError, ConnectionError:
             if loop.time() >= deadline:
                 raise TimeoutError(
                     f"{host}:{port} did not start listening within {timeout_s:.0f}s"

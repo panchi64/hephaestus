@@ -40,6 +40,7 @@ class _DownloadStarted(Exception):
     """The browser began a file download instead of rendering a page (a `.pdf` URL and the
     like). Routed to the direct-download PDF path rather than surfaced as a render failure."""
 
+
 _INNERTEXT_JS = "() => (document.body ? document.body.innerText : '')"
 
 # An interstitial a bot wall serves while it runs its JS check (Cloudflare/DataDome/Reddit

@@ -207,7 +207,6 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated:
         deps.release_conversation(request, conversation_id)
 
 
-
 @router.post("/regenerate", status_code=202, response_model=ChatCreated)
 async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
     """Re-answer a turn: drop back to the user request that produced ``message_id``
@@ -289,4 +288,3 @@ async def edit(body: EditCreate, request: Request) -> ChatCreated:
         )
     finally:
         deps.release_conversation(request, body.conversation_id)
-

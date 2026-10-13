@@ -101,9 +101,7 @@ def turn_metrics(run: Run, messages: list[ModelMessage], *, settings: Settings) 
     )
 
 
-def post_fold_metrics(
-    run: Run, replay: list[ModelMessage], *, settings: Settings
-) -> RunMetrics:
+def post_fold_metrics(run: Run, replay: list[ModelMessage], *, settings: Settings) -> RunMetrics:
     """The readout for a thread that has just been folded: ``replay`` is the whole history
     the next request carries, and none of it was measured against the thread as it now
     stands, so the boundary is the whole replay and the footprint reads the estimate.

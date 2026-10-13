@@ -78,9 +78,7 @@ def _clip(text: str | None) -> str | None:
     return folded[: SNIPPET_MAX_CHARS - 1] + "…"
 
 
-def citations_from_tool_result(
-    content: Any, *, at: datetime | None = None
-) -> list[CitationAdded]:
+def citations_from_tool_result(content: Any, *, at: datetime | None = None) -> list[CitationAdded]:
     """Sources a completed tool call surfaced, in the order the result gave them.
 
     A result declares its own sources by implementing :class:`~core.citations.Citable`;
@@ -276,9 +274,7 @@ def _on_tool_event(
             # cannot know whether a call made progress until this event arrives. A failure
             # is an answer like any other: the *same* error three times over is a loop, and
             # one of the commonest.
-            answer = (
-                part.model_response() if isinstance(part, RetryPromptPart) else part.content
-            )
+            answer = part.model_response() if isinstance(part, RetryPromptPart) else part.content
             loop_breaker.observe(part.tool_call_id, answer)
         if isinstance(part, RetryPromptPart):
             run.emit(

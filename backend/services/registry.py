@@ -415,9 +415,7 @@ class ModelRegistry:
         # the next: the pre-emptive side of the runtime FallbackModel failover.
         live = [e for e in endpoints if e.enabled]
         if not live:
-            raise DegradedCapabilityError(
-                f"all endpoints bound to role {role!r} are disabled"
-            )
+            raise DegradedCapabilityError(f"all endpoints bound to role {role!r} are disabled")
         # Pin applies to the head only; the tail falls back on each endpoint's default.
         return await self._with_model_limits(
             [
@@ -426,9 +424,7 @@ class ModelRegistry:
             ]
         )
 
-    async def implicit_main_binding(
-        self, owner_id: str
-    ) -> tuple[list[str], str | None] | None:
+    async def implicit_main_binding(self, owner_id: str) -> tuple[list[str], str | None] | None:
         """The chain `main` resolves to when the operator has bound nothing — the first
         enabled endpoint that can name a model, and that model. None when no endpoint
         can supply one.
@@ -463,7 +459,7 @@ class ModelRegistry:
             if not model:
                 try:
                     discovered = await self.list_provider_models(owner_id, endpoint.id)
-                except (DegradedCapabilityError, NotFoundError):
+                except DegradedCapabilityError, NotFoundError:
                     continue
                 model = discovered[0] if discovered else None
             if model:
@@ -836,4 +832,3 @@ class ModelRegistry:
             raise ValueError(str(exc)) from exc
         if impl.requires_key and not has_key:
             raise ValueError(f"provider {impl.display_name!r} requires an API key")
-

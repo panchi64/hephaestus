@@ -170,9 +170,7 @@ class AgentStore:
         return await self.update(owner_id, agent_id, _file_values(text, current.name))
 
     @records("published")
-    async def set_published(
-        self, owner_id: str, agent_id: str, published: bool
-    ) -> AgentDefinition:
+    async def set_published(self, owner_id: str, agent_id: str, published: bool) -> AgentDefinition:
         def work(session: Session) -> AgentDefinition:
             row = _require(session, owner_id, agent_id)
             row.published = published

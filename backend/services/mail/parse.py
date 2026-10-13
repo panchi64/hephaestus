@@ -187,7 +187,7 @@ def _part_text(part: Any) -> str | None:
         return None
     try:
         content = part.get_content()
-    except (LookupError, UnicodeDecodeError, KeyError):
+    except LookupError, UnicodeDecodeError, KeyError:
         # An unknown charset or a broken transfer encoding — read the raw payload with a
         # replacement decode rather than dropping the message entirely.
         payload = part.get_payload(decode=True)
@@ -210,7 +210,7 @@ def _received_at(message: Any):
         return None
     try:
         return parsedate_to_datetime(str(raw))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -221,9 +221,7 @@ def _addresses(message: Any, name: str) -> tuple[MailAddress, ...]:
     found: list[MailAddress] = []
     for address in getattr(header, "addresses", ()):
         if address.addr_spec:
-            found.append(
-                MailAddress(address=address.addr_spec, name=address.display_name or None)
-            )
+            found.append(MailAddress(address=address.addr_spec, name=address.display_name or None))
     return tuple(found)
 
 

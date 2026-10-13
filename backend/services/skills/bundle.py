@@ -217,9 +217,7 @@ def parse_skill_md(text: str, *, warnings: list[str] | None = None) -> ParsedSki
     metadata = _json_safe(metadata) if metadata is not None else None
 
     allowed_tools = _normalize_allowed_tools(loaded.get("allowed-tools"), notes)
-    extras = _json_safe(
-        {key: value for key, value in loaded.items() if key not in SPEC_FIELDS}
-    )
+    extras = _json_safe({key: value for key, value in loaded.items() if key not in SPEC_FIELDS})
     if extras:
         notes.append(
             "kept non-standard frontmatter keys: " + ", ".join(sorted(extras)),

@@ -49,7 +49,7 @@ def backend_healthy(instance: DevInstance, *, timeout_s: float = 2.0) -> bool:
     try:
         with urllib.request.urlopen(f"{instance.backend_url}/health", timeout=timeout_s) as reply:
             return reply.status == 200
-    except (urllib.error.URLError, OSError, ValueError):
+    except urllib.error.URLError, OSError, ValueError:
         return False
 
 
@@ -157,9 +157,7 @@ def ensure_frontend(instance: DevInstance, supervisor: Supervisor) -> str:
         log_dir=instance.logs_dir,
     )
     if not await_listening(instance.frontend_port):
-        raise LaunchError(
-            f"the frontend did not start — see {instance.logs_dir / 'frontend.log'}"
-        )
+        raise LaunchError(f"the frontend did not start — see {instance.logs_dir / 'frontend.log'}")
     _warm_frontend(instance)
     return "started (installed dependencies)" if installed else "started"
 

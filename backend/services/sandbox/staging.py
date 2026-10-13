@@ -100,6 +100,4 @@ def stage_attachment(
 
     Raises :class:`SandboxError` when the workspace can't be written — the caller
     decides how to degrade."""
-    return stage_unique(
-        session, f"{prefix}{STAGE_DIR}/{safe_name(filename, upload_id)}", content
-    )
+    return stage_unique(session, f"{prefix}{STAGE_DIR}/{safe_name(filename, upload_id)}", content)

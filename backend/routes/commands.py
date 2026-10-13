@@ -108,9 +108,7 @@ class WorkflowUpdate(BaseModel):
 def _out(entry: CatalogEntry) -> CommandOut:
     spec = entry.spec
     argument = (
-        ActionArgumentOut(
-            required=spec.argument_required, choices=list(spec.action_choices)
-        )
+        ActionArgumentOut(required=spec.argument_required, choices=list(spec.action_choices))
         if spec.kind == "action" and (spec.argument_required or spec.action_choices)
         else None
     )
@@ -221,9 +219,7 @@ async def get_workflow(request: Request, command_id: str) -> WorkflowOut:
 
 
 @router.patch("/workflows/{command_id}", response_model=WorkflowOut)
-async def update_workflow(
-    request: Request, command_id: str, body: WorkflowUpdate
-) -> WorkflowOut:
+async def update_workflow(request: Request, command_id: str, body: WorkflowUpdate) -> WorkflowOut:
     try:
         view = await deps.command_store(request).update(
             OPERATOR_ID,

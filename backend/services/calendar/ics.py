@@ -94,7 +94,7 @@ def parse_ics(data: bytes | str) -> list[ParsedEvent]:
     for component in document.walk("VEVENT"):
         try:
             parsed.append(_from_component(component))
-        except (ValueError, TypeError, AttributeError):
+        except ValueError, TypeError, AttributeError:
             logger.warning("calendar: skipping an unreadable VEVENT during import", exc_info=True)
     return parsed
 

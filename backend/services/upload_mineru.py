@@ -85,8 +85,15 @@ class MinerUExtractor:
             out_dir = tmp_dir / "out"
             out_dir.mkdir()
             proc = await asyncio.create_subprocess_exec(
-                self._binary, "-p", str(src), "-o", str(out_dir),
-                "-b", "pipeline", "-m", "auto",
+                self._binary,
+                "-p",
+                str(src),
+                "-o",
+                str(out_dir),
+                "-b",
+                "pipeline",
+                "-m",
+                "auto",
                 # stdout is MinerU's progress chatter — discard it rather than buffer it
                 # all in the parent; only stderr (the failure detail) is read.
                 stdout=asyncio.subprocess.DEVNULL,

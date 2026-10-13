@@ -141,9 +141,7 @@ def judge(capability: Capability, *, fenced: bool) -> Judgement:
         # The sandbox is the fence: no host filesystem, no egress, and outputs that come
         # back explicitly. Reading the program would add nothing, which is why this is the
         # one branch that clears something the extraction could not bound.
-        return Judgement(
-            True, "runs offline in the conversation's own sandbox", tier="sandbox"
-        )
+        return Judgement(True, "runs offline in the conversation's own sandbox", tier="sandbox")
     if capability.unbounded:
         return Judgement(False, capability.unbounded[0])
     if capability.kind is not ActionKind.SHELL:
@@ -180,8 +178,8 @@ def _shell_judgement(capability: Capability, *, fenced: bool) -> Judgement:
         )
     if capability.escapes:
         return Judgement(
-            False, f'declared reach "{reach}" but names {capability.escapes[0]}, outside the '
-            "workspace"
+            False,
+            f'declared reach "{reach}" but names {capability.escapes[0]}, outside the workspace',
         )
     if reach == "network":
         # The one declaration that is never settled here, and not because it is unreadable:

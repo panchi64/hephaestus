@@ -102,9 +102,7 @@ PRESETS: tuple[IntegrationPreset, ...] = (
         header_name="PRIVATE-TOKEN",
         test_path="/user",
         actions=(
-            IntegrationAction(
-                "get_project", "GET", "/projects/{id}", "Read a project's metadata."
-            ),
+            IntegrationAction("get_project", "GET", "/projects/{id}", "Read a project's metadata."),
             IntegrationAction(
                 "list_issues", "GET", "/projects/{id}/issues", "List a project's issues."
             ),
@@ -138,9 +136,7 @@ PRESETS: tuple[IntegrationPreset, ...] = (
         auth="bearer",
         test_path="/auth.test",
         actions=(
-            IntegrationAction(
-                "list_channels", "GET", "/conversations.list", "List conversations."
-            ),
+            IntegrationAction("list_channels", "GET", "/conversations.list", "List conversations."),
             IntegrationAction(
                 "post_message",
                 "POST",
@@ -177,7 +173,10 @@ PRESETS: tuple[IntegrationPreset, ...] = (
         test_path="/v1/health",
         actions=(
             IntegrationAction(
-                "publish", "POST", "/{topic}", "Publish a notification to a topic.",
+                "publish",
+                "POST",
+                "/{topic}",
+                "Publish a notification to a topic.",
                 takes_body=True,
             ),
         ),

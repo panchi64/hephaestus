@@ -27,6 +27,7 @@ _DEFAULT_BASE_URL = "https://api.anthropic.com"
 _API_VERSION = "2023-06-01"
 _TIMEOUT = httpx.Timeout(8.0, connect=3.0)
 
+
 def _headers(api_key: str | None) -> dict[str, str]:
     headers = {"anthropic-version": _API_VERSION}
     if api_key:

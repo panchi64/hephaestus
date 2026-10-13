@@ -196,9 +196,7 @@ class EmailChannel:
         read back out to a caller — only used to address a delivery."""
         await self._settings.set(owner_id, EMAIL_ENABLED_KEY, "true" if enabled else "false")
         if address is not None:
-            await self._settings.set(
-                owner_id, EMAIL_ADDRESS_KEY, self._vault.encrypt_str(address)
-            )
+            await self._settings.set(owner_id, EMAIL_ADDRESS_KEY, self._vault.encrypt_str(address))
         if account_id is not None:
             await self._settings.set(owner_id, EMAIL_ACCOUNT_KEY, account_id)
 
@@ -239,9 +237,7 @@ class PushChannel:
             logger.warning("notifications: could not read the push endpoint", exc_info=True)
             endpoint = None
         if endpoint is None:
-            return ChannelHealth(
-                self.key, self.label, False, "warn", "no endpoint — in-app only"
-            )
+            return ChannelHealth(self.key, self.label, False, "warn", "no endpoint — in-app only")
         if not await self._enabled(owner_id):
             return ChannelHealth(self.key, self.label, False, "warn", "turned off")
         # The host, never the path — a push endpoint's path is usually its credential.

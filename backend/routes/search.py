@@ -81,9 +81,7 @@ async def get_provider(provider_id: str, request: Request) -> ProviderView:
 
 
 @router.patch("/providers/{provider_id}", response_model=ProviderView)
-async def update_provider(
-    provider_id: str, body: ProviderUpdate, request: Request
-) -> ProviderView:
+async def update_provider(provider_id: str, body: ProviderUpdate, request: Request) -> ProviderView:
     changes = body.model_dump(exclude_unset=True)
     try:
         provider = await deps.search(request).update_provider(OPERATOR_ID, provider_id, **changes)

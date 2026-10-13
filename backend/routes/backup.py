@@ -130,6 +130,4 @@ async def import_backup(body: ImportIn, request: Request) -> ImportOut:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     except VaultLocked:
         raise HTTPException(status_code=409, detail="the app is locked") from None
-    return ImportOut(
-        imported=report.imported, skipped=report.skipped, unknown=list(report.unknown)
-    )
+    return ImportOut(imported=report.imported, skipped=report.skipped, unknown=list(report.unknown))

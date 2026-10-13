@@ -138,8 +138,7 @@ def parse_command_file(text: str, *, name: str) -> CommandSpec:
         title=clip(_line(fields.get("title")) or spec_name, TITLE_MAX_CHARS),
         description=clip(description, DESCRIPTION_MAX_CHARS),
         # The standard's own key, and ours by the same name. A hint, never enforced.
-        argument_hint=clip(_line(fields.get("argument-hint")), ARGUMENT_HINT_MAX_CHARS)
-        or None,
+        argument_hint=clip(_line(fields.get("argument-hint")), ARGUMENT_HINT_MAX_CHARS) or None,
         body=clip(template, BODY_MAX_CHARS),
         workspaces=PROJECT_WORKSPACES,
     )

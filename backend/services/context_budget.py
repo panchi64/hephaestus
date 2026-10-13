@@ -96,6 +96,7 @@ def compose(
         # token nobody can see should live.
         if tokens > 0
     )
+
     # The totals are the sums of the rows beneath them rather than a second reckoning of
     # the same tokens — the bar and the list are one measurement, and two derivations of
     # it would eventually disagree by a token and make the operator arbitrate.
@@ -146,4 +147,3 @@ def _pieces(overhead: TurnOverhead, messages: list[Any]) -> list[_Piece]:
         for name, chars in message_class_chars(messages).items()
     )
     return pieces
-

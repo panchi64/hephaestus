@@ -98,14 +98,10 @@ class SkillFile(SQLModel, table=True):
     """One supporting file in a skill's bundle — a script, a reference doc, an asset."""
 
     __tablename__ = "skill_files"
-    __table_args__ = (
-        UniqueConstraint("skill_id", "relpath", name="uq_skill_files_skill_relpath"),
-    )
+    __table_args__ = (UniqueConstraint("skill_id", "relpath", name="uq_skill_files_skill_relpath"),)
     # Rides its skill's section and lands after it. Ids are preserved across an import, so
     # ``skill_id`` still points at the right bundle on the far host.
-    __backup__ = BackupSpec(
-        section="skills", natural_key=("skill_id", "relpath"), order=1
-    )
+    __backup__ = BackupSpec(section="skills", natural_key=("skill_id", "relpath"), order=1)
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

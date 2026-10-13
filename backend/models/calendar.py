@@ -61,7 +61,7 @@ def _default_timezone() -> str:
     key = local_zone_key()
     try:
         ZoneInfo(key)
-    except (KeyError, ValueError, OSError):
+    except KeyError, ValueError, OSError:
         return "UTC"
     return key
 

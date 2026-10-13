@@ -157,9 +157,7 @@ class GraphTransport:
         await self._api.request("PATCH", f"messages/{uid}", json=patch)
 
     async def move(self, folder: str, uid: str, destination: str) -> None:
-        await self._api.request(
-            "POST", f"messages/{uid}/move", json={"destinationId": destination}
-        )
+        await self._api.request("POST", f"messages/{uid}/move", json={"destinationId": destination})
 
     async def delete(self, folder: str, uid: str) -> None:
         # Graph's DELETE moves to Deleted Items rather than erasing — recoverable, which
@@ -204,5 +202,3 @@ def _to_header(message: dict[str, Any]) -> MailHeader:
         has_attachments=bool(message.get("hasAttachments")),
     )
     return replace(header, size_bytes=message.get("size"))
-
-

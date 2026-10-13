@@ -124,7 +124,6 @@ async def resolve_turn_models(
     )
 
 
-
 def compose_turn(
     *,
     prompt: str | None,

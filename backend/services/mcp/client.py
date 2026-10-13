@@ -69,7 +69,7 @@ def parse_args(args_json: str) -> list[str]:
     taking the whole surface down."""
     try:
         parsed = json.loads(args_json)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return []
     return [str(a) for a in parsed] if isinstance(parsed, list) else []
 

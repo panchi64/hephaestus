@@ -40,8 +40,7 @@ BUILTIN_ACTIONS: tuple[CommandSpec, ...] = (
         kind="action",
         action="fork",
         title="Fork from the last turn",
-        description="Open a new thread carrying history up to here, leaving this one "
-        "untouched.",
+        description="Open a new thread carrying history up to here, leaving this one untouched.",
     ),
     CommandSpec(
         name="retitle",

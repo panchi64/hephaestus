@@ -102,9 +102,7 @@ class DraftStore:
             "label_enc": self._seal(fields.get("label")) if "label" in fields else None,
         }
         touched = {
-            key: value
-            for key, value in sealed.items()
-            if key.removesuffix("_enc") in fields
+            key: value for key, value in sealed.items() if key.removesuffix("_enc") in fields
         }
 
         def work(session: Session) -> MailDraft | None:

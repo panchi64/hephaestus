@@ -114,7 +114,7 @@ class ConversationTasks:
             return []
         try:
             return _load(self._vault.decrypt_str(sealed))
-        except (VaultLocked, VaultError):
+        except VaultLocked, VaultError:
             logger.debug("task list unreadable for %s: vault locked", conversation_id)
             return []
 
@@ -138,9 +138,7 @@ class ConversationTasks:
         await in_session(self._db, work)
         self._locks.pop(conversation_id, None)
 
-    async def replace(
-        self, owner_id: str, conversation_id: str, items: list[TaskItem]
-    ) -> bool:
+    async def replace(self, owner_id: str, conversation_id: str, items: list[TaskItem]) -> bool:
         """Store ``items``; ``False`` when the vault was locked and nothing was written.
 
         The caller needs the distinction: announcing a change that was silently dropped
@@ -148,7 +146,7 @@ class ConversationTasks:
         """
         try:
             sealed = self._vault.encrypt_str(_dump(items))
-        except (VaultLocked, VaultError):
+        except VaultLocked, VaultError:
             logger.debug("tasks not stored for %s: vault locked", conversation_id)
             return False
 

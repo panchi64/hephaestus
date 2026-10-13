@@ -104,9 +104,7 @@ class GmailTransport:
         # Google. The window is applied before fetching (rather than breaking mid-loop) so
         # the concurrent form reads exactly the messages the serial form would have, and
         # `gather_bounded` preserves listing order.
-        bodies = await gather_bounded(
-            [self._read(mid) for mid in wanted], _LIST_CONCURRENCY
-        )
+        bodies = await gather_bounded([self._read(mid) for mid in wanted], _LIST_CONCURRENCY)
         return [body.header for body in bodies]
 
     async def fetch(self, folder: str, uid: str) -> MailBody:
@@ -157,9 +155,7 @@ class GmailTransport:
     # --- internals -------------------------------------------------------------
 
     async def _read(self, message_id: str) -> MailBody:
-        payload = await self._api.request(
-            "GET", f"messages/{message_id}", params={"format": "RAW"}
-        )
+        payload = await self._api.request("GET", f"messages/{message_id}", params={"format": "RAW"})
         raw = payload.get("raw")
         if not raw:
             raise MailError("that message is no longer on the server")
@@ -176,9 +172,7 @@ class GmailTransport:
             received_at=_internal_date(payload.get("internalDate")),
             size_bytes=payload.get("sizeEstimate"),
         )
-        return MailBody(
-            header=header, text=body.text, html=body.html, attachments=body.attachments
-        )
+        return MailBody(header=header, text=body.text, html=body.html, attachments=body.attachments)
 
 
 def _stamp(header: MailHeader, **overrides) -> MailHeader:
@@ -194,7 +188,7 @@ def _internal_date(value) -> datetime | None:
         return None
     try:
         return datetime.fromtimestamp(int(value) / 1000, tz=UTC)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 

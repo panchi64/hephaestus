@@ -90,7 +90,7 @@ def contained_file(root: Path, relpath: str) -> Path | None:
     try:
         target = contained_path(root, relpath, what="file reference")
         return target if target.is_file() else None
-    except (SandboxError, OSError):
+    except SandboxError, OSError:
         return None
 
 

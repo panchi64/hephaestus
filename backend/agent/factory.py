@@ -61,8 +61,8 @@ from .prefix_watch import WatchPrefix, watch_prefix_enabled
 NO_DORMANT: Mapping[str, str] = MappingProxyType({})
 
 
-
 _WORKSPACE_POSTURE = {"checkout": CHECKOUT_WORKSPACE, "worktree": WORKTREE_WORKSPACE}
+
 
 def build_agent(
     model: Model,

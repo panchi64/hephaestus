@@ -261,9 +261,7 @@ def prepare_worktree_workspace(path: Path) -> None:
         if not ignore.is_file():
             ignore.write_text("# Odysseus' own scratch — never the operator's work.\n*\n")
     except OSError:
-        logger.debug(
-            "workspace: could not exclude %s from git", WORKTREE_SCRATCH, exc_info=True
-        )
+        logger.debug("workspace: could not exclude %s from git", WORKTREE_SCRATCH, exc_info=True)
 
 
 async def resolve_workspace(

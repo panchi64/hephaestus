@@ -70,9 +70,7 @@ def _assert_foreign_key_integrity(connection) -> None:
     finally:
         cursor.close()
     if violations:
-        raise SchemaMigrationError(
-            f"foreign-key integrity broken by migration: {violations}"
-        )
+        raise SchemaMigrationError(f"foreign-key integrity broken by migration: {violations}")
 
 
 def _run(connection) -> None:

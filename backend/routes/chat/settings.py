@@ -63,9 +63,7 @@ async def get_chat_settings(request: Request) -> ChatSettings:
     context = await get_context_thresholds(store, OPERATOR_ID)
     subagents = await get_subagent_limit(store, OPERATOR_ID)
     idle_minutes = await get_work_summary_idle_minutes(store, OPERATOR_ID)
-    return _settings_response(
-        auto, context, steps, inactivity, wall_clock, subagents, idle_minutes
-    )
+    return _settings_response(auto, context, steps, inactivity, wall_clock, subagents, idle_minutes)
 
 
 @router.put("/settings", response_model=ChatSettings)
@@ -140,6 +138,4 @@ async def update_chat_settings(body: ChatSettings, request: Request) -> ChatSett
                 ),
             ) from exc
         context = await set_context_thresholds(store, OPERATOR_ID, thresholds)
-    return _settings_response(
-        auto, context, steps, inactivity, wall_clock, subagents, idle_minutes
-    )
+    return _settings_response(auto, context, steps, inactivity, wall_clock, subagents, idle_minutes)

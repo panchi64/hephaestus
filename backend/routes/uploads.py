@@ -223,7 +223,7 @@ async def thumbnail_upload(
     try:
         thumb = _render_thumbnail(blob.content, size)
         media_type = "image/webp"
-    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+    except UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError:
         # An image Pillow can't decode (an exotic format, or one so large it trips the
         # decompression-bomb guard) still has its original bytes — serve those so the tile
         # renders rather than breaks; the browser scales it down.
@@ -259,9 +259,7 @@ def _render_thumbnail(raw: bytes, size: int) -> bytes:
 
 
 @router.patch("/{upload_id}", response_model=UploadOut)
-async def patch_upload(
-    upload_id: str, body: UploadPatch, request: Request
-) -> UploadOut:
+async def patch_upload(upload_id: str, body: UploadPatch, request: Request) -> UploadOut:
     """Correct the extracted text, toggle knowledge-base membership, or both. Each is
     applied independently so the frontend can send just the field it changed."""
     store = deps.uploads(request)

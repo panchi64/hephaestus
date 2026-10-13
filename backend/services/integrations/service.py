@@ -127,9 +127,7 @@ class IntegrationService:
         # One policy read for the whole listing — see the same call in the MCP registry:
         # this sits on the agent's toolset-assembly path, so a query per row is a query
         # per row on every run.
-        policies = await self._policy.snapshots(
-            owner_id, "integration", [r.id for r in rows]
-        )
+        policies = await self._policy.snapshots(owner_id, "integration", [r.id for r in rows])
         views = (self._view(row, policies.get(row.id, {})) for row in rows)
         return [view for view in views if view is not None]
 
@@ -281,9 +279,7 @@ class IntegrationService:
             raise NotFoundError(f"connector {row.name!r} has no action named {action_name!r}")
         decision = await self._policy.get(owner_id, "integration", integration_id, action_name)
         if not decision.enabled:
-            raise DegradedCapabilityError(
-                f"action {action_name!r} on {row.name!r} is disabled"
-            )
+            raise DegradedCapabilityError(f"action {action_name!r} on {row.name!r} is disabled")
         if body and not chosen.takes_body:
             raise InvalidInputError(f"action {action_name!r} does not take a body")
         path, query = _fill_path(chosen, params or {})
@@ -413,9 +409,7 @@ class IntegrationService:
         now = utcnow()
 
         def work(session: Session) -> None:
-            row = session.exec(
-                select(Integration).where(Integration.id == integration_id)
-            ).first()
+            row = session.exec(select(Integration).where(Integration.id == integration_id)).first()
             if row is None:  # pragma: no cover - removed mid-test
                 return
             row.status = STATUS_OK if error is None else STATUS_ERROR
@@ -438,7 +432,7 @@ class IntegrationService:
             parsed = json.loads(self._vault.decrypt_str(sealed))
         except VaultLocked:
             return None
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             logger.warning("integrations: stored credentials could not be read")
             return None
         return parsed if isinstance(parsed, dict) else None

@@ -119,7 +119,7 @@ def _fingerprint(answer: object) -> str:
     """
     try:
         rendered = json.dumps(answer, sort_keys=True, default=repr)
-    except (TypeError, ValueError):  # pragma: no cover — `default=repr` handles the rest
+    except TypeError, ValueError:  # pragma: no cover — `default=repr` handles the rest
         rendered = repr(answer)
     return hashlib.sha256(rendered.encode("utf-8", "replace")).hexdigest()
 

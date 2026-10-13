@@ -191,9 +191,7 @@ async def _token_request(
     )
     try:
         async with client:
-            token = await client.fetch_token(
-                provider.token_url, grant_type=grant, **params
-            )
+            token = await client.fetch_token(provider.token_url, grant_type=grant, **params)
     except Exception as exc:  # noqa: BLE001 — authlib raises a wide family of errors
         # A refused grant and an unreachable identity provider are different problems for
         # the operator: one needs a reconnect, the other needs waiting.
@@ -243,8 +241,9 @@ class MailSecrets:
         try:
             raw = self._vault.decrypt_str(account.secret_enc)
         except VaultLocked as exc:
-            raise MailUnavailableError("the vault is locked, so this account's credentials "
-                                       "cannot be opened") from exc
+            raise MailUnavailableError(
+                "the vault is locked, so this account's credentials cannot be opened"
+            ) from exc
         if account.auth_kind != AUTH_OAUTH:
             return json.loads(raw).get("password"), None
 

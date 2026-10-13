@@ -60,9 +60,7 @@ from .summarize import (
 logger = logging.getLogger(__name__)
 
 
-def incoming_request(
-    user_prompt: str | list[Any] | None, extra: list[str]
-) -> ModelRequest | None:
+def incoming_request(user_prompt: str | list[Any] | None, extra: list[str]) -> ModelRequest | None:
     """This turn's own new content as one request, for measuring it — the operator's
     message with its attachment markers, plus any per-turn context that isn't already
     inside it (a regenerate has no fresh prompt, so its context is the only new part).

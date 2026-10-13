@@ -40,6 +40,7 @@ def workspace_policy(raw: str) -> WorkspacePolicy | None:
         return "own"
     return None
 
+
 #: Where a definition came from. ``user`` and ``agent`` are stored; ``builtin`` ships in
 #: code; ``project`` is read from the bound project's files; ``plugin`` is contributed by an
 #: installed plugin.

@@ -149,9 +149,7 @@ class MailStyle:
         return Agent(resolved.model, output_type=output_type, instructions=instructions), settings
 
 
-def _draft_prompt(
-    detail: MessageDetail, profile: str | None, context: list[MessageDetail]
-) -> str:
+def _draft_prompt(detail: MessageDetail, profile: str | None, context: list[MessageDetail]) -> str:
     """Assemble the drafting request. The operator's style profile is *their* text and
     sits outside the fence; the message and every prior exchange are the sender's and go
     inside it."""
@@ -169,6 +167,7 @@ def _draft_prompt(
         "",
     ]
     if context:
+
         def _speaker(item: MessageDetail) -> str:
             them = item.message.from_address == message.from_address
             return "They wrote" if them else "You wrote"

@@ -234,9 +234,7 @@ async def create_calendar(body: CalendarCreate, request: Request) -> CalendarOut
 
 
 @router.patch("/calendars/{calendar_id}", response_model=CalendarOut)
-async def update_calendar(
-    calendar_id: str, body: CalendarUpdate, request: Request
-) -> CalendarOut:
+async def update_calendar(calendar_id: str, body: CalendarUpdate, request: Request) -> CalendarOut:
     service = deps.calendar(request)
     with _mapped():
         updated = await service.update_calendar(

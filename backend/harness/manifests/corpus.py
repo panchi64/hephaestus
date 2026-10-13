@@ -37,9 +37,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     index.register(ConversationAdapter(ctx.services.get(ConversationSearch)))
     for adapter in record_adapters(ctx.engine, ctx.vault):
         index.register(adapter)
-    await ctx.lifecycle.start(
-        "corpus-folder", start=folder_adapter.start, stop=folder_adapter.stop
-    )
+    await ctx.lifecycle.start("corpus-folder", start=folder_adapter.start, stop=folder_adapter.stop)
     return FeatureRuntime(
         services=(chunk_store, index, folder_adapter),
         capabilities=(index,),

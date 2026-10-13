@@ -111,9 +111,7 @@ def _split(text: str, size: int) -> list[str]:
     return [text[at : at + size] for at in range(0, len(text), size)] or [""]
 
 
-def stream(
-    model: str, reply: Reply, *, request_id: str, include_usage: bool
-) -> Iterator[str]:
+def stream(model: str, reply: Reply, *, request_id: str, include_usage: bool) -> Iterator[str]:
     """The streaming response, as ready-to-write SSE frames.
 
     ``include_usage`` follows the client's ``stream_options``. When asked for, the usage

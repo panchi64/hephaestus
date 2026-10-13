@@ -50,15 +50,23 @@ def _tooling() -> list[Finding]:
         found = shutil.which(tool)
         if found is None:
             findings.append(
-                Finding(tool, FAIL, f"not on PATH — {why} cannot start",
-                        f"install {tool}, or run only the half that does not need it")
+                Finding(
+                    tool,
+                    FAIL,
+                    f"not on PATH — {why} cannot start",
+                    f"install {tool}, or run only the half that does not need it",
+                )
             )
         else:
             findings.append(Finding(tool, OK, found))
     if not (repo.FRONTEND / "node_modules").is_dir():
         findings.append(
-            Finding("frontend deps", WARN, "node_modules is missing",
-                    "`up` installs them on its next run; nothing to do by hand")
+            Finding(
+                "frontend deps",
+                WARN,
+                "node_modules is missing",
+                "`up` installs them on its next run; nothing to do by hand",
+            )
         )
     return findings
 
@@ -79,7 +87,8 @@ def _ports(instance: DevInstance) -> list[Finding]:
         if name == "backend" and not healthy:
             findings.append(
                 Finding(
-                    "backend port", FAIL,
+                    "backend port",
+                    FAIL,
                     f"{port} is held by something that does not answer /health",
                     "stop it, or delete "
                     f"{instance.root / 'instance.json'} to be given another slot",
@@ -96,16 +105,24 @@ def _isolation(instance: DevInstance) -> list[Finding]:
     env = instance.env()
     if not str(instance.data_dir).startswith(str(Path.home())):
         findings.append(
-            Finding("data dir", WARN, f"{instance.data_dir} is outside your home directory",
-                    "expected under ~/.odysseus/dev — check instance.json")
+            Finding(
+                "data dir",
+                WARN,
+                f"{instance.data_dir} is outside your home directory",
+                "expected under ~/.odysseus/dev — check instance.json",
+            )
         )
     else:
         findings.append(Finding("data dir", OK, str(instance.data_dir)))
 
     if env["ODYSSEUS_PORT"] in {"8000", "5173"}:
         findings.append(
-            Finding("ports", FAIL, "this instance is on the operator's own ports",
-                    "no slot can reach them — devkit/ports.py has been changed")
+            Finding(
+                "ports",
+                FAIL,
+                "this instance is on the operator's own ports",
+                "no slot can reach them — devkit/ports.py has been changed",
+            )
         )
     return findings
 
@@ -113,14 +130,18 @@ def _isolation(instance: DevInstance) -> list[Finding]:
 def _model(_instance: DevInstance) -> list[Finding]:
     if live.configured():
         return [
-            Finding("model", OK, f"a real endpoint ({live.endpoint()['base_url']}) — "
-                                 "the stub is not started")
+            Finding(
+                "model",
+                OK,
+                f"a real endpoint ({live.endpoint()['base_url']}) — the stub is not started",
+            )
         ]
     missing = live.missing()
     if len(missing) < len(live.REQUIRED):
         return [
             Finding(
-                "model", WARN,
+                "model",
+                WARN,
                 f"a real endpoint is half-configured; missing {', '.join(missing)}",
                 "set them all to use it, or unset the rest to fall back to the stub",
             )
@@ -132,8 +153,12 @@ def _surfaces() -> list[Finding]:
     findings = []
     if not surfaces.SOURCE.is_file():
         findings.append(
-            Finding("recipe", WARN, f"{surfaces.SOURCE} is missing",
-                    "the generated skill falls back to a pointer; restore the file")
+            Finding(
+                "recipe",
+                WARN,
+                f"{surfaces.SOURCE} is missing",
+                "the generated skill falls back to a pointer; restore the file",
+            )
         )
     for label, path in (
         ("launch.json", repo.CLAUDE_DIR / "launch.json"),
@@ -143,8 +168,12 @@ def _surfaces() -> list[Finding]:
             findings.append(Finding(label, OK, str(path)))
         else:
             findings.append(
-                Finding(label, WARN, f"{path} has not been generated",
-                        "run `up` — it writes these on every run")
+                Finding(
+                    label,
+                    WARN,
+                    f"{path} has not been generated",
+                    "run `up` — it writes these on every run",
+                )
             )
     return findings
 
@@ -160,7 +189,11 @@ def run(instance: DevInstance) -> list[Finding]:
     ]
     if len(set(ports.slot_ports(instance.slot))) != 3:
         findings.append(
-            Finding("slot", FAIL, "this slot's three ports are not distinct",
-                    "the port bases in devkit/ports.py have drifted into each other")
+            Finding(
+                "slot",
+                FAIL,
+                "this slot's three ports are not distinct",
+                "the port bases in devkit/ports.py have drifted into each other",
+            )
         )
     return findings

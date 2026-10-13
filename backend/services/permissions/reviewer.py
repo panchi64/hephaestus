@@ -377,8 +377,7 @@ def review_prompt(request: ReviewRequest) -> str:
     # program can reach, and the reviewer has no other way to tell that call from one on
     # the operator's own machine.
     lines.append(
-        "Runs inside the conversation's sandbox: "
-        f"{'yes' if capability.sandboxed else 'no'}"
+        f"Runs inside the conversation's sandbox: {'yes' if capability.sandboxed else 'no'}"
     )
     # And the network fact is always the grammar walk's, which is why the label says what
     # was *seen written* rather than what the action can reach. The grammar walk is the

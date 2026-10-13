@@ -98,6 +98,7 @@ class PlanMode:
         """This thread's plan, or None where there is none — including where the vault is
         locked, for the same reason the task list reads as empty then: a surface that
         cannot be drawn correctly should be drawn empty rather than wrongly."""
+
         def work(session: Session) -> tuple[str, str, int] | None:
             row = session.exec(
                 select(ConversationPlan)
@@ -114,7 +115,7 @@ class PlanMode:
         sealed, status, revision = stored
         try:
             document = json.loads(self._vault.decrypt_str(sealed))
-        except (VaultLocked, VaultError):
+        except VaultLocked, VaultError:
             logger.debug("plan unreadable for %s: vault locked", conversation_id)
             return None
         return Plan(
@@ -147,7 +148,7 @@ class PlanMode:
             sealed = self._vault.encrypt_str(
                 json.dumps({"title": title, "body": body, "steps": list(steps)})
             )
-        except (VaultLocked, VaultError):
+        except VaultLocked, VaultError:
             logger.debug("plan not stored for %s: vault locked", conversation_id)
             return None
 
@@ -176,9 +177,7 @@ class PlanMode:
             return row.revision
 
         revision = await in_session(self._db, work)
-        plan = Plan(
-            title=title, body=body, steps=list(steps), status="pending", revision=revision
-        )
+        plan = Plan(title=title, body=body, steps=list(steps), status="pending", revision=revision)
         self._announce(plan, run)
         return plan
 

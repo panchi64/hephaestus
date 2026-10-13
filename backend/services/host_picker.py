@@ -197,9 +197,7 @@ def _build_argv(
         )
     else:
         filt = (
-            "|".join(
-                f"{e.lstrip('.')} files|*.{e.lstrip('.')}" for e in (extensions or [])
-            )
+            "|".join(f"{e.lstrip('.')} files|*.{e.lstrip('.')}" for e in (extensions or []))
             or "All files|*.*"
         )
         script = (
@@ -251,9 +249,7 @@ async def _run(argv: list[str]) -> str | None:
     except OSError as exc:
         raise RuntimeError(f"could not open a file chooser: {exc}") from exc
     try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=_DIALOG_TIMEOUT_S
-        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_DIALOG_TIMEOUT_S)
     except TimeoutError:
         # An unanswered dialog must not hold the lock (or a process) indefinitely.
         with suppress(ProcessLookupError):
@@ -271,7 +267,5 @@ async def _run(argv: list[str]) -> str | None:
         logger.warning(
             "host picker: the file chooser failed (exit %s): %s", proc.returncode, detail
         )
-        raise RuntimeError(
-            f"the file chooser couldn't be opened{f': {detail}' if detail else ''}"
-        )
+        raise RuntimeError(f"the file chooser couldn't be opened{f': {detail}' if detail else ''}")
     return stdout.decode(errors="replace").strip() or None

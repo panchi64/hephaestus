@@ -127,9 +127,7 @@ class CommandStore:
             else None
         )
         clean_hint = (
-            validate_line(
-                argument_hint, field="argument hint", limit=ARGUMENT_HINT_MAX_CHARS
-            )
+            validate_line(argument_hint, field="argument hint", limit=ARGUMENT_HINT_MAX_CHARS)
             if argument_hint is not None
             else None
         )

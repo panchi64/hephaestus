@@ -161,9 +161,7 @@ async def write_summary(
                 if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                     if event.part.content:
                         on_delta(event.part.content)
-                elif isinstance(event, PartDeltaEvent) and isinstance(
-                    event.delta, TextPartDelta
-                ):
+                elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
                     on_delta(event.delta.content_delta)
         response = agent_run.ctx.state.message_history[-1]
     if not isinstance(response, ModelResponse):

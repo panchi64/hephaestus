@@ -23,9 +23,7 @@ class SearchProvider(SQLModel, table=True):
     __tablename__ = "search_providers"
     # An operator's provider names are unique, so a re-import can't silently
     # duplicate one (same guard the model endpoints use).
-    __table_args__ = (
-        UniqueConstraint("owner_id", "name", name="uq_search_provider_owner_name"),
-    )
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_search_provider_owner_name"),)
     # Part of the operator's configuration, so it exports under "settings" (`BACKUP-1`),
     # merged on that same unique name.
     __backup__ = BackupSpec(section="settings", natural_key=("name",), order=2)

@@ -335,7 +335,11 @@ class MailService:
         return await self.cache.get(owner_id, message_id)
 
     async def set_flags(
-        self, owner_id: str, message_id: str, *, seen: bool | None = None,
+        self,
+        owner_id: str,
+        message_id: str,
+        *,
+        seen: bool | None = None,
         flagged: bool | None = None,
     ) -> None:
         """Write a flag remotely, then locally — the remote write is authoritative, so a
@@ -396,11 +400,7 @@ class MailService:
         detail = await self.cache.get(owner_id, message_id)
         message = detail.message
         recipients = [message.from_address]
-        cc = [
-            address
-            for address in detail.cc
-            if reply_all and address not in recipients
-        ]
+        cc = [address for address in detail.cc if reply_all and address not in recipients]
         subject = message.subject
         if not subject.lower().startswith("re:"):
             subject = f"Re: {subject}".strip()
@@ -424,9 +424,7 @@ class MailService:
             return stored.profile
         account = await self._row(owner_id, account_id)
         transport = await self._transport(account)
-        sent = next(
-            (f for f in await transport.list_folders() if f.role == ROLE_SENT), None
-        )
+        sent = next((f for f in await transport.list_folders() if f.role == ROLE_SENT), None)
         if sent is None:
             raise MailError("this account has no Sent folder to learn from")
         headers = await transport.list_messages(sent.id, limit=SAMPLE_LIMIT)
@@ -547,7 +545,7 @@ class MailService:
         for detail in await self.cache.untriaged(owner_id):
             try:
                 full = await self.read_message(owner_id, detail.message.id)
-            except (MailError, NotFoundError):
+            except MailError, NotFoundError:
                 continue
             verdict = await self.triage.triage(owner_id, full)
             if verdict is None:

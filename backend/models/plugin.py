@@ -35,9 +35,7 @@ class Plugin(SQLModel, table=True):
 
 class PluginSecret(SQLModel, table=True):
     __tablename__ = "plugin_secrets"
-    __table_args__ = (
-        UniqueConstraint("plugin_id", "name", name="uq_plugin_secrets_plugin_name"),
-    )
+    __table_args__ = (UniqueConstraint("plugin_id", "name", name="uq_plugin_secrets_plugin_name"),)
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

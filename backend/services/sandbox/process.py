@@ -118,7 +118,7 @@ def kill_tree(proc: asyncio.subprocess.Process) -> None:
     spawned (a server, a backgrounded job) outlives whatever stopped its parent."""
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError, PermissionError:
         proc.kill()
     except OSError:  # already reaped, or no such group
         pass
@@ -138,7 +138,7 @@ async def terminate_tree(proc: asyncio.subprocess.Process) -> None:
     """
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError, PermissionError:
         proc.terminate()
     except OSError:  # already reaped, or no such group
         return

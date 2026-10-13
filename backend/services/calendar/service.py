@@ -169,9 +169,7 @@ class CalendarService:
     async def list_calendars(self, owner_id: str) -> list[CalendarView]:
         def work(session: Session) -> list[CalendarView]:
             rows = session.exec(
-                select(Calendar)
-                .where(Calendar.owner_id == owner_id)
-                .order_by(Calendar.created_at)  # type: ignore[arg-type]
+                select(Calendar).where(Calendar.owner_id == owner_id).order_by(Calendar.created_at)  # type: ignore[arg-type]
             ).all()
             return [self._calendar_view(row) for row in rows]
 
@@ -452,9 +450,7 @@ class CalendarService:
 
         return await in_session(self._engine, work)
 
-    async def list_events(
-        self, owner_id: str, calendar_id: str | None = None
-    ) -> list[EventView]:
+    async def list_events(self, owner_id: str, calendar_id: str | None = None) -> list[EventView]:
         """The stored events (rules, not occurrences), oldest first. The ICS export and
         the sync push read this; a calendar *view* wants `occurrences` instead."""
 

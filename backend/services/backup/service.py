@@ -92,11 +92,10 @@ class BackupManifest:
             return cls(
                 created_at=datetime.fromisoformat(data["created_at"]),
                 items=tuple(
-                    BackupManifestItem(name=i["name"], count=int(i["count"]))
-                    for i in data["items"]
+                    BackupManifestItem(name=i["name"], count=int(i["count"])) for i in data["items"]
                 ),
             )
-        except (ValueError, KeyError, TypeError):
+        except ValueError, KeyError, TypeError:
             # A corrupted marker is a missing marker, never a failed page load.
             logger.warning("backup: stored last-export manifest is unreadable")
             return None
@@ -243,10 +242,7 @@ class BackupService:
             report.record(section, imported=imported, skipped=skipped)
 
         in_file = {
-            name
-            for group in file_sections.values()
-            if isinstance(group, dict)
-            for name in group
+            name for group in file_sections.values() if isinstance(group, dict) for name in group
         }
         report.unknown = tuple(sorted(in_file - known))
         return report
@@ -365,7 +361,7 @@ class BackupService:
                 continue
             try:
                 instance = self._decode(entity, values)
-            except (KeyError, ValueError, TypeError):
+            except KeyError, ValueError, TypeError:
                 logger.warning("backup: dropped an unreadable %s row", entity.name)
                 skipped += 1
                 continue
@@ -387,9 +383,7 @@ class BackupService:
         return len(fresh), skipped
 
     @staticmethod
-    def _reparent(
-        entity: BackupEntity, values: dict[str, Any], remap: Mapping[str, str]
-    ) -> None:
+    def _reparent(entity: BackupEntity, values: dict[str, Any], remap: Mapping[str, str]) -> None:
         """Rewrite a row's references to ids this host actually uses. In place, no-op when
         nothing has been remapped (the common case — ids are preserved).
 

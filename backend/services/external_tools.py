@@ -210,9 +210,7 @@ class ExternalPolicyStore:
 
         return await in_session(self._db, work)
 
-    async def forget_source(
-        self, owner_id: str, source_kind: SourceKind, source_id: str
-    ) -> None:
+    async def forget_source(self, owner_id: str, source_kind: SourceKind, source_id: str) -> None:
         """Drop every decision for a source — called when its server/connector is
         removed, so a later registration at the same id can't inherit stale trust."""
 

@@ -79,8 +79,7 @@ class TurnOverhead:
             "tools": self.tools,
             "blocks": [{"id": b.id, "chars": b.chars} for b in self.blocks],
             "groups": [
-                {"category": g.category, "tools": g.tools, "chars": g.chars}
-                for g in self.groups
+                {"category": g.category, "tools": g.tools, "chars": g.chars} for g in self.groups
             ],
         }
 
@@ -116,7 +115,7 @@ class TurnOverhead:
                     for g in raw.get("groups") or ()
                 ),
             )
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             return None
         counts = (
             overhead.system,

@@ -312,8 +312,8 @@ class NotificationService:
         )
         # --- atomic: register before snapshot, no await between ---
         self._subscribers.add(queue)
-        backlog = [e for e in self._buffer if e.seq > after_seq] if after_seq > 0 else list(
-            self._buffer
+        backlog = (
+            [e for e in self._buffer if e.seq > after_seq] if after_seq > 0 else list(self._buffer)
         )
         # ------------------------------------------------------------
         try:

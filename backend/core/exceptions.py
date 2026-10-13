@@ -54,7 +54,8 @@ class SpanEditError(OdysseusError):
     def __init__(self, occurrences: int) -> None:
         self.occurrences = occurrences
         super().__init__(
-            "old_text was not found" if occurrences == 0
+            "old_text was not found"
+            if occurrences == 0
             else f"old_text matched {occurrences} spans"
         )
 
@@ -135,4 +136,3 @@ class WebFetchError(OdysseusError):
     """A web fetch failed for a single URL in a way the caller can retry against a
     different source — a network error, a non-OK status, too many redirects, or a
     page with no extractable content. Distinct from a missing capability."""
-

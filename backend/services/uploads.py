@@ -203,9 +203,7 @@ class UploadStore:
         self._worker.submit(ExtractJob(owner_id, view.id))
         return view, True
 
-    async def correct_text(
-        self, owner_id: str, upload_id: str, text: str
-    ) -> UploadView:
+    async def correct_text(self, owner_id: str, upload_id: str, text: str) -> UploadView:
         """Replace an upload's extracted text with an operator correction (`UP-2`) and
         re-index it. Clears any extraction note and marks the upload done."""
         await self._require(owner_id, upload_id)
@@ -228,9 +226,7 @@ class UploadStore:
         self._adapter.index_upload(owner_id, upload_id, text)
         return view
 
-    async def set_kb_excluded(
-        self, owner_id: str, upload_id: str, value: bool
-    ) -> UploadView:
+    async def set_kb_excluded(self, owner_id: str, upload_id: str, value: bool) -> UploadView:
         """Toggle whether this upload is part of the knowledge base — retroactively. Flips
         the authoritative flag on the row and restamps its corpus chunks, so it's filtered
         out of (``True``) or back into (``False``) every ``corpus.retrieve``. The bytes,
@@ -252,9 +248,7 @@ class UploadStore:
         self._adapter.set_excluded(owner_id, upload_id, value)
         return view
 
-    async def set_favorite(
-        self, owner_id: str, upload_id: str, value: bool
-    ) -> UploadView:
+    async def set_favorite(self, owner_id: str, upload_id: str, value: bool) -> UploadView:
         """Toggle the operator's star on an image. A clear-column flip, like
         ``set_kb_excluded`` but with no corpus restamp — favorite is a UI affordance, not a
         knowledge-base property, so it touches the row alone."""
@@ -309,9 +303,7 @@ class UploadStore:
 
         def work(session: Session) -> list[UploadSummaryView]:
             rows = session.exec(
-                select(Upload)
-                .where(Upload.owner_id == owner_id)
-                .order_by(Upload.created_at.desc())  # type: ignore[attr-defined]
+                select(Upload).where(Upload.owner_id == owner_id).order_by(Upload.created_at.desc())  # type: ignore[attr-defined]
             ).all()
             return [self._to_summary(row) for row in rows]
 
@@ -401,9 +393,7 @@ class UploadStore:
             upload = session.get(Upload, upload_id)
             if upload is None or upload.owner_id != owner_id:
                 return None
-            return UploadHead(
-                mime=upload.mime, sha256=upload.sha256, size_bytes=upload.size_bytes
-            )
+            return UploadHead(mime=upload.mime, sha256=upload.sha256, size_bytes=upload.size_bytes)
 
         return await in_session(self._engine, work)
 
@@ -464,9 +454,7 @@ class UploadStore:
         # Done when we got text, or when the file simply had none to give; error only
         # when there was content to extract but a reason it couldn't be (e.g. no vision
         # model). The extractor/vision provenance rides through on every outcome.
-        status = (
-            UploadStatus.DONE if (result.text or not result.note) else UploadStatus.ERROR
-        )
+        status = UploadStatus.DONE if (result.text or not result.note) else UploadStatus.ERROR
         await self._finish(
             job,
             status=status,
@@ -478,9 +466,7 @@ class UploadStore:
         if result.text:
             self._adapter.index_upload(job.owner_id, job.upload_id, result.text)
 
-    async def _load_for_extraction(
-        self, job: ExtractJob
-    ) -> tuple[str, str, bytes] | None:
+    async def _load_for_extraction(self, job: ExtractJob) -> tuple[str, str, bytes] | None:
         def work(session: Session) -> tuple[str, str, bytes] | None:
             upload = session.get(Upload, job.upload_id)
             if upload is None or upload.owner_id != job.owner_id:

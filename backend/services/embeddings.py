@@ -79,9 +79,7 @@ class RegistryEmbedder:
         # shared client would need keying, invalidation, and a close at shutdown that
         # nothing here owns. What that buys is one connection setup on a call otherwise
         # dominated by model inference.
-        async with AsyncOpenAI(
-            base_url=spec.base_url, api_key=spec.api_key or "unused"
-        ) as client:
+        async with AsyncOpenAI(base_url=spec.base_url, api_key=spec.api_key or "unused") as client:
             try:
                 response = await client.embeddings.create(model=spec.model, input=texts)
             except APIConnectionError as exc:
@@ -195,9 +193,7 @@ async def probe_embedding(spec: llm.EndpointSpec) -> int:
     endpoint can't be reached, or when it answers but returns no usable vector (not an
     embeddings model). The two cases carry distinct messages so the operator can tell
     a wrong model from a down server."""
-    async with AsyncOpenAI(
-        base_url=spec.base_url, api_key=spec.api_key or "unused"
-    ) as client:
+    async with AsyncOpenAI(base_url=spec.base_url, api_key=spec.api_key or "unused") as client:
         try:
             response = await client.embeddings.create(model=spec.model, input=["probe"])
         except APIConnectionError as exc:

@@ -16,9 +16,7 @@ import asyncio
 from collections.abc import Awaitable, Iterable
 
 
-async def gather_bounded[T](
-    awaitables: Iterable[Awaitable[T]], max_concurrency: int
-) -> list[T]:
+async def gather_bounded[T](awaitables: Iterable[Awaitable[T]], max_concurrency: int) -> list[T]:
     """Await everything with at most ``max_concurrency`` in flight, results in input order.
 
     Failure behaves like :func:`asyncio.gather` with no ``return_exceptions``: the first

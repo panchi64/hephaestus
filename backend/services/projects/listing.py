@@ -201,5 +201,3 @@ def _rank(query: str, paths: list[str]) -> list[str]:
         elif q in path.lower():
             by_path.append(path)
     return [*sorted(by_name_prefix), *sorted(by_name), *sorted(by_path)]
-
-

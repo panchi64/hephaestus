@@ -41,9 +41,7 @@ def _build_extractor(registry: ModelRegistry, settings) -> UploadExtractor:
         return basic
     if settings.upload_extractor == "mineru" or MinerUExtractor.is_available():
         logger.info("uploads: MinerU extraction enabled (high-fidelity, degrades to built-in)")
-        return FallbackExtractor(
-            MinerUExtractor(timeout_s=settings.upload_mineru_timeout_s), basic
-        )
+        return FallbackExtractor(MinerUExtractor(timeout_s=settings.upload_mineru_timeout_s), basic)
     logger.info("uploads: built-in extraction (MinerU not detected on host)")
     return basic
 

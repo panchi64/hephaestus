@@ -31,9 +31,7 @@ from services.workspace import RunWorkspace
 MAX_FILE_REFS = 40
 
 
-def resolve_file_refs(
-    paths: list[str], workspace: RunWorkspace | None
-) -> tuple[list[str], str]:
+def resolve_file_refs(paths: list[str], workspace: RunWorkspace | None) -> tuple[list[str], str]:
     """The references that resolve, and the block naming them for the model."""
     if not paths or workspace is None:
         return [], ""

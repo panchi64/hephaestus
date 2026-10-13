@@ -71,9 +71,7 @@ _STRIP_RESPONSE = _HOP_BY_HOP | {
 # opaque origin — no cookies, no credentialed same-origin fetch — while leaving a dev
 # server fully functional. `routes/views.py` makes the same call for the same reason; the
 # frontend's iframe attributes are UX, not the enforcement point.
-_PREVIEW_SANDBOX = (
-    "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-)
+_PREVIEW_SANDBOX = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
 
 
 def _preview(request_or_ws: Request | WebSocket, token: str) -> PreviewHandle | None:
@@ -122,14 +120,10 @@ async def proxy_http(token: str, path: str, request: Request) -> Response:
         query=request.url.query.encode("ascii"),
     )
     headers = [
-        (k, v)
-        for k, v in request.headers.raw
-        if k.decode("latin-1").lower() not in _STRIP_REQUEST
+        (k, v) for k, v in request.headers.raw if k.decode("latin-1").lower() not in _STRIP_REQUEST
     ]
     headers.append((b"x-forwarded-prefix", prefix.encode("ascii")))
-    upstream = client.build_request(
-        request.method, url, headers=headers, content=request.stream()
-    )
+    upstream = client.build_request(request.method, url, headers=headers, content=request.stream())
     try:
         response = await client.send(upstream, stream=True)
     except httpx.HTTPError as exc:
@@ -165,7 +159,7 @@ async def proxy_ws(websocket: WebSocket, token: str, path: str) -> None:
     subprotocols = websocket.scope.get("subprotocols") or None
     try:
         upstream = await ws_connect(upstream_url, subprotocols=subprotocols, open_timeout=10)
-    except (OSError, ConnectionClosed, TimeoutError, InvalidHandshake):
+    except OSError, ConnectionClosed, TimeoutError, InvalidHandshake:
         await websocket.close(code=1011)
         return
 
@@ -189,7 +183,7 @@ async def _bridge(client_ws: WebSocket, upstream) -> None:
                     await upstream.send(text)
                 elif (data := message.get("bytes")) is not None:
                     await upstream.send(data)
-        except (WebSocketDisconnect, ConnectionClosed):
+        except WebSocketDisconnect, ConnectionClosed:
             return
 
     async def upstream_to_client() -> None:
@@ -199,7 +193,7 @@ async def _bridge(client_ws: WebSocket, upstream) -> None:
                     await client_ws.send_text(message)
                 else:
                     await client_ws.send_bytes(message)
-        except (WebSocketDisconnect, ConnectionClosed):
+        except WebSocketDisconnect, ConnectionClosed:
             return
 
     tasks = [

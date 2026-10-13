@@ -32,21 +32,15 @@ OWNER = "operator"
 # --- ranking variants (all over the one embedded set, via services.ranking) ----
 
 
-def _dense_ranking(
-    query_vec: np.ndarray, doc_vecs: dict[str, np.ndarray]
-) -> list[str]:
-    scores = {
-        doc_id: ranking.cosine(query_vec, vec) for doc_id, vec in doc_vecs.items()
-    }
+def _dense_ranking(query_vec: np.ndarray, doc_vecs: dict[str, np.ndarray]) -> list[str]:
+    scores = {doc_id: ranking.cosine(query_vec, vec) for doc_id, vec in doc_vecs.items()}
     scores = {doc_id: s for doc_id, s in scores.items() if s > 0}
     return [doc_id for doc_id, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)]
 
 
 def _sparse_ranking(query: str, doc_texts: dict[str, str]) -> list[str]:
     q = ranking.tokens(query)
-    scores = {
-        doc_id: float(len(q & ranking.tokens(text))) for doc_id, text in doc_texts.items()
-    }
+    scores = {doc_id: float(len(q & ranking.tokens(text))) for doc_id, text in doc_texts.items()}
     scores = {doc_id: s for doc_id, s in scores.items() if s > 0}
     return [doc_id for doc_id, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)]
 
@@ -79,9 +73,7 @@ def metrics(rankings: list[tuple[list[str], set[str]]]) -> dict[str, float]:
 # --- embedding the corpus once ------------------------------------------------
 
 
-async def _embed_docs(
-    embedder: EnvEmbedder, doc_texts: dict[str, str]
-) -> dict[str, np.ndarray]:
+async def _embed_docs(embedder: EnvEmbedder, doc_texts: dict[str, str]) -> dict[str, np.ndarray]:
     ids = list(doc_texts)
     batch = await embedder.embed(OWNER, [doc_texts[i] for i in ids])
     return {i: np.asarray(v, dtype=np.float64) for i, v in zip(ids, batch.vectors, strict=True)}
@@ -140,9 +132,7 @@ async def _memory_hybrid(store, corpus: Corpus) -> dict[str, list[str]]:
     for q in corpus.queries:
         hits = await store.recall(OWNER, q.query, limit=len(corpus.memories))
         hybrid[q.query] = [
-            id_by_content[h.memory.content]
-            for h in hits
-            if h.memory.content in id_by_content
+            id_by_content[h.memory.content] for h in hits if h.memory.content in id_by_content
         ]
     return hybrid
 
@@ -172,9 +162,7 @@ async def _conversation_hybrid(store, search, corpus: Corpus) -> dict[str, list[
     for q in corpus.queries:
         hits = await search.search(OWNER, q.query, limit=len(corpus.conversations))
         hybrid[q.query] = [
-            real_to_gold[h.conversation_id]
-            for h in hits
-            if h.conversation_id in real_to_gold
+            real_to_gold[h.conversation_id] for h in hits if h.conversation_id in real_to_gold
         ]
     return hybrid
 
@@ -187,9 +175,7 @@ def _conversation_texts(corpus: Corpus) -> dict[str, str]:
     # The per-message vectors the drainer stores are one per turn-text; for the
     # offline ablation we score against the joined conversation text (the unit the
     # search collapses to). Faithful for recall@k at the conversation grain.
-    return {
-        c.id: " ".join(f"{p} {a}" for p, a in c.turns) for c in corpus.conversations
-    }
+    return {c.id: " ".join(f"{p} {a}" for p, a in c.turns) for c in corpus.conversations}
 
 
 # --- assertions on the per-consumer ablation ----------------------------------

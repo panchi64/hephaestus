@@ -207,9 +207,7 @@ def _message_out(view: MessageView, detail: MessageDetail | None = None) -> Mess
 
 
 def _suggestion_out(draft: DraftView) -> ReplySuggestionOut:
-    return ReplySuggestionOut(
-        id=draft.id, label=draft.label or "SUGGESTED REPLY", body=draft.body
-    )
+    return ReplySuggestionOut(id=draft.id, label=draft.label or "SUGGESTED REPLY", body=draft.body)
 
 
 def _profile_out(stored: StyleProfileView | None) -> StyleProfileOut | None:

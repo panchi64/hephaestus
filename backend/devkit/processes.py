@@ -186,7 +186,7 @@ class Supervisor:
 def _group_of(service: Service) -> int | None:
     try:
         return os.getpgid(service.process.pid)
-    except (ProcessLookupError, OSError):
+    except ProcessLookupError, OSError:
         return None
 
 
@@ -199,18 +199,20 @@ def _read_groups(path: Path) -> dict[str, int]:
     """
     try:
         groups = json.loads(path.read_text())
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
-    return {str(name): int(group) for name, group in groups.items()} if (
-        isinstance(groups, dict)
-    ) else {}
+    return (
+        {str(name): int(group) for name, group in groups.items()}
+        if (isinstance(groups, dict))
+        else {}
+    )
 
 
 def _group_alive(group: int) -> bool:
     """Whether any process is still in this group. Signal 0 checks without delivering."""
     try:
         os.killpg(group, 0)
-    except (ProcessLookupError, OSError):
+    except ProcessLookupError, OSError:
         return False
     return True
 

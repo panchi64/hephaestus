@@ -189,9 +189,7 @@ async def list_project_files(
     # this thread looking at" is three chances for them to disagree. The 404 stays here,
     # because a listing for a project that does not exist is a request to refuse — where
     # for the two pickers it is a keystroke, and an empty menu is the right answer.
-    root, from_worktree = await deps.composer_tree(
-        request, project_id, conversation_id
-    )
+    root, from_worktree = await deps.composer_tree(request, project_id, conversation_id)
     if root is None:
         raise HTTPException(status_code=404, detail="project not found")
     listing = await list_files(root, query=query, limit=max(1, min(limit, 500)))
@@ -296,9 +294,7 @@ async def init_repo(request: Request, project_id: str) -> ProjectOut:
     store = deps.projects(request)
     try:
         project = await store.get(OPERATOR_ID, project_id)
-        created = await deps.worktrees(request).ensure_repo(
-            Path(project.root_path), confirmed=True
-        )
+        created = await deps.worktrees(request).ensure_repo(Path(project.root_path), confirmed=True)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (InvalidInputError, WorktreeError) as exc:

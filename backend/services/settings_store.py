@@ -161,9 +161,7 @@ async def get_agent_request_limit(store: SettingsStore, owner_id: str) -> int:
     )
 
 
-async def get_agent_request_limit_override(
-    store: SettingsStore, owner_id: str
-) -> int | None:
+async def get_agent_request_limit_override(store: SettingsStore, owner_id: str) -> int | None:
     """The operator's per-turn ceiling **only if they set one**, else None.
 
     The distinction is load-bearing where a sub-agent spec carries a floor of its own: a floor may
@@ -202,9 +200,7 @@ async def get_subagent_limit(store: SettingsStore, owner_id: str) -> int | None:
     return value or None
 
 
-async def set_subagent_limit(
-    store: SettingsStore, owner_id: str, value: int | None
-) -> int | None:
+async def set_subagent_limit(store: SettingsStore, owner_id: str, value: int | None) -> int | None:
     """Persist the cap, or ``None`` to remove it. Returns the stored value. The ``ge=1``
     body field at the route rejects a nonsensical number; ``None`` is a deliberate choice
     and the route distinguishes it from an omission before calling this."""
@@ -222,9 +218,7 @@ async def get_inactivity_timeout(store: SettingsStore, owner_id: str) -> float |
     return _positive_float_or(raw, get_settings().run_inactivity_timeout_s)
 
 
-async def set_inactivity_timeout(
-    store: SettingsStore, owner_id: str, value: float
-) -> float:
+async def set_inactivity_timeout(store: SettingsStore, owner_id: str, value: float) -> float:
     """Persist the operator's inactivity timeout in seconds. Returns the stored value.
     The ``gt=0`` body field at the route rejects a nonsensical one; a stray non-positive
     value stored here would simply be ignored by the getter."""
@@ -254,9 +248,7 @@ async def set_wall_clock_timeout(
     Returns the stored value. The ``gt=0`` body field at the route rejects a nonsensical
     number; ``None`` is a deliberate choice, not an omission, and the route distinguishes
     the two before calling this."""
-    await store.set(
-        owner_id, WALL_CLOCK_TIMEOUT_KEY, _DISABLED if value is None else str(value)
-    )
+    await store.set(owner_id, WALL_CLOCK_TIMEOUT_KEY, _DISABLED if value is None else str(value))
     return value
 
 
@@ -361,9 +353,7 @@ async def set_auto_compact(
     store: SettingsStore, owner_id: str, settings: AutoCompactSettings
 ) -> AutoCompactSettings:
     """Persist the operator's auto-compaction preferences. Returns the stored settings."""
-    await store.set(
-        owner_id, AUTO_COMPACT_ENABLED_KEY, "true" if settings.enabled else "false"
-    )
+    await store.set(owner_id, AUTO_COMPACT_ENABLED_KEY, "true" if settings.enabled else "false")
     await store.set(owner_id, AUTO_COMPACT_THRESHOLD_KEY, str(settings.threshold))
     return settings
 
@@ -411,7 +401,7 @@ async def get_context_thresholds(store: SettingsStore, owner_id: str) -> Context
             warn=_fraction(values.get(CONTEXT_WARN_THRESHOLD_KEY)),
             alert=_fraction(values.get(CONTEXT_ALERT_THRESHOLD_KEY)),
         )
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         # `ValueError` covers pydantic's ValidationError (its base) — the ordering
         # invariant — as well as an unparseable string; `TypeError` covers an absent key.
         return DEFAULT_CONTEXT_THRESHOLDS

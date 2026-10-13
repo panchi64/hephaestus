@@ -107,7 +107,7 @@ async def _drain(ctx: SeedContext, run_id: str) -> bool:
                         return False
                     if event.get("type") == "run.ended":
                         return event.get("outcome") == "done"
-    except (TimeoutError, json.JSONDecodeError):
+    except TimeoutError, json.JSONDecodeError:
         return False
     return False
 

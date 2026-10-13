@@ -164,9 +164,7 @@ class ApiTokenStore:
 
         def work(session: Session) -> ApiToken:
             row = session.exec(
-                select(ApiToken).where(
-                    ApiToken.owner_id == owner_id, ApiToken.id == token_id
-                )
+                select(ApiToken).where(ApiToken.owner_id == owner_id, ApiToken.id == token_id)
             ).first()
             if row is None:
                 raise NotFoundError(f"unknown token {token_id!r}")
@@ -205,9 +203,7 @@ class ApiTokenStore:
         prefix, secret = parts
 
         def work(session: Session) -> ApiToken | None:
-            return session.exec(
-                select(ApiToken).where(ApiToken.token_prefix == prefix)
-            ).first()
+            return session.exec(select(ApiToken).where(ApiToken.token_prefix == prefix)).first()
 
         row = await in_session(self._engine, work)
         if row is None or row.revoked_at is not None:
@@ -215,9 +211,7 @@ class ApiTokenStore:
         if not await asyncio.to_thread(verify_password, row.token_hash, secret):
             return None
 
-        identity = TokenIdentity(
-            token_id=row.id, owner_id=row.owner_id, scopes=tuple(row.scopes)
-        )
+        identity = TokenIdentity(token_id=row.id, owner_id=row.owner_id, scopes=tuple(row.scopes))
         self._verified[_digest(presented)] = identity
         return identity
 

@@ -155,7 +155,11 @@ class UploadsAdapter(SourceAdapter):
         # reindex of an already-excluded file doesn't quietly re-admit it to the corpus).
         excluded = await self._is_excluded(job.owner_id, job.upload_id)
         await self._chunks.upsert(
-            job.owner_id, self.source_kind, job.upload_id, job.upload_id, chunks,
+            job.owner_id,
+            self.source_kind,
+            job.upload_id,
+            job.upload_id,
+            chunks,
             kb_excluded=excluded,
         )
         await self._chunks.reembed(job.owner_id, job.upload_id)

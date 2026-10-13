@@ -28,15 +28,11 @@ from services.skills import SkillStore
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
     store = CommandStore(ctx.engine, ctx.vault)
-    registry = CommandRegistry(
-        ctx.services.get(SkillStore), store, ctx.services.get(AgentCatalog)
-    )
+    registry = CommandRegistry(ctx.services.get(SkillStore), store, ctx.services.get(AgentCatalog))
     # Both on `app.state`: the registry is what a composer and a turn read, the store is
     # what the settings pane writes. Separate handles because they are separate audiences —
     # nothing that offers a command should be able to edit one.
-    return FeatureRuntime(
-        state={"commands": registry, "command_store": store}, services=(store,)
-    )
+    return FeatureRuntime(state={"commands": registry, "command_store": store}, services=(store,))
 
 
 MANIFEST = FeatureManifest(

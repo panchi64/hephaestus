@@ -102,17 +102,14 @@ def render_answer(
     offered, or a question came back with nothing said to it at all.
     """
     if len(replies) != len(questions):
-        raise AnswerError(
-            f"expected one reply per question ({len(questions)}), got {len(replies)}"
-        )
+        raise AnswerError(f"expected one reply per question ({len(questions)}), got {len(replies)}")
     lines: list[str] = []
     for question, (selections, text) in zip(questions, replies, strict=True):
         offered = {opt.label for opt in question.options}
         unknown = [label for label in selections if label not in offered]
         if unknown:
             raise AnswerError(
-                f"{unknown!r} was not offered for {question.question!r}; "
-                f"offered: {sorted(offered)}"
+                f"{unknown!r} was not offered for {question.question!r}; offered: {sorted(offered)}"
             )
         written = (text or "").strip()
         if not selections and not written:

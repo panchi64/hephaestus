@@ -46,9 +46,7 @@ class Upload(SQLModel, table=True):
     # one owner collide on this constraint, so a create race can't sneak two copies in.
     # The unique index also serves the dedup lookup (owner_id + sha256), so sha256
     # needs no separate index.
-    __table_args__ = (
-        UniqueConstraint("owner_id", "sha256", name="uq_uploads_owner_sha256"),
-    )
+    __table_args__ = (UniqueConstraint("owner_id", "sha256", name="uq_uploads_owner_sha256"),)
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

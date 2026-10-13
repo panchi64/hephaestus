@@ -106,9 +106,7 @@ def _out(view: McpServerView) -> McpServerOut:
         last_error=view.last_error,
         last_error_at=view.last_error_at,
         tools=[
-            McpToolOut(
-                name=t.name, description=t.description, enabled=t.enabled, trusted=t.trusted
-            )
+            McpToolOut(name=t.name, description=t.description, enabled=t.enabled, trusted=t.trusted)
             for t in view.tools
         ],
         created_at=view.created_at,
@@ -141,9 +139,7 @@ async def register_server(request: Request, body: McpServerCreate) -> McpServerO
 
 
 @router.patch("/servers/{server_id}")
-async def update_server(
-    request: Request, server_id: str, body: McpServerUpdate
-) -> McpServerOut:
+async def update_server(request: Request, server_id: str, body: McpServerUpdate) -> McpServerOut:
     view = await deps.mcp(request).update(
         OPERATOR_ID,
         server_id,

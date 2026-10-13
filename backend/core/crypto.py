@@ -39,7 +39,7 @@ def verify_password(stored_hash: str, password: str) -> bool:
     # PHC string) escaping as a 500 out of the login route instead of a clean "no".
     try:
         return _PASSWORD_HASHER.verify(stored_hash, password)
-    except (VerificationError, InvalidHashError):
+    except VerificationError, InvalidHashError:
         return False
 
 
@@ -52,7 +52,7 @@ def needs_rehash(stored_hash: str) -> bool:
     """
     try:
         return _PASSWORD_HASHER.check_needs_rehash(stored_hash)
-    except (VerificationError, InvalidHashError):
+    except VerificationError, InvalidHashError:
         return False
 
 

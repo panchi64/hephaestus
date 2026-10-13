@@ -249,8 +249,6 @@ def _basic_password(value: bytes | None) -> str | None:
     return decoded.partition(":")[2]
 
 
-
-
 async def _connect(
     host: str, port: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
 ) -> None:

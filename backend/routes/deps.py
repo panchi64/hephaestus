@@ -254,9 +254,7 @@ async def composer_tree(
     root = Path(project.root_path)
     if not conversation_id:
         return root, False
-    return await worktree_root(
-        worktrees(request).path_for(project_id), conversation_id, root
-    )
+    return await worktree_root(worktrees(request).path_for(project_id), conversation_id, root)
 
 
 async def composer_root(
@@ -400,7 +398,6 @@ async def active_project(request: Request) -> str | None:
 
 def settings_store(request: Request) -> SettingsStore:
     return request.app.state.settings_store
-
 
 
 def credentials(request: Request) -> CredentialStore:

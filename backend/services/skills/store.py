@@ -337,8 +337,7 @@ class SkillStore:
             if projected > BUNDLE_MAX_BYTES:
                 raise SkillValidationError(
                     "bundle",
-                    f"that file would take the bundle over "
-                    f"{BUNDLE_MAX_BYTES // (1024 * 1024)} MB",
+                    f"that file would take the bundle over {BUNDLE_MAX_BYTES // (1024 * 1024)} MB",
                 )
             if existing is not None:
                 session.delete(existing)
@@ -460,9 +459,7 @@ class SkillStore:
         def work(session: Session) -> list[tuple[str, bytes]]:
             _require(session, owner_id, skill_id)
             rows = session.exec(
-                select(SkillFile)
-                .where(SkillFile.skill_id == skill_id)
-                .order_by(SkillFile.relpath)
+                select(SkillFile).where(SkillFile.skill_id == skill_id).order_by(SkillFile.relpath)
             ).all()
             return [(row.relpath, self._vault.decrypt_bytes(row.blob_enc)) for row in rows]
 
@@ -675,9 +672,7 @@ def _validate_relpath(relpath: str) -> str:
     if not clean:
         raise SkillValidationError("relpath", "a bundle file needs a path")
     if clean.upper() == "SKILL.MD":
-        raise SkillValidationError(
-            "relpath", "SKILL.md is the skill's own body, not a bundle file"
-        )
+        raise SkillValidationError("relpath", "SKILL.md is the skill's own body, not a bundle file")
     if "\\" in clean or clean.startswith("/") or any(part == ".." for part in clean.split("/")):
         raise SkillValidationError("relpath", f"{relpath!r} escapes the bundle root")
     return clean

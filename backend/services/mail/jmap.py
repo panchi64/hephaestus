@@ -352,8 +352,6 @@ def _first(value: Any) -> str | None:
     return str(value) if isinstance(value, str) else None
 
 
-
-
 def _bodies(email: dict[str, Any]) -> tuple[str, str | None]:
     """Resolve the body parts a JMAP ``Email/get`` returns by reference into text/HTML."""
     values = email.get("bodyValues") or {}
