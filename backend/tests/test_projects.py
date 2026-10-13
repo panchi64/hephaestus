@@ -66,10 +66,10 @@ class TestCatalog:
 
     async def test_name_defaults_to_the_directory_name(self, tmp_path):
         store = await _store(tmp_path)
-        work = tmp_path / "odysseus"
+        work = tmp_path / "hephaestus"
         work.mkdir()
         view = await store.create("operator", "  ", str(work))
-        assert view.name == "odysseus"
+        assert view.name == "hephaestus"
 
     async def test_relative_path_is_refused(self, tmp_path):
         store = await _store(tmp_path)
@@ -102,12 +102,12 @@ class TestEnsureForPath:
 
     async def test_creates_a_project_named_after_the_directory(self, tmp_path):
         store = await _store(tmp_path)
-        work = tmp_path / "odysseus"
+        work = tmp_path / "hephaestus"
         work.mkdir()
 
         view = await store.ensure_for_path("operator", str(work))
 
-        assert view.name == "odysseus"
+        assert view.name == "hephaestus"
         assert view.root_path == str(work.resolve())
         # Never establishes a repository — that stays the separately confirmed act, and
         # the view is what tells the caller one is still needed.
@@ -455,7 +455,7 @@ class TestRoutes:
 
             await in_session(app.state.db_engine, seed)
 
-            listing = await client.get("/conversations", headers={"X-Ody-Project": "all"})
+            listing = await client.get("/conversations", headers={"X-Heph-Project": "all"})
             row = next(c for c in listing.json() if c["id"] == "c-code")
             # The rail groups on these two and nothing else — the workspace kind picks the section,
             # the workspace names it, and the path stays on the server.
@@ -492,7 +492,7 @@ class TestScopedSurfaces:
 
     @staticmethod
     async def _listed(client, header: str | None) -> list[str]:
-        headers = {"X-Ody-Project": header} if header is not None else {}
+        headers = {"X-Heph-Project": header} if header is not None else {}
         resp = await client.get("/conversations", headers=headers)
         assert resp.status_code == 200, resp.text
         return sorted(c["id"] for c in resp.json())
@@ -579,7 +579,7 @@ class TestCreationStampsTheScope:
                         "output": "notification",
                         "schedule": {"type": "interval", "everySeconds": 3600},
                     },
-                    headers={"X-Ody-Project": "all"},
+                    headers={"X-Heph-Project": "all"},
                 )
             ).json()
             # Asking to *see* everything is not a statement about where new work goes.

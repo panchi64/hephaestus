@@ -46,7 +46,7 @@ export function StatusDot(props: StatusDotProps): JSX.Element {
         "inline-block shrink-0 bg-current",
         props.shape === "square" ? "size-2" : "size-1.5",
         `text-${statusTone[props.status ?? "idle"]}`,
-        props.pulse && "ody-pulse",
+        props.pulse && "heph-pulse",
         props.class,
       )}
       aria-label={props.label}

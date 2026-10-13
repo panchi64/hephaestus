@@ -1,5 +1,5 @@
 /**
- * The active project, as the client sends it — one `X-Ody-Project` header on every
+ * The active project, as the client sends it — one `X-Heph-Project` header on every
  * REST call.
  *
  * Kept separate from both the API client and the projects store so neither has to
@@ -19,7 +19,7 @@
 
 import { readLS, removeLS, writeLS } from "~/lib/storage";
 
-const SCOPE_KEY = "ody.projects.active";
+const SCOPE_KEY = "heph.projects.active";
 
 /** The literal the backend reads as "no filtering at all". */
 export const ALL_PROJECTS = "all";

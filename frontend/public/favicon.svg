@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" shape-rendering="geometricPrecision">
-  <!-- ODYSSEUS — Terminal-HUD favicon: phosphor reticle "O" framed by registration crosshairs. -->
+  <!-- HEPHAESTUS — Terminal-HUD favicon: phosphor reticle "O" framed by registration crosshairs. -->
   <!-- Phosphor mode tokens: bg #0A0C0B, line #2A2F2C, text-dim #5A635E, accent-nominal #5BD47E. -->
   <!-- Static pre-JS / .ico fallback (ready/green). The runtime, theme- and status-tinted
        version lives in src/app/useFavicon.ts — keep this geometry in sync with it. -->

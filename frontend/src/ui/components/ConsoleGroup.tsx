@@ -43,10 +43,10 @@ export function ConsoleGroup(props: ConsoleGroupProps): JSX.Element {
     "class",
   ]);
   return (
-    // `ody-framed`: on a page carrying the deep field this surface goes glass,
+    // `heph-framed`: on a page carrying the deep field this surface goes glass,
     // so the graticule behind a group of readouts arrives blurred rather than as
     // lines running under the rows (§11.1). Inert on every other page.
-    <div class={cx("ody-framed border border-line bg-surface", local.class)}>
+    <div class={cx("heph-framed border border-line bg-surface", local.class)}>
       <div class="flex items-center gap-2 border-b border-line px-2 py-1">
         <Text variant="plate" tone="dim" class="min-w-0 truncate">
           {local.label}

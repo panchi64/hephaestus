@@ -1,6 +1,6 @@
 """One dev instance: where its data lives, which ports it holds, how it is configured.
 
-A dev instance is a second, disposable Odysseus that an agent can drive without touching
+A dev instance is a second, disposable Hephaestus that an agent can drive without touching
 the operator's. Everything separating the two is here, and all of it is ordinary
 ``Settings`` the app already reads from the environment — there is no dev-only code path
 inside the app, which is the point: what runs under an agent is the same program the
@@ -11,7 +11,7 @@ two of them running the same instance would share a database and fight over port
 worktree's own directory name is the key, so isolation follows the way the work is
 actually organised without anyone choosing a name.
 
-**Rooted outside the repository.** ``~/.odysseus/dev/<worktree>/`` rather than somewhere
+**Rooted outside the repository.** ``~/.hephaestus/dev/<worktree>/`` rather than somewhere
 under the checkout: a worktree is deleted when its branch lands, and a data directory
 inside one would be deleted with it. It also puts the instance's database beyond any
 reach of ``.gitignore`` being edited, which matters for a directory holding an encrypted
@@ -30,7 +30,7 @@ from pathlib import Path
 from devkit import ports
 
 #: Where every dev instance on this host lives, one directory per worktree.
-ROOT = Path("~/.odysseus/dev").expanduser()
+ROOT = Path("~/.hephaestus/dev").expanduser()
 
 #: The file recording what was decided the first time an instance was created. Mode 0600
 #: because it holds the vault passphrase.
@@ -111,28 +111,28 @@ class DevInstance:
         ]
         return {
             **os.environ,
-            "ODYSSEUS_DATA_DIR": str(self.data_dir),
-            "ODYSSEUS_WORKTREES_DIR": str(self.worktrees_dir),
-            "ODYSSEUS_PORT": str(self.backend_port),
+            "HEPHAESTUS_DATA_DIR": str(self.data_dir),
+            "HEPHAESTUS_WORKTREES_DIR": str(self.worktrees_dir),
+            "HEPHAESTUS_PORT": str(self.backend_port),
             # A list field, so pydantic-settings parses it as JSON. Without both origins
             # the browser blocks every call the dev frontend makes.
-            "ODYSSEUS_CORS_ORIGINS": json.dumps(origins),
+            "HEPHAESTUS_CORS_ORIGINS": json.dumps(origins),
             # Set even though `init_db` migrates at boot: it is what an `alembic` command
             # run by hand in a dev shell reads, and without it that command falls back to
             # `alembic.ini`, which points at the operator's live database.
-            "ODYSSEUS_DB_URL": f"sqlite:///{self.data_dir / 'app.db'}",
-            "ODYSSEUS_AUTH_ENABLED": str(self.auth).lower(),
+            "HEPHAESTUS_DB_URL": f"sqlite:///{self.data_dir / 'app.db'}",
+            "HEPHAESTUS_AUTH_ENABLED": str(self.auth).lower(),
             # Set up on the first boot and unlocked on every later one, so seeding and
             # browsing need no login step even when the gate above is on.
-            "ODYSSEUS_UNLOCK_PASSPHRASE": self.password,
-            "ODYSSEUS_VM_ENABLED": str(self.vm).lower(),
-            "ODYSSEUS_SANDBOX_ENABLED": str(self.vm).lower(),
-            "ODYSSEUS_SEARXNG_ENABLED": str(self.vm).lower(),
-            "ODYSSEUS_WEB_FETCH_ENABLED": str(self.vm).lower(),
+            "HEPHAESTUS_UNLOCK_PASSPHRASE": self.password,
+            "HEPHAESTUS_VM_ENABLED": str(self.vm).lower(),
+            "HEPHAESTUS_SANDBOX_ENABLED": str(self.vm).lower(),
+            "HEPHAESTUS_SEARXNG_ENABLED": str(self.vm).lower(),
+            "HEPHAESTUS_WEB_FETCH_ENABLED": str(self.vm).lower(),
             # Assume online without probing: the monitor's boot check is a real
             # connection, and an instance that exists to be screenshotted should not
             # reach the network to decide whether to start.
-            "ODYSSEUS_OFFLINE_CHECK_ENABLED": "false",
+            "HEPHAESTUS_OFFLINE_CHECK_ENABLED": "false",
         }
 
     def frontend_env(self) -> dict[str, str]:

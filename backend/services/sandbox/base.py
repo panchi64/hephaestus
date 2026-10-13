@@ -19,7 +19,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.exceptions import OdysseusError
+from core.exceptions import HephaestusError
 
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
@@ -35,13 +35,13 @@ def safe_key(key: str) -> str:
     return "s" + _SAFE.sub("-", key)
 
 
-class SandboxError(OdysseusError):
+class SandboxError(HephaestusError):
     """The sandbox failed to run the request (not a non-zero exit — that is an
     ordinary :class:`SandboxResult` the agent acts on). This is an infrastructure
     failure: the VM is down or still starting, or a workspace could not cross into it."""
 
 
-class HostExecutionError(OdysseusError):
+class HostExecutionError(HephaestusError):
     """The host command could not be launched (a non-zero exit is a normal
     :class:`SandboxResult`, not this).
 

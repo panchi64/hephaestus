@@ -87,7 +87,7 @@ async def seed_tasks(ctx: SeedContext) -> str:
             "title": "Morning briefing",
             "prompt": "Summarise what is on today and anything waiting on me.",
             # Disabled: a seeded task that fired on its own would spend model calls, and
-            # against a real endpoint behind ODY_DEV_CHAT_* it would spend money — on a
+            # against a real endpoint behind HEPH_DEV_CHAT_* it would spend money — on a
             # schedule nobody set, in a workspace nobody is watching.
             "enabled": False,
             "schedule": {"type": "cron", "cron": "0 8 * * *"},

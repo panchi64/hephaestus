@@ -39,12 +39,12 @@ def test_canonicalize_url_folds_scheme_trailing_slash_and_fragment():
 
 def test_a_key_is_claimed_once():
     dedupe = DedupeSets()
-    assert dedupe.claim_search("Odysseus release date", limit=5, time_range=None) is not None
+    assert dedupe.claim_search("Hephaestus release date", limit=5, time_range=None) is not None
     # Same, folded — already claimed.
-    assert dedupe.claim_search("  odysseus   release date ", limit=5, time_range=None) is None
+    assert dedupe.claim_search("  hephaestus   release date ", limit=5, time_range=None) is None
     # Same words, different slice of the web — a read of its own.
-    assert dedupe.claim_search("odysseus release date", limit=5, time_range="day") is not None
-    assert dedupe.claim_search("odysseus pricing", limit=5, time_range=None) is not None
+    assert dedupe.claim_search("hephaestus release date", limit=5, time_range="day") is not None
+    assert dedupe.claim_search("hephaestus pricing", limit=5, time_range=None) is not None
 
     assert dedupe.claim_url("https://example.com/page/") is not None
     assert dedupe.claim_url("https://example.com/page") is None  # same, sans slash
@@ -62,11 +62,11 @@ def test_a_released_key_is_claimable_again():
     has to hand it back — a search that errored was never read, and keeping its key would
     tell the model it has evidence it does not have."""
     dedupe = DedupeSets()
-    claim = dedupe.claim_search("odysseus pricing", limit=5, time_range=None)
+    claim = dedupe.claim_search("hephaestus pricing", limit=5, time_range=None)
     assert claim is not None
-    assert dedupe.claim_search("odysseus pricing", limit=5, time_range=None) is None
+    assert dedupe.claim_search("hephaestus pricing", limit=5, time_range=None) is None
     dedupe.release(claim)
-    assert dedupe.claim_search("odysseus pricing", limit=5, time_range=None) is not None
+    assert dedupe.claim_search("hephaestus pricing", limit=5, time_range=None) is not None
 
     url_claim = dedupe.claim_url("https://example.com/a")
     assert url_claim is not None

@@ -158,8 +158,8 @@ class TestOpeningAWorktree:
         assert after is not None
         assert after.kind == "worktree"
         assert after.root != root
-        assert after.branch == "ody/conv-a"
-        assert "ody/conv-a" in result
+        assert after.branch == "heph/conv-a"
+        assert "heph/conv-a" in result
 
     async def test_an_unfiled_chat_has_nothing_to_check_out(self, tmp_path):
         root = await _repo(tmp_path / "project")

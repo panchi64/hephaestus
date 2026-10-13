@@ -247,7 +247,7 @@ export function Select(props: SelectProps): JSX.Element {
                         "grid w-full grid-cols-[8px_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-0.5 border-b border-line px-2.5 py-2 text-left last:border-b-0 hover:bg-raised",
                         (opt.value === props.value || i() === active()) &&
                           "bg-raised",
-                        opt.value === props.value && "ody-selected-edge",
+                        opt.value === props.value && "heph-selected-edge",
                       )}
                     >
                       <Swatch class={opt.swatch ?? "bg-dim"} />
@@ -282,7 +282,7 @@ export function Select(props: SelectProps): JSX.Element {
                         "flex w-full flex-col gap-0.5 px-2 py-1.5 text-left transition-colors hover:bg-raised",
                         (opt.value === props.value || i() === active()) &&
                           "bg-raised",
-                        opt.value === props.value && "ody-selected-edge",
+                        opt.value === props.value && "heph-selected-edge",
                       )}
                     >
                       <span class="flex items-center gap-2">

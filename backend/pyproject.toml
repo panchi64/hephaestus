@@ -1,7 +1,7 @@
 [project]
-name = "odysseus-backend"
+name = "hephaestus-backend"
 version = "0.1.0"
-description = "Odysseus backend — the chassis around a Pydantic AI engine."
+description = "Hephaestus backend — the chassis around a Pydantic AI engine."
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.143.0",

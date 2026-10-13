@@ -107,9 +107,9 @@ export function ProjectSwitcher(): JSX.Element {
               aria-label={`Project filter: ${label()}`}
               class="flex min-w-0 items-center gap-1 font-mono text-meta text-dim hover:text-text"
             >
-              <Icon name="filter" size={16} class="ody-rail-narrow" />
-              <span class="ody-rail-wide min-w-0 truncate">{label()}</span>
-              <Icon name="chevron-down" size={12} class="ody-rail-wide" />
+              <Icon name="filter" size={16} class="heph-rail-narrow" />
+              <span class="heph-rail-wide min-w-0 truncate">{label()}</span>
+              <Icon name="chevron-down" size={12} class="heph-rail-wide" />
             </span>
           }
         />

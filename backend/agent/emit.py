@@ -35,9 +35,9 @@ from pydantic_ai.messages import ToolCallPart
 from runs import PrefixVerdict, TurnOverhead
 
 #: Namespace for every capability event this codebase defines. The library requires one
-#: and uses it to prefix the event's kind (``odysseus.chassis_event``), which is what
+#: and uses it to prefix the event's kind (``hephaestus.chassis_event``), which is what
 #: keeps our events distinguishable from a harness capability's on a shared stream.
-NAMESPACE = "odysseus"
+NAMESPACE = "hephaestus"
 
 
 @dataclass(kw_only=True)
@@ -119,7 +119,7 @@ class NestedToolFinished(CapabilityEvent, namespace=NAMESPACE):
 #: reaches the run; what has to be kept out as well is the state an observing capability
 #: holds *on itself*, which lives as long as the agent and so would carry a side run's
 #: request into the turn's own readings.
-SIDE_RUN = "odysseus.side_run"
+SIDE_RUN = "hephaestus.side_run"
 
 
 def is_side_run(ctx: RunContext[Any]) -> bool:

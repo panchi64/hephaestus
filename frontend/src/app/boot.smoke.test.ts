@@ -86,9 +86,9 @@ test("the SPA boots, mounts, and renders its shell", async () => {
       30_000,
     );
 
-    expect(String(await wv.evaluate("document.title"))).toContain("Odysseus");
+    expect(String(await wv.evaluate("document.title"))).toContain("Hephaestus");
     expect(String(await wv.evaluate("document.body.innerText"))).toContain(
-      "Odysseus",
+      "Hephaestus",
     );
 
     // The no-flash theme script runs inline in the shell, ahead of the bundle.

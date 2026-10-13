@@ -15,7 +15,7 @@ export function AppSplash(props: { label?: string }): JSX.Element {
     <div class="flex h-screen items-center justify-center bg-bg">
       <Stack gap={1} class="items-center">
         <Text variant="display" tone="bright">
-          Odysseus
+          Hephaestus
         </Text>
         <LoadingText label={props.label ?? "Establishing link…"} />
       </Stack>

@@ -84,16 +84,16 @@ const DEFAULT_STATE: ViewportPersistedState = {
   seen: {},
 };
 
-const V4_KEY = "ody.chat.viewer.v4";
+const V4_KEY = "heph.chat.viewer.v4";
 /** The prior per-conversation record: one surface, an `open` flag, and the View's
  *  preferences at the top level. Read once to seed a conversation's first v4 entry,
  *  and never written again. */
-const V3_KEY = "ody.chat.viewer.v3";
+const V3_KEY = "heph.chat.viewer.v3";
 /** Read only to seed v3, which v3 itself did — kept so a conversation that has sat
  *  untouched across both migrations still arrives with its preferences. */
-const V2_KEY = "ody.chat.viewer.v2";
+const V2_KEY = "heph.chat.viewer.v2";
 /** Legacy per-conversation open-state map (`ChatRoomScreen`'s prior `VIEWPORT_KEY`). */
-const LEGACY_OPEN_KEY = "ody.chat.viewport";
+const LEGACY_OPEN_KEY = "heph.chat.viewport";
 
 // ── v3, as it was ────────────────────────────────────────────────────────────
 

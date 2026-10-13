@@ -7,10 +7,10 @@ decide retry-vs-degrade. They live beside the capability (like ``services.sandbo
 
 from __future__ import annotations
 
-from core.exceptions import OdysseusError
+from core.exceptions import HephaestusError
 
 
-class MailError(OdysseusError):
+class MailError(HephaestusError):
     """A mail operation failed in a way the operator or the model can act on — a refused
     login, an unreachable server, a message the provider no longer has. Carries a plain
     sentence; **never** a password, token, or message content."""

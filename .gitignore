@@ -73,7 +73,7 @@ output.txt.txt
 # …and the README's own screenshots. Deliberately named assets only: a raw
 # "Screenshot 2026-… .png" dropped in here stays ignored, so a capture that
 # still has private workspace content in it cannot be committed by accident.
-!md-assets/odysseus-*.png
+!md-assets/hephaestus-*.png
 
 # Reports and temp files
 /reports/

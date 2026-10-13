@@ -109,7 +109,7 @@ export function AgentsDirectoryScreen(props: {
     <LibraryDirectory
       title="Agents"
       subtitle="Named agents a thread can run as — their own instructions, tools and limits."
-      assetId="ODY-AGT-01.0"
+      assetId="HEPH-AGT-01.0"
       noun="agent"
       nouns="agents"
       icon="layers"

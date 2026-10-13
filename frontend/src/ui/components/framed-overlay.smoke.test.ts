@@ -83,11 +83,11 @@ const BUILD_REAL = `(function(){
   var host = document.createElement('div');
   host.id = 'probe';
   host.innerHTML =
-    '<div class="ody-fade-in fixed inset-0 z-50 bg-bg/70"></div>' +
+    '<div class="heph-fade-in fixed inset-0 z-50 bg-bg/70"></div>' +
     '<div class="pointer-events-none fixed inset-0 z-50 grid place-items-center p-6">' +
-      '<div id="frame" class="ody-frame relative pointer-events-auto flex max-h-[85vh] min-h-0 w-full max-w-4xl flex-col" data-ready>' +
-        '<div id="glass" class="ody-frame-surface ody-glass absolute inset-1.5"></div>' +
-        '<div class="ody-frame-surface relative p-1.5" style="height:400px"></div>' +
+      '<div id="frame" class="heph-frame relative pointer-events-auto flex max-h-[85vh] min-h-0 w-full max-w-4xl flex-col" data-ready>' +
+        '<div id="glass" class="heph-frame-surface heph-glass absolute inset-1.5"></div>' +
+        '<div class="heph-frame-surface relative p-1.5" style="height:400px"></div>' +
       '</div>' +
     '</div>';
   document.body.appendChild(host);
@@ -101,9 +101,9 @@ const BUILD_NESTED = `(function(){
   host.id = 'probe';
   host.innerHTML =
     '<div id="backdrop" class="fixed inset-0 z-50 grid place-items-center bg-bg/70" style="opacity:0.5">' +
-      '<div id="frame" class="ody-frame relative w-full max-w-4xl" data-ready>' +
-        '<div id="glass" class="ody-frame-surface ody-glass absolute inset-1.5"></div>' +
-        '<div class="ody-frame-surface relative p-1.5" style="height:400px"></div>' +
+      '<div id="frame" class="heph-frame relative w-full max-w-4xl" data-ready>' +
+        '<div id="glass" class="heph-frame-surface heph-glass absolute inset-1.5"></div>' +
+        '<div class="heph-frame-surface relative p-1.5" style="height:400px"></div>' +
       '</div>' +
     '</div>';
   document.body.appendChild(host);

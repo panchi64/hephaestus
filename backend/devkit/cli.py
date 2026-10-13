@@ -227,7 +227,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dev_instance",
         description=(
-            "Run an isolated Odysseus for development — its own data, ports and "
+            "Run an isolated Hephaestus for development — its own data, ports and "
             "platform VM, seeded and safe to break."
         ),
     )

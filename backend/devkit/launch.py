@@ -32,7 +32,7 @@ from devkit.processes import Supervisor, await_listening, listening
 #: passes to `preview_start`. Fixed rather than per-slot: a session reads it from the
 #: skill, and one name that always means "this worktree's instance" is what makes that
 #: instruction correct in every worktree.
-LAUNCH_CONFIG = "odysseus-dev"
+LAUNCH_CONFIG = "hephaestus-dev"
 
 
 class LaunchError(RuntimeError):
@@ -65,7 +65,7 @@ def _await_health(instance: DevInstance, *, timeout_s: float) -> bool:
 def ensure_stub(instance: DevInstance, supervisor: Supervisor) -> str:
     """Start the scripted model unless one is already up, or a real endpoint is set."""
     if live.configured():
-        return "using the endpoint in ODY_DEV_CHAT_* instead"
+        return "using the endpoint in HEPH_DEV_CHAT_* instead"
     if listening(instance.stub_port):
         return "already running"
     supervisor.start(

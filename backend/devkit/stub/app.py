@@ -30,7 +30,7 @@ from devkit.stub.scripts import Scenario, ScriptBook, last_user_prompt
 from devkit.stub.wire import Reply, ToolCall, completion, stream
 
 #: The model id the stub advertises and the seeded endpoint binds to.
-MODEL_ID = "odysseus-stub"
+MODEL_ID = "hephaestus-stub"
 
 
 class ToolCallIn(BaseModel):
@@ -67,7 +67,7 @@ class ScenarioIn(BaseModel):
 def create_stub() -> FastAPI:
     """A stub with its own script. A factory rather than a module-level app so two of
     them in one test process cannot share state."""
-    app = FastAPI(title="Odysseus stub model", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Hephaestus stub model", docs_url=None, redoc_url=None)
     book = ScriptBook()
     app.state.book = book
 

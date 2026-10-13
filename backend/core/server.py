@@ -7,7 +7,7 @@ responses never finish on their own, and the lifespan is what would end them, so
 ``uvicorn.run`` waited forever and a second Ctrl+C force-exited past the lifespan, abandoning
 the write-behind queues and leaving the VM running.
 
-:class:`OdysseusServer` closes that gap by raising :func:`core.shutdown.begin_shutdown` from
+:class:`HephaestusServer` closes that gap by raising :func:`core.shutdown.begin_shutdown` from
 ``handle_exit`` — the instant the signal lands, before uvicorn starts waiting — so every
 stream ends and uvicorn can finish. ``timeout_graceful_shutdown`` stays as the backstop for
 a connection that is not ours to end.
@@ -39,7 +39,7 @@ GRACEFUL_SHUTDOWN_TIMEOUT_S = 5
 STARTUP_FAILURE = 3
 
 
-class OdysseusServer(uvicorn.Server):
+class HephaestusServer(uvicorn.Server):
     """A uvicorn server that raises the app's shutdown signal as soon as it is stopped."""
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
@@ -50,7 +50,7 @@ class OdysseusServer(uvicorn.Server):
 
 
 def serve(config: uvicorn.Config) -> None:
-    """Run ``config`` on :class:`OdysseusServer` — ``uvicorn.run`` with our server class."""
+    """Run ``config`` on :class:`HephaestusServer` — ``uvicorn.run`` with our server class."""
     if config.reload or config.workers > 1:
         if not isinstance(config.app, str):
             logging.getLogger("uvicorn.error").warning(
@@ -60,7 +60,7 @@ def serve(config: uvicorn.Config) -> None:
     else:
         config.load_app()
 
-    server = OdysseusServer(config=config)
+    server = HephaestusServer(config=config)
     try:
         if config.should_reload:
             sock = config.bind_socket()

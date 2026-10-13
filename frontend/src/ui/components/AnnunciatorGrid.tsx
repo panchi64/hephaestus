@@ -83,9 +83,9 @@ export function AnnunciatorGrid(props: AnnunciatorGridProps): JSX.Element {
     // pixel gives the same single hairline and leaves an empty position genuinely empty.
     //
     // The column counts are set per breakpoint as custom properties and applied by
-    // `.ody-annunciator` in theme.css — see `columnsFor`.
+    // `.heph-annunciator` in theme.css — see `columnsFor`.
     <div
-      class={cx("ody-annunciator", local.class)}
+      class={cx("heph-annunciator", local.class)}
       style={{
         "--ann-cols-sm": columnsFor(n(), 4),
         "--ann-cols-lg": columnsFor(n(), 6),

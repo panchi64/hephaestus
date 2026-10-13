@@ -383,7 +383,7 @@ async def test_the_watch_is_on_by_default_and_switching_it_off_silences_it(monke
     assert watch_prefix_enabled()
     assert (await _drive(_calls_then_answers([], "tasks_read"), _deps())).prefix_verdict is not None
 
-    monkeypatch.setenv("ODYSSEUS_PREFIX_WATCH", "0")
+    monkeypatch.setenv("HEPHAESTUS_PREFIX_WATCH", "0")
     assert not watch_prefix_enabled()
     quiet = await _drive(_calls_then_answers([], "tasks_read"), _deps())
     assert quiet.prefix_verdict is None
@@ -391,7 +391,7 @@ async def test_the_watch_is_on_by_default_and_switching_it_off_silences_it(monke
 
 @pytest.mark.parametrize("value", ["0", "false", "OFF", "no"])
 def test_every_spelling_of_off_is_honoured(monkeypatch, value: str):
-    monkeypatch.setenv("ODYSSEUS_PREFIX_WATCH", value)
+    monkeypatch.setenv("HEPHAESTUS_PREFIX_WATCH", value)
     assert not watch_prefix_enabled()
 
 

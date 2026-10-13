@@ -11,7 +11,7 @@ the metric tables, and writes ``backend/evals/FINDINGS.md`` with:
   retrieval / grounding) for each consumer.
 
 This entry point reuses the exact functions the tests assert on, so the report and
-the test suite can never drift. It requires the six ``ODY_EVAL_*`` env vars; run it
+the test suite can never drift. It requires the six ``HEPH_EVAL_*`` env vars; run it
 the same way as ``uv run pytest evals/ -m live_models``.
 """
 
@@ -217,7 +217,7 @@ def _render(results: dict[str, tuple[dict, ConsumerScores]]) -> str:
     lines = [
         "# Embeddings eval findings",
         "",
-        f"Generated {now} by `python -m evals.report` against the live `ODY_EVAL_*` "
+        f"Generated {now} by `python -m evals.report` against the live `HEPH_EVAL_*` "
         "models, over synthetic corpora (`evals/dataset.py`).",
         "",
         "Three failure points are scored per consumer: **trigger** (does the agent "

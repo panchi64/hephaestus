@@ -19,7 +19,7 @@ export interface MarqueeProps {
  * revealing otherwise-clipped text; static when it fits. Pair with a flexible,
  * `min-w-0` parent so it claims the leftover row space instead of forcing
  * horizontal overflow. Respects prefers-reduced-motion (falls back to static
- * clip). The keyframe (`ody-marquee`) lives in the design-system CSS.
+ * clip). The keyframe (`heph-marquee`) lives in the design-system CSS.
  */
 export function Marquee(props: MarqueeProps): JSX.Element {
   const [local] = splitProps(props, ["speed", "class", "children"]);
@@ -55,7 +55,7 @@ export function Marquee(props: MarqueeProps): JSX.Element {
         class={cx(
           "w-max whitespace-nowrap",
           overflow() > 0 &&
-            "motion-safe:animate-[ody-marquee_var(--mq-dur)_linear_infinite]",
+            "motion-safe:animate-[heph-marquee_var(--mq-dur)_linear_infinite]",
         )}
         style={
           overflow() > 0

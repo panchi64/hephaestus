@@ -3,7 +3,7 @@
 Three outbound services existed only for surfaces that have been removed. Artificial
 Analysis and llm-stats supplied model-quality rankings to the Cookbook's
 recommendations; the HuggingFace token lifted the anonymous rate limit while downloading
-weights. Odysseus works off endpoints now — it ranks no models and downloads no weights —
+weights. Hephaestus works off endpoints now — it ranks no models and downloads no weights —
 so nothing reads any of the three, and their rows in `KNOWN_SERVICES` are gone.
 
 Dropping the catalog entry alone would leave any stored key sealed in this table and

@@ -12,8 +12,8 @@ export interface DeepFieldProps {
  *  region (the launchpad's composer band), which left the limb sliced off at an edge
  *  the composition never anticipated — a horizon is only enormous if you can see it
  *  run the width of the frame. It now backs the entire content column on the screens
- *  that carry it, and the framed surfaces on those screens go **glass** (`.ody-framed`
- *  under `.ody-field-page`) so the field is frosted out from behind anything holding
+ *  that carry it, and the framed surfaces on those screens go **glass** (`.heph-framed`
+ *  under `.heph-field-page`) so the field is frosted out from behind anything holding
  *  words. That pairing is the whole reason a page-wide field is not the "atmosphere in
  *  the reading path" failure §11 exists to prevent: nothing readable sits *on* the
  *  field, only in front of a blurred copy of it.
@@ -47,7 +47,7 @@ export function DeepField(props: DeepFieldProps): JSX.Element {
   const [local] = splitProps(props, ["class"]);
   return (
     <svg
-      class={cx("ody-deep-field text-bright", local.class)}
+      class={cx("heph-deep-field text-bright", local.class)}
       viewBox="0 0 1200 900"
       preserveAspectRatio="xMidYMax slice"
       aria-hidden="true"

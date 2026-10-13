@@ -120,7 +120,7 @@ export function ChoiceList(props: ChoiceListProps): JSX.Element {
       <div
         role={props.multiple ? "group" : "radiogroup"}
         aria-labelledby={props.labelledBy}
-        class="ody-choices"
+        class="heph-choices"
       >
         <For each={props.options}>
           {(option, i) => {
@@ -140,18 +140,18 @@ export function ChoiceList(props: ChoiceListProps): JSX.Element {
                 aria-checked={checked()}
                 tabindex={tabStop() ? 0 : -1}
                 disabled={props.disabled}
-                class="ody-choice"
+                class="heph-choice"
                 onClick={() => pickAt(i())}
                 onKeyDown={(e) => onRowKeyDown(e, i())}
               >
-                <span class="ody-keycap" aria-hidden="true">
+                <span class="heph-keycap" aria-hidden="true">
                   {i() < NUMBER_KEYS ? i() + 1 : ""}
                 </span>
                 <Text variant="body" tone="bright" class="min-w-0">
                   {option.label}
                 </Text>
                 <Show when={option.hint}>
-                  <Text variant="label" tone="dim" class="ody-choice-hint">
+                  <Text variant="label" tone="dim" class="heph-choice-hint">
                     {option.hint}
                   </Text>
                 </Show>
@@ -161,8 +161,8 @@ export function ChoiceList(props: ChoiceListProps): JSX.Element {
         </For>
         <Show when={props.freeText}>
           {(free) => (
-            <label class="ody-choice-free">
-              <span class="ody-keycap" aria-hidden="true">
+            <label class="heph-choice-free">
+              <span class="heph-keycap" aria-hidden="true">
                 ✎
               </span>
               <input
@@ -191,7 +191,7 @@ export function ChoiceList(props: ChoiceListProps): JSX.Element {
           )}
         </Show>
       </div>
-      <div class="ody-choice-foot">
+      <div class="heph-choice-foot">
         <Text variant="micro" tone="dim">
           {hints()}
         </Text>

@@ -36,7 +36,7 @@ from services.calendar.service import CalendarService, EventView
 
 logger = logging.getLogger(__name__)
 
-PRODID = "-//Odysseus//Calendar//EN"
+PRODID = "-//Hephaestus//Calendar//EN"
 ICS_MEDIA_TYPE = "text/calendar"
 
 

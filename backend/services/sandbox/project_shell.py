@@ -235,4 +235,4 @@ def _refuse(command: str) -> None:
 
 
 def _capturing_cwd(command: str) -> str:
-    return f'{command}\n__ody_ec=$?\npwd > /run/cwd\nexit "$__ody_ec"'
+    return f'{command}\n__heph_ec=$?\npwd > /run/cwd\nexit "$__heph_ec"'

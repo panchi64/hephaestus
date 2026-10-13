@@ -89,7 +89,7 @@ async def test_a_tool_cannot_change_its_own_code(runtime):
 async def test_a_tool_reaches_only_its_declared_hosts(runtime):
     result = await _call(runtime, "fetch", url="http://undeclared.example.org/")
     assert result.ok, result.log
-    assert "odysseus-egress: denied undeclared.example.org" in result.output
+    assert "hephaestus-egress: denied undeclared.example.org" in result.output
 
 
 async def test_a_failing_tool_reports_its_error_and_traceback(runtime):

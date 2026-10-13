@@ -16,7 +16,7 @@ sandbox (host `<data>/sandbox/work/<key>/x` is `/work/x` to the model) and are t
 a worktree, which is exactly the kind of detail that goes wrong when four modules each
 build it themselves.
 
-**Attachments and skills stage under ``.odysseus/`` in a worktree.** They have to land
+**Attachments and skills stage under ``.hephaestus/`` in a worktree.** They have to land
 inside it or the file tools can't reach them, and they must not show up as the agent's
 work — so :func:`prepare_worktree_workspace` makes that directory ignore itself.
 """
@@ -47,9 +47,9 @@ logger = logging.getLogger(__name__)
 #: told this, never the host path — the host path means nothing in the guest.
 SANDBOX_MOUNT = "/work"
 
-#: Odysseus' own scratch inside a worktree: staged attachments and opened skill bundles.
+#: Hephaestus' own scratch inside a worktree: staged attachments and opened skill bundles.
 #: Excluded from git, so the diff the operator reviews is the agent's work and nothing else.
-WORKTREE_SCRATCH = ".odysseus"
+WORKTREE_SCRATCH = ".hephaestus"
 
 
 class WorkspaceFiles(Protocol):
@@ -243,7 +243,7 @@ async def worktree_workspace(
 
 
 def prepare_worktree_workspace(path: Path) -> None:
-    """Keep Odysseus' own scratch out of the operator's diff.
+    """Keep Hephaestus' own scratch out of the operator's diff.
 
     The scratch directory ignores *itself*, with a `.gitignore` containing `*` — which
     covers that `.gitignore` too, so the whole directory disappears from `git status` and
@@ -259,7 +259,7 @@ def prepare_worktree_workspace(path: Path) -> None:
         scratch.mkdir(parents=True, exist_ok=True)
         ignore = scratch / ".gitignore"
         if not ignore.is_file():
-            ignore.write_text("# Odysseus' own scratch — never the operator's work.\n*\n")
+            ignore.write_text("# Hephaestus' own scratch — never the operator's work.\n*\n")
     except OSError:
         logger.debug("workspace: could not exclude %s from git", WORKTREE_SCRATCH, exc_info=True)
 

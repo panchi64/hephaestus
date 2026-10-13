@@ -373,7 +373,7 @@ export default function Bench(): JSX.Element {
           await new Promise<void>((r) => queueMicrotask(r));
           peak = Math.max(
             peak,
-            document.querySelectorAll(".ody-token-in").length,
+            document.querySelectorAll(".heph-token-in").length,
           );
         }
         throw new Error("bench: pump did not finish");
@@ -437,7 +437,7 @@ export default function Bench(): JSX.Element {
         const leaked = await pass(false);
         const leakedDeferred = leaked ? await pass(true) : null;
         // Take the INJECTED spans back out — `[data-bench-span]`, not every
-        // `.ody-token-in` — leaving the DOM the product now produces.
+        // `.heph-token-in` — leaving the DOM the product now produces.
         document.querySelectorAll("[data-bench-span]").forEach((el) => {
           el.replaceWith(document.createTextNode(el.textContent ?? ""));
         });
@@ -453,7 +453,7 @@ export default function Bench(): JSX.Element {
        * Put the leak back, so what the fix removed can be measured and not merely
        * asserted.
        *
-       * The reveal used to leave one `.ody-token-in` span per character behind, for good
+       * The reveal used to leave one `.heph-token-in` span per character behind, for good
        * — around 280 per streamed answer, measured. Reproducing that here rather than
        * adding a flag to turn the fix off keeps the switch out of the product code, and
        * what is being measured is the DOM the leak produced, which is the thing that
@@ -463,7 +463,7 @@ export default function Bench(): JSX.Element {
        */
       rewrap: (perAnswer = 280): number => {
         let made = 0;
-        document.querySelectorAll(".ody-prose").forEach((prose) => {
+        document.querySelectorAll(".heph-prose").forEach((prose) => {
           const walker = document.createTreeWalker(prose, NodeFilter.SHOW_TEXT);
           const texts: Text[] = [];
           for (let n = walker.nextNode(); n; n = walker.nextNode())
@@ -484,9 +484,9 @@ export default function Bench(): JSX.Element {
               );
             for (let c = cut; c < node.data.length; c++) {
               const span = document.createElement("span");
-              span.className = "ody-token-in";
+              span.className = "heph-token-in";
               // Tagged, so the cleanup below can remove exactly what was injected. A
-              // blanket sweep of `.ody-token-in` would also eat the wrappers a stream
+              // blanket sweep of `.heph-token-in` would also eat the wrappers a stream
               // still in flight is depending on, cutting live fades to full opacity and
               // leaving the clean arms measuring a DOM the product never produces.
               span.dataset.benchSpan = "";
@@ -504,7 +504,7 @@ export default function Bench(): JSX.Element {
       },
       counts: () => ({
         elements: document.getElementsByTagName("*").length,
-        revealSpans: document.querySelectorAll(".ody-token-in").length,
+        revealSpans: document.querySelectorAll(".heph-token-in").length,
       }),
       /** Scroll the transcript at a fixed velocity for `ms` and report how many frames
        *  it missed. rAF deltas rather than a paint timestamp because a dropped frame is
@@ -563,7 +563,7 @@ export default function Bench(): JSX.Element {
               p99: at(0.99),
               longFrames,
               elements: document.getElementsByTagName("*").length,
-              revealSpans: document.querySelectorAll(".ody-token-in").length,
+              revealSpans: document.querySelectorAll(".heph-token-in").length,
             });
           };
           requestAnimationFrame(tick);

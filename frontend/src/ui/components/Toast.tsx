@@ -79,7 +79,7 @@ export function Toaster(): JSX.Element {
               role="status"
               aria-live="polite"
               class={cx(
-                "ody-rise pointer-events-auto flex items-stretch bg-surface shadow-2",
+                "heph-rise pointer-events-auto flex items-stretch bg-surface shadow-2",
                 toneText[t.tone],
               )}
             >

@@ -155,7 +155,7 @@ class Interceptor:
     def _authority(self) -> tuple[ec.EllipticCurvePrivateKey, x509.Certificate]:
         if self._ca is None:
             key = ec.generate_private_key(ec.SECP256R1())
-            name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Odysseus egress")])
+            name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Hephaestus egress")])
             now = datetime.datetime.now(datetime.UTC)
             cert = (
                 x509.CertificateBuilder()
@@ -215,7 +215,7 @@ class Interceptor:
         )
         # The ssl module loads a certificate and key only from a file.
         if self._dir is None:
-            self._dir = Path(tempfile.mkdtemp(prefix="odysseus-egress-"))
+            self._dir = Path(tempfile.mkdtemp(prefix="hephaestus-egress-"))
         pem = self._dir / f"{len(self._contexts)}.pem"
         pem.write_bytes(
             cert.public_bytes(serialization.Encoding.PEM)

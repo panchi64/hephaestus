@@ -1,4 +1,4 @@
-# Odysseus — Backend Architecture
+# Hephaestus — Backend Architecture
 
 > **Status: living design.** This describes *how* the backend is built — the structure, abstractions, and seams.
 >

@@ -38,8 +38,8 @@ def init(root: str, bundle: str, source: str, branch: str, uid: str) -> int:
     left to the files the host sends."""
     os.makedirs(root, exist_ok=True)
     _git(root, "init", "-q", "-b", branch)
-    _git(root, "config", "user.name", "Odysseus agent")
-    _git(root, "config", "user.email", "agent@odysseus.invalid")
+    _git(root, "config", "user.name", "Hephaestus agent")
+    _git(root, "config", "user.email", "agent@hephaestus.invalid")
     if bundle == "-":
         _chown(root, int(uid))
         return 0

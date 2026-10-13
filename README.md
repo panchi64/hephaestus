@@ -1,19 +1,19 @@
-# Odysseus
+# Hephaestus
 ───────────────────────────────────────────────
 
- ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Odysseus (Revamped)
+ ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Hephaestus (formerly Odysseus)
 
 ───────────────────────────────────────────────
 
-A self-hosted AI workspace that runs on your own hardware against your own data. Local-first, encrypted at rest, built for personal use (1 user).
+A self-hosted agent platform that runs on your own hardware against your own data: a legion of language models that carry out your bidding, so you can build and ship things far larger than one person could alone. Local-first, encrypted at rest, built for personal use (1 user).
 
-![Odysseus — the home overview: the launchpad composer, recent threads, in-flight runs, and live per-capability status along the bottom. Thread titles and previews are blurred; this is a live workspace.](md-assets/odysseus-screenshot.png)
+![Hephaestus — the home overview: the launchpad composer, recent threads, in-flight runs, and live per-capability status along the bottom. Thread titles and previews are blurred; this is a live workspace.](md-assets/hephaestus-screenshot.png)
 
 I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loop is done and so is most of the workspace around it: chat with sub-agents, a knowledge base, email, calendar, routines, projects the agent works in directly, memory, MCP, a secrets vault, and encrypted backup all run today. What's left is a short list, and it's at the bottom.
 
 ## The idea
 
-**Pydantic AI is the engine; the code I wrote around it is the chassis.** All agentic reasoning — the model call, tool selection, typed-arg validation, the within-turn tool→observe→continue loop, retries, fallback, output validation, history processing — runs *through* Pydantic AI. Everything that turns one model run into a durable, observable, resumable product — run lifecycle, the event stream, disconnect-survival and resume, cancellation, timeouts, persistence, access policy, the verifier/loop-break meta-loop — is what I built. Like I said up top, Odysseus assumes one powerful local host, a single operator, and models capable of native tool calling.
+**Pydantic AI is the engine; the code I wrote around it is the chassis.** All agentic reasoning — the model call, tool selection, typed-arg validation, the within-turn tool→observe→continue loop, retries, fallback, output validation, history processing — runs *through* Pydantic AI. Everything that turns one model run into a durable, observable, resumable product — run lifecycle, the event stream, disconnect-survival and resume, cancellation, timeouts, persistence, access policy, the verifier/loop-break meta-loop — is what I built. Like I said up top, Hephaestus assumes one powerful local host, a single operator, and models capable of native tool calling.
 
 ## What runs today
 
@@ -67,7 +67,7 @@ I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loo
 
 Some things were built and then deliberately removed, because they were redundant, better done elsewhere, or not worth their maintenance:
 
-- **Local model serving and the "Cookbook."** Odysseus no longer downloads, quantizes or serves models. It works off **endpoints** — you point it at LM Studio, vLLM, llama.cpp or a hosted provider, and the registry takes it from there. Serving models was a second product wearing this one's clothes.
+- **Local model serving and the "Cookbook."** Hephaestus no longer downloads, quantizes or serves models. It works off **endpoints** — you point it at LM Studio, vLLM, llama.cpp or a hosted provider, and the registry takes it from there. Serving models was a second product wearing this one's clothes.
 - **The document editor, the gallery, the in-browser code runner, and the operator's host shell.** The agent still writes files, runs code, and works a real terminal inside a project worktree; what went away was the standalone UI for each.
 
 ## Architecture
@@ -129,22 +129,22 @@ bun run lint        # eslint + prettier --check
 bun run test        # the fast unit suite
 ```
 
-**A disposable instance to develop against.** A second Odysseus with its own data directory, its own ports, its own platform VM (off unless `up --with-vm`) and a scripted model behind it — seeded on first use, safe to break, and separate from the workspace above:
+**A disposable instance to develop against.** A second Hephaestus with its own data directory, its own ports, its own platform VM (off unless `up --with-vm`) and a scripted model behind it — seeded on first use, safe to break, and separate from the workspace above:
 ```bash
 cd backend
 uv run python dev_instance.py up --detach     # starts everything and prints the URLs
 uv run python dev_instance.py status --json   # its ports (they differ per git worktree)
 uv run python dev_instance.py reset --yes     # wipe it; the next `up` re-seeds
 ```
-It lives under `~/.odysseus/dev/<worktree>/`, needs no login, and points at a stub model unless `ODY_DEV_CHAT_BASE_URL`/`_MODEL`/`_KEY` name a real endpoint. Full recipe in [`docs/dev-instance.md`](docs/dev-instance.md).
+It lives under `~/.hephaestus/dev/<worktree>/`, needs no login, and points at a stub model unless `HEPH_DEV_CHAT_BASE_URL`/`_MODEL`/`_KEY` name a real endpoint. Full recipe in [`docs/dev-instance.md`](docs/dev-instance.md).
 
-> **NOTE — `alembic` by hand.** The CLI falls back to `alembic.ini`, which points at the live `data/app.db`. A command meant for a dev instance must carry that instance's `ODYSSEUS_DB_URL` (`status --json` has the data directory) or it will migrate the real database.
+> **NOTE — `alembic` by hand.** The CLI falls back to `alembic.ini`, which points at the live `data/app.db`. A command meant for a dev instance must carry that instance's `HEPHAESTUS_DB_URL` (`status --json` has the data directory) or it will migrate the real database.
 
 > **NOTE — fonts.** UI typography is fully self-hosted: **JetBrains Mono** is served as a Nerd Font build (subset to the ranges the UI uses plus Braille Patterns), so the spinners' **Braille** glyphs render natively — nothing to install. The mono font is regenerated by `bun run build:fonts` in `frontend/` (needs `python3` with `fonttools` + `brotli`).
 
 ## Security & privacy
 
-Odysseus can do powerful things on your machine — sandboxed and (with approval) host code execution, file writes, email, web research — so I don't treat security as an afterthought. The full details are in [SECURITY.md](SECURITY.md).
+Hephaestus can do powerful things on your machine — sandboxed and (with approval) host code execution, file writes, email, web research — so I don't treat security as an afterthought. The full details are in [SECURITY.md](SECURITY.md).
 
 - **Single operator.** All data and features belong to *you* — the sole user. Every request is authenticated before any feature is reached; every record is owner-stamped against a future multi-user seam.
 - **A blast radius, not a cage.** Every agent workspace is disposable — a copy in the platform VM, or a git worktree on a throwaway branch — so computing, installing packages and reaching a package registry cost nothing and feel like nothing. What is guarded is the small set of ways out of it.

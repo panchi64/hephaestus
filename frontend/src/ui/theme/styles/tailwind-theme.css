@@ -80,6 +80,6 @@
   --shadow-accent: var(--shadow-accent);
   --shadow-alert: var(--shadow-alert);
 
-  /* ---- motion -> ease-out-ody / duration-* ---- */
-  --ease-ody: var(--ease);
+  /* ---- motion -> ease-out-heph / duration-* ---- */
+  --ease-heph: var(--ease);
 }

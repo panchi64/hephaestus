@@ -14,7 +14,7 @@ import { ProcessRow, Sep, createAdoptedOpen } from "./ProcessRow";
  *  by name rather than holding a duration of its own — the timing lives in
  *  `--motion-stage`, and a copy here would be a second number to keep in sync
  *  with a token that exists precisely so there is only one. */
-const CLEAR_ANIMATION = "ody-stage-clear";
+const CLEAR_ANIMATION = "heph-stage-clear";
 
 /** How much of the trace the collapsed row shows. The same slot a tool row's
  *  `detail` fills — what this step was *about* — so a column of thinks and calls
@@ -93,7 +93,7 @@ export function ReasoningBlock(props: {
         // The wall fades to the background, then the settled row fades in where
         // it stood — above the response — so the handoff reads as one movement
         // rather than as a block being swapped out.
-        <div class="ody-fade-in">
+        <div class="heph-fade-in">
           <ProcessRow
             open={open()}
             onToggle={toggle}
@@ -147,15 +147,15 @@ export function ReasoningBlock(props: {
         )}
       >
         <div
-          class="ody-reasoning-stage"
+          class="heph-reasoning-stage"
           data-clearing={fading() ? "" : undefined}
           aria-hidden="true"
           onAnimationEnd={(e) => {
             if (e.animationName === CLEAR_ANIMATION) setFading(false);
           }}
         >
-          <div class="ody-reasoning">
-            <div class="ody-reasoning-tail">{props.reasoning}</div>
+          <div class="heph-reasoning">
+            <div class="heph-reasoning-tail">{props.reasoning}</div>
           </div>
         </div>
       </div>

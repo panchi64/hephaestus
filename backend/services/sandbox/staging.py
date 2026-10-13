@@ -95,7 +95,7 @@ def stage_attachment(
     never disagree about where a given file lives.
 
     ``prefix`` is the workspace's own scratch prefix — empty for a sandbox workspace,
-    which is ours entirely, and ``.odysseus/`` for a coding run's git worktree, where the
+    which is ours entirely, and ``.hephaestus/`` for a coding run's git worktree, where the
     operator's diff must not fill up with files they attached to a message.
 
     Raises :class:`SandboxError` when the workspace can't be written — the caller

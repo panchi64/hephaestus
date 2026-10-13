@@ -8,7 +8,7 @@ export interface PageHeaderProps {
   title: string;
   /** Dim subtitle / description under the title. */
   subtitle?: string;
-  /** Diegetic asset/version ID shown above the title (e.g. "ODY-HUD-00.1"). */
+  /** Diegetic asset/version ID shown above the title (e.g. "HEPH-HUD-00.1"). */
   assetId?: string;
   /** Right-aligned actions (buttons, status flags). */
   actions?: JSX.Element;

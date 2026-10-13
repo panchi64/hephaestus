@@ -1,5 +1,5 @@
 {
-  "name": "odysseus-frontend",
+  "name": "hephaestus-frontend",
   "type": "module",
   "scripts": {
     "dev": "vite dev",

@@ -682,10 +682,10 @@ async def test_fetch_pdf_text_size_cap(monkeypatch):
 
 
 async def _browser_or_skip(tmp_path) -> tuple[ManagedBrowser, PlatformVM]:
-    """A browser in a real platform VM; set ``ODYSSEUS_TEST_VM=1`` on a host that has the
+    """A browser in a real platform VM; set ``HEPHAESTUS_TEST_VM=1`` on a host that has the
     VM backend and its image to run it."""
-    if not os.environ.get("ODYSSEUS_TEST_VM"):
-        pytest.skip("set ODYSSEUS_TEST_VM=1 to render in a real platform VM")
+    if not os.environ.get("HEPHAESTUS_TEST_VM"):
+        pytest.skip("set HEPHAESTUS_TEST_VM=1 to render in a real platform VM")
     settings = Settings(data_dir=tmp_path)
     vm = PlatformVM(
         SmolvmDriver(

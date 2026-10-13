@@ -3,7 +3,7 @@
    storage helper. Its own module so the feature layer can move a draft between keys
    (a new thread getting its id mid-run) without reaching into the Composer. */
 
-const DRAFT_PREFIX = "ody.draft.";
+const DRAFT_PREFIX = "heph.draft.";
 
 /** The unsent draft stored under `key`, or "" when there is none (or no storage). */
 export function loadDraft(key?: string): string {

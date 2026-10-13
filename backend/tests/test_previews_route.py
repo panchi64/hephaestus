@@ -109,7 +109,7 @@ async def test_http_proxy_forwards_and_strips_credentials():
             app.state.sandbox = _FakeManager("tok", port)
             resp = await client.get(
                 "/previews/tok/hello?x=1",
-                headers={"cookie": "odysseus_session=secret", "authorization": "Bearer xyz"},
+                headers={"cookie": "hephaestus_session=secret", "authorization": "Bearer xyz"},
             )
             assert resp.status_code == 200
             assert resp.text == "GET /hello?x=1"  # method, path, and query forwarded

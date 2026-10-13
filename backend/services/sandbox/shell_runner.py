@@ -357,9 +357,9 @@ class HostShell:
     def _with_cwd_capture(self, command: str) -> tuple[str, Path]:
         """``command`` with its final directory recorded out of band (see the module
         docstring)."""
-        fd, name = tempfile.mkstemp(prefix="odysseus_cwd_")
+        fd, name = tempfile.mkstemp(prefix="hephaestus_cwd_")
         os.close(fd)
-        wrapped = f"{command}\n__ody_ec=$?\npwd > {shlex.quote(name)}\nexit $__ody_ec"
+        wrapped = f"{command}\n__heph_ec=$?\npwd > {shlex.quote(name)}\nexit $__heph_ec"
         return wrapped, Path(name)
 
     def _apply_captured_cwd(self, cwd_file: Path) -> None:
@@ -436,8 +436,8 @@ def _stream_files(prefix: str) -> tuple[IO[bytes], IO[bytes]]:
     too: a pipe has to be drained while the process runs or it fills and deadlocks, and the
     same buffers then serve `check` without a second mechanism for it."""
     return (
-        tempfile.NamedTemporaryFile(mode="w+b", prefix=f"odysseus_{prefix}_out_", delete=False),
-        tempfile.NamedTemporaryFile(mode="w+b", prefix=f"odysseus_{prefix}_err_", delete=False),
+        tempfile.NamedTemporaryFile(mode="w+b", prefix=f"hephaestus_{prefix}_out_", delete=False),
+        tempfile.NamedTemporaryFile(mode="w+b", prefix=f"hephaestus_{prefix}_err_", delete=False),
     )
 
 

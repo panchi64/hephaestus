@@ -63,9 +63,9 @@ function paint(options: {
   systemPrefersLight?: boolean;
 }): Painted {
   const store: Record<string, string> = {};
-  if (options.theme != null) store["odysseus:theme"] = options.theme;
+  if (options.theme != null) store["hephaestus:theme"] = options.theme;
   if (options.accents !== undefined)
-    store["odysseus:accents"] = JSON.stringify(options.accents);
+    store["hephaestus:accents"] = JSON.stringify(options.accents);
 
   const root = { dataset: {} as Record<string, string> };
   // A one-slot box rather than a bare `let`, so reading it back after the script

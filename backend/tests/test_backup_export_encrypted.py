@@ -65,7 +65,7 @@ async def test_the_exported_file_carries_no_readable_user_data(tmp_path):
     assert b"memories" not in on_disk
 
     # Only bookkeeping is in the clear: a format, a version, a salt, an algorithm.
-    assert envelope["format"] == "odysseus-backup"
+    assert envelope["format"] == "hephaestus-backup"
     assert set(envelope) == {"format", "version", "created_at", "kdf", "cipher", "payload"}
 
     assert dict((i.name, i.count) for i in manifest.items)["memories"] == 2

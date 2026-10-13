@@ -341,7 +341,7 @@ def watch_prefix_enabled() -> bool:
     not a property of their installation — and a settings field would have to be carried
     through the factory, which knows nothing about settings by design.
     """
-    return os.environ.get("ODYSSEUS_PREFIX_WATCH", "1").strip().lower() not in (
+    return os.environ.get("HEPHAESTUS_PREFIX_WATCH", "1").strip().lower() not in (
         "0",
         "false",
         "off",

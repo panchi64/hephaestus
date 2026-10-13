@@ -9,7 +9,7 @@ import { searchSettingsSections } from "./sections-search";
  *  it is a view state, not a preference, and the backend owns preferences. */
 const [collapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
 
-const NAV_COLLAPSED_KEY = "ody.settings.navCollapsed";
+const NAV_COLLAPSED_KEY = "heph.settings.navCollapsed";
 
 /** Whether the column is folded to its icon rail. Remembered across opens, and
  *  across reloads where storage allows; unreadable storage reads as expanded. */

@@ -6,29 +6,29 @@
    the ordinary blur-fade as the stroke reaches it. ~220ms end to end, under
    the ceiling; nothing waits on it. Keyed by the caller, so each new step
    replays it and a re-render of the same step does not. The existing
-   `ody-frame-close` / `ody-frame-draw` keyframes are the strokes; reduced
+   `heph-frame-close` / `heph-frame-draw` keyframes are the strokes; reduced
    motion is covered by the global rule, delays included.
    ========================================================================== */
-.ody-trace-down {
+.heph-trace-down {
   transform-origin: top;
-  animation: ody-frame-close 110ms var(--ease) both;
+  animation: heph-frame-close 110ms var(--ease) both;
 }
-.ody-trace-across {
+.heph-trace-across {
   transform-origin: left;
-  animation: ody-frame-draw 90ms var(--ease) 70ms both;
+  animation: heph-frame-draw 90ms var(--ease) 70ms both;
 }
-.ody-trace-body {
-  animation: ody-reveal-fade var(--motion-base) var(--ease) 40ms both;
+.heph-trace-body {
+  animation: heph-reveal-fade var(--motion-base) var(--ease) 40ms both;
 }
 /* The socket the trace lands on: lit the instant the stroke arrives, dark again
    a beat later. Stepped, not eased — contact is a machine event, so it snaps. */
-.ody-trace-pin {
-  animation: ody-trace-contact 320ms var(--ease-machine);
+.heph-trace-pin {
+  animation: heph-trace-contact 320ms var(--ease-machine);
 }
 /* Dark for the first half (the implicit 0% is the socket's own colour) while
-   the stroke travels — `ody-trace-across` lands at 160ms — lit for the second,
+   the stroke travels — `heph-trace-across` lands at 160ms — lit for the second,
    and no fill, so it drops back to its own colour when the blip ends. */
-@keyframes ody-trace-contact {
+@keyframes heph-trace-contact {
   50%,
   100% {
     border-color: var(--color-info);
@@ -52,7 +52,7 @@
    tints: it just looks like a slightly lighter surface. Anything that creates a
    backdrop root above this element has the same effect, which is why the
    lifecycle span above animates `outline-color` and not `opacity`. */
-.ody-glass {
+.heph-glass {
   background: var(--glass-bg);
   /* Unprefixed only — Lightning CSS adds `-webkit-backdrop-filter` from the
      build's browser targets. Writing the prefix by hand here made it drop the
@@ -78,11 +78,11 @@
    of the ground colour on the same falloff.
 
    `backdrop-filter` blurs only what is painted inside its backdrop root, so the
-   backdrop-root trap on `.ody-glass` applies in full: nothing between the
+   backdrop-root trap on `.heph-glass` applies in full: nothing between the
    scroller and this box may carry `opacity`, `filter`, `mask`, `isolation` or a
    `will-change` of them, or the layers blur nothing and only the tint shows.
    `pointer-events: none` — the band lies over live transcript. */
-.ody-scroll-fade {
+.heph-scroll-fade {
   --fade-dir: to bottom;
   position: absolute;
   inset-inline: 0;
@@ -90,28 +90,28 @@
   bottom: calc(-1 * var(--scroll-fade-band));
   pointer-events: none;
 }
-.ody-scroll-fade[data-edge="bottom"] {
+.heph-scroll-fade[data-edge="bottom"] {
   --fade-dir: to top;
   top: calc(-1 * var(--scroll-fade-band));
   bottom: 0;
 }
-.ody-scroll-fade > * {
+.heph-scroll-fade > * {
   position: absolute;
   inset: 0;
 }
-.ody-scroll-fade-blur-1 {
+.heph-scroll-fade-blur-1 {
   backdrop-filter: blur(calc(var(--scroll-fade-blur) / 4));
   mask-image: linear-gradient(var(--fade-dir), black, transparent);
 }
-.ody-scroll-fade-blur-2 {
+.heph-scroll-fade-blur-2 {
   backdrop-filter: blur(calc(var(--scroll-fade-blur) / 2));
   mask-image: linear-gradient(var(--fade-dir), black, transparent 66%);
 }
-.ody-scroll-fade-blur-3 {
+.heph-scroll-fade-blur-3 {
   backdrop-filter: blur(var(--scroll-fade-blur));
   mask-image: linear-gradient(var(--fade-dir), black, transparent 33%);
 }
-.ody-scroll-fade-tint {
+.heph-scroll-fade-tint {
   background: linear-gradient(
     var(--fade-dir),
     color-mix(in oklab, var(--bg) var(--scroll-fade-tint), transparent),
@@ -122,7 +122,7 @@
 /* The clamp fade (`ScrollFade variant="clamp"`): "there is more below" over the
    foot of a clamped block. Inside the block, from the block's own ground, no
    blur — a clamped block is not a scroll region with something laid over it. */
-.ody-clamp-fade {
+.heph-clamp-fade {
   --fade-ground: var(--bg);
   position: absolute;
   inset-inline: 0;
@@ -131,17 +131,17 @@
   pointer-events: none;
   background: linear-gradient(to top, var(--fade-ground), transparent);
 }
-.ody-clamp-fade[data-edge="top"] {
+.heph-clamp-fade[data-edge="top"] {
   top: 0;
   bottom: auto;
   background: linear-gradient(to bottom, var(--fade-ground), transparent);
 }
-.ody-clamp-fade[data-ground="surface"] {
+.heph-clamp-fade[data-ground="surface"] {
   --fade-ground: var(--surface);
 }
-.ody-clamp-fade[data-ground="sunken"] {
+.heph-clamp-fade[data-ground="sunken"] {
   --fade-ground: var(--surface-sunken);
 }
-.ody-clamp-fade[data-ground="raised"] {
+.heph-clamp-fade[data-ground="raised"] {
   --fade-ground: var(--surface-raised);
 }

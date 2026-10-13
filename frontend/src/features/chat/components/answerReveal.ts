@@ -57,14 +57,14 @@ import {
  *  flicker rather than as arrival — on top of the column widths still
  *  reflowing as rows stream in.
  *
- *  `.ody-open-path` is a file the answer pointed at (markdownLinks.ts). It is
+ *  `.heph-open-path` is a file the answer pointed at (markdownLinks.ts). It is
  *  mono by rule rather than by the `.font-mono` class, so nothing above catches
  *  it, and it is machine voice by the same §2 test the table is: a path is a
  *  literal string the machine will act on, not a phrase being spoken. */
 const MACHINE_VOICE =
-  "code, pre, kbd, samp, table, .katex, .font-mono, .ody-open-path";
+  "code, pre, kbd, samp, table, .katex, .font-mono, .heph-open-path";
 
-const SPAN_CLASS = "ody-token-in";
+const SPAN_CLASS = "heph-token-in";
 
 /** The reveal's carry-over between deltas. One per `AnswerText`. */
 export interface RevealState {
@@ -136,7 +136,7 @@ function revealSpan(char: string, delay: number): HTMLSpanElement {
  * have produced a block wrapper yet).
  *
  * A plain descendant query rather than a child combinator because `Markdown` puts its
- * blocks inside its own `.ody-prose` element, and an answer never nests a second
+ * blocks inside its own `.heph-prose` element, and an answer never nests a second
  * `Markdown` inside itself — the only way another `[data-block-index]` could appear here.
  */
 function revealUnits(host: HTMLElement): HTMLElement[] {

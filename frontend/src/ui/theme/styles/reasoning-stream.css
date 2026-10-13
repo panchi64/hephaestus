@@ -6,7 +6,7 @@
    it fades out (human register — that is the interface clearing the stage) and
    the full trace collapses into a disclosure.
    ========================================================================== */
-.ody-reasoning {
+.heph-reasoning {
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -33,7 +33,7 @@
    older lines up and out of frame. The wall stays full — the block is always
    filled to its top edge with older reasoning — and the newest line sits at the
    bottom, where the eye already is. */
-.ody-reasoning-tail {
+.heph-reasoning-tail {
   position: absolute;
   inset-inline: 0;
   bottom: 0;
@@ -49,15 +49,15 @@
    Transitions do not run on initial render, so a region that mounts already open
    simply is open — no animation on load, which is what keeps a long transcript
    still. */
-.ody-collapse {
+.heph-collapse {
   display: grid;
   grid-template-rows: 1fr;
   transition: grid-template-rows var(--motion-stage) var(--ease);
 }
-.ody-collapse[data-closed] {
+.heph-collapse[data-closed] {
   grid-template-rows: 0fr;
 }
-.ody-collapse > * {
+.heph-collapse > * {
   overflow: hidden;
   min-height: 0;
   min-width: 0;
@@ -71,7 +71,7 @@
     opacity var(--motion-stage) var(--ease),
     filter var(--motion-stage) var(--ease);
 }
-.ody-collapse[data-closed] > * {
+.heph-collapse[data-closed] > * {
   opacity: 0;
   filter: blur(var(--reveal-blur, 3px));
 }
@@ -83,7 +83,7 @@
    `data-settled` (set on transition end, and from the start for a region that
    mounts open, which never transitions) — the clip lifts only then, and comes
    straight back on the way closed. */
-.ody-collapse[data-settled] > * {
+.heph-collapse[data-settled] > * {
   overflow: visible;
 }
 
@@ -99,18 +99,18 @@
    token edit, and nothing has to be kept in sync with it. In particular the
    component does NOT hold a matching duration: it waits for `animationend`, so
    there is no second copy of this number to drift. */
-.ody-reasoning-stage {
+.heph-reasoning-stage {
   position: relative;
   height: var(--reasoning-h);
   overflow: hidden;
-  animation: ody-stage-open var(--motion-stage) var(--ease) both;
+  animation: heph-stage-open var(--motion-stage) var(--ease) both;
 }
 /* Swapping the NAME (rather than adding a class with its own animation) is what
    lets the close start cleanly from the open state's end. */
-.ody-reasoning-stage[data-clearing] {
-  animation-name: ody-stage-clear;
+.heph-reasoning-stage[data-clearing] {
+  animation-name: heph-stage-clear;
 }
-@keyframes ody-stage-open {
+@keyframes heph-stage-open {
   from {
     height: 0;
     opacity: 0;
@@ -120,7 +120,7 @@
     opacity: 1;
   }
 }
-@keyframes ody-stage-clear {
+@keyframes heph-stage-clear {
   from {
     height: var(--reasoning-h);
     opacity: 1;

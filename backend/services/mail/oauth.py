@@ -5,7 +5,7 @@ authorization-code grant with a long-lived refresh token. Two distinct secrets a
 involved and they live in **different places on purpose**:
 
 - The **client registration** (client id + secret) is one per *install*, identifies this
-  copy of Odysseus to Google/Microsoft, and is the same no matter how many mailboxes the
+  copy of Hephaestus to Google/Microsoft, and is the same no matter how many mailboxes the
   operator connects. That is exactly what ``services/credential_store``'s static catalog
   models, so it lives there, on the API Tokens surface.
 - The **per-account token bundle** (access token, refresh token, expiry, scope) is one per

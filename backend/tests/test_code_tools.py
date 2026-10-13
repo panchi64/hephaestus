@@ -316,7 +316,7 @@ async def test_a_blocked_host_points_at_the_egress_request():
     denied = SandboxResult(
         exit_code=1,
         stdout="",
-        stderr="urllib.error.HTTPError: HTTP Error 403: odysseus-egress: denied",
+        stderr="urllib.error.HTTPError: HTTP Error 403: hephaestus-egress: denied",
     )
     hint = (await _run_canned(result=denied))["error"]
     assert "code_request_egress" in hint
@@ -472,7 +472,7 @@ async def test_a_delegate_is_not_sent_after_tools_it_was_never_offered():
     assert "code_request_egress" not in described
     assert "files_*" not in described
 
-    denied = SandboxResult(exit_code=1, stdout="", stderr="odysseus-egress: denied")
+    denied = SandboxResult(exit_code=1, stdout="", stderr="hephaestus-egress: denied")
     manager = _CannedManager(_CannedSession(result=denied))
     child = await _run_one_tool("code_execute", sessions=manager, delegated_approved=True)
     hint = next(b for b in _bodies(child) if b.type == "tool.completed").result["error"]

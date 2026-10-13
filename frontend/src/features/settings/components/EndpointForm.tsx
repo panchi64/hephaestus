@@ -64,7 +64,7 @@ export function EndpointForm(props: EndpointFormProps): JSX.Element {
             value={v().provider}
             options={options()}
             onChange={(id) => props.onChange("provider", id)}
-            hint="How Odysseus talks to this endpoint. Presets prefill the base URL."
+            hint="How Hephaestus talks to this endpoint. Presets prefill the base URL."
           />
         )}
       </Show>

@@ -15,7 +15,7 @@ kinds of reach, not degrees of danger:
   fetch, an IMAP body) is still reading: nothing anywhere is different afterwards.
 - ``workspace_write`` — changes state this installation owns. The run's own files, the
   conversation's plan, the operator's memory and skills, a local draft. Visible from
-  inside Odysseus, inspectable, and undoable from here.
+  inside Hephaestus, inspectable, and undoable from here.
 - ``host_exec`` — hands a command or a program to an interpreter, so the worst case is not
   bounded by the tool's own arguments. The sandbox is a fence around the blast
   radius, not a reason to call running arbitrary code a file write.

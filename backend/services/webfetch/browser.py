@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 _SERVICE = "chromium"
 _FORWARDER = "chromium-cdp"
 _USER = "browser"
-_BINARY = "/opt/odysseus/bin/headless_shell"
+_BINARY = "/opt/hephaestus/bin/headless_shell"
 #: Chromium serves CDP on the guest's loopback only; the forwarder exposes it here.
 _CDP_PORT = 9222
 _CDP_EXPOSED = 9223
@@ -235,7 +235,7 @@ class ManagedBrowser:
                     # Drops Chrome's implicit localhost bypass, so a page cannot reach the
                     # debugging port or anything else on the guest's loopback.
                     "--proxy-bypass-list=<-loopback>",
-                    "--user-data-dir=/tmp/odysseus-chromium",
+                    "--user-data-dir=/tmp/hephaestus-chromium",
                     # The guest kernel has no user namespaces, which Chromium's own
                     # sandbox needs; the service's confinement and its user stand in.
                     "--no-sandbox",

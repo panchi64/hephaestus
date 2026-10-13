@@ -105,7 +105,7 @@ async def test_the_policys_own_output_parses_and_matches(tmp_path):
 def test_the_denial_marker_names_this_fence():
     # It is what an agent sees in the body of a refusal, so it has to identify the fence
     # rather than read as an anonymous proxy error it would try to work around.
-    assert DENIED_MARKER.startswith("odysseus-egress")
+    assert DENIED_MARKER.startswith("hephaestus-egress")
 
 
 # --- serving requests -------------------------------------------------------

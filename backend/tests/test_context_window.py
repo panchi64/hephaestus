@@ -141,7 +141,7 @@ def test_a_nonsense_threshold_draws_no_mark_rather_than_raising(fraction: float)
 
     ``Settings.auto_compact_threshold`` is an unbounded float — ``_float_or`` bounds what
     the settings store holds and then falls back to it — so a deploy running with
-    ``ODYSSEUS_AUTO_COMPACT_THRESHOLD=0`` reaches here. Constructed directly, the field
+    ``HEPHAESTUS_AUTO_COMPACT_THRESHOLD=0`` reaches here. Constructed directly, the field
     bounds would raise inside the orchestrator (killing every turn) and 500 every
     conversation load, over a mark on a bar."""
     assert FoldPoint.of(fraction, active=True) is None

@@ -199,13 +199,13 @@ async def test_push_posts_the_notification_to_the_operators_endpoint(tmp_path):
     service, _mail, _email, push, _settings = await _wired(
         tmp_path, client=await _push_client(seen)
     )
-    await push.configure(OWNER, enabled=True, endpoint="https://ntfy.example/odysseus")
+    await push.configure(OWNER, enabled=True, endpoint="https://ntfy.example/hephaestus")
     await service.notify(OWNER, "approval_needed", "needs approval", "wants to send mail")
     await service._deliveries.join()
     await service.stop()
 
     [request] = seen
-    assert str(request.url) == "https://ntfy.example/odysseus"
+    assert str(request.url) == "https://ntfy.example/hephaestus"
     assert request.headers["Title"] == "needs approval"
     import json
 
@@ -277,7 +277,7 @@ async def test_a_failing_push_endpoint_does_not_re_send_the_email(tmp_path):
     service, mail, _email, push, _settings = await _wired(
         tmp_path, client=await _push_client(seen, status=500)
     )
-    await push.configure(OWNER, enabled=True, endpoint="https://ntfy.example/odysseus")
+    await push.configure(OWNER, enabled=True, endpoint="https://ntfy.example/hephaestus")
     await service.notify(OWNER, "reminder", "Call the dentist")
     await service._deliveries.join()
     await service.stop()

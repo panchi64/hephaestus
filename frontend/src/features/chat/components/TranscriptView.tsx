@@ -84,8 +84,8 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
     requestAnimationFrame(() => {
       const el = props.scroll.scrollToMessage(id);
       if (!el) return;
-      el.classList.add("ody-flash");
-      setTimeout(() => el.classList.remove("ody-flash"), 3000);
+      el.classList.add("heph-flash");
+      setTimeout(() => el.classList.remove("heph-flash"), 3000);
     });
   });
 

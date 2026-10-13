@@ -12,7 +12,7 @@ import { isServer } from "solid-js/web";
 export type ThemeMode = "phosphor" | "paper";
 export type ThemePreference = ThemeMode | "system";
 
-export const THEME_STORAGE_KEY = "odysseus:theme";
+export const THEME_STORAGE_KEY = "hephaestus:theme";
 export const DEFAULT_THEME: ThemeMode = "phosphor";
 export const DEFAULT_PREFERENCE: ThemePreference = "phosphor";
 

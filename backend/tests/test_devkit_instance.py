@@ -1,7 +1,7 @@
 """What keeps two dev instances — and a dev instance and the operator's — apart.
 
 Every test here roots the instance store under ``tmp_path``, because the real one is the
-developer's own ``~/.odysseus/dev`` and a test that allocated a slot in it would hand a
+developer's own ``~/.hephaestus/dev`` and a test that allocated a slot in it would hand a
 port to a worktree that had not asked for one.
 """
 
@@ -38,7 +38,7 @@ def test_a_second_worktree_gets_its_own_slot(tmp_path):
     second = resolve(root=tmp_path, name="beta")
     assert second.slot != first.slot
     assert set(second.env()) == set(first.env())
-    for key in ("ODYSSEUS_PORT", "ODYSSEUS_DATA_DIR"):
+    for key in ("HEPHAESTUS_PORT", "HEPHAESTUS_DATA_DIR"):
         assert second.env()[key] != first.env()[key]
 
 
@@ -117,19 +117,19 @@ def test_the_environment_never_names_the_operators_ports():
 def test_the_environment_isolates_every_piece_of_state(tmp_path):
     env = resolve(root=tmp_path, name="alpha").env()
     root = str(tmp_path / "alpha")
-    assert env["ODYSSEUS_DATA_DIR"].startswith(root)
+    assert env["HEPHAESTUS_DATA_DIR"].startswith(root)
     # Outside `data_dir` in the app too, and it has to be redirected on its own or code
-    # mode cuts real git worktrees into the operator's ~/.odysseus/worktrees.
-    assert env["ODYSSEUS_WORKTREES_DIR"].startswith(root)
-    assert root in env["ODYSSEUS_DB_URL"]
-    assert env["ODYSSEUS_OFFLINE_CHECK_ENABLED"] == "false"
+    # mode cuts real git worktrees into the operator's ~/.hephaestus/worktrees.
+    assert env["HEPHAESTUS_WORKTREES_DIR"].startswith(root)
+    assert root in env["HEPHAESTUS_DB_URL"]
+    assert env["HEPHAESTUS_OFFLINE_CHECK_ENABLED"] == "false"
 
 
 def test_the_cors_origins_are_json_the_settings_layer_can_parse(tmp_path):
     # A list field, so pydantic-settings reads it as JSON. Getting this wrong blocks
     # every call the dev frontend makes, in the browser, with no server-side trace.
     instance = resolve(root=tmp_path, name="alpha")
-    origins = json.loads(instance.env()["ODYSSEUS_CORS_ORIGINS"])
+    origins = json.loads(instance.env()["HEPHAESTUS_CORS_ORIGINS"])
     assert f"http://127.0.0.1:{instance.frontend_port}" in origins
     assert f"http://localhost:{instance.frontend_port}" in origins
 
@@ -141,7 +141,7 @@ def test_the_settings_layer_accepts_the_environment_verbatim(tmp_path, monkeypat
 
     instance = resolve(root=tmp_path, name="alpha")
     for key, value in instance.env().items():
-        if key.startswith("ODYSSEUS_"):
+        if key.startswith("HEPHAESTUS_"):
             monkeypatch.setenv(key, value)
     settings = Settings(_env_file=None)
     assert settings.port == instance.backend_port
@@ -159,7 +159,7 @@ def test_the_settings_layer_accepts_the_environment_verbatim(tmp_path, monkeypat
 def test_allocation_reports_the_remedy_when_every_slot_is_claimed():
     with pytest.raises(ports.NoFreeSlot) as excinfo:
         ports.allocate(set(range(ports.MAX_SLOTS)))
-    assert "~/.odysseus/dev" in str(excinfo.value)
+    assert "~/.hephaestus/dev" in str(excinfo.value)
 
 
 def test_a_slot_whose_ports_are_in_use_is_skipped(monkeypatch):

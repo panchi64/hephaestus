@@ -82,7 +82,7 @@ OUT_DIR = HERE.parent / "src" / "ui" / "theme" / "fonts"
 
 def download(url: str) -> Path:
     tmp = Path(tempfile.mkstemp(suffix=".tar.xz")[1])
-    req = urllib.request.Request(url, headers={"User-Agent": "odysseus-font-build"})
+    req = urllib.request.Request(url, headers={"User-Agent": "hephaestus-font-build"})
     with urllib.request.urlopen(req) as resp, open(tmp, "wb") as f:
         shutil.copyfileobj(resp, f)
     return tmp

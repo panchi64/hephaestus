@@ -12,13 +12,18 @@ operator's own machine, and opening a file back out of one of them.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from core.api_scopes import ScopeClaim
+from core.vault import Vault
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from routes import host as host_routes
 from routes import projects as project_routes
 from routes import worktrees as worktree_routes
+from routes.deps import OPERATOR_ID
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.checkout import CheckoutHolders
+from services.projects.legacy_branches import rename_legacy_branches
 from services.settings_store import SettingsStore
 from tools.projects import project_toolset
 
@@ -34,11 +39,19 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     # cutting real worktrees into the operator's own home directory.
     worktrees = WorktreeManager(ctx.settings.worktrees_dir)
     checkouts = CheckoutHolders()
+    ctx.lifecycle.track("projects.legacy_branches", _rename_branches(store, ctx.vault))
     return FeatureRuntime(
         services=(store, worktrees, checkouts),
         capabilities=(store, worktrees, checkouts),
         state={"projects": store, "worktrees": worktrees},
     )
+
+
+async def _rename_branches(store: ProjectStore, vault: Vault) -> None:
+    """Project paths are sealed, so this waits for the vault."""
+    await vault.unlocked_event.wait()
+    for project in await store.list(OPERATOR_ID, include_archived=True):
+        await rename_legacy_branches(Path(project.root_path))
 
 
 MANIFEST = FeatureManifest(

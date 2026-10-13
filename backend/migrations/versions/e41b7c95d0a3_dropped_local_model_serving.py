@@ -1,6 +1,6 @@
 """dropped local model serving
 
-Odysseus works off **endpoints** — OpenAI-compatible URLs the operator points it at. It no
+Hephaestus works off **endpoints** — OpenAI-compatible URLs the operator points it at. It no
 longer downloads weights, installs inference engines, or supervises a local model server,
 so the schema that tracked those servers goes away: the `managed_models` table, and the
 two endpoint columns that existed only to describe a server this process owned

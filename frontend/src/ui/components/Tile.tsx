@@ -41,7 +41,7 @@ export function Tile(props: TileProps): JSX.Element {
       aria-disabled={local.locked || undefined}
       class={cx(
         "group flex aspect-square flex-col justify-between border border-line bg-surface p-3 text-left transition-colors",
-        local.selected && "ody-selected-edge bg-raised",
+        local.selected && "heph-selected-edge bg-raised",
         local.locked ? "cursor-not-allowed text-dim" : "hover:bg-raised",
         local.class,
       )}

@@ -66,7 +66,7 @@ import { QuestionPanel } from "./QuestionPanel";
  * Without it, a park the operator does not want to answer would be a trap.
  *
  * ── The glass, and three ways to lose it silently ──
- * The surface is plain `ody-glass` on the wrapper, and it frosts the transcript
+ * The surface is plain `heph-glass` on the wrapper, and it frosts the transcript
  * scrolling behind it. All three failures below render a slightly lighter panel rather
  * than an error, which is why they are written down; `FramedOverlay` carries the long
  * version of the same warnings.
@@ -232,7 +232,7 @@ export function ParkDock(props: {
   ];
 
   return (
-    <div class="ody-glass flex flex-col">
+    <div class="heph-glass flex flex-col">
       <ActionFrame
         tone={asking() ? "question" : "approval"}
         title={title()}

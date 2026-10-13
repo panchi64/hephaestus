@@ -357,7 +357,7 @@ def worktrees(request: Request) -> WorktreeManager:
     return request.app.state.worktrees
 
 
-#: What ``X-Ody-Project`` must be to mean "show me everything, unscoped". A literal
+#: What ``X-Heph-Project`` must be to mean "show me everything, unscoped". A literal
 #: rather than an absent header, because absent means "use whatever is active" — the two
 #: are different requests and a client must be able to say either.
 PROJECT_SCOPE_ALL = "all"
@@ -366,7 +366,7 @@ PROJECT_SCOPE_ALL = "all"
 async def project_scope(request: Request) -> tuple[str | None, ...] | None:
     """The project ids this request may see, or ``None`` for no filter at all.
 
-    Resolved from the ``X-Ody-Project`` header when the client sent one, else from the
+    Resolved from the ``X-Heph-Project`` header when the client sent one, else from the
     operator's stored active project. It returns the *visible set* rather than the active
     id so that every caller applies the one scope rule (``services.projects``) instead of
     each route re-deriving "unfiled plus this one" and one of them eventually getting it
@@ -376,7 +376,7 @@ async def project_scope(request: Request) -> tuple[str | None, ...] | None:
     this. A run keeps working in the project it started in even if the operator switches
     away mid-turn, so the run's scope comes from the conversation, not the live request.
     """
-    header = request.headers.get("X-Ody-Project")
+    header = request.headers.get("X-Heph-Project")
     if header == PROJECT_SCOPE_ALL:
         return None
     active = header or await projects(request).active_id(OPERATOR_ID)
@@ -390,7 +390,7 @@ async def active_project(request: Request) -> str | None:
     which is one id, never a set. ``all`` files nothing — asking to see everything is not
     a statement about where new work belongs.
     """
-    header = request.headers.get("X-Ody-Project")
+    header = request.headers.get("X-Heph-Project")
     if header == PROJECT_SCOPE_ALL:
         return None
     return header or await projects(request).active_id(OPERATOR_ID)

@@ -203,7 +203,7 @@ class TestWorktree:
         workspace = await run_workspace(ctx)
         assert workspace is not None
         assert workspace.kind == "worktree"
-        assert workspace.branch == "ody/conv-a"
+        assert workspace.branch == "heph/conv-a"
         # The assertion the whole design exists for: never the operator's own checkout.
         assert workspace.root != root
         assert (workspace.root / "hello.txt").read_text() == "original\n"

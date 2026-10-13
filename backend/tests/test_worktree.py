@@ -190,7 +190,7 @@ class TestDiffAndMerge:
         (state.path / WORKTREE_SCRATCH / "attachments" / "note.txt").write_text("mine")
 
         diff = await manager.diff(root, base_ref="main", conversation_id="c1", project_id="p")
-        # Odysseus' own staged attachments and skill bundles are not the agent's work,
+        # Hephaestus' own staged attachments and skill bundles are not the agent's work,
         # and the operator must not be asked to review them.
         assert WORKTREE_SCRATCH not in diff.patch
 

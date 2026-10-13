@@ -1,5 +1,5 @@
 /* Code is machine output: mono, and it snaps rather than eases. */
-.ody-prose code {
+.heph-prose code {
   font-family: var(--font-mono);
   font-size: var(--prose-code-size);
   line-height: var(--prose-code-lh);
@@ -8,13 +8,13 @@
   padding: 1px var(--space-1);
   color: var(--text-bright);
 }
-.ody-prose pre {
+.heph-prose pre {
   background: var(--surface-raised);
   border: var(--line-w) solid var(--line);
   padding: var(--space-3);
   overflow-x: auto;
 }
-.ody-prose pre code {
+.heph-prose pre code {
   background: transparent;
   border: 0;
   padding: 0;
@@ -30,7 +30,7 @@
    (`space-4` → `space-6`), overriding the rule above rather than adding to it.
    Sibling margins collapse here, so the next block's own `space-4` disappears
    into this one and the gap stays symmetrical. */
-.ody-prose blockquote {
+.heph-prose blockquote {
   border-left: var(--line-emphasis) solid var(--line-strong);
   padding-left: var(--space-3);
   margin: var(--space-6) 0;
@@ -38,7 +38,7 @@
 }
 /* The rhythm rule above is direct-child only, so a quote holding more than one
    paragraph ran them together — the same defect one level down. */
-.ody-prose blockquote > * + * {
+.heph-prose blockquote > * + * {
   margin-top: var(--space-4);
 }
 
@@ -50,15 +50,15 @@
    Display math sits on its own line and scrolls horizontally instead of
    bursting the message bubble; its block rhythm comes from the prose `* + *`
    rule, so KaTeX's own 1em margin is dropped. */
-.ody-prose .ody-math-block {
+.heph-prose .heph-math-block {
   overflow-x: auto;
   overflow-y: hidden;
   color: var(--text-bright);
 }
-.ody-prose .katex-display {
+.heph-prose .katex-display {
   margin: 0;
 }
-.ody-prose .katex-error {
+.heph-prose .katex-error {
   color: var(--accent-alert);
 }
 
@@ -66,30 +66,30 @@
    rounded cell breaks the ruled structure that makes tabular data scannable),
    tabular figures, and a mono uppercase header band, because a column header
    names a machine field. No zebra striping or accent fills. */
-.ody-prose [data-table-host] {
+.heph-prose [data-table-host] {
   overflow-x: auto;
 }
-.ody-prose table {
+.heph-prose table {
   width: 100%;
   border-collapse: collapse;
   border: var(--line-w) solid var(--line);
   font-variant-numeric: tabular-nums;
 }
-.ody-prose th,
-.ody-prose td {
+.heph-prose th,
+.heph-prose td {
   padding: var(--space-2) var(--space-3);
   text-align: left;
   vertical-align: baseline;
 }
 /* Hairline grid: cell separators on every internal edge. */
-.ody-prose th + th,
-.ody-prose td + td {
+.heph-prose th + th,
+.heph-prose td + td {
   border-left: var(--line-w) solid var(--line);
 }
-.ody-prose tbody tr {
+.heph-prose tbody tr {
   border-top: var(--line-w) solid var(--line);
 }
-.ody-prose thead th {
+.heph-prose thead th {
   font-family: var(--font-mono);
   font-size: var(--type-meta-size);
   line-height: var(--type-meta-lh);
@@ -100,6 +100,6 @@
   background: var(--surface-raised);
   border-bottom: var(--line-w) solid var(--line);
 }
-.ody-prose tbody td {
+.heph-prose tbody td {
   color: var(--text);
 }

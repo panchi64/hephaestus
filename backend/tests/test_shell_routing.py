@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-BRANCH = "odysseus/thread-1"
+BRANCH = "hephaestus/thread-1"
 
 
 class TestWhereTheToolRunsACommand:

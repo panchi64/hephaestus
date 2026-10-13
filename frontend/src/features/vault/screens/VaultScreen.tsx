@@ -200,7 +200,7 @@ export function VaultScreen(): JSX.Element {
         variant="section"
         title="Password vault"
         subtitle="Encrypted credential store. Agent reads require explicit approval."
-        assetId="ODY-VLT-05.0 EDITION 01"
+        assetId="HEPH-VLT-05.0 EDITION 01"
         actions={
           <Row gap={2} align="center">
             <StatusFlag status={locked() ? "alert" : "nominal"} dot>

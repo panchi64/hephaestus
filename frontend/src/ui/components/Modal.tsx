@@ -33,7 +33,7 @@ export function Modal(props: ModalProps): JSX.Element {
     <Show when={local.open}>
       <Portal>
         <div
-          class="ody-fade-in fixed inset-0 z-50 flex items-center justify-center bg-bg/70 p-4 backdrop-blur-[2px]"
+          class="heph-fade-in fixed inset-0 z-50 flex items-center justify-center bg-bg/70 p-4 backdrop-blur-[2px]"
           onClick={local.onClose}
         >
           {/* Overlay: smoothed corners, `shadow-2` (which carries its own
@@ -44,7 +44,7 @@ export function Modal(props: ModalProps): JSX.Element {
             role="dialog"
             aria-modal="true"
             class={cx(
-              "ody-rise flex max-h-[85vh] w-full max-w-md flex-col bg-surface shadow-2",
+              "heph-rise flex max-h-[85vh] w-full max-w-md flex-col bg-surface shadow-2",
               local.class,
             )}
             onClick={(e) => e.stopPropagation()}

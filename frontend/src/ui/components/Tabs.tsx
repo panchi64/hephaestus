@@ -89,7 +89,7 @@ export function Tabs(props: TabsProps): JSX.Element {
                   // inset edge under the tab, and the only medium weight in the
                   // strip. No shadow — a tab is a cell, not a layer.
                   active()
-                    ? "ody-selected-edge-b bg-raised text-bright font-medium"
+                    ? "heph-selected-edge-b bg-raised text-bright font-medium"
                     : "font-normal text-dim hover:bg-raised hover:text-text",
                 )}
               >

@@ -215,7 +215,7 @@ def _vm_note(boundary: _Boundary, result: ShellResult) -> str | None:
             "The VM's egress gateway refused a host this conversation has not been allowed "
             "to reach. Ask for it with `code_request_egress`, then run the command again."
         )
-    if "407" in text and "odysseus-egress" in text:
+    if "407" in text and "hephaestus-egress" in text:
         return (
             "This command declared `workspace`, which has no network. Declare `network` "
             "to reach the domains the operator has allowed."

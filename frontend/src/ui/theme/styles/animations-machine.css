@@ -4,7 +4,7 @@
    ========================================================================== */
 
 /* Terminal cursor blink. */
-@keyframes ody-blink {
+@keyframes heph-blink {
   0%,
   49% {
     opacity: 1;
@@ -14,13 +14,13 @@
     opacity: 0;
   }
 }
-.ody-caret {
-  animation: ody-blink 1s steps(1, end) infinite;
+.heph-caret {
+  animation: heph-blink 1s steps(1, end) infinite;
 }
 
 /* Search "found-it" flash on the located nav row when a query resolves to a
    single match. Hard-stepped brightness, not a decorative fade. */
-@keyframes ody-flash {
+@keyframes heph-flash {
   0%,
   100% {
     background: transparent;
@@ -29,13 +29,13 @@
     background: var(--surface-raised);
   }
 }
-.ody-flash {
-  animation: ody-flash 0.5s steps(1, end) 6;
+.heph-flash {
+  animation: heph-flash 0.5s steps(1, end) 6;
 }
 
 /* Live-activity pulse — a stepped blink on a state dot while a stream is in
    flight. Functional (signals "live"), hard-stepped like the caret. */
-@keyframes ody-pulse {
+@keyframes heph-pulse {
   0%,
   49% {
     opacity: 1;
@@ -45,8 +45,8 @@
     opacity: 0.3;
   }
 }
-.ody-pulse {
-  animation: ody-pulse 1s steps(1, end) infinite;
+.heph-pulse {
+  animation: heph-pulse 1s steps(1, end) infinite;
 }
 
 /* The caution & warning matrix (§10.15). The column count is the COMPONENT's, passed
@@ -58,25 +58,25 @@
 
    A media query cannot do this arithmetic and Tailwind cannot emit a class per count,
    so the breakpoints live here and the integers arrive as custom properties. */
-.ody-annunciator {
+.heph-annunciator {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 @media (min-width: 40rem) {
-  .ody-annunciator {
+  .heph-annunciator {
     grid-template-columns: repeat(var(--ann-cols-sm, 3), minmax(0, 1fr));
   }
 }
 
 @media (min-width: 64rem) {
-  .ody-annunciator {
+  .heph-annunciator {
     grid-template-columns: repeat(var(--ann-cols-lg, 5), minmax(0, 1fr));
   }
 }
 
 @media (min-width: 80rem) {
-  .ody-annunciator {
+  .heph-annunciator {
     grid-template-columns: repeat(var(--ann-cols-xl, 5), minmax(0, 1fr));
   }
 }
@@ -92,7 +92,7 @@
    resolves dark marks on a light ground far more readily. Paper therefore runs the
    whole figure at roughly half strength; without this the moment stops being
    ambient in exactly one of the two modes. */
-.ody-deep-field {
+.heph-deep-field {
   position: absolute;
   inset: 0;
   /* Explicit, and NOT redundant with `inset: 0`. An `<svg>` is a replaced
@@ -106,7 +106,7 @@
   opacity: 1;
 }
 
-[data-theme="paper"] .ody-deep-field {
+[data-theme="paper"] .heph-deep-field {
   opacity: 0.55;
 }
 
@@ -123,14 +123,14 @@
    Scoped to the host rather than baked into the shells: off a field page there is
    nothing behind a panel but flat ground, and `backdrop-filter` over a uniform
    field returns that field — it would cost a compositor layer per panel to change
-   nothing. `.ody-framed` is the opt-in marker the shells carry (Panel,
+   nothing. `.heph-framed` is the opt-in marker the shells carry (Panel,
    ConsoleGroup, Composer, InstrumentBand); a shell with no surface of its own
    (a bare panel, the system strip) deliberately does not.
 
-   NOTE the backdrop-root trap documented on `.ody-glass` below applies here in
+   NOTE the backdrop-root trap documented on `.heph-glass` below applies here in
    full: nothing between the field and a framed shell may set `opacity`, `filter`,
    `mask` or `isolation`, or the blur silently samples nothing. */
-.ody-field-page .ody-framed {
+.heph-field-page .heph-framed {
   background: var(--glass-bg);
   backdrop-filter: var(--glass-filter);
 }
@@ -139,7 +139,7 @@
    in a dense row), not decoration. It ping-pongs the overflow distance set in
    --mq-shift, pausing at each end. Only applied when the content actually
    overflows; reduced-motion users get a static clip. */
-@keyframes ody-marquee {
+@keyframes heph-marquee {
   0%,
   8% {
     transform: translateX(0);

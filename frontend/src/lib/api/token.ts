@@ -10,7 +10,7 @@
 
 import { readLS, removeLS, writeLS } from "~/lib/storage";
 
-const TOKEN_KEY = "ody.auth.token";
+const TOKEN_KEY = "heph.auth.token";
 
 let inMemory: string | null = null;
 

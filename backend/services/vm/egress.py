@@ -43,7 +43,7 @@ WORKSPACE = b"W"
 PLATFORM = b"P"
 #: Written into a refusal's body so a denial is legible in whatever the agent ran,
 #: rather than an unexplained 403 from "some proxy".
-DENIED_MARKER = "odysseus-egress: denied"
+DENIED_MARKER = "hephaestus-egress: denied"
 #: The most of a request head the proxy holds before answering. What sends it is code the
 #: agent wrote, so an endless head is refused rather than buffered.
 _MAX_HEAD_BYTES = 64 * 1024
@@ -166,8 +166,8 @@ class EgressGateway:
                 await _respond(
                     writer,
                     "407 Proxy Authentication Required",
-                    "odysseus-egress: this workspace's proxy credentials are missing\n",
-                    extra='Proxy-Authenticate: Basic realm="odysseus"\r\n',
+                    "hephaestus-egress: this workspace's proxy credentials are missing\n",
+                    extra='Proxy-Authenticate: Basic realm="hephaestus"\r\n',
                 )
                 return
             await self._dispatch(request, grant, reader, writer)

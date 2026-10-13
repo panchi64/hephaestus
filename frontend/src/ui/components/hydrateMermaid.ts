@@ -222,7 +222,7 @@ async function drawOnce(
   for (const [index, text] of attempts.entries()) {
     if (index > 0 && text === attempts[0]) break;
     try {
-      const { svg } = await mermaid.render(`ody-mmd-${++renderSeq}`, text);
+      const { svg } = await mermaid.render(`heph-mmd-${++renderSeq}`, text);
       const element = await toSvgElement(svg);
       if (!element) continue;
       // The transform is allowed to be wrong, but never allowed to be *visibly*

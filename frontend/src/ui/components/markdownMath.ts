@@ -40,7 +40,7 @@ const blockMath: TokenizerAndRendererExtension = {
     return { type: "blockMath", raw: m[0], text };
   },
   renderer(token) {
-    return `<div class="ody-math-block">${render(token.text, true)}</div>`;
+    return `<div class="heph-math-block">${render(token.text, true)}</div>`;
   },
 };
 

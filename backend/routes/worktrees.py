@@ -1,6 +1,6 @@
 """The worktree branch surface — review what a worktree conversation changed, then land it.
 
-A worktree thread works on `ody/<conversation-id>` in a worktree beside the project, never
+A worktree thread works on `heph/<conversation-id>` in a worktree beside the project, never
 in the operator's own checkout. These three endpoints are how that work gets back:
 
 - ``GET /worktrees/{conversation_id}`` — the diffstat, the patch, the **per-file rows with

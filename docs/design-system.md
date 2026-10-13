@@ -1,4 +1,4 @@
-# Odysseus Design System — **Instrument**
+# Hephaestus Design System — **Instrument**
 
 *A quiet, high-precision interface language: Swiss neo-grotesque structure, pure-neutral surfaces, and a monospaced second voice reserved for the machine.*
 
@@ -165,7 +165,7 @@ looked at*, so they differ in scale.
 | `readout-lg` | 32 / 40 | Sans | 500 | Sentence | Hero value — one per screen, tabular figures |
 | `display` | 40 / 44 | Sans | 600 | Sentence | Page/section titles, −0.02em tracking |
 
-#### Reading scale (`.ody-prose` only)
+#### Reading scale (`.heph-prose` only)
 
 | Token | Size/LH | Family | Weight | Use |
 |---|---|---|---|---|
@@ -189,13 +189,13 @@ sentence around it; 14/16 is the ~0.875em every prose stylesheet on the web
 converges on. Its line-height stays on the prose 24px so an inline span never
 opens up the line it sits in.
 
-**`Markdown dense` (`.ody-prose-dense`) steps headings down one rung** (`h1` at
+**`Markdown dense` (`.heph-prose-dense`) steps headings down one rung** (`h1` at
 `prose-h2`, `h2` at `prose-h3`, `h3` at `prose-h4`) and leaves body text at the
 reading size. It is for prose read inside a narrow pane, where full-size headings
 outshout the pane's own name; the reading floor is not negotiable, so only the
 headings give.
 
-**Never reach for `--type-*` inside `.ody-prose`, or `--prose-*` outside it.**
+**Never reach for `--type-*` inside `.heph-prose`, or `--prose-*` outside it.**
 That is precisely what re-couples the two scales, and the next time one moves the
 other follows silently.
 
@@ -207,7 +207,7 @@ so a section opens on space and binds to the paragraph it introduces.
 
 **That cascade is transcribed a second time in `Markdown.tsx`, and the copy is load-
 bearing.** The `streamStable` path wraps each top-level block in its own `div`, so
-those wrappers — not the `<p>`/`<h*>` elements — are what `.ody-prose`'s child
+those wrappers — not the `<p>`/`<h*>` elements — are what `.heph-prose`'s child
 selectors match, and every heading-aware rule misses them. `blockSpacingClass` exists
 to restate the same ladder in spacing utilities. When the two disagree the symptom is
 nearly invisible: an answer is set to one rhythm while it streams and to another once
@@ -215,7 +215,7 @@ it reloads from history. Change one side, change the other.
 
 #### The reading register has its own colour
 
-`.ody-prose` takes `--text-reading`, not `--text`. The argument is the same one the
+`.heph-prose` takes `--text-reading`, not `--text`. The argument is the same one the
 reading *scale* makes, carried into colour: a value tuned for a rail row is not a
 value for five paragraphs.
 
@@ -494,7 +494,7 @@ behind it — an overlay over the transcript, a dialog over a working page.
 ### Permitted animations
 
 - Eased (human): the reveal above, hover and focus transitions, height on disclosure, ambient state colour (240ms).
-- **The trace-in** (`.ody-trace-*`) — a sub-row branching off the row above it. The construction reveal's sentence at the size of one line: the elbow hanging the row off its parent draws itself down and then across (overlapping, so it reads as one L), and the row resolves out of the ordinary blur-fade as the stroke reaches it; ~220ms end to end. The stroke lands on a hard-cornered socket around the row's glyph, which blips the info tone on contact and snaps back (stepped — contact is a machine event), and the row's label speaks `meta` at the dim tone — it recedes under the header's reason, the line meant to be read first — since it reports the run's last act rather than offering one to open. The socket and the label are the whole work log's voice, not this row's alone: open, the log is drawn as a schematic — one trunk down from the header's chevron, an elbow into each row's socket, a script's calls branching off the script's own socket, the chevron at the row's far end — and only this row traces in. A row the chassis put there rather than the model (injected context, a review) hangs off a **dashed** elbow into a dashed socket, which is what tells the two apart now that no row has a card to refuse; and the running row's length of trunk and its elbow turn `info`. One surface uses it: the collapsed work log's latest step, keyed so each new step replays it — and only while the run streams, since the same row also remounts when a thread opens or the log folds shut, and a trace-in there would announce an arrival that never happened. Like the construction reveal, it stops meaning anything if it spreads.
+- **The trace-in** (`.heph-trace-*`) — a sub-row branching off the row above it. The construction reveal's sentence at the size of one line: the elbow hanging the row off its parent draws itself down and then across (overlapping, so it reads as one L), and the row resolves out of the ordinary blur-fade as the stroke reaches it; ~220ms end to end. The stroke lands on a hard-cornered socket around the row's glyph, which blips the info tone on contact and snaps back (stepped — contact is a machine event), and the row's label speaks `meta` at the dim tone — it recedes under the header's reason, the line meant to be read first — since it reports the run's last act rather than offering one to open. The socket and the label are the whole work log's voice, not this row's alone: open, the log is drawn as a schematic — one trunk down from the header's chevron, an elbow into each row's socket, a script's calls branching off the script's own socket, the chevron at the row's far end — and only this row traces in. A row the chassis put there rather than the model (injected context, a review) hangs off a **dashed** elbow into a dashed socket, which is what tells the two apart now that no row has a card to refuse; and the running row's length of trunk and its elbow turn `info`. One surface uses it: the collapsed work log's latest step, keyed so each new step replays it — and only while the run streams, since the same row also remounts when a thread opens or the log folds shut, and a trace-in there would announce an arrival that never happened. Like the construction reveal, it stops meaning anything if it spreads.
 - Stepped (machine): caret blink, the braille throbber (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) as a "working now" indicator, live-state pulse, the action tier's waiting square (`steps(2)`, 1.2s; static under reduced motion, §10.18), value tick-over, **the reasoning wall** (§10.10).
 
 The chat transcript is where the two registers are visible at once, and it is the reference implementation: the mono reasoning wall lands hard, the sans answer beneath it eases in token by token.
@@ -588,7 +588,7 @@ Square, hairline border, `space-2`/`space-3` padding, sans label. Focus is `shad
 
 ### 10.9 Live edge — a coloured rule, not light
 
-*The LED edge light (`LedEdge`, `.ody-led*`) is removed.* It was a hairline with a four-layer directional glow reaching ~90px past it; the console register says the same thing without light.
+*The LED edge light (`LedEdge`, `.heph-led*`) is removed.* It was a hairline with a four-layer directional glow reaching ~90px past it; the console register says the same thing without light.
 
 A region that is running right now says so by **its rule turning `info`**: the running row's length of trunk and its elbow in the work log, the reasoning wall's left edge while it streams, a rail row's leading edge (in its run state's own tone, and only for the states worth marking from across the room — live work, a failure, a limit). The rule is the same 1px in both states, so marking a region shifts nothing, and the colour change is ambient state, so it eases (§8). Nothing glows, nothing spills onto its neighbours, and no scroll container has to keep padding for light to fall into.
 
@@ -675,7 +675,7 @@ Width follows content: a three-word prompt is a three-word bubble. A fixed-width
 
 Alignment of the *block* and alignment of the *words* are separate decisions: the block sits right (that is what marks it as the operator's), the text inside is left-aligned, because right-ragged prose with any internal structure reads as broken.
 
-**It is rendered, not printed.** The turn goes through `Markdown` — `.ody-prose`, the reading scale, the answer's own colour — so a prompt carrying a list, a fence or a `>` quote is set the way the answer beside it is. Printing the operator's source beside the model's rendered prose read as the product taking one speaker less seriously than the other. The block's edge and tag are what mark the turn as theirs; the text takes `text-bright` (the one colour difference from the answer). A long turn clamps with a `ScrollFade variant="clamp"` over its foot and a Show more/less toggle beneath.
+**It is rendered, not printed.** The turn goes through `Markdown` — `.heph-prose`, the reading scale, the answer's own colour — so a prompt carrying a list, a fence or a `>` quote is set the way the answer beside it is. Printing the operator's source beside the model's rendered prose read as the product taking one speaker less seriously than the other. The block's edge and tag are what mark the turn as theirs; the text takes `text-bright` (the one colour difference from the answer). A long turn clamps with a `ScrollFade variant="clamp"` over its foot and a Show more/less toggle beneath.
 
 **The transcript's chrome runs at the composer's density; its prose does not.** Every row that isn't reading text — a work log's header and rows, a View chip, a turn's identity row — is 24px, the height of the composer's status cells, and the work log's sockets are 16px so a schematic row is no taller than a plain one. Turns are separated by 24px (12px of padding above and below each), and the parts inside an assistant turn sit 8px apart. The reading scale is untouched by any of it: density is taken out of the furniture around the words, never out of the words.
 
@@ -719,11 +719,11 @@ One is in use: the **run clock** on an in-flight run, from its `started_at`, in 
 
 ### 10.17 Scroll fade
 
-Where a scroll region runs **under** something laid over its edge — the chat title above, the docked composer below — it dissolves rather than being cut at a line. `ScrollFade edge="top" | "bottom"` (`.ody-scroll-fade`) fills its positioned parent and reaches one `--scroll-fade-band` (28px) past the side facing the content. Two effects on one falloff, strongest at the edge and nothing at the band's far end: a **progressive backdrop blur** — three layers, each masked to a shorter reach and blurring harder (a quarter, a half, all of `--scroll-fade-blur`), so there is no seam where one stops — and a **tint of the ground** from `--scroll-fade-tint` (70%) to clear, which keeps a title legible over text passing under it. Either alone fails: a gradient alone is a smear of crisp grey text; a blur alone leaves the title's contrast to whatever scrolls by.
+Where a scroll region runs **under** something laid over its edge — the chat title above, the docked composer below — it dissolves rather than being cut at a line. `ScrollFade edge="top" | "bottom"` (`.heph-scroll-fade`) fills its positioned parent and reaches one `--scroll-fade-band` (28px) past the side facing the content. Two effects on one falloff, strongest at the edge and nothing at the band's far end: a **progressive backdrop blur** — three layers, each masked to a shorter reach and blurring harder (a quarter, a half, all of `--scroll-fade-blur`), so there is no seam where one stops — and a **tint of the ground** from `--scroll-fade-tint` (70%) to clear, which keeps a title legible over text passing under it. Either alone fails: a gradient alone is a smear of crisp grey text; a blur alone leaves the title's contrast to whatever scrolls by.
 
 The scroll region keeps an inset of exactly one band at that edge (plus the overlay's own height at the top), so what rests there at the end of the scroll clears the fade — never more, or the band becomes dead page. The overlay's content must be positioned to paint above it, and the backdrop-root trap applies in full: nothing between the scroller and the fade may set `opacity`, `filter`, `mask`, `isolation` or a `will-change` of them, and the overlay takes its paint order from the DOM rather than a `z-index`. Pointer-transparent and hidden from assistive tech.
 
-**`variant="clamp"`** is the same idea at the scale of one clamped block — the operator's long turn, a compaction section — saying "there is more below" over its foot: a plain 24px gradient from the block's own ground (`ground="bg" | "surface" | "sunken"`), inside the block, no blur (`.ody-clamp-fade`). A hand-rolled `bg-gradient-to-t` is the thing it replaces.
+**`variant="clamp"`** is the same idea at the scale of one clamped block — the operator's long turn, a compaction section — saying "there is more below" over its foot: a plain 24px gradient from the block's own ground (`ground="bg" | "surface" | "sunken"`), inside the block, no blur (`.heph-clamp-fade`). A hand-rolled `bg-gradient-to-t` is the thing it replaces.
 
 ### 10.18 The action tier — things that need the operator
 
@@ -793,7 +793,7 @@ A licensed moment is a single expressive device — the `DeepField`'s graticule,
 
 **The field backs a page, not a region.** It was first cropped to the launchpad's composer band, and the crop is what argued against itself: the limb is drawn as a horizon too large to see the whole of, and cut off two hundred pixels either side of the composer it reads as an arc in a box. A horizon has to run the width of the frame or it is not one. So the shell paints it behind its whole content column (`isDeepFieldRoute`, `AppShell`), status bar included, and the screen stops owning it.
 
-**What makes that safe is glass, and the two are one decision.** A page-wide field runs under content the operator is meant to read, which is the "atmosphere in the reading path" failure this section exists to prevent — unless nothing readable sits *on* the field. On a field page every framed shell (`.ody-framed`: `Panel`, `ConsoleGroup`, `Composer`, `InstrumentBand`) trades its opaque `bg-surface` for the same glass the View and the park dock use, so a graticule behind a column of numbers arrives as a blur rather than as lines through them. A shell with no surface of its own — a bare panel, the system strip — carries no marker and is instead given space, which is the same answer §7 gives everywhere else. **Ship one without the other and the rejection above stands.**
+**What makes that safe is glass, and the two are one decision.** A page-wide field runs under content the operator is meant to read, which is the "atmosphere in the reading path" failure this section exists to prevent — unless nothing readable sits *on* the field. On a field page every framed shell (`.heph-framed`: `Panel`, `ConsoleGroup`, `Composer`, `InstrumentBand`) trades its opaque `bg-surface` for the same glass the View and the park dock use, so a graticule behind a column of numbers arrives as a blur rather than as lines through them. A shell with no surface of its own — a bare panel, the system strip — carries no marker and is instead given space, which is the same answer §7 gives everywhere else. **Ship one without the other and the rejection above stands.**
 
 **Still rationed, and still never inside a container holding data.** Two routes carry it (the launchpad and the 404), the list is explicit rather than a default, and matching is exact — `/` is a prefix of every path in the app, and a `matchesHref` here would put the field behind all of it, which is the outcome the ration exists to prevent.
 

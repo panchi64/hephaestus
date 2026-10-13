@@ -12,7 +12,7 @@ import {
  * property is, and `themeCSS` is serialised into the generated `<svg>`, which is
  * a subtree the cascade reaches but which must still carry its own values for the
  * lightbox (where the same markup is handed to an `<img>` and stops inheriting
- * anything at all). Odysseus has two themes and per-theme operator accent overrides on
+ * anything at all). Hephaestus has two themes and per-theme operator accent overrides on
  * top of them, so a hardcoded palette would be wrong two different ways.
  *
  * So the values are *read back out of the cascade* — `getComputedStyle` on

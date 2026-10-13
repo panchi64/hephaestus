@@ -26,7 +26,7 @@ export function RecentThreadCard(props: RecentThreadCardProps): JSX.Element {
          tint). `warm` (the resumable thread) is the console's selection. */
       class={cx(
         "flex w-full flex-col gap-1 p-3 text-left outline-none hover:bg-raised focus-visible:bg-raised",
-        props.warm && "ody-selected-edge bg-raised",
+        props.warm && "heph-selected-edge bg-raised",
       )}
     >
       <div class="flex items-center justify-between gap-2">

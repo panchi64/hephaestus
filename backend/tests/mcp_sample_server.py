@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from mcp.server.mcpserver import MCPServer
 
-server = MCPServer("odysseus-test")
+server = MCPServer("hephaestus-test")
 
 
 @server.tool()

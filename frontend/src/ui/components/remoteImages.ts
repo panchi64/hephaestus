@@ -63,7 +63,7 @@ function resolveOnce(remote: string): Promise<string> {
 function replaceWithCaption(img: HTMLImageElement, remote: string): void {
   const caption = document.createElement("span");
   caption.dataset.remoteImageError = "";
-  caption.className = "ody-remote-image-error";
+  caption.className = "heph-remote-image-error";
   const alt = img.getAttribute("alt")?.trim();
   caption.textContent = alt
     ? `${alt} — image unavailable (${hostLabel(remote)})`

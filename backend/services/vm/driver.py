@@ -10,10 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from core.exceptions import OdysseusError
+from core.exceptions import HephaestusError
 
 
-class VMError(OdysseusError):
+class VMError(HephaestusError):
     """The VM itself failed: it would not boot, stopped answering, or a transfer broke.
     A command's non-zero exit is an :class:`ExecResult`, not this."""
 

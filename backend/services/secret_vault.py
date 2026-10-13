@@ -36,7 +36,7 @@ from sqlmodel import Session, select
 
 from core import crypto
 from core.db import in_session
-from core.exceptions import NotFoundError, OdysseusError
+from core.exceptions import HephaestusError, NotFoundError
 from core.vault import Vault
 from models._fields import utcnow
 from models.secret import SecretEntry, SecretVaultConfig
@@ -49,15 +49,15 @@ logger = logging.getLogger(__name__)
 _IDLE_TIMEOUT_S = 15 * 60.0
 
 
-class SecretVaultLocked(OdysseusError):
+class SecretVaultLocked(HephaestusError):
     """The secrets manager is locked (or was never unlocked in this process)."""
 
 
-class SecretVaultNotConfigured(OdysseusError):
+class SecretVaultNotConfigured(HephaestusError):
     """No vault has been set up for this operator yet."""
 
 
-class SecretVaultAlreadyConfigured(OdysseusError):
+class SecretVaultAlreadyConfigured(HephaestusError):
     """A vault already exists; configuring twice would strand every stored entry."""
 
 

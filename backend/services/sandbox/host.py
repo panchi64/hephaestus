@@ -107,7 +107,7 @@ def scratch_path() -> Path:
     command. This module's profile allows writing it (it is where an approved host command
     starts).
     """
-    return Path(tempfile.gettempdir()) / f"odysseus-host-{os.getuid()}"
+    return Path(tempfile.gettempdir()) / f"hephaestus-host-{os.getuid()}"
 
 
 def denied_read_paths(settings: Settings) -> tuple[str, ...]:

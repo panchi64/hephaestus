@@ -57,7 +57,7 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
         onResizeEnd={rail.persist}
       />
 
-      {/* `relative` + `ody-field-page`: the column is where the deep field is
+      {/* `relative` + `heph-field-page`: the column is where the deep field is
           painted on the screens that carry one (§11.1), and the marker is what
           turns every framed surface inside it to glass. It hosts the field rather
           than the screen doing so, for two reasons — a screen can only paint
@@ -67,7 +67,7 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
       <div
         class={cx(
           "relative flex min-w-0 flex-1 flex-col",
-          deepField() && "ody-field-page",
+          deepField() && "heph-field-page",
         )}
       >
         <Show when={deepField()}>
@@ -110,7 +110,7 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
             paint order is DOM order and the field stays behind without a
             stacking context — a `z-*` here risks making this a backdrop root in
             some engines, which would leave the glass surfaces inside it blurring
-            nothing (see the note on `.ody-glass`). */}
+            nothing (see the note on `.heph-glass`). */}
         <div class="relative min-h-0 flex-1">
           {/* Scopes a suspending *or throwing* screen to the content region;
               without them the root blanks the shell too, taking the rail and

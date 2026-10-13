@@ -38,11 +38,11 @@ export function ActionFrame(props: ActionFrameProps): JSX.Element {
   const titleId = createUniqueId();
   return (
     <section
-      class={cx("ody-action", props.class)}
+      class={cx("heph-action", props.class)}
       data-tone={props.tone}
       aria-labelledby={titleId}
     >
-      <div class="ody-action-band">
+      <div class="heph-action-band">
         <Text
           variant="meta"
           tone="inverse"
@@ -58,7 +58,7 @@ export function ActionFrame(props: ActionFrameProps): JSX.Element {
             </Text>
           </Show>
           <Show when={props.live ?? true}>
-            <span class="ody-action-pulse" aria-hidden="true" />
+            <span class="heph-action-pulse" aria-hidden="true" />
           </Show>
         </span>
       </div>
@@ -90,12 +90,12 @@ export interface ActionButtonsProps {
  *  (`text-bright` on the ground), the rest outlined. Wraps on a narrow frame. */
 export function ActionButtons(props: ActionButtonsProps): JSX.Element {
   return (
-    <div class={cx("ody-action-btns", props.class)}>
+    <div class={cx("heph-action-btns", props.class)}>
       <For each={props.buttons}>
         {(b) => (
           <button
             type="button"
-            class="ody-action-btn"
+            class="heph-action-btn"
             data-primary={b.primary ? "" : undefined}
             disabled={b.disabled}
             aria-label={b.ariaLabel}

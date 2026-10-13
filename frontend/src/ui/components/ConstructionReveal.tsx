@@ -81,7 +81,7 @@ function Mark(props: { class?: string }): JSX.Element {
  * had merely come up.
  *
  * **It is also the system's one frosted framed panel**, and the 404 takes it with a
- * constant-true `when` for exactly that: marks, rules and `.ody-glass` on the region
+ * constant-true `when` for exactly that: marks, rules and `.heph-glass` on the region
  * between them. Nothing else may reproduce that combination — `RegistrationFrame`
  * draws marks and deliberately no surface — because two of them would be two things
  * to keep in step. The 404 is the one consumer that is not *opened*; it has no exit,
@@ -144,7 +144,7 @@ export function ConstructionReveal(
            dies silently under it: the fill still tints, so it looks like a
            slightly lighter surface rather than like broken glass, which is
            exactly how it read. The frame's `z-10` is enough on its own. */
-        class={cx("ody-frame relative", local.class)}
+        class={cx("heph-frame relative", local.class)}
         style={vars()}
         /* `data-ready` releases the whole timeline at once — every animation in
            theme.css is scoped under it, so until it appears nothing is running
@@ -154,7 +154,7 @@ export function ConstructionReveal(
            tree behind it had even settled. */
         data-ready={gate.ready() ? "" : undefined}
         data-closed={gate.closing() ? "" : undefined}
-        /* `.ody-frame` carries a lifecycle span — an invisible animation lasting
+        /* `.heph-frame` carries a lifecycle span — an invisible animation lasting
            exactly as long as the whole sequence — so `animationend` fires on
            THIS element at the true end. `useGatedMount` ignores everything that
            merely bubbles up from the marks, the rules, or the content, which is
@@ -170,7 +170,7 @@ export function ConstructionReveal(
             decorating rather than as the pane the marks describe. Square, no
             radius, no elevation. `inset-1.5` puts it on exactly the box the
             rules draw. */}
-        <div class="ody-frame-surface ody-glass absolute inset-1.5" />
+        <div class="heph-frame-surface heph-glass absolute inset-1.5" />
 
         {/* The frame, INSET 6px into the region rather than drawn on its edge.
 
@@ -201,20 +201,20 @@ export function ConstructionReveal(
               of its own phase — laid a hairline straight across the middle of
               the `+`, breaking the glyph exactly where the two strokes cross. */}
           <Mark class={cx("z-10", OFFSET.top, near())} />
-          <div class="ody-frame-mark-a absolute inset-0 z-10">
+          <div class="heph-frame-mark-a absolute inset-0 z-10">
             <Mark class={cx(OFFSET.top, far())} />
           </div>
-          <span class="ody-frame-rule-top absolute top-0 right-0 left-0 h-px bg-line" />
+          <span class="heph-frame-rule-top absolute top-0 right-0 left-0 h-px bg-line" />
 
           {/* Phase 2 — both marks drop to the bottom edge, the sides close
               behind them, and the bottom rule completes the frame. */}
-          <div class="ody-frame-mark-b absolute inset-0 z-10">
+          <div class="heph-frame-mark-b absolute inset-0 z-10">
             <Mark class={cx(OFFSET.bottom, near())} />
             <Mark class={cx(OFFSET.bottom, far())} />
           </div>
-          <span class="ody-frame-rule-side absolute top-0 bottom-0 left-0 w-px bg-line" />
-          <span class="ody-frame-rule-side absolute top-0 right-0 bottom-0 w-px bg-line" />
-          <span class="ody-frame-rule-bottom absolute right-0 bottom-0 left-0 h-px bg-line" />
+          <span class="heph-frame-rule-side absolute top-0 bottom-0 left-0 w-px bg-line" />
+          <span class="heph-frame-rule-side absolute top-0 right-0 bottom-0 w-px bg-line" />
+          <span class="heph-frame-rule-bottom absolute right-0 bottom-0 left-0 h-px bg-line" />
         </div>
 
         {/* `relative` so the content paints above the absolutely-positioned
@@ -223,7 +223,9 @@ export function ConstructionReveal(
             padding is also what keeps the wrapper sized by its content: the
             surface and the frame are both absolute and contribute no width, so
             an aside with an explicit width still drives the column. */}
-        <div class={cx("ody-frame-surface relative p-1.5", local.contentClass)}>
+        <div
+          class={cx("heph-frame-surface relative p-1.5", local.contentClass)}
+        >
           {local.children}
         </div>
       </div>

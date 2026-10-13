@@ -33,7 +33,7 @@ from services.permissions.capability import (
 from services.permissions.judge import Judgement, judge
 from services.permissions.shell_ast import command_prefixes, strip_comments
 
-ROOT = Path("/tmp/odysseus-judge-workspace")
+ROOT = Path("/tmp/hephaestus-judge-workspace")
 
 
 def judged(

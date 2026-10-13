@@ -177,9 +177,9 @@ describe("groupSessions", () => {
         session("b", { projectId: "p2" }),
         session("c", { projectId: "p1" }),
       ],
-      { directories: [dir("p1", "acme-api"), dir("p2", "odysseus")] },
+      { directories: [dir("p1", "acme-api"), dir("p2", "hephaestus")] },
     );
-    expect(groups.map((g) => g.label)).toEqual(["acme-api", "odysseus"]);
+    expect(groups.map((g) => g.label)).toEqual(["acme-api", "hephaestus"]);
     expect(groups[0].sessions.map((s) => s.id)).toEqual(["a", "c"]);
     expect(groups[1].sessions.map((s) => s.id)).toEqual(["b"]);
   });

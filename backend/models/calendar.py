@@ -81,7 +81,7 @@ def new_uid() -> str:
     """A fresh iCalendar ``UID``. Globally unique and stable for the life of the event —
     it is the identity ICS export/import and CalDAV sync all match on, which is why it is
     minted here rather than derived from the row id at export time."""
-    return f"{uuid.uuid4().hex}@odysseus"
+    return f"{uuid.uuid4().hex}@hephaestus"
 
 
 class Calendar(SQLModel, table=True):

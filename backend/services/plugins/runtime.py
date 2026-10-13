@@ -39,7 +39,7 @@ INSTALL_TIMEOUT_S = 900.0
 RESULT_MAX_CHARS = 64 * 1024
 _LOG_TAIL_CHARS = 2000
 _INSTALL_HOSTS = ("pypi.org", "files.pythonhosted.org")
-_CA_PATH = "/usr/local/share/ca-certificates/odysseus-egress.crt"
+_CA_PATH = "/usr/local/share/ca-certificates/hephaestus-egress.crt"
 
 # Runs inside the plugin's venv with -I, so only the venv and /plugin/src are importable.
 # Anything the tool prints goes to stderr; stdout carries the one result line.
@@ -104,7 +104,7 @@ class PluginRuntime:
         declared = [name for name in sorted(manifest.secrets) if name in secret_values]
         sent = [
             Secret(
-                f"odysseus-secret-{secrets.token_hex(16)}",
+                f"hephaestus-secret-{secrets.token_hex(16)}",
                 secret_values[name].value,
                 secret_values[name].domain,
             )

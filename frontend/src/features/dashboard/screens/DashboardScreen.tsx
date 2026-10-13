@@ -88,7 +88,7 @@ const RUN_STATUS_TONE: Record<ActiveRun["status"], Status> = {
  *  draw it: `isDeepFieldRoute` puts it behind the shell's whole content column, because
  *  cropping it to one region cut the limb off short of the page edges it is drawn
  *  against. What this screen owes the field is the other half of the arrangement —
- *  every surface here either frosts it out (`ody-framed` → glass) or has no surface at
+ *  every surface here either frosts it out (`heph-framed` → glass) or has no surface at
  *  all, so nothing on the launchpad is read against a graticule. */
 export function DashboardScreen(): JSX.Element {
   const navigate = useNavigate();
@@ -194,9 +194,9 @@ export function DashboardScreen(): JSX.Element {
   return (
     <div class="flex min-h-full flex-col gap-6">
       <PageHeader
-        title="Odysseus"
+        title="Hephaestus"
         subtitle="Your private, self-hosted AI workspace — chat, code, memory, and more."
-        assetId="ODY-HUD-00.1 EDITION 02"
+        assetId="HEPH-HUD-00.1 EDITION 02"
         actions={
           <Show
             when={alertReason()}

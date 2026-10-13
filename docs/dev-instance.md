@@ -1,6 +1,6 @@
 # The dev instance
 
-A second, disposable Odysseus you can run, drive and break: its own data directory, its
+A second, disposable Hephaestus you can run, drive and break: its own data directory, its
 own ports, its own platform VM, and a scripted model behind it. Nothing it does touches
 the operator's workspace.
 
@@ -26,7 +26,7 @@ cd backend && uv run python dev_instance.py up --detach
 ```
 
 It is safe to run twice; it fills in whatever is not already running, seeds the workspace
-on first use, and prints the URLs. Then `preview_start 'odysseus-dev'` opens it in the
+on first use, and prints the URLs. Then `preview_start 'hephaestus-dev'` opens it in the
 browser pane. Ports differ per worktree — read them from
 `uv run python dev_instance.py status --json`, never assume them.
 
@@ -55,7 +55,7 @@ vite's dependency optimizer, so the first page you open is the app and not a bla
 ## Looking at it
 
 ```
-preview_start 'odysseus-dev'      # opens the browser pane at this worktree's frontend
+preview_start 'hephaestus-dev'      # opens the browser pane at this worktree's frontend
 ```
 
 Then `read_page`, `find`, `computer` (click, type, screenshot) as usual, and
@@ -110,9 +110,9 @@ Two rules worth knowing before you script one:
 To use a real model instead, name one before `up` — the stub is then not started at all:
 
 ```bash
-export ODY_DEV_CHAT_BASE_URL=http://127.0.0.1:1234/v1
-export ODY_DEV_CHAT_MODEL=your-model
-export ODY_DEV_CHAT_KEY=…          # optional; a local engine usually needs none
+export HEPH_DEV_CHAT_BASE_URL=http://127.0.0.1:1234/v1
+export HEPH_DEV_CHAT_MODEL=your-model
+export HEPH_DEV_CHAT_KEY=…          # optional; a local engine usually needs none
 ```
 
 ## The platform VM, and why it is off
@@ -120,22 +120,22 @@ export ODY_DEV_CHAT_KEY=…          # optional; a local engine usually needs no
 The platform VM — and with it the sandbox, the project shell, SearXNG and the web-fetch
 browser — does not run by default: it costs an image build, memory and boot time that most
 visual checks never need. `up --with-vm` turns it on. The VM and its image live under this
-instance's own data dir; to skip the first image build, point `ODYSSEUS_VM_IMAGE` at an
+instance's own data dir; to skip the first image build, point `HEPHAESTUS_VM_IMAGE` at an
 image directory another instance already built (`<data dir>/vm/images/<hash>`).
 
 ## When something is wrong
 
 ```bash
 uv run python dev_instance.py status --json
-tail -f ~/.odysseus/dev/<worktree>/logs/backend.log    # also stub.log, frontend.log
+tail -f ~/.hephaestus/dev/<worktree>/logs/backend.log    # also stub.log, frontend.log
 ```
 
-Everything lives under `~/.odysseus/dev/<worktree>/` — data, worktrees, logs, and the
+Everything lives under `~/.hephaestus/dev/<worktree>/` — data, worktrees, logs, and the
 `instance.json` recording the ports and the vault passphrase. Deleting that directory
 forgets the instance entirely; the next `up` builds a new one.
 
 ## What it is not
 
-Not a place to point at real data. `ODYSSEUS_DATA_DIR` and the rest are set by the
+Not a place to point at real data. `HEPHAESTUS_DATA_DIR` and the rest are set by the
 launcher for exactly this reason: an instance aimed at the operator's data directory would
 seed fixtures into their workspace and boot a second VM over their state.

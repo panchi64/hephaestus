@@ -84,7 +84,7 @@ async def test_the_base_fixture_binds_every_role_to_one_endpoint(seeding):
     # Nothing else in the pack can run without this: an instance with no model bound
     # does not merely look emptier, most of the product returns an error instead.
     summary = await seed_model(seeding)
-    assert "odysseus-stub" in summary
+    assert "hephaestus-stub" in summary
 
     endpoints = (await seeding.client.get("/models/endpoints")).json()
     assert [e["name"] for e in endpoints] == [ENDPOINT_NAME]
@@ -118,7 +118,7 @@ async def test_every_surface_fixture_populates_and_then_leaves_itself_alone(seed
 
 async def test_a_seeded_task_never_fires_on_its_own(seeding):
     # It would spend model calls on a schedule nobody set, in a workspace nobody is
-    # watching — and real money, against an endpoint named by ODY_DEV_CHAT_*.
+    # watching — and real money, against an endpoint named by HEPH_DEV_CHAT_*.
     await seed_tasks(seeding)
     tasks = registry.rows(await seeding.client.get("/tasks"))
     assert tasks and all(task["enabled"] is False for task in tasks)

@@ -16,12 +16,12 @@ import { ProcessRow, Sep } from "./ProcessRow";
  *  It only exists while the log is shut. Open, the same step is the last row of
  *  the list, and a second copy of it directly above the first would be noise.
  *
- *  **While the run streams, it arrives by tracing in** (`.ody-trace-*`, §8): its
+ *  **While the run streams, it arrives by tracing in** (`.heph-trace-*`, §8): its
  *  branch draws itself down and across, and the row resolves as the stroke reaches
  *  it. The caller keys it on the step's block id, so each step the run folds in
  *  replays the arrival — the fold's proof of life — while a re-render of the same
  *  step does not. The socket blips the info tone as the trace reaches it and snaps
- *  back (`.ody-trace-pin`, stepped — the machine register). A settled run shows
+ *  back (`.heph-trace-pin`, stepped — the machine register). A settled run shows
  *  the row still: nothing is arriving.
  *
  *  It is the first branch on the log's trunk, and the last unless pinned rows
@@ -40,12 +40,12 @@ export function WorkLogLatest(props: {
   return (
     <Branch edge={props.edge} trace={live}>
       <ProcessRow
-        class={live ? "ody-trace-body" : undefined}
+        class={live ? "heph-trace-body" : undefined}
         open={false}
         foldable={false}
         onToggle={() => {}}
         icon={props.step.icon}
-        iconClass={live ? "ody-trace-pin text-dim" : "text-dim"}
+        iconClass={live ? "heph-trace-pin text-dim" : "text-dim"}
         label={props.step.label}
       >
         <Show when={props.step.detail}>

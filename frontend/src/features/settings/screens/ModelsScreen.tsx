@@ -36,7 +36,7 @@ import { ModelRoleCard } from "../components/ModelRoleCard";
  *
  *  Every model is reached through an **endpoint** — an OpenAI-compatible URL the
  *  operator points at, whether it is a server on this machine or a lab's API.
- *  Odysseus no longer downloads weights, installs engines, or supervises a local
+ *  Hephaestus no longer downloads weights, installs engines, or supervises a local
  *  server, so the hardware band and the serve lifecycle that used to sit under
  *  these cards are gone; what a model runs on is decided where it runs.
  *
@@ -164,7 +164,7 @@ export function ModelsScreen(): JSX.Element {
         variant="section"
         title="Models"
         subtitle="Which model does what. Set it here once — every surface follows."
-        assetId="ODY-MDL-01.0"
+        assetId="HEPH-MDL-01.0"
       />
 
       <Tabs

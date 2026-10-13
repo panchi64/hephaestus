@@ -7,7 +7,7 @@ Two ways in:
   We migrate on *that* engine — crucial for the in-memory test DBs, whose schema
   lives only on a single shared connection.
 - **CLI (autogenerate / manual).** No connection is attached, so we build one
-  from ``sqlalchemy.url`` (``alembic.ini``, overridable via ``ODYSSEUS_DB_URL``).
+  from ``sqlalchemy.url`` (``alembic.ini``, overridable via ``HEPHAESTUS_DB_URL``).
 
 ``target_metadata`` is the SQLModel registry, populated by importing every model
 module, so ``--autogenerate`` sees the full schema. SQLite gets batch mode, since
@@ -109,7 +109,7 @@ def run_migrations_online() -> None:
             _run(attached)
         return
 
-    url = os.environ.get("ODYSSEUS_DB_URL") or config.get_main_option("sqlalchemy.url")
+    url = os.environ.get("HEPHAESTUS_DB_URL") or config.get_main_option("sqlalchemy.url")
     engine = create_engine(url)
     with engine.connect() as connection:
         _run(connection)
@@ -117,7 +117,7 @@ def run_migrations_online() -> None:
 
 def run_migrations_offline() -> None:
     """Emit SQL without a DBAPI connection (``alembic upgrade --sql``)."""
-    url = os.environ.get("ODYSSEUS_DB_URL") or config.get_main_option("sqlalchemy.url")
+    url = os.environ.get("HEPHAESTUS_DB_URL") or config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,

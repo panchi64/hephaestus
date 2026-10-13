@@ -135,7 +135,7 @@ export function isFlushRoute(pathname: string): boolean {
  * composer and whose other panels are readouts that go glass over it, and the 404,
  * which has one plate on it and nothing running. A route earns a place here only if
  * nothing on it is read *against* the field — everything with a surface frosts it out
- * (`.ody-framed`, theme.css), and everything else on the page is a label or a number
+ * (`.heph-framed`, theme.css), and everything else on the page is a label or a number
  * with space around it.
  *
  * A list rather than a flag on `NavItem`, for the same reason as `FLUSH_TOP_ROUTES`

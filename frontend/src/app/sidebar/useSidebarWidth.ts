@@ -1,7 +1,7 @@
 import { createSignal, type Accessor } from "solid-js";
 import { readLS, writeLS } from "~/lib/storage";
 
-const STORAGE_KEY = "ody.sidebar.width";
+const STORAGE_KEY = "heph.sidebar.width";
 const DEFAULT_WIDTH = 248;
 const MIN_WIDTH = 208;
 const MAX_WIDTH = 420;

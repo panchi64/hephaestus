@@ -13,21 +13,21 @@
    The frame imposes no padding on its body — a question card sits flush, an
    approval pads its own.
    ========================================================================== */
-.ody-action {
+.heph-action {
   --action: var(--accent-warn);
   display: flex;
   flex-direction: column;
   border: var(--line-w) solid var(--action);
   background: color-mix(in srgb, var(--action) 7%, var(--bg));
 }
-.ody-action[data-tone="question"] {
+.heph-action[data-tone="question"] {
   --action: var(--accent-info);
   background: color-mix(in srgb, var(--action) 5%, var(--bg));
 }
-.ody-action[data-tone="alert"] {
+.heph-action[data-tone="alert"] {
   --action: var(--accent-alert);
 }
-.ody-action-band {
+.heph-action-band {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -37,30 +37,30 @@
 }
 /* The live marker — the band's one moving part. Hard-stepped like the caret
    (§8): it is the machine reporting "still waiting", not decoration. */
-.ody-action-pulse {
+.heph-action-pulse {
   width: 6px;
   height: 6px;
   flex: none;
   background: var(--bg);
 }
-@keyframes ody-action-blink {
+@keyframes heph-action-blink {
   50% {
     opacity: 0;
   }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .ody-action-pulse {
-    animation: ody-action-blink 1.2s steps(2, jump-none) infinite;
+  .heph-action-pulse {
+    animation: heph-action-blink 1.2s steps(2, jump-none) infinite;
   }
 }
 
 /* A row of square cells with joined borders. The primary is the brightest thing
    in the frame — luminance, not hue (§5) — and every other cell is outlined. */
-.ody-action-btns {
+.heph-action-btns {
   display: flex;
   flex-wrap: wrap;
 }
-.ody-action-btn {
+.heph-action-btn {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -76,34 +76,34 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.ody-action-btn + .ody-action-btn {
+.heph-action-btn + .heph-action-btn {
   border-left-width: 0;
 }
-.ody-action-btn:hover {
+.heph-action-btn:hover {
   background: var(--surface-raised);
   color: var(--text-bright);
 }
-.ody-action-btn[data-primary] {
+.heph-action-btn[data-primary] {
   background: var(--text-bright);
   border-color: var(--text-bright);
   color: var(--bg);
 }
-.ody-action-btn[data-primary]:hover {
+.heph-action-btn[data-primary]:hover {
   opacity: 0.9;
 }
-.ody-action-btn:disabled {
+.heph-action-btn:disabled {
   cursor: not-allowed;
   opacity: 0.4;
 }
-.ody-action-btn:focus-visible,
-.ody-choice:focus-visible {
+.heph-action-btn:focus-visible,
+.heph-choice:focus-visible {
   outline: 2px solid var(--action, var(--accent-info));
   box-shadow: none;
 }
-.ody-action-btn:focus-visible {
+.heph-action-btn:focus-visible {
   outline-offset: 2px;
 }
-.ody-action-btn kbd {
+.heph-action-btn kbd {
   font: inherit;
   opacity: 0.6;
 }
@@ -112,11 +112,11 @@
    is a keycap, the answer, and its consequence right-aligned on the same line.
    The picked row is a filled keycap and a tinted row — not a full inversion,
    which would outshout the band. */
-.ody-choices {
+.heph-choices {
   display: grid;
   border-top: var(--line-w) solid var(--line);
 }
-.ody-choice {
+.heph-choice {
   display: grid;
   grid-template-columns: 22px minmax(0, max-content) 1fr;
   align-items: center;
@@ -128,41 +128,41 @@
   text-align: left;
   cursor: pointer;
 }
-.ody-choice:hover {
+.heph-choice:hover {
   background: color-mix(
     in srgb,
     var(--action, var(--accent-info)) 6%,
     transparent
   );
 }
-.ody-choice:focus-visible {
+.heph-choice:focus-visible {
   outline-offset: -2px;
 }
-.ody-choice[aria-checked="true"] {
+.heph-choice[aria-checked="true"] {
   background: color-mix(
     in srgb,
     var(--action, var(--accent-info)) 16%,
     transparent
   );
 }
-.ody-choice:disabled {
+.heph-choice:disabled {
   cursor: not-allowed;
   opacity: 0.4;
 }
-.ody-choice-hint {
+.heph-choice-hint {
   text-align: right;
   min-width: 0;
 }
 @media (max-width: 560px) {
-  .ody-choice {
+  .heph-choice {
     grid-template-columns: 22px 1fr;
   }
-  .ody-choice-hint {
+  .heph-choice-hint {
     grid-column: 2;
     text-align: left;
   }
 }
-.ody-keycap {
+.heph-keycap {
   display: grid;
   place-items: center;
   width: 22px;
@@ -173,13 +173,13 @@
   font-size: var(--type-meta-size);
   line-height: 1;
 }
-.ody-choice[aria-checked="true"] .ody-keycap {
+.heph-choice[aria-checked="true"] .heph-keycap {
   background: var(--action, var(--accent-info));
   border-color: var(--action, var(--accent-info));
   color: var(--bg);
 }
 /* The free-text row: a real input, its keycap dashed until it holds focus. */
-.ody-choice-free {
+.heph-choice-free {
   display: grid;
   grid-template-columns: 22px 1fr;
   align-items: center;
@@ -187,16 +187,16 @@
   padding: var(--space-2) var(--space-3);
   border-bottom: var(--line-w) solid var(--line);
 }
-.ody-choice-free .ody-keycap {
+.heph-choice-free .heph-keycap {
   border-style: dashed;
   color: var(--text-dim);
 }
-.ody-choice-free:focus-within .ody-keycap {
+.heph-choice-free:focus-within .heph-keycap {
   border-style: solid;
   border-color: var(--action, var(--accent-info));
   color: var(--action, var(--accent-info));
 }
-.ody-choice-foot {
+.heph-choice-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;

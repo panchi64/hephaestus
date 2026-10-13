@@ -235,5 +235,5 @@ class TestTheRoute:
             # The fork's transcript describes `new.txt`, so its branch has to contain it —
             # branching from `main` would hand it a tree its own history contradicts.
             diff = (await client.get(f"/worktrees/{forked['id']}")).json()
-            assert diff["branch"] == f"ody/{forked['id']}"
+            assert diff["branch"] == f"heph/{forked['id']}"
             assert "from the source thread" in diff["patch"]

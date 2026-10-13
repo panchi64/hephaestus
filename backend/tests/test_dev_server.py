@@ -70,7 +70,7 @@ def test_exclusions_are_absolute(tmp_path):
 
 
 def test_excludes_the_configured_data_dir_not_a_hardcoded_one(tmp_path):
-    """`ODYSSEUS_DATA_DIR` moves where the app writes, so it has to move the exclusion
+    """`HEPHAESTUS_DATA_DIR` moves where the app writes, so it has to move the exclusion
     too — otherwise the trap returns for anyone who relocates their data."""
     elsewhere = tmp_path / "somewhere-else"
     elsewhere.mkdir()

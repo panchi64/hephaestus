@@ -18,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 #: Branch namespace. One per worktree conversation, so a branch is self-describing and a
 #: stale one is obvious.
-BRANCH_PREFIX = "ody/"
+BRANCH_PREFIX = "heph/"
 
 #: The identity every commit this layer makes is attributed to. It is the chassis
 #: committing on the agent's behalf, and it should read that way in `git log`.
-AUTHOR = ("-c", "user.name=Odysseus", "-c", "user.email=odysseus@localhost")
+AUTHOR = ("-c", "user.name=Hephaestus", "-c", "user.email=hephaestus@localhost")
 
 
 class WorktreeError(Exception):
@@ -44,7 +44,7 @@ def child_branch_for(conversation_id: str, delegation_id: str) -> str:
     """The branch a delegated child works on, beside its parent's rather than under it.
 
     A dash and not a slash: git stores a branch as a file under ``refs/heads``, so
-    ``ody/<conv>/<delegation>`` cannot exist while ``ody/<conv>`` does — and the parent's
+    ``heph/<conv>/<delegation>`` cannot exist while ``heph/<conv>`` does — and the parent's
     branch is the very thing this one is cut from.
     """
     return f"{branch_for(conversation_id)}-{delegation_id}"
@@ -88,7 +88,7 @@ async def commit_worktree(path: Path, message: str | None = None) -> bool:
     """Stage and commit everything in ``path``, or return False if it was clean.
 
     Best-effort by design: a worktree that isn't there, or a git that refuses, must
-    not take down the read that asked for this. `.odysseus/` ignores itself, so the
+    not take down the read that asked for this. `.hephaestus/` ignores itself, so the
     agent's staged attachments and skill bundles never reach the operator's diff.
     """
     if not (path / ".git").exists():

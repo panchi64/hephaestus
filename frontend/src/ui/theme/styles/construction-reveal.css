@@ -9,7 +9,7 @@
    reverse, so the panel is taken apart rather than switched off.
 
    WHY THIS IS NOT A `Reveal` PRESET. The rule in ui/CLAUDE.md is "add a preset,
-   never a third keyframe", and it governs the `ody-reveal-*` family — anything
+   never a third keyframe", and it governs the `heph-reveal-*` family — anything
    whose whole vocabulary is `--reveal-y` / `--reveal-ms` / `--reveal-blur` over
    the two shared keyframes. This shares none of them: it animates position and
    scale on six sibling elements that are not the content, in sequence. Writing
@@ -28,7 +28,7 @@
 /* Phase 1 — the trailing `+` travels from the origin to the far corner. The
    element is positioned at its destination and animated back to the origin, so
    the geometry stays declarative (`inset`) and only the transform moves. */
-@keyframes ody-frame-slide {
+@keyframes heph-frame-slide {
   from {
     opacity: 0;
     transform: translateX(var(--frame-from-x, 100%));
@@ -42,7 +42,7 @@
 /* Phase 1 — the rule between the two marks, drawn from the origin outward.
    `scaleX` on a compositor-friendly transform, never `width`, which would lay
    out on every frame of the animation. */
-@keyframes ody-frame-draw {
+@keyframes heph-frame-draw {
   from {
     transform: scaleX(0);
   }
@@ -53,7 +53,7 @@
 
 /* Phase 2 — the pair drops to the panel's bottom edge, and the rule closing it
    grows the same way `draw` does, on the other axis. */
-@keyframes ody-frame-drop {
+@keyframes heph-frame-drop {
   from {
     opacity: 0;
     transform: translateY(var(--frame-from-y, -100%));
@@ -63,7 +63,7 @@
     transform: translateY(0);
   }
 }
-@keyframes ody-frame-close {
+@keyframes heph-frame-close {
   from {
     transform: scaleY(0);
   }
@@ -76,7 +76,7 @@
    carries the content with it — ONE fade for the whole region, no per-child
    stagger (§8 forbids staggered cascades, and the region is one thing arriving,
    not a list of things). */
-@keyframes ody-frame-surface {
+@keyframes heph-frame-surface {
   from {
     opacity: 0;
   }
@@ -86,10 +86,10 @@
 }
 
 /* The exits are written out reversed rather than driven by
-   `animation-direction: reverse`, matching `ody-reveal-fade-out`. Reversing a
+   `animation-direction: reverse`, matching `heph-reveal-fade-out`. Reversing a
    direction also reverses the EASING, so a decelerating entry becomes an
    accelerating exit — which is the one thing §8 says this register never does. */
-@keyframes ody-frame-slide-out {
+@keyframes heph-frame-slide-out {
   from {
     opacity: 1;
     transform: translateX(0);
@@ -99,7 +99,7 @@
     transform: translateX(var(--frame-from-x, 100%));
   }
 }
-@keyframes ody-frame-draw-out {
+@keyframes heph-frame-draw-out {
   from {
     transform: scaleX(1);
   }
@@ -107,7 +107,7 @@
     transform: scaleX(0);
   }
 }
-@keyframes ody-frame-drop-out {
+@keyframes heph-frame-drop-out {
   from {
     opacity: 1;
     transform: translateY(0);
@@ -117,7 +117,7 @@
     transform: translateY(var(--frame-from-y, -100%));
   }
 }
-@keyframes ody-frame-close-out {
+@keyframes heph-frame-close-out {
   from {
     transform: scaleY(1);
   }
@@ -125,7 +125,7 @@
     transform: scaleY(0);
   }
 }
-@keyframes ody-frame-surface-out {
+@keyframes heph-frame-surface-out {
   from {
     opacity: 1;
   }
@@ -161,7 +161,7 @@
    Entry and exit both total 320ms: entry ends with the surface (190+130), exit
    ends with the travelling mark going home (170+150). Keep this in step if
    either changes. */
-@keyframes ody-frame-span {
+@keyframes heph-frame-span {
   from {
     outline-color: transparent;
   }
@@ -169,7 +169,7 @@
     outline-color: transparent;
   }
 }
-@keyframes ody-frame-span-out {
+@keyframes heph-frame-span-out {
   from {
     outline-color: transparent;
   }
@@ -178,7 +178,7 @@
   }
 }
 
-.ody-frame {
+.heph-frame {
   --frame-ease: var(--ease);
 }
 
@@ -186,7 +186,7 @@
    once the tree behind it has settled (two frames — see `useGatedMount`). That
    scoping is not tidiness, it is the mechanism:
 
-   - Held invisible. `.ody-frame-hold`-style opacity on the wrapper could not
+   - Held invisible. `.heph-frame-hold`-style opacity on the wrapper could not
      work here, because the wrapper's own span animation sets `opacity: 1` and
      an animated value beats a plain declaration in the cascade. Withholding the
      animation instead leaves the plain `opacity: 0` below to do its job.
@@ -199,39 +199,39 @@
    A region whose first render is expensive — the View hosts iframes, a
    highlighter and a document viewer — can block the main thread for longer than
    320ms, and the first frame to paint would otherwise be the last one. */
-.ody-frame:not([data-ready]) {
+.heph-frame:not([data-ready]) {
   opacity: 0;
 }
 
-.ody-frame[data-ready] {
-  animation: ody-frame-span var(--motion-stage) linear both;
+.heph-frame[data-ready] {
+  animation: heph-frame-span var(--motion-stage) linear both;
 }
-.ody-frame[data-ready] .ody-frame-mark-a {
-  animation: ody-frame-slide 170ms var(--frame-ease) both;
+.heph-frame[data-ready] .heph-frame-mark-a {
+  animation: heph-frame-slide 170ms var(--frame-ease) both;
 }
-.ody-frame[data-ready] .ody-frame-rule-top {
-  animation: ody-frame-draw 170ms var(--frame-ease) both;
+.heph-frame[data-ready] .heph-frame-rule-top {
+  animation: heph-frame-draw 170ms var(--frame-ease) both;
 }
-.ody-frame[data-ready] .ody-frame-mark-b {
-  animation: ody-frame-drop 150ms var(--frame-ease) 150ms both;
+.heph-frame[data-ready] .heph-frame-mark-b {
+  animation: heph-frame-drop 150ms var(--frame-ease) 150ms both;
 }
-.ody-frame[data-ready] .ody-frame-rule-side {
-  animation: ody-frame-close 150ms var(--frame-ease) 150ms both;
+.heph-frame[data-ready] .heph-frame-rule-side {
+  animation: heph-frame-close 150ms var(--frame-ease) 150ms both;
 }
-.ody-frame[data-ready] .ody-frame-rule-bottom {
-  animation: ody-frame-draw 130ms var(--frame-ease) 190ms both;
+.heph-frame[data-ready] .heph-frame-rule-bottom {
+  animation: heph-frame-draw 130ms var(--frame-ease) 190ms both;
 }
-.ody-frame[data-ready] .ody-frame-surface {
-  animation: ody-frame-surface 130ms var(--frame-ease) 190ms both;
+.heph-frame[data-ready] .heph-frame-surface {
+  animation: heph-frame-surface 130ms var(--frame-ease) 190ms both;
 }
 
 /* The transform origins are geometry, not choreography, so they stay unscoped —
    an element must not jump because its animation has not been released yet. */
-.ody-frame-rule-top,
-.ody-frame-rule-bottom {
+.heph-frame-rule-top,
+.heph-frame-rule-bottom {
   transform-origin: var(--frame-origin-x, right) center;
 }
-.ody-frame-rule-side {
+.heph-frame-rule-side {
   transform-origin: center top;
 }
 
@@ -241,33 +241,33 @@
    rather than stylistic: `data-closed` appearing does not restart an animation
    that has already finished, so reusing the entry's name would leave the region
    sitting at its end state until the unmount that never comes. That is also why
-   the wrapper needs `ody-frame-span-out` — its span is what fires the
+   the wrapper needs `heph-frame-span-out` — its span is what fires the
    `animationend` the unmount waits on. */
-.ody-frame[data-ready][data-closed] {
-  animation: ody-frame-span-out var(--motion-stage) linear both;
+.heph-frame[data-ready][data-closed] {
+  animation: heph-frame-span-out var(--motion-stage) linear both;
 }
-.ody-frame[data-closed] .ody-frame-mark-a {
-  animation: ody-frame-slide-out 150ms var(--frame-ease) 170ms both;
+.heph-frame[data-closed] .heph-frame-mark-a {
+  animation: heph-frame-slide-out 150ms var(--frame-ease) 170ms both;
 }
-.ody-frame[data-closed] .ody-frame-rule-top {
-  animation: ody-frame-draw-out 150ms var(--frame-ease) 170ms both;
+.heph-frame[data-closed] .heph-frame-rule-top {
+  animation: heph-frame-draw-out 150ms var(--frame-ease) 170ms both;
 }
-.ody-frame[data-closed] .ody-frame-mark-b {
-  animation: ody-frame-drop-out 150ms var(--frame-ease) both;
+.heph-frame[data-closed] .heph-frame-mark-b {
+  animation: heph-frame-drop-out 150ms var(--frame-ease) both;
 }
-.ody-frame[data-closed] .ody-frame-rule-side {
-  animation: ody-frame-close-out 150ms var(--frame-ease) both;
+.heph-frame[data-closed] .heph-frame-rule-side {
+  animation: heph-frame-close-out 150ms var(--frame-ease) both;
 }
-.ody-frame[data-closed] .ody-frame-rule-bottom {
-  animation: ody-frame-draw-out 120ms var(--frame-ease) both;
+.heph-frame[data-closed] .heph-frame-rule-bottom {
+  animation: heph-frame-draw-out 120ms var(--frame-ease) both;
 }
-.ody-frame[data-closed] .ody-frame-surface {
-  animation: ody-frame-surface-out 120ms var(--frame-ease) both;
+.heph-frame[data-closed] .heph-frame-surface {
+  animation: heph-frame-surface-out 120ms var(--frame-ease) both;
 }
 
 /* Nothing on its way out takes clicks — same reasoning as the reveal's own
    rule above: the operator closes the panel and immediately clicks what was
    behind it. */
-.ody-frame[data-closed] {
+.heph-frame[data-closed] {
   pointer-events: none;
 }

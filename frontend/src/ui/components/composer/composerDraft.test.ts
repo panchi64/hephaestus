@@ -19,7 +19,7 @@ describe("composer drafts", () => {
     saveDraft("chat:a", "hello");
     expect(loadDraft("chat:a")).toBe("hello");
     saveDraft("chat:a", "");
-    expect(store.has("ody.draft.chat:a")).toBe(false);
+    expect(store.has("heph.draft.chat:a")).toBe(false);
     expect(loadDraft(undefined)).toBe("");
   });
 });

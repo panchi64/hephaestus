@@ -63,13 +63,13 @@ export function ComposerActions(props: ComposerActionsProps): JSX.Element {
   // nothing about an edit to a message already sent, so it is neither consulted nor
   // shown then.
   //
-  // Outlined, never a white slab under the words (`.ody-send`): dim while there is
+  // Outlined, never a white slab under the words (`.heph-send`): dim while there is
   // nothing to send — which is what `disabled` already says — bright once there is,
   // filled only under the pointer.
   const SendButton = () => (
     <button
       type="button"
-      class="ody-send"
+      class="heph-send"
       disabled={
         props.recalling
           ? !props.recallSavable
@@ -128,11 +128,11 @@ export function ComposerActions(props: ComposerActionsProps): JSX.Element {
         <Tooltip label={stopTip()} side="top">
           <button
             type="button"
-            class="ody-send"
+            class="heph-send"
             data-tone="stop"
             onClick={() => props.onStop()}
           >
-            <span class="ody-send-sq" aria-hidden="true" />
+            <span class="heph-send-sq" aria-hidden="true" />
             {props.hasDraft ? "Stop & correct" : "Stop"}
             <KeyHint>esc</KeyHint>
           </button>

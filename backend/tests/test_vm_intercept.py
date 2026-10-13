@@ -19,7 +19,7 @@ from services.vm.egress import ALLOW_FILE, WORKSPACE, EgressGateway
 from services.vm.intercept import Interceptor, Secret
 
 HOST = "api.example.com"
-PLACEHOLDER = "odysseus-secret-0123456789abcdef"
+PLACEHOLDER = "hephaestus-secret-0123456789abcdef"
 
 
 def _server_cert(tmp_path: Path) -> tuple[Path, bytes]:

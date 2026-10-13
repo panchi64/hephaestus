@@ -1,7 +1,7 @@
 """The prompt library — every standing instruction we hand an LLM, in one place.
 
 A prompt is product behavior, not an implementation detail: the words below are
-what make the agent *act like Odysseus* turn after turn, so they live together
+what make the agent *act like Hephaestus* turn after turn, so they live together
 where they can be read, diffed, and tuned as a set rather than scattered as
 inline string literals across the modules that happen to call a model.
 

@@ -121,7 +121,7 @@ export function DropOverlay(props: {
 }): JSX.Element {
   return (
     <Show when={props.attachments && props.dragging}>
-      <div class="ody-composer-drop">
+      <div class="heph-composer-drop">
         <Text variant="plate" tone="bright">
           Drop to attach
         </Text>

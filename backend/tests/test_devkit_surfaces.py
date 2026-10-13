@@ -20,7 +20,7 @@ import pytest
 from devkit import surfaces
 from devkit.instance import DevInstance
 
-CONFIG = "odysseus-dev"
+CONFIG = "hephaestus-dev"
 
 
 @pytest.fixture

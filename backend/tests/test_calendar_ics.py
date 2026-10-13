@@ -266,4 +266,4 @@ async def test_export_names_the_calendar():
     calendar = await service.create_calendar(OWNER, "Ops / On-call")
     document = (await export_calendar(service, OWNER, calendar.id)).decode()
     assert "X-WR-CALNAME:Ops / On-call" in document
-    assert "PRODID:-//Odysseus//Calendar//EN" in document
+    assert "PRODID:-//Hephaestus//Calendar//EN" in document

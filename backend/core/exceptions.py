@@ -13,15 +13,15 @@ endpoint. What it must not do is restate the *same* answer the table already giv
 from __future__ import annotations
 
 
-class OdysseusError(Exception):
+class HephaestusError(Exception):
     """Base for all application errors."""
 
 
-class NotFoundError(OdysseusError):
+class NotFoundError(HephaestusError):
     """A requested resource does not exist."""
 
 
-class InvalidInputError(OdysseusError):
+class InvalidInputError(HephaestusError):
     """The caller supplied something well-formed but unacceptable — a blank name, a path
     that isn't a model of the expected shape, a launch flag the chosen engine can't use.
 
@@ -33,19 +33,19 @@ class InvalidInputError(OdysseusError):
     fault — and each route then had to translate it back by hand."""
 
 
-class PermissionDeniedError(OdysseusError):
+class PermissionDeniedError(HephaestusError):
     """The operator is not permitted to perform this action."""
 
 
-class ApprovalRequiredError(OdysseusError):
+class ApprovalRequiredError(HephaestusError):
     """A sensitive action needs explicit operator approval before it runs."""
 
 
-class DegradedCapabilityError(OdysseusError):
+class DegradedCapabilityError(HephaestusError):
     """An optional capability is unavailable; the caller should degrade gracefully."""
 
 
-class SpanEditError(OdysseusError):
+class SpanEditError(HephaestusError):
     """A targeted (surgical) edit's ``old_text`` did not match exactly one span — either
     absent (``occurrences == 0``) or ambiguous (``occurrences > 1``). Carries the count so
     the caller can phrase a precise retry for the model. Raised by
@@ -64,7 +64,7 @@ class SkillSpanError(SpanEditError):
     """A :class:`SpanEditError` on a skill's ``SKILL.md`` body (`SKILL-3`)."""
 
 
-class FieldValidationError(OdysseusError):
+class FieldValidationError(HephaestusError):
     """Something the operator authored is not well-formed, and this says *which part*.
 
     The difference from :class:`InvalidInputError` is the audience, not the severity: that
@@ -101,14 +101,14 @@ class CommandValidationError(FieldValidationError):
     typed, a missing body, a field over its cap."""
 
 
-class ModelLoadError(OdysseusError):
+class ModelLoadError(HephaestusError):
     """An inference server refused a request because it couldn't bring the model
     up (e.g. an on-demand cold-load that failed, or a concurrent-load race). The
     message carries an operator-actionable hint — the fix is engine-side (pre-load
     the model, let the server hold more than one), not ours."""
 
 
-class RateLimitedError(OdysseusError):
+class RateLimitedError(HephaestusError):
     """An action was refused because the caller exceeded its allowed rate. Carries
     the number of seconds to wait before retrying so the route can surface a
     ``Retry-After`` (uploads are rate-limited to protect the service, `UP-4`)."""
@@ -118,13 +118,13 @@ class RateLimitedError(OdysseusError):
         self.retry_after_s = retry_after_s
 
 
-class SSRFError(OdysseusError):
+class SSRFError(HephaestusError):
     """An outbound request was refused because its target resolves to a
     non-public address (loopback, private, link-local, cloud metadata) or uses a
     disallowed scheme — a server-side request forgery guard."""
 
 
-class SchemaMigrationError(OdysseusError):
+class SchemaMigrationError(HephaestusError):
     """Bringing the DB to head failed because its recorded revision and/or its
     physical schema disagree with the migration scripts — typically a dev DB left
     stamped at a deleted or regenerated migration. Carries an operator-actionable
@@ -132,7 +132,7 @@ class SchemaMigrationError(OdysseusError):
     SQLAlchemy traceback; raised at startup, aborting the boot."""
 
 
-class WebFetchError(OdysseusError):
+class WebFetchError(HephaestusError):
     """A web fetch failed for a single URL in a way the caller can retry against a
     different source — a network error, a non-OK status, too many redirects, or a
     page with no extractable content. Distinct from a missing capability."""

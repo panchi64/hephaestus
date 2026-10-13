@@ -8,7 +8,7 @@ lifts whatever backlog exists once the vault is unlocked.
 
 This lived beside local model serving while the app served its own models, because binding
 a freshly served embedding model was the most common way to trigger a heal. Serving is
-gone — Odysseus now speaks only to endpoints the operator points it at — but the healing is
+gone — Hephaestus now speaks only to endpoints the operator points it at — but the healing is
 not about *where* the embedder runs, only about the model changing underneath the vectors.
 So it stands on its own here.
 """

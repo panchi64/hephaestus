@@ -104,7 +104,7 @@ const mermaidDiagram: TokenizerAndRendererExtension = {
   renderer(token) {
     const { text, legend, complete } = token as unknown as MermaidToken;
     return [
-      `<div class="ody-mermaid"`,
+      `<div class="heph-mermaid"`,
       ` data-mermaid-src="${escapeAttr(text)}"`,
       legend ? ` data-mermaid-legend="${escapeAttr(legend)}"` : "",
       complete ? "" : ` data-mermaid-partial=""`,

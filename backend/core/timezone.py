@@ -1,6 +1,6 @@
 """Which zone the operator lives in — asked once, answered from the host.
 
-Odysseus runs on the operator's own machine, so their clock *is* the host's clock. That
+Hephaestus runs on the operator's own machine, so their clock *is* the host's clock. That
 sounds like it needs no module, until three callers need the answer in three shapes: the
 standing brief wants a name to tell the model, the calendar wants an IANA key it can put
 on a row, and neither wants to care that a host can be configured in more than one way.

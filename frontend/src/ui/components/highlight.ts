@@ -26,8 +26,8 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
  *  elsewhere, referencing the live CSS custom properties directly rather than
  *  a snapshotted hex value. No `colors` block — only the token spans matter,
  *  since the surrounding `<pre>`/gutter chrome is `CodeBlock`'s, not Shiki's. */
-const THEME_NAME = "odysseus-mono";
-const ODYSSEUS_THEME: ThemeRegistrationRaw = {
+const THEME_NAME = "hephaestus-mono";
+const HEPHAESTUS_THEME: ThemeRegistrationRaw = {
   name: THEME_NAME,
   type: "dark",
   settings: [
@@ -119,7 +119,7 @@ const loadedLangs = new Set<string>();
 function getHighlighter(): Promise<HighlighterCore> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighterCore({
-      themes: [ODYSSEUS_THEME],
+      themes: [HEPHAESTUS_THEME],
       langs: [],
       engine: createJavaScriptRegexEngine(),
     });

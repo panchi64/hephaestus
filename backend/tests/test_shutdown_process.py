@@ -32,21 +32,21 @@ def _free_port() -> int:
 
 
 def _env(tmp: Path, port: int) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ODYSSEUS_")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("HEPHAESTUS_")}
     env.update(
         PYTHONPATH=str(BACKEND),
-        ODYSSEUS_HOST="127.0.0.1",
-        ODYSSEUS_PORT=str(port),
+        HEPHAESTUS_HOST="127.0.0.1",
+        HEPHAESTUS_PORT=str(port),
         # Everything under a throwaway directory — never the operator's data/.
-        ODYSSEUS_DATA_DIR=str(tmp / "data"),
-        ODYSSEUS_DB_URL=f"sqlite:///{tmp / 'app.db'}",
-        ODYSSEUS_WORKTREES_DIR=str(tmp / "worktrees"),
-        ODYSSEUS_AUTH_ENABLED="false",
-        ODYSSEUS_UNLOCK_PASSPHRASE="test-passphrase",
-        ODYSSEUS_SEARXNG_ENABLED="false",
-        ODYSSEUS_WEB_FETCH_ENABLED="false",
-        ODYSSEUS_SANDBOX_ENABLED="false",
-        ODYSSEUS_OFFLINE_CHECK_ENABLED="false",
+        HEPHAESTUS_DATA_DIR=str(tmp / "data"),
+        HEPHAESTUS_DB_URL=f"sqlite:///{tmp / 'app.db'}",
+        HEPHAESTUS_WORKTREES_DIR=str(tmp / "worktrees"),
+        HEPHAESTUS_AUTH_ENABLED="false",
+        HEPHAESTUS_UNLOCK_PASSPHRASE="test-passphrase",
+        HEPHAESTUS_SEARXNG_ENABLED="false",
+        HEPHAESTUS_WEB_FETCH_ENABLED="false",
+        HEPHAESTUS_SANDBOX_ENABLED="false",
+        HEPHAESTUS_OFFLINE_CHECK_ENABLED="false",
     )
     return env
 

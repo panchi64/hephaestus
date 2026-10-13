@@ -88,10 +88,10 @@ class TestSearch:
     async def test_the_same_query_is_not_asked_twice(self):
         svc = _FakeSearch()
         ctx = _ctx(search=svc)
-        await _call("search", ctx, query="odysseus release date")
-        again = await _call("search", ctx, query="  Odysseus   Release Date ")
+        await _call("search", ctx, query="hephaestus release date")
+        again = await _call("search", ctx, query="  Hephaestus   Release Date ")
         # Folded to the same key, so it never reached the provider.
-        assert svc.queries == ["odysseus release date"]
+        assert svc.queries == ["hephaestus release date"]
         # And the model is told *why* there is nothing — a bare empty result would read
         # as "the web has nothing" and send it looking again.
         assert isinstance(again, str)

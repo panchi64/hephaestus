@@ -16,7 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ODYSSEUS_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="HEPHAESTUS_", env_file=".env", extra="ignore")
 
     version: str = "0.1.0"
     environment: str = "development"
@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     # by the very shell that has to build and test it. The tradeoff this accepts is that
     # a worktree is plaintext on disk — it is a checkout of the operator's own already
     # plaintext repository, so it exposes nothing that was not already exposed.
-    worktrees_dir: Path = Path("~/.odysseus/worktrees")
+    worktrees_dir: Path = Path("~/.hephaestus/worktrees")
 
     @field_validator("worktrees_dir")
     @classmethod

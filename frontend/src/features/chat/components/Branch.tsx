@@ -53,7 +53,7 @@ function trunkSpan(g: Geometry, edge: BranchEdge): string {
  *  there (injected context, a review) rather than one the model did, which the
  *  row's own dashed socket repeats; bare rows no longer have a card to refuse, so
  *  this is what tells the two apart at a glance. `trace` draws the strokes in
- *  (`.ody-trace-*`) — the collapsed log's latest step, as it arrives. */
+ *  (`.heph-trace-*`) — the collapsed log's latest step, as it arrives. */
 export function Branch(props: {
   edge: BranchEdge;
   variant?: keyof typeof GEOMETRY;
@@ -71,7 +71,7 @@ export function Branch(props: {
           "pointer-events-none absolute flex",
           g().trunk,
           trunkSpan(g(), props.edge),
-          props.trace && "ody-trace-down",
+          props.trace && "heph-trace-down",
         )}
       >
         <span
@@ -89,7 +89,7 @@ export function Branch(props: {
           g().elbow,
           props.lit ? "border-info" : "border-line",
           props.chassis && "border-dashed",
-          props.trace && "ody-trace-across",
+          props.trace && "heph-trace-across",
         )}
       />
       {props.children}

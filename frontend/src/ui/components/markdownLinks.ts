@@ -275,7 +275,7 @@ function openPathHtml(
 ): string {
   const title = markdownTitle?.trim() || `Open ${path}`;
   return [
-    `<button type="button" class="ody-open-path"`,
+    `<button type="button" class="heph-open-path"`,
     ` data-open-path="${escapeAttr(path)}"`,
     ` title="${escapeAttr(title)}"`,
     `>${inner}</button>`,
@@ -309,7 +309,7 @@ export const markedLinks: MarkedExtension = {
         `<img data-remote-src="${escapeAttr(href)}"`,
         ` alt="${escapeAttr(alt)}"`,
         ` title="${escapeAttr(hostLabel(href))}"`,
-        ` class="ody-remote-image">`,
+        ` class="heph-remote-image">`,
       ].join("");
     },
     html(token) {

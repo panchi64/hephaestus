@@ -75,7 +75,7 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
   // selection — the backend resolves its own stored active project when this is
   // absent, and decides what the scope means either way.
   const scope = getProjectScope();
-  if (scope) headers["X-Ody-Project"] = scope;
+  if (scope) headers["X-Heph-Project"] = scope;
   return headers;
 }
 

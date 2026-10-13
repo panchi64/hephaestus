@@ -94,14 +94,14 @@ export function Sidebar(): JSX.Element {
   };
 
   return (
-    <nav class="ody-rail flex h-full min-h-0 flex-col bg-surface">
+    <nav class="heph-rail flex h-full min-h-0 flex-col bg-surface">
       <div class="sticky top-0 z-30 bg-surface">
         {/* The wordmark in the machine's voice, wide-tracked, with the workspace id
             dim beside it. It stacks under the brand at the rail's narrowest. */}
-        <a href="/" class="ody-rail-brand hover:bg-raised">
-          <span class="ody-rail-wordmark">Odysseus</span>
+        <a href="/" class="heph-rail-brand hover:bg-raised">
+          <span class="heph-rail-wordmark">Hephaestus</span>
           <Text variant="micro" tone="dim">
-            ody-workspace-02.1
+            heph-workspace-02.1
           </Text>
         </a>
       </div>

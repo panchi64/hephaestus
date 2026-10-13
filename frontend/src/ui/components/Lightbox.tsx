@@ -17,7 +17,7 @@ export interface LightboxItem {
   height?: number;
   /** Byte size, rendered via bytes(). */
   size?: number;
-  /** Diegetic asset id, e.g. "ODY-GAL-0042". */
+  /** Diegetic asset id, e.g. "HEPH-GAL-0042". */
   assetId?: string;
 }
 

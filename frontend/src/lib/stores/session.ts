@@ -19,7 +19,7 @@ export type { SessionStatus };
 /**
  * Session store — the real auth state for the single-operator backend.
  *
- * Odysseus has one operator and a password-derived, memory-only vault key
+ * Hephaestus has one operator and a password-derived, memory-only vault key
  * (lock-until-unlocked). There is no multi-user model, no privilege tiers — the
  * only question is whether the workspace is *unlocked* and we hold a valid token.
  *

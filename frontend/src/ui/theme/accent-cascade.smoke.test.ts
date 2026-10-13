@@ -105,7 +105,7 @@ test("an accent override beats the token definitions", async () => {
     // source order would lose from, so only specificity can carry this.
     await wv.evaluate(`(function(){
       var s = document.createElement('style');
-      s.id = 'ody-accent-overrides';
+      s.id = 'heph-accent-overrides';
       s.textContent =
         'html[data-theme="phosphor"]{--accent:${INK_OVERRIDE};}' +
         'html[data-theme="paper"]{--accent:${PAPER_OVERRIDE};}';

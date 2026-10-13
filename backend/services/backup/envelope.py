@@ -10,7 +10,7 @@ The file is JSON so it survives being mailed, copied, and stored anywhere text g
 
 .. code-block:: json
 
-    {"format": "odysseus-backup", "version": 1, "created_at": "…",
+    {"format": "hephaestus-backup", "version": 1, "created_at": "…",
      "kdf": {"algorithm": "argon2id-kek-v1", "salt": "…"},
      "cipher": "AES-256-GCM", "payload": "<base64 nonce||ciphertext>"}
 
@@ -33,9 +33,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core import crypto
-from core.exceptions import OdysseusError
+from core.exceptions import HephaestusError
 
-FORMAT = "odysseus-backup"
+FORMAT = "hephaestus-backup"
 VERSION = 1
 # The derivation this file used. A tag, not parameters: it names the scheme in
 # `core.crypto.derive_kek`, so a later change to the cost factors can branch on it instead of
@@ -44,11 +44,11 @@ KDF_ALGORITHM = "argon2id-kek-v1"
 CIPHER = "AES-256-GCM"
 
 
-class BackupFormatError(OdysseusError):
-    """The file is not an Odysseus backup, or is a version this build can't read."""
+class BackupFormatError(HephaestusError):
+    """The file is not an Hephaestus backup, or is a version this build can't read."""
 
 
-class BackupSecretError(OdysseusError):
+class BackupSecretError(HephaestusError):
     """The backup secret is wrong, or the file has been altered since it was written."""
 
 
@@ -87,7 +87,7 @@ def open_envelope(secret: str, envelope: Mapping[str, Any]) -> bytes:
     if not secret:
         raise ValueError("a backup secret is required")
     if not isinstance(envelope, Mapping) or envelope.get("format") != FORMAT:
-        raise BackupFormatError("not an Odysseus backup file")
+        raise BackupFormatError("not an Hephaestus backup file")
     if envelope.get("version") != VERSION:
         raise BackupFormatError(
             f"backup format version {envelope.get('version')!r} is not supported"

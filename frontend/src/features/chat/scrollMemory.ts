@@ -8,7 +8,7 @@
 import { onCleanup, onMount } from "solid-js";
 import { readLS, writeLS } from "~/lib/storage";
 
-const SCROLL_KEY = "ody.chat.viewer.scroll";
+const SCROLL_KEY = "heph.chat.viewer.scroll";
 const SCROLL_LRU_CAP = 200;
 
 function readScrollMap(): Record<string, number> {

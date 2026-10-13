@@ -11,7 +11,7 @@ controllers allow. A plugin's call also sees that plugin version's directory at
 
 ``run`` waits and exits with the command's status (124 on a timeout); ``start`` runs it
 as a named background job, whose output, process and exit status are files under
-``run/odysseus/jobs`` that ``stop`` and ``alive`` act on and the host reads.
+``run/hephaestus/jobs`` that ``stop`` and ``alive`` act on and the host reads.
 
 Standard library only; it is copied into the guest at boot.
 """
@@ -36,13 +36,13 @@ _KILL_GRACE_S = 5.0
 
 
 def _layout(root: str) -> dict[str, str]:
-    run = os.path.join(root, "run/odysseus")
+    run = os.path.join(root, "run/hephaestus")
     return {
         "work": os.path.join(root, "work"),
         "sock": os.path.join(run, "egress.sock"),
         "previews": os.path.join(run, "previews"),
         "jobs": os.path.join(run, "jobs"),
-        "enter": os.path.join(root, "opt/odysseus/enter.py"),
+        "enter": os.path.join(root, "opt/hephaestus/enter.py"),
         "plugins": os.path.join(root, "plugins"),
     }
 
@@ -212,7 +212,7 @@ def _cgroup(args: argparse.Namespace) -> str | None:
         "pids": ("pids.max", str(args.pids) if args.pids else ""),
         "cpu": ("cpu.max", f"{int(float(args.cpus) * 100000)} 100000" if args.cpus else ""),
     }
-    parent = os.path.join(root, "odysseus")
+    parent = os.path.join(root, "hephaestus")
     group = os.path.join(parent, args.key)
     try:
         os.makedirs(group, exist_ok=True)

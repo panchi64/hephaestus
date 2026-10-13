@@ -63,7 +63,7 @@ export function BackupScreen(): JSX.Element {
   const [exporting, setExporting] = createSignal(false);
   const [exportError, setExportError] = createSignal<string | null>(null);
   const [exportBlob, setExportBlob] = createSignal<Blob | null>(null);
-  const [exportName, setExportName] = createSignal("odysseus-backup.json");
+  const [exportName, setExportName] = createSignal("hephaestus-backup.json");
 
   // Import state
   const [importFile, setImportFile] = createSignal<File | null>(null);
@@ -89,7 +89,9 @@ export function BackupScreen(): JSX.Element {
         exportSecret(),
         includes(),
       );
-      setExportName(`odysseus-backup-${manifest.createdAt.slice(0, 10)}.json`);
+      setExportName(
+        `hephaestus-backup-${manifest.createdAt.slice(0, 10)}.json`,
+      );
       setExportBlob(
         new Blob([JSON.stringify(envelope)], { type: "application/json" }),
       );
@@ -150,7 +152,7 @@ export function BackupScreen(): JSX.Element {
         variant="section"
         title="Backup / restore"
         subtitle="Export an encrypted archive of your workspace, or merge one back in."
-        assetId="ODY-ADM-06.0 EDITION 01"
+        assetId="HEPH-ADM-06.0 EDITION 01"
         actions={
           <Suspense fallback={<LoadingText />}>
             <Show when={lastBackup()}>
@@ -369,7 +371,7 @@ export function BackupScreen(): JSX.Element {
               {(err) => (
                 <ErrorState
                   message={err()}
-                  hint="Check the passphrase, and that the file is an Odysseus backup archive."
+                  hint="Check the passphrase, and that the file is an Hephaestus backup archive."
                   onRetry={() => void confirmImport()}
                   retryLabel="Retry import"
                 />

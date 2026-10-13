@@ -23,7 +23,7 @@ import { readLS, writeLS } from "~/lib/storage";
 import { isPanelSpec, surfaceSpec, type SurfaceId } from "./surfaces";
 
 /** Legacy (and still current) global panel width key. */
-const WIDTH_KEY = "ody.chat.viewport.w";
+const WIDTH_KEY = "heph.chat.viewport.w";
 
 const WIDTH_DEFAULT = 384;
 /** The floor when nothing is open — no surface's minimum to defer to. */

@@ -8,7 +8,7 @@
    surrounding interface stays at its 13px instrument density. Do not reach for
    `--type-*` in this block — that is what re-couples the two.
    ========================================================================== */
-.ody-prose {
+.heph-prose {
   font-family: var(--font-sans);
   font-size: var(--prose-size);
   line-height: var(--prose-lh);
@@ -19,23 +19,23 @@
 }
 /* Default rhythm between blocks. The heading-aware overrides that make a section
    read as a section are further down, beside the heading type itself. */
-.ody-prose > * + * {
+.heph-prose > * + * {
   margin-top: var(--space-4);
 }
-.ody-prose > :first-child {
+.heph-prose > :first-child {
   margin-top: 0;
 }
 /* The rhythm is *between* blocks, so it must not become trailing space under the
    last one — a quote ending an answer would otherwise pad the turn beneath it. */
-.ody-prose > :last-child {
+.heph-prose > :last-child {
   margin-bottom: 0;
 }
-.ody-prose h1,
-.ody-prose h2,
-.ody-prose h3,
-.ody-prose h4,
-.ody-prose h5,
-.ody-prose h6 {
+.heph-prose h1,
+.heph-prose h2,
+.heph-prose h3,
+.heph-prose h4,
+.heph-prose h5,
+.heph-prose h6 {
   color: var(--text-bright);
   font-family: var(--font-sans);
   font-weight: 600;
@@ -49,17 +49,17 @@
    own paragraph by weight alone; in a long assistant answer that reads as a
    bolded sentence, not as structure. Every level now separates by SIZE first,
    weight second, brightness third (§4). */
-.ody-prose h1 {
+.heph-prose h1 {
   font-size: var(--prose-h1-size);
   line-height: var(--prose-h1-lh);
   letter-spacing: var(--tracking-tight);
 }
-.ody-prose h2 {
+.heph-prose h2 {
   font-size: var(--prose-h2-size);
   line-height: var(--prose-h2-lh);
   letter-spacing: var(--tracking-tight);
 }
-.ody-prose h3 {
+.heph-prose h3 {
   font-size: var(--prose-h3-size);
   line-height: var(--prose-h3-lh);
 }
@@ -71,12 +71,12 @@
    h5/h6 are in the ladder because markdown emits them and an unstyled `h6`
    falls to the browser default of ~10.7px, in the one place the operator does
    not control the source. */
-.ody-prose h4 {
+.heph-prose h4 {
   font-size: var(--prose-h4-size);
   line-height: var(--prose-h4-lh);
 }
-.ody-prose h5,
-.ody-prose h6 {
+.heph-prose h5,
+.heph-prose h6 {
   font-size: var(--prose-h4-size);
   line-height: var(--prose-h4-lh);
   color: var(--text);
@@ -87,46 +87,46 @@
    the next one's pair. Set per heading rather than by redefining `--prose-h*` on
    the element, because a variable defined in terms of its neighbour on the same
    element resolves the whole chain (h1 → h2 → h3) instead of one step. */
-.ody-prose.ody-prose-dense h1 {
+.heph-prose.heph-prose-dense h1 {
   font-size: var(--prose-h2-size);
   line-height: var(--prose-h2-lh);
 }
-.ody-prose.ody-prose-dense h2 {
+.heph-prose.heph-prose-dense h2 {
   font-size: var(--prose-h3-size);
   line-height: var(--prose-h3-lh);
 }
-.ody-prose.ody-prose-dense h3 {
+.heph-prose.heph-prose-dense h3 {
   font-size: var(--prose-h4-size);
   line-height: var(--prose-h4-lh);
 }
 /* Headings are section breaks: extra space above, tight to the content below.
    Space above scales with the level, so the eye reads the gap as depth. */
-.ody-prose :is(h1, h2, h3, h4, h5, h6) + * {
+.heph-prose :is(h1, h2, h3, h4, h5, h6) + * {
   margin-top: var(--space-2);
 }
-.ody-prose * + h1 {
+.heph-prose * + h1 {
   margin-top: var(--space-8);
 }
-.ody-prose * + h2 {
+.heph-prose * + h2 {
   margin-top: var(--space-6);
 }
-.ody-prose * + h3 {
+.heph-prose * + h3 {
   margin-top: var(--space-6);
 }
-.ody-prose * + :is(h4, h5, h6) {
+.heph-prose * + :is(h4, h5, h6) {
   margin-top: var(--space-5);
 }
-.ody-prose strong {
+.heph-prose strong {
   color: var(--text-bright);
   font-weight: 600;
 }
-.ody-prose em {
+.heph-prose em {
   font-style: italic;
 }
 /* A link the model wrote into its prose. Info is the one accent the resting
    palette spends here (§1.4), and it is spent because a link is a place the
    operator can go — the only element in an answer that is. */
-.ody-prose a {
+.heph-prose a {
   color: var(--accent-info);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -147,7 +147,7 @@
    It therefore carries the link's underline, which is correct: the glyph is part
    of the link, not an annotation floating beside it. Dim keeps it quiet next to
    the accented text. */
-.ody-prose a[data-link-external]::after {
+.heph-prose a[data-link-external]::after {
   content: "\a0↗";
   font-size: 0.85em;
   color: var(--text-dim);
@@ -171,7 +171,7 @@
    A button is an inline-block whose contents cannot break across lines, so a long
    absolute path is held to the column width and wraps *inside* the control rather
    than pushing the answer sideways. */
-.ody-prose .ody-open-path {
+.heph-prose .heph-open-path {
   font-family: var(--font-mono);
   font-size: var(--prose-code-size);
   line-height: var(--prose-code-lh);
@@ -188,7 +188,7 @@
   text-decoration-style: dotted;
   text-underline-offset: 2px;
 }
-.ody-prose .ody-open-path:hover {
+.heph-prose .heph-open-path:hover {
   text-decoration-style: solid;
 }
 /* An image the answer embedded. It arrives with no `src` (markdownLinks parks the
@@ -197,20 +197,20 @@
    the line so the paragraph doesn't jolt when the bytes land, and the hairline
    frame reads as a held slot rather than a rendering fault. Square corners: this is
    captured content, the same family as a data panel (§7). */
-.ody-prose img.ody-remote-image {
+.heph-prose img.heph-remote-image {
   display: block;
   max-width: 100%;
   height: auto;
   border: 1px solid var(--line);
   background: var(--surface-sunken);
 }
-.ody-prose img.ody-remote-image[data-remote-state="loading"] {
+.heph-prose img.heph-remote-image[data-remote-state="loading"] {
   min-height: var(--space-8);
 }
 /* The stand-in for an image that would not load. Dim and mono — a failure to fetch
    is the machine reporting, not the interface speaking (§2), and it says which host
    it could not reach so the operator can judge whether that matters. */
-.ody-prose .ody-remote-image-error {
+.heph-prose .heph-remote-image-error {
   display: block;
   font-family: var(--font-mono);
   font-size: var(--type-meta-size);
@@ -218,22 +218,22 @@
   border: 1px solid var(--line);
   padding: var(--space-2) var(--space-3);
 }
-.ody-prose ul,
-.ody-prose ol {
+.heph-prose ul,
+.heph-prose ol {
   padding-left: var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
-.ody-prose li {
+.heph-prose li {
   padding-left: var(--space-1);
 }
-.ody-prose ul {
+.heph-prose ul {
   list-style: square;
 }
-.ody-prose ol {
+.heph-prose ol {
   list-style: decimal;
 }
-.ody-prose li::marker {
+.heph-prose li::marker {
   color: var(--text-dim);
 }

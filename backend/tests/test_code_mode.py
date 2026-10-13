@@ -137,7 +137,7 @@ class TestTheBranchSurface:
             body = (await client.get(f"/worktrees/{conversation_id}")).json()
             # An empty diff, not an error: a thread that hasn't touched a file is a
             # perfectly normal state and the UI should render zeros for it.
-            assert body["branch"] == f"ody/{conversation_id}"
+            assert body["branch"] == f"heph/{conversation_id}"
             assert body["filesChanged"] == 0
             assert body["patch"] == ""
 

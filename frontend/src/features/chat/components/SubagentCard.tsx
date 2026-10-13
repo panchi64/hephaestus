@@ -13,7 +13,7 @@ import { isLive, type Subagent, type SubagentStatus } from "../data";
  *  is spent there and nowhere else. `cancelled` is not an error and is not a success:
  *  the whole row dims — nothing went wrong, and nothing came of it either. */
 const GLYPH: Record<SubagentStatus, string> = {
-  running: "bg-nominal ody-caret",
+  running: "bg-nominal heph-caret",
   blocked: "bg-warn",
   done: "bg-text",
   failed: "bg-alert",

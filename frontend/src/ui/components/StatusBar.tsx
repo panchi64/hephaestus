@@ -13,7 +13,7 @@ import { Icon } from "../primitives/Icon";
  *  voice — the text beneath the card is a line of telemetry, and a sentence-case
  *  label there ("Auto-review", "Stats") reads as a heading over the row. */
 export const STATUS_CELL_CLASS =
-  "ody-status-cell flex h-6 items-center gap-1.5 px-2.5 font-mono text-meta lowercase whitespace-nowrap transition-none";
+  "heph-status-cell flex h-6 items-center gap-1.5 px-2.5 font-mono text-meta lowercase whitespace-nowrap transition-none";
 
 /** A cell that acts: the text tone at rest, bright on a raised fill under the pointer.
  *  A disabled one drops to the line colour — present, so the row doesn't reflow, and
@@ -104,7 +104,7 @@ export function StatusBar(props: StatusBarProps): JSX.Element {
           wrap(),
           edgeClass(),
           rule(),
-          recede() && "ody-status-recede",
+          recede() && "heph-status-recede",
           local.class,
         )}
       >

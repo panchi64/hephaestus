@@ -41,10 +41,10 @@ const storage = new MemoryStorage();
 const { useViewportPersistence, resetViewportPersistence } =
   await import("./persistence");
 
-const V4_KEY = "ody.chat.viewer.v4";
-const V3_KEY = "ody.chat.viewer.v3";
-const V2_KEY = "ody.chat.viewer.v2";
-const LEGACY_KEY = "ody.chat.viewport";
+const V4_KEY = "heph.chat.viewer.v4";
+const V3_KEY = "heph.chat.viewer.v3";
+const V2_KEY = "heph.chat.viewer.v2";
+const LEGACY_KEY = "heph.chat.viewport";
 
 const VIEW_LEAF: ViewportLayout = {
   strips: [],

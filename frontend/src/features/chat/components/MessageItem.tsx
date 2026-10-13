@@ -100,7 +100,7 @@ export interface MessageItemProps {
  *  summary, with no actions and no bubble. */
 export function MessageItem(props: MessageItemProps): JSX.Element {
   return (
-    // Two nodes, deliberately: `ody-message-in` runs with `animation-fill-mode:
+    // Two nodes, deliberately: `heph-message-in` runs with `animation-fill-mode:
     // both`, and an animated opacity outranks a utility class in the cascade —
     // on one element the entry animation would silently cancel `dimmed`. The
     // outer node owns the dim state, the inner one owns the movement.
@@ -115,7 +115,7 @@ export function MessageItem(props: MessageItemProps): JSX.Element {
           streaming turn never re-animates mid-delta (its root element is not
           recreated). Opening a thread mounts its turns together, so the
           transcript settles in as one movement, not a staggered cascade. */}
-      <div class="ody-message-in">
+      <div class="heph-message-in">
         <Switch
           fallback={
             <AssistantTurn
@@ -178,13 +178,13 @@ function VersionCycler(props: {
   };
   return (
     <Show when={count() > 1}>
-      {/* `ody-fade-in` rather than a `Reveal` wrapper: this sits in a row of
+      {/* `heph-fade-in` rather than a `Reveal` wrapper: this sits in a row of
           inline controls, and a block wrapper would change how it lays out. The
           fade matters because version metadata arrives a round-trip *after* the
           answer settles — the cycler would otherwise pop into a header the
           operator has already started reading. On a turn that mounts with
           siblings it just runs alongside the turn's own entry. */}
-      <span class="ody-fade-in flex items-center gap-1">
+      <span class="heph-fade-in flex items-center gap-1">
         <Button
           variant="ghost"
           size="sm"
@@ -344,14 +344,14 @@ function UserText(props: { text: string }): JSX.Element {
             product taking one speaker less seriously than the other.
 
             This is also the *stricter* reading of §4, not a relaxation of it: the
-            reading scale is `.ody-prose` only, and `variant="reading"` was the
+            reading scale is `.heph-prose` only, and `variant="reading"` was the
             system's one sanctioned use of `--prose-*` outside it. Real prose
             retires that exception at identical size.
 
             No `streamStable` — that path exists for the answer stream's settled-
             block caching (§10.11), and the operator's turn arrives whole.
 
-            Colour comes from `.ody-prose` rather than a `bright` override: both
+            Colour comes from `.heph-prose` rather than a `bright` override: both
             speakers then render identically, which is the point, and the sunken
             ground under the bubble is already what marks the turn as theirs (§5.1
             names it for exactly this). */}

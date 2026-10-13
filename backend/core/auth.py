@@ -31,7 +31,7 @@ from core.api_scopes import ScopeTable
 from core.exceptions import RateLimitedError
 from core.ratelimit import RateLimiter
 
-SESSION_COOKIE = "odysseus_session"
+SESSION_COOKIE = "hephaestus_session"
 
 # Marks a credential as an inbound API token rather than an operator session token, so the
 # gate can route it without a database lookup. The minted form is `odyt_<prefix>_<secret>`.

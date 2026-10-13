@@ -32,7 +32,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from core.exceptions import OdysseusError
+from core.exceptions import HephaestusError
 from core.ssrf import assert_public_url
 
 # Formats worth rendering inline, each with the magic-byte prefix that proves it.
@@ -53,7 +53,7 @@ IMAGE_TYPES: tuple[tuple[str, tuple[bytes, ...]], ...] = (
 _MAX_REDIRECTS = 3
 
 
-class ImageFetchError(OdysseusError):
+class ImageFetchError(HephaestusError):
     """The URL did not yield an image we are willing to render."""
 
 

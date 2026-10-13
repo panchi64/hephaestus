@@ -103,7 +103,7 @@ def _mux(previews: str):
 
 async def main(args: argparse.Namespace) -> None:
     pool = Pool()
-    run = os.path.join(args.root, "run/odysseus")
+    run = os.path.join(args.root, "run/hephaestus")
     sock = os.path.join(run, "egress.sock")
     os.makedirs(run, exist_ok=True)
     if os.path.exists(sock):

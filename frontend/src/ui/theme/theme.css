@@ -1,4 +1,4 @@
-/* Theme entry: the token -> utility mapping, resting defaults and every `.ody-*`
+/* Theme entry: the token -> utility mapping, resting defaults and every `.heph-*`
    class of the console register. Each concern lives in its own partial under
    ./styles/. Order is the cascade, so do not reorder: later partials rely on
    winning (or losing) at equal specificity against earlier ones. */

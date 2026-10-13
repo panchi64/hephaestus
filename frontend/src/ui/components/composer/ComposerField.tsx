@@ -15,11 +15,11 @@ function Token(props: { trigger: ComposerTrigger; text: string }): JSX.Element {
   const name = () => props.text.slice(1);
   const cut = () => (props.trigger === "@" ? name().lastIndexOf("/") : -1);
   return (
-    <span class="ody-tok" data-trigger={props.trigger}>
-      <span class="ody-tok-sigil">{props.trigger}</span>
-      <span class="ody-tok-name">
+    <span class="heph-tok" data-trigger={props.trigger}>
+      <span class="heph-tok-sigil">{props.trigger}</span>
+      <span class="heph-tok-name">
         <Show when={cut() >= 0} fallback={name()}>
-          <span class="ody-tok-dir">{name().slice(0, cut() + 1)}</span>
+          <span class="heph-tok-dir">{name().slice(0, cut() + 1)}</span>
           {name().slice(cut() + 1)}
         </Show>
       </span>
@@ -88,7 +88,7 @@ export function ComposerField(props: ComposerFieldProps): JSX.Element {
       props.lg ? "px-4 py-3" : "px-3 py-2.5",
     );
 
-  /** The field's text split into plain runs and tokens (`Token`, `.ody-tok`).
+  /** The field's text split into plain runs and tokens (`Token`, `.heph-tok`).
    *
    *  A textarea cannot colour part of its own value, so the standard arrangement is used:
    *  this layer sits directly behind a text-transparent field, painting the same string

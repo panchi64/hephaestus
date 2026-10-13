@@ -92,7 +92,7 @@ class TestRootResolution:
         _git(repo, "add", "-A")
         _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init")
         tree = tmp_path / "wt"
-        _git(repo, "worktree", "add", "-q", "-b", "ody/c1", str(tree))
+        _git(repo, "worktree", "add", "-q", "-b", "heph/c1", str(tree))
 
         # The holder map is never consulted — nothing has acquired anything here, which
         # is precisely the state every worktree is in after a backend restart.
@@ -105,7 +105,7 @@ class TestRootResolution:
         _git(repo, "add", "-A")
         _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init")
         tree = tmp_path / "wt"
-        _git(repo, "worktree", "add", "-q", "-b", "ody/c1", str(tree))
+        _git(repo, "worktree", "add", "-q", "-b", "heph/c1", str(tree))
         # One worktree serves a project, so an existing directory on someone else's
         # branch is not this thread's files.
         root, is_worktree = await worktree_root(tree, "c2", repo)

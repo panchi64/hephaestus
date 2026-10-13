@@ -22,7 +22,7 @@ from devkit import live
 from devkit.seed.registry import SeedContext, fixture, rows
 
 #: How long one seeded turn may take before seeding gives up on it. Generous for a real
-#: endpoint behind `ODY_DEV_CHAT_*`, and far beyond anything the stub needs.
+#: endpoint behind `HEPH_DEV_CHAT_*`, and far beyond anything the stub needs.
 _TURN_TIMEOUT_S = 120.0
 
 #: Pushing a script is a local POST that either answers at once or is broken.

@@ -126,7 +126,7 @@ export function LibraryFileBrowser(props: {
           style={pad}
           class={cx(
             "flex w-full items-center gap-2 py-1.5 pr-2 text-left transition-colors hover:bg-raised",
-            selected() === n.path && "bg-raised ody-selected-edge",
+            selected() === n.path && "bg-raised heph-selected-edge",
           )}
         >
           <Icon name="file" size={14} class="shrink-0 text-dim" />

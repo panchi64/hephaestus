@@ -57,7 +57,7 @@ export function ListRow(props: ListRowProps): JSX.Element {
   ]);
   const interactive = () => !local.locked && (local.href || local.onClick);
   // The rail's footer destination: a 16px icon, the label, its meta, on a ruled row
-  // whose selection is the raised fill plus a 2px bright inset edge (`.ody-rail-nav`).
+  // whose selection is the raised fill plus a 2px bright inset edge (`.heph-rail-nav`).
   if (local.variant === "nav")
     return (
       <Dynamic
@@ -67,7 +67,7 @@ export function ListRow(props: ListRowProps): JSX.Element {
         onClick={local.onClick}
         aria-current={local.selected && local.href ? "page" : undefined}
         data-selected={local.selected ? "" : undefined}
-        class={cx("ody-rail-nav w-full text-left", local.class)}
+        class={cx("heph-rail-nav w-full text-left", local.class)}
       >
         <Show when={local.leading} fallback={<span />}>
           <Icon name={local.leading!} size={16} />
@@ -120,7 +120,7 @@ export function ListRow(props: ListRowProps): JSX.Element {
         "flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors",
         local.divided && "border-b border-line",
         local.selected && "bg-raised",
-        local.selected && !local.selectable && "ody-selected-edge",
+        local.selected && !local.selectable && "heph-selected-edge",
         interactive() && "hover:bg-raised",
         local.selectable && !local.locked && "cursor-pointer",
         local.locked && "cursor-not-allowed",

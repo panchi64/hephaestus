@@ -61,7 +61,7 @@ const GHOST_ACTIVE_CLASS = "bg-raised text-bright hover:text-bright";
 
 /* A button label is the interface speaking to the operator, so it is sans and
    sentence case (§2) — the old mono uppercase made every control shout. (The
-   composer's commit keys are the machine's, and are `.ody-send`, not a size here.)
+   composer's commit keys are the machine's, and are `.heph-send`, not a size here.)
 
    The type family lives here rather than in the shared base, so a size never sets a
    font the base also sets — two `font-*` utilities on one node resolve by stylesheet

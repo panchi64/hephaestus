@@ -35,7 +35,7 @@ needs to do any more is restate the answer already written here.
   didn't match exactly one span, so the write would have been ambiguous.
 - ``SkillValidationError`` → **422**, carrying the offending ``field`` so the operator is
   told which part of the bundle to fix.
-- ``OdysseusError`` itself has **no** entry. A base-class catch-all would quietly give a
+- ``HephaestusError`` itself has **no** entry. A base-class catch-all would quietly give a
   tidy status to errors nobody has thought about, which is how a real fault becomes an
   unnoticed 400. Anything unmapped stays a 500 and stays visible.
 """
@@ -94,7 +94,7 @@ def status_for(exc: Exception) -> int | None:
 def install_error_handlers(app: FastAPI) -> None:
     """Answer every mapped domain error at the transport boundary.
 
-    Registered per concrete type rather than on ``OdysseusError``, so the set of errors
+    Registered per concrete type rather than on ``HephaestusError``, so the set of errors
     that get a considered status is exactly the set written down above — a new domain
     error added without a decision here stays a 500 rather than inheriting one.
     """

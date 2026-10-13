@@ -131,7 +131,7 @@ def test_a_scratch_directory_this_process_owns_is_tightened_rather_than_refused(
 
 
 async def test_a_host_command_takes_the_environment_it_is_given(tmp_path):
-    result = await run_on_host("echo $ODYSSEUS_TEST_MARK", env={"ODYSSEUS_TEST_MARK": "pinned"})
+    result = await run_on_host("echo $HEPHAESTUS_TEST_MARK", env={"HEPHAESTUS_TEST_MARK": "pinned"})
     assert "pinned" in result.stdout
 
 
@@ -164,11 +164,11 @@ async def test_the_hatch_runs_where_and_with_what_it_was_told(tmp_path):
     # `cwd` and `env` exist so the project-folder shell can share this spawn; the hatch itself
     # passes neither, and a regression that dropped them would be silent there.
     result = await run_on_host(
-        "pwd; echo $ODYSSEUS_TEST_MARKER",
+        "pwd; echo $HEPHAESTUS_TEST_MARKER",
         cwd=tmp_path,
         env={
             "PATH": os.environ["PATH"],
-            "ODYSSEUS_TEST_MARKER": "carried",
+            "HEPHAESTUS_TEST_MARKER": "carried",
         },
     )
     assert result.ok
@@ -182,8 +182,8 @@ async def test_the_hatch_does_not_hand_the_operators_model_keys_to_the_command(m
     # the operator approved without ever being shown that it could read them. The
     # project-folder shell already filters; the hatch is the more guarded path of the two.
     monkeypatch.setenv("OPENAI_API_KEY", "sk-not-for-the-command")
-    monkeypatch.setenv("ODYSSEUS_TEST_MARKER", "kept")
-    result = await run_on_host("echo [$OPENAI_API_KEY] [$ODYSSEUS_TEST_MARKER]")
+    monkeypatch.setenv("HEPHAESTUS_TEST_MARKER", "kept")
+    result = await run_on_host("echo [$OPENAI_API_KEY] [$HEPHAESTUS_TEST_MARKER]")
     assert result.ok
     assert "sk-not-for-the-command" not in result.stdout
     assert "kept" in result.stdout  # only the credentials go, not the whole environment

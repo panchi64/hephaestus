@@ -33,12 +33,12 @@ _SERVICE = "searxng"
 _USER = "searxng"
 _PORT = 8888
 _SETTINGS_PATH = "/etc/searxng/settings.yml"
-_PYTHON = "/opt/odysseus/searxng/bin/python"
+_PYTHON = "/opt/hephaestus/searxng/bin/python"
 
 # The secret key is generated once and reused across boots so session cookies stay
 # stable; the settings file itself is rewritten each boot so template changes take effect.
 _SETTINGS_TEMPLATE = """\
-# Managed by Odysseus — regenerated on each boot. Enables the JSON API the agent
+# Managed by Hephaestus — regenerated on each boot. Enables the JSON API the agent
 # queries and disables the limiter (a single local operator, not a public instance).
 use_default_settings: true
 server:

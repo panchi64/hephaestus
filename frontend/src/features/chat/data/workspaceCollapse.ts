@@ -18,7 +18,7 @@
 import { createSignal } from "solid-js";
 import { readLS, writeLS } from "~/lib/storage";
 
-const KEY = "ody.chat.workspaces";
+const KEY = "heph.chat.workspaces";
 
 function read(): Record<string, boolean> {
   try {

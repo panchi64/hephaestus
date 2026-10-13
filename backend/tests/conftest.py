@@ -23,9 +23,9 @@ import os
 # behave differently on two developers' laptops for reasons unrelated to what is being
 # tested. Off here, so the host path under test is the plain subprocess; the confinement
 # logic itself is exercised explicitly in `test_sandbox.py`, which configures it directly.
-os.environ.setdefault("ODYSSEUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
+os.environ.setdefault("HEPHAESTUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
 # The app would otherwise boot a real QEMU VM; the VM tests drive a local stand-in.
-os.environ.setdefault("ODYSSEUS_VM_ENABLED", "false")
+os.environ.setdefault("HEPHAESTUS_VM_ENABLED", "false")
 
 import core.crypto  # noqa: E402 — must follow the environment default above
 import core.db  # noqa: E402

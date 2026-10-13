@@ -1,7 +1,7 @@
 """Git worktrees — where a chat works when the agent wants its changes kept apart.
 
 A worktree never writes the operator's checkout. A worktree conversation gets a **branch**
-(``ody/<conversation-id>``) checked out in a worktree beside the repository, the agent
+(``heph/<conversation-id>``) checked out in a worktree beside the repository, the agent
 edits and runs tests there, and the only thing that ever touches the operator's own tree
 is an explicit merge they ask for.
 

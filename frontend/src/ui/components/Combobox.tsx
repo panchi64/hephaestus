@@ -303,7 +303,7 @@ export function Combobox(props: ComboboxProps): JSX.Element {
                               (opt.value === props.value ||
                                 opt.value === activeValue()) &&
                                 "bg-raised",
-                              opt.value === props.value && "ody-selected-edge",
+                              opt.value === props.value && "heph-selected-edge",
                             )}
                           >
                             <Icon

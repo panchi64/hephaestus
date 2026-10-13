@@ -179,7 +179,7 @@ class SmolvmDriver:
         image = self._clean_image()
         self.phase, self.step = "booting", None
         private, _public = ensure_ssh_key(self._state / "keys")
-        vm_id = f"odysseus-{secrets.token_hex(4)}"
+        vm_id = f"hephaestus-{secrets.token_hex(4)}"
         config = self._config(vm_id, image, internet=False)
         self._current.parent.mkdir(parents=True, exist_ok=True)
         self._current.write_text(vm_id)
@@ -260,7 +260,7 @@ class SmolvmDriver:
                 logger.info("platform VM: resuming the image build from its partial disk")
                 vm = SmolVM(
                     config=self._config(
-                        f"odysseus-build-{secrets.token_hex(4)}", partial, internet=True
+                        f"hephaestus-build-{secrets.token_hex(4)}", partial, internet=True
                     ),
                     data_dir=self._smolvm_dir,
                     ssh_key_path=str(private),

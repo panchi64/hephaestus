@@ -4,7 +4,7 @@
    receded strip of cells (`StatusBar variant="recede"`) carrying the pickers,
    the context bar and Send.
    ========================================================================== */
-.ody-composer {
+.heph-composer {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -13,7 +13,7 @@
 /* The plate: mono, uppercase, dim, a 7px square glyph at its head. While a run
    streams it turns info and the square blinks — state said in the plate, not
    by light around the frame. */
-.ody-composer-plate {
+.heph-composer-plate {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -28,42 +28,42 @@
   text-transform: uppercase;
   color: var(--text-dim);
 }
-.ody-composer-plate-sq {
+.heph-composer-plate-sq {
   width: 7px;
   height: 7px;
   flex: none;
   background: var(--text-dim);
 }
-.ody-composer-plate-end {
+.heph-composer-plate-end {
   margin-left: auto;
   flex: none;
   font-variant-numeric: tabular-nums;
 }
-.ody-composer[data-live] .ody-composer-plate {
+.heph-composer[data-live] .heph-composer-plate {
   color: var(--accent-info);
 }
-.ody-composer[data-live] .ody-composer-plate-sq {
+.heph-composer[data-live] .heph-composer-plate-sq {
   background: var(--accent-info);
 }
-.ody-composer[data-live] .ody-composer-plate-end {
+.heph-composer[data-live] .heph-composer-plate-end {
   color: var(--text);
 }
 @media (prefers-reduced-motion: no-preference) {
-  .ody-composer[data-live] .ody-composer-plate-sq {
-    animation: ody-action-blink 1s steps(2, jump-none) infinite;
+  .heph-composer[data-live] .heph-composer-plate-sq {
+    animation: heph-action-blink 1s steps(2, jump-none) infinite;
   }
 }
-.ody-composer[data-live][data-queued] .ody-composer-plate {
+.heph-composer[data-live][data-queued] .heph-composer-plate {
   color: var(--accent-queue);
 }
-.ody-composer[data-live][data-queued] .ody-composer-plate-sq {
+.heph-composer[data-live][data-queued] .heph-composer-plate-sq {
   background: var(--accent-queue);
   animation: none;
 }
 /* The echo of the action tier (§10.18): while the thread waits on the
    operator the plate is replaced by a solid amber strip with the tier's own
    blinking square, and its Jump takes the operator to the ask. */
-.ody-composer-wait {
+.heph-composer-wait {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -77,21 +77,21 @@
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
-.ody-composer-wait button {
+.heph-composer-wait button {
   margin-left: auto;
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
   cursor: pointer;
 }
-.ody-composer-wait button:hover {
+.heph-composer-wait button:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 /* Send, outlined rather than a white slab under the words: dim while there is
    nothing to send, bright once there is, filled only under the pointer. Stop is
    the same key in the alert tone, its square in front. */
-.ody-send {
+.heph-send {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -108,42 +108,42 @@
   box-shadow: inset 0 0 0 var(--line-w) var(--text-bright);
   cursor: pointer;
 }
-.ody-send:not(:disabled):hover {
+.heph-send:not(:disabled):hover {
   background: var(--text-bright);
   color: var(--bg);
 }
-.ody-send:disabled {
+.heph-send:disabled {
   color: var(--text-dim);
   box-shadow: inset 0 0 0 var(--line-w) var(--line);
   cursor: not-allowed;
 }
-.ody-send[data-tone="stop"] {
+.heph-send[data-tone="stop"] {
   color: var(--accent-alert);
   box-shadow: inset 0 0 0 var(--line-w)
     color-mix(in srgb, var(--accent-alert) 45%, transparent);
 }
-.ody-send[data-tone="stop"]:hover {
+.heph-send[data-tone="stop"]:hover {
   background: var(--accent-alert);
   color: var(--bg);
 }
-.ody-send-sq {
+.heph-send-sq {
   width: 8px;
   height: 8px;
   flex: none;
   background: currentColor;
 }
-.ody-send kbd {
+.heph-send kbd {
   font: inherit;
   opacity: 0.6;
 }
-.ody-send:focus-visible {
+.heph-send:focus-visible {
   outline: 2px solid var(--accent-info);
   outline-offset: -2px;
   box-shadow: none;
 }
 /* The drop target: the console's own vocabulary — a ruled frame and a plate —
    rather than a dashed tinted zone. */
-.ody-composer-drop {
+.heph-composer-drop {
   position: absolute;
   inset: 0;
   z-index: 10;
@@ -167,24 +167,24 @@
    draws its top, bottom and left edges, the name its top, bottom and right,
    and the two meet at the glyph boundary — that is the weld. Inline
    `box-decoration-break: clone` keeps the edges whole when a long path wraps. */
-.ody-tok {
+.heph-tok {
   --tok-line: var(--line-strong);
 }
-.ody-tok[data-trigger="/"] {
+.heph-tok[data-trigger="/"] {
   --tok-line: var(--text-bright);
 }
-.ody-tok-sigil,
-.ody-tok-name {
+.heph-tok-sigil,
+.heph-tok-name {
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
-.ody-tok-sigil {
+.heph-tok-sigil {
   box-shadow:
     inset 0 var(--line-w) 0 var(--tok-line),
     inset 0 calc(-1 * var(--line-w)) 0 var(--tok-line),
     inset var(--line-w) 0 0 var(--tok-line);
 }
-.ody-tok-name {
+.heph-tok-name {
   color: var(--text-bright);
   background: var(--surface-raised);
   box-shadow:
@@ -192,14 +192,14 @@
     inset 0 calc(-1 * var(--line-w)) 0 var(--tok-line),
     inset calc(-1 * var(--line-w)) 0 0 var(--tok-line);
 }
-.ody-tok[data-trigger="/"] .ody-tok-sigil {
+.heph-tok[data-trigger="/"] .heph-tok-sigil {
   color: var(--bg);
   background: var(--text-bright);
 }
-.ody-tok[data-trigger="@"] .ody-tok-sigil {
+.heph-tok[data-trigger="@"] .heph-tok-sigil {
   color: var(--text);
 }
-.ody-tok-dir {
+.heph-tok-dir {
   color: var(--text-dim);
 }
 
@@ -208,36 +208,36 @@
    dim mono at a 28px row — so the words being written stay the brightest thing
    in the unit. It comes up to normal contrast only while the pointer or focus
    is in it. The rail's command strip and footer are the same strip. */
-.ody-status-recede {
+.heph-status-recede {
   background: var(--surface-sunken);
 }
-.ody-status-recede .ody-status-cell {
+.heph-status-recede .heph-status-cell {
   height: calc(var(--space-1) * 7);
   color: var(--text-dim);
 }
 @media (prefers-reduced-motion: no-preference) {
-  .ody-status-recede .ody-status-cell {
+  .heph-status-recede .heph-status-cell {
     transition: color 120ms ease;
   }
 }
-.ody-status-recede:is(:hover, :focus-within) .ody-status-cell {
+.heph-status-recede:is(:hover, :focus-within) .heph-status-cell {
   color: var(--text);
 }
-.ody-status-recede .ody-status-cell:is(button, label):hover,
-.ody-status-recede .ody-status-cell[aria-expanded="true"] {
+.heph-status-recede .heph-status-cell:is(button, label):hover,
+.heph-status-recede .heph-status-cell[aria-expanded="true"] {
   color: var(--text-bright);
 }
-.ody-status-recede .ody-status-cell:disabled {
+.heph-status-recede .heph-status-cell:disabled {
   color: var(--line-strong);
 }
-.ody-status-recede .ody-status-cell input {
+.heph-status-recede .heph-status-cell input {
   color: var(--text-bright);
 }
-.ody-status-recede .ody-status-cell input::placeholder {
+.heph-status-recede .heph-status-cell input::placeholder {
   color: var(--text-dim);
 }
-.ody-status-recede:is(:hover, :focus-within)
-  .ody-status-cell
+.heph-status-recede:is(:hover, :focus-within)
+  .heph-status-cell
   input::placeholder {
   color: var(--text);
 }

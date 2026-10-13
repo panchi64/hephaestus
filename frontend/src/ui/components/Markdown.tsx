@@ -19,7 +19,7 @@ import { hydrateRemoteImages } from "./remoteImages";
 import { disposeMermaid, hydrateMermaid } from "./hydrateMermaid";
 
 export interface MarkdownProps {
-  /** Markdown source. Rendered with token-styled prose (.ody-prose). */
+  /** Markdown source. Rendered with token-styled prose (.heph-prose). */
   children: string;
   class?: string;
   /** Add a hover copy button to each rendered code block. Default true. */
@@ -31,7 +31,7 @@ export interface MarkdownProps {
    *  what causes KaTeX/markdown flicker mid-stream). Default false — the
    *  default path is unchanged. */
   streamStable?: boolean;
-  /** Headings one step down the reading scale (`.ody-prose-dense`), for a document
+  /** Headings one step down the reading scale (`.heph-prose-dense`), for a document
    *  read in a narrow pane where full-size headings outshout the pane's own title.
    *  Body text keeps the reading size. Default false. */
   dense?: boolean;
@@ -71,7 +71,7 @@ function cachedParse(raw: string): string {
 /** Vertical rhythm between top-level blocks, replicating theme.css's heading
  *  cascade at the block-wrapper level — the `streamStable` path wraps each block in
  *  its own `div`, so those wrappers, not the raw `<p>`/`<h*>` elements, are the
- *  direct children `.ody-prose`'s selectors key off, and the heading-aware rules
+ *  direct children `.heph-prose`'s selectors key off, and the heading-aware rules
  *  never see them.
  *
  *  **This is a transcription, not a second opinion.** Every value below is one of
@@ -108,7 +108,7 @@ function makeCopyButton(): HTMLButtonElement {
   btn.dataset.codeCopy = "";
   btn.setAttribute("aria-label", "Copy code");
   btn.className =
-    "ody-code-copy absolute right-1 top-1 hidden border border-line bg-raised px-2 py-0.5 text-micro uppercase tracking-label text-dim transition-colors hover:text-bright group-hover/code:block focus:block focus:outline-none";
+    "heph-code-copy absolute right-1 top-1 hidden border border-line bg-raised px-2 py-0.5 text-micro uppercase tracking-label text-dim transition-colors hover:text-bright group-hover/code:block focus:block focus:outline-none";
   btn.textContent = "Copy";
   return btn;
 }
@@ -145,7 +145,7 @@ export function Markdown(props: MarkdownProps): JSX.Element {
     "dense",
   ]);
   const proseClass = (): string =>
-    cx("ody-prose", local.dense && "ody-prose-dense", local.class);
+    cx("heph-prose", local.dense && "heph-prose-dense", local.class);
   // Gated on the path that actually renders it. Solid memos are eager, so an
   // ungated one re-parsed the *whole* answer on every delta while streaming — the
   // one mode where the result is thrown away, since the block path below renders

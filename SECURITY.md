@@ -1,6 +1,6 @@
 # Security Policy
 
-Odysseus is a self-hosted AI workspace with privileged local capabilities — shell access, code execution, file writes, email, web research. Please do not run it as a public, unauthenticated service.
+Hephaestus is a self-hosted AI workspace with privileged local capabilities — shell access, code execution, file writes, email, web research. Please do not run it as a public, unauthenticated service.
 
 > **Note:** the backend is mid-rebuild (greenfield on Pydantic AI + FastAPI). This describes the **security posture the build targets**, defined in `docs/spec/00-overview.md` (`XC-SEC-*`, `XC-PORT-*`) and `docs/architecture/`. Concrete deployment hardening steps will be filled in as the install flow lands.
 
@@ -10,7 +10,7 @@ Security fixes are handled on the default branch until formal releases are cut.
 
 ## Security model
 
-- **Single operator.** Odysseus targets one operator; all data and features belong to them. When authentication is enabled, every request is authenticated before any feature is reached. (Multi-user privilege separation is out of scope, but every record carries an owner seam so it can be added later without a rewrite.)
+- **Single operator.** Hephaestus targets one operator; all data and features belong to them. When authentication is enabled, every request is authenticated before any feature is reached. (Multi-user privilege separation is out of scope, but every record carries an owner seam so it can be added later without a rewrite.)
 - **Sensitive actions require explicit approval.** The agent must pause and ask for the operator's approval — showing the action and its concrete arguments — before anything powerful, externally visible, or hard to reverse takes effect: shell and code execution, filesystem writes, sending email, model download/serve/stop, endpoint/integration/webhook/token/settings configuration, and vault access. A denied action is not performed.
 - **Encrypted at rest.** All user data is encrypted with confidentiality that remains secure against quantum-capable adversaries (AES-256 class). The encryption key is **derived from the operator's password and held only in memory** — there is no OS keystore dependency and nothing readable on disk. Authentication secrets (login password, TOTP seed, backup codes) are one-way hashed, never recoverable.
 - **Untrusted content is data, not instructions.** External content (web pages, fetched URLs, emails, uploaded files, retrieved documents, transcripts, the active editor document) is marked untrusted before it enters a model prompt.

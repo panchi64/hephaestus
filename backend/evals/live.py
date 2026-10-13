@@ -4,8 +4,8 @@ The model registry stores endpoints encrypted under ``data/`` (off limits to thi
 suite), so the evals do **not** read the operator's registry. Instead they build
 their handles directly from eval-only env vars, fully decoupled from ``data/``:
 
-- ``ODY_EVAL_EMBED_BASE_URL`` / ``ODY_EVAL_EMBED_MODEL`` / ``ODY_EVAL_EMBED_KEY``
-- ``ODY_EVAL_CHAT_BASE_URL`` / ``ODY_EVAL_CHAT_MODEL`` / ``ODY_EVAL_CHAT_KEY``
+- ``HEPH_EVAL_EMBED_BASE_URL`` / ``HEPH_EVAL_EMBED_MODEL`` / ``HEPH_EVAL_EMBED_KEY``
+- ``HEPH_EVAL_CHAT_BASE_URL`` / ``HEPH_EVAL_CHAT_MODEL`` / ``HEPH_EVAL_CHAT_KEY``
 
 ``EnvEmbedder`` satisfies the :class:`~services.embeddings.Embedder` protocol and
 calls the exact same OpenAI-compatible ``/embeddings`` path as
@@ -36,8 +36,8 @@ from services.embeddings import EmbeddingBatch
 from services.llm import EndpointSpec, build_model
 
 # The six env vars that gate the whole suite. All-present ⇒ the live tests run.
-EMBED_ENV = ("ODY_EVAL_EMBED_BASE_URL", "ODY_EVAL_EMBED_MODEL", "ODY_EVAL_EMBED_KEY")
-CHAT_ENV = ("ODY_EVAL_CHAT_BASE_URL", "ODY_EVAL_CHAT_MODEL", "ODY_EVAL_CHAT_KEY")
+EMBED_ENV = ("HEPH_EVAL_EMBED_BASE_URL", "HEPH_EVAL_EMBED_MODEL", "HEPH_EVAL_EMBED_KEY")
+CHAT_ENV = ("HEPH_EVAL_CHAT_BASE_URL", "HEPH_EVAL_CHAT_MODEL", "HEPH_EVAL_CHAT_KEY")
 REQUIRED_ENV = (*EMBED_ENV, *CHAT_ENV)
 
 
@@ -64,9 +64,9 @@ class EnvEmbedder:
     @classmethod
     def from_env(cls) -> EnvEmbedder:
         return cls(
-            base_url=os.environ["ODY_EVAL_EMBED_BASE_URL"],
-            model=os.environ["ODY_EVAL_EMBED_MODEL"],
-            api_key=os.environ["ODY_EVAL_EMBED_KEY"],
+            base_url=os.environ["HEPH_EVAL_EMBED_BASE_URL"],
+            model=os.environ["HEPH_EVAL_EMBED_MODEL"],
+            api_key=os.environ["HEPH_EVAL_EMBED_KEY"],
         )
 
     async def is_available(self, owner_id: str) -> bool:
@@ -83,9 +83,9 @@ class EnvEmbedder:
 def chat_spec_from_env() -> EndpointSpec:
     """The env chat endpoint as an :class:`~services.llm.EndpointSpec`."""
     return EndpointSpec(
-        base_url=os.environ["ODY_EVAL_CHAT_BASE_URL"],
-        model=os.environ["ODY_EVAL_CHAT_MODEL"],
-        api_key=os.environ.get("ODY_EVAL_CHAT_KEY") or "not-needed",
+        base_url=os.environ["HEPH_EVAL_CHAT_BASE_URL"],
+        model=os.environ["HEPH_EVAL_CHAT_MODEL"],
+        api_key=os.environ.get("HEPH_EVAL_CHAT_KEY") or "not-needed",
     )
 
 

@@ -17,7 +17,7 @@ export default function NotFound() {
     <div class="relative flex h-screen items-center justify-center overflow-hidden bg-bg text-text">
       <DeepField />
       {/* The plate is the View's own panel — `ConstructionReveal`: registration
-          marks, hairline rules, and the frosted `.ody-glass` surface inside them.
+          marks, hairline rules, and the frosted `.heph-glass` surface inside them.
           It is reused rather than reproduced on `RegistrationFrame`, which draws
           marks and no surface: a second "framed glass panel" in the system is two
           things to keep in step, and the frost is the whole point here. The field
@@ -36,7 +36,7 @@ export default function NotFound() {
         // `relative`: the field is an absolutely positioned sibling and would
         // otherwise paint over in-flow content in the same stacking context.
         // NOT `isolate` and no `z-index` — either makes this a backdrop root and
-        // the glass would frost nothing but itself (see `.ody-glass`).
+        // the glass would frost nothing but itself (see `.heph-glass`).
         class="relative w-full max-w-md"
         contentClass="flex flex-col items-center gap-3 p-8 text-center"
       >
@@ -65,7 +65,7 @@ export default function NotFound() {
             id tracks `--tracking-plate` with every other engraved legend in the
             product instead of drifting off on its own. */}
         <Text variant="plate" tone="dim" class="mt-2">
-          ODY-ERR-404
+          HEPH-ERR-404
         </Text>
       </ConstructionReveal>
     </div>

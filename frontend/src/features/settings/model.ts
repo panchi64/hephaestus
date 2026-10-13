@@ -3,7 +3,7 @@
  * The connected surface is model configuration: the backend's endpoint registry
  * (`/models/endpoints`) and the role→endpoint bindings (`/models/roles`), plus the
  * web-search provider registry (`/search/providers`). There is no
- * user-preferences/2FA/account model — Odysseus is single-operator. The endpoint
+ * user-preferences/2FA/account model — Hephaestus is single-operator. The endpoint
  * read shape (`ModelEndpoint`) is owned by `~/lib/stores/models`, shared with the
  * chat picker; this module holds the write/form and role contracts, and the
  * search-provider shapes (which only Settings reads — the agent reaches search

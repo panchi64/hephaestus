@@ -1,7 +1,7 @@
 """Eval gating + live fixtures.
 
 Registers the ``live_models`` marker and **auto-skips every test in this directory
-unless all six ``ODY_EVAL_*`` env vars are set**, so the default ``uv run pytest``
+unless all six ``HEPH_EVAL_*`` env vars are set**, so the default ``uv run pytest``
 (no creds) never runs these and stays green. Provides the live embedder + chat
 model fixtures, and a load-bearing **preflight** that does one real
 ``embed(["probe"])`` and asserts a non-empty vector of positive dim.
@@ -34,7 +34,7 @@ OWNER = "operator"
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        "live_models: requires the six ODY_EVAL_* env vars (a live embedding + chat "
+        "live_models: requires the six HEPH_EVAL_* env vars (a live embedding + chat "
         "endpoint); auto-skipped otherwise.",
     )
 

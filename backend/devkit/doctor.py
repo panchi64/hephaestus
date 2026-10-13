@@ -109,13 +109,13 @@ def _isolation(instance: DevInstance) -> list[Finding]:
                 "data dir",
                 WARN,
                 f"{instance.data_dir} is outside your home directory",
-                "expected under ~/.odysseus/dev — check instance.json",
+                "expected under ~/.hephaestus/dev — check instance.json",
             )
         )
     else:
         findings.append(Finding("data dir", OK, str(instance.data_dir)))
 
-    if env["ODYSSEUS_PORT"] in {"8000", "5173"}:
+    if env["HEPHAESTUS_PORT"] in {"8000", "5173"}:
         findings.append(
             Finding(
                 "ports",

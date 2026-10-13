@@ -210,7 +210,7 @@ class ProjectWorkspace:
 
     async def _land(self, bundle: Path, branch: str, sha: str) -> None:
         """Fetch the agent's commits, check they fast-forward the branch, and move it."""
-        incoming = f"refs/odysseus/incoming-{secrets.token_hex(4)}"
+        incoming = f"refs/hephaestus/incoming-{secrets.token_hex(4)}"
         ref = f"refs/heads/{branch}"
         await self._host_git(
             "-c", "fetch.fsckObjects=true", "fetch", "-q", str(bundle), f"{ref}:{incoming}"

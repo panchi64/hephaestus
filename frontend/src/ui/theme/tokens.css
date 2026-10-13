@@ -93,7 +93,7 @@
   --type-display-size: 40px;
   --type-display-lh: 44px;
 
-  /* ---- READING scale — rendered prose only (`.ody-prose`) ----
+  /* ---- READING scale — rendered prose only (`.heph-prose`) ----
      Assistant messages, reports, documents: everything the operator
      READS rather than scans. Anchored on 16px/1.5, the browser default and the
      size long-form reading is standardized around; 13px is a defensible size for

@@ -43,7 +43,7 @@ export function PluginsDirectoryScreen(props: {
     <LibraryDirectory
       title="Plugins"
       subtitle="Tools, agents and skills that agents write. Python tools run in the platform VM once you review and publish them."
-      assetId="ODY-PLG-01.0"
+      assetId="HEPH-PLG-01.0"
       noun="plugin"
       nouns="plugins"
       icon="plug"

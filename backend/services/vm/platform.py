@@ -65,15 +65,15 @@ class GuestLayout:
 
     @property
     def opt(self) -> str:
-        return self.path("opt/odysseus")
+        return self.path("opt/hephaestus")
 
     @property
     def run_dir(self) -> str:
-        return self.path("run/odysseus")
+        return self.path("run/hephaestus")
 
     @property
     def xfer(self) -> str:
-        return self.path("run/odysseus/xfer")
+        return self.path("run/hephaestus/xfer")
 
     def plugin(self, version: str) -> str:
         return self.path("plugins", version)
@@ -290,7 +290,7 @@ class PlatformVM:
     async def _install_scripts(self) -> None:
         lay = self.layout
         await self._admin(
-            ["mkdir", "-p", lay.opt, lay.path("run/odysseus/previews"), lay.path("work")]
+            ["mkdir", "-p", lay.opt, lay.path("run/hephaestus/previews"), lay.path("work")]
         )
         for script in sorted(GUEST_SCRIPTS.glob("*.py")):
             await self._driver.put_file(script, f"{lay.opt}/{script.name}")

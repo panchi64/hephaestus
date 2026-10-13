@@ -101,13 +101,13 @@ MEMORIES: list[MemoryItem] = [
     ),
     # projects
     MemoryItem(
-        "mem-odysseus", "My main project is Odysseus, a self-hosted AI workspace.", "project"
+        "mem-hephaestus", "My main project is Hephaestus, a self-hosted AI workspace.", "project"
     ),
     MemoryItem("mem-thesis", "I am writing a thesis on coral reef restoration.", "project"),
     MemoryItem("mem-garden", "I am building a raised-bed vegetable garden this spring.", "project"),
     MemoryItem("mem-novel", "I am drafting a science-fiction novel set on Europa.", "project"),
     MemoryItem("mem-rust", "I am learning the Rust programming language on weekends.", "project"),
-    MemoryItem("mem-deadline", "The Odysseus beta is due at the end of September.", "project"),
+    MemoryItem("mem-deadline", "The Hephaestus beta is due at the end of September.", "project"),
     # people
     MemoryItem("mem-maria", "My sister Maria is a pediatric nurse in Lisbon.", "person"),
     MemoryItem("mem-sam", "Sam is my co-founder and handles the backend.", "person"),
@@ -129,7 +129,7 @@ MEMORIES: list[MemoryItem] = [
     # rare-token / identifier memories (sparse must carry these)
     MemoryItem("mem-gate", "My building gate code is 7741.", "how-they-like"),
     MemoryItem("mem-router", "My home router admin URL is 192.168.4.1.", "how-they-like"),
-    MemoryItem("mem-license", "My software license key is ODY-X92-Q7K4.", "how-they-like"),
+    MemoryItem("mem-license", "My software license key is HEPH-X92-Q7K4.", "how-they-like"),
     MemoryItem("mem-flight", "My frequent-flyer number is FF-558213.", "person"),
 ]
 
@@ -142,7 +142,7 @@ MEMORY_QUERIES: list[RetrievalQuery] = [
     RetrievalQuery("when is the operator most productive", ["mem-morning"], "paraphrase"),
     RetrievalQuery("which family member works healthcare", ["mem-maria"], "paraphrase"),
     RetrievalQuery(
-        "what flagship software does the operator build", ["mem-odysseus"], "paraphrase"
+        "what flagship software does the operator build", ["mem-hephaestus"], "paraphrase"
     ),
     RetrievalQuery("does the operator avoid animal products", ["mem-vegan"], "paraphrase"),
     RetrievalQuery("how should responses be styled for them", ["mem-brevity"], "paraphrase"),
@@ -150,7 +150,7 @@ MEMORY_QUERIES: list[RetrievalQuery] = [
     # rare-token slice — exact codes/ids embeddings miss; sparse must carry.
     RetrievalQuery("7741", ["mem-gate"], "rare_token"),
     RetrievalQuery("192.168.4.1", ["mem-router"], "rare_token"),
-    RetrievalQuery("ODY-X92-Q7K4", ["mem-license"], "rare_token"),
+    RetrievalQuery("HEPH-X92-Q7K4", ["mem-license"], "rare_token"),
     RetrievalQuery("FF-558213", ["mem-flight"], "rare_token"),
     # plain slice — natural overlap, both paths can contribute.
     RetrievalQuery("what programming language is the operator learning", ["mem-rust"], "plain"),
@@ -181,8 +181,8 @@ MEMORY_QUESTIONS: list[EndToEndQuestion] = [
     EndToEndQuestion(
         "What is the name of my main project?",
         should_trigger=True,
-        gold_fact="Odysseus",
-        rubric="Names the project Odysseus.",
+        gold_fact="Hephaestus",
+        rubric="Names the project Hephaestus.",
     ),
     EndToEndQuestion(
         "Who is my co-founder?",

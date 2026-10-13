@@ -235,7 +235,7 @@ export function RagConfigScreen(): JSX.Element {
       <PageHeader
         title="Knowledge base"
         subtitle="The unified retrieval corpus — every source the assistant can search."
-        assetId="ODY-RAG-01.0"
+        assetId="HEPH-RAG-01.0"
         actions={
           <Row gap={2}>
             <Show when={errorSources().length > 0}>
@@ -332,8 +332,8 @@ export function RagConfigScreen(): JSX.Element {
             </Button>
           </Row>
           <Text variant="micro" tone="dim">
-            Paths must be accessible to the Odysseus server process. The folder
-            will be crawled and all supported file types indexed.
+            Paths must be accessible to the Hephaestus server process. The
+            folder will be crawled and all supported file types indexed.
           </Text>
         </Stack>
       </Panel>

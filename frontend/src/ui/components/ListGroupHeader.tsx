@@ -40,19 +40,19 @@ export function ListGroupHeader(props: ListGroupHeaderProps): JSX.Element {
       }
     >
       <div
-        class={cx("ody-list-plate", local.class)}
+        class={cx("heph-list-plate", local.class)}
         data-rule={local.variant === "plate" ? "" : undefined}
         data-tone={local.variant === "section" ? "section" : undefined}
       >
-        <span class="ody-list-plate-label shrink-0">{local.label}</span>
+        <span class="heph-list-plate-label shrink-0">{local.label}</span>
         <Show when={local.count !== undefined}>
           <Show when={local.variant === "section"}>
             <span aria-hidden="true">·</span>
           </Show>
-          <span class="ody-list-plate-count">{local.count}</span>
+          <span class="heph-list-plate-count">{local.count}</span>
         </Show>
         <Show when={local.aside}>
-          <span class="ody-list-plate-aside">{local.aside}</span>
+          <span class="heph-list-plate-aside">{local.aside}</span>
         </Show>
       </div>
     </Show>

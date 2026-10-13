@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import os
 
-BASE_URL = "ODY_DEV_CHAT_BASE_URL"
-MODEL = "ODY_DEV_CHAT_MODEL"
-KEY = "ODY_DEV_CHAT_KEY"
+BASE_URL = "HEPH_DEV_CHAT_BASE_URL"
+MODEL = "HEPH_DEV_CHAT_MODEL"
+KEY = "HEPH_DEV_CHAT_KEY"
 
 #: The key is genuinely optional — a local engine usually wants none — so it is read but
 #: not required. The other two are what "an endpoint" means.

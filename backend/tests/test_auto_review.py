@@ -77,7 +77,7 @@ from ._helpers import client_app
 
 #: A workspace root, because a command is judged against the directory it runs in and a
 #: command with none is read as unplaced — the deterministic stage clears neither.
-WORKSPACE = Path("/tmp/odysseus-review-workspace")
+WORKSPACE = Path("/tmp/hephaestus-review-workspace")
 BENIGN = capability_of("shell_run_command", {"command": "git status"}, root=WORKSPACE)
 RISKY = capability_of("shell_run_command", {"command": "rm -rf /"}, root=WORKSPACE)
 

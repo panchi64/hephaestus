@@ -514,7 +514,7 @@ export function ChatRoomScreen(): JSX.Element {
             Nothing in here — this wrapper, the overlay, the transcript's own wrapper —
             may carry `opacity`, `filter`, `mask`, `isolation` or a `will-change` of
             them: any one makes a backdrop root, and the fade's blur would sample
-            nothing (the trap noted on `.ody-glass`). */}
+            nothing (the trap noted on `.heph-glass`). */}
         <div class="relative flex min-h-0 flex-1 flex-col">
           <TranscriptView
             stream={stream}

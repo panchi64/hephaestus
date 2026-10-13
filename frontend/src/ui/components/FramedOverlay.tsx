@@ -42,7 +42,7 @@ export interface FramedOverlayProps {
  * - **The backdrop is a SIBLING of the reveal, never its parent.** `backdrop-filter`
  *   only blurs what is painted inside its *backdrop root*, and `opacity < 1` on any
  *   ancestor creates one — which the backdrop's own fade animation does for as long
- *   as it runs. Nest the reveal inside it and `.ody-glass` blurs nothing while its
+ *   as it runs. Nest the reveal inside it and `.heph-glass` blurs nothing while its
  *   translucent fill still tints, so the result reads as a slightly lighter panel
  *   rather than as anything broken. Same reason `ConstructionReveal`'s wrapper is
  *   `relative` and not `relative isolate`.
@@ -89,7 +89,7 @@ export function FramedOverlay(props: FramedOverlayProps): JSX.Element {
           taken apart. */}
       <Show when={local.open}>
         <div
-          class="ody-fade-in fixed inset-0 z-50 bg-bg/70"
+          class="heph-fade-in fixed inset-0 z-50 bg-bg/70"
           aria-hidden="true"
           onClick={local.onClose}
         />

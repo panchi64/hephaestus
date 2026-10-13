@@ -4,7 +4,7 @@ A committed, re-runnable harness that verifies the two embedding consumers —
 long-term memory (``MemoryStore.recall``) and cross-chat search
 (``ConversationSearch.search``) — actually help the LLM at inference, against
 **live** embedding + chat models. Everything here is gated behind the
-``live_models`` pytest marker and auto-skips when the ``ODY_EVAL_*`` env vars are
+``live_models`` pytest marker and auto-skips when the ``HEPH_EVAL_*`` env vars are
 unset, so the default ``uv run pytest`` (credential-free CI) never touches it.
 
 Three failure points are measured for each consumer:

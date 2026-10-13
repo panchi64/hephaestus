@@ -45,7 +45,7 @@ from sqlalchemy.types import TypeDecorator
 from sqlmodel import Session, SQLModel, select
 
 from core.db import in_session
-from core.exceptions import OdysseusError
+from core.exceptions import HephaestusError
 from core.vault import Vault
 from services.settings_store import SettingsStore
 
@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 LAST_EXPORT_KEY = "backup.last_export"
 
 
-class BackupPayloadError(OdysseusError):
+class BackupPayloadError(HephaestusError):
     """The file decrypted, but its contents are not a payload this build understands."""
 
 

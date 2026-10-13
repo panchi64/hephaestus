@@ -24,7 +24,7 @@ export interface ScrollFadeProps {
 
 /**
  * The band a scroll region dissolves into under an overlaid edge — a progressive
- * backdrop blur with a ground-colour tint on the same falloff (`.ody-scroll-fade`).
+ * backdrop blur with a ground-colour tint on the same falloff (`.heph-scroll-fade`).
  *
  * **Mount it as the first child of the overlay, and give the overlay a position.** It
  * fills that parent and reaches one `--scroll-fade-band` past the side facing the
@@ -35,7 +35,7 @@ export interface ScrollFadeProps {
  *
  * `variant="clamp"` is the same idea at the scale of one clamped block: mount it as
  * the last child of the `relative overflow-hidden` block, and it lays a short fade
- * from `ground` over the block's edge (`.ody-clamp-fade`).
+ * from `ground` over the block's edge (`.heph-clamp-fade`).
  *
  * Decoration only: hidden from assistive tech and transparent to the pointer, since it
  * lies over live content.
@@ -48,12 +48,12 @@ export function ScrollFade(props: ScrollFadeProps): JSX.Element {
         <div
           aria-hidden="true"
           data-edge={props.edge}
-          class={cx("ody-scroll-fade", props.class)}
+          class={cx("heph-scroll-fade", props.class)}
         >
-          <span class="ody-scroll-fade-blur-1" />
-          <span class="ody-scroll-fade-blur-2" />
-          <span class="ody-scroll-fade-blur-3" />
-          <span class="ody-scroll-fade-tint" />
+          <span class="heph-scroll-fade-blur-1" />
+          <span class="heph-scroll-fade-blur-2" />
+          <span class="heph-scroll-fade-blur-3" />
+          <span class="heph-scroll-fade-tint" />
         </div>
       }
     >
@@ -61,7 +61,7 @@ export function ScrollFade(props: ScrollFadeProps): JSX.Element {
         aria-hidden="true"
         data-edge={props.edge}
         data-ground={props.ground ?? "bg"}
-        class={cx("ody-clamp-fade", props.class)}
+        class={cx("heph-clamp-fade", props.class)}
       />
     </Show>
   );

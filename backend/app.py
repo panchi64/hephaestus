@@ -482,7 +482,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    app = FastAPI(title="Odysseus", version=settings.version, lifespan=lifespan)
+    app = FastAPI(title="Hephaestus", version=settings.version, lifespan=lifespan)
     app.state.settings = settings  # the lifespan reads this (tests inject it)
     # Discovered once per app: routers register below (before the lifespan runs);
     # the lifespan runs each enabled manifest's build in the same order.

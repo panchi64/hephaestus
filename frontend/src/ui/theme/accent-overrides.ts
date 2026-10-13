@@ -36,12 +36,12 @@ import type { ThemeMode } from "./theme-store";
  * because there is one sheet and one stored blob.
  */
 
-export const ACCENT_STORAGE_KEY = "odysseus:accents";
+export const ACCENT_STORAGE_KEY = "hephaestus:accents";
 
 /** The id the pre-paint script in `entry-server.tsx` gives its element. The
  *  store *adopts* that element rather than appending a second one — two sheets
  *  both setting `--accent` would leave the winner up to source order. */
-const STYLE_ELEMENT_ID = "ody-accent-overrides";
+const STYLE_ELEMENT_ID = "heph-accent-overrides";
 
 /** The theme modes, spelled out so the emitted sheet has a stable order and
  *  nothing unvetted can reach it. */

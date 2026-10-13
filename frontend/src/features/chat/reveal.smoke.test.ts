@@ -31,7 +31,7 @@ const FRONTEND_ROOT = join(import.meta.dir, "..", "..", "..");
  * The streamed answer's prose, as a selector — quoted for use inside the page-side
  * snippets below.
  *
- * This used to be `.ody-prose`, unqualified, which worked only for as long as the
+ * This used to be `.heph-prose`, unqualified, which worked only for as long as the
  * assistant's answer was the single piece of rendered markdown on the page. The
  * operator's own turn renders as markdown too now, and it comes *first* in the
  * transcript — so the bare selector started answering with the question rather than
@@ -44,7 +44,7 @@ const FRONTEND_ROOT = join(import.meta.dir, "..", "..", "..");
  * only its prose has `[data-block-index]` children — which is also exactly the thing
  * the reveal operates on.
  */
-const ANSWER_PROSE = "'.ody-prose:has([data-block-index])'";
+const ANSWER_PROSE = "'.heph-prose:has([data-block-index])'";
 
 let dev: ReturnType<typeof Bun.spawn> | undefined;
 
@@ -142,7 +142,7 @@ test("a streamed answer leaves no reveal wrappers behind", async () => {
     const longestRun = Number(
       await wv.evaluate(
         "(() => {" +
-          " const blocks = document.querySelectorAll('.ody-prose > [data-block-index]');" +
+          " const blocks = document.querySelectorAll('.heph-prose > [data-block-index]');" +
           " const last = blocks[blocks.length - 1];" +
           " const runs = [...last.querySelector('p').childNodes]" +
           "   .filter((n) => n.nodeType === 3).map((n) => n.data.length);" +
@@ -181,13 +181,13 @@ test("no character loses its wrapper while its fade is still running", async () 
         await new Promise((res) => {
           const t0 = performance.now();
           const tick = () => {
-            const spans = document.querySelectorAll('.ody-token-in').length;
+            const spans = document.querySelectorAll('.heph-token-in').length;
             const prose = document.querySelector(${ANSWER_PROSE});
             const chars = prose ? prose.textContent.length : 0;
             let running = 0;
             for (const a of document.getAnimations()) {
               const el = a.effect && a.effect.target;
-              if (!el || !el.classList || !el.classList.contains('ody-token-in')) continue;
+              if (!el || !el.classList || !el.classList.contains('heph-token-in')) continue;
               const d = a.effect.getTiming().duration || 320;
               const ct = typeof a.currentTime === 'number' ? a.currentTime : 0;
               if (a.playState !== 'finished' && ct / d < 1) running++;

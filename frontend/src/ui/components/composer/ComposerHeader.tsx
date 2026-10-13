@@ -46,18 +46,18 @@ export function ComposerHeader(props: ComposerHeaderProps): JSX.Element {
       ? "Draft saved"
       : undefined);
   // The plate: the 7px square, what the thread is doing, and its aside. Its tone is
-  // the unit's (`.ody-composer[data-live]` turns it info while a run streams); a piece
+  // the unit's (`.heph-composer[data-live]` turns it info while a run streams); a piece
   // the caller hands in may carry its own.
   const plate = (
     <Show when={props.recalling || headerLeft() || headerRight()}>
-      <div class="ody-composer-plate">
-        <span class="ody-composer-plate-sq" aria-hidden="true" />
+      <div class="heph-composer-plate">
+        <span class="heph-composer-plate-sq" aria-hidden="true" />
         <Show
           when={props.recalling}
           fallback={
             <>
               <span class="min-w-0 truncate">{headerLeft()}</span>
-              <span class="ody-composer-plate-end">{headerRight()}</span>
+              <span class="heph-composer-plate-end">{headerRight()}</span>
             </>
           }
         >
@@ -65,7 +65,7 @@ export function ComposerHeader(props: ComposerHeaderProps): JSX.Element {
             <Icon name="pen" size={10} />
             {props.recallLabel}
           </span>
-          <span class="ody-composer-plate-end">
+          <span class="heph-composer-plate-end">
             {SEND_CHORD} save · Esc cancel
           </span>
         </Show>
@@ -76,8 +76,8 @@ export function ComposerHeader(props: ComposerHeaderProps): JSX.Element {
   return (
     <Show when={!props.recalling && props.waiting} fallback={plate}>
       {(waiting) => (
-        <div class="ody-composer-wait" role="status">
-          <span class="ody-action-pulse" aria-hidden="true" />
+        <div class="heph-composer-wait" role="status">
+          <span class="heph-action-pulse" aria-hidden="true" />
           <span class="min-w-0 truncate">{waiting().label}</span>
           <Show when={waiting().onJump}>
             {(jump) => (

@@ -28,7 +28,7 @@
    animation is still smooth.) The containing block does exist for the ~200ms the
    animation runs — worth knowing if a reveal wraps absolutely-positioned
    children. */
-@keyframes ody-reveal-fade {
+@keyframes heph-reveal-fade {
   from {
     opacity: 0;
     filter: blur(var(--reveal-blur, 3px));
@@ -38,7 +38,7 @@
     filter: none;
   }
 }
-@keyframes ody-reveal-rise {
+@keyframes heph-reveal-rise {
   from {
     opacity: 0;
     filter: blur(var(--reveal-blur, 3px));
@@ -51,15 +51,15 @@
   }
 }
 
-.ody-fade-in,
-.ody-token-in {
-  animation: ody-reveal-fade var(--reveal-ms, var(--motion-base)) var(--ease)
+.heph-fade-in,
+.heph-token-in {
+  animation: heph-reveal-fade var(--reveal-ms, var(--motion-base)) var(--ease)
     both;
 }
 /* Overlay entry — modals, popovers, menus, toasts. Settles, never bounces. */
-.ody-rise,
-.ody-message-in {
-  animation: ody-reveal-rise var(--reveal-ms, var(--motion-base)) var(--ease)
+.heph-rise,
+.heph-message-in {
+  animation: heph-reveal-rise var(--reveal-ms, var(--motion-base)) var(--ease)
     both;
 }
 
@@ -70,7 +70,7 @@
    Swapping the animation NAME rather than adding a competing rule is what lets
    the exit start cleanly from wherever the entry left off; two animations on one
    element would be settled by fill-mode instead of by intent. */
-@keyframes ody-reveal-fade-out {
+@keyframes heph-reveal-fade-out {
   from {
     opacity: 1;
     filter: none;
@@ -80,7 +80,7 @@
     filter: blur(var(--reveal-blur, 3px));
   }
 }
-@keyframes ody-reveal-rise-out {
+@keyframes heph-reveal-rise-out {
   from {
     opacity: 1;
     filter: none;
@@ -92,11 +92,11 @@
     transform: translateY(var(--reveal-y, 4px));
   }
 }
-.ody-fade-in[data-closed] {
-  animation-name: ody-reveal-fade-out;
+.heph-fade-in[data-closed] {
+  animation-name: heph-reveal-fade-out;
 }
-.ody-rise[data-closed] {
-  animation-name: ody-reveal-rise-out;
+.heph-rise[data-closed] {
+  animation-name: heph-reveal-rise-out;
 }
 /* Held before its entry plays: mounted, laid out, and invisible.
    A gated reveal starts its animation a frame AFTER mount rather than at mount,
@@ -107,7 +107,7 @@
    is the last one — the region appears fully formed and the fade is spent on
    nothing. Starting late costs nothing, because an animation carries its own
    start value and plays in full whenever it begins. */
-.ody-reveal-hold {
+.heph-reveal-hold {
   opacity: 0;
 }
 
@@ -115,9 +115,9 @@
    not when it finishes leaving. Otherwise a full-screen overlay keeps swallowing
    input for the length of its own exit — the operator dismisses it, clicks what
    was behind it, and hits the ghost instead. */
-.ody-fade-in[data-closed],
-.ody-rise[data-closed],
-.ody-collapse[data-closed] > * {
+.heph-fade-in[data-closed],
+.heph-rise[data-closed],
+.heph-collapse[data-closed] > * {
   pointer-events: none;
 }
 
@@ -125,7 +125,7 @@
    assistant's block as it opens. Travels further than an overlay and moves
    faster, so it reads as a response rather than as a reveal. Fires once, on
    mount, so a streaming turn does not re-animate on every delta. */
-.ody-message-in {
+.heph-message-in {
   --reveal-y: 10px;
   --reveal-ms: 200ms;
   --reveal-blur: 4px;
@@ -141,7 +141,7 @@
    refuses to enter machine text, and the rule below makes that structural rather
    than a property of one function — a fade on a code block would erase the one
    contrast the transcript is built on. */
-.ody-token-in {
+.heph-token-in {
   /* Softer than the default: a per-character run is a few pixels wide, and the
      full blur on 13px text resolves as a smear rather than as a word arriving.
      Inline spans can't carry the glide either — `transform` does not apply to a
@@ -154,6 +154,6 @@
      alongside that character's delay. A second copy here would drift, and the
      symptom would be characters that never settle or settle early. */
 }
-:where(code, pre, kbd, samp, table, .font-mono) .ody-token-in {
+:where(code, pre, kbd, samp, table, .font-mono) .heph-token-in {
   animation: none;
 }

@@ -8,8 +8,8 @@ import { useGatedMount } from "./useGatedMount";
 export type RevealMotion = "fade" | "rise";
 
 const motionClass: Record<RevealMotion, string> = {
-  fade: "ody-fade-in",
-  rise: "ody-rise",
+  fade: "heph-fade-in",
+  rise: "heph-rise",
 };
 
 export interface RevealProps {
@@ -71,7 +71,7 @@ export interface RevealProps {
  *   changed.
  *
  * For a case that cannot take a wrapper — a portal root, a node built by hand —
- * the underlying `.ody-fade-in` / `.ody-rise` classes are still there.
+ * the underlying `.heph-fade-in` / `.heph-rise` classes are still there.
  */
 export function Reveal(props: RevealProps): JSX.Element {
   const [local] = splitProps(props, [
@@ -115,7 +115,7 @@ export function Reveal(props: RevealProps): JSX.Element {
           // arrives and its animation plays from there.
           gate.ready()
             ? motionClass[local.motion ?? "fade"]
-            : "ody-reveal-hold",
+            : "heph-reveal-hold",
           local.class,
         )}
         style={style()}

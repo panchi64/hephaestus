@@ -22,30 +22,30 @@ describe("pathLabel", () => {
 
   test("a trailing separator is not a segment", () => {
     // Otherwise the name would come back empty and the heading would be blank.
-    expect(pathLabel("/Users/me/odysseus/")).toEqual({
+    expect(pathLabel("/Users/me/hephaestus/")).toEqual({
       parent: "me",
-      name: "odysseus",
+      name: "hephaestus",
     });
   });
 
   test("repeated separators collapse", () => {
-    expect(pathLabel("/Users//me///odysseus")).toEqual({
+    expect(pathLabel("/Users//me///hephaestus")).toEqual({
       parent: "me",
-      name: "odysseus",
+      name: "hephaestus",
     });
   });
 
   test("Windows separators read the same way", () => {
     // The path is the host's and this runs in a browser, which knows nothing about
     // which host produced it.
-    expect(pathLabel("C:\\Users\\me\\code\\odysseus")).toEqual({
+    expect(pathLabel("C:\\Users\\me\\code\\hephaestus")).toEqual({
       parent: "code",
-      name: "odysseus",
+      name: "hephaestus",
     });
   });
 
   test("a path with no separator at all is its own name", () => {
-    expect(pathLabel("odysseus")).toEqual({ parent: "", name: "odysseus" });
+    expect(pathLabel("hephaestus")).toEqual({ parent: "", name: "hephaestus" });
   });
 
   test("an empty path degrades to itself rather than to undefined", () => {

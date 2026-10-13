@@ -5,7 +5,7 @@ work. Chat cannot answer, titles cannot be generated, memories cannot be embedde
 the surfaces that would show a change render an error instead. So this runs first, and
 everything after it can assume a working ``main``.
 
-By default that is the stub. When ``ODY_DEV_CHAT_*`` names a real endpoint, this binds
+By default that is the stub. When ``HEPH_DEV_CHAT_*`` names a real endpoint, this binds
 that instead — same seam, same registry row, so nothing downstream knows the difference.
 """
 
@@ -84,5 +84,5 @@ async def seed_model(ctx: SeedContext) -> str:
             f"/models/roles/{role}", json={"endpoint_ids": [endpoint_id], "model": model}
         )
         bound.raise_for_status()
-    where = "a real endpoint (ODY_DEV_CHAT_*)" if live.configured() else "the stub"
+    where = "a real endpoint (HEPH_DEV_CHAT_*)" if live.configured() else "the stub"
     return f"{model} on {where}, bound to {', '.join(ROLES)}"

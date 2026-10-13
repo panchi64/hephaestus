@@ -49,7 +49,7 @@ export function entrySessionId(list: ChatSummary[]): string | null {
 
 /* ── Pinned threads (non-recency ordering) ────────────────────────────────── */
 
-const PINS_KEY = "ody.chat.pins";
+const PINS_KEY = "heph.chat.pins";
 function readPins(): Set<string> {
   try {
     const raw = readLS(PINS_KEY);

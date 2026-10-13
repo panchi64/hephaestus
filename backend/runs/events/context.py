@@ -89,7 +89,7 @@ class FoldPoint(_Body):
         but the threshold reaching them is not always a validated value: ``_float_or``
         bounds what the *settings store* holds and then falls back to
         ``Settings.auto_compact_threshold``, which is a plain unbounded float. An operator
-        running with ``ODYSSEUS_AUTO_COMPACT_THRESHOLD=0`` would otherwise have a gauge
+        running with ``HEPHAESTUS_AUTO_COMPACT_THRESHOLD=0`` would otherwise have a gauge
         decoration raise inside the orchestrator — killing every turn — and 500 every
         conversation load, over a mark on a bar.
 

@@ -191,7 +191,7 @@ export function MemoryTimelineScreen(): JSX.Element {
         variant="section"
         title="Memory"
         subtitle="Persistent facts, preferences, and context the system has learned."
-        assetId="ODY-MEM-01.0"
+        assetId="HEPH-MEM-01.0"
         actions={
           <Row gap={2}>
             <Button

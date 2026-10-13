@@ -1,4 +1,4 @@
-"""The dev instance — a second, disposable Odysseus an agent can drive and look at.
+"""The dev instance — a second, disposable Hephaestus an agent can drive and look at.
 
 The suite proves behaviour; this is for the claims a suite cannot make. A change to a
 picker, a card, a layout or a flow is either seen working in the running product or it is

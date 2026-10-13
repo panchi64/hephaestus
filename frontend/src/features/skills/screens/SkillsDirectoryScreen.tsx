@@ -166,7 +166,7 @@ export function SkillsDirectoryScreen(props: {
     <LibraryDirectory
       title="Skills"
       subtitle="Agent Skills bundles — reusable procedures the assistant can follow."
-      assetId="ODY-SKL-01.0"
+      assetId="HEPH-SKL-01.0"
       noun="skill"
       nouns="skills"
       icon="layers"

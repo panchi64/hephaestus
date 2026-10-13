@@ -13,10 +13,10 @@ from fastapi import APIRouter
 from core.exceptions import (
     ApprovalRequiredError,
     DegradedCapabilityError,
+    HephaestusError,
     InvalidInputError,
     ModelLoadError,
     NotFoundError,
-    OdysseusError,
     PermissionDeniedError,
     RateLimitedError,
     SkillSpanError,
@@ -52,10 +52,10 @@ def test_each_domain_error_has_one_answer(error: Exception, status: int):
 
 
 def test_the_base_class_is_deliberately_unmapped():
-    # A catch-all on OdysseusError would quietly give a tidy status to errors nobody has
+    # A catch-all on HephaestusError would quietly give a tidy status to errors nobody has
     # thought about — which is how a real fault becomes an unnoticed 400. A new domain
     # error stays a 500, and stays visible, until someone decides what it means.
-    assert status_for(OdysseusError("something new")) is None
+    assert status_for(HephaestusError("something new")) is None
     assert status_for(RuntimeError("not ours at all")) is None
 
 
@@ -81,7 +81,7 @@ async def _rate_limited() -> None:
 
 @_router.get("/unmapped")
 async def _unmapped() -> None:
-    raise OdysseusError("nobody decided what this means")
+    raise HephaestusError("nobody decided what this means")
 
 
 async def test_a_route_that_does_not_catch_still_answers_correctly():
@@ -119,5 +119,5 @@ async def test_a_rate_limit_tells_the_caller_how_long_to_wait():
 async def test_an_unmapped_error_is_not_quietly_given_a_status():
     async with client_app() as (client, app):
         app.include_router(_router)
-        with pytest.raises(OdysseusError):
+        with pytest.raises(HephaestusError):
             await client.get("/_errors/unmapped")

@@ -103,7 +103,7 @@ export function Collapse(props: CollapseProps): JSX.Element {
     <Show when={mounted()}>
       <div
         ref={(el) => (host = el)}
-        class={cx("ody-collapse", props.class)}
+        class={cx("heph-collapse", props.class)}
         data-closed={shown() ? undefined : ""}
         data-settled={settled() ? "" : undefined}
         onTransitionEnd={(e) => {

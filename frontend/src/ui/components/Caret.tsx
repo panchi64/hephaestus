@@ -12,7 +12,7 @@ export interface CaretProps {
  *  in lockstep. Decorative, so hidden from assistive tech. */
 export function Caret(props: CaretProps): JSX.Element {
   return (
-    <span class={cx("ody-caret", props.class)} aria-hidden="true">
+    <span class={cx("heph-caret", props.class)} aria-hidden="true">
       ▋
     </span>
   );

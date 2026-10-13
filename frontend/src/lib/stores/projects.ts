@@ -61,7 +61,7 @@ async function fetchProjects(): Promise<ProjectsDTO> {
  *
  *  `POST /projects/{id}/activate` is a round trip, and the operator picks again as
  *  soon as the switcher looks like it ignored them. Both replies then arrive, and
- *  whichever lands last writes the echo *and* the `X-Ody-Project` header every
+ *  whichever lands last writes the echo *and* the `X-Heph-Project` header every
  *  subsequent request is scoped by — so a slow first pick can silently re-scope the
  *  whole app to the project they abandoned, taking every refetch with it. Only the
  *  operator's newest pick is allowed to adopt its own answer; an older reply is read
