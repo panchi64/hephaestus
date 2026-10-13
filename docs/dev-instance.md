@@ -134,6 +134,12 @@ Everything lives under `~/.hephaestus/dev/<worktree>/` — data, worktrees, logs
 `instance.json` recording the ports and the vault passphrase. Deleting that directory
 forgets the instance entirely; the next `up` builds a new one.
 
+## Running `alembic` by hand
+
+The CLI falls back to `alembic.ini`, which points at the live `data/app.db`. A command meant
+for a dev instance must carry that instance's `HEPHAESTUS_DB_URL` (`status --json` has the
+data directory), or it migrates the real database.
+
 ## What it is not
 
 Not a place to point at real data. `HEPHAESTUS_DATA_DIR` and the rest are set by the
