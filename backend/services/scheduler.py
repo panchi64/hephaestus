@@ -34,7 +34,8 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from croniter import croniter
 from sqlalchemy import Engine
@@ -98,6 +99,9 @@ class ScheduledTaskView:
     prompt: str
     output: str  # TaskOutput
     pre_authorized: list[str]
+    agent_name: str | None = None
+    #: The routine's thread, when it has one yet.
+    conversation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -123,9 +127,11 @@ def compute_next_run(
     run_at: datetime | None = None,
     every_seconds: float | None = None,
     cron_expr: str | None = None,
+    timezone: str = "UTC",
 ) -> datetime | None:
     """The next `next_run_at` for a schedule, given an anchor (the fire time it's
-    counted forward from, for interval/cron — "anchored on last fire"). Deterministic
+    counted forward from, for interval/cron — "anchored on last fire"). A cron's fields
+    are read in ``timezone``, so "9am on weekdays" stays 9am across DST. Deterministic
     and side-effect-free so both the scheduler and the future task-creation route can
     share it. Degrades to `None` ("never due") for a malformed schedule (missing
     interval, missing cron) rather than raising — the write-side route is where a bad
@@ -141,7 +147,8 @@ def compute_next_run(
     if schedule_type == ScheduleType.CRON:
         if not cron_expr:
             return None
-        return croniter(cron_expr, anchor).get_next(datetime)
+        local = anchor.astimezone(ZoneInfo(timezone))
+        return croniter(cron_expr, local).get_next(datetime).astimezone(UTC)
     return None  # ScheduleType.WEBHOOK (or an unrecognized value) — never time-due
 
 
@@ -269,8 +276,8 @@ class SchedulerService:
         same task. Returns the id of the `TaskRun` row this attempt recorded (fired or
         skipped), or ``None`` if no such task exists (the caller — the route — already
         checked ownership; this is a defensive re-check against a delete racing the
-        request) **or the task is disabled** — mirrors the tick loop's own due-detection
-        (`_load_due` filters on ``enabled``), so an operator turning a task off actually
+        request) **or the task is disabled or awaiting approval** — mirrors the tick loop's
+        own due-detection (`_load_due` filters on both), so an operator turning a task off actually
         stops it from firing rather than only stopping its own schedule. This is the one
         gate shared by both on-demand callers: the authenticated `run_now` route checks
         `enabled` itself first (for a clearer 409 than a bare "not found"), but the
@@ -282,7 +289,7 @@ class SchedulerService:
             return session.get(ScheduledTask, task_id)
 
         task = await in_session(self._engine, work)
-        if task is None or not task.enabled:
+        if task is None or not task.enabled or not task.approved:
             return None
         return await self._dispatch(task, utcnow(), on_demand=True)
 
@@ -375,6 +382,7 @@ class SchedulerService:
                         run_at=task.run_at,
                         every_seconds=task.every_seconds,
                         cron_expr=task.cron_expr,
+                        timezone=task.timezone,
                     )
                     await self._advance(task.id, last_run_at=finished, next_run_at=next_run)
             except Exception:  # noqa: BLE001 — a failed reschedule must never kill the loop
@@ -415,6 +423,7 @@ class SchedulerService:
                 run_at=task.run_at,
                 every_seconds=task.every_seconds,
                 cron_expr=task.cron_expr,
+                timezone=task.timezone,
             )
             if computed is not None and computed > next_run:
                 next_run = computed
@@ -431,6 +440,8 @@ class SchedulerService:
             prompt=self._vault.decrypt_str(task.prompt_enc),
             output=task.output,
             pre_authorized=list(task.pre_authorized),
+            agent_name=task.agent_name,
+            conversation_id=task.conversation_id,
         )
 
     # --- persistence --------------------------------------------------------------
@@ -445,6 +456,7 @@ class SchedulerService:
                 session.exec(
                     select(ScheduledTask)
                     .where(ScheduledTask.enabled.is_(True))
+                    .where(ScheduledTask.approved.is_(True))
                     .where(ScheduledTask.next_run_at.is_not(None))
                 ).all()
             )
@@ -463,6 +475,7 @@ class SchedulerService:
                 session.exec(
                     select(ScheduledTask.next_run_at)
                     .where(ScheduledTask.enabled.is_(True))
+                    .where(ScheduledTask.approved.is_(True))
                     .where(ScheduledTask.next_run_at.is_not(None))
                 ).all()
             )

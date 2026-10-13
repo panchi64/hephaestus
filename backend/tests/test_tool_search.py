@@ -38,6 +38,7 @@ DORMANT = {
     "calendar": "the operator's calendars",
     "mail": "the operator's email",
     "plugins": "the operator's published plugins",
+    "routines": "schedule work to run later or on repeat",
     "vault": "the operator's stored secrets",
 }
 

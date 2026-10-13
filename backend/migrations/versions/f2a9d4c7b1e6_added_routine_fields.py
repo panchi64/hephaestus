@@ -1,0 +1,59 @@
+"""Added routine fields to scheduled tasks
+
+Revision ID: f2a9d4c7b1e6
+Revises: e8b3c6d2f4a1
+Create Date: 2026-10-13 12:00:00.000000
+
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+import sqlmodel
+
+
+# revision identifiers, used by Alembic.
+revision: str = "f2a9d4c7b1e6"
+down_revision: Union[str, Sequence[str], None] = "e8b3c6d2f4a1"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    with op.batch_alter_table("scheduled_tasks", schema=None) as batch_op:
+        batch_op.add_column(
+            sa.Column("approved", sa.Boolean(), nullable=False, server_default=sa.true())
+        )
+        batch_op.add_column(
+            sa.Column("agent_name", sqlmodel.sql.sqltypes.AutoString(), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("conversation_id", sqlmodel.sql.sqltypes.AutoString(), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column(
+                "timezone",
+                sqlmodel.sql.sqltypes.AutoString(),
+                nullable=False,
+                server_default="UTC",
+            )
+        )
+        batch_op.create_index(
+            batch_op.f("ix_scheduled_tasks_approved"), ["approved"], unique=False
+        )
+        batch_op.create_index(
+            batch_op.f("ix_scheduled_tasks_conversation_id"), ["conversation_id"], unique=False
+        )
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    with op.batch_alter_table("scheduled_tasks", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_scheduled_tasks_conversation_id"))
+        batch_op.drop_index(batch_op.f("ix_scheduled_tasks_approved"))
+        batch_op.drop_column("timezone")
+        batch_op.drop_column("conversation_id")
+        batch_op.drop_column("agent_name")
+        batch_op.drop_column("approved")

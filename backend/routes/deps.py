@@ -49,6 +49,7 @@ from services.projects import ProjectStore, WorktreeManager, visible_project_ids
 from services.projects.tree import worktree_root
 from services.registry import ModelRegistry
 from services.reindex import EmbeddingReindexer
+from services.routines import RoutineStore, ScheduleNaturalLanguage
 from services.sandbox import SandboxSessionManager
 from services.scheduler import SchedulerService
 from services.search import SearchService
@@ -432,6 +433,14 @@ def db_engine(request: Request) -> Engine:
 
 def scheduler(request: Request) -> SchedulerService:
     return request.app.state.scheduler
+
+
+def routines(request: Request) -> RoutineStore:
+    return request.app.state.routines
+
+
+def schedule_parser(request: Request) -> ScheduleNaturalLanguage:
+    return request.app.state.schedule_parser
 
 
 def mail(request: Request) -> MailService:

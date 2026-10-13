@@ -156,6 +156,10 @@ _PINNED_CATALOG = {
     "project_list",
     "project_open_worktree",
     "repo_inventory_agent_context",
+    "routines_delete",
+    "routines_list",
+    "routines_run_now",
+    "routines_write",
     "shell_check_command",
     "shell_run_command",
     "shell_start_command",
@@ -196,6 +200,8 @@ async def test_booted_app_assembles_the_same_catalog():
             "shell_start_command",
             "agents_spawn",
             "plugins_test",
+            "routines_write",
+            "routines_delete",
         }
         # ...and every one of them is a real, registered tool, so the operator's scope
         # list can actually offer it.

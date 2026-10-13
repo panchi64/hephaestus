@@ -88,8 +88,10 @@ CATALOG_CEILING_CHARS = 48_000
 #: cost from every turn to the turns that want it; it does not make the group free, and a
 #: ceiling that only watched the fresh request would let the dormant half grow unwatched.
 #: Raised from 50k, then from 60k, then from 72k, alongside the ceiling above and for the
-#: same reasons; then from 82k for the dormant `agents` group (agents writing agents).
-CORPUS_CEILING_CHARS = 84_000
+#: same reasons; then from 82k for the dormant `agents` group (agents writing agents), and
+#: from 84k for the dormant `routines` group, whose schedule is one compact string rather
+#: than a nested object for that reason.
+CORPUS_CEILING_CHARS = 88_000
 
 
 class _AllOnline:

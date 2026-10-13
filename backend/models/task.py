@@ -1,7 +1,8 @@
-"""Scheduled tasks — the operator's recurring/one-off/webhook automations.
+"""Routines — the operator's recurring/one-off/webhook automations, stored as scheduled
+tasks.
 
-A `ScheduledTask` is either an **agent** task (its prompt drives an ordinary Run,
-in a fresh conversation created for that execution) or a **reminder** (its prompt is
+A `ScheduledTask` is either an **agent** task (its prompt drives an ordinary Run by the
+routine's agent, appended to the routine's one thread) or a **reminder** (its prompt is
 delivered verbatim as a notification body — no AI phrasing). At-rest posture mirrors
 notifications: `title`/`prompt` are the operator's own content, so they are encrypted
 under the vault; schedule shape, output channel, and timestamps are structural
@@ -100,6 +101,16 @@ class ScheduledTask(SQLModel, table=True):
     pre_authorized: list[str] = Field(sa_column=Column(JSON, nullable=False, default=list))
 
     enabled: bool = Field(default=True, index=True)
+    # False for a routine an agent drafted: it never fires until the operator approves it.
+    approved: bool = Field(default=True, index=True)
+
+    # The agent each fire runs (`services/agents`), by name. Null is the default agent.
+    agent_name: str | None = None
+    # The routine's one thread: every fire appends a turn to it. Null until the first fire,
+    # and again once the operator deletes the thread.
+    conversation_id: str | None = Field(default=None, index=True)
+    # The IANA zone a cron schedule's fields are read in.
+    timezone: str = Field(default="UTC")
 
     # Nullable: only a `webhook`-type task ever has one. See the module docstring for
     # why it is stored in the clear rather than vault-sealed.

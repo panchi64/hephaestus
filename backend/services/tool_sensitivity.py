@@ -145,6 +145,7 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "project_active",
             "project_list",
             "repo_inventory_agent_context",
+            "routines_list",
             # Reading the status and output of a command someone else started. Starting
             # and stopping one are execution; asking what it printed is not.
             "shell_check_command",
@@ -189,6 +190,10 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "agents_stop",
             # A plugin an agent writes is a draft: it runs only through `plugins_test`.
             "plugins_write",
+            # A routine an agent drafts never fires until the operator approves it;
+            # rewriting or deleting an approved one is gated on the tool itself.
+            "routines_delete",
+            "routines_write",
             "skills_create",
             "skills_edit",
             "tasks_update_statuses",
@@ -222,6 +227,8 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # A message can point another agent at any work its own catalog covers, and is
             # acted on after the sending turn has ended — the same statement as the spawn.
             "agents_message",
+            # Starts a routine's agent turn, with its pre-authorizations, after this one.
+            "routines_run_now",
         }
     ),
     Sensitivity.EXTERNAL_EFFECT: frozenset(

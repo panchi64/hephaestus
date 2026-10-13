@@ -1,10 +1,11 @@
-"""The scheduled-tasks feature (`TASK-1..6`) — the scheduler and how a task fires.
+"""Routines (`TASK-1..6`) — the scheduler, how a routine fires, and the agent's
+`routines_*` tools.
 
-An agent task executes as an ordinary Run in a fresh conversation, reusing the chat
-turn's own composition so there is no forked run-submission path; a reminder task
-fires its prompt verbatim as a notification. The executor learns a Run's outcome
-through a waiter future resolved synchronously at the terminal transition — the
-same dispatch everything else observes a run's outcome through.
+An agent routine executes as an ordinary Run appended to the routine's own thread, by the
+routine's agent, reusing the chat turn's own composition so there is no forked
+run-submission path; a reminder fires its prompt verbatim as a notification. The executor
+learns a Run's outcome through a waiter future resolved synchronously at the terminal
+transition — the same dispatch everything else observes a run's outcome through.
 """
 
 from __future__ import annotations
@@ -21,13 +22,18 @@ from harness.manifest import (
 )
 from models.task import TaskOutcome, TaskOutput
 from routes import tasks as tasks_routes
-from routes.chat import compose_turn, resolve_turn_models
+from routes.chat import ConversationBusyError, compose_turn, resolve_turn_models
+from routes.deps import OPERATOR_ID
 from runs import Run, RunRegistry, RunStatus
+from services.agents import AgentCatalog, lower_of
+from services.agents.thread import DELEGATION_TOOLS, may_delegate, resolve_thread_agent
 from services.approval_grants import ONCE_ONLY_TOOLS, ApprovalGrantStore
 from services.conversations import ConversationStore
 from services.notifications import NotificationService
 from services.offline import OfflineModeService
+from services.projects import ProjectStore, WorktreeManager
 from services.registry import ModelRegistry
+from services.routines import RoutineStore, ScheduleNaturalLanguage
 from services.scheduler import ScheduledTaskView, SchedulerService, TaskRunResult
 from services.settings_store import (
     SettingsStore,
@@ -36,6 +42,8 @@ from services.settings_store import (
 )
 from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
+from tools.routines import GATED_TOOLS as ROUTINES_GATED
+from tools.routines import routines_toolset
 
 # A scheduled task's outcome summary is a short factual line, not a transcript —
 # just enough for the operator to judge at a glance whether to open the conversation.
@@ -61,6 +69,8 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     notifications = services.get(NotificationService)
     settings_store = services.get(SettingsStore)
     offline = services.get(OfflineModeService)
+    agents = services.get(AgentCatalog)
+    routines = RoutineStore(ctx.engine, ctx.vault, agents)
 
     # Keyed by run id — the executor awaits one of these futures to learn when its
     # Run reaches a genuinely terminal state, which may be long after an approval
@@ -92,111 +102,117 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             return None
         return None
 
-    async def _task_executor(view: ScheduledTaskView) -> TaskRunResult:
-        """An agent task's fire — an ordinary Run in a fresh conversation (titled from
-        the task), seeded with the task's own pre-authorization as a conversation
-        grant (`AE-3.5`) so its unattended sensitive actions within that scope don't
-        pause; anything outside it still parks + notifies exactly like an
-        interactive run. Reuses `routes.chat`'s own turn composition
-        (`resolve_turn_models`/`compose_turn`) so a task's run is submitted through
-        the identical path a live chat turn is — no forked run-submission logic.
-
-        **These seeds are whole-tool grants, including on a tool that runs commands** —
-        the one place `services/approval_grants.py` still writes the empty scope for one
-        of those, and deliberately. A grant recorded from an approval names the command
-        the agent asked to run; here there is no such call yet, only a tool name the
-        operator wrote on the task itself ahead of every turn it will ever take. Scoping
-        it to a command nobody has proposed is not possible, and refusing the seed would
-        leave a task parked forever on exactly the tool it was configured to use.
-
-        **They are not the operator's wider pick, though they share its shape.** A seed is
-        left undecisive, so at the level that reviews it informs the review exactly as it
-        always has rather than answering for it. The width that answers is one a person
-        chose on a card, in front of the act it would cover; nobody is in front of an
-        unattended run, and the thread one opens is an ordinary conversation the operator
-        can reopen later — so a seed promoted by its shape would go on authorizing past the
-        single execution it was written for."""
-        models = await resolve_turn_models(registry, None, None, owner_id=view.owner_id)
+    async def _thread_for(view: ScheduledTaskView) -> str:
+        """The routine's one thread, opened on its first fire and again if the operator
+        deleted it. The routine's agent is written onto it each time, so an edit to the
+        routine takes effect on its next fire."""
+        conversation_id = view.conversation_id
+        if conversation_id and await conversations.exists(conversation_id, view.owner_id):
+            await conversations.set_agent_name(conversation_id, view.agent_name)
+            return conversation_id
         conversation_id = await conversations.create_conversation(
-            view.owner_id, title=view.title
+            view.owner_id, title=view.title, agent_name=view.agent_name
         )
-        for tool_name in view.pre_authorized:
-            # A once-only tool is once-only here too. This is the other door onto the same
-            # table, and the unattended run is exactly where a standing grant on a per-call
-            # gate would do its damage: nobody is reading what it covers.
-            if tool_name in ONCE_ONLY_TOOLS:
-                continue
+        await routines.attach_thread(view.id, conversation_id)
+        return conversation_id
+
+    async def _seed_grants(view: ScheduledTaskView, conversation_id: str) -> None:
+        """Seed the routine's pre-authorizations (`AE-3.5`) onto its thread, and drop the
+        seeds of ones it no longer carries.
+
+        **These seeds are whole-tool grants, including on a tool that runs commands.** There
+        is no proposed command to scope one to, only a tool name the operator approved on
+        the routine. A seed is left undecisive: it informs the review at the level that
+        reviews rather than answering for it, since nobody is in front of an unattended run.
+        """
+        wanted = {name for name in view.pre_authorized if name not in ONCE_ONLY_TOOLS}
+        for grant in await grants.list(view.owner_id, conversation_id):
+            stale = grant.tool_name not in wanted
+            if stale and not grant.command_prefix and not grant.decisive:
+                await grants.revoke(view.owner_id, conversation_id, grant.tool_name)
+        for tool_name in wanted:
             await grants.grant(view.owner_id, conversation_id, tool_name)
 
+    async def _task_executor(view: ScheduledTaskView) -> TaskRunResult:
+        """A routine's fire: a turn appended to the routine's own thread, run by its agent
+        through the same composition an interactive turn uses (`compose_turn`), in the
+        background lane. A thread already busy with a turn — the operator talking in it —
+        skips this fire rather than queueing behind them."""
+        conversation_id = await _thread_for(view)
+        await _seed_grants(view, conversation_id)
+        applied = await resolve_thread_agent(
+            agents,
+            view.owner_id,
+            await conversations.binding(conversation_id),
+            conversation_id,
+            projects=services.get_optional(ProjectStore),
+            worktrees=services.get_optional(WorktreeManager),
+        )
+        models = await resolve_turn_models(
+            registry, applied.agent.endpoint_id, applied.agent.model, owner_id=view.owner_id
+        )
+        disabled = await effective_disabled_tools(
+            settings_store,
+            offline,
+            view.owner_id,
+            vision=models[4],
+            # Nobody is watching, so tools that stop and wait for someone are withheld, and
+            # so are features never set up.
+            kind="task",
+            availability=ctx.category_availability,
+            caps=ctx.capabilities,
+        )
+        if not may_delegate(applied.agent, 0, ctx.settings.agent_max_depth):
+            disabled |= DELEGATION_TOOLS
+        request_limit = lower_of(
+            applied.agent.request_limit,
+            await get_agent_request_limit_override(settings_store, view.owner_id),
+        )
+        thresholds = await get_context_thresholds(settings_store, view.owner_id)
+        timeouts = {}
+        if applied.agent.wall_clock_timeout_s is not None:
+            timeouts["wall_clock_timeout_s"] = applied.agent.wall_clock_timeout_s
+        auto_compact = await resolve_auto_compact_policy(settings_store, view.owner_id)
+
+        # The registry's own check-and-claim, released at once: with no await before the
+        # submit, nothing can take the thread in between.
+        try:
+            runs.claim(conversation_id, view.owner_id)
+        except ConversationBusyError:
+            return TaskRunResult(
+                outcome=TaskOutcome.SKIPPED.value,
+                conversation_id=conversation_id,
+                summary="Its thread was busy with another turn.",
+            )
+        runs.release(conversation_id, view.owner_id)
         waiter: asyncio.Future[Run] = asyncio.get_running_loop().create_future()
         created = compose_turn(
             prompt=view.prompt,
             conversation_id=conversation_id,
             models=models,
-            # An unattended task reaches the same capabilities, tool catalog, and
-            # dynamic instructions an interactive turn does — the app's one assembled
-            # set of each, so the two can never diverge.
             capabilities=ctx.capabilities,
             categories=ctx.tool_categories,
             dormant=DormantCategory.summaries(ctx.dormant_categories),
-            instruction_providers=ctx.instruction_providers,
+            instruction_providers=(*ctx.instruction_providers, *applied.instructions),
             prompt_context_providers=ctx.prompt_context_providers,
             registry=runs,
             store=conversations,
             uploads=services.get(UploadStore),
-            # An unattended task's turn honours the operator's disabled set exactly as an
-            # interactive one does — a tool switched off is off everywhere, not just where
-            # someone is watching.
-            disabled_tools=await effective_disabled_tools(
-                settings_store,
-                offline,
-                view.owner_id,
-                # `models[4]` is the resolved main model's vision fact, the same one
-                # `compose_turn` hands the engine for attachments. It is known here, so
-                # the permissive default has no business standing in for it: a tool that
-                # answers with an image is withheld from a model that cannot read one,
-                # whether or not anyone is watching the turn.
-                vision=models[4],
-                # And the reason the operator is not asked anything: this is the lane
-                # whose whole premise is that nobody is watching, so a tool that would
-                # suspend the turn on them is withheld rather than left to hang.
-                kind="task",
-                # And the same for a feature the operator never set up: nobody is here
-                # to connect a mailbox mid-run, so offering `mail_*` to a task that will
-                # only be told there is no account is worse here than anywhere.
-                availability=ctx.category_availability,
-                caps=ctx.capabilities,
-            ),
-            # Same reasoning for the per-turn model-request ceiling: an unattended task
-            # runs under the operator's own setting when they set one, and otherwise
-            # under the config default.
-            request_limit=await get_agent_request_limit_override(
-                settings_store, view.owner_id
-            ),
-            # And the context gauge's boundaries, so a task's thread reddens at the same
-            # fullness an interactive one does — the readout is read in the same UI.
-            context_thresholds=await get_context_thresholds(settings_store, view.owner_id),
-            # And the same for conversation compaction. Inert today — each fire starts a
-            # fresh conversation, so there is never history to fold — but passing the
-            # operator's policy rather than letting it default keeps the unattended path
-            # from quietly disagreeing with the interactive one the day a task's thread
-            # does carry history.
-            auto_compact=await resolve_auto_compact_policy(settings_store, view.owner_id),
+            disabled_tools=disabled | applied.withheld,
+            binding=applied.binding,
+            request_limit=request_limit,
+            context_thresholds=thresholds,
+            # Each fire appends to one thread, so compaction is what keeps it bounded.
+            auto_compact=auto_compact,
             owner_id=view.owner_id,
-            # Unattended by definition, so it queues in the background lane and can never
-            # hold a slot the operator's own next turn is waiting for (`runs/lanes.py`).
+            # Background lane: it never holds a slot the operator's next turn waits for.
             kind="task",
+            **timeouts,
         )
-        # Registered before the very first `await` below — the newly submitted Run's
-        # task hasn't had a chance to run yet (`RunRegistry.submit` only schedules
-        # it), so there is no window for it to reach terminal and fire the terminal
-        # dispatch before this waiter exists.
+        # Registered before the first await below, so the run cannot reach terminal first.
         run_waiters[created.run_id] = waiter
-        # Deliberately waits for a *terminal* outcome, not merely for the turn's task to
-        # end: a fire that parks for approval is unfinished, and its `TaskRun` row stays
-        # open until the operator decides. What keeps that from stranding the process at
-        # shutdown is `RunRegistry.shutdown` — registered to stop before this one, it
-        # cancels every live run, which fires the terminal hook that resolves this waiter.
+        # Waits for a terminal outcome: a fire parked for approval stays open until the
+        # operator decides, and shutdown cancels live runs, which resolves this.
         run = await waiter
 
         outcome = _TASK_OUTCOME_BY_RUN_STATUS.get(run.status, TaskOutcome.ERROR.value)
@@ -240,9 +256,21 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         notify=_task_notify,
     )
     await ctx.lifecycle.start("scheduler", start=scheduler.start, stop=scheduler.stop)
+
+    async def _resolve_model():
+        resolved = await registry.resolve_background(owner_id=OPERATOR_ID)
+        return resolved.model, resolved.reasoning_off
+
+    parser = ScheduleNaturalLanguage(resolve_model=_resolve_model)
     return FeatureRuntime(
-        services=(scheduler,),
-        state={"scheduler": scheduler, "task_run_waiters": run_waiters},
+        services=(scheduler, routines, parser),
+        capabilities=(scheduler, routines),
+        state={
+            "scheduler": scheduler,
+            "routines": routines,
+            "schedule_parser": parser,
+            "task_run_waiters": run_waiters,
+        },
         run_terminal_sync=(_resolve_waiter,),
     )
 
@@ -252,6 +280,7 @@ MANIFEST = FeatureManifest(
     # The executor composes the full interactive capability set, so the features
     # providing it must have built (and their services registered) first.
     after=(
+        "agents",
         "calendar",
         "corpus",
         "external",
@@ -265,6 +294,15 @@ MANIFEST = FeatureManifest(
         "web",
     ),
     routers=(tasks_routes.router,),
+    toolsets=(("routines", routines_toolset),),
+    dormant=(
+        DormantCategory(
+            "routines",
+            "schedule work to run later or on repeat — drafting routines, listing them, "
+            "running one now",
+        ),
+    ),
+    gated_tools=ROUTINES_GATED,
     api_scopes=(ScopeClaim("tasks", ("/tasks",)),),
     # The inbound webhook trigger is auth-exempt: the per-task unguessable token in
     # the path is the credential, so an external caller can fire a task without the

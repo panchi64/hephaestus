@@ -91,6 +91,10 @@ class PluginValidationError(FieldValidationError):
     """A plugin's files are not a usable plugin; ``field`` names the part to fix."""
 
 
+class RoutineValidationError(FieldValidationError):
+    """A routine's schedule, agent or prompt is not usable; ``field`` names the part to fix."""
+
+
 class CommandValidationError(FieldValidationError):
     """A workflow the operator wrote is not usable as a command — a name that could not be
     typed, a missing body, a field over its cap."""
