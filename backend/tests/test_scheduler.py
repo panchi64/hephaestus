@@ -85,8 +85,10 @@ def _list_runs(engine, task_id: str) -> list[TaskRun]:
         return list(session.exec(select(TaskRun).where(TaskRun.task_id == task_id)).all())
 
 
-async def _settled_runs(engine, task_id: str, *, timeout: float = 5.0) -> list[TaskRun]:
-    """``task_id``'s runs, once every one of them has finished.
+async def _settled_runs(
+    engine, task_id: str, *, count: int = 1, timeout: float = 5.0
+) -> list[TaskRun]:
+    """``task_id``'s runs, once at least ``count`` exist and every one has finished.
 
     **Wait for the condition, not for a plausible number of milliseconds.** `fire_now`
     returns as soon as the `TaskRun` row exists; the executor and the bookkeeping that
@@ -105,7 +107,7 @@ async def _settled_runs(engine, task_id: str, *, timeout: float = 5.0) -> list[T
     deadline = loop.time() + timeout
     while True:
         runs = _list_runs(engine, task_id)
-        if runs and all(run.outcome is not None for run in runs):
+        if len(runs) >= count and all(run.outcome is not None for run in runs):
             return runs
         if loop.time() >= deadline:
             raise AssertionError(
@@ -253,10 +255,9 @@ async def test_executor_exception_records_error_outcome_without_killing_the_loop
 
 async def test_advance_failure_releases_the_task_so_the_next_due_fire_runs(tmp_path):
     """A DB error in the post-finalize schedule advance must not strand the task id
-    in `_running` — a phantom in-flight entry would turn every future due fire into
-    a `skipped` row until restart. The failed advance leaves `next_run_at` at its
-    stale past value, so the very next tick re-detects the task as due and the real
-    fire (not a skip) runs."""
+    in `_running` — a phantom in-flight entry would queue every future due fire
+    behind a run that never ends. The failed advance leaves `next_run_at` at its
+    stale past value, so the very next tick re-detects the task as due and fires it."""
     engine = _engine()
     vault = await _vault(tmp_path)
     second_fire = asyncio.Event()
@@ -275,13 +276,12 @@ async def test_advance_failure_releases_the_task_so_the_next_due_fire_runs(tmp_p
         every_seconds=3600,
         next_run_at=utcnow(),
     )
-    scheduler = SchedulerService(engine, vault, executor, _never_notify, skip_recheck_s=0.05)
+    scheduler = SchedulerService(engine, vault, executor, _never_notify)
     real_advance = scheduler._advance
     failed = False
 
     async def flaky_advance(task_id: str, **kwargs) -> None:
-        # Only the fire path passes `last_run_at` — the skip path's own advance runs
-        # inside the tick loop itself, so failing it here would test the wrong thing.
+        # Only the fire path passes `last_run_at`.
         nonlocal failed
         if not failed and kwargs.get("last_run_at") is not None:
             failed = True
@@ -296,7 +296,7 @@ async def test_advance_failure_releases_the_task_so_the_next_due_fire_runs(tmp_p
         live = scheduler._running.get(task_id)
         assert live is None or live.done()  # no phantom in-flight entry
         completed = [r for r in _list_runs(engine, task_id) if r.outcome == TaskOutcome.OK.value]
-        assert len(completed) == 2  # the re-detected fire ran for real, not skipped
+        assert len(completed) == 2  # the re-detected fire ran
         assert all(r.finished_at is not None for r in completed)  # both rows finalized
     finally:
         await scheduler.stop()
@@ -501,17 +501,24 @@ async def test_permanently_locked_db_gives_up_after_bounded_retries(tmp_path, mo
 # --- non-overlap ---------------------------------------------------------------
 
 
-async def test_still_live_execution_is_skipped_not_run_twice(tmp_path):
-    engine = _engine()
-    vault = await _vault(tmp_path)
+def _slow():
     executing = asyncio.Event()
     release = asyncio.Event()
+    calls: list[str] = []
 
-    async def slow_executor(view: ScheduledTaskView) -> TaskRunResult:
+    async def executor(view: ScheduledTaskView) -> TaskRunResult:
+        calls.append(view.id)
         executing.set()
         await release.wait()
         return TaskRunResult(outcome=TaskOutcome.OK.value)
 
+    return executor, executing, release, calls
+
+
+async def test_a_fire_due_while_the_last_is_live_runs_after_it(tmp_path):
+    engine = _engine()
+    vault = await _vault(tmp_path)
+    executor, executing, release, calls = _slow()
     task_id = _add_task(
         engine,
         vault,
@@ -519,25 +526,47 @@ async def test_still_live_execution_is_skipped_not_run_twice(tmp_path):
         every_seconds=3600,
         next_run_at=utcnow() - timedelta(milliseconds=10),
     )
-    scheduler = SchedulerService(engine, vault, slow_executor, _never_notify, skip_recheck_s=0.05)
+    scheduler = SchedulerService(engine, vault, executor, _never_notify)
     await scheduler.start()
     try:
         await asyncio.wait_for(executing.wait(), timeout=2.0)
-        await asyncio.sleep(0.2)  # let the loop re-tick a few times while still busy
-
-        runs = _list_runs(engine, task_id)
-        in_flight = [r for r in runs if r.finished_at is None]
-        skipped = [r for r in runs if r.outcome == TaskOutcome.SKIPPED.value]
-        assert len(in_flight) == 1  # exactly one execution actually running
-        assert len(skipped) >= 1  # at least one overlap attempt recorded, not silently dropped
+        # The next occurrence comes due while the first is still running.
+        await scheduler._advance(task_id, next_run_at=utcnow() - timedelta(milliseconds=10))
+        scheduler.wake()
+        await asyncio.sleep(0.2)
+        assert len(calls) == 1  # never two at once
+        assert task_id in scheduler._queued
 
         release.set()
-        await asyncio.sleep(0.2)
-        runs = _list_runs(engine, task_id)
-        completed = [r for r in runs if r.outcome == TaskOutcome.OK.value]
-        assert len(completed) == 1
+        runs = await _settled_runs(engine, task_id, count=2)
+        assert [r.outcome for r in runs] == ["ok", "ok"]
+        assert len(calls) == 2
     finally:
         await scheduler.stop()
+
+
+async def test_a_queued_fire_stays_due_across_a_restart(tmp_path):
+    engine = _engine()
+    vault = await _vault(tmp_path)
+    executor, executing, release, _calls = _slow()
+    task_id = _add_task(
+        engine,
+        vault,
+        schedule_type=ScheduleType.INTERVAL.value,
+        every_seconds=3600,
+        next_run_at=utcnow() - timedelta(milliseconds=10),
+    )
+    scheduler = SchedulerService(engine, vault, executor, _never_notify)
+    await scheduler.start()
+    await asyncio.wait_for(executing.wait(), timeout=2.0)
+    overdue = utcnow() - timedelta(milliseconds=10)
+    await scheduler._advance(task_id, next_run_at=overdue)
+    scheduler.wake()
+    await asyncio.sleep(0.2)
+    assert task_id in scheduler._queued
+    assert as_utc(_get_task(engine, task_id).next_run_at) == overdue
+    release.set()
+    await scheduler.stop()
 
 
 # --- lock-awareness --------------------------------------------------------------
@@ -726,39 +755,53 @@ async def test_fire_now_refuses_a_disabled_task(tmp_path):
 
 
 async def test_fire_now_shares_non_overlap_with_the_tick_loop(tmp_path):
-    """A manual `fire_now` and the tick loop's own due-detection must never double-run
-    the same task — both funnel through `_dispatch`'s single `_running` check."""
+    """A manual `fire_now` and the tick loop's own due-detection never run the same task
+    twice at once — both go through `_dispatch` — and the manual fire is queued, not
+    dropped."""
     engine = _engine()
     vault = await _vault(tmp_path)
-    executing = asyncio.Event()
-    release = asyncio.Event()
-
-    async def slow_executor(view: ScheduledTaskView) -> TaskRunResult:
-        executing.set()
-        await release.wait()
-        return TaskRunResult(outcome=TaskOutcome.OK.value)
-
+    executor, executing, release, calls = _slow()
     task_id = _add_task(
         engine,
         vault,
         schedule_type=ScheduleType.INTERVAL.value,
         every_seconds=3600,
-        next_run_at=utcnow() - timedelta(milliseconds=10),  # already due for the tick loop
+        next_run_at=utcnow() - timedelta(milliseconds=10),
     )
-    scheduler = SchedulerService(engine, vault, slow_executor, _never_notify)
+    scheduler = SchedulerService(engine, vault, executor, _never_notify)
     await scheduler.start()
     try:
         await asyncio.wait_for(executing.wait(), timeout=2.0)
-        # The tick loop's own fire is already live — a manual fire_now right now must
-        # skip, not start a second concurrent execution.
-        task_run_id = await scheduler.fire_now(task_id)
-        assert task_run_id is not None
-        runs = {r.id: r for r in _list_runs(engine, task_id)}
-        assert runs[task_run_id].outcome == TaskOutcome.SKIPPED.value
+        queued = await scheduler.fire_now(task_id)
+        assert queued == await scheduler.fire_now(task_id)  # one waits, however many ask
+        assert len(calls) == 1
 
         release.set()
-        await asyncio.sleep(0.2)
-        completed = [r for r in _list_runs(engine, task_id) if r.outcome == TaskOutcome.OK.value]
-        assert len(completed) == 1
+        runs = await _settled_runs(engine, task_id, count=2)
+        assert queued in {r.id for r in runs}
+        assert len(calls) == 2
+    finally:
+        await scheduler.stop()
+
+
+async def test_running_a_one_off_by_hand_keeps_its_scheduled_moment(tmp_path):
+    engine = _engine()
+    vault = await _vault(tmp_path)
+
+    async def executor(view: ScheduledTaskView) -> TaskRunResult:
+        return TaskRunResult(outcome=TaskOutcome.OK.value)
+
+    later = utcnow() + timedelta(days=7)
+    task_id = _add_task(
+        engine, vault, schedule_type=ScheduleType.ONCE.value, run_at=later, next_run_at=later
+    )
+    scheduler = SchedulerService(engine, vault, executor, _never_notify)
+    await scheduler.start()
+    try:
+        await scheduler.fire_now(task_id)
+        await _settled_runs(engine, task_id)
+        task = _get_task(engine, task_id)
+        assert task.enabled and as_utc(task.next_run_at) == later
+        assert task.last_run_at is not None
     finally:
         await scheduler.stop()

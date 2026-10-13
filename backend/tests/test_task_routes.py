@@ -176,9 +176,7 @@ async def test_webhook_schedule_has_no_next_run_and_gets_a_url():
 async def test_run_now_creates_conversation_run_and_seeds_grants(monkeypatch):
     patch_model_resolution(monkeypatch, output_text="All set, nothing else to do.")
     async with client_app() as (client, app):
-        created = await _create_task(
-            client, pre_authorized=["platform_search", "agents_write"]
-        )
+        created = await _create_task(client, pre_authorized=["platform_search", "agents_write"])
         task_id = created["id"]
 
         run_now = await client.post(f"/tasks/{task_id}/run_now")
@@ -225,48 +223,43 @@ async def test_a_fire_drops_a_once_only_pre_authorization(monkeypatch):
         assert {g.tool_name for g in granted} == {"platform_search"}
 
 
-async def test_run_now_skips_when_previous_execution_still_live():
+async def test_run_now_queues_behind_a_still_live_execution():
     async with client_app() as (client, app):
         created = await _create_task(client)
         task_id = created["id"]
 
         started = asyncio.Event()
         release = asyncio.Event()
+        calls = []
 
         async def slow_executor(view):
+            calls.append(view.id)
             started.set()
             await release.wait()
             return TaskRunResult(outcome="ok")
 
         app.state.scheduler._executor = slow_executor
-        try:
-            first = await client.post(f"/tasks/{task_id}/run_now")
-            assert first.status_code == 202
-            await asyncio.wait_for(started.wait(), timeout=2.0)
+        first = await client.post(f"/tasks/{task_id}/run_now")
+        await asyncio.wait_for(started.wait(), timeout=2.0)
+        second = await client.post(f"/tasks/{task_id}/run_now")
+        assert second.status_code == 202
+        first_id, second_id = first.json()["taskRunId"], second.json()["taskRunId"]
+        assert first_id != second_id
+        assert len(calls) == 1
 
-            second = await client.post(f"/tasks/{task_id}/run_now")
-            assert second.status_code == 202
-            first_id, second_id = first.json()["taskRunId"], second.json()["taskRunId"]
-            assert first_id != second_id
-
-            items = (await client.get(f"/tasks/{task_id}/runs")).json()["items"]
-            by_id = {r["id"]: r for r in items}
-            assert by_id[second_id]["outcome"] == "skipped"
-            assert by_id[second_id]["finishedAt"] is not None
-            assert by_id[first_id]["finishedAt"] is None  # still in flight
-        finally:
-            release.set()
-            await asyncio.wait_for(
-                _wait_finished(client, task_id, first.json()["taskRunId"]), timeout=2.0
-            )
+        release.set()
+        await asyncio.wait_for(_wait_finished(client, task_id, first_id), timeout=2.0)
+        row = await asyncio.wait_for(_wait_finished(client, task_id, second_id), timeout=2.0)
+        assert row["outcome"] == "ok"
+        assert len(calls) == 2
 
 
 async def _wait_finished(client, task_id, task_run_id):
     while True:
         items = (await client.get(f"/tasks/{task_id}/runs")).json()["items"]
-        row = next(r for r in items if r["id"] == task_run_id)
-        if row["finishedAt"] is not None:
-            return
+        row = next((r for r in items if r["id"] == task_run_id), None)
+        if row is not None and row["finishedAt"] is not None:
+            return row
         await asyncio.sleep(0.01)
 
 

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -318,22 +319,29 @@ async def test_a_schedule_phrase_is_read_without_saving_anything(monkeypatch):
         assert (await client.get("/tasks")).json()["items"] == []
 
 
-async def test_a_fire_skips_while_its_thread_is_busy(monkeypatch):
-    patch_model_resolution(monkeypatch)
+async def test_a_fire_waits_out_a_turn_in_its_thread_instead_of_skipping(monkeypatch):
+    patch_model_resolution(monkeypatch, output_text="Newsletter sent.")
     async with client_app() as (_client, app):
         routine = await app.state.routines.create(OWNER, _values(), approved=True)
         thread = await app.state.conversations.create_conversation(OWNER, title="brief")
         app.state.runs.claim(thread, OWNER)
-        result = await app.state.scheduler._executor(
-            ScheduledTaskView(
-                id=routine.id,
-                owner_id=OWNER,
-                kind="agent",
-                title=routine.title,
-                prompt=routine.prompt,
-                output="chat",
-                pre_authorized=[],
-                conversation_id=thread,
+        fire = asyncio.create_task(
+            app.state.scheduler._executor(
+                ScheduledTaskView(
+                    id=routine.id,
+                    owner_id=OWNER,
+                    kind="agent",
+                    title=routine.title,
+                    prompt=routine.prompt,
+                    output="chat",
+                    pre_authorized=[],
+                    conversation_id=thread,
+                )
             )
         )
-        assert (result.outcome, result.conversation_id) == ("skipped", thread)
+        await asyncio.sleep(0.5)
+        assert not fire.done()
+
+        app.state.runs.release(thread, OWNER)
+        result = await asyncio.wait_for(fire, timeout=5.0)
+        assert (result.outcome, result.conversation_id) == ("ok", thread)

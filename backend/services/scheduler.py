@@ -19,13 +19,13 @@ and immediately recomputes its schedule anchored on *now* (not on the stale
 timestamp) — so a task never floods a burst of missed fires, whether the gap was a
 locked vault, a restart, or just a slow executor.
 
-**Non-overlap** (`TASK-5`): the loop tracks each task's in-flight execution as an
-asyncio task in `_running`. A tick that finds a task's previous execution still
-live records a `TaskRun` with outcome `skipped` instead of starting a second one, and
-nudges that task's own schedule forward by a small poll floor rather than the
-task's real cadence — so a busy task doesn't get re-detected-as-due (and re-skipped)
-on every single loop iteration. The eventual real fire's own finalize overwrites that
-placeholder with the actual next occurrence, anchored on when it actually settled.
+**Non-overlap without dropping** (`TASK-5`): the loop tracks each task's in-flight
+execution as an asyncio task in `_running`. A fire that comes due while the previous one
+is still live is queued (`_queued`) and starts the moment that one settles; at most one
+waits per task, so a later occurrence arriving meanwhile is covered by the one already
+queued. While queued, the task's `next_run_at` stays due in the database and the loop
+leaves it out of its due-check in memory, so a restart before the queued fire starts
+still fires it.
 """
 
 from __future__ import annotations
@@ -52,10 +52,8 @@ from models.task import ScheduledTask, ScheduleType, TaskKind, TaskOutcome, Task
 
 logger = logging.getLogger(__name__)
 
-# How soon a still-busy task is re-checked after a skip — deliberately much shorter
-# than any real schedule, just enough to avoid a zero-wait busy loop while an
-# overlap-in-progress task's own execution is still running.
-_SKIP_RECHECK_S = 5.0
+# Passed as `next_run_at` to leave the stored value as it is.
+_KEEP = object()
 
 # The tick loop's own floor on how soon it re-checks after finding something already
 # due — see `_wait_for`.
@@ -110,7 +108,7 @@ class TaskRunResult:
     call for a reminder never produces one of these — the scheduler synthesizes an
     ``ok`` outcome itself unless ``notify`` raises."""
 
-    outcome: str  # TaskOutcome, excluding "skipped" (the scheduler's own verdict)
+    outcome: str  # TaskOutcome
     run_id: str | None = None
     conversation_id: str | None = None
     summary: str | None = None
@@ -159,18 +157,18 @@ class SchedulerService:
         vault: Vault,
         executor: TaskExecutor,
         notify: TaskNotifier,
-        *,
-        skip_recheck_s: float = _SKIP_RECHECK_S,
     ) -> None:
         self._engine = engine
         self._vault = vault
         self._executor = executor
         self._notify = notify
-        self._skip_recheck_s = skip_recheck_s
         self._running: dict[str, asyncio.Task] = {}
         # task id → the `TaskRun` id of a fire whose executor has already returned and
         # which is now only writing its own bookkeeping. See `_dispatch`.
         self._settling: dict[str, str] = {}
+        # task id → the `TaskRun` id reserved for the fire waiting on the live one, and
+        # whether every request it covers was on demand.
+        self._queued: dict[str, tuple[str, bool]] = {}
         self._wake = asyncio.Event()
         self._stopping = asyncio.Event()
         self._task: asyncio.Task | None = None
@@ -273,8 +271,8 @@ class SchedulerService:
         """Fire ``task_id`` immediately — the manual ``run_now``/webhook entry point —
         through the exact same non-overlap path the tick loop's own due-detection uses
         (`_dispatch`), so an on-demand fire and a real due-tick can never double-run the
-        same task. Returns the id of the `TaskRun` row this attempt recorded (fired or
-        skipped), or ``None`` if no such task exists (the caller — the route — already
+        same task. Returns the id of the `TaskRun` row this fire records (now, or once the
+        live one settles), or ``None`` if no such task exists (the caller — the route — already
         checked ownership; this is a defensive re-check against a delete racing the
         request) **or the task is disabled or awaiting approval** — mirrors the tick loop's
         own due-detection (`_load_due` filters on both), so an operator turning a task off actually
@@ -293,45 +291,58 @@ class SchedulerService:
             return None
         return await self._dispatch(task, utcnow(), on_demand=True)
 
-    # --- firing / skipping --------------------------------------------------------
+    # --- firing and queueing --------------------------------------------------------
 
     async def _dispatch(
         self, task: ScheduledTask, now: datetime, *, on_demand: bool = False
     ) -> str:
-        """Fire-or-skip ``task`` right now: a still-live previous execution (tracked in
-        `_running`) records a `skipped` `TaskRun` instead of running twice; otherwise
-        starts a tracked background execution. Returns the new `TaskRun`'s id either
-        way. Synchronous up to the point `_running` is set (no `await` in between) —
-        the same atomic check-and-claim discipline `RunRegistry.claim` uses — so the
-        tick loop's due-detection and an on-demand `fire_now` can never both slip past
-        the non-overlap check for the same task.
+        """Fire ``task`` now, or queue it behind its still-live previous execution.
+        Returns the id of the `TaskRun` that fire records. Synchronous up to the point
+        `_running` or `_queued` is set (no `await` in between) — the same atomic
+        check-and-claim discipline `RunRegistry.claim` uses — so the tick loop and an
+        on-demand `fire_now` can never both start the same task.
 
         **A settling fire is not an overlap.** Between the executor returning and
         `_fire`'s bookkeeping landing, the task is still claimed *and* still reads as due
         — its `next_run_at` is exactly what that bookkeeping is about to advance. A tick
-        that lands in that window is re-observing the occurrence that just ran, so
-        recording a `skipped` run for it would invent a second occurrence that never
-        existed. It returns the settling fire's own id instead. The window is normally
-        sub-millisecond and opens wide only when a write retries a locked database, which
-        is precisely when the phantom used to appear.
-
-        ``on_demand`` (a manual `run_now` or an inbound webhook) is the opposite case: it
-        is a real, externally-triggered request to fire *now*, so it still records the
-        `skipped` run that tells the operator their trigger didn't run anything.
+        that lands in that window is re-observing the occurrence that just ran, so it
+        returns the settling fire's own id. ``on_demand`` (a manual `run_now` or an
+        inbound webhook) is a real request to fire again, so it queues.
         """
         live = self._running.get(task.id)
         if live is not None and not live.done():
             settling = self._settling.get(task.id)
             if settling is not None and not on_demand:
                 return settling
-            return await self._skip(task, now)
+            run_row_id, queued_on_demand = self._queued.get(task.id, (new_id(), True))
+            self._queued[task.id] = (run_row_id, queued_on_demand and on_demand)
+            return run_row_id
         run_row_id = new_id()
         self._running[task.id] = asyncio.create_task(
-            self._fire(task, now, run_row_id), name=f"scheduled-task:{task.id}"
+            self._fire(task, now, run_row_id, on_demand=on_demand),
+            name=f"scheduled-task:{task.id}",
         )
         return run_row_id
 
-    async def _fire(self, task: ScheduledTask, fire_time: datetime, run_row_id: str) -> None:
+    async def _fire_queued(self, task_id: str, run_row_id: str, on_demand: bool) -> None:
+        """Start the fire that waited on the previous one, against the task as it is now:
+        one disabled, unapproved or deleted in the meantime does not run."""
+
+        def work(session: Session) -> ScheduledTask | None:
+            return session.get(ScheduledTask, task_id)
+
+        task = await in_session(self._engine, work)
+        if task is None or not task.enabled or not task.approved:
+            self._running.pop(task_id, None)
+            self.wake()
+            return
+        await self._fire(task, utcnow(), run_row_id, on_demand=on_demand)
+
+    async def _fire(
+        self, task: ScheduledTask, fire_time: datetime, run_row_id: str, *, on_demand: bool = False
+    ) -> None:
+        """Run ``task`` once and record it. An ``on_demand`` fire of a one-off task leaves
+        its scheduled moment in place: running it by hand is not that occurrence."""
         await self._insert_task_run(id=run_row_id, task_id=task.id, started_at=fire_time)
         try:
             try:
@@ -366,16 +377,16 @@ class SchedulerService:
                 # as due (its `next_run_at` was never advanced) and re-fires it.
                 return
             try:
-                if task.schedule_type == ScheduleType.ONCE:
+                if task.schedule_type == ScheduleType.ONCE and on_demand:
+                    await self._advance(task.id, last_run_at=finished, next_run_at=_KEEP)
+                elif task.schedule_type == ScheduleType.ONCE:
                     await self._advance(
                         task.id, last_run_at=finished, next_run_at=None, enabled=False
                     )
                 else:
                     # Anchored on when the execution actually *settled*, not when it
-                    # was launched — a slow run that outlives its own interval must
-                    # schedule its next occurrence from now, never from a moment
-                    # already further behind than a concurrent skip may have already
-                    # advanced past.
+                    # was launched — a slow run that outlives its own interval
+                    # schedules its next occurrence from now.
                     next_run = compute_next_run(
                         task.schedule_type,
                         anchor=finished,
@@ -394,42 +405,18 @@ class SchedulerService:
                 logger.exception("scheduler: task %s schedule advance failed", task.id)
         finally:
             # Always release the in-flight claim, whatever path got us here — a task
-            # id stranded in `_running` would turn every future due fire into a
-            # `skipped` row until restart. The wake is what re-arms the sleep after
-            # this task's schedule (maybe) changed; on the stopping-while-locked
-            # early return it's harmless — the loop is already exiting.
+            # id stranded in `_running` would queue every future due fire behind a
+            # run that never ends. A fire queued behind this one starts now. The wake
+            # re-arms the sleep after this task's schedule (maybe) changed; on the
+            # stopping-while-locked early return it's harmless.
             self._running.pop(task.id, None)
             self._settling.pop(task.id, None)
+            queued = self._queued.pop(task.id, None)
+            if queued is not None and not self._stopping.is_set():
+                self._running[task.id] = asyncio.create_task(
+                    self._fire_queued(task.id, *queued), name=f"scheduled-task:{task.id}"
+                )
             self.wake()
-
-    async def _skip(self, task: ScheduledTask, now: datetime) -> str:
-        run_row_id = new_id()
-        await self._insert_task_run(
-            id=run_row_id,
-            task_id=task.id,
-            started_at=now,
-            finished_at=now,
-            outcome=TaskOutcome.SKIPPED.value,
-        )
-        # A plain recompute would hand a `once` task back its own fixed (already-past)
-        # run_at forever — busy-looping until its one live execution finally settles.
-        # A short poll floor sidesteps that without needing to special-case interval/
-        # cron too (their own recompute already lands in the future off `now`).
-        next_run = now + timedelta(seconds=self._skip_recheck_s)
-        if task.schedule_type != ScheduleType.ONCE:
-            computed = compute_next_run(
-                task.schedule_type,
-                anchor=now,
-                run_at=task.run_at,
-                every_seconds=task.every_seconds,
-                cron_expr=task.cron_expr,
-                timezone=task.timezone,
-            )
-            if computed is not None and computed > next_run:
-                next_run = computed
-        await self._advance(task.id, next_run_at=next_run)
-        self.wake()
-        return run_row_id
 
     def _decrypt_view(self, task: ScheduledTask) -> ScheduledTaskView:
         return ScheduledTaskView(
@@ -466,14 +453,18 @@ class SchedulerService:
         # the nulls, which no reader of this expression can see — so it is re-checked
         # here rather than assumed.
         return [
-            row for row in rows if row.next_run_at is not None and as_utc(row.next_run_at) <= now
+            row
+            for row in rows
+            if row.next_run_at is not None
+            and as_utc(row.next_run_at) <= now
+            and row.id not in self._queued
         ]
 
     async def _earliest_next_run(self) -> datetime | None:
-        def work(session: Session) -> list[datetime | None]:
+        def work(session: Session) -> list[tuple[str, datetime | None]]:
             return list(
                 session.exec(
-                    select(ScheduledTask.next_run_at)
+                    select(ScheduledTask.id, ScheduledTask.next_run_at)
                     .where(ScheduledTask.enabled.is_(True))
                     .where(ScheduledTask.approved.is_(True))
                     .where(ScheduledTask.next_run_at.is_not(None))
@@ -481,7 +472,10 @@ class SchedulerService:
             )
 
         rows = await in_session(self._engine, work)
-        return min((as_utc(r) for r in rows if r is not None), default=None)
+        return min(
+            (as_utc(at) for task_id, at in rows if at is not None and task_id not in self._queued),
+            default=None,
+        )
 
     async def _insert_task_run(self, **kwargs) -> None:
         def work(session: Session) -> None:
@@ -592,7 +586,7 @@ class SchedulerService:
         self,
         task_id: str,
         *,
-        next_run_at: datetime | None,
+        next_run_at: datetime | None | object,
         last_run_at: datetime | None = None,
         enabled: bool | None = None,
     ) -> None:
@@ -613,7 +607,7 @@ class SchedulerService:
         self,
         task_id: str,
         *,
-        next_run_at: datetime | None,
+        next_run_at: datetime | None | object,
         last_run_at: datetime | None = None,
         enabled: bool | None = None,
     ) -> None:
@@ -621,7 +615,8 @@ class SchedulerService:
             row = session.get(ScheduledTask, task_id)
             if row is None:
                 return
-            row.next_run_at = next_run_at
+            if next_run_at is not _KEEP:
+                row.next_run_at = next_run_at
             if last_run_at is not None:
                 row.last_run_at = last_run_at
             if enabled is not None:

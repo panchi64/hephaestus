@@ -177,6 +177,10 @@ class RunRegistry:
             r.owner_id == owner_id and not r.is_terminal for r in self._runs.values()
         )
 
+    def held(self, conversation_id: str, owner_id: str) -> bool:
+        """Whether a request has claimed ``conversation_id`` and not yet let it go."""
+        return (owner_id, conversation_id) in self._claims
+
     # --- claim (pre-submit / pre-mutation mutual exclusion) --------------------
     def claim(self, conversation_id: str, owner_id: str) -> None:
         """Atomically check-and-claim ``conversation_id`` for a request that is about
