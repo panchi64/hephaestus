@@ -33,7 +33,7 @@ export interface ScheduledTask {
   /** False while an agent's draft waits on the operator — it never fires until
    *  approved. */
   approved: boolean;
-  /** The routine's one thread; every fire appends a turn to it. */
+  /** The thread its latest run opened. */
   conversationId: string | null;
   /** Next fire times as ISO instants; empty for drafts and webhooks. */
   upcoming: string[];

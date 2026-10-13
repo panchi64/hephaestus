@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from core.container import ServiceContainer
-from runs.lanes import lane_for
+from runs.lanes import is_attended
 from services.permissions import (
     ApprovalPolicy,
     permission_spec,
@@ -140,20 +140,20 @@ ATTENDED_ONLY_TOOLS = frozenset({"builtin_ask_user", "plan_enter", "plan_submit"
 def lane_disabled_tools(kind: str) -> frozenset[str]:
     """The tools a run nobody is watching should not be offered.
 
-    A scheduled task's whole point is that it runs while the operator is elsewhere
-    (``runs/lanes.py``), so a question asked from one has no one to answer it: the turn
-    parks, and — since a parked turn lives in the process, not the database — it waits
-    there until the operator happens to look or the process restarts. Withholding is the
-    honest form of that fact. The model is told the capability does not exist rather than
-    being offered one that silently strands the run, and it does what it would have done
-    anyway: decide, and say what it assumed.
+    A routine's whole point is that it runs while the operator is elsewhere, so a
+    question asked from one has no one to answer it: the turn parks, and — since a parked
+    turn lives in the process, not the database — it waits there until the operator
+    happens to look or the process restarts. Withholding is the honest form of that fact.
+    The model is told the capability does not exist rather than being offered one that
+    silently strands the run, and it does what it would have done anyway: decide, and say
+    what it assumed.
 
     ``linked`` is treated as unattended too. Those threads are the agent's own, opened
     from inside another conversation; they are visible, and the operator *could* answer
     one, but nothing says they are looking — and the cost of guessing wrong here is a run
     that hangs rather than one that proceeds.
     """
-    return frozenset() if lane_for(kind) == "interactive" else ATTENDED_ONLY_TOOLS
+    return frozenset() if is_attended(kind) else ATTENDED_ONLY_TOOLS
 
 
 def permission_disabled_tools(level: str) -> frozenset[str]:

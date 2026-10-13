@@ -20,9 +20,10 @@ hold are, by arithmetic, always there for a turn somebody is waiting on.
 
 **The lanes are about who is waiting, not what the run does.** All three kinds run the
 same chat orchestrator over the same tools; they differ in whether somebody is sitting in
-front of the answer. ``interactive`` is the operator's own turn and gets the widest lane.
-``background`` is unattended work — a scheduled task, whose whole point is that nobody is
-watching it. ``linked`` is a thread the agent opened for itself (a sub-agent, or a turn its report
+front of the answer. ``interactive`` is the operator's own turn and gets the widest lane;
+a routine's run shares it, because a routine runs on a schedule the operator set and is
+late the moment it waits behind other work. ``background`` is unattended work of any
+other kind. ``linked`` is a thread the agent opened for itself (a sub-agent, or a turn its report
 woke), which is foreground for the model and background for the operator,
 and gets its own lane so a burst of them can neither starve the operator nor be starved
 by the scheduler.
@@ -51,12 +52,12 @@ DEFAULT_LANE: Lane = "background"
 
 #: Run kind → lane. The keys are the vocabulary the chat composition path
 #: (``routes/chat.py``'s ``compose_turn``) submits under: ``chat`` is the operator's own
-#: turn, ``task`` a scheduled task's fire, ``linked`` a thread the agent opened from
+#: turn, ``task`` a routine's run, ``linked`` a thread the agent opened from
 #: inside another one. They name the turn's *provenance*, which is exactly what decides
 #: the lane — hence one mapping rather than a lane argument at each call site.
 LANE_BY_KIND: Mapping[str, Lane] = {
     "chat": "interactive",
-    "task": "background",
+    "task": "interactive",
     "linked": "linked",
     # A thread continuing itself: a sub-agent it launched has reported, and the turn that
     # launched one has long since ended. Foreground for the model and background for the
@@ -81,6 +82,16 @@ LANE_BY_KIND: Mapping[str, Lane] = {
 #: would have been enrolled as one silently, and the symptom is a fold quietly swallowing
 #: a message the operator sent while it ran.
 CHAT_TURN_KINDS: frozenset[str] = frozenset({"chat", "task", "linked", "wake"})
+
+
+#: The kinds someone is in front of: the operator's turn and their own fold. Separate from
+#: the lanes because a routine's run queues like interactive work yet has nobody to answer
+#: a question or approve a plan.
+ATTENDED_KINDS: frozenset[str] = frozenset({"chat", "compaction"})
+
+
+def is_attended(kind: str) -> bool:
+    return kind in ATTENDED_KINDS
 
 
 def lane_for(kind: str) -> Lane:

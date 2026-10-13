@@ -28,7 +28,7 @@ from services.routines import (
     parse_schedule,
     upcoming,
 )
-from services.scheduler import ScheduledTaskView, SchedulerService
+from services.scheduler import SchedulerService
 from tools.deps import RunDeps
 from tools.routines import routines_toolset
 
@@ -274,33 +274,32 @@ async def test_an_agents_draft_is_approved_by_the_operator():
         assert approved["approved"] and len(approved["upcoming"]) == 3
 
 
-async def test_every_fire_appends_to_the_routines_one_thread(monkeypatch):
+async def test_every_run_gets_a_fresh_thread_told_how_the_last_ended(monkeypatch):
     patch_model_resolution(monkeypatch, output_text="Inbox is quiet.")
     async with client_app() as (client, app):
         created = (await client.post("/tasks", json=_routine_body(agentName="researcher"))).json()
-        routine = await app.state.routines.get(OWNER, created["id"])
-        view = ScheduledTaskView(
-            id=routine.id,
-            owner_id=OWNER,
-            kind="agent",
-            title=routine.title,
-            prompt=routine.prompt,
-            output="chat",
-            pre_authorized=[],
-            agent_name="researcher",
-        )
-        first = await app.state.scheduler._executor(view)
-        thread = (await app.state.routines.get(OWNER, routine.id)).conversation_id
-        assert first.outcome == "ok" and first.conversation_id == thread
+        first = await _run_and_wait(client, created["id"])
+        second = await _run_and_wait(client, created["id"])
 
-        again = await app.state.scheduler._executor(
-            ScheduledTaskView(**{**view.__dict__, "conversation_id": thread})
-        )
-        assert again.conversation_id == thread
+        assert first["conversationId"] != second["conversationId"]
         store = app.state.conversations
-        turns = await store.messages_view(thread)
-        assert [t.role for t in turns].count("user") == 2
-        assert (await store.binding(thread)).agent_name == "researcher"
+        assert (await store.binding(second["conversationId"])).agent_name == "researcher"
+        turns = await store.messages_view(second["conversationId"])
+        [prompt] = [turn.content for turn in turns if turn.role == "user"]
+        assert "How the previous run ended" in prompt and "Inbox is quiet." in prompt
+        latest = (await client.get("/tasks")).json()["items"][0]["conversationId"]
+        assert latest == second["conversationId"]
+
+
+async def _run_and_wait(client, routine_id: str) -> dict:
+    run_id = (await client.post(f"/tasks/{routine_id}/run_now")).json()["taskRunId"]
+    for _ in range(500):
+        items = (await client.get(f"/tasks/{routine_id}/runs")).json()["items"]
+        row = next((r for r in items if r["id"] == run_id), None)
+        if row is not None and row["finishedAt"] is not None:
+            return row
+        await asyncio.sleep(0.01)
+    raise AssertionError("the run never finished")
 
 
 async def test_a_schedule_phrase_is_read_without_saving_anything(monkeypatch):
@@ -317,31 +316,3 @@ async def test_a_schedule_phrase_is_read_without_saving_anything(monkeypatch):
         assert body["schedule"]["cron"] == "0 9 * * 1-5"
         assert len(body["upcoming"]) == 3
         assert (await client.get("/tasks")).json()["items"] == []
-
-
-async def test_a_fire_waits_out_a_turn_in_its_thread_instead_of_skipping(monkeypatch):
-    patch_model_resolution(monkeypatch, output_text="Newsletter sent.")
-    async with client_app() as (_client, app):
-        routine = await app.state.routines.create(OWNER, _values(), approved=True)
-        thread = await app.state.conversations.create_conversation(OWNER, title="brief")
-        app.state.runs.claim(thread, OWNER)
-        fire = asyncio.create_task(
-            app.state.scheduler._executor(
-                ScheduledTaskView(
-                    id=routine.id,
-                    owner_id=OWNER,
-                    kind="agent",
-                    title=routine.title,
-                    prompt=routine.prompt,
-                    output="chat",
-                    pre_authorized=[],
-                    conversation_id=thread,
-                )
-            )
-        )
-        await asyncio.sleep(0.5)
-        assert not fire.done()
-
-        app.state.runs.release(thread, OWNER)
-        result = await asyncio.wait_for(fire, timeout=5.0)
-        assert (result.outcome, result.conversation_id) == ("ok", thread)

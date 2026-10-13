@@ -1,8 +1,8 @@
 """Routines (`TASK-1..6`) — the scheduler, how a routine fires, and the agent's
 `routines_*` tools.
 
-An agent routine executes as an ordinary Run appended to the routine's own thread, by the
-routine's agent, reusing the chat turn's own composition so there is no forked
+An agent routine executes as an ordinary Run in a new thread each time, by the routine's
+agent, reusing the chat turn's own composition so there is no forked
 run-submission path; a reminder fires its prompt verbatim as a notification. The executor
 learns a Run's outcome through a waiter future resolved synchronously at the terminal
 transition — the same dispatch everything else observes a run's outcome through.
@@ -14,6 +14,9 @@ import asyncio
 
 from agent.summarize import resolve_auto_compact_policy
 from core.api_scopes import ScopeClaim
+from core.exceptions import NotFoundError
+from core.serde import as_utc
+from core.untrusted import wrap_untrusted
 from harness.manifest import (
     DormantCategory,
     FeatureManifest,
@@ -22,7 +25,7 @@ from harness.manifest import (
 )
 from models.task import TaskOutcome, TaskOutput
 from routes import tasks as tasks_routes
-from routes.chat import ConversationBusyError, compose_turn, resolve_turn_models
+from routes.chat import compose_turn, resolve_turn_models
 from routes.deps import OPERATOR_ID
 from runs import Run, RunRegistry, RunStatus
 from services.agents import AgentCatalog, lower_of
@@ -52,9 +55,6 @@ _TASK_SUMMARY_MAX_CHARS = 280
 # `TaskRun.outcome` from the Run status it settled at — the three failure-shaped
 # statuses map onto the matching `TaskOutcome` verbatim; `cancelled` covers both an
 # operator-cancelled run and one still parked (never approved/denied) at shutdown.
-# How soon a fire re-checks a thread held by a request that has not started its turn yet.
-_CLAIM_RETRY_S = 0.2
-
 _TASK_OUTCOME_BY_RUN_STATUS = {
     RunStatus.done: TaskOutcome.OK.value,
     RunStatus.error: TaskOutcome.ERROR.value,
@@ -81,27 +81,11 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     # at the terminal transition, so a task execution's eventual settle is observed
     # the same way anything else observes a run's outcome — no polling loop.
     run_waiters: dict[str, asyncio.Future[Run]] = {}
-    # Runs a routine's fire is waiting out before it can take its thread, keyed the same.
-    thread_waiters: dict[str, list[asyncio.Future[Run]]] = {}
 
     def _resolve_waiter(run: Run) -> None:
         waiter = run_waiters.pop(run.id, None)
-        for future in (waiter, *thread_waiters.pop(run.id, ())):
-            if future is not None and not future.done():
-                future.set_result(run)
-
-    async def _thread_free(conversation_id: str, owner_id: str) -> None:
-        """Wait until nothing holds the thread: a turn running in it ends, or a request
-        about to start one lets go."""
-        while (active := runs.active_run_for(conversation_id, owner_id)) is not None or (
-            runs.held(conversation_id, owner_id)
-        ):
-            if active is None:
-                await asyncio.sleep(_CLAIM_RETRY_S)
-                continue
-            future: asyncio.Future[Run] = asyncio.get_running_loop().create_future()
-            thread_waiters.setdefault(active.id, []).append(future)
-            await future
+        if waiter is not None and not waiter.done():
+            waiter.set_result(run)
 
     async def _task_run_summary(run: Run, conversation_id: str) -> str | None:
         """A short, plain factual line about how the run settled — no extra model
@@ -121,92 +105,83 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             return None
         return None
 
-    async def _thread_for(view: ScheduledTaskView) -> str:
-        """The routine's one thread, opened on its first fire and again if the operator
-        deleted it. The routine's agent is written onto it each time, so an edit to the
-        routine takes effect on its next fire."""
-        conversation_id = view.conversation_id
-        if conversation_id and await conversations.exists(conversation_id, view.owner_id):
-            await conversations.set_agent_name(conversation_id, view.agent_name)
-            return conversation_id
+    async def _open_thread(view: ScheduledTaskView) -> str:
+        """A new thread for this run, run by the routine's agent and seeded with its
+        pre-authorizations (`AE-3.5`). A fresh thread is never busy, so nothing in a
+        thread can hold a run back from its time. The routine records it as its latest.
+
+        **The seeds are whole-tool grants, including on a tool that runs commands.** There
+        is no proposed command to scope one to, only a tool name the operator approved on
+        the routine. A seed is left undecisive: it informs the review at the level that
+        reviews rather than answering for it, since nobody is in front of the run."""
         conversation_id = await conversations.create_conversation(
             view.owner_id, title=view.title, agent_name=view.agent_name
         )
+        for tool_name in view.pre_authorized:
+            # A once-only tool is once-only here too: a standing grant on a per-call gate
+            # does its damage exactly where nobody is reading what it covers.
+            if tool_name not in ONCE_ONLY_TOOLS:
+                await grants.grant(view.owner_id, conversation_id, tool_name)
         await routines.attach_thread(view.id, conversation_id)
         return conversation_id
 
-    async def _seed_grants(view: ScheduledTaskView, conversation_id: str) -> None:
-        """Seed the routine's pre-authorizations (`AE-3.5`) onto its thread, and drop the
-        seeds of ones it no longer carries.
-
-        **These seeds are whole-tool grants, including on a tool that runs commands.** There
-        is no proposed command to scope one to, only a tool name the operator approved on
-        the routine. A seed is left undecisive: it informs the review at the level that
-        reviews rather than answering for it, since nobody is in front of an unattended run.
-        """
-        wanted = {name for name in view.pre_authorized if name not in ONCE_ONLY_TOOLS}
-        for grant in await grants.list(view.owner_id, conversation_id):
-            stale = grant.tool_name not in wanted
-            if stale and not grant.command_prefix and not grant.decisive:
-                await grants.revoke(view.owner_id, conversation_id, grant.tool_name)
-        for tool_name in wanted:
-            await grants.grant(view.owner_id, conversation_id, tool_name)
+    async def _with_last_run(view: ScheduledTaskView) -> str:
+        """The routine's prompt, followed by how its previous run ended, so each run
+        picks up where the last left off without sharing its thread."""
+        try:
+            recent = await routines.runs(view.owner_id, view.id, limit=10)
+        except NotFoundError:  # deleted since it fired
+            return view.prompt
+        previous = next(
+            (run for run in recent if run.finished_at is not None and run.summary), None
+        )
+        if previous is None:
+            return view.prompt
+        stamp = as_utc(previous.finished_at).strftime("%Y-%m-%d %H:%M UTC")
+        last = wrap_untrusted(previous.summary, source="the routine's previous run")
+        return f"{view.prompt}\n\nHow the previous run ended ({stamp}, {previous.outcome}):\n{last}"
 
     async def _task_executor(view: ScheduledTaskView) -> TaskRunResult:
-        """A routine's fire: a turn appended to the routine's own thread, run by its agent
-        through the same composition an interactive turn uses (`compose_turn`), in the
-        background lane."""
-        conversation_id = await _thread_for(view)
-        await _seed_grants(view, conversation_id)
-        # A turn already in the thread — the operator's, or this routine's last fire — is
-        # waited out rather than skipped: the fire still happens, just after it.
-        while True:
-            await _thread_free(conversation_id, view.owner_id)
-            applied = await resolve_thread_agent(
-                agents,
-                view.owner_id,
-                await conversations.binding(conversation_id),
-                conversation_id,
-                projects=services.get_optional(ProjectStore),
-                worktrees=services.get_optional(WorktreeManager),
-            )
-            models = await resolve_turn_models(
-                registry, applied.agent.endpoint_id, applied.agent.model, owner_id=view.owner_id
-            )
-            disabled = await effective_disabled_tools(
-                settings_store,
-                offline,
-                view.owner_id,
-                vision=models[4],
-                # Nobody is watching, so tools that stop and wait for someone are
-                # withheld, and so are features never set up.
-                kind="task",
-                availability=ctx.category_availability,
-                caps=ctx.capabilities,
-            )
-            if not may_delegate(applied.agent, 0, ctx.settings.agent_max_depth):
-                disabled |= DELEGATION_TOOLS
-            request_limit = lower_of(
-                applied.agent.request_limit,
-                await get_agent_request_limit_override(settings_store, view.owner_id),
-            )
-            thresholds = await get_context_thresholds(settings_store, view.owner_id)
-            timeouts = {}
-            if applied.agent.wall_clock_timeout_s is not None:
-                timeouts["wall_clock_timeout_s"] = applied.agent.wall_clock_timeout_s
-            auto_compact = await resolve_auto_compact_policy(settings_store, view.owner_id)
-            # The registry's own check-and-claim, released at once: with no await before
-            # the submit, nothing can take the thread in between. Taken meanwhile, the
-            # fire waits again.
-            try:
-                runs.claim(conversation_id, view.owner_id)
-            except ConversationBusyError:
-                continue
-            runs.release(conversation_id, view.owner_id)
-            break
+        """A routine's fire: a turn in a new thread, run by the routine's agent through
+        the same composition an interactive turn uses (`compose_turn`)."""
+        conversation_id = await _open_thread(view)
+        applied = await resolve_thread_agent(
+            agents,
+            view.owner_id,
+            await conversations.binding(conversation_id),
+            conversation_id,
+            projects=services.get_optional(ProjectStore),
+            worktrees=services.get_optional(WorktreeManager),
+        )
+        models = await resolve_turn_models(
+            registry, applied.agent.endpoint_id, applied.agent.model, owner_id=view.owner_id
+        )
+        disabled = await effective_disabled_tools(
+            settings_store,
+            offline,
+            view.owner_id,
+            vision=models[4],
+            # Nobody is watching, so tools that stop and wait for someone are withheld,
+            # and so are features never set up.
+            kind="task",
+            availability=ctx.category_availability,
+            caps=ctx.capabilities,
+        )
+        if not may_delegate(applied.agent, 0, ctx.settings.agent_max_depth):
+            disabled |= DELEGATION_TOOLS
+        request_limit = lower_of(
+            applied.agent.request_limit,
+            await get_agent_request_limit_override(settings_store, view.owner_id),
+        )
+        thresholds = await get_context_thresholds(settings_store, view.owner_id)
+        timeouts = {}
+        if applied.agent.wall_clock_timeout_s is not None:
+            timeouts["wall_clock_timeout_s"] = applied.agent.wall_clock_timeout_s
+        auto_compact = await resolve_auto_compact_policy(settings_store, view.owner_id)
+        prompt = await _with_last_run(view)
         waiter: asyncio.Future[Run] = asyncio.get_running_loop().create_future()
         created = compose_turn(
-            prompt=view.prompt,
+            prompt=prompt,
             conversation_id=conversation_id,
             models=models,
             capabilities=ctx.capabilities,
@@ -221,10 +196,9 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             binding=applied.binding,
             request_limit=request_limit,
             context_thresholds=thresholds,
-            # Each fire appends to one thread, so compaction is what keeps it bounded.
             auto_compact=auto_compact,
             owner_id=view.owner_id,
-            # Background lane: it never holds a slot the operator's next turn waits for.
+            # Routines take the interactive lane (`runs/lanes.py`): they run on schedule.
             kind="task",
             **timeouts,
         )

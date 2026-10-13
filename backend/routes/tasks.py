@@ -94,7 +94,7 @@ class TaskOut(CamelModel):
     enabled: bool
     # False for a routine an agent drafted: it waits on the operator's approval.
     approved: bool
-    # The routine's thread, once it has fired.
+    # The thread its latest run opened.
     conversation_id: str | None = None
     created_at: datetime
     updated_at: datetime

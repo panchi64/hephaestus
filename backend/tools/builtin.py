@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import CallDeferred
 
-from runs.lanes import lane_for
+from runs.lanes import is_attended
 
 from .deps import RunDeps
 
@@ -83,8 +83,8 @@ def builtin_toolset() -> FunctionToolset[RunDeps]:
 
         Ask everything you need in ONE call — up to four questions, answered together.
         """
-        # Guard before deferring: a run in an unattended lane has nobody to park on.
-        if lane_for(ctx.deps.run.kind) != "interactive":
+        # Guard before deferring: an unattended run has nobody to park on.
+        if not is_attended(ctx.deps.run.kind):
             return NO_OPERATOR
         raise CallDeferred
 

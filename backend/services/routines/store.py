@@ -240,7 +240,7 @@ class RoutineStore:
         await in_session(self._engine, work)
 
     async def attach_thread(self, routine_id: str, conversation_id: str) -> None:
-        """Record the thread a routine's fires append to."""
+        """Record the thread a routine's latest run opened."""
 
         def work(session: Session) -> None:
             row = session.get(ScheduledTask, routine_id)

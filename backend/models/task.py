@@ -2,7 +2,7 @@
 tasks.
 
 A `ScheduledTask` is either an **agent** task (its prompt drives an ordinary Run by the
-routine's agent, appended to the routine's one thread) or a **reminder** (its prompt is
+routine's agent, in a new thread each run) or a **reminder** (its prompt is
 delivered verbatim as a notification body — no AI phrasing). At-rest posture mirrors
 notifications: `title`/`prompt` are the operator's own content, so they are encrypted
 under the vault; schedule shape, output channel, and timestamps are structural
@@ -106,8 +106,7 @@ class ScheduledTask(SQLModel, table=True):
 
     # The agent each fire runs (`services/agents`), by name. Null is the default agent.
     agent_name: str | None = None
-    # The routine's one thread: every fire appends a turn to it. Null until the first fire,
-    # and again once the operator deletes the thread.
+    # The thread its latest run opened. Null until it first runs.
     conversation_id: str | None = Field(default=None, index=True)
     # The IANA zone a cron schedule's fields are read in.
     timezone: str = Field(default="UTC")

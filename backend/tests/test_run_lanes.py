@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 
 from runs import CHAT_TURN_KINDS, LANE_BY_KIND, LaneLimits, RunRegistry, RunStatus, lane_for
+from runs.lanes import DEFAULT_LANE
 
 
 def _blocking(started: asyncio.Event, release: asyncio.Event):
@@ -27,7 +28,8 @@ async def test_an_unknown_kind_waits_in_the_unattended_lane():
     # A kind nobody mapped is far likelier to be new autonomous work than a turn someone
     # is waiting on, so the fallback must never be the operator's lane.
     assert lane_for("chat") == "interactive"
-    assert lane_for("task") == "background"
+    # A routine runs on the operator's schedule, so it is never left behind other work.
+    assert lane_for("task") == "interactive"
     assert lane_for("linked") == "linked"
     assert lane_for("something-invented-later") == "background"
 
@@ -38,7 +40,7 @@ def test_every_composed_kind_has_a_lane():
     # carries kinds that are not turns (a hand-started fold), and equating the two is what
     # would enrol the next one as a chat turn without anyone choosing that.
     assert CHAT_TURN_KINDS <= frozenset(LANE_BY_KIND)
-    assert set(LANE_BY_KIND.values()) == {"interactive", "background", "linked"}
+    assert set(LANE_BY_KIND.values()) | {DEFAULT_LANE} == {"interactive", "background", "linked"}
 
 
 def test_a_fold_has_a_lane_and_is_not_a_chat_turn():
@@ -60,13 +62,13 @@ async def test_a_saturated_background_lane_does_not_queue_the_operators_turn():
     chat_started, release_chat = asyncio.Event(), asyncio.Event()
 
     task = reg.submit(
-        kind="task", owner_id="operator", orchestrator=_blocking(task_started, release_task)
+        kind="job", owner_id="operator", orchestrator=_blocking(task_started, release_task)
     )
     linked = reg.submit(
         kind="linked", owner_id="operator", orchestrator=_blocking(linked_started, release_linked)
     )
     second_task = reg.submit(
-        kind="task", owner_id="operator", orchestrator=_blocking(asyncio.Event(), release_task)
+        kind="job", owner_id="operator", orchestrator=_blocking(asyncio.Event(), release_task)
     )
     await task_started.wait()
     await linked_started.wait()
@@ -127,8 +129,8 @@ async def test_a_lane_cannot_push_the_host_past_its_ceiling():
     started = [asyncio.Event() for _ in range(3)]
 
     runs = [
-        reg.submit(kind="task", owner_id="operator", orchestrator=_blocking(started[0], release)),
-        reg.submit(kind="task", owner_id="operator", orchestrator=_blocking(started[1], release)),
+        reg.submit(kind="job", owner_id="operator", orchestrator=_blocking(started[0], release)),
+        reg.submit(kind="job", owner_id="operator", orchestrator=_blocking(started[1], release)),
         reg.submit(kind="chat", owner_id="operator", orchestrator=_blocking(started[2], release)),
     ]
     await started[0].wait()

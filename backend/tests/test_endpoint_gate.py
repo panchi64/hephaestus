@@ -51,10 +51,10 @@ async def test_waiters_are_served_interactive_then_linked_then_background_in_arr
     tasks = [asyncio.create_task(_hold(gate, "chat", order, "holder", hold))]
     await _settle()
     for kind, name in [
-        ("task", "bg1"),
+        ("job", "bg1"),
         ("wake", "linked1"),
         ("chat", "chat1"),
-        ("task", "bg2"),
+        ("job", "bg2"),
         ("chat", "chat2"),
     ]:
         tasks.append(asyncio.create_task(_hold(gate, kind, order, name, go)))
@@ -76,7 +76,7 @@ async def test_a_waiter_hears_its_position_as_the_line_moves():
 
     holder = asyncio.create_task(_hold(gate, "chat", [], "holder", hold))
     await _settle()
-    x = asyncio.create_task(wait("x", "task"))
+    x = asyncio.create_task(wait("x", "job"))
     await _settle()
     y = asyncio.create_task(wait("y", "chat"))
     await _settle()
@@ -253,7 +253,7 @@ async def test_three_queued_runs_start_in_priority_order_and_report_their_place(
     first = _registry_run(reg, "chat", "c0", holder)
     await _settle()
     runs = [
-        _registry_run(reg, "task", "c1", note("routine")),
+        _registry_run(reg, "job", "c1", note("routine")),
         _registry_run(reg, "wake", "c2", note("wake")),
         _registry_run(reg, "chat", "c3", note("operator")),
     ]

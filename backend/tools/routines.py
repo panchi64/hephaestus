@@ -70,7 +70,7 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
         routine_id: str | None = None,
     ) -> dict:
         """Draft a routine, or rewrite `routine_id`: `prompt` goes to `agent` on `schedule`,
-        each time as a new turn in the routine's own thread.
+        each time in a new thread.
 
         `schedule`: `once 2026-06-12T09:00+02:00`, `every 30m` (m/h/d), or
         `cron 0 9 * * 1-5 [zone]` (default: the operator's zone). `pre_authorized` names
@@ -113,7 +113,7 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
 
     @toolset.tool
     async def delete(ctx: RunContext[RunDeps], routine_id: str) -> dict:
-        """Delete a routine. Its thread stays."""
+        """Delete a routine. Its threads stay."""
         store = ctx.deps.caps.get_optional(RoutineStore)
         if store is None:
             return {"ok": False, "error": _UNAVAILABLE}
@@ -125,7 +125,7 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
 
     @toolset.tool
     async def run_now(ctx: RunContext[RunDeps], routine_id: str) -> dict:
-        """Fire an approved routine once now, in its own thread, without waiting."""
+        """Fire an approved routine once now, in a new thread, without waiting."""
         store = ctx.deps.caps.get_optional(RoutineStore)
         scheduler = ctx.deps.caps.get_optional(SchedulerService)
         if store is None or scheduler is None:

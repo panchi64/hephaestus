@@ -13,9 +13,10 @@ the turn its cached prefix, which on a single-slot server is a full re-prefill p
 A request made from inside a run that already holds that endpoint passes straight through:
 the run's own utility call must not wait for the run's own lease.
 
-**Order is by lane, then arrival**: the operator's own turns, then threads the agents opened
-for themselves, then unattended work. A saturated endpoint queues; it never falls through to
-a fallback endpoint, because a fallback chain is for failures, not for load.
+**Order is by lane, then arrival**: the operator's own turns and routine runs, then threads
+the agents opened for themselves, then other unattended work. A saturated endpoint queues;
+it never falls through to a fallback endpoint, because a fallback chain is for failures,
+not for load.
 
 Deadlock-free by construction as long as no run awaits another run, which delegation keeps:
 spawning and messaging return at once and replies arrive as wakes.

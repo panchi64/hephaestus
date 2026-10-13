@@ -113,7 +113,7 @@ Two deliberate omissions, each a settled decision rather than an oversight:
 | `attachments` | `provision` | `services/uploads` + `services/sandbox` (stage a file into `/work`) | ✅ built |
 | `skills` | `open`, `create`, `edit` | `services/skills` (Agent Skills bundles, `SKILL-1..3`) | ✅ built |
 | `plugins` | `write`, `read`, `test`, and each published plugin's tools as `plugins_<plugin>_<tool>` | `services/plugins`: drafts the operator publishes, run in the platform VM (D122) | ✅ built |
-| `routines` | `write`, `list`, `delete`, `run_now` | `services/routines`: drafts the operator approves, each fire a turn in the routine's own thread by its agent (D123) | ✅ built |
+| `routines` | `write`, `list`, `delete`, `run_now` | `services/routines`: drafts the operator approves, each run on time in a new thread by its agent (D123) | ✅ built |
 | `mail`, … | — | land with their `services/` capability | ⬜ pending |
 | MCP servers, integrations | — | external (`MCP-*`, `INTEG-*`) | ⬜ pending (gating designed — §4.4) |
 
@@ -270,7 +270,7 @@ The result: the spec's entire access-control surface (`AE-2` categories, `AE-3` 
 | D116 agent trees (`agents_spawn`/`message`/`list`/`read`/`stop`, depth, tree messaging, open-as-thread) | ✅ built (`harness/manifests/_subagents.py`, `_subagent_wake.py`, `tools/delegation.py`, `routes/subagents.py`) — the `subagents` category folded into `agents`; `tools/subagents.py` is gone |
 | D121 version history (skills, agents, plugins: history, diff, restore) | ✅ built (`services/revisions.py`, `routes/revisions.py`) |
 | D122 plugins (drafts, VM runtime, declared egress, secret placeholders) | ✅ built (`services/plugins/`, `services/vm/intercept.py`, `tools/plugins.py`, `routes/plugins.py`) |
-| D123 routines (agent per routine, one thread, time zones, agent drafts, natural-language schedules) | ✅ built (`services/routines/`, `tools/routines.py`, `routes/tasks.py`) |
+| D123 routines (agent per routine, on-time runs in their own threads, time zones, agent drafts, natural-language schedules) | ✅ built (`services/routines/`, `tools/routines.py`, `routes/tasks.py`) |
 | Privilege gate (D14) | 🔭 seam reserved — empty until a second user exists |
 | Relevance pre-filter (D3) | 🔭 seam reserved — deliberately omitted |
 | D24 scheduled pre-authorization | ⬜ designed, lands with `TASK-*` |

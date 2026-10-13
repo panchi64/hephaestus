@@ -223,7 +223,7 @@ async def test_a_fire_drops_a_once_only_pre_authorization(monkeypatch):
         assert {g.tool_name for g in granted} == {"platform_search"}
 
 
-async def test_run_now_queues_behind_a_still_live_execution():
+async def test_run_now_starts_alongside_a_still_live_execution():
     async with client_app() as (client, app):
         created = await _create_task(client)
         task_id = created["id"]
@@ -245,7 +245,11 @@ async def test_run_now_queues_behind_a_still_live_execution():
         assert second.status_code == 202
         first_id, second_id = first.json()["taskRunId"], second.json()["taskRunId"]
         assert first_id != second_id
-        assert len(calls) == 1
+        for _ in range(200):
+            if len(calls) == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert len(calls) == 2  # both running at once
 
         release.set()
         await asyncio.wait_for(_wait_finished(client, task_id, first_id), timeout=2.0)

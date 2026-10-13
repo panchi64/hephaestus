@@ -1,4 +1,4 @@
-"""Routines: scheduled agent work, each with its own thread."""
+"""Routines: scheduled agent work, each run in a thread of its own."""
 
 from .nl import ScheduleNaturalLanguage
 from .schedule import Schedule, check_schedule, format_schedule, parse_schedule, upcoming

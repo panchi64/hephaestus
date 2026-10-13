@@ -38,7 +38,7 @@ from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 
-from runs.lanes import lane_for
+from runs.lanes import is_attended
 from services.permissions import stricter_permission
 from services.plan_mode import ACTING_LEVEL, PLAN_SUBMIT_TOOL, PLANNING_LEVEL, PlanMode
 
@@ -78,7 +78,7 @@ NO_RECORD = (
 
 def _unattended(ctx: RunContext[RunDeps]) -> bool:
     """Whether this run has nobody in front of it to answer a plan. See :data:`NO_OPERATOR`."""
-    return lane_for(ctx.deps.run.kind) != "interactive"
+    return not is_attended(ctx.deps.run.kind)
 
 
 def _retarget(ctx: RunContext[RunDeps], level: str) -> None:

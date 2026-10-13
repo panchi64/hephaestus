@@ -353,7 +353,7 @@ export function TaskFormModal(props: {
           onInput={(e) => setForm("prompt", e.currentTarget.value)}
           hint={
             isAgent()
-              ? "Each time this routine fires it adds a turn to its one thread."
+              ? "Each run gets its own thread, told how the previous run ended."
               : "Delivered verbatim as the notification body — no AI phrasing."
           }
         />

@@ -176,7 +176,7 @@ export function TasksScreen(): JSX.Element {
     <Stack gap={6}>
       <PageHeader
         title="Routines"
-        subtitle="Scheduled agent runs and reminders, each with its own thread."
+        subtitle="Scheduled agent runs and reminders, each run on time in its own thread."
         assetId="AUTO-TSK-01.0"
         actions={
           <Button variant="primary" leading="plus" onClick={openNew}>
@@ -442,7 +442,7 @@ export function TasksScreen(): JSX.Element {
                                   leading="chat"
                                   onClick={() => openThread(task)}
                                 >
-                                  Open thread
+                                  Open latest thread
                                 </Button>
                               </div>
                             </Show>
