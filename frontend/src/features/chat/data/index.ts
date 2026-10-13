@@ -21,6 +21,7 @@ export {
   RESUME_WINDOW_MS,
   togglePin,
   useChatSessions,
+  useSessionArrivals,
 } from "./sessions";
 
 export { setWorkspaceOpen, workspaceOpen } from "./workspaceCollapse";

@@ -1,6 +1,8 @@
-import { For, Show, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { Collapse, Icon, Text, cx } from "~/ui";
+import { useSessionArrivals } from "../data";
 import type { ChatSummary } from "../model";
+import { useArrival } from "./arrival";
 import { Branch } from "./Branch";
 
 /** Whether a row's agent threads are showing: shut until the operator opens them, or
@@ -22,7 +24,8 @@ export function createThreadFold(
 
 /** The agent threads opened under a thread, hung off a trunk the way a work log's
  *  steps are. The trunk drops from the row's state square; each thread's socket lines
- *  up with the titles above it. */
+ *  up with the titles above it. A thread the latest read of the list added traces in,
+ *  the same arrival as a work log's new call. */
 export function ThreadLog(props: {
   threads: ChatSummary[];
   open: boolean;
@@ -31,6 +34,13 @@ export function ThreadLog(props: {
   onSelect: (id: string) => void;
   nested?: boolean;
 }): JSX.Element {
+  const arrivals = useSessionArrivals();
+  // By id: each read of the list mints new summaries, and a remount would cut an
+  // arrival off halfway.
+  const ids = createMemo(() => props.threads.map((t) => t.id));
+  const byId = createMemo(
+    () => new Map(props.threads.map((t) => [t.id, t] as const)),
+  );
   const edgeOf = (index: number) => ({
     first: index === 0,
     last: index === props.threads.length - 1,
@@ -38,20 +48,28 @@ export function ThreadLog(props: {
   return (
     <Collapse open={props.open}>
       <div class={props.nested ? undefined : "pl-0.5"}>
-        <For each={props.threads}>
-          {(thread, index) => (
-            <Branch
-              edge={edgeOf(index())}
-              variant={props.nested ? "nested" : "log"}
-            >
-              <ThreadBranch
-                thread={thread}
-                childrenOf={props.childrenOf}
-                currentId={props.currentId}
-                onSelect={props.onSelect}
-              />
-            </Branch>
-          )}
+        <For each={ids()}>
+          {(id, index) => {
+            const trace = arrivals().has(id);
+            return (
+              <Show when={byId().get(id)}>
+                {(thread) => (
+                  <Branch
+                    edge={edgeOf(index())}
+                    variant={props.nested ? "nested" : "log"}
+                    trace={trace}
+                  >
+                    <ThreadBranch
+                      thread={thread()}
+                      childrenOf={props.childrenOf}
+                      currentId={props.currentId}
+                      onSelect={props.onSelect}
+                    />
+                  </Branch>
+                )}
+              </Show>
+            );
+          }}
         </For>
       </div>
     </Collapse>
@@ -71,6 +89,7 @@ function ThreadBranch(props: {
     () => props.currentId,
   );
   const selected = () => props.thread.id === props.currentId;
+  const arrival = useArrival();
   const tone = () =>
     props.thread.activity === "awaiting_input"
       ? "text-warn"
@@ -83,6 +102,7 @@ function ThreadBranch(props: {
         class={cx(
           "flex w-full min-w-0 items-center hover:bg-raised",
           selected() && "bg-raised",
+          arrival.body,
         )}
       >
         <button
@@ -90,12 +110,17 @@ function ThreadBranch(props: {
           onClick={() => props.onSelect(props.thread.id)}
           aria-current={selected() ? "page" : undefined}
           title={props.thread.title}
+          ref={arrival.sweep}
           class="flex min-w-0 flex-1 items-center gap-2 py-1 pr-2 text-left"
         >
           <Icon
             name="users"
             size={12}
-            class={cx("box-content shrink-0 border border-line p-px", tone())}
+            class={cx(
+              "box-content shrink-0 border border-line p-px",
+              tone(),
+              arrival.socket,
+            )}
           />
           <Text
             variant="micro"

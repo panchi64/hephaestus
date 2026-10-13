@@ -123,6 +123,8 @@ export function BlockRow(
     top?: TopSpacing;
     /** Where a process row sits on its work log's trunk. */
     edge?: BranchEdge;
+    /** The row is arriving, so its branch traces in (`Branch trace`). */
+    trace?: boolean;
   } & RowHandlers,
 ): JSX.Element {
   const g = () => props.group;
@@ -192,7 +194,11 @@ export function BlockRow(
         </div>
       </Match>
       <Match when={g().kind === "thinking"}>
-        <Branch edge={props.edge ?? LONE} lit={props.active}>
+        <Branch
+          edge={props.edge ?? LONE}
+          trace={props.trace}
+          lit={props.active}
+        >
           <ReasoningBlock
             reasoning={(g().blocks[0] as ThinkingBlock).text}
             open={props.forceOpen}
@@ -202,7 +208,11 @@ export function BlockRow(
         </Branch>
       </Match>
       <Match when={g().kind === "tool"}>
-        <Branch edge={props.edge ?? LONE} lit={props.active}>
+        <Branch
+          edge={props.edge ?? LONE}
+          trace={props.trace}
+          lit={props.active}
+        >
           <ToolCallCard
             tool={(g().blocks[0] as ToolBlock).tool}
             open={props.forceOpen}
@@ -214,7 +224,7 @@ export function BlockRow(
             the trunk's light means "this is running now", and an injection is a settled
             fact the moment it exists. Lighting it would spend the one signal the
             interface delivers in light on something with no duration. */}
-        <Branch edge={props.edge ?? LONE} chassis>
+        <Branch edge={props.edge ?? LONE} trace={props.trace} chassis>
           <ContextInjectionCard
             injection={(g().blocks[0] as ContextBlock).injection}
             open={props.forceOpen}
@@ -225,7 +235,7 @@ export function BlockRow(
         {/* On the trunk, because it happened in the turn's sequence, and never `active`:
             the trunk's light means "the model is doing this now", and a review is the
             chassis answering for the operator — the opposite kind of event. */}
-        <Branch edge={props.edge ?? LONE} chassis>
+        <Branch edge={props.edge ?? LONE} trace={props.trace} chassis>
           <ReviewCard
             review={(g().blocks[0] as ReviewBlock).review}
             open={props.forceOpen}
@@ -233,7 +243,11 @@ export function BlockRow(
         </Branch>
       </Match>
       <Match when={g().kind === "host_command"}>
-        <Branch edge={props.edge ?? LONE} lit={props.active}>
+        <Branch
+          edge={props.edge ?? LONE}
+          trace={props.trace}
+          lit={props.active}
+        >
           <HostCommandCard
             commands={(g().blocks as HostCommandBlock[]).map((b) => b.command)}
             open={props.forceOpen}

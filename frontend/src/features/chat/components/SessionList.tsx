@@ -37,6 +37,7 @@ import {
   groupSessions,
   type DirectoryGroup,
   type RecencyGroup,
+  type SessionGroup,
   type WorkspaceDirectory,
 } from "../sessionGroups";
 import { SessionRow } from "./SessionRow";
@@ -127,6 +128,11 @@ export function SessionList(props: SessionListProps): JSX.Element {
     };
   });
   const groups = createMemo(() => grouped()?.shown ?? []);
+  const groupKey = (g: SessionGroup): string => `${g.kind}:${g.id}`;
+  const groupKeys = createMemo(() => groups().map(groupKey));
+  const groupByKey = createMemo(
+    () => new Map(groups().map((g) => [groupKey(g), g] as const)),
+  );
   /** The directory section that opens itself when the operator has expressed no
    *  preference: the first one, which is the most recently touched directory.
    *
@@ -158,36 +164,57 @@ export function SessionList(props: SessionListProps): JSX.Element {
           />
         }
       >
-        {/* A group's kind is fixed for the life of the object, and `<For>` mints a new
-            one whenever the grouping changes — so this branches once per section
-            rather than tracking, and each kind gets the component that actually fits
-            it instead of one component with half its props nulled out. */}
-        <For each={groups()}>
-          {(group) =>
-            group.kind === "directory" ? (
-              <DirectorySection
-                group={group}
-                currentId={props.currentId}
-                menu={props.menu}
-                forceOpen={view.isFiltered()}
-                lead={group.id === leadId()}
-                staged={group.projectId === props.stagedProjectId}
-                status={props.status?.(group.projectId)}
-                actions={props.actions?.(group.projectId)}
-                onNewThread={props.onNewThread}
-                onSelect={props.onSelect}
-                unread={props.unread}
-              />
-            ) : (
-              <RecencySection
-                group={group}
-                currentId={props.currentId}
-                menu={props.menu}
-                onSelect={props.onSelect}
-                unread={props.unread}
-              />
-            )
-          }
+        {/* Keyed by kind and id, because each read of the list regroups it into new
+            objects and a reference-keyed list would remount every section, and every
+            row in it, on each refetch. The kind is part of the key, so only one of the
+            two arms below ever renders for a section. */}
+        <For each={groupKeys()}>
+          {(key) => (
+            <Show when={groupByKey().get(key)}>
+              {(group) => {
+                const directory = () => {
+                  const g = group();
+                  return g.kind === "directory" ? g : undefined;
+                };
+                const recency = () => {
+                  const g = group();
+                  return g.kind === "recency" ? g : undefined;
+                };
+                return (
+                  <>
+                    <Show when={directory()}>
+                      {(d) => (
+                        <DirectorySection
+                          group={d()}
+                          currentId={props.currentId}
+                          menu={props.menu}
+                          forceOpen={view.isFiltered()}
+                          lead={d().id === leadId()}
+                          staged={d().projectId === props.stagedProjectId}
+                          status={props.status?.(d().projectId)}
+                          actions={props.actions?.(d().projectId)}
+                          onNewThread={props.onNewThread}
+                          onSelect={props.onSelect}
+                          unread={props.unread}
+                        />
+                      )}
+                    </Show>
+                    <Show when={recency()}>
+                      {(r) => (
+                        <RecencySection
+                          group={r()}
+                          currentId={props.currentId}
+                          menu={props.menu}
+                          onSelect={props.onSelect}
+                          unread={props.unread}
+                        />
+                      )}
+                    </Show>
+                  </>
+                );
+              }}
+            </Show>
+          )}
         </For>
       </Show>
     </Show>
@@ -212,56 +239,67 @@ function SessionRows(props: {
   const top = createMemo(() =>
     props.sessions.filter((s) => !s.parentId || !listed().has(s.parentId)),
   );
+  /* Iterated by id: every read of the list mints new summaries, and a
+     reference-keyed list would remount each row on every refetch, cutting off a
+     thread's arrival halfway through. */
+  const topIds = createMemo(() => top().map((s) => s.id));
+  const byId = createMemo(
+    () => new Map(props.sessions.map((s) => [s.id, s] as const)),
+  );
   return (
-    <For each={top()}>
-      {(s) => {
-        const threads = () => childrenOf(s.id);
-        const fold = createThreadFold(
-          threads,
-          childrenOf,
-          () => props.currentId,
-        );
-        return (
-          <>
-            <SessionRow
-              title={s.title}
-              selected={s.id === props.currentId}
-              pinned={isPinned(s.id)}
-              unread={props.unread?.(s.id)}
-              reveal={titleReveals[s.id]}
-              retitling={isRetitling(s.id)}
-              activity={s.activity}
-              lastOutcome={s.lastOutcome}
-              updatedAt={s.updatedAt}
-              onOpen={() => props.onSelect(s.id)}
-              // The thread's id is the menu's key, which is what lets one panel serve the
-              // whole list: it tells the rail which thread to build items for, and tells
-              // the row whether the open menu is its own.
-              onContextMenu={(e) => props.menu.openAt(e, s.id)}
-              menuTrigger={props.menu.triggerProps(s.id)}
-              menuOpen={props.menu.isOpen(s.id)}
-              fold={
-                threads().length > 0
-                  ? {
-                      open: fold.open(),
-                      onToggle: fold.toggle,
-                      label: `Agent threads of ${s.title}`,
-                    }
-                  : undefined
-              }
-            />
-            <Show when={threads().length > 0}>
-              <ThreadLog
-                threads={threads()}
-                open={fold.open()}
-                childrenOf={childrenOf}
-                currentId={props.currentId}
-                onSelect={props.onSelect}
-              />
-            </Show>
-          </>
-        );
-      }}
+    <For each={topIds()}>
+      {(id) => (
+        <Show when={byId().get(id)}>
+          {(s) => {
+            const threads = () => childrenOf(id);
+            const fold = createThreadFold(
+              threads,
+              childrenOf,
+              () => props.currentId,
+            );
+            return (
+              <>
+                <SessionRow
+                  title={s().title}
+                  selected={id === props.currentId}
+                  pinned={isPinned(id)}
+                  unread={props.unread?.(id)}
+                  reveal={titleReveals[id]}
+                  retitling={isRetitling(id)}
+                  activity={s().activity}
+                  lastOutcome={s().lastOutcome}
+                  updatedAt={s().updatedAt}
+                  onOpen={() => props.onSelect(id)}
+                  // The thread's id is the menu's key, which is what lets one panel serve the
+                  // whole list: it tells the rail which thread to build items for, and tells
+                  // the row whether the open menu is its own.
+                  onContextMenu={(e) => props.menu.openAt(e, id)}
+                  menuTrigger={props.menu.triggerProps(id)}
+                  menuOpen={props.menu.isOpen(id)}
+                  fold={
+                    threads().length > 0
+                      ? {
+                          open: fold.open(),
+                          onToggle: fold.toggle,
+                          label: `Agent threads of ${s().title}`,
+                        }
+                      : undefined
+                  }
+                />
+                <Show when={threads().length > 0}>
+                  <ThreadLog
+                    threads={threads()}
+                    open={fold.open()}
+                    childrenOf={childrenOf}
+                    currentId={props.currentId}
+                    onSelect={props.onSelect}
+                  />
+                </Show>
+              </>
+            );
+          }}
+        </Show>
+      )}
     </For>
   );
 }

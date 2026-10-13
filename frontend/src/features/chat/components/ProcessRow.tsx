@@ -11,6 +11,7 @@ import {
 } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { Icon, Text, cx, type IconName } from "~/ui";
+import { useArrival } from "./arrival";
 
 export interface AdoptedOpen {
   open: Accessor<boolean>;
@@ -137,6 +138,7 @@ export function ProcessRow(props: {
   const trailing = children(() => props.trailing);
   // Read once: a row does not move between a work log and a card.
   const schematic = useContext(SchematicContext);
+  const arrival = useArrival();
   const chevron = (): JSX.Element => (
     <Icon
       name={props.open ? "chevron-down" : "chevron-right"}
@@ -153,11 +155,13 @@ export function ProcessRow(props: {
          `hover:bg-raised` themselves. */
       class={cx(
         "flex w-full items-center justify-between gap-2 pr-1.5 transition-colors",
+        arrival.body,
         props.class,
       )}
     >
       <Dynamic
         component={props.foldable === false ? "div" : "button"}
+        ref={arrival.sweep}
         type={props.foldable === false ? undefined : "button"}
         aria-expanded={props.foldable === false ? undefined : props.open}
         onClick={
@@ -196,7 +200,11 @@ export function ProcessRow(props: {
             <Icon
               name={name()}
               size={12}
-              class={cx(schematic && SOCKET, props.iconClass ?? "text-dim")}
+              class={cx(
+                schematic && SOCKET,
+                props.iconClass ?? "text-dim",
+                arrival.socket,
+              )}
             />
           )}
         </Show>

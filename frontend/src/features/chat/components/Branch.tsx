@@ -1,5 +1,6 @@
 import type { JSX } from "solid-js";
 import { cx } from "~/ui";
+import { ArrivalContext } from "./arrival";
 
 /** Where a branch sits in its trunk: whether it is the first row hung off it (a
  *  nested one then reaches up to its parent's socket) and the last (the trunk then
@@ -52,8 +53,9 @@ function trunkSpan(g: Geometry, edge: BranchEdge): string {
  *  `chassis` dashes the elbow — the trace for a row the chassis put
  *  there (injected context, a review) rather than one the model did, which the
  *  row's own dashed socket repeats; bare rows no longer have a card to refuse, so
- *  this is what tells the two apart at a glance. `trace` draws the strokes in
- *  (`.heph-trace-*`) — the collapsed log's latest step, as it arrives. */
+ *  this is what tells the two apart at a glance. `trace` is the row's arrival
+ *  (`.heph-trace-*`, §8): the strokes draw in charged and cool to the hairline, and
+ *  the `ProcessRow` inside charges its socket and sweeps its summary. */
 export function Branch(props: {
   edge: BranchEdge;
   variant?: keyof typeof GEOMETRY;
@@ -78,6 +80,7 @@ export function Branch(props: {
           class={cx(
             "border-l transition-colors",
             props.lit ? "border-info" : "border-line",
+            props.trace && "heph-trace-charge",
           )}
         />
       </span>
@@ -92,7 +95,9 @@ export function Branch(props: {
           props.trace && "heph-trace-across",
         )}
       />
-      {props.children}
+      <ArrivalContext.Provider value={props.trace === true}>
+        {props.children}
+      </ArrivalContext.Provider>
     </div>
   );
 }

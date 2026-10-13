@@ -1,7 +1,6 @@
-import { For, Match, Show, Switch, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
 import { LoadingText, Text } from "~/ui";
-import { useChatSession, type Subagent } from "../data";
-import { isLive } from "../data";
+import { isLive, useChatSession, type Subagent } from "../data";
 import { TurnBlocks } from "./TurnBlocks";
 import { settled } from "~/lib/resource";
 
@@ -58,26 +57,46 @@ export function SubagentTranscript(props: { subagent: Subagent }): JSX.Element {
           </Text>
         </Match>
         <Match when={settled(session)}>
-          {(loaded) => (
-            <For each={loaded().messages}>
-              {(message) => (
-                <Show
-                  when={message.role === "assistant"}
-                  fallback={
-                    <Text
-                      variant="micro"
-                      tone="dim"
-                      class="whitespace-pre-wrap"
-                    >
-                      {message.content}
-                    </Text>
-                  }
-                >
-                  <TurnBlocks blocks={message.blocks} />
-                </Show>
-              )}
-            </For>
-          )}
+          {(loaded) => {
+            /* Iterated by id: each poll returns fresh message objects, and a
+               reference-keyed list would remount every turn and lose what its work
+               log has already seen arrive. */
+            const ids = createMemo(() => loaded().messages.map((m) => m.id));
+            const byId = createMemo(
+              () => new Map(loaded().messages.map((m) => [m.id, m] as const)),
+            );
+            return (
+              <For each={ids()}>
+                {(id) => (
+                  <Show when={byId().get(id)}>
+                    {(message) => (
+                      <Show
+                        when={message().role === "assistant"}
+                        fallback={
+                          <Text
+                            variant="micro"
+                            tone="dim"
+                            class="whitespace-pre-wrap"
+                          >
+                            {message().content}
+                          </Text>
+                        }
+                      >
+                        {/* A live sub-agent's last turn reads as streaming, so
+                            calls a poll adds to it trace in. */}
+                        <TurnBlocks
+                          blocks={message().blocks}
+                          streaming={
+                            isLive(props.subagent) && id === ids().at(-1)
+                          }
+                        />
+                      </Show>
+                    )}
+                  </Show>
+                )}
+              </For>
+            );
+          }}
         </Match>
         <Match when={session.loading}>
           <LoadingText label="Reading the transcript…" />

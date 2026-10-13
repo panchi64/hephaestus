@@ -1,5 +1,6 @@
-import { For, Show, createMemo, type JSX } from "solid-js";
+import { For, Show, createMemo, untrack, type JSX } from "solid-js";
 import { Collapse, cx } from "~/ui";
+import { createArrivalTracker } from "../arrivals";
 import type { WorkLogEntry } from "../blocks";
 import { latestReason, workShape } from "../workShape";
 import {
@@ -71,16 +72,45 @@ export function WorkLog(
    *  A stretch of foldable rows shares **one** `Collapse` — the shape the log had
    *  before a pinned row was allowed to sit inside it, and the reason matters: a
    *  `Collapse` per row is a height measurement and a transition per row, so a
-   *  forty-call turn folded in forty independent animations where one would do. */
+   *  forty-call turn folded in forty independent animations where one would do.
+   *
+   *  Segments and rows are iterated by string key, not by object: the layout mints
+   *  fresh entries on every recompute, and a reference-keyed `<For>` would remount
+   *  every row (and replay its arrival) each time a block lands. */
   const segments = createMemo(() => {
-    const out: { pinned: boolean; rows: WorkLogEntry[] }[] = [];
+    const out: { key: string; pinned: boolean; ids: string[] }[] = [];
     for (const entry of props.entries) {
       const tail = out[out.length - 1];
-      if (tail && tail.pinned === entry.pinned) tail.rows.push(entry);
-      else out.push({ pinned: entry.pinned, rows: [entry] });
+      const id = entry.group.id;
+      if (tail && tail.pinned === entry.pinned) tail.ids.push(id);
+      else
+        out.push({
+          key: `${entry.pinned ? "p" : "f"}:${id}`,
+          pinned: entry.pinned,
+          ids: [id],
+        });
     }
     return out;
   });
+  const segmentKeys = createMemo(() => segments().map((s) => s.key));
+  const segmentByKey = createMemo(
+    () => new Map(segments().map((s) => [s.key, s] as const)),
+  );
+  const entryById = createMemo(
+    () => new Map(props.entries.map((e) => [e.group.id, e] as const)),
+  );
+
+  /* The ids this update added to the log. A row traces in only when it mounts as one
+     of them during a stream, so a settled call moving into the fold or the latest
+     slot, a log being opened, and a thread loading from history all stay still. */
+  const arrivals = createArrivalTracker(
+    untrack(() => props.entries.map((e) => e.group.id)),
+  );
+  const fresh = createMemo(() =>
+    arrivals(props.entries.map((e) => e.group.id)),
+  );
+  const arrives = (id: string): boolean =>
+    untrack(() => props.streaming === true && fresh().has(id));
 
   /* What hangs off the trunk right now, in drawn order: the latest step (shut
      only), then every entry the fold shows — all of them open, the pinned ones
@@ -117,9 +147,8 @@ export function WorkLog(
         foldable={foldable()}
         onToggle={() => props.onToggle()}
       />
-      {/* Keyed on the block, so each step the run folds in replays its trace-in and
-          a re-render of the same step does not. Shut only: open, the same step is
-          the last row of the list below.
+      {/* Keyed on the block, and open only while shut: open, the same step is the
+          last row of the list below.
 
           The step itself is read through the inner `Show`, not captured here: a
           keyed child runs untracked, and the same block can change in place — a
@@ -127,45 +156,58 @@ export function WorkLog(
           value snapshotted at mount would sit stale for the rest of the turn. */}
       <SchematicContext.Provider value={true}>
         <Show when={!open() && folded().latestId} keyed>
-          {(id: string) => (
-            <Show when={folded().latest}>
-              {(step) => (
-                <WorkLogLatest
-                  step={step()}
-                  edge={edgeOf(id)}
-                  live={props.streaming}
-                />
-              )}
-            </Show>
-          )}
-        </Show>
-        <For each={segments()}>
-          {(segment) => {
-            const rows = (
-              <For each={segment.rows}>
-                {(entry) => (
-                  <BlockRow
-                    group={entry.group}
-                    active={props.activeIds?.has(entry.group.id)}
-                    streaming={props.streaming}
-                    edge={edgeOf(entry.group.id)}
-                    forceOpen={props.forceOpen}
-                    onResolveHostCommands={props.onResolveHostCommands}
-                    onOpenInView={props.onOpenInView}
-                    chipLookup={props.chipLookup}
-                    seenIndex={props.seenIndex}
+          {(id: string) => {
+            const trace = arrives(id);
+            return (
+              <Show when={folded().latest}>
+                {(step) => (
+                  <WorkLogLatest
+                    step={step()}
+                    edge={edgeOf(id)}
+                    trace={trace}
                   />
                 )}
+              </Show>
+            );
+          }}
+        </Show>
+        <For each={segmentKeys()}>
+          {(key) => {
+            const ids = () => segmentByKey().get(key)?.ids ?? [];
+            const rows = (
+              <For each={ids()}>
+                {(id) => {
+                  const trace = arrives(id);
+                  return (
+                    <Show when={entryById().get(id)}>
+                      {(entry) => (
+                        <BlockRow
+                          group={entry().group}
+                          active={props.activeIds?.has(id)}
+                          streaming={props.streaming}
+                          trace={trace}
+                          edge={edgeOf(id)}
+                          forceOpen={props.forceOpen}
+                          onResolveHostCommands={props.onResolveHostCommands}
+                          onOpenInView={props.onOpenInView}
+                          chipLookup={props.chipLookup}
+                          seenIndex={props.seenIndex}
+                        />
+                      )}
+                    </Show>
+                  );
+                }}
               </For>
             );
             /* `Collapse` rather than a bare `Show`: folding a stretch of rows away
                instantly takes everything below it with it, which is a jump the reader
                has to recover their place after. A pinned segment skips it entirely —
-               it is never the thing being folded. */
-            return (
-              <Show when={!segment.pinned} fallback={rows}>
-                <Collapse open={open()}>{rows}</Collapse>
-              </Show>
+               it is never the thing being folded. The key carries the kind, so a
+               segment never changes kind in place. */
+            return key.startsWith("p:") ? (
+              rows
+            ) : (
+              <Collapse open={open()}>{rows}</Collapse>
             );
           }}
         </For>

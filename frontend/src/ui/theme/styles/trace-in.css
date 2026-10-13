@@ -1,38 +1,73 @@
 /* ==========================================================================
-   THE TRACE-IN — a sub-row branching off the row above it (§8).
-   The construction reveal's sentence at the size of one line: the elbow that
-   hangs the row off its parent draws itself first — down, then across, the
-   two strokes overlapping so they read as one L — and the row resolves out of
-   the ordinary blur-fade as the stroke reaches it. ~220ms end to end, under
-   the ceiling; nothing waits on it. Keyed by the caller, so each new step
-   replays it and a re-render of the same step does not. The existing
-   `heph-frame-close` / `heph-frame-draw` keyframes are the strokes; reduced
-   motion is covered by the global rule, delays included.
+   THE TRACE-IN — a row arriving on a trunk (§8).
+   The construction reveal's sentence at the size of one line: the elbow draws
+   itself down and across (overlapping, so it reads as one L) and the row
+   resolves out of the ordinary blur-fade as the stroke reaches it. The strokes
+   and the socket land charged — in the info tone — and cool to their own colour,
+   while one band of light crosses the row's text from the socket outward. No
+   phase runs longer than 240ms, the whole gesture is over by ~420ms, and nothing
+   waits on it; reduced motion is covered by the global rule, delays included.
    ========================================================================== */
 .heph-trace-down {
   transform-origin: top;
-  animation: heph-frame-close 110ms var(--ease) both;
+  animation: heph-frame-close 120ms var(--ease) both;
 }
 .heph-trace-across {
   transform-origin: left;
-  animation: heph-frame-draw 90ms var(--ease) 70ms both;
+  animation:
+    heph-frame-draw 100ms var(--ease) 80ms both,
+    heph-trace-cool 240ms var(--ease) 180ms backwards;
 }
 .heph-trace-body {
-  animation: heph-reveal-fade var(--motion-base) var(--ease) 40ms both;
+  animation: heph-reveal-fade var(--motion-base) var(--ease) 60ms both;
 }
-/* The socket the trace lands on: lit the instant the stroke arrives, dark again
-   a beat later. Stepped, not eased — contact is a machine event, so it snaps. */
-.heph-trace-pin {
-  animation: heph-trace-contact 320ms var(--ease-machine);
+/* The trunk and the socket. `backwards` and a `from`-only keyframe: charged
+   until the stroke lands, then eased back to whatever the element's own colour
+   is — the hairline, or the info tone of a call still running. */
+.heph-trace-charge {
+  animation: heph-trace-cool 240ms var(--ease) 180ms backwards;
 }
-/* Dark for the first half (the implicit 0% is the socket's own colour) while
-   the stroke travels — `heph-trace-across` lands at 160ms — lit for the second,
-   and no fill, so it drops back to its own colour when the blip ends. */
-@keyframes heph-trace-contact {
-  50%,
-  100% {
+@keyframes heph-trace-cool {
+  from {
     border-color: var(--color-info);
     color: var(--color-info);
+    box-shadow: 0 0 6px 0 color-mix(in srgb, var(--color-info) 50%, transparent);
+  }
+}
+
+/* The sweep. `sweepText` marks each text segment of the row and tells it the
+   row's width (`--sweep-w`) and its own offset in it (`--sweep-x`), so every
+   segment clips the same band at the same moment and the row reads as one
+   sweep. The base layer is `currentColor`, so each segment keeps its own tone
+   under the band. The mark is removed when the sweep ends. */
+[data-sweep] {
+  --sweep-band: calc(var(--sweep-w, 0px) * 0.4);
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--color-info) 65%, var(--color-bright)),
+      transparent
+    ),
+    linear-gradient(currentColor, currentColor);
+  background-repeat: no-repeat;
+  background-size:
+    var(--sweep-band) 100%,
+    100% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: heph-trace-sweep 240ms linear 160ms both;
+}
+@keyframes heph-trace-sweep {
+  from {
+    background-position:
+      calc(-1 * var(--sweep-band) - var(--sweep-x, 0px)) 0,
+      0 0;
+  }
+  to {
+    background-position:
+      calc(var(--sweep-w, 0px) - var(--sweep-x, 0px)) 0,
+      0 0;
   }
 }
 

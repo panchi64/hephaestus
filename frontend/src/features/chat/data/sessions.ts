@@ -13,11 +13,13 @@
  */
 
 import {
+  createMemo,
   createResource,
   createRoot,
   createSignal,
   type Accessor,
 } from "solid-js";
+import { createArrivalTracker } from "../arrivals";
 import { api } from "~/lib/api";
 import { parseInstant } from "~/lib/format";
 import { settled } from "~/lib/resource";
@@ -107,6 +109,28 @@ export function useChatSessions(): Accessor<ChatSummary[] | undefined> {
     // flickers the page — and before the first read it is `undefined` rather than a
     // suspension, which is what the rail's loading arm is for.
     return () => settled(data);
+  }));
+}
+
+let arrivalsAccessor: Accessor<ReadonlySet<string>> | undefined;
+
+/** The thread ids the latest read of the list added — what the rail traces in.
+ *
+ *  Beside the resource so a remounting rail cannot forget what it already showed, and
+ *  seeded by the first list that loads so the app's history never counts as arriving. */
+export function useSessionArrivals(): Accessor<ReadonlySet<string>> {
+  if (arrivalsAccessor) return arrivalsAccessor;
+  const sessions = useChatSessions();
+  return (arrivalsAccessor = createRoot(() => {
+    let track: ((ids: readonly string[]) => ReadonlySet<string>) | undefined;
+    return createMemo<ReadonlySet<string>>(() => {
+      const list = sessions();
+      if (!list) return new Set();
+      const ids = list.map((s) => s.id);
+      if (track) return track(ids);
+      track = createArrivalTracker(ids);
+      return new Set();
+    });
   }));
 }
 
