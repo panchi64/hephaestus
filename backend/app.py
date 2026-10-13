@@ -187,6 +187,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     app.state.runs = RunRegistry(
         lanes=LaneLimits(
             interactive=settings.run_max_concurrency,
+            routine=settings.run_routine_concurrency,
             background=settings.run_background_concurrency,
             linked=settings.run_linked_concurrency,
         ),

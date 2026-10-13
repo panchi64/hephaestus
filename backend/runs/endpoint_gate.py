@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 
 from .lanes import Lane, lane_for
 
-_RANK: dict[Lane, int] = {"interactive": 0, "linked": 1, "background": 2}
+_RANK: dict[Lane, int] = {"interactive": 0, "routine": 0, "linked": 1, "background": 2}
 
 
 @dataclass(frozen=True)

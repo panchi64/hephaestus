@@ -11,22 +11,25 @@ ceiling its kind of work may take. A run picks its lane from its own ``kind``, w
 the whole mechanism — no call site threads a new argument, because every submitter
 already says what kind of work it is submitting.
 
-**Lanes redistribute the ceiling; they never raise it.** Two semaphores rather than one
-per lane because the alternative — a pool per lane — makes the machine's real limit the
-*sum* of the lanes, which is how a change meant to lower resource use quietly raises peak
-concurrency instead. The operator's protection does not come from a bigger pool: it comes
+**Lanes redistribute the ceiling; only the routine lane adds to it.** Two semaphores rather
+than one per lane because the alternative — a pool per lane — makes the machine's real
+limit the *sum* of the lanes, which is how a change meant to lower resource use quietly
+raises peak concurrency instead. The routine lane is the one deliberate exception: its
+slots are a reservation the operator configures, so peak concurrency is the ceiling plus
+that reservation. The operator's protection does not come from a bigger pool: it comes
 from the unattended lanes being capped well below the ceiling, so slots they can never
 hold are, by arithmetic, always there for a turn somebody is waiting on.
 
-**The lanes are about who is waiting, not what the run does.** All three kinds run the
-same chat orchestrator over the same tools; they differ in whether somebody is sitting in
-front of the answer. ``interactive`` is the operator's own turn and gets the widest lane;
-a routine's run shares it, because a routine runs on a schedule the operator set and is
-late the moment it waits behind other work. ``background`` is unattended work of any
-other kind. ``linked`` is a thread the agent opened for itself (a sub-agent, or a turn its report
-woke), which is foreground for the model and background for the operator,
-and gets its own lane so a burst of them can neither starve the operator nor be starved
-by the scheduler.
+**The lanes are about who is waiting, not what the run does.** Every kind runs the same
+chat orchestrator over the same tools; they differ in whether somebody is sitting in front
+of the answer, or on a clock. ``interactive`` is the operator's own turn and gets the
+widest lane. ``routine`` is a routine's run: it runs on a schedule the operator set and is
+late the moment it waits, so its slots are **reserved on top of the ceiling** — routines
+never take a slot from the operator, and the operator's turns can never fill a routine's.
+``background`` is unattended work of any other kind. ``linked`` is a thread the agent
+opened for itself (a sub-agent, or a turn its report woke), which is foreground for the
+model and background for the operator, and gets its own lane so a burst of them can
+neither starve the operator nor be starved by other unattended work.
 
 An unrecognised kind lands in ``background``. That is the conservative direction: a kind
 nobody mapped is far more likely to be new autonomous work than a turn the operator is
@@ -42,10 +45,10 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Literal
 
-type Lane = Literal["interactive", "background", "linked"]
+type Lane = Literal["interactive", "routine", "background", "linked"]
 
 #: Every lane, in the order a readout should list them: most attended first.
-LANES: tuple[Lane, ...] = ("interactive", "background", "linked")
+LANES: tuple[Lane, ...] = ("interactive", "routine", "background", "linked")
 
 #: What an unmapped kind waits in — see the module docstring.
 DEFAULT_LANE: Lane = "background"
@@ -57,7 +60,7 @@ DEFAULT_LANE: Lane = "background"
 #: the lane — hence one mapping rather than a lane argument at each call site.
 LANE_BY_KIND: Mapping[str, Lane] = {
     "chat": "interactive",
-    "task": "interactive",
+    "task": "routine",
     "linked": "linked",
     # A thread continuing itself: a sub-agent it launched has reported, and the turn that
     # launched one has long since ended. Foreground for the model and background for the
@@ -116,6 +119,8 @@ class LaneLimits:
     """
 
     interactive: int = 8
+    #: Reserved on top of the ceiling: see the module docstring.
+    routine: int = 2
     background: int = 2
     linked: int = 3
     total: int | None = None
@@ -135,8 +140,10 @@ class LaneLimits:
         return max(0, self.ceiling - self.background - self.linked)
 
     def for_lane(self, lane: Lane) -> int:
-        """How many of the ceiling's slots this lane may hold at once."""
-        return min(self.ceiling, max(1, int(getattr(self, lane))))
+        """How many slots this lane may hold at once: of the ceiling's, except for the
+        routine lane's own."""
+        slots = max(1, int(getattr(self, lane)))
+        return slots if lane == "routine" else min(self.ceiling, slots)
 
 
 class LaneGate:
@@ -175,5 +182,10 @@ class LaneGate:
         while still waiting — because that is what the two nested ``async with``\\ es
         mean, and a permit leaked by a run that failed would narrow the lane for good.
         """
-        async with self._semaphores[lane_for(kind)], self._host:
+        lane = lane_for(kind)
+        if lane == "routine":
+            async with self._semaphores[lane]:
+                yield
+            return
+        async with self._semaphores[lane], self._host:
             yield

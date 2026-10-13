@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     # is volume, and slots they can never hold are slots the operator always can.
     run_max_concurrency: int = 8
     run_background_concurrency: int = 2
+    # Routine runs, reserved on top of `run_max_concurrency`: a routine runs on schedule, so
+    # it neither waits for the operator's slots nor takes them.
+    run_routine_concurrency: int = 2
     # Also the number of sub-agents that actually *execute* at once, since they run in the
     # linked lane. Deliberately left as one knob rather than
     # widened for them: the lane's narrowness is what guarantees the operator's own turn a

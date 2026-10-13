@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 
 from runs import CHAT_TURN_KINDS, LANE_BY_KIND, LaneLimits, RunRegistry, RunStatus, lane_for
-from runs.lanes import DEFAULT_LANE
+from runs.lanes import DEFAULT_LANE, LANES
 
 
 def _blocking(started: asyncio.Event, release: asyncio.Event):
@@ -28,8 +28,8 @@ async def test_an_unknown_kind_waits_in_the_unattended_lane():
     # A kind nobody mapped is far likelier to be new autonomous work than a turn someone
     # is waiting on, so the fallback must never be the operator's lane.
     assert lane_for("chat") == "interactive"
-    # A routine runs on the operator's schedule, so it is never left behind other work.
-    assert lane_for("task") == "interactive"
+    # A routine runs on the operator's schedule, in slots of its own.
+    assert lane_for("task") == "routine"
     assert lane_for("linked") == "linked"
     assert lane_for("something-invented-later") == "background"
 
@@ -40,7 +40,7 @@ def test_every_composed_kind_has_a_lane():
     # carries kinds that are not turns (a hand-started fold), and equating the two is what
     # would enrol the next one as a chat turn without anyone choosing that.
     assert CHAT_TURN_KINDS <= frozenset(LANE_BY_KIND)
-    assert set(LANE_BY_KIND.values()) | {DEFAULT_LANE} == {"interactive", "background", "linked"}
+    assert set(LANE_BY_KIND.values()) | {DEFAULT_LANE} == set(LANES)
 
 
 def test_a_fold_has_a_lane_and_is_not_a_chat_turn():
@@ -221,3 +221,48 @@ async def test_a_run_cancelled_while_queued_releases_the_permit_it_was_waiting_f
     await asyncio.wait_for(third_started.wait(), timeout=1.0)
     release_third.set()
     await third.wait()
+
+
+async def test_routines_run_in_reserved_slots_beside_a_full_ceiling():
+    # One slot on the host, held by the operator: a routine still starts, in its own slot,
+    # and a second routine waits only for the routine lane.
+    reg = RunRegistry(lanes=LaneLimits(total=1, interactive=1, routine=1))
+    chat_started, routine_started, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    chat = reg.submit(
+        kind="chat", owner_id="operator", orchestrator=_blocking(chat_started, release)
+    )
+    await chat_started.wait()
+    routine = reg.submit(
+        kind="task", owner_id="operator", orchestrator=_blocking(routine_started, release)
+    )
+    await asyncio.wait_for(routine_started.wait(), timeout=1.0)
+    second = reg.submit(
+        kind="task", owner_id="operator", orchestrator=_blocking(asyncio.Event(), release)
+    )
+    await asyncio.sleep(0)
+    assert second.status is RunStatus.queued
+
+    release.set()
+    for run in (chat, routine, second):
+        await run.wait()
+
+
+async def test_routines_never_take_the_operators_slots():
+    reg = RunRegistry(lanes=LaneLimits(total=1, interactive=1, routine=2))
+    routines_started = [asyncio.Event(), asyncio.Event()]
+    chat_started, release = asyncio.Event(), asyncio.Event()
+    runs = [
+        reg.submit(kind="task", owner_id="operator", orchestrator=_blocking(started, release))
+        for started in routines_started
+    ]
+    for started in routines_started:
+        await started.wait()
+    chat = reg.submit(
+        kind="chat", owner_id="operator", orchestrator=_blocking(chat_started, release)
+    )
+    await asyncio.wait_for(chat_started.wait(), timeout=1.0)
+
+    release.set()
+    for run in (*runs, chat):
+        await run.wait()
