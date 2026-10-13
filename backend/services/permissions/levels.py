@@ -56,11 +56,14 @@ delegates to — but nothing weighs the arguments, because for that class of too
 nothing in them to weigh. It is the one place where a level's delegation resolves without
 a model, and the review row says so in those words rather than reporting it as a review.
 
-There is exactly one exemption in the other direction, and it is here rather than at a
-call site because both halves of the enforcement need it: the model's own task list and the
-tools that move a thread in and out of plan mode are reachable at every level
-(:data:`PLANNING_TOOLS`), since a read-only turn whose only possible ending is a submitted
-plan cannot be made to ask permission to reach the tool that submits one.
+Two sets are exempt in the other direction, here rather than at a call site because both
+halves of the enforcement need them. The model's own task list and the tools that move a
+thread in and out of plan mode are reachable at every level (:data:`PLANNING_TOOLS`), since
+a read-only turn whose only possible ending is a submitted plan cannot be made to ask
+permission to reach the tool that submits one. And messaging within a delegation tree is
+reachable at every level (:data:`COORDINATION_TOOLS`), since a read-only agent sent to look
+into something has to be able to say what it found before it finishes; the tool gates
+itself on where the message goes.
 """
 
 from __future__ import annotations
@@ -306,6 +309,17 @@ PLANNING_TOOLS = frozenset(
 )
 
 
+# Messaging within a delegation tree — permitted at every level. Its class stays where
+# directing another agent belongs, and the tool raises its own approval for a message that
+# reaches an agent able to write from anywhere but below it (`tools/delegation.py`), so the
+# exemption only spares a read-only agent from being unable to report early or to reach a
+# read-only sibling.
+COORDINATION_TOOLS = frozenset({"agents_message"})
+
+#: Every tool the level gate never elevates.
+LEVEL_EXEMPT_TOOLS = PLANNING_TOOLS | COORDINATION_TOOLS
+
+
 def beyond_scope(level: str, tool: str, *, declared: Sensitivity | None = None) -> bool:
     """Whether ``tool`` reaches past what ``level`` permits unasked.
 
@@ -354,7 +368,7 @@ def beyond_scope(level: str, tool: str, *, declared: Sensitivity | None = None) 
     kept in step with the registry. The conservatism above is not bypassed at that level;
     it is applied, and finds nothing left to elevate.
     """
-    if tool in PLANNING_TOOLS:
+    if tool in LEVEL_EXEMPT_TOOLS:
         return False
     spec = permission_spec(level)
     if declared is not None:
@@ -370,4 +384,4 @@ def tools_beyond_scope(level: str) -> frozenset[str]:
     call. Unclassified names are absent by construction and do not need to be there: only
     a call can reveal one, and the decision point that sees it resolves it the same way.
     """
-    return tools_above(permission_spec(level).ceiling) - PLANNING_TOOLS
+    return tools_above(permission_spec(level).ceiling) - LEVEL_EXEMPT_TOOLS

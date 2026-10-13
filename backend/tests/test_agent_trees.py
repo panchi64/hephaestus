@@ -177,6 +177,28 @@ class TestMessaging:
             await _settle(app, started.run_id)
             await _settle_thread(app, root)
 
+    async def test_a_recipient_is_upward_only_when_it_is_above_the_sender(self, monkeypatch):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="done")
+            root = await _root(app)
+            lead = await _spawn(app, await _lead(app), "planner", root)
+            reader = await _spawn(app, EXPLORER, "reader", lead.conversation_id)
+            sibling = await _spawn(app, EXPLORER, "lexer", lead.conversation_id)
+            launcher = _launcher(app)
+
+            parent = await launcher.recipient("operator", reader.conversation_id, "parent")
+            above = await launcher.recipient("operator", reader.conversation_id, "planner")
+            top = await launcher.recipient("operator", reader.conversation_id, "main")
+            across = await launcher.recipient("operator", reader.conversation_id, "lexer")
+            down = await launcher.recipient("operator", lead.conversation_id, "reader")
+
+            assert (parent.label, parent.agent_name, parent.upward) == ("planner", "lead", True)
+            assert above.upward and top.upward
+            assert (across.agent_name, across.upward) == ("explorer", False)
+            assert not down.upward
+            for started in (reader, sibling, lead):
+                await _settle(app, started.run_id)
+
     async def test_the_root_has_no_parent(self, monkeypatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch)

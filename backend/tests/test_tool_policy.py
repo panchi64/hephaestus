@@ -198,6 +198,7 @@ async def test_booted_app_assembles_the_same_catalog():
             "agents_write",
             "shell_run_command",
             "shell_start_command",
+            "agents_message",
             "agents_spawn",
             "plugins_test",
             "routines_write",

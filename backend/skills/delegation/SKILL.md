@@ -35,7 +35,8 @@ Use `isolate` when the agent will edit files while you keep editing yours. Its c
 Issue every spawn together in one step, then carry on or end your turn. Reports arrive on their own: never poll, and never wait in a loop.
 
 - When what you need from an agent changes, `agents_message` it with the amended brief rather than spawning a second one.
-- Agents in one tree can message each other: tell an agent the handle of a sibling whose result it needs.
+- Agents in one tree can message each other: tell an agent the handle of a sibling whose result it needs. Any agent, read-only ones included, can message `parent` or `main` at any time to report something early.
+- A message across or down the tree to an agent that can write asks the operator first, as spawning one does. Messages up the tree and to read-only agents never ask.
 - Stop an agent with `agents_stop` once its work is moot. It reports what it got through.
 
 ## 5. Check before you relay

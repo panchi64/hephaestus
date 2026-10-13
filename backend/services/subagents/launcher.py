@@ -117,6 +117,20 @@ class SubagentView:
     ended_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class Recipient:
+    """Who a message from one agent of a tree reaches."""
+
+    conversation_id: str
+    #: The handle the sender is told it reached.
+    label: str
+    #: The agent definition it runs; None for the thread at the top of the tree.
+    agent_name: str | None
+    #: Whether it is the sender's parent or any agent above that: a message up the tree
+    #: carries what a report would, and directs nothing.
+    upward: bool
+
+
 #: How the thread at the top of a tree is named to the agents in it.
 ROOT_HANDLE = "main"
 
@@ -151,6 +165,13 @@ class SubagentLauncher(ABC):
         Raises :class:`SubagentUnavailableError` for every state that prevents a launch:
         the parent may not delegate, the tree is at its depth or concurrency limit, no
         model can serve it, or its workspace cannot be given.
+        """
+
+    @abstractmethod
+    async def recipient(self, owner_id: str, conversation_id: str, to: str) -> Recipient:
+        """Who ``to`` names, from the agent of ``conversation_id``.
+
+        Raises :class:`SubagentUnavailableError` when nothing in the tree answers to ``to``.
         """
 
     @abstractmethod

@@ -35,13 +35,14 @@ from services.subagents import (
     SubagentView,
 )
 from tools.deps import RunDeps
-from tools.project_agents import run_roster
+from tools.project_agents import run_catalog, run_roster
 
 #: The spawn tool's name inside the category, before the prefix makes it ``agents_spawn``.
 SPAWN_TOOL = "spawn"
 
-#: Raised for approval only when the agent being spawned can write.
-GATED_TOOLS: frozenset[str] = frozenset({f"agents_{SPAWN_TOOL}"})
+#: Raised for approval only when the agent being spawned, or sent a message from anywhere
+#: but below it, can write.
+GATED_TOOLS: frozenset[str] = frozenset({f"agents_{SPAWN_TOOL}", "agents_message"})
 
 _UNAVAILABLE = "Delegation is unavailable in this deployment."
 
@@ -121,14 +122,22 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         """Send a message to another agent of your delegation tree: a handle from
         `agents_list`, `parent` for the agent that spawned you, or `main` for the thread at
         the top. It reaches a running agent at its next step and wakes an idle one; you are
-        not waiting on a reply, which arrives as a message of its own if one comes."""
+        not waiting on a reply, which arrives as a message of its own if one comes. A message
+        to an agent that can write, unless it is above you, asks the operator first."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"sent": False, "detail": _UNAVAILABLE}
+        conversation_id = ctx.deps.conversation_id or ""
         try:
-            label = await launcher.message(
-                ctx.deps.owner_id, ctx.deps.conversation_id or "", to, text
-            )
+            recipient = await launcher.recipient(ctx.deps.owner_id, conversation_id, to)
+            # Up the tree a message is an early report, which every agent may send. Across
+            # or down it directs work, so reaching an agent that can write asks first, as
+            # spawning one does: a read-only agent's message can carry what it read.
+            if not recipient.upward and not ctx.tool_call_approved:
+                agent = (await run_catalog(ctx)).get(recipient.agent_name or "")
+                if agent is None or _can_write(agent):
+                    raise ApprovalRequired()
+            label = await launcher.message(ctx.deps.owner_id, conversation_id, to, text)
         except SubagentUnavailableError as exc:
             return {"sent": False, "detail": str(exc)}
         return {"sent": True, "to": label}

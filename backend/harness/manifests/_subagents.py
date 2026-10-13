@@ -53,6 +53,7 @@ from services.subagents.launcher import (
     PARENT_ADDRESS,
     ROOT_HANDLE,
     LaunchedSubagent,
+    Recipient,
     SubagentLauncher,
     SubagentParent,
     SubagentUnavailableError,
@@ -382,12 +383,8 @@ class ConversationSubagents(SubagentLauncher):
 
     # -- reaching agents in the tree -----------------------------------------------
 
-    async def message(self, owner_id: str, conversation_id: str, to: str, text: str) -> str:
-        text = text.strip()
-        if not text:
-            raise SubagentUnavailableError("A message with nothing in it says nothing.")
+    async def recipient(self, owner_id: str, conversation_id: str, to: str) -> Recipient:
         position = await self._position(owner_id, conversation_id)
-        sender = position.record.handle if position.record else ROOT_HANDLE
         address = _address(to)
         if address == PARENT_ADDRESS:
             if position.record is None or not position.record.parent_conversation_id:
@@ -396,21 +393,42 @@ class ConversationSubagents(SubagentLauncher):
                 )
             target = position.record.parent_conversation_id
             parent = await self._records.by_child(target)
-            label = parent.handle if parent else ROOT_HANDLE
+            found = Recipient(
+                target,
+                parent.handle if parent else ROOT_HANDLE,
+                parent.spec_name if parent else None,
+                upward=True,
+            )
         elif address == ROOT_HANDLE:
-            target, label = position.root, ROOT_HANDLE
+            found = Recipient(position.root, ROOT_HANDLE, None, upward=True)
         else:
             row = await self._resolve(owner_id, position.root, address)
-            target, label = row.child_conversation_id, row.handle
-        if not target or target == conversation_id:
+            found = Recipient(
+                row.child_conversation_id,
+                row.handle,
+                row.spec_name,
+                upward=await self._is_above(row.child_conversation_id, position.record),
+            )
+        if not found.conversation_id or found.conversation_id == conversation_id:
             raise SubagentUnavailableError(f"`{to}` is you; there is nobody to send it to.")
-        delivered = await self._wake.deliver(owner_id, target, text, source="agent", sender=sender)
+        return found
+
+    async def message(self, owner_id: str, conversation_id: str, to: str, text: str) -> str:
+        text = text.strip()
+        if not text:
+            raise SubagentUnavailableError("A message with nothing in it says nothing.")
+        position = await self._position(owner_id, conversation_id)
+        sender = position.record.handle if position.record else ROOT_HANDLE
+        found = await self.recipient(owner_id, conversation_id, to)
+        delivered = await self._wake.deliver(
+            owner_id, found.conversation_id, text, source="agent", sender=sender
+        )
         if not delivered:
             raise SubagentUnavailableError(
-                f"`{label}` was stopped, so nothing will read this. Spawn a new agent if "
-                "the work still needs doing."
+                f"`{found.label}` was stopped, so nothing will read this. Spawn a new agent "
+                "if the work still needs doing."
             )
-        return label
+        return found.label
 
     async def read(self, owner_id: str, conversation_id: str, handle: str) -> SubagentView:
         position = await self._position(owner_id, conversation_id)
@@ -459,6 +477,15 @@ class ConversationSubagents(SubagentLauncher):
         root = row.root_conversation_id or row.parent_conversation_id
         self._wake.remember_root(conversation_id, root)
         return _Position(root=root, depth=row.depth, record=row)
+
+    async def _is_above(self, conversation_id: str, sender: SubagentRecord | None) -> bool:
+        """Whether ``conversation_id`` is the thread of an agent above ``sender``."""
+        current = sender
+        while current is not None and current.parent_conversation_id:
+            if current.parent_conversation_id == conversation_id:
+                return True
+            current = await self._records.by_child(current.parent_conversation_id)
+        return False
 
     async def _is_below(self, row: SubagentRecord, conversation_id: str) -> bool:
         current: SubagentRecord | None = row

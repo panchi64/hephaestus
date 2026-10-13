@@ -25,7 +25,7 @@ It is built for **one operator on one powerful machine**, and it assumes models 
 
 - **One chat, every capability.** There are no modes. Every message runs the full agent loop over the whole tool catalog your permission level allows: files, a shell, web search, memory, email, calendar, and the rest. The tools a chat doesn't need yet stay out of its context until it searches for them.
 - **Agents you define.** An agent is a standing brief plus limits: its model, the tools it may use, how far it may reach without asking, and whether it may delegate. Write them yourself, drop them into a project's `.claude/agents/`, or let an agent draft one for you to publish. Start any chat with any agent.
-- **Delegation trees.** An agent can spawn others to do self-contained work in parallel, to any depth you allow. Spawning never blocks: reports arrive on their own and wake the thread that asked. Agents in one tree can message each other, so one can point a sibling at the gap it found.
+- **Delegation trees.** An agent can spawn others to do self-contained work in parallel, to any depth you allow. Spawning never blocks: reports arrive on their own and wake the thread that asked. Any agent in a tree can message any other, read-only scouts included, so one can report early or point a sibling at the gap it found. Only a message that would direct an agent able to write asks you first.
 - **Every sub-agent is a thread.** Open any sub-agent as its own conversation, read what it did, and talk to it directly while its report still goes to its parent.
 - **Per-endpoint queueing.** Each model endpoint has a capacity. Runs past it wait their turn, your own messages first, and a parent can never deadlock against a child waiting on the same endpoint.
 

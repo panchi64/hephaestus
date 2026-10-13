@@ -226,6 +226,9 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "agents_spawn",
             # A message can point another agent at any work its own catalog covers, and is
             # acted on after the sending turn has ended — the same statement as the spawn.
+            # Reachable at every level all the same (`permissions.COORDINATION_TOOLS`): the
+            # tool asks only when the message reaches an agent that can write from anywhere
+            # but below it.
             "agents_message",
             # Starts a routine's agent turn, with its pre-authorizations, after this one.
             "routines_run_now",
