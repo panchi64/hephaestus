@@ -30,6 +30,7 @@ export interface ManifestOut {
   /** Absent from older payloads. */
   agents?: string[];
   skills?: string[];
+  routines?: string[];
 }
 
 export interface PluginOut {
@@ -73,6 +74,7 @@ export function toManifest(dto: ManifestOut): PluginManifest {
     tools: dto.tools.map(toTool),
     agents: dto.agents ?? [],
     skills: dto.skills ?? [],
+    routines: dto.routines ?? [],
   };
 }
 

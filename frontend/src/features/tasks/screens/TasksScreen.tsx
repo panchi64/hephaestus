@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
+import { useNavigate } from "@solidjs/router";
 import {
   Button,
   Chip,
@@ -18,18 +19,22 @@ import {
   toast,
 } from "~/ui";
 import { relativeTime, timestamp } from "~/lib/format";
+import { openConversation } from "~/features/chat/data";
 import {
+  approveTask,
   deleteTask,
   refreshTasks,
   runTaskNow,
   rotateWebhook,
+  taskErrorMessage,
   updateTask,
+  useRoutineTemplates,
   useScheduledTasks,
 } from "../data";
 import { TaskFormModal } from "../components/TaskFormModal";
 import { TaskRunHistory } from "../components/TaskRunHistory";
-import { humanizeSchedule } from "../schedule";
-import type { ScheduledTask, TaskKind } from "../model";
+import { agentLabel, humanizeSchedule, isDraft } from "../schedule";
+import type { RoutineTemplate, ScheduledTask, TaskKind } from "../model";
 
 const KIND_ICON: Record<TaskKind, "chat" | "bell"> = {
   agent: "chat",
@@ -38,26 +43,56 @@ const KIND_ICON: Record<TaskKind, "chat" | "bell"> = {
 
 export function TasksScreen(): JSX.Element {
   const tasksResource = useScheduledTasks();
+  const navigate = useNavigate();
+  const templatesResource = useRoutineTemplates();
 
   const [expandedId, setExpandedId] = createSignal<string | null>(null);
   const [formOpen, setFormOpen] = createSignal(false);
   const [editingTask, setEditingTask] = createSignal<ScheduledTask | null>(
     null,
   );
+  const [template, setTemplate] = createSignal<RoutineTemplate | null>(null);
   const [rotatingId, setRotatingId] = createSignal<string | null>(null);
+  const [approvingId, setApprovingId] = createSignal<string | null>(null);
 
   const tasks = () => tasksResource() ?? [];
+  const draftCount = createMemo(() => tasks().filter(isDraft).length);
   const enabledCount = createMemo(
-    () => tasks().filter((t) => t.enabled).length,
+    () => tasks().filter((t) => t.enabled && !isDraft(t)).length,
   );
   const disabledCount = createMemo(
-    () => tasks().filter((t) => !t.enabled).length,
+    () => tasks().filter((t) => !t.enabled && !isDraft(t)).length,
   );
   const webhookCount = createMemo(
     () => tasks().filter((t) => t.schedule.type === "webhook").length,
   );
 
+  function openThread(task: ScheduledTask) {
+    if (!task.conversationId) return;
+    openConversation(task.conversationId);
+    navigate("/chat");
+  }
+
+  async function approve(task: ScheduledTask) {
+    setApprovingId(task.id);
+    try {
+      await approveTask(task.id);
+      toast.success(`"${task.title}" approved.`);
+    } catch (err) {
+      toast.error(taskErrorMessage(err, "Unable to approve the routine."));
+    } finally {
+      setApprovingId(null);
+    }
+  }
+
   function openNew() {
+    setTemplate(null);
+    setEditingTask(null);
+    setFormOpen(true);
+  }
+
+  function applyTemplate(t: RoutineTemplate) {
+    setTemplate(t);
     setEditingTask(null);
     setFormOpen(true);
   }
@@ -83,8 +118,8 @@ export function TasksScreen(): JSX.Element {
       toast.success(
         task.enabled ? `"${task.title}" disabled.` : `"${task.title}" enabled.`,
       );
-    } catch {
-      toast.error("Unable to update the task.");
+    } catch (err) {
+      toast.error(taskErrorMessage(err, "Unable to update the routine."));
     }
   }
 
@@ -92,7 +127,7 @@ export function TasksScreen(): JSX.Element {
     const ok = await confirm({
       title: `Delete "${task.title}"?`,
       detail:
-        "This removes the task and stops all future scheduled runs. This cannot be undone.",
+        "This removes the routine and stops all future scheduled runs. This cannot be undone.",
       confirmLabel: "Delete",
       cancelLabel: "Cancel",
       tone: "alert",
@@ -101,9 +136,9 @@ export function TasksScreen(): JSX.Element {
     try {
       if (expandedId() === task.id) setExpandedId(null);
       await deleteTask(task.id);
-      toast.success(`Task "${task.title}" deleted.`);
-    } catch {
-      toast.error("Unable to delete the task.");
+      toast.success(`Routine "${task.title}" deleted.`);
+    } catch (err) {
+      toast.error(taskErrorMessage(err, "Unable to delete the routine."));
     }
   }
 
@@ -111,8 +146,8 @@ export function TasksScreen(): JSX.Element {
     try {
       await runTaskNow(task.id);
       toast.success(`"${task.title}" queued to run now.`);
-    } catch {
-      toast.error("Unable to run the task now.");
+    } catch (err) {
+      toast.error(taskErrorMessage(err, "Unable to run the routine now."));
     }
   }
 
@@ -130,8 +165,8 @@ export function TasksScreen(): JSX.Element {
     try {
       await rotateWebhook(task.id);
       toast.success(`Webhook rotated for "${task.title}".`);
-    } catch {
-      toast.error("Unable to rotate the webhook.");
+    } catch (err) {
+      toast.error(taskErrorMessage(err, "Unable to rotate the webhook."));
     } finally {
       setRotatingId(null);
     }
@@ -140,12 +175,12 @@ export function TasksScreen(): JSX.Element {
   return (
     <Stack gap={6}>
       <PageHeader
-        title="Tasks"
-        subtitle="Scheduled automations and delivery targets."
+        title="Routines"
+        subtitle="Scheduled agent runs and reminders, each with its own thread."
         assetId="AUTO-TSK-01.0"
         actions={
           <Button variant="primary" leading="plus" onClick={openNew}>
-            New task
+            New routine
           </Button>
         }
       />
@@ -153,6 +188,11 @@ export function TasksScreen(): JSX.Element {
       <InstrumentBand
         items={[
           { label: "Total", value: String(tasks().length) },
+          {
+            label: "Drafts",
+            value: String(draftCount()),
+            tone: draftCount() > 0 ? "warn" : "dim",
+          },
           { label: "Enabled", value: String(enabledCount()), tone: "nominal" },
           {
             label: "Disabled",
@@ -163,15 +203,42 @@ export function TasksScreen(): JSX.Element {
         ]}
       />
 
+      <Show when={(templatesResource() ?? []).length > 0}>
+        <Panel label="From a plugin" flush>
+          <For each={templatesResource()}>
+            {(t) => (
+              <div class="flex items-center gap-3 px-3 py-2">
+                <Stack gap={0} class="min-w-0 flex-1">
+                  <Text variant="label" tone="bright" class="truncate">
+                    {t.title}
+                  </Text>
+                  <Text variant="micro" tone="dim" class="truncate">
+                    {t.plugin} · {humanizeSchedule(t.schedule)} ·{" "}
+                    {agentLabel(t.agentName)}
+                  </Text>
+                </Stack>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => applyTemplate(t)}
+                >
+                  Use
+                </Button>
+              </div>
+            )}
+          </For>
+        </Panel>
+      </Show>
+
       <Resource
         data={tasksResource}
         onRetry={refreshTasks}
         isEmpty={(t) => t.length === 0}
-        emptyMessage="No tasks"
-        emptyHint="No scheduled tasks configured."
+        emptyMessage="No routines"
+        emptyHint="No routines configured."
         empty={
           <Button variant="default" onClick={openNew}>
-            Create task
+            Create routine
           </Button>
         }
       >
@@ -194,10 +261,16 @@ export function TasksScreen(): JSX.Element {
                           class={task.enabled ? "text-bright" : "text-dim"}
                         />
                         <StatusFlag
-                          status={task.enabled ? "nominal" : "idle"}
-                          dot={task.enabled}
+                          status={
+                            isDraft(task)
+                              ? "warn"
+                              : task.enabled
+                                ? "nominal"
+                                : "idle"
+                          }
+                          dot={task.enabled && !isDraft(task)}
                         >
-                          {task.kind.toUpperCase()}
+                          {isDraft(task) ? "DRAFT" : task.kind.toUpperCase()}
                         </StatusFlag>
                         <Text
                           variant="label"
@@ -211,10 +284,17 @@ export function TasksScreen(): JSX.Element {
                         <Text variant="micro" tone="dim" class="font-mono">
                           {humanizeSchedule(task.schedule)}
                         </Text>
-                        <Show when={task.nextRunAt}>
+                        <Show when={task.kind === "agent"}>
                           <Text variant="micro" tone="dim">
-                            {relativeTime(task.nextRunAt!)}
+                            {agentLabel(task.agentName)}
                           </Text>
+                        </Show>
+                        <Show when={task.upcoming[0]}>
+                          {(next) => (
+                            <Text variant="micro" tone="dim">
+                              {relativeTime(next())}
+                            </Text>
+                          )}
                         </Show>
                         <Show when={task.kind === "agent"}>
                           <StatusFlag
@@ -232,12 +312,14 @@ export function TasksScreen(): JSX.Element {
                           variant="ghost"
                           size="sm"
                           leading="play"
+                          disabled={isDraft(task)}
                           onClick={() => void runNow(task)}
                         >
                           Run now
                         </Button>
                         <Toggle
                           checked={task.enabled}
+                          disabled={isDraft(task)}
                           onChange={() => void toggleEnabled(task)}
                         />
                         <Button
@@ -272,6 +354,22 @@ export function TasksScreen(): JSX.Element {
                       <div class="bg-raised px-4 py-3">
                         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                           <Stack gap={3}>
+                            <Show when={isDraft(task)}>
+                              <Row gap={3} align="center" class="flex-wrap">
+                                <StatusFlag status="warn" dot>
+                                  Draft — waiting for your approval
+                                </StatusFlag>
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  leading="check"
+                                  disabled={approvingId() === task.id}
+                                  onClick={() => void approve(task)}
+                                >
+                                  Approve
+                                </Button>
+                              </Row>
+                            </Show>
                             <Field
                               label={
                                 task.kind === "agent"
@@ -291,6 +389,10 @@ export function TasksScreen(): JSX.Element {
                               />
                               <Show when={task.kind === "agent"}>
                                 <Field
+                                  label="Agent"
+                                  value={agentLabel(task.agentName)}
+                                />
+                                <Field
                                   label="Output"
                                   value={task.output.toUpperCase()}
                                 />
@@ -308,17 +410,41 @@ export function TasksScreen(): JSX.Element {
                                 </Row>
                               </Stack>
                             </Show>
-                            <Show when={task.nextRunAt}>
-                              <Field
-                                label="Next run"
-                                value={timestamp(task.nextRunAt!)}
-                              />
+                            <Show when={task.upcoming.length > 0}>
+                              <Stack gap={1}>
+                                <Text variant="label" tone="dim">
+                                  Upcoming
+                                </Text>
+                                <For each={task.upcoming}>
+                                  {(at) => (
+                                    <Text
+                                      variant="micro"
+                                      tone="dim"
+                                      class="font-mono"
+                                    >
+                                      {timestamp(at)}
+                                    </Text>
+                                  )}
+                                </For>
+                              </Stack>
                             </Show>
                             <Show when={task.lastRunAt}>
                               <Field
                                 label="Last run"
                                 value={timestamp(task.lastRunAt!)}
                               />
+                            </Show>
+                            <Show when={task.conversationId}>
+                              <div>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  leading="chat"
+                                  onClick={() => openThread(task)}
+                                >
+                                  Open thread
+                                </Button>
+                              </div>
                             </Show>
                             <Show when={task.schedule.type === "webhook"}>
                               <Stack gap={1}>
@@ -378,6 +504,7 @@ export function TasksScreen(): JSX.Element {
         open={formOpen()}
         onClose={() => setFormOpen(false)}
         task={editingTask()}
+        template={template()}
       />
     </Stack>
   );

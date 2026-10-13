@@ -34,11 +34,11 @@ export const AREAS: NavArea[] = [
         description: "View and manage your schedule",
       },
       {
-        label: "Tasks",
+        label: "Routines",
         href: "/tasks",
         icon: "clock",
         connected: true,
-        description: "Scheduled agent tasks and reminders",
+        description: "Scheduled agent routines and reminders",
       },
     ],
   },

@@ -89,6 +89,13 @@ export function PublishChanges(props: {
             </Line>
           )}
         </For>
+        <For each={c().routines.added}>
+          {(name) => (
+            <Line tag="NEW ROUTINE" tone="alert">
+              {name}
+            </Line>
+          )}
+        </For>
         <For each={c().requirements.added}>
           {(r) => (
             <Line tag="NEW REQUIREMENT" tone="warn">
@@ -127,6 +134,13 @@ export function PublishChanges(props: {
         <For each={c().skills.removed}>
           {(name) => (
             <Line tag="SKILL REMOVED" tone="idle">
+              {name}
+            </Line>
+          )}
+        </For>
+        <For each={c().routines.removed}>
+          {(name) => (
+            <Line tag="ROUTINE REMOVED" tone="idle">
               {name}
             </Line>
           )}

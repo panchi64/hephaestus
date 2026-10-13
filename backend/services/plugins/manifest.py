@@ -35,10 +35,17 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator, SchemaError
 
-from core.exceptions import InvalidInputError, PluginValidationError, SkillValidationError
+from core.exceptions import (
+    InvalidInputError,
+    PluginValidationError,
+    RoutineValidationError,
+    SkillValidationError,
+)
+from core.frontmatter import FrontmatterError, split_frontmatter
 from services.agents.definition import AgentDefinition
 from services.agents.files import AgentFileError, AgentNameError, parse_agent_file
 from services.egress import normalise_domain
+from services.routines.schedule import parse_schedule
 from services.skills.bundle import SKILL_FILE, ParsedSkill, parse_skill_md
 from services.tool_sensitivity import Sensitivity
 
@@ -86,6 +93,19 @@ class PluginSkill:
 
 
 @dataclass(frozen=True)
+class RoutineTemplate:
+    """A routine a plugin offers for the operator to set up: ``routines/<name>.md``, with
+    ``title``, ``schedule`` (the compact form `routines_write` takes) and an optional
+    ``agent`` in its frontmatter, and the prompt as its body."""
+
+    name: str
+    title: str
+    schedule: str
+    agent: str | None
+    prompt: str
+
+
+@dataclass(frozen=True)
 class PluginManifest:
     name: str
     description: str
@@ -98,6 +118,8 @@ class PluginManifest:
     agents: tuple[AgentDefinition, ...] = ()
     #: Skills from ``skills/<name>/SKILL.md`` and the files beside it.
     skills: tuple[PluginSkill, ...] = ()
+    #: Routine templates from ``routines/<name>.md``.
+    routines: tuple[RoutineTemplate, ...] = ()
 
     def tool(self, name: str) -> PluginTool | None:
         return next((tool for tool in self.tools if tool.name == name), None)
@@ -130,9 +152,13 @@ def validate_files(files: Mapping[str, bytes]) -> PluginManifest:
     except UnicodeDecodeError:
         raise PluginValidationError(MANIFEST_FILE, "is not UTF-8 text") from None
     manifest = parse_manifest(text)
-    manifest = replace(manifest, agents=_agents(files), skills=_skills(files))
-    if not (manifest.tools or manifest.agents or manifest.skills):
-        raise PluginValidationError("tools", "a plugin contributes a tool, an agent or a skill")
+    manifest = replace(
+        manifest, agents=_agents(files), skills=_skills(files), routines=_routines(files)
+    )
+    if not (manifest.tools or manifest.agents or manifest.skills or manifest.routines):
+        raise PluginValidationError(
+            "tools", "a plugin contributes a tool, an agent, a skill or a routine"
+        )
     for tool in manifest.tools:
         module = tool.module.replace(".", "/")
         if f"{module}.py" not in files and f"{module}/__init__.py" not in files:
@@ -179,6 +205,39 @@ def _skills(files: Mapping[str, bytes]) -> tuple[PluginSkill, ...]:
     if len({entry.skill.name for entry in skills}) != len(skills):
         raise PluginValidationError("skills", "two skills share a name")
     return tuple(skills)
+
+
+def _routines(files: Mapping[str, bytes]) -> tuple[RoutineTemplate, ...]:
+    templates: list[RoutineTemplate] = []
+    for path, blob in sorted(files.items()):
+        folder, _, filename = path.rpartition("/")
+        if folder != "routines" or not filename.endswith(".md"):
+            continue
+        try:
+            fields, body = split_frontmatter(blob.decode())
+            template = RoutineTemplate(
+                name=validate_name(filename.removesuffix(".md")),
+                title=_required(fields, "title"),
+                schedule=_required(fields, "schedule"),
+                agent=str(fields["agent"]) if fields.get("agent") else None,
+                prompt=body.strip(),
+            )
+            if not template.prompt:
+                raise PluginValidationError("routines", "the body is the routine's prompt")
+            parse_schedule(template.schedule, "UTC")
+        except (FrontmatterError, RoutineValidationError, UnicodeDecodeError) as exc:
+            raise PluginValidationError("routines", f"{path}: {exc}") from None
+        except PluginValidationError as exc:
+            raise PluginValidationError("routines", f"{path}: {exc}") from None
+        templates.append(template)
+    return tuple(templates)
+
+
+def _required(fields: Mapping[str, Any], key: str) -> str:
+    value = str(fields.get(key) or "").strip()
+    if not value:
+        raise PluginValidationError("routines", f"needs a {key}")
+    return value
 
 
 def validate_path(path: str) -> str:

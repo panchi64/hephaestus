@@ -33,6 +33,8 @@ export interface PluginManifest {
   agents: string[];
   /** Names of the skills it contributes while published. */
   skills: string[];
+  /** Names of the routine templates it contributes while published. */
+  routines: string[];
 }
 
 export interface Plugin {
@@ -117,6 +119,7 @@ export function contributionParts(plugin: Plugin): string[] {
     [m?.tools.length ?? 0, "tool", "tools"],
     [m?.agents.length ?? 0, "agent", "agents"],
     [m?.skills.length ?? 0, "skill", "skills"],
+    [m?.routines.length ?? 0, "routine", "routines"],
   ];
   const parts = counts
     .filter(([n]) => n > 0)
@@ -195,6 +198,7 @@ export interface PublishChanges {
   requirements: { added: string[]; removed: string[] };
   agents: { added: string[]; removed: string[] };
   skills: { added: string[]; removed: string[] };
+  routines: { added: string[]; removed: string[] };
   descriptionChanged: boolean;
 }
 
@@ -224,6 +228,7 @@ export function publishChanges(
     tools: [],
     agents: [],
     skills: [],
+    routines: [],
   };
 
   const secretNames = diffSet(
@@ -275,13 +280,14 @@ export function publishChanges(
     requirements: diffSet(base.requirements, draft.requirements),
     agents: diffSet(base.agents, draft.agents),
     skills: diffSet(base.skills, draft.skills),
+    routines: diffSet(base.routines, draft.routines),
     descriptionChanged:
       active !== null && active.description !== draft.description,
   };
 }
 
 /** Whether publishing widens what the plugin can reach or do: a new host, a new
- *  or re-pointed secret, a new tool, a new agent or skill (standing instructions the model acts
+ *  or re-pointed secret, a new tool, a new agent, skill or routine (standing instructions the model acts
  *  under), or a tool that became more sensitive. */
 export function widensAccess(changes: PublishChanges): boolean {
   return (
@@ -291,6 +297,7 @@ export function widensAccess(changes: PublishChanges): boolean {
     changes.tools.added.length > 0 ||
     changes.agents.added.length > 0 ||
     changes.skills.added.length > 0 ||
+    changes.routines.added.length > 0 ||
     changes.tools.sensitivity.some((s) => s.escalated)
   );
 }
@@ -311,7 +318,9 @@ export function hasChanges(changes: PublishChanges): boolean {
       changes.agents.added.length +
       changes.agents.removed.length +
       changes.skills.added.length +
-      changes.skills.removed.length >
+      changes.skills.removed.length +
+      changes.routines.added.length +
+      changes.routines.removed.length >
       0 || changes.descriptionChanged
   );
 }
@@ -330,6 +339,8 @@ export function accessSummary(manifest: PluginManifest): string[] {
     lines.push(`Agents: ${manifest.agents.join(", ")}`);
   if (manifest.skills.length)
     lines.push(`Skills: ${manifest.skills.join(", ")}`);
+  if (manifest.routines.length)
+    lines.push(`Routines: ${manifest.routines.join(", ")}`);
   if (!lines.length) lines.push("It declares no hosts or secrets.");
   return lines;
 }

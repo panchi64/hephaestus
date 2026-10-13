@@ -1,4 +1,4 @@
-import { createEffect, Show, For, type JSX } from "solid-js";
+import { createEffect, createMemo, Show, For, type JSX } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
   Button,
@@ -12,22 +12,31 @@ import {
   Textarea,
   toast,
 } from "~/ui";
+import { timestamp } from "~/lib/format";
+import { pickableAgents, useAgents } from "~/features/agents";
 import {
   createTask,
+  parseSchedule,
+  taskErrorMessage,
   updateTask,
   useApprovalScopes,
   type TaskInput,
 } from "../data";
 import type {
   OutputChannel,
+  RoutineTemplate,
   ScheduledTask,
   ScheduleType,
   TaskKind,
 } from "../model";
 import {
+  agentFromValue,
+  agentOptions,
+  browserTimezone,
   CRON_PATTERN,
   isoToLocalInput,
   secondsToValueUnit,
+  DEFAULT_AGENT_VALUE,
   UNIT_SECONDS,
   type IntervalUnit,
 } from "../schedule";
@@ -41,7 +50,13 @@ interface FormState {
   intervalValue: string;
   intervalUnit: IntervalUnit;
   cron: string;
+  timezone: string;
+  phrase: string;
+  parsing: boolean;
+  parseError: string;
+  upcoming: string[];
   output: OutputChannel;
+  agent: string;
   scopes: Set<string>;
   titleError: string;
   scheduleError: string;
@@ -57,7 +72,13 @@ function blankForm(): FormState {
     intervalValue: "1",
     intervalUnit: "hours",
     cron: "",
+    timezone: browserTimezone(),
+    phrase: "",
+    parsing: false,
+    parseError: "",
+    upcoming: [],
     output: "chat",
+    agent: DEFAULT_AGENT_VALUE,
     scopes: new Set(),
     titleError: "",
     scheduleError: "",
@@ -79,31 +100,70 @@ function formFromTask(task: ScheduledTask): FormState {
     intervalValue: interval.value,
     intervalUnit: interval.unit,
     cron: sched.cron ?? "",
+    timezone: sched.timezone || browserTimezone(),
+    phrase: "",
+    parsing: false,
+    parseError: "",
+    upcoming: task.upcoming,
     output: task.output,
+    agent: task.agentName ?? DEFAULT_AGENT_VALUE,
     scopes: new Set(task.preAuthorized),
     titleError: "",
     scheduleError: "",
   };
 }
 
-/** Create/edit modal for a scheduled task — the kind toggle (agent/reminder),
- *  schedule builder (once/interval/cron/webhook), output channel, and
- *  pre-authorization scope checkboxes. A `reminder` preset hides the
- *  agent-only fields (output channel, pre-authorized scopes): a reminder never
- *  drives a Run, so neither has meaning for it. */
+function formFromTemplate(template: RoutineTemplate): FormState {
+  return formFromTask({
+    id: "",
+    kind: "agent",
+    title: template.title,
+    prompt: template.prompt,
+    schedule: template.schedule,
+    output: "chat",
+    agentName: template.agentName,
+    approved: true,
+    conversationId: null,
+    upcoming: [],
+    preAuthorized: [],
+    enabled: true,
+    createdAt: "",
+    updatedAt: "",
+  });
+}
+
+/** Create/edit modal for a routine — the kind toggle (agent/reminder), agent
+ *  picker, schedule builder (a described phrase read by the backend, or
+ *  once/interval/cron/webhook fields), output channel, and pre-authorization
+ *  scope checkboxes. A `reminder` preset hides the agent-only fields (agent,
+ *  output channel, pre-authorized scopes): a reminder never drives a Run, so
+ *  none has meaning for it. */
 export function TaskFormModal(props: {
   open: boolean;
   onClose: () => void;
   task: ScheduledTask | null;
+  /** Prefills a new routine; nothing is saved until the form is submitted. */
+  template?: RoutineTemplate | null;
 }): JSX.Element {
   const [form, setForm] = createStore<FormState>(blankForm());
   // Which tools can be pre-authorized is the backend's to decide — it depends on
   // what the operator has registered, so the form asks rather than assumes.
   const scopes = useApprovalScopes();
+  const agents = useAgents();
+  const agentChoices = createMemo(() =>
+    agentOptions(
+      pickableAgents(agents() ?? [])
+        .map((a) => a.name)
+        .filter((name) => name !== "default"),
+      props.task?.agentName ?? null,
+    ),
+  );
 
   createEffect(() => {
     if (!props.open) return;
-    setForm(props.task ? formFromTask(props.task) : blankForm());
+    if (props.task) setForm(formFromTask(props.task));
+    else if (props.template) setForm(formFromTemplate(props.template));
+    else setForm(blankForm());
   });
 
   const isAgent = () => form.kind === "agent";
@@ -116,6 +176,35 @@ export function TaskFormModal(props: {
       else next.delete(id);
       return next;
     });
+  }
+
+  async function readPhrase() {
+    const phrase = form.phrase.trim();
+    if (!phrase) return;
+    setForm({ parsing: true, parseError: "" });
+    try {
+      const { schedule, upcoming } = await parseSchedule(phrase, form.timezone);
+      const interval = schedule.everySeconds
+        ? secondsToValueUnit(schedule.everySeconds)
+        : null;
+      setForm({
+        scheduleType: schedule.type,
+        runAtLocal: schedule.runAt ? isoToLocalInput(schedule.runAt) : "",
+        intervalValue: interval?.value ?? form.intervalValue,
+        intervalUnit: interval?.unit ?? form.intervalUnit,
+        cron: schedule.cron ?? "",
+        timezone: schedule.timezone || form.timezone,
+        scheduleError: "",
+        upcoming,
+      });
+    } catch (err) {
+      setForm(
+        "parseError",
+        taskErrorMessage(err, "Unable to read that schedule."),
+      );
+    } finally {
+      setForm("parsing", false);
+    }
   }
 
   function validate(): boolean {
@@ -157,20 +246,26 @@ export function TaskFormModal(props: {
   async function save() {
     if (!validate()) return;
 
+    const timezone = form.timezone.trim() || browserTimezone();
     const schedule: TaskInput["schedule"] =
       form.scheduleType === "once"
-        ? { type: "once", runAt: new Date(form.runAtLocal).toISOString() }
+        ? {
+            type: "once",
+            runAt: new Date(form.runAtLocal).toISOString(),
+            timezone,
+          }
         : form.scheduleType === "interval"
           ? {
               type: "interval",
               everySeconds:
                 Number(form.intervalValue) * UNIT_SECONDS[form.intervalUnit],
+              timezone,
             }
           : form.scheduleType === "cron"
-            ? { type: "cron", cron: form.cron.trim() }
-            : { type: "webhook" };
+            ? { type: "cron", cron: form.cron.trim(), timezone }
+            : { type: "webhook", timezone };
 
-    // `output` only has meaning for an agent task (which channel to deliver its
+    // `output` only has meaning for an agent routine (which channel to deliver its
     // run to); a reminder always fires a direct notification per the schedule
     // contract regardless of this field, so it's left at the form default
     // rather than implying a real distinction that doesn't exist.
@@ -180,6 +275,7 @@ export function TaskFormModal(props: {
       prompt: form.prompt,
       schedule,
       output: form.output,
+      agentName: isAgent() ? agentFromValue(form.agent) : null,
       preAuthorized: isAgent() ? [...form.scopes] : [],
     };
 
@@ -191,11 +287,14 @@ export function TaskFormModal(props: {
         isEditing() ? `"${saved.title}" updated.` : `"${saved.title}" created.`,
       );
       props.onClose();
-    } catch {
+    } catch (err) {
       toast.error(
-        isEditing()
-          ? "Unable to update the task."
-          : "Unable to create the task.",
+        taskErrorMessage(
+          err,
+          isEditing()
+            ? "Unable to update the routine."
+            : "Unable to create the routine.",
+        ),
       );
     }
   }
@@ -204,7 +303,7 @@ export function TaskFormModal(props: {
     <Modal
       open={props.open}
       onClose={props.onClose}
-      title={isEditing() ? "Edit task" : "New task"}
+      title={isEditing() ? "Edit routine" : "New routine"}
       class="max-w-lg"
       footer={
         <Row gap={2}>
@@ -227,7 +326,7 @@ export function TaskFormModal(props: {
             isEditing() ? "Set at creation — cannot be changed." : undefined
           }
           options={[
-            { value: "agent", label: "Agent task" },
+            { value: "agent", label: "Agent routine" },
             { value: "reminder", label: "Reminder" },
           ]}
         />
@@ -239,7 +338,7 @@ export function TaskFormModal(props: {
               setForm("title", e.currentTarget.value);
               if (e.currentTarget.value.trim()) setForm("titleError", "");
             }}
-            placeholder="Descriptive task title"
+            placeholder="Descriptive routine title"
           />
           <Show when={form.titleError}>
             <Text variant="micro" tone="alert">
@@ -254,10 +353,52 @@ export function TaskFormModal(props: {
           onInput={(e) => setForm("prompt", e.currentTarget.value)}
           hint={
             isAgent()
-              ? "Drives a fresh conversation each time this task fires."
+              ? "Each time this routine fires it adds a turn to its one thread."
               : "Delivered verbatim as the notification body — no AI phrasing."
           }
         />
+
+        <Show when={isAgent()}>
+          <Select
+            label="Agent"
+            value={form.agent}
+            onChange={(v) => setForm("agent", v)}
+            options={agentChoices()}
+          />
+        </Show>
+
+        <Stack gap={1}>
+          <Row gap={2} align="end">
+            <Input
+              label="Describe the schedule"
+              class="flex-1"
+              value={form.phrase}
+              onInput={(e) => {
+                setForm("phrase", e.currentTarget.value);
+                setForm("parseError", "");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void readPhrase();
+                }
+              }}
+              placeholder="every weekday at 8am"
+            />
+            <Button
+              variant="default"
+              disabled={form.parsing || !form.phrase.trim()}
+              onClick={() => void readPhrase()}
+            >
+              {form.parsing ? "Reading…" : "Read"}
+            </Button>
+          </Row>
+          <Show when={form.parseError}>
+            <Text variant="micro" tone="alert">
+              {form.parseError}
+            </Text>
+          </Show>
+        </Stack>
 
         <Select
           label="Schedule type"
@@ -344,10 +485,35 @@ export function TaskFormModal(props: {
           </Stack>
         </Show>
 
+        <Show when={form.scheduleType === "cron"}>
+          <Input
+            label="TIMEZONE"
+            value={form.timezone}
+            onInput={(e) => setForm("timezone", e.currentTarget.value)}
+            placeholder="Europe/Paris"
+            hint="IANA zone the cron fields are read in."
+          />
+        </Show>
+
+        <Show when={form.upcoming.length > 0}>
+          <Stack gap={1}>
+            <Text variant="label" tone="dim">
+              Upcoming
+            </Text>
+            <For each={form.upcoming}>
+              {(at) => (
+                <Text variant="micro" tone="dim" class="font-mono">
+                  {timestamp(at)}
+                </Text>
+              )}
+            </For>
+          </Stack>
+        </Show>
+
         <Show when={form.scheduleType === "webhook"}>
           <Text variant="micro" tone="dim">
             Fires only when its webhook URL is called — no time-based schedule.
-            The URL is generated once this task is saved.
+            The URL is generated once this routine is saved.
           </Text>
         </Show>
 

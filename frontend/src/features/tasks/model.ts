@@ -1,4 +1,4 @@
-/** Tasks / Scheduling feature data contracts — mirrors the backend wire contract
+/** Routines (scheduled tasks) feature data contracts — mirrors the backend wire contract
  *  (`ScheduledTask`/`TaskRun`, `routes/tasks.py`) camelCase-for-camelCase. */
 
 export type TaskKind = "agent" | "reminder";
@@ -8,7 +8,7 @@ export type TaskRunOutcome =
   "ok" | "error" | "blocked" | "cancelled" | "skipped";
 
 /** Exactly one of `runAt`/`everySeconds`/`cron` is meaningful, selected by `type`;
- *  a `webhook` task uses none of them (it fires only on its hook route). */
+ *  a `webhook` routine uses none of them (it fires only on its hook route). */
 export interface TaskSchedule {
   type: ScheduleType;
   /** ISO timestamp — `once` only. */
@@ -17,6 +17,8 @@ export interface TaskSchedule {
   everySeconds?: number;
   /** Raw cron expression — `cron` only. */
   cron?: string;
+  /** IANA zone a cron's fields are read in. */
+  timezone: string;
 }
 
 export interface ScheduledTask {
@@ -26,6 +28,15 @@ export interface ScheduledTask {
   prompt: string;
   schedule: TaskSchedule;
   output: OutputChannel;
+  /** Agent the routine runs as; null is the default agent. */
+  agentName: string | null;
+  /** False while an agent's draft waits on the operator — it never fires until
+   *  approved. */
+  approved: boolean;
+  /** The routine's one thread; every fire appends a turn to it. */
+  conversationId: string | null;
+  /** Next fire times as ISO instants; empty for drafts and webhooks. */
+  upcoming: string[];
   /** Tool-name scopes (the same vocabulary `ApprovalGrant.tool_name` uses) this
    *  task's unattended runs are pre-authorized for — seeded into a conversation
    *  grant at each execution so out-of-scope sensitive actions still park. */
@@ -67,4 +78,20 @@ export interface ApprovalScope {
   name: string;
   category: string;
   description: string;
+}
+
+/** A routine a published plugin offers; using one prefills the create form. */
+export interface RoutineTemplate {
+  plugin: string;
+  name: string;
+  title: string;
+  prompt: string;
+  schedule: TaskSchedule;
+  agentName: string | null;
+}
+
+/** What `POST /tasks/parse-schedule` reads out of a phrase; nothing is saved. */
+export interface ParsedSchedule {
+  schedule: TaskSchedule;
+  upcoming: string[];
 }

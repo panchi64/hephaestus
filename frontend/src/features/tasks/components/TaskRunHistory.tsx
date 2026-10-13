@@ -54,9 +54,9 @@ function runLabel(run: TaskRun): string {
 
 const RUNS_PAGE = 6;
 
-/** A task's expanded run history — outcome chip, timestamps, and a deep-link
- *  to the conversation the run drove (agent tasks only). Fetches lazily via
- *  `useTaskRuns`, mounted only while the task row is expanded. */
+/** A routine's expanded run history — outcome chip, timestamps, and a deep-link
+ *  to the conversation the run drove (agent routines only). Fetches lazily via
+ *  `useTaskRuns`, mounted only while the routine row is expanded. */
 export function TaskRunHistory(props: { taskId: string }): JSX.Element {
   const runsResource = useTaskRuns(() => props.taskId);
   const navigate = useNavigate();

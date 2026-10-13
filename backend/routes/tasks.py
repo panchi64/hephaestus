@@ -27,7 +27,7 @@ from routes import deps
 from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
 from services.projects import project_clause
-from services.routines import Routine, RoutineRun, Schedule, upcoming
+from services.routines import Routine, RoutineRun, Schedule, parse_schedule, upcoming
 from tools.catalog import approval_scopes
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -128,6 +128,21 @@ class TaskRunListOut(CamelModel):
 
 class RunNowOut(CamelModel):
     task_run_id: str
+
+
+class TemplateOut(CamelModel):
+    """A routine a published plugin offers; the operator sets it up through the form."""
+
+    plugin: str
+    name: str
+    title: str
+    prompt: str
+    schedule: TaskSchedule
+    agent_name: str | None = None
+
+
+class TemplateListOut(CamelModel):
+    items: list[TemplateOut]
 
 
 class ParseScheduleIn(CamelModel):
@@ -307,8 +322,26 @@ async def list_task_runs(
     return TaskRunListOut(items=[_task_run_out(run) for run in runs])
 
 
+@router.get("/templates", response_model=TemplateListOut)
+async def list_templates(request: Request) -> TemplateListOut:
+    templates = await deps.plugins(request).routine_templates(OPERATOR_ID)
+    return TemplateListOut(
+        items=[
+            TemplateOut(
+                plugin=plugin,
+                name=template.name,
+                title=template.title,
+                prompt=template.prompt,
+                schedule=_schedule_out(parse_schedule(template.schedule, DEFAULT_TIMEZONE)),
+                agent_name=template.agent,
+            )
+            for plugin, template in templates
+        ]
+    )
+
+
 @router.post("/parse-schedule", response_model=ParseScheduleOut)
-async def parse_schedule(body: ParseScheduleIn, request: Request) -> ParseScheduleOut:
+async def read_schedule(body: ParseScheduleIn, request: Request) -> ParseScheduleOut:
     """Read a phrase ("every weekday at 9") into a schedule, without saving anything."""
     schedule = await deps.schedule_parser(request).parse(body.phrase, timezone=body.timezone)
     return ParseScheduleOut(

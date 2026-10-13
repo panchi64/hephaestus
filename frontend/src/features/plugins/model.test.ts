@@ -34,6 +34,7 @@ function manifest(over: Partial<PluginManifest> = {}): PluginManifest {
     tools: [],
     agents: [],
     skills: [],
+    routines: [],
     ...over,
   };
 }
@@ -90,9 +91,15 @@ describe("contributionParts", () => {
         tools: [tool("a")],
         agents: ["x", "y"],
         skills: ["s"],
+        routines: ["r", "q"],
       }),
     });
-    expect(contributionParts(p)).toEqual(["1 tool", "2 agents", "1 skill"]);
+    expect(contributionParts(p)).toEqual([
+      "1 tool",
+      "2 agents",
+      "1 skill",
+      "2 routines",
+    ]);
     expect(
       contributionParts(plugin({ draft: manifest({ skills: ["s"] }) })),
     ).toEqual(["1 skill"]);
@@ -220,6 +227,30 @@ describe("agents and skills", () => {
     expect(c.skills.added).toEqual(["s"]);
     expect(c.tools.added).toEqual([]);
     expect(widensAccess(c)).toBe(true);
+  });
+});
+
+describe("routines", () => {
+  it("diffs routines and treats additions as widening", () => {
+    const c = publishChanges(
+      manifest({ routines: ["old"] }),
+      manifest({ routines: ["new"] }),
+    );
+    expect(c.routines).toEqual({ added: ["new"], removed: ["old"] });
+    expect(hasChanges(c)).toBe(true);
+    expect(widensAccess(c)).toBe(true);
+  });
+
+  it("does not widen when only removed", () => {
+    const c = publishChanges(manifest({ routines: ["r"] }), manifest());
+    expect(hasChanges(c)).toBe(true);
+    expect(widensAccess(c)).toBe(false);
+  });
+
+  it("lists contributed routines in the access summary", () => {
+    expect(accessSummary(manifest({ routines: ["a", "b"] }))).toEqual([
+      "Routines: a, b",
+    ]);
   });
 });
 

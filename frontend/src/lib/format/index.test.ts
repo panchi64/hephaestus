@@ -11,7 +11,13 @@
 process.env.TZ = "America/New_York";
 
 import { describe, expect, it } from "bun:test";
-import { longTimestamp, met, parseInstant, plural } from "./index";
+import {
+  longTimestamp,
+  met,
+  parseInstant,
+  plural,
+  relativeTime,
+} from "./index";
 
 /** Built from local-time parts on purpose. `longTimestamp` reads the operator's clock
  *  (see its docstring), so a fixture written as a UTC string would shift the expected
@@ -166,5 +172,22 @@ describe("plural", () => {
   it("takes an irregular plural when given one", () => {
     expect(plural(2, "match", "matches")).toBe("2 matches");
     expect(plural(1, "match", "matches")).toBe("1 match");
+  });
+});
+
+describe("relativeTime", () => {
+  it("reads a past instant as how long ago", () => {
+    expect(
+      relativeTime("2026-06-10T07:00:00Z", new Date("2026-06-10T09:00:00Z")),
+    ).toBe("2H AGO");
+  });
+
+  it("reads a future instant as how long until", () => {
+    expect(
+      relativeTime("2026-06-10T09:30:00Z", new Date("2026-06-10T09:00:00Z")),
+    ).toBe("IN 30M");
+    expect(
+      relativeTime("2026-06-13T09:00:00Z", new Date("2026-06-10T09:00:00Z")),
+    ).toBe("IN 3D");
   });
 });

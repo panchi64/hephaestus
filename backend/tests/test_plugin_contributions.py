@@ -14,6 +14,7 @@ from tools.deps import RunDeps
 from tools.skills import skill_catalog
 
 from ._agent_helpers import make_stores
+from ._helpers import client_app
 from ._plugin_helpers import OWNER, make_store
 from ._plugin_helpers import make_stores as make_plugin_stores
 from .test_skills_tools import FakeRun, FakeSessions, _ctx, _tool
@@ -132,3 +133,51 @@ async def test_a_stored_skill_shadows_a_plugin_skill_of_the_same_name(tmp_path):
     assert [(entry.name, entry.description) for entry in entries] == [
         ("release-checklist", "Mine.")
     ]
+
+
+ROUTINE = """---
+title: Weekly release check
+schedule: cron 0 9 * * 1
+agent: changelog-writer
+---
+
+Check what shipped this week and draft the changelog.
+"""
+
+
+def test_a_plugin_offers_routine_templates():
+    manifest = validate_files(
+        {"plugin.yaml": MANIFEST.encode(), "routines/weekly.md": ROUTINE.encode()}
+    )
+    [template] = manifest.routines
+    assert (template.name, template.schedule, template.agent) == (
+        "weekly",
+        "cron 0 9 * * 1",
+        "changelog-writer",
+    )
+    assert template.prompt.startswith("Check what shipped")
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        ROUTINE.replace("cron 0 9 * * 1", "every monday"),
+        ROUTINE.replace("title: Weekly release check\n", ""),
+        ROUTINE.split("---\n\n")[0] + "---\n",
+    ],
+)
+def test_a_broken_routine_template_names_its_path(broken):
+    with pytest.raises(PluginValidationError) as raised:
+        validate_files({"plugin.yaml": MANIFEST.encode(), "routines/weekly.md": broken.encode()})
+    assert raised.value.field == "routines"
+    assert "routines/weekly.md" in str(raised.value)
+
+
+async def test_a_published_plugins_templates_are_listed_for_the_operator():
+    async with client_app() as (client, app):
+        plugins = app.state.plugins
+        await _published(plugins, _files(**{"routines/weekly.md": ROUTINE.encode()}))
+        [template] = (await client.get("/tasks/templates")).json()["items"]
+        assert (template["plugin"], template["title"]) == ("helpers", "Weekly release check")
+        assert template["schedule"]["cron"] == "0 9 * * 1"
+        assert template["agentName"] == "changelog-writer"

@@ -22,6 +22,7 @@ const manifest = {
   ],
   agents: ["researcher"],
   skills: ["summarise"],
+  routines: ["morning-brief"],
 };
 
 function dto(over: Partial<PluginOut> = {}): PluginOut {
@@ -52,10 +53,12 @@ describe("toPlugin", () => {
     const p = toPlugin(dto());
     expect(p.draft?.agents).toEqual(["researcher"]);
     expect(p.draft?.skills).toEqual(["summarise"]);
-    const { agents: _a, skills: _s, ...old } = manifest;
+    expect(p.draft?.routines).toEqual(["morning-brief"]);
+    const { agents: _a, skills: _s, routines: _r, ...old } = manifest;
     const legacy = toPlugin(dto({ draft: old }));
     expect(legacy.draft?.agents).toEqual([]);
     expect(legacy.draft?.skills).toEqual([]);
+    expect(legacy.draft?.routines).toEqual([]);
   });
 
   it("describes the plugin by its draft, else its active version", () => {

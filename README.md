@@ -9,7 +9,7 @@ A self-hosted AI workspace that runs on your own hardware against your own data.
 
 ![Odysseus — the home overview: the launchpad composer, recent threads, in-flight runs, and live per-capability status along the bottom. Thread titles and previews are blurred; this is a live workspace.](md-assets/odysseus-screenshot.png)
 
-I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loop is done and so is most of the workspace around it: chat with sub-agents, a knowledge base, email, calendar, scheduled tasks, projects the agent works in directly, memory, MCP, a secrets vault, and encrypted backup all run today. What's left is a short list, and it's at the bottom.
+I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loop is done and so is most of the workspace around it: chat with sub-agents, a knowledge base, email, calendar, routines, projects the agent works in directly, memory, MCP, a secrets vault, and encrypted backup all run today. What's left is a short list, and it's at the bottom.
 
 ## The idea
 
@@ -41,7 +41,7 @@ I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loo
 - **Web search and fetch.** A managed SearXNG instance with no operator setup, plus a headless browser in the platform VM that renders a page to Markdown. SSRF-guarded on every request; untrusted content is marked as data before it reaches a prompt.
 - **Email.** Multiple accounts over IMAP/SMTP, Gmail, Microsoft Graph or JMAP, with OAuth where the provider wants it — plus AI triage (urgency, tagging, summaries) and reply drafts that match how you actually write.
 - **Calendar.** Local-first, with CalDAV sync, `.ics` import/export, recurrence, and natural-language entry — "lunch Friday 1pm" becomes a draft, with the model reading the phrase and the code doing the date arithmetic.
-- **Tasks.** Scheduled and webhook-triggered jobs the agent runs unattended within a pre-authorized scope. An out-of-scope sensitive action still parks for approval exactly like an interactive run.
+- **Routines.** Scheduled and webhook-triggered work, each run by the agent you pick in a thread of its own, within a pre-authorized scope. Schedules can be typed as a phrase ("every weekday at 9"), agents can draft routines for you to approve, and plugins can offer them as templates. An out-of-scope sensitive action still parks for approval exactly like an interactive run.
 - **Notifications.** A second, separately-versioned event stream for approvals, failures, completions and reminders — and the two worth interrupting you for (an approval request and a reminder) also go out by email through your own connected mailbox and by push to whatever notifier you already run.
 - **MCP.** Register external tool servers; their tools are sensitive by default until you trust them.
 - **Integrations.** Preset connectors to third-party HTTP services, with encrypted credentials.
@@ -60,7 +60,7 @@ I rebuilt the entire platform on top of **Pydantic AI + FastAPI**. The agent loo
 
 ## What's left
 
-- **Task automation depth** — predefined actions and chaining, natural-language schedule parsing, and event triggers beyond the inbound webhook.
+- **Routine depth** — chaining one routine into another, and event triggers beyond the inbound webhook.
 - **The health screen** — it's the one surface still on fixtures. It wants per-service latency, a baseline and a status history, and the backend measures none of those yet. Real capability health lives at `/overview` and the home page renders it.
 
 ## Out of scope, on purpose

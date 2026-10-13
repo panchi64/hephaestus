@@ -6,6 +6,7 @@ from .manifest import (
     PluginSkill,
     PluginTool,
     PluginValidationError,
+    RoutineTemplate,
     parse_manifest,
     validate_files,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "PluginTool",
     "PluginValidationError",
     "PluginView",
+    "RoutineTemplate",
     "SecretStatus",
     "SecretValue",
     "parse_manifest",

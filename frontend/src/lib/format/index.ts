@@ -219,18 +219,19 @@ export function longTimestamp(iso: string): string {
   );
 }
 
-/** Coarse relative time (e.g. 3M AGO, 2H AGO, 5D AGO). Uppercase for labels. */
+/** Coarse relative time (e.g. 3M AGO, 2H AGO, IN 5D). Uppercase for labels. */
 export function relativeTime(iso: string, now: Date = new Date()): string {
   const then = parseInstant(iso);
   if (Number.isNaN(then)) return iso;
-  const secs = Math.round((now.getTime() - then) / 1000);
+  const delta = Math.round((now.getTime() - then) / 1000);
+  const secs = Math.abs(delta);
   if (secs < 60) return "NOW";
+  const label = (span: string) => (delta < 0 ? `IN ${span}` : `${span} AGO`);
   const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins}M AGO`;
+  if (mins < 60) return label(`${mins}M`);
   const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}H AGO`;
-  const days = Math.round(hours / 24);
-  return `${days}D AGO`;
+  if (hours < 24) return label(`${hours}H`);
+  return label(`${Math.round(hours / 24)}D`);
 }
 
 /** A snake_case identifier as a phrase in sentence case — `tool_results` → "Tool

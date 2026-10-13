@@ -1,9 +1,11 @@
 import { createResource, createSignal, type Resource } from "solid-js";
-import { api } from "~/lib/api";
+import { api, isApiError } from "~/lib/api";
 import { apiUrl } from "~/lib/config";
 import type {
   ApprovalScope,
   OutputChannel,
+  ParsedSchedule,
+  RoutineTemplate,
   ScheduledTask,
   TaskKind,
   TaskRun,
@@ -42,6 +44,19 @@ export function useScheduledTasks(): Resource<ScheduledTask[]> {
 /** Invalidate the list after a mutation. */
 export function refreshTasks(): void {
   setListTick((n) => n + 1);
+}
+
+/* ── Plugin templates ─────────────────────────────────────────────────────── */
+
+/** Routine templates offered by published plugins. */
+export function useRoutineTemplates(): Resource<RoutineTemplate[]> {
+  const [data] = createResource(async () => {
+    const { items } = await api.get<{ items: RoutineTemplate[] }>(
+      "/tasks/templates",
+    );
+    return items;
+  });
+  return data;
 }
 
 /* ── Pre-authorization scopes ─────────────────────────────────────────────── */
@@ -94,6 +109,7 @@ export interface TaskInput {
   prompt: string;
   schedule: TaskSchedule;
   output: OutputChannel;
+  agentName: string | null;
   preAuthorized: string[];
 }
 
@@ -138,4 +154,29 @@ export async function rotateWebhook(id: string): Promise<ScheduledTask> {
   });
   refreshTasks();
   return toTask(dto);
+}
+
+/** Publish an agent-drafted routine so it starts firing. */
+export async function approveTask(id: string): Promise<ScheduledTask> {
+  const dto = await api.post<TaskOut>(`/tasks/${id}/approve`);
+  refreshTasks();
+  return toTask(dto);
+}
+
+/** Read a natural-language phrase into a schedule and its next fire times.
+ *  Nothing is saved. */
+export async function parseSchedule(
+  phrase: string,
+  timezone: string,
+): Promise<ParsedSchedule> {
+  return api.post<ParsedSchedule>("/tasks/parse-schedule", {
+    phrase,
+    timezone,
+  });
+}
+
+/** The backend's message for a failure, verbatim; `fallback` covers a
+ *  transport failure that produced none. */
+export function taskErrorMessage(err: unknown, fallback: string): string {
+  return isApiError(err) ? err.detail : fallback;
 }

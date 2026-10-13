@@ -27,6 +27,7 @@ from .manifest import (
     PluginManifest,
     PluginSkill,
     PluginValidationError,
+    RoutineTemplate,
     secret_domain,
     validate_files,
     validate_name,
@@ -153,6 +154,15 @@ class PluginStore:
             for view, _files in await self.published(owner_id)
             if view.active is not None
             for skill in view.active.skills
+        ]
+
+    async def routine_templates(self, owner_id: str) -> list[tuple[str, RoutineTemplate]]:
+        """The routine templates published plugins offer, with each one's plugin."""
+        return [
+            (view.name, template)
+            for view, _files in await self.published(owner_id)
+            if view.active is not None
+            for template in view.active.routines
         ]
 
     # --- writes -----------------------------------------------------------------
