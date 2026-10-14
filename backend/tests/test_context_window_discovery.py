@@ -13,24 +13,31 @@ rather than letting it run unguarded.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
+from typing import override
 
 import httpx
 import pytest
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
 from core.vault import Vault
+from models.registry import ModelEndpoint
 from runs import Endpoint
 from services import llm
-from services.llm import EndpointSpec
+from services.endpoint_spec import EndpointSpec
 from services.providers import get_provider
-from services.providers.anthropic import PROVIDER as ANTHROPIC
-from services.providers.base import ModelLimits, ProviderPreset
-from services.providers.google import PROVIDER as GOOGLE
+from services.providers.base import ModelLimits, Provider, ProviderPreset
 from services.reasoning import ModelDescriptor
+from services.registry import ModelRegistry
+
+ANTHROPIC = get_provider("anthropic")
+GOOGLE = get_provider("google")
 
 
-def _client(handler) -> httpx.AsyncClient:
+def _client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
@@ -41,11 +48,11 @@ def _client(handler) -> httpx.AsyncClient:
     "key",
     ["context_length", "max_context_length", "max_model_len", "context_window", "n_ctx"],
 )
-async def test_reads_whichever_context_key_the_server_invented(key):
+async def test_reads_whichever_context_key_the_server_invented(key: str):
     # "OpenAI-compatible" agrees on the chat route and nothing else: the OpenAI
     # /v1/models schema has no context field at all, so every server that reports one
     # made up its own name. vLLM says max_model_len, llama.cpp n_ctx, and so on.
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"id": "m", key: 4096}]})
 
     async with _client(handler) as client:
@@ -181,7 +188,7 @@ async def test_a_props_body_that_says_nothing_useful_is_ignored():
 
 
 async def test_only_the_asked_for_model_answers():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={"data": [{"id": "small", "n_ctx": 8192}, {"id": "big", "n_ctx": 131072}]},
@@ -196,7 +203,7 @@ async def test_only_the_asked_for_model_answers():
 async def test_a_server_that_says_nothing_yields_none_rather_than_raising():
     # Every caller's response to "couldn't establish it" is identical, so the failure
     # is collapsed here instead of at each call site.
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"id": "m"}]})
 
     async with _client(handler) as client:
@@ -204,7 +211,7 @@ async def test_a_server_that_says_nothing_yields_none_rather_than_raising():
 
 
 async def test_an_unreachable_server_is_not_an_error():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
 
     async with _client(handler) as client:
@@ -214,7 +221,7 @@ async def test_an_unreachable_server_is_not_an_error():
 async def test_a_nonsense_value_is_ignored():
     # `True` is an `int` subclass — a server answering `"n_ctx": true` would otherwise
     # produce a one-token context window, and a gauge pinned at 100% forever.
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"id": "m", "n_ctx": True, "max_model_len": 0}]})
 
     async with _client(handler) as client:
@@ -225,7 +232,7 @@ async def test_a_nonsense_value_is_ignored():
 
 
 async def test_gemini_reports_its_input_limit():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
@@ -270,16 +277,16 @@ async def test_anthropic_reads_both_limits_off_one_models_entry():
         httpx.Response(200, json={"id": "claude-x", "max_input_tokens": True, "max_tokens": 0}),
     ],
 )
-async def test_anthropic_answers_none_where_the_entry_does_not_say(response):
+async def test_anthropic_answers_none_where_the_entry_does_not_say(response: httpx.Response):
     # An Anthropic-compatible proxy with no such route, or an entry without the fields,
     # leaves both unknown — and the library's own figures in place — rather than raising.
-    async with _client(lambda request: response) as client:
+    async with _client(lambda _request: response) as client:
         limits = await ANTHROPIC.model_limits("https://a", "key", "claude-x", client=client)
     assert limits == ModelLimits()
 
 
 async def test_anthropic_unreachable_is_not_an_error():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
 
     async with _client(handler) as client:
@@ -291,70 +298,85 @@ async def test_anthropic_unreachable_is_not_an_error():
 # ── Resolution: precedence, caching, and the gate ────────────────────────────────
 
 
-async def _registry(tmp_path, monkeypatch, *, window: int | None, max_output: int | None = None):
-    """A registry whose stub provider reports ``window`` and ``max_output``."""
-    from pydantic_ai.models.test import TestModel
+class _ProbeStub(Provider):
+    id: str = "probe-stub"
+    display_name: str = "Probe stub"
+    requires_key: bool = False
+    preset: ProviderPreset = ProviderPreset()
 
+    def __init__(self, window: int | None, max_output: int | None) -> None:
+        self.window: int | None = window
+        self.max_output: int | None = max_output
+        self.asked: int = 0
+
+    @override
+    async def discover(
+        self, base_url: str, api_key: str | None, *, client: object = None
+    ) -> list[str]:
+        raise AssertionError("unexpected call: discover")
+
+    @override
+    async def probe(self, base_url: str, api_key: str | None, *, client: object = None) -> None:
+        raise AssertionError("unexpected call: probe")
+
+    @override
+    async def context_window(
+        self, base_url: str, api_key: str | None, model: str, *, client: object = None
+    ) -> int | None:
+        raise AssertionError("unexpected call: context_window")
+
+    @override
+    def model_settings(self, descriptor: ModelDescriptor) -> ModelSettings:
+        return {}
+
+    @override
+    async def model_limits(
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        *,
+        client: object = None,
+    ) -> ModelLimits:
+        self.asked += 1
+        return ModelLimits(context_window=self.window, max_output_tokens=self.max_output)
+
+    # Stubbed so a full resolve runs without a network: the gate test goes through
+    # `resolve_detailed`, which builds a model and asks the adapter how to quiet its
+    # reasoning before it ever reaches the window check.
+    @override
+    def build_model(self, spec: EndpointSpec) -> TestModel:
+        return TestModel(custom_output_text="ok")
+
+    @override
+    def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
+        return {}
+
+
+async def _registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    window: int | None,
+    max_output: int | None = None,
+) -> tuple[ModelRegistry, _ProbeStub]:
+    """A registry whose stub provider reports ``window`` and ``max_output``."""
     from core.db import init_db, make_engine
     from services import providers
-    from services.registry import ModelRegistry
 
-    class _Stub:
-        id = "probe-stub"
-        display_name = "Probe stub"
-        requires_key = False
-        preset = ProviderPreset()
-        asked = 0
-
-        async def discover(
-            self, base_url: str, api_key: str | None, *, client: object = None
-        ) -> list[str]:
-            raise AssertionError("unexpected call: discover")
-
-        async def probe(self, base_url: str, api_key: str | None, *, client: object = None) -> None:
-            raise AssertionError("unexpected call: probe")
-
-        async def context_window(
-            self, base_url: str, api_key: str | None, model: str, *, client: object = None
-        ) -> int | None:
-            raise AssertionError("unexpected call: context_window")
-
-        def model_settings(self, descriptor: ModelDescriptor) -> ModelSettings:
-            return {}
-
-        async def model_limits(
-            self,
-            base_url: str,
-            api_key: str | None,
-            model: str,
-            *,
-            client: object = None,
-        ) -> ModelLimits:
-            type(self).asked += 1
-            return ModelLimits(context_window=window, max_output_tokens=max_output)
-
-        # Stubbed so a full resolve runs without a network: the gate test goes through
-        # `resolve_detailed`, which builds a model and asks the adapter how to quiet its
-        # reasoning before it ever reaches the window check.
-        def build_model(self, spec: EndpointSpec) -> TestModel:
-            return TestModel(custom_output_text="ok")
-
-        def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
-            return {}
-
-    _Stub.asked = 0
+    stub = _ProbeStub(window, max_output)
     registry_map = dict(providers._registry())
-    registry_map["probe-stub"] = _Stub()
+    registry_map["probe-stub"] = stub
     monkeypatch.setattr(providers, "_PROVIDERS", registry_map)
 
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
-    return ModelRegistry(engine, vault), _Stub
+    return ModelRegistry(engine, vault), stub
 
 
-async def _bind(registry, *, context_window: int | None):
+async def _bind(registry: ModelRegistry, *, context_window: int | None) -> ModelEndpoint:
     endpoint = await registry.create_endpoint(
         "operator",
         name="stub",
@@ -367,61 +389,69 @@ async def _bind(registry, *, context_window: int | None):
     return endpoint
 
 
-async def test_a_discovered_window_reaches_resolution(tmp_path, monkeypatch):
+async def test_a_discovered_window_reaches_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     registry, _ = await _registry(tmp_path, monkeypatch, window=200_000)
-    await _bind(registry, context_window=None)
+    _ = await _bind(registry, context_window=None)
     assert await registry.main_context_window("operator") == 200_000
 
 
-async def test_the_operators_own_value_wins(tmp_path, monkeypatch):
+async def test_the_operators_own_value_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # The field is the override for providers that can't answer, so a discovered value
     # silently replacing a deliberate one would make the setting appear not to work.
     registry, _ = await _registry(tmp_path, monkeypatch, window=200_000)
-    await _bind(registry, context_window=8192)
+    _ = await _bind(registry, context_window=8192)
     assert await registry.main_context_window("operator") == 8192
 
 
 async def test_the_output_ceiling_is_discovered_even_beside_an_operator_window(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     # The operator's field overrides the window only; the output ceiling has no field of
     # its own, so the provider is still asked for it, once, and remembered.
     registry, stub = await _registry(tmp_path, monkeypatch, window=200_000, max_output=64_000)
-    await _bind(registry, context_window=8192)
+    _ = await _bind(registry, context_window=8192)
     for _ in range(3):
         [spec] = await registry._resolve_specs("main", owner_id="operator")
         assert (spec.context_window, spec.max_output_tokens) == (8192, 64_000)
     assert stub.asked == 1
 
 
-async def test_the_provider_is_asked_once_and_then_remembered(tmp_path, monkeypatch):
+async def test_the_provider_is_asked_once_and_then_remembered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # This sits on the path of every turn; an uncached lookup would put a provider
     # round-trip in front of each one for a number already known.
     registry, stub = await _registry(tmp_path, monkeypatch, window=200_000)
-    await _bind(registry, context_window=None)
+    _ = await _bind(registry, context_window=None)
     for _ in range(3):
         assert await registry.main_context_window("operator") == 200_000
     assert stub.asked == 1
 
 
-async def test_editing_an_endpoint_re_asks(tmp_path, monkeypatch):
+async def test_editing_an_endpoint_re_asks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # A write can move the base URL, the model or the operator's own value — every
     # input the memo keyed on — so it drops rather than being reasoned about.
     registry, stub = await _registry(tmp_path, monkeypatch, window=200_000)
     endpoint = await _bind(registry, context_window=None)
-    await registry.main_context_window("operator")
-    await registry.update_endpoint("operator", endpoint.id, name="renamed")
-    await registry.main_context_window("operator")
+    _ = await registry.main_context_window("operator")
+    _ = await registry.update_endpoint("operator", endpoint.id, name="renamed")
+    _ = await registry.main_context_window("operator")
     assert stub.asked == 2
 
 
-async def test_a_provider_that_says_nothing_leaves_the_window_unknown(tmp_path, monkeypatch):
+async def test_a_provider_that_says_nothing_leaves_the_window_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     registry, _ = await _registry(tmp_path, monkeypatch, window=None)
-    await _bind(registry, context_window=None)
+    _ = await _bind(registry, context_window=None)
     assert await registry.main_context_window("operator") is None
 
 
-async def test_a_turn_is_refused_when_no_window_can_be_established(tmp_path, monkeypatch):
+async def test_a_turn_is_refused_when_no_window_can_be_established(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """The gate. Without a window every guard that keeps a thread inside its limit is
     inert, so the turn stops here — with a message naming the fix — instead of running
     normally until the provider rejects it outright."""
@@ -430,10 +460,10 @@ async def test_a_turn_is_refused_when_no_window_can_be_established(tmp_path, mon
     from routes.chat import resolve_turn_models
 
     registry, _ = await _registry(tmp_path, monkeypatch, window=None)
-    await _bind(registry, context_window=None)
+    _ = await _bind(registry, context_window=None)
 
     with pytest.raises(HTTPException) as caught:
-        await resolve_turn_models(registry, None, None, owner_id="operator")
+        _ = await resolve_turn_models(registry, None, None, owner_id="operator")
     assert caught.value.status_code == 422
     assert "context window" in caught.value.detail
 
@@ -441,7 +471,9 @@ async def test_a_turn_is_refused_when_no_window_can_be_established(tmp_path, mon
 # ── The binding: what the frontend reads to know a window exists ─────────────────
 
 
-async def test_the_window_follows_the_binding_not_the_endpoint_row(tmp_path, monkeypatch):
+async def test_the_window_follows_the_binding_not_the_endpoint_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """The bug the send gate shipped with. An endpoint row carries only a *default*
     model and usually doesn't set one — the model in play is the one the role pinned. A
     window read off the endpoint alone therefore answers null on exactly this workspace's
@@ -458,31 +490,35 @@ async def test_the_window_follows_the_binding_not_the_endpoint_row(tmp_path, mon
     assert await registry.role_context_window("operator", "main") == 262_144
 
 
-async def test_every_role_reports_its_own_window(tmp_path, monkeypatch):
+async def test_every_role_reports_its_own_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """The field means the same thing on every row of the roles listing — a value
     populated for one role and silently null for the others is a trap for the next
     caller."""
     registry, _ = await _registry(tmp_path, monkeypatch, window=200_000)
-    await _bind(registry, context_window=None)
+    _ = await _bind(registry, context_window=None)
     assert await registry.role_context_window("operator", "main") == 200_000
     # Unconfigured roles answer null rather than raising: this is a read path.
     assert await registry.role_context_window("operator", "utility") is None
 
 
-async def test_main_context_window_is_the_same_answer(tmp_path, monkeypatch):
+async def test_main_context_window_is_the_same_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """The gate calls one, the roles listing the other. If they could disagree, the
     operator would meet a refusal from a composer that looked ready — or be blocked on a
     thread that would have run fine."""
     registry, _ = await _registry(tmp_path, monkeypatch, window=262_144)
-    await _bind(registry, context_window=None)
+    _ = await _bind(registry, context_window=None)
     assert await registry.main_context_window("operator") == await registry.role_context_window(
         "operator", "main"
     )
 
 
-async def test_an_unresolvable_role_reports_no_window_rather_than_raising(tmp_path, monkeypatch):
+async def test_an_unresolvable_role_reports_no_window_rather_than_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     registry, _ = await _registry(tmp_path, monkeypatch, window=None)
-    await _bind(registry, context_window=None)
+    _ = await _bind(registry, context_window=None)
     assert await registry.role_context_window("operator", "main") is None
 
 
