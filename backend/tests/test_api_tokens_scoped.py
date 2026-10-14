@@ -6,41 +6,49 @@ Distinct from `test_api_tokens.py`, which covers the *outbound* service credenti
 
 from __future__ import annotations
 
+import httpx
+from fastapi import FastAPI
+from pydantic import JsonValue
+from sqlalchemy import Engine
 from sqlmodel import Session, select
 
+from core.api_scopes import ScopeTable
 from core.db import in_session
 from models.api_token import ApiToken
 
-from ._helpers import client_app
+from ._helpers import app_state, client_app
+from ._json import arr, json_body, obj, parse_json, s
 
 
-async def _issue(client, label="laptop CLI", scopes=("chat",)):
+async def _issue(
+    client: httpx.AsyncClient, label: str = "laptop CLI", scopes: tuple[str, ...] = ("chat",)
+) -> dict[str, JsonValue]:
     resp = await client.post("/tokens", json={"label": label, "scopes": list(scopes)})
     assert resp.status_code == 201, resp.text
-    return resp.json()
+    return json_body(resp)
 
 
-async def _stored(app) -> list[ApiToken]:
+async def _stored(app: FastAPI) -> list[ApiToken]:
     # Through `in_session` like every other reader: a booted app's in-memory engine shares
     # one connection, and its background drainers are using it.
     def work(session: Session) -> list[ApiToken]:
         return list(session.exec(select(ApiToken)).all())
 
-    return await in_session(app.state.db_engine, work)
+    return await in_session(app_state(app, "db_engine", Engine), work)
 
 
 async def test_issue_returns_the_token_once_and_stores_only_a_hash():
     async with client_app() as (client, app):
         issued = await _issue(client)
-        token = issued["token"]
+        token = s(issued["token"])
         assert token.startswith("odyt_")
-        assert issued["prefix"] in token
+        assert s(issued["prefix"]) in token
         assert issued["scopes"] == ["chat"]
 
         # The listing never carries the plaintext back — it is unrecoverable.
-        listed = (await client.get("/tokens")).json()
-        assert [row["id"] for row in listed] == [issued["id"]]
-        assert "token" not in listed[0]
+        listed = arr(parse_json((await client.get("/tokens")).content))
+        assert [obj(row)["id"] for row in listed] == [issued["id"]]
+        assert "token" not in obj(listed[0])
 
         # Nor does the row: only a one-way hash of the secret half.
         rows = await _stored(app)
@@ -54,7 +62,7 @@ async def test_issue_rejects_an_unknown_or_empty_scope_set():
     async with client_app() as (client, _app):
         bad = await client.post("/tokens", json={"label": "x", "scopes": ["everything"]})
         assert bad.status_code == 422
-        assert "everything" in bad.json()["detail"]
+        assert "everything" in s(json_body(bad)["detail"])
         assert (await client.post("/tokens", json={"label": "x", "scopes": []})).status_code == 422
         assert (
             await client.post("/tokens", json={"label": " ", "scopes": ["chat"]})
@@ -66,7 +74,7 @@ async def test_scopes_catalog_never_covers_credential_or_host_surfaces():
     # operator's secrets, or drive a backup. The table is per-app, assembled from
     # core claims + every enabled manifest's — so this asserts the real one.
     async with client_app() as (_client, app):
-        table = app.state.api_scope_table
+        table = app_state(app, "api_scope_table", ScopeTable)
         for path in ("/tokens", "/tokens/abc", "/credentials", "/vault", "/backup"):
             assert table.scope_for_path(path) is None
         # Opening a native dialog on the operator's machine — and reading back whatever
@@ -87,8 +95,8 @@ async def test_scopes_catalog_never_covers_credential_or_host_surfaces():
 
 async def test_token_authenticates_in_scope_and_is_refused_out_of_scope():
     async with client_app(auth_enabled=True, passphrase=None) as (client, _app):
-        await client.post("/setup", json={"password": "the-password"})
-        token = (await _issue(client, scopes=("chat",)))["token"]
+        _ = await client.post("/setup", json={"password": "the-password"})
+        token = s((await _issue(client, scopes=("chat",)))["token"])
         client.cookies.clear()  # drop the operator session; rely on the token alone
 
         headers = {"Authorization": f"Bearer {token}"}
@@ -103,14 +111,14 @@ async def test_token_authenticates_in_scope_and_is_refused_out_of_scope():
 
 async def test_revoked_token_is_refused_even_after_it_has_been_used():
     async with client_app(auth_enabled=True, passphrase=None) as (client, _app):
-        await client.post("/setup", json={"password": "the-password"})
+        _ = await client.post("/setup", json={"password": "the-password"})
         issued = await _issue(client, scopes=("chat",))
-        headers = {"Authorization": f"Bearer {issued['token']}"}
+        headers = {"Authorization": f"Bearer {s(issued['token'])}"}
         assert (await client.get("/runs/whatever", headers=headers)).status_code == 404
 
-        revoked = await client.delete(f"/tokens/{issued['id']}")
+        revoked = await client.delete(f"/tokens/{s(issued['id'])}")
         assert revoked.status_code == 200
-        assert revoked.json()["revoked_at"] is not None
+        assert json_body(revoked)["revoked_at"] is not None
         # The gate's in-memory verification cache is dropped on revoke, so the very next
         # request is refused rather than the one after a restart.
         assert (await client.get("/runs/whatever", headers=headers)).status_code == 401
@@ -119,7 +127,7 @@ async def test_revoked_token_is_refused_even_after_it_has_been_used():
 
 async def test_token_authentication_attempts_are_rate_limited():
     async with client_app(auth_enabled=True, passphrase=None) as (client, app):
-        await client.post("/setup", json={"password": "the-password"})
+        _ = await client.post("/setup", json={"password": "the-password"})
         client.cookies.clear()
 
         # A guess can never hit the verification cache, so every one spends a bucket token.
@@ -141,8 +149,8 @@ async def test_token_authentication_attempts_are_rate_limited():
 
 async def test_login_attempts_are_rate_limited():
     async with client_app(auth_enabled=True, passphrase=None) as (client, _app):
-        await client.post("/setup", json={"password": "the-password"})
-        await client.post("/auth/lock")
+        _ = await client.post("/setup", json={"password": "the-password"})
+        _ = await client.post("/auth/lock")
 
         statuses = [
             (await client.post("/auth/login", json={"password": "wrong"})).status_code
@@ -156,7 +164,9 @@ async def test_operator_session_paths_are_unchanged_by_token_auth():
     # The cookie and bearer session must still authenticate exactly as before, and must
     # not be scope-limited the way a token is.
     async with client_app(auth_enabled=True, passphrase=None) as (client, _app):
-        session = (await client.post("/setup", json={"password": "the-password"})).json()["token"]
+        session = s(
+            json_body(await client.post("/setup", json={"password": "the-password"}))["token"]
+        )
         assert (await client.get("/runs/whatever")).status_code == 404  # cookie
         assert (await client.get("/memory")).status_code == 200
         assert (await client.get("/tokens")).status_code == 200

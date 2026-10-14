@@ -5,12 +5,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from datetime import timedelta
 
 import pytest
-from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset, ModelMessage
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+    StreamFunctionDef,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 from sqlmodel import Session, select
@@ -20,7 +26,7 @@ from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from models._fields import utcnow
 from models.approval_grant import ApprovalGrant
-from runs import Run, RunRegistry, RunStatus, RunStream
+from runs import Orchestrator, Run, RunRegistry, RunStatus, RunStream
 from services.approval_grants import (
     COMMAND_SCOPED_TOOLS,
     ApprovalGrantStore,
@@ -36,8 +42,11 @@ from tools.corpus import corpus_toolset
 from tools.memory import memory_toolset
 from tools.platform import platform_toolset
 
+from ._helpers import run_bodies
+
 OWNER = "operator"
 CONV = "conv-1"
+Output = str | DeferredToolRequests
 
 
 def _store(ttl_s: float) -> ApprovalGrantStore:
@@ -51,7 +60,7 @@ def _store(ttl_s: float) -> ApprovalGrantStore:
 
 async def test_grant_then_list():
     s = _store(3600)
-    await s.grant(OWNER, CONV, "corpus_retrieve")
+    _ = await s.grant(OWNER, CONV, "corpus_retrieve")
     listed = await s.list(OWNER, CONV)
     assert [(g.tool_name, g.command_prefix) for g in listed] == [("corpus_retrieve", ())]
     # A grant is scoped to its conversation — another thread is unaffected.
@@ -60,9 +69,9 @@ async def test_grant_then_list():
 
 async def test_a_grant_records_which_width_the_operator_chose():
     s = _store(3600)
-    await s.grant(OWNER, CONV, "corpus_retrieve")
+    _ = await s.grant(OWNER, CONV, "corpus_retrieve")
     assert [g.decisive for g in await s.list(OWNER, CONV)] == [False]
-    await s.grant(OWNER, CONV, "mail_send", decisive=True)
+    _ = await s.grant(OWNER, CONV, "mail_send", decisive=True)
     assert {g.tool_name: g.decisive for g in await s.list(OWNER, CONV)} == {
         "corpus_retrieve": False,
         "mail_send": True,
@@ -75,8 +84,8 @@ async def test_a_refresh_never_narrows_a_width_the_operator_chose():
     # where the row written last would otherwise decide how far the grant reaches.
     # Narrowing is something they do on purpose, by revoking the chip.
     s = _store(3600)
-    await s.grant(OWNER, CONV, "mail_send", decisive=True)
-    await s.grant(OWNER, CONV, "mail_send")
+    _ = await s.grant(OWNER, CONV, "mail_send", decisive=True)
+    _ = await s.grant(OWNER, CONV, "mail_send")
     assert [g.decisive for g in await s.list(OWNER, CONV)] == [True]
 
 
@@ -85,8 +94,8 @@ async def test_choosing_the_wider_width_promotes_the_grant_already_there():
     # can already see rather than standing a second one beside it — two grants over one
     # scope disagreeing about how far it reaches is not a state worth being able to hold.
     s = _store(3600)
-    await s.grant(OWNER, CONV, "shell_run_command")
-    await s.grant(OWNER, CONV, "shell_run_command", decisive=True)
+    _ = await s.grant(OWNER, CONV, "shell_run_command")
+    _ = await s.grant(OWNER, CONV, "shell_run_command", decisive=True)
     listed = await s.list(OWNER, CONV)
     assert [(g.tool_name, g.command_prefix, g.decisive) for g in listed] == [
         ("shell_run_command", (), True)
@@ -95,14 +104,14 @@ async def test_choosing_the_wider_width_promotes_the_grant_already_there():
 
 async def test_expired_grant_is_not_listed():
     s = _store(-1)  # already lapsed the instant it's written
-    await s.grant(OWNER, CONV, "corpus_retrieve")
+    _ = await s.grant(OWNER, CONV, "corpus_retrieve")
     assert await s.list(OWNER, CONV) == []
 
 
 async def test_revoke_drops_the_grant():
     s = _store(3600)
-    await s.grant(OWNER, CONV, "corpus_retrieve")
-    await s.revoke(OWNER, CONV, "corpus_retrieve")
+    _ = await s.grant(OWNER, CONV, "corpus_retrieve")
+    _ = await s.revoke(OWNER, CONV, "corpus_retrieve")
     assert await s.list(OWNER, CONV) == []
 
 
@@ -121,8 +130,8 @@ async def test_two_commands_on_one_tool_are_two_grants():
     # The upsert keys on the scope as well as the tool, so `uv run pytest` and
     # `git commit` are separate standing yeses rather than one overwriting the other.
     s = _store(3600)
-    await s.grant(OWNER, CONV, "shell_run_command", ("uv", "run", "pytest"))
-    await s.grant(OWNER, CONV, "shell_run_command", ("git", "commit"))
+    _ = await s.grant(OWNER, CONV, "shell_run_command", ("uv", "run", "pytest"))
+    _ = await s.grant(OWNER, CONV, "shell_run_command", ("git", "commit"))
     assert sorted(g.command_prefix for g in await s.list(OWNER, CONV)) == [
         ("git", "commit"),
         ("uv", "run", "pytest"),
@@ -131,9 +140,9 @@ async def test_two_commands_on_one_tool_are_two_grants():
 
 async def test_revoking_one_command_leaves_the_other_standing():
     s = _store(3600)
-    await s.grant(OWNER, CONV, "shell_run_command", ("uv", "run", "pytest"))
-    await s.grant(OWNER, CONV, "shell_run_command", ("git", "commit"))
-    await s.revoke(OWNER, CONV, "shell_run_command", ("git", "commit"))
+    _ = await s.grant(OWNER, CONV, "shell_run_command", ("uv", "run", "pytest"))
+    _ = await s.grant(OWNER, CONV, "shell_run_command", ("git", "commit"))
+    _ = await s.revoke(OWNER, CONV, "shell_run_command", ("git", "commit"))
     assert [g.command_prefix for g in await s.list(OWNER, CONV)] == [("uv", "run", "pytest")]
 
 
@@ -141,8 +150,8 @@ async def test_a_command_scoped_grant_is_not_revoked_by_the_whole_tool_form():
     # The empty scope is a grant in its own right, not a wildcard: revoking it must not
     # silently take the narrower ones with it.
     s = _store(3600)
-    await s.grant(OWNER, CONV, "shell_run_command", ("uv", "run", "pytest"))
-    await s.revoke(OWNER, CONV, "shell_run_command")
+    _ = await s.grant(OWNER, CONV, "shell_run_command", ("uv", "run", "pytest"))
+    _ = await s.revoke(OWNER, CONV, "shell_run_command")
     assert len(await s.list(OWNER, CONV)) == 1
 
 
@@ -150,15 +159,15 @@ async def test_a_whole_tool_grant_re_grants_rather_than_duplicating():
     # The regression the NOT NULL column exists for: SQLite treats NULLs as distinct in a
     # UNIQUE index, so a nullable prefix would make this insert a second row every time.
     s = _store(3600)
-    await s.grant(OWNER, CONV, "corpus_retrieve")
-    await s.grant(OWNER, CONV, "corpus_retrieve")
+    _ = await s.grant(OWNER, CONV, "corpus_retrieve")
+    _ = await s.grant(OWNER, CONV, "corpus_retrieve")
     assert len(await s.list(OWNER, CONV)) == 1
 
 
 # --- the engine auto-approves a granted tool --------------------------------
 
 
-def _danger_categories():
+def _danger_categories() -> dict[str, AbstractToolset[RunDeps]]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool_plain(requires_approval=True)
@@ -172,7 +181,7 @@ DANGER_TOOL = "danger_delete_thing"  # namespaced category_tool name
 
 
 def _types(run: Run) -> list[str]:
-    return [e.body.type for e in run.stream.replay()]
+    return [b.type for b in run_bodies(run)]
 
 
 #: The level these engine tests are about. Named rather than left to the default, which
@@ -183,7 +192,7 @@ def _types(run: Run) -> list[str]:
 ASKING_LEVEL = ConversationBinding(permission="edit")
 
 
-def _danger_orchestrator(store: ApprovalGrantStore):
+def _danger_orchestrator(store: ApprovalGrantStore) -> Orchestrator:
     return build_chat_orchestrator(
         "delete the thing",
         model=TestModel(custom_output_text="done"),
@@ -197,7 +206,7 @@ def _danger_orchestrator(store: ApprovalGrantStore):
 async def test_active_grant_auto_approves_without_prompting():
     reg = RunRegistry()
     store = _store(3600)
-    await store.grant(OWNER, CONV, DANGER_TOOL)
+    _ = await store.grant(OWNER, CONV, DANGER_TOOL)
 
     run = reg.submit(
         kind="chat", owner_id=OWNER, orchestrator=_danger_orchestrator(store), conversation_id=CONV
@@ -229,9 +238,11 @@ async def test_granted_runaway_tool_still_trips_the_turn_guard():
     of recursing without end (the regression the inline-resume loop guards against)."""
     reg = RunRegistry()
     store = _store(3600)
-    await store.grant(OWNER, CONV, DANGER_TOOL)
+    _ = await store.grant(OWNER, CONV, DANGER_TOOL)
 
-    async def always_calls(messages, info):
+    async def always_calls(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls]:
         yield {0: DeltaToolCall(name=DANGER_TOOL, json_args=json.dumps({"name": "x"}))}
 
     orch = build_chat_orchestrator(
@@ -252,17 +263,19 @@ async def test_granted_runaway_tool_still_trips_the_turn_guard():
 # --- platform search gates only global recall -------------------------------
 
 
-def _call_once(tool_name: str, args: dict[str, object]):
+def _call_once(tool_name: str, args: dict[str, object]) -> StreamFunctionDef:
     """A model that calls one tool once, then answers with text once it has run."""
 
-    def _tool_ran(messages) -> bool:
+    def _tool_ran(messages: list[ModelMessage]) -> bool:
         return any(
             type(part).__name__ == "ToolReturnPart"
             for message in messages
             for part in message.parts
         )
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         if _tool_ran(messages):
             yield "done"
         else:
@@ -276,7 +289,7 @@ def _recall_agent(
     tool_name: str,
     args: dict[str, object],
     level: PermissionLevel = DEFAULT_PERMISSION,
-):
+) -> tuple[Agent[RunDeps, Output], Run, RunDeps]:
     """An agent that calls one recall tool once. The backing capability is left unset on
     the deps, so a gated tool defers *before* touching it and an ungated one degrades to
     an "unavailable" string — either way the gate behaviour is what's under test."""
@@ -291,13 +304,14 @@ def _recall_agent(
     return agent, run, deps
 
 
-def _corpus_agent(args: dict[str, object]):
+def _corpus_agent(args: dict[str, object]) -> tuple[Agent[RunDeps, Output], Run, RunDeps]:
     return _recall_agent({"corpus": corpus_toolset()}, "corpus_retrieve", args)
 
 
-async def _drive(agent, run, deps, prompt: str):
+async def _drive(agent: Agent[RunDeps, Output], run: Run, deps: RunDeps, prompt: str) -> Output:
     async with agent.iter(prompt, deps=deps) as agent_run:
         await stream_agent_run(agent_run, run)
+        assert agent_run.result is not None
         return agent_run.result.output
 
 
@@ -309,7 +323,7 @@ async def test_explicit_source_read_is_not_gated():
 
 
 @pytest.mark.parametrize("level", sorted(PERMISSION_LEVELS))
-async def test_memory_recall_never_defers(level):
+async def test_memory_recall_never_defers(level: PermissionLevel):
     # Long-term memory holds the operator's own notes, not content someone else wrote, so
     # the recall gate does not cover it — at any level. It is the lookup the agent needs
     # most often, and a park on it buys nothing to keep out of context.
@@ -321,7 +335,7 @@ async def test_memory_recall_never_defers(level):
     assert "tool.completed" in _types(run)
 
 
-def _platform(tool: str, args: dict[str, object]):
+def _platform(tool: str, args: dict[str, object]) -> tuple[Agent[RunDeps, Output], Run, RunDeps]:
     return _recall_agent({"platform": platform_toolset()}, tool, args)
 
 
@@ -424,7 +438,7 @@ class TestACommandScopedGrant:
     makes it a standing yes to an *act*.
     """
 
-    held = _grants(("shell_run_command", ("uv", "run", "pytest")))
+    held: list[GrantInfo] = _grants(("shell_run_command", ("uv", "run", "pytest")))
 
     def _covers(self, command: str) -> bool:
         return covered_by_grant("shell_run_command", {"command": command}, self.held)
@@ -437,7 +451,7 @@ class TestACommandScopedGrant:
             "uv run pytest -k thing",
         ],
     )
-    def test_it_covers_the_act_it_was_granted_for(self, command):
+    def test_it_covers_the_act_it_was_granted_for(self, command: str):
         assert self._covers(command) is True
 
     @pytest.mark.parametrize(
@@ -449,7 +463,7 @@ class TestACommandScopedGrant:
             "cat $TARGET",  # unreadable, so nothing may be inferred
         ],
     )
-    def test_it_covers_nothing_else(self, command):
+    def test_it_covers_nothing_else(self, command: str):
         assert self._covers(command) is False
 
     @pytest.mark.parametrize(
@@ -459,13 +473,13 @@ class TestACommandScopedGrant:
             "LD_PRELOAD=/tmp/evil.so uv run pytest",
         ],
     )
-    def test_the_same_words_reaching_outside_the_worktree_are_not_the_same_act(self, command):
+    def test_the_same_words_reaching_outside_the_worktree_are_not_the_same_act(self, command: str):
         # The redirect destination and the environment value are where the command stops
         # being one the fence can hold — and the leading words say nothing about either.
         assert self._covers(command) is False
 
     @pytest.mark.parametrize("reach", ["host", "network"])
-    def test_the_same_words_declaring_a_wider_reach_are_not_the_same_act(self, reach):
+    def test_the_same_words_declaring_a_wider_reach_are_not_the_same_act(self, reach: str):
         # `reach` is what decides the fence the tool wraps the process in: `host` runs it
         # unwrapped. The operator ticked a box under a fenced run.
         assert (
@@ -482,9 +496,12 @@ class TestACommandScopedGrant:
         # `host` parks, the operator ticks the box, and the next identical call is covered
         # — while the same words fenced, or declared `network`, are asked about again.
         held = _grants(("shell_run_command", ("@host", "brew", "install", "wget")))
-        covers = lambda reach: covered_by_grant(  # noqa: E731 — one line, one meaning
-            "shell_run_command", {"command": "brew install wget", "reach": reach}, held
-        )
+
+        def covers(reach: str) -> bool:
+            return covered_by_grant(
+                "shell_run_command", {"command": "brew install wget", "reach": reach}, held
+            )
+
         assert covers("host") is True
         assert covers("workspace") is False
         assert covers("network") is False
@@ -513,7 +530,7 @@ class TestACommandScopedGrant:
             ("npm -w pkg run build", "npm -w other run publish"),
         ],
     )
-    def test_a_flag_led_command_does_not_stand_for_every_other_one(self, granted, later):
+    def test_a_flag_led_command_does_not_stand_for_every_other_one(self, granted: str, later: str):
         # The words a scope is matched on include the flags (`shell_ast.py`), so an
         # invocation flagged differently is a different act and is asked about again.
         scopes = grant_scopes("shell_run_command", {"command": granted}) or []
@@ -588,13 +605,13 @@ class TestTheScopeAnApprovalRecords:
         "command",
         ["uv run pytest > ~/.ssh/authorized_keys", "LD_PRELOAD=/tmp/x.so uv run pytest"],
     )
-    def test_a_command_leaving_the_worktree_records_nothing(self, command):
+    def test_a_command_leaving_the_worktree_records_nothing(self, command: str):
         # Symmetric with coverage: a scope that could never match a later call is one
         # nothing should have written down, and the operator's chip would misdescribe it.
         assert grant_scopes("shell_run_command", {"command": command}) is None
 
     @pytest.mark.parametrize("reach", ["host", "network"])
-    def test_a_command_declaring_a_wider_reach_records_the_reach_in_its_scope(self, reach):
+    def test_a_command_declaring_a_wider_reach_records_the_reach_in_its_scope(self, reach: str):
         # At Auto these are the only shell calls that ever park, so a scoping that refused
         # them would leave "allow for this conversation" with nothing to apply to. The
         # reach leads the scope instead, so the grant stands for *that* run and no other.
@@ -616,7 +633,7 @@ class TestTheScopeAnApprovalRecords:
         ]
 
     @pytest.mark.parametrize("command", ["cat $TARGET", "ls |", ""])
-    def test_an_unreadable_command_records_nothing(self, command):
+    def test_an_unreadable_command_records_nothing(self, command: str):
         # Not a whole-tool grant: falling back to one would hand exactly the commands the
         # grammar could not read the standing yes this scoping exists to withhold.
         assert grant_scopes("shell_run_command", {"command": command}) is None
@@ -636,7 +653,7 @@ async def test_expired_grants_are_pruned_on_read():
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     store = ApprovalGrantStore(engine, -1)  # lapsed the instant it's written
-    await store.grant(OWNER, CONV, "corpus_retrieve")
+    _ = await store.grant(OWNER, CONV, "corpus_retrieve")
     assert await store.list(OWNER, CONV) == []  # filtered out of the view
     # …and physically gone, not just hidden — the table can't grow without bound.
     with Session(engine) as session:
@@ -647,5 +664,5 @@ async def test_concurrent_grants_do_not_duplicate_or_error():
     # Two approvals of the same tool racing into grant() must converge on one row via the
     # DB upsert, not raise a duplicate-insert IntegrityError.
     s = _store(3600)
-    await asyncio.gather(*(s.grant(OWNER, CONV, "corpus_retrieve") for _ in range(5)))
+    _ = await asyncio.gather(*(s.grant(OWNER, CONV, "corpus_retrieve") for _ in range(5)))
     assert len(await s.list(OWNER, CONV)) == 1
