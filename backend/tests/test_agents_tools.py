@@ -35,13 +35,13 @@ def _ctx(store: AgentStore | None, **deps) -> RunContext[RunDeps]:
     )
 
 
-async def _call(ctx: RunContext[RunDeps], name: str, args: dict):
+async def _call(ctx: RunContext[RunDeps], name: str, args: dict[str, object]):
     toolset = agents_toolset()
     tools = await toolset.get_tools(ctx)
     return await toolset.call_tool(name, args, ctx, tools[name])
 
 
-_WRITE = {"name": "scout", "description": "Looks around.", "instructions": "Look around."}
+_WRITE: dict[str, object] = {"name": "scout", "description": "Looks around.", "instructions": "Look around."}
 
 
 @pytest.fixture

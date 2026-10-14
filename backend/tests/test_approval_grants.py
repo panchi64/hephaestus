@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from datetime import timedelta
 
 import pytest
 from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from sqlmodel import Session, select
@@ -28,7 +30,7 @@ from services.approval_grants import (
     grant_width,
 )
 from services.conversations import ConversationBinding
-from services.permissions import DEFAULT_PERMISSION, PERMISSION_LEVELS
+from services.permissions import DEFAULT_PERMISSION, PERMISSION_LEVELS, PermissionLevel
 from tools import RunDeps, build_agent_toolsets
 from tools.corpus import corpus_toolset
 from tools.memory import memory_toolset
@@ -250,7 +252,7 @@ async def test_granted_runaway_tool_still_trips_the_turn_guard():
 # --- platform search gates only global recall -------------------------------
 
 
-def _call_once(tool_name: str, args: dict):
+def _call_once(tool_name: str, args: dict[str, object]):
     """A model that calls one tool once, then answers with text once it has run."""
 
     def _tool_ran(messages) -> bool:
@@ -269,7 +271,12 @@ def _call_once(tool_name: str, args: dict):
     return stream_fn
 
 
-def _recall_agent(categories: dict, tool_name: str, args: dict, level: str = DEFAULT_PERMISSION):
+def _recall_agent(
+    categories: Mapping[str, AbstractToolset[RunDeps]],
+    tool_name: str,
+    args: dict[str, object],
+    level: PermissionLevel = DEFAULT_PERMISSION,
+):
     """An agent that calls one recall tool once. The backing capability is left unset on
     the deps, so a gated tool defers *before* touching it and an ungated one degrades to
     an "unavailable" string — either way the gate behaviour is what's under test."""
@@ -284,7 +291,7 @@ def _recall_agent(categories: dict, tool_name: str, args: dict, level: str = DEF
     return agent, run, deps
 
 
-def _corpus_agent(args: dict):
+def _corpus_agent(args: dict[str, object]):
     return _recall_agent({"corpus": corpus_toolset()}, "corpus_retrieve", args)
 
 
@@ -314,7 +321,7 @@ async def test_memory_recall_never_defers(level):
     assert "tool.completed" in _types(run)
 
 
-def _platform(tool: str, args: dict):
+def _platform(tool: str, args: dict[str, object]):
     return _recall_agent({"platform": platform_toolset()}, tool, args)
 
 

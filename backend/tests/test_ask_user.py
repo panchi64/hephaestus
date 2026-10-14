@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, FunctionToolset
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
@@ -65,7 +66,7 @@ QUESTIONS = {
 }
 
 
-def _calls_once(tool_name: str, args: dict):
+def _calls_once(tool_name: str, args: Mapping[str, object]):
     """A model that calls one tool once, then answers with text once it has a result."""
 
     def _tool_ran(messages) -> bool:
@@ -251,7 +252,7 @@ def test_a_question_answered_with_nothing_is_refused():
 # One case per shape the renderer can write, since the round trip is only as good as its
 # least-exercised branch: a bare selection, prose instead of a selection, both together,
 # several selections, and a label that contains the separator the selections are joined on.
-ROUND_TRIPS = [
+ROUND_TRIPS: list[tuple[list[QuestionSpec], list[tuple[list[str], str | None]]]] = [
     ([_spec("Which database?", ["Postgres", "SQLite"])], [(["SQLite"], None)]),
     ([_spec("Which database?", ["Postgres"])], [([], "DuckDB, actually")]),
     ([_spec("Which database?", ["Postgres"])], [(["Postgres"], "with PostGIS")]),
@@ -319,7 +320,7 @@ def _ask_and_danger_categories():
     return {"builtin": builtin_toolset(), "danger": danger}
 
 
-def _install_asking_model(monkeypatch, args: dict, *, also_danger: bool = False):
+def _install_asking_model(monkeypatch, args: Mapping[str, object], *, also_danger: bool = False):
     """Point every model resolution at a model that makes the call(s) under test once,
     then answers with text."""
 

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from pydantic_ai import RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
+
 from agent.injections import contributor_id
 from runs import Run, RunStream
 from services.agents import DEFAULT_AGENT, AgentCatalog, AgentDefinition, ToolAccess
 from services.agents.thread import DELEGATION_TOOLS, as_thread, resolve_thread_agent
 from services.conversations import ConversationBinding
+from services.permissions import PermissionLevel
 from tools.deps import RunDeps
 from tools.plan import _retarget
 
@@ -72,10 +77,10 @@ async def test_a_thread_resolves_its_named_agent(tmp_path):
     assert unknown.agent.name == DEFAULT_AGENT
 
 
-def _ctx(permission: str, ceiling: str | None):
+def _ctx(permission: PermissionLevel, ceiling: PermissionLevel | None) -> RunContext[RunDeps]:
     run = Run(id="r", kind="chat", owner_id=OWNER, stream=RunStream())
     deps = RunDeps(run=run, owner_id=OWNER, permission=permission, permission_ceiling=ceiling)
-    return type("Ctx", (), {"deps": deps})()
+    return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
 def test_approving_a_plan_never_lifts_a_run_past_its_agents_ceiling():

@@ -53,7 +53,7 @@ def _ctx(launcher: FakeLauncher, *, approved: bool = False) -> RunContext[RunDep
     return ctx
 
 
-async def _message(ctx: RunContext[RunDeps], to: str) -> dict:
+async def _message(ctx: RunContext[RunDeps], to: str) -> dict[str, object]:
     toolset = agents_toolset()
     tools = await toolset.get_tools(ctx)
     return await toolset.call_tool("message", {"to": to, "text": "found it"}, ctx, tools["message"])
