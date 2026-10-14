@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import socket
 import threading
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 
 import httpx
 import pytest
 import uvicorn
+from pydantic import JsonValue
 
 from devkit import ports
 from devkit.instance import DevInstance
@@ -29,10 +32,11 @@ from devkit.seed.surfaces import seed_calendar, seed_memory, seed_tasks
 from devkit.stub import create_stub
 
 from ._helpers import client_app
+from ._json import json_body, json_list, n, obj
 
 
 @pytest.fixture
-def served_stub():
+def served_stub() -> Iterator[int]:
     """A real stub, listening on a real port, on a slot this test has claimed.
 
     Load-bearing rather than scene-setting: binding the ``embedding`` role *probes* the
@@ -61,7 +65,7 @@ def served_stub():
     thread.start()
     try:
         while not server.started and thread.is_alive():
-            threading.Event().wait(0.02)
+            _ = threading.Event().wait(0.02)
         yield slot
     finally:
         server.should_exit = True
@@ -70,41 +74,43 @@ def served_stub():
 
 
 @pytest.fixture
-def instance(tmp_path, served_stub):
+def instance(tmp_path: Path, served_stub: int) -> DevInstance:
     return DevInstance(name="test", slot=served_stub, root=tmp_path, password="unused-here")
 
 
 @pytest.fixture
-async def seeding(instance):
+async def seeding(instance: DevInstance) -> AsyncIterator[registry.SeedContext]:
     async with client_app() as (client, _app):
         yield registry.SeedContext(client=client, instance=instance)
 
 
-async def test_the_base_fixture_binds_every_role_to_one_endpoint(seeding):
+async def test_the_base_fixture_binds_every_role_to_one_endpoint(seeding: registry.SeedContext):
     # Nothing else in the pack can run without this: an instance with no model bound
     # does not merely look emptier, most of the product returns an error instead.
     summary = await seed_model(seeding)
     assert "hephaestus-stub" in summary
 
-    endpoints = (await seeding.client.get("/models/endpoints")).json()
+    endpoints = [obj(e) for e in json_list(await seeding.client.get("/models/endpoints"))]
     assert [e["name"] for e in endpoints] == [ENDPOINT_NAME]
     # Declared rather than discovered: the app refuses to send a turn on an endpoint
     # whose context window it does not know, and the stub has none to report.
-    assert endpoints[0]["context_window"] > 0
+    assert n(endpoints[0]["context_window"]) > 0
 
-    roles = (await seeding.client.get("/models/roles")).json()
+    roles = json_body(await seeding.client.get("/models/roles"))
     for role in ROLES:
-        assert roles[role]["endpoint_ids"] == [endpoints[0]["id"]]
+        assert obj(roles[role])["endpoint_ids"] == [endpoints[0]["id"]]
 
 
-async def test_seeding_twice_updates_rather_than_duplicates(seeding):
-    await seed_model(seeding)
-    await seed_model(seeding)
-    endpoints = (await seeding.client.get("/models/endpoints")).json()
+async def test_seeding_twice_updates_rather_than_duplicates(seeding: registry.SeedContext):
+    _ = await seed_model(seeding)
+    _ = await seed_model(seeding)
+    endpoints = json_list(await seeding.client.get("/models/endpoints"))
     assert len(endpoints) == 1
 
 
-async def test_every_surface_fixture_populates_and_then_leaves_itself_alone(seeding):
+async def test_every_surface_fixture_populates_and_then_leaves_itself_alone(
+    seeding: registry.SeedContext,
+):
     for populate in (seed_calendar, seed_memory, seed_tasks):
         first = await populate(seeding)
         assert "could not" not in first, first
@@ -116,10 +122,10 @@ async def test_every_surface_fixture_populates_and_then_leaves_itself_alone(seed
     assert len(registry.rows(await seeding.client.get("/memory"))) == 3
 
 
-async def test_a_seeded_task_never_fires_on_its_own(seeding):
+async def test_a_seeded_task_never_fires_on_its_own(seeding: registry.SeedContext):
     # It would spend model calls on a schedule nobody set, in a workspace nobody is
     # watching — and real money, against an endpoint named by HEPH_DEV_CHAT_*.
-    await seed_tasks(seeding)
+    _ = await seed_tasks(seeding)
     tasks = registry.rows(await seeding.client.get("/tasks"))
     assert tasks and all(task["enabled"] is False for task in tasks)
 
@@ -130,7 +136,7 @@ def test_the_pack_runs_base_before_anything_that_needs_a_model():
     assert "conversations" in order
 
 
-def test_the_version_moves_when_a_fixture_changes(tmp_path, monkeypatch):
+def test_the_version_moves_when_a_fixture_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Derived, never declared: a hand-maintained number is one somebody forgets, and a
     # forgotten bump leaves a stale workspace disagreeing with the code in silence.
     before = seed_version()
@@ -138,11 +144,11 @@ def test_the_version_moves_when_a_fixture_changes(tmp_path, monkeypatch):
 
     pack = tmp_path / "seed"
     pack.mkdir()
-    (pack / "existing.py").write_text("# a fixture\n")
+    _ = (pack / "existing.py").write_text("# a fixture\n")
     monkeypatch.setattr(registry, "_SEED_DIR", pack)
     monkeypatch.setattr(registry, "_MIGRATIONS", tmp_path / "versions")
     with_one = seed_version()
-    (pack / "another.py").write_text("# a second fixture\n")
+    _ = (pack / "another.py").write_text("# a second fixture\n")
     assert seed_version() != with_one
 
 
@@ -155,7 +161,7 @@ def test_the_version_moves_when_a_fixture_changes(tmp_path, monkeypatch):
         ({"unexpected": "shape"}, 0),
     ],
 )
-def test_listings_are_read_whichever_shape_they_come_in(body, expected):
+def test_listings_are_read_whichever_shape_they_come_in(body: JsonValue, expected: int):
     # Some listings are a bare array and others wrap one in `items`. A fixture that
     # indexed into the wrong one fails with `KeyError: 0`, which says nothing.
     response = httpx.Response(200, json=body)
