@@ -3,15 +3,29 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 import pytest
 
-from runs import ConversationBusyError, LaneLimits, RunRegistry, RunStatus
-from runs.events import AnswerDelta, RunMetrics
+from runs import ConversationBusyError, LaneLimits, Run, RunRegistry, RunStatus
+from runs.events import AnswerDelta, RunEnded, RunMetrics
 
 
 def _types(run):
     return [e.body.type for e in run.stream.replay()]
+
+
+def _ended(run: Run) -> RunEnded:
+    body = run.stream.replay()[-1].body
+    assert isinstance(body, RunEnded)
+    return body
+
+
+def _count_subscribers(seen: dict[str, int]) -> Callable[[Run], None]:
+    def hook(run: Run) -> None:
+        seen.setdefault("count", run.stream.subscriber_count)
+
+    return hook
 
 
 async def test_run_completes_done():
@@ -27,8 +41,7 @@ async def test_run_completes_done():
     # A run that measured nothing reports nothing: an empty metrics frame would read as
     # the authoritative state of the thread and blank its meter.
     assert _types(run) == ["run.started", "answer.delta", "run.ended"]
-    ended = run.stream.replay()[-1].body
-    assert ended.outcome == "done"
+    assert _ended(run).outcome == "done"
 
 
 async def test_metrics_the_run_measured_precede_the_closing_frame_on_every_path():
@@ -126,7 +139,7 @@ async def test_cancel_running_run():
     await run.wait()
 
     assert run.status is RunStatus.cancelled
-    assert run.stream.replay()[-1].body.outcome == "cancelled"
+    assert _ended(run).outcome == "cancelled"
     # cancelling an already-terminal run is a no-op
     assert await reg.cancel(run.id) is False
 
@@ -182,7 +195,7 @@ async def test_keepalive_holds_a_long_silent_call_open_past_the_inactivity_bound
     await run.wait()
 
     assert run.status is RunStatus.done
-    assert run.stream.replay()[-1].body.outcome == "done"
+    assert _ended(run).outcome == "done"
 
 
 async def test_the_bound_applies_again_the_moment_the_call_returns():
@@ -513,7 +526,7 @@ async def test_on_terminal_reads_the_live_subscriber_count_before_close():
     # terminal transition — captured synchronously by the hook, before the stream
     # (and thus each subscriber's own cleanup) has had any chance to run.
     seen: dict[str, int] = {}
-    reg = RunRegistry(on_terminal=lambda run: seen.setdefault("count", run.stream.subscriber_count))
+    reg = RunRegistry(on_terminal=_count_subscribers(seen))
 
     ready, proceed = asyncio.Event(), asyncio.Event()
 
@@ -540,7 +553,7 @@ async def test_on_terminal_reads_the_live_subscriber_count_before_close():
 
 async def test_on_terminal_sees_zero_subscribers_when_nobody_is_watching():
     seen: dict[str, int] = {}
-    reg = RunRegistry(on_terminal=lambda run: seen.setdefault("count", run.stream.subscriber_count))
+    reg = RunRegistry(on_terminal=_count_subscribers(seen))
 
     async def orch(run):
         run.emit(AnswerDelta(text="hi"))
@@ -572,12 +585,13 @@ async def test_cancel_while_parked_survives_an_orchestrator_still_unwinding():
 
     assert await reg.cancel(run.id) is True
     release.set()
+    assert run.task is not None
     await asyncio.gather(run.task, return_exceptions=True)
 
     assert run.status is RunStatus.cancelled
     assert calls == [run]  # exactly once
     assert _types(run)[-1] == "run.ended"
-    assert run.stream.replay()[-1].body.outcome == "cancelled"
+    assert _ended(run).outcome == "cancelled"
 
 
 async def test_a_bound_tripping_just_after_a_park_still_flushes_the_parked_turn():
