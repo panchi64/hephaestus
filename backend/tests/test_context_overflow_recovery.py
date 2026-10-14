@@ -21,17 +21,27 @@ from folding at all.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import override
 
 import pytest
-from pydantic_ai import DeferredToolRequests, ModelMessage, ModelRequest, ModelResponse
+from fastapi import FastAPI
+from pydantic_ai import (
+    DeferredToolRequests,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RunContext,
+)
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import TextPart, UserPromptPart
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from agent import build_chat_orchestrator
@@ -54,13 +64,15 @@ from runs import (
     ConversationCompacted,
     LimitNotice,
     Run,
+    RunRegistry,
     RunStatus,
     RunStream,
     TurnOverhead,
 )
+from services.conversations import ConversationStore
 
 from ._agent_helpers import make_stores
-from ._helpers import bodies_of, client_app, fold_aware_model, is_fold_request
+from ._helpers import app_state, bodies_of, client_app, fold_aware_model, is_fold_request
 
 #: Measured, and empty. These fixtures run against a deliberately tiny window, and an
 #: *unmeasured* overhead makes the trigger assume the shipped catalog — several thousand
@@ -94,12 +106,12 @@ class _OverflowsThenAnswers(WrapperModel):
         self, *, failures: int = 1, answer: str = "the answer", fold_overflows: bool = False
     ) -> None:
         super().__init__(fold_aware_model(answer=answer, summary="FOLDED AWAY"))
-        self.failures = failures
-        self.fold_overflows = fold_overflows
-        self.requests = 0
-        self.folds = 0
+        self.failures: int = failures
+        self.fold_overflows: bool = fold_overflows
+        self.requests: int = 0
+        self.folds: int = 0
 
-    def _check(self, messages) -> None:
+    def _check(self, messages: list[ModelMessage]) -> None:
         if is_fold_request(messages):
             self.folds += 1
             if self.fold_overflows:
@@ -109,14 +121,29 @@ class _OverflowsThenAnswers(WrapperModel):
         if self.requests <= self.failures:
             raise _ctx_error()
 
-    async def request(self, messages, *args, **kwargs):
+    @override
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         self._check(messages)
-        return await super().request(messages, *args, **kwargs)
+        return await super().request(messages, model_settings, model_request_parameters)
 
+    @override
     @asynccontextmanager
-    async def request_stream(self, messages, *args, **kwargs):
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[object] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
         self._check(messages)
-        async with super().request_stream(messages, *args, **kwargs) as stream:
+        async with super().request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as stream:
             yield stream
 
 
@@ -142,27 +169,30 @@ def _texts(messages: list[ModelMessage]) -> list[str]:
     return out
 
 
-async def _seed(store, *, tail_tokens: int, turns: int = 4) -> str:
+async def _seed(store: ConversationStore, *, tail_tokens: int, turns: int = 4) -> str:
     cid = await store.create_conversation(OPERATOR_ID)
     for i in range(turns - 1):
-        store.record(cid, _turn(f"q{i}", f"a{i}", 100))
-    store.record(cid, _turn(f"q{turns - 1}", f"a{turns - 1}", tail_tokens))
+        _ = store.record(cid, _turn(f"q{i}", f"a{i}", 100))
+    _ = store.record(cid, _turn(f"q{turns - 1}", f"a{turns - 1}", tail_tokens))
     await store.set_overhead(cid, _NO_OVERHEAD)
     return cid
 
 
-def _run_chat(app, cid: str | None, *, model, prompt="next question", **kwargs):
-    kwargs.setdefault("auto_compact", _POLICY)
+def _run_chat(
+    app: FastAPI, cid: str | None, *, model: Model, prompt: str = "next question"
+) -> Run:
     orch = build_chat_orchestrator(
         prompt,
         model=model,
         categories={},
-        store=app.state.conversations if cid else None,
+        store=app_state(app, "conversations", ConversationStore) if cid else None,
         conversation_id=cid,
         context_window=10_000,
-        **kwargs,
+        auto_compact=_POLICY,
     )
-    return app.state.runs.submit(kind="chat", owner_id=OPERATOR_ID, orchestrator=orch)
+    return app_state(app, "runs", RunRegistry).submit(
+        kind="chat", owner_id=OPERATOR_ID, orchestrator=orch
+    )
 
 
 # --- the in-turn recovery ----------------------------------------------------
@@ -170,7 +200,7 @@ def _run_chat(app, cid: str | None, *, model, prompt="next question", **kwargs):
 
 async def test_an_overflow_folds_the_thread_and_the_retried_request_answers():
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=100)  # nowhere near the threshold
         before = len(await store.history(cid))
 
@@ -199,7 +229,7 @@ async def test_an_overflow_folds_the_thread_and_the_retried_request_answers():
 
 async def test_the_retry_replays_the_folded_history_not_the_original():
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=100)
 
         run = _run_chat(app, cid, model=_OverflowsThenAnswers())
@@ -218,7 +248,7 @@ async def test_a_second_overflow_blocks_with_the_detail_the_client_keys_on():
     """One recovery per turn. A request that is still too big *after* a fold is too big
     for a reason folding can't reach, and re-folding would strip the thread for nothing."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=100)
 
         model = _OverflowsThenAnswers(failures=2)
@@ -245,7 +275,7 @@ async def test_the_summary_is_written_by_the_turns_own_model_on_its_recorded_tur
     """The overflow fold summarizes the thread's *recorded* turns — this turn is not in the
     tree yet — on the model the turn runs on, so it is the smaller request of the two."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=100)
 
         model = _OverflowsThenAnswers()
@@ -262,7 +292,7 @@ async def test_a_summary_request_that_overflows_too_stops_the_turn_with_the_noti
     other, and the turn stops with the ordinary context notice — which still offers the
     fold, since none landed."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=100)
 
         model = _OverflowsThenAnswers(fold_overflows=True)
@@ -286,9 +316,9 @@ async def test_a_collapsed_fold_boundary_does_not_re_record_the_history():
     the operator typed. A previous turn that stopped before it answered, folded along with
     the rest, must not come back either."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=100)
-        store.record(
+        _ = store.record(
             cid,
             [ModelRequest(parts=[UserPromptPart(content="dangling question")])],
             blocked_reason=CONTEXT_OVERFLOW_DETAIL,
@@ -317,7 +347,7 @@ async def test_the_gauge_moves_when_the_overflow_fold_lands_not_when_it_answers(
     A thread that folds and then overruns anyway would otherwise leave the operator looking
     at the pre-fold figure for good — a compaction that visibly did nothing."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=7_000)
 
         run = _run_chat(app, cid, model=_OverflowsThenAnswers(failures=2))
@@ -351,7 +381,7 @@ async def test_compaction_switched_off_is_not_overruled_by_an_overflow():
     """Switching compaction off is an instruction, not a preference to be second-guessed:
     the thread stops and offers the fold, rather than performing it uninvited."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=100)
 
         orch = build_chat_orchestrator(
@@ -363,7 +393,9 @@ async def test_compaction_switched_off_is_not_overruled_by_an_overflow():
             context_window=10_000,
             auto_compact=AutoCompactPolicy(enabled=False, threshold=0.80),
         )
-        run = app.state.runs.submit(kind="chat", owner_id=OPERATOR_ID, orchestrator=orch)
+        run = app_state(app, "runs", RunRegistry).submit(
+            kind="chat", owner_id=OPERATOR_ID, orchestrator=orch
+        )
         await run.wait()
 
         assert run.status is RunStatus.blocked
@@ -373,7 +405,7 @@ async def test_compaction_switched_off_is_not_overruled_by_an_overflow():
 
 async def test_a_thread_with_nothing_left_to_fold_blocks_rather_than_looping():
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await store.create_conversation(OPERATOR_ID)  # no turns at all
         await store.set_overhead(cid, _NO_OVERHEAD)
 
@@ -393,7 +425,7 @@ async def test_the_incoming_turn_counts_toward_the_threshold():
     history alone is well under it. Measuring only the history is what forced the old
     threshold up to 95% — the incoming turn had to fit in whatever was left over."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=7_000)
 
         run = _run_chat(app, cid, model=TestModel(custom_output_text="ok"), prompt="x" * 6_000)
@@ -405,7 +437,7 @@ async def test_the_incoming_turn_counts_toward_the_threshold():
 
 async def test_the_same_thread_without_the_prompt_is_left_alone():
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=7_000)
 
         run = _run_chat(app, cid, model=TestModel(custom_output_text="ok"), prompt="hi")
@@ -421,7 +453,7 @@ async def test_the_gauge_moves_the_moment_the_fold_lands():
     than that stale figure, is what stops the gauge sitting at 70% through the very turn
     the fold made room for."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await _seed(store, tail_tokens=7_000)
 
         run = _run_chat(app, cid, model=TestModel(custom_output_text="ok"), prompt="x" * 6_000)
@@ -477,9 +509,10 @@ async def _reject(_prompt: str, _answer: str) -> Verdict:
     return Verdict(ok=False, reason="incomplete")
 
 
-async def _no_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+async def _no_model(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    for chunk in list[str]():
+        yield chunk
     raise AttributeError("no model to re-drive with")
-    yield ""
 
 
 async def test_the_verifier_skips_a_correction_that_cannot_fit():
@@ -520,7 +553,7 @@ async def test_the_verifier_still_corrects_when_there_is_room():
     with pytest.raises(AttributeError):
         # An agent whose model raises on the re-drive — reaching that failure is the
         # assertion: the guard let the correction through rather than skipping it.
-        await verify_and_correct(
+        _ = await verify_and_correct(
             run,
             build_agent(FunctionModel(stream_function=_no_model), categories={}),
             "prompt",
