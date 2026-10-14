@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -106,7 +106,7 @@ def _require_run(request: Request, run_id: str) -> Run:
 
 
 @router.get("", response_model=list[RunView])
-async def list_runs(request: Request, active: bool = Query(default=True)) -> list[RunView]:
+async def list_runs(request: Request, active: Annotated[bool, Query()] = True) -> list[RunView]:
     """The operator's runs, newest first. ``active=True`` (default) returns only
     the ones still in flight (not yet terminal) — what the home page surfaces."""
     runs = deps.registry(request).list(deps.OPERATOR_ID)
@@ -135,7 +135,7 @@ async def get_run(run_id: str, request: Request) -> RunView:
 async def stream_run_events(
     run_id: str,
     request: Request,
-    last_event_id: int | None = Query(default=None),
+    last_event_id: Annotated[int | None, Query()] = None,
 ):
     """SSE event stream. Reconnect with ``Last-Event-ID`` to replay missed events."""
     run = _require_run(request, run_id)
@@ -217,7 +217,7 @@ class ApprovalDecision(BaseModel):
     tool_call_id: str
     approved: bool
     message: str | None = None  # shown to the model on denial
-    override_args: dict[str, Any] | None = None  # replace args on approval
+    override_args: dict[str, object] | None = None  # replace args on approval
     # How long this yes lasts. "once" is this call only. "conversation" records an
     # auto-approval grant so the same *act* isn't re-prompted for the rest of the thread —
     # which on a tool that runs a command is that command, derived here from the parked

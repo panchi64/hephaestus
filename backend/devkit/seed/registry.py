@@ -21,9 +21,10 @@ import pkgutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 if TYPE_CHECKING:
     from devkit.instance import DevInstance
@@ -58,7 +59,14 @@ def fixture(name: str, *, order: int) -> Callable[[Fixture], Fixture]:
     return register
 
 
-def rows(response: httpx.Response) -> list[dict[str, Any]]:
+class _Wrapped(BaseModel):
+    items: list[dict[str, object]] = []
+
+
+_LISTING = TypeAdapter[list[dict[str, object]] | _Wrapped](list[dict[str, object]] | _Wrapped)
+
+
+def rows(response: httpx.Response) -> list[dict[str, object]]:
     """The rows in a listing, whichever shape the surface returns.
 
     Some listings are a bare JSON array and others wrap one in ``items`` — a difference
@@ -71,12 +79,10 @@ def rows(response: httpx.Response) -> list[dict[str, Any]]:
     if response.status_code != 200:
         return []
     try:
-        body = response.json()
-    except ValueError:
+        listing = _LISTING.validate_json(response.content)
+    except ValidationError:
         return []
-    if isinstance(body, dict):
-        body = body.get("items", [])
-    return body if isinstance(body, list) else []
+    return listing if isinstance(listing, list) else listing.items
 
 
 def _import_fixtures() -> None:
@@ -110,7 +116,7 @@ def seed_version() -> str:
 
 async def run_seed(ctx: SeedContext) -> list[str]:
     """Run every registered fixture in order, returning what each reported."""
-    summaries = []
+    summaries: list[str] = []
     for _order, name, function in registered():
         summaries.append(f"{name}: {await function(ctx)}")
     return summaries
