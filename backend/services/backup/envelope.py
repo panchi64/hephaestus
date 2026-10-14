@@ -30,10 +30,10 @@ import base64
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
 
 from core import crypto
 from core.exceptions import HephaestusError
+from services.shapes import as_dict
 
 FORMAT = "hephaestus-backup"
 VERSION = 1
@@ -52,24 +52,24 @@ class BackupSecretError(HephaestusError):
     """The backup secret is wrong, or the file has been altered since it was written."""
 
 
-def _header(envelope: Mapping[str, Any]) -> dict[str, Any]:
+def _header(envelope: Mapping[str, object]) -> dict[str, object]:
     """The bookkeeping half of the envelope — everything but the ciphertext. Serialized
     canonically below and bound into the AEAD, so it cannot be edited after the fact."""
     return {key: value for key, value in envelope.items() if key != "payload"}
 
 
-def _aad(header: Mapping[str, Any]) -> bytes:
+def _aad(header: Mapping[str, object]) -> bytes:
     return json.dumps(header, sort_keys=True, separators=(",", ":")).encode()
 
 
-def seal(secret: str, payload: bytes, *, created_at: datetime | None = None) -> dict[str, Any]:
+def seal(secret: str, payload: bytes, *, created_at: datetime | None = None) -> dict[str, object]:
     """Wrap ``payload`` into a self-describing, encrypted envelope. CPU-heavy (Argon2id) —
     call it off the event loop."""
     if not secret:
         raise ValueError("a backup secret is required")
     salt = crypto.generate_salt()
     key = crypto.derive_kek(secret, salt)
-    header = {
+    header: dict[str, object] = {
         "format": FORMAT,
         "version": VERSION,
         "created_at": (created_at or datetime.now(UTC)).isoformat(),
@@ -80,23 +80,22 @@ def seal(secret: str, payload: bytes, *, created_at: datetime | None = None) -> 
     return {**header, "payload": base64.b64encode(sealed).decode()}
 
 
-def open_envelope(secret: str, envelope: Mapping[str, Any]) -> bytes:
+def open_envelope(secret: str, envelope: object) -> bytes:
     """Recover the payload. Raises :class:`BackupFormatError` for something that isn't one
     of our files, :class:`BackupSecretError` for a wrong secret or a tampered file — the two
     are worth telling apart, since only one of them is the operator's to fix by retyping."""
     if not secret:
         raise ValueError("a backup secret is required")
-    if not isinstance(envelope, Mapping) or envelope.get("format") != FORMAT:
+    fields = as_dict(envelope)
+    if fields is None or fields.get("format") != FORMAT:
         raise BackupFormatError("not an Hephaestus backup file")
-    if envelope.get("version") != VERSION:
-        raise BackupFormatError(
-            f"backup format version {envelope.get('version')!r} is not supported"
-        )
-    kdf = envelope.get("kdf")
-    if not isinstance(kdf, Mapping) or kdf.get("algorithm") != KDF_ALGORITHM:
+    if fields.get("version") != VERSION:
+        raise BackupFormatError(f"backup format version {fields.get('version')!r} is not supported")
+    kdf = as_dict(fields.get("kdf"))
+    if kdf is None or kdf.get("algorithm") != KDF_ALGORITHM:
         raise BackupFormatError("unsupported key derivation in this backup file")
     try:
-        salt_text, payload_text = kdf["salt"], envelope["payload"]
+        salt_text, payload_text = kdf["salt"], fields["payload"]
         if not isinstance(salt_text, str) or not isinstance(payload_text, str):
             raise TypeError("salt and payload must be base64 strings")
         salt = base64.b64decode(salt_text)
@@ -106,7 +105,7 @@ def open_envelope(secret: str, envelope: Mapping[str, Any]) -> bytes:
 
     key = crypto.derive_kek(secret, salt)
     try:
-        return crypto.aead_decrypt(key, sealed, _aad(_header(envelope)))
+        return crypto.aead_decrypt(key, sealed, _aad(_header(fields)))
     except Exception as exc:  # noqa: BLE001 — AEAD failure is one answer: it didn't open
         raise BackupSecretError(
             "the backup could not be decrypted — wrong secret, or the file was altered"

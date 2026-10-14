@@ -38,8 +38,8 @@ import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import Column, Engine, func
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Session, col, select
@@ -48,6 +48,7 @@ from core.db import in_session
 from core.exceptions import HephaestusError
 from core.vault import Vault
 from services.settings_store import SettingsStore
+from services.shapes import as_dict, as_list, dict_list, parse_json
 
 from .envelope import open_envelope, seal
 from .manifest import BackupEntity, BackupModel, discover_entities, sections
@@ -88,17 +89,25 @@ class BackupManifest:
     @classmethod
     def from_json(cls, raw: str) -> BackupManifest | None:
         try:
-            data = json.loads(raw)
-            return cls(
-                created_at=datetime.fromisoformat(data["created_at"]),
-                items=tuple(
-                    BackupManifestItem(name=i["name"], count=int(i["count"])) for i in data["items"]
-                ),
-            )
-        except ValueError, KeyError, TypeError:
+            stored = _StoredManifest.model_validate_json(raw)
+        except ValueError:
             # A corrupted marker is a missing marker, never a failed page load.
             logger.warning("backup: stored last-export manifest is unreadable")
             return None
+        return cls(
+            created_at=stored.created_at,
+            items=tuple(BackupManifestItem(name=i.name, count=i.count) for i in stored.items),
+        )
+
+
+class _StoredItem(BaseModel):
+    name: str
+    count: int
+
+
+class _StoredManifest(BaseModel):
+    created_at: datetime
+    items: list[_StoredItem]
 
 
 @dataclass
@@ -117,7 +126,7 @@ class BackupImportReport:
         self.skipped[section] = self.skipped.get(section, 0) + skipped
 
 
-def _column_kind(column: Column[Any]) -> str:
+def _column_kind(column: Column[object]) -> str:
     """How a column's value is carried in JSON. Driven by the declared type, not by
     sniffing values, so the encoding is exact both ways (a JSON column holding a string
     that *looks* like a timestamp is never re-parsed as one).
@@ -141,9 +150,9 @@ def _column_kind(column: Column[Any]) -> str:
 
 class BackupService:
     def __init__(self, engine: Engine, vault: Vault, settings: SettingsStore) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._settings = settings
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._settings: SettingsStore = settings
 
     # --- what's in the box ----------------------------------------------------------
 
@@ -173,7 +182,7 @@ class BackupService:
 
     async def export(
         self, owner_id: str, secret: str, *, include: Sequence[str] | None = None
-    ) -> tuple[dict[str, Any], BackupManifest]:
+    ) -> tuple[dict[str, object], BackupManifest]:
         """Build the encrypted envelope plus the manifest describing what went into it.
 
         ``include`` names the groups to take (None ⇒ everything). A named group with no
@@ -202,7 +211,7 @@ class BackupService:
         self,
         owner_id: str,
         secret: str,
-        envelope: Mapping[str, Any],
+        envelope: Mapping[str, object],
         *,
         include: Sequence[str] | None = None,
     ) -> BackupImportReport:
@@ -210,9 +219,11 @@ class BackupService:
         twice writes nothing the second time."""
         raw = await asyncio.to_thread(open_envelope, secret, envelope)
         try:
-            payload = json.loads(gzip.decompress(raw))
-            file_sections = payload["sections"]
-            if not isinstance(file_sections, dict):
+            payload = as_dict(parse_json(gzip.decompress(raw)))
+            if payload is None:
+                raise TypeError
+            file_sections = as_dict(payload["sections"])
+            if file_sections is None:
                 raise TypeError
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise BackupPayloadError("the backup's contents could not be read") from exc
@@ -234,7 +245,8 @@ class BackupService:
             if wanted is not None and section not in wanted:
                 continue
             known.add(entity.name)
-            rows = (file_sections.get(section) or {}).get(entity.name)
+            group = as_dict(file_sections.get(section) or {}) or {}
+            rows = dict_list(group.get(entity.name))
             if not rows:
                 report.record(section, imported=0, skipped=0)
                 continue
@@ -242,7 +254,10 @@ class BackupService:
             report.record(section, imported=imported, skipped=skipped)
 
         in_file = {
-            name for group in file_sections.values() if isinstance(group, dict) for name in group
+            name
+            for group in map(as_dict, file_sections.values())
+            if group is not None
+            for name in group
         }
         report.unknown = tuple(sorted(in_file - known))
         return report
@@ -273,7 +288,7 @@ class BackupService:
         with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as gz:
 
             def write(text: str) -> None:
-                gz.write(text.encode())
+                _ = gz.write(text.encode())
 
             write('{"created_at": ' + json.dumps(created_at.isoformat()) + ', "sections": {')
             open_section: str | None = None
@@ -319,7 +334,7 @@ class BackupService:
         self,
         entity: BackupEntity,
         owner_id: str,
-        rows: Iterable[Mapping[str, Any]],
+        rows: Iterable[Mapping[str, object]],
         remap: dict[str, str],
     ) -> tuple[int, int]:
         """Merge one entity's rows, reading and extending the import-wide id ``remap``."""
@@ -328,7 +343,7 @@ class BackupService:
         # Natural key → the id that record already carries *here*. A dict, not a set,
         # because a skipped row has to hand its local id to whatever pointed at the
         # file's id — knowing only "a duplicate exists" is what orphans the children.
-        local_by_key: dict[tuple[Any, ...], str] = {}
+        local_by_key: dict[tuple[object, ...], str] = {}
         for row in existing:
             row_key = self._natural_key(entity, self._plain(entity, row))
             if row_key is not None:
@@ -383,7 +398,9 @@ class BackupService:
         return len(fresh), skipped
 
     @staticmethod
-    def _reparent(entity: BackupEntity, values: dict[str, Any], remap: Mapping[str, str]) -> None:
+    def _reparent(
+        entity: BackupEntity, values: dict[str, object], remap: Mapping[str, str]
+    ) -> None:
         """Rewrite a row's references to ids this host actually uses. In place, no-op when
         nothing has been remapped (the common case — ids are preserved).
 
@@ -405,16 +422,17 @@ class BackupService:
             if column.primary_key:
                 continue
             value = values.get(column.name)
+            items = as_list(value)
             if isinstance(value, str) and value in remap:
                 values[column.name] = remap[value]
-            elif isinstance(value, list):
+            elif items is not None:
                 values[column.name] = [
-                    remap.get(item, item) if isinstance(item, str) else item for item in value
+                    remap.get(item, item) if isinstance(item, str) else item for item in items
                 ]
 
     def _natural_key(
-        self, entity: BackupEntity, values: Mapping[str, Any]
-    ) -> tuple[Any, ...] | None:
+        self, entity: BackupEntity, values: Mapping[str, object]
+    ) -> tuple[object, ...] | None:
         """The identity two hosts would agree on, read off already-plaintext values. None
         when the entity declared no natural key — then only the primary key dedupes."""
         columns = entity.spec.natural_key
@@ -422,18 +440,18 @@ class BackupService:
             return None
         return tuple(values.get(column) for column in columns)
 
-    def _plain(self, entity: BackupEntity, row: BackupModel) -> dict[str, Any]:
+    def _plain(self, entity: BackupEntity, row: BackupModel) -> dict[str, object]:
         """A DB row's values with its sealed columns opened — the shape an incoming row is
         already in, so the two can be compared without either side guessing."""
-        values: dict[str, Any] = {}
+        values: dict[str, object] = {}
         for column in entity.model.__table__.columns:
-            value = getattr(row, column.name)
-            if column.name.endswith("_enc") and value is not None:
+            value: object = getattr(row, column.name, None)
+            if column.name.endswith("_enc") and isinstance(value, str | bytes):
                 value = self._unseal(value)
             values[column.name] = value
         return values
 
-    def _encode(self, entity: BackupEntity, row: BackupModel) -> dict[str, Any]:
+    def _encode(self, entity: BackupEntity, row: BackupModel) -> dict[str, object]:
         """One row, JSON-ready: the opened values from :meth:`_plain` (the envelope re-seals
         the whole payload under the backup secret) with bytes/timestamps made portable."""
         plain = self._plain(entity, row)
@@ -442,14 +460,14 @@ class BackupService:
             for column in entity.model.__table__.columns
         }
 
-    def _decode(self, entity: BackupEntity, values: Mapping[str, Any]) -> BackupModel:
+    def _decode(self, entity: BackupEntity, values: Mapping[str, object]) -> BackupModel:
         """The reverse: JSON back to column values, re-sealed under *this* host's DEK."""
-        built: dict[str, Any] = {}
+        built: dict[str, object] = {}
         for column in entity.model.__table__.columns:
             if column.name not in values:
                 continue
             value = _from_json(values[column.name], _column_kind(column))
-            if column.name.endswith("_enc") and value is not None:
+            if column.name.endswith("_enc") and isinstance(value, str | bytes):
                 value = self._seal(value)
             built[column.name] = value
         return entity.model(**built)
@@ -469,21 +487,23 @@ class BackupService:
         )
 
 
-def _to_json(value: Any, kind: str) -> Any:
-    if value is None:
-        return None
-    if kind == "bytes":
+def _to_json(value: object, kind: str) -> object:
+    if kind == "bytes" and isinstance(value, bytes):
         return base64.b64encode(value).decode()
-    if kind == "datetime":
+    if kind == "datetime" and isinstance(value, datetime):
         return value.isoformat()
     return value
 
 
-def _from_json(value: Any, kind: str) -> Any:
+def _from_json(value: object, kind: str) -> object:
     if value is None:
         return None
     if kind == "bytes":
+        if not isinstance(value, str | bytes):
+            raise TypeError("a bytes column is carried as base64 text")
         return base64.b64decode(value)
     if kind == "datetime":
+        if not isinstance(value, str):
+            raise TypeError("a datetime column is carried as ISO text")
         return datetime.fromisoformat(value)
     return value

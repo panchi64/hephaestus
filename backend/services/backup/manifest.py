@@ -13,10 +13,11 @@ a class the process never imported has no mapper, and would silently vanish from
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import Table
 from sqlmodel import SQLModel
+from sqlmodel.main import default_registry
 
 from models._backup import BackupSpec
 from models._discovery import import_all_models
@@ -31,6 +32,11 @@ class BackupModel(SQLModel):
     __table__: ClassVar[Table]
     id: str
     owner_id: str
+
+    if TYPE_CHECKING:
+
+        def __init__(self, **data: object) -> None:
+            super().__init__(**data)
 
 
 @dataclass(frozen=True)
@@ -52,7 +58,7 @@ def discover_entities() -> list[BackupEntity]:
     marker's ``order`` (parents before children), then name for a stable tie-break."""
     import_all_models()
     found: dict[str, BackupEntity] = {}
-    for mapper in SQLModel._sa_registry.mappers:
+    for mapper in default_registry.mappers:
         cls = mapper.class_
         # `__dict__`, not `getattr`: a subclass must declare its own membership rather
         # than inherit a parent's section by accident.
