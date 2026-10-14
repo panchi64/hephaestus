@@ -10,7 +10,11 @@ of it and every OAuth account fails an hour after its first use.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import ClassVar, NoReturn, override
+
 import pytest
+from sqlalchemy import Engine
 from sqlmodel import Session
 
 from core.db import in_session, init_db, make_engine
@@ -18,9 +22,11 @@ from core.vault import Vault
 from models.mail import AUTH_OAUTH, PROVIDER_GMAIL, MailAccount
 from services.credential_store import CredentialStore
 from services.mail import service as mail_service
-from services.mail.oauth import TokenBundle
+from services.mail.models import AccountSpec
+from services.mail.oauth import OAuthProvider, TokenBundle
 from services.mail.service import MailService
-from tests.mail_fakes import install_transport
+from services.mail.transport import MailTransport
+from tests.mail_fakes import FakeTransport, install_transport
 
 EXPIRED = 1_000_000_000.0  # long past — `open_access` judges expiry against the real clock
 LIVE = 4_000_000_000.0  # far future
@@ -28,39 +34,57 @@ LIVE_BUNDLE = TokenBundle(access_token="live", refresh_token="rt", expires_at=LI
 
 
 class _NoModels:
-    async def resolve_background(self, **_kwargs):
+    async def resolve_background(self, **_kwargs: object) -> NoReturn:
         raise RuntimeError("no utility model configured")
 
 
-class _SpecRecorder:
+class _SpecRecorder(FakeTransport):
     """Stands in for a provider adapter, remembering the spec it was handed."""
 
-    instances: list[_SpecRecorder] = []
+    instances: ClassVar[list[_SpecRecorder]] = []
 
-    def __init__(self, spec) -> None:
-        self.spec = spec
-        self.closed = False
+    def __init__(self, spec: AccountSpec | None) -> None:
+        super().__init__()
+        self.spec: AccountSpec | None = spec
+        self.closed: bool = False
         _SpecRecorder.instances.append(self)
 
+    @override
     async def close(self) -> None:
         self.closed = True
 
 
+def _recorder(transport: MailTransport) -> _SpecRecorder:
+    assert isinstance(transport, _SpecRecorder)
+    return transport
+
+
+def _access_token(transport: MailTransport) -> str | None:
+    spec = _recorder(transport).spec
+    assert spec is not None
+    return spec.access_token
+
+
+type _Wired = tuple[MailService, Engine, Vault]
+
+
 @pytest.fixture
-async def wired(tmp_path, monkeypatch):
+async def wired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Wired:
     """A service whose Gmail provider builds recorders instead of real adapters."""
     _SpecRecorder.instances = []
-    monkeypatch.setitem(mail_service._TRANSPORTS, PROVIDER_GMAIL, _SpecRecorder)
+    monkeypatch.setattr(mail_service, "_TRANSPORTS", {PROVIDER_GMAIL: _SpecRecorder})
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
     credentials = CredentialStore(engine, vault)
-    await credentials.set_key("operator", "google_oauth", "client-secret")
+    _ = await credentials.set_key("operator", "google_oauth", "client-secret")
     return MailService(engine, vault, credentials, _NoModels()), engine, vault
 
 
-async def _oauth_account(service, engine, vault, bundle: TokenBundle) -> MailAccount:
+async def _oauth_account(
+    service: MailService, engine: Engine, vault: Vault, bundle: TokenBundle
+) -> MailAccount:
     account = MailAccount(
         owner_id="operator",
         name="Personal",
@@ -78,12 +102,14 @@ async def _oauth_account(service, engine, vault, bundle: TokenBundle) -> MailAcc
     return account
 
 
-async def test_a_live_token_reuses_the_cached_transport(wired, monkeypatch):
+async def test_a_live_token_reuses_the_cached_transport(
+    wired: _Wired, monkeypatch: pytest.MonkeyPatch
+):
     """The cache still has to be a cache — one connection per account, not one per call."""
     service, engine, vault = wired
     account = await _oauth_account(service, engine, vault, LIVE_BUNDLE)
 
-    async def _never(*_args, **_kwargs):
+    async def _never(*_args: object, **_kwargs: object) -> NoReturn:
         raise AssertionError("a live token must not trigger a refresh")
 
     monkeypatch.setattr("services.mail.oauth.refresh_tokens", _never)
@@ -92,7 +118,9 @@ async def test_a_live_token_reuses_the_cached_transport(wired, monkeypatch):
     assert len(_SpecRecorder.instances) == 1
 
 
-async def test_every_call_resolves_credentials_before_consulting_the_cache(wired):
+async def test_every_call_resolves_credentials_before_consulting_the_cache(
+    wired: _Wired, monkeypatch: pytest.MonkeyPatch
+):
     """The load-bearing half, stated as its own rule: `open_access` runs on *every* call,
     not just a miss. It is the only code that notices an access token is near expiry and
     the only code that refreshes one, so a cache checked ahead of it pins the account to
@@ -103,12 +131,12 @@ async def test_every_call_resolves_credentials_before_consulting_the_cache(wired
     opened = 0
     original = service._secrets.open_access
 
-    async def counting(row):
+    async def counting(row: MailAccount) -> tuple[str | None, str | None]:
         nonlocal opened
         opened += 1
         return await original(row)
 
-    service._secrets.open_access = counting
+    monkeypatch.setattr(service._secrets, "open_access", counting)
     first = await service._transport(account)
     second = await service._transport(account)
 
@@ -116,7 +144,9 @@ async def test_every_call_resolves_credentials_before_consulting_the_cache(wired
     assert opened == 2  # ...but the credentials behind it were re-checked
 
 
-async def test_a_rotated_token_rebuilds_the_transport(wired, monkeypatch):
+async def test_a_rotated_token_rebuilds_the_transport(
+    wired: _Wired, monkeypatch: pytest.MonkeyPatch
+):
     """The bug this guards: the adapter's token is frozen at construction, so a cache hit
     that skips `open_access` pins the account to a token that lapses within the hour and
     then fails every operation until the operator edits or probes the account."""
@@ -128,30 +158,30 @@ async def test_a_rotated_token_rebuilds_the_transport(wired, monkeypatch):
         TokenBundle(access_token="stale", refresh_token="rt-1", expires_at=EXPIRED),
     )
 
-    async def _refresh(_provider, *, client_id, client_secret, refresh_token):
+    async def _refresh(_provider: OAuthProvider, **_credentials: str) -> TokenBundle:
         return TokenBundle(access_token="fresh", refresh_token="rt-2", expires_at=LIVE)
 
     monkeypatch.setattr("services.mail.oauth.refresh_tokens", _refresh)
     stale = await service._transport(account)
-    assert stale.spec.access_token == "fresh"  # the very first build already refreshed
+    assert _access_token(stale) == "fresh"  # the very first build already refreshed
 
     # Age the freshly-sealed bundle so the next call has to refresh again.
     account.secret_enc = service._secrets.seal_bundle(
         TokenBundle(access_token="fresh", refresh_token="rt-2", expires_at=EXPIRED)
     )
 
-    async def _refresh_again(_provider, *, client_id, client_secret, refresh_token):
+    async def _refresh_again(_provider: OAuthProvider, **_credentials: str) -> TokenBundle:
         return TokenBundle(access_token="fresher", refresh_token="rt-3", expires_at=LIVE)
 
     monkeypatch.setattr("services.mail.oauth.refresh_tokens", _refresh_again)
     rebuilt = await service._transport(account)
 
     assert rebuilt is not stale
-    assert rebuilt.spec.access_token == "fresher"
-    assert stale.closed is True  # the old connection is released, not leaked
+    assert _access_token(rebuilt) == "fresher"
+    assert _recorder(stale).closed is True  # the old connection is released, not leaked
 
 
-async def test_an_installed_transport_is_cached_on_the_same_terms_as_a_built_one(wired):
+async def test_an_installed_transport_is_cached_on_the_same_terms_as_a_built_one(wired: _Wired):
     """Tests wire fakes in to keep the network out; `install_transport` records the same
     credentials the service would have, so an installed adapter is subject to the same
     rule rather than being an exception to it — nothing lands in the cache unaccounted
@@ -165,12 +195,12 @@ async def test_an_installed_transport_is_cached_on_the_same_terms_as_a_built_one
     assert service._transports[account.id].credentials == (None, "live")
 
 
-async def test_dropping_a_transport_forgets_its_credentials(wired):
+async def test_dropping_a_transport_forgets_its_credentials(wired: _Wired):
     service, engine, vault = wired
     account = await _oauth_account(service, engine, vault, LIVE_BUNDLE)
     first = await service._transport(account)
     await service._drop_transport(account.id)
 
-    assert first.closed is True
+    assert _recorder(first).closed is True
     assert account.id not in service._transports
     assert await service._transport(account) is not first
