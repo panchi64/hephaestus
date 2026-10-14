@@ -13,6 +13,10 @@ be a confident lie about the one thing this readout exists to expose.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from pathlib import Path
+from typing import override
+
 import pytest
 from pydantic_ai import FunctionToolset, ModelMessage, ModelRequest, ModelResponse
 from pydantic_ai.messages import TextPart, UserPromptPart
@@ -20,6 +24,11 @@ from pydantic_ai.usage import RequestUsage
 
 from runs import TurnOverhead
 from services.context_budget import compose
+from services.conversations import ConversationStore
+from services.registry import ModelRegistry
+
+from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from ._json import arr, json_body, n, obj, s
 
 
 def _messages(text: str) -> list[ModelMessage]:
@@ -92,7 +101,7 @@ async def test_the_overhead_is_measured_from_the_request_that_went_out():
     definitions the model was actually handed."""
     from dataclasses import dataclass
 
-    from pydantic_ai import Agent, FunctionToolset
+    from pydantic_ai import Agent, FunctionToolset, ModelRequestContext, RunContext
     from pydantic_ai.capabilities import AbstractCapability
     from pydantic_ai.models.test import TestModel
 
@@ -103,13 +112,17 @@ async def test_the_overhead_is_measured_from_the_request_that_went_out():
     @toolset.tool_plain(metadata={"sensitivity": "read"})
     def lookup(query: str, limit: int = 5) -> str:
         """Look something up in the corpus."""
+        del query, limit
         return "x"
 
     seen: list[TurnOverhead] = []
 
     @dataclass
     class _Capture(AbstractCapability[object]):
-        async def before_model_request(self, ctx, request_context):
+        @override
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
             params = request_context.model_request_parameters
             seen.append(
                 measure_overhead(
@@ -125,7 +138,7 @@ async def test_the_overhead_is_measured_from_the_request_that_went_out():
         toolsets=[toolset],
         capabilities=[_Capture()],
     )
-    await agent.run("hello")
+    _ = await agent.run("hello")
 
     assert seen, "before_model_request never fired"
     overhead = seen[0]
@@ -205,18 +218,20 @@ async def test_a_live_turn_reports_a_split_that_sums_to_its_footprint():
 # ── The itemisation ──────────────────────────────────────────────────────────────
 
 
-def _overhead(**kw) -> TurnOverhead:
+def _overhead(
+    *,
+    blocks: Sequence[tuple[str, int]] = (),
+    groups: Sequence[tuple[str, int, int]] = (),
+) -> TurnOverhead:
     from runs import BriefBlock, ToolGroupOverhead
 
-    blocks = tuple(BriefBlock(id=i, chars=c) for i, c in kw.get("blocks", ()))
-    groups = tuple(
-        ToolGroupOverhead(category=c, tools=n, chars=x) for c, n, x in kw.get("groups", ())
-    )
+    brief = tuple(BriefBlock(id=i, chars=c) for i, c in blocks)
+    tool_groups = tuple(ToolGroupOverhead(category=c, tools=t, chars=x) for c, t, x in groups)
     return TurnOverhead(
-        system=sum(b.chars for b in blocks),
-        tools=sum(g.chars for g in groups),
-        blocks=blocks,
-        groups=groups,
+        system=sum(block.chars for block in brief),
+        tools=sum(g.chars for g in tool_groups),
+        blocks=brief,
+        groups=tool_groups,
     )
 
 
@@ -361,15 +376,17 @@ async def test_a_providers_own_contribution_is_attributed_to_it():
     """What makes the brief actionable: 'your brief is 5k' is a fact, 'the skill catalog is
     4k of it' is a decision. Each provider is registered under a `name`, so the library
     stamps the part it resolves to and the row is read off the assembled request."""
+    from pydantic_ai import RunContext
     from pydantic_ai.models.test import TestModel
 
     from agent import build_chat_orchestrator
     from runs import RunRegistry, RunStatus
+    from tools import RunDeps
 
-    async def skill_catalog_instructions(ctx) -> str:
+    async def skill_catalog_instructions(_ctx: RunContext[RunDeps]) -> str:
         return "S" * 4_000
 
-    def delegate_instructions(ctx) -> str:
+    def delegate_instructions(_ctx: RunContext[RunDeps]) -> str:
         # Sync on purpose: features write both shapes, and a blanket `await` in the
         # measuring shim would have cost this turn rather than this row.
         return "D" * 1_000
@@ -432,7 +449,7 @@ def test_a_measurement_without_itemisation_still_reads():
     assert Overhead.from_dict({"system": 100, "tools": 200}) == Overhead(system=100, tools=200)
 
 
-async def test_a_failed_measurement_leaves_the_stored_one_alone(tmp_path):
+async def test_a_failed_measurement_leaves_the_stored_one_alone(tmp_path: Path):
     """A turn that never reached a model request measures nothing. That is ignored rather
     than written as absence: the previous figure still describes this thread better than
     nothing does, and blanking it would cost the operator the breakdown for a turn that
@@ -440,7 +457,6 @@ async def test_a_failed_measurement_leaves_the_stored_one_alone(tmp_path):
     from core.db import init_db, make_engine
     from core.vault import Vault
     from runs import TurnOverhead as Overhead
-    from services.conversations import ConversationStore
 
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
@@ -456,7 +472,7 @@ async def test_a_failed_measurement_leaves_the_stored_one_alone(tmp_path):
     assert await store.get_overhead(conversation_id) == Overhead(system=100, tools=200)
 
 
-async def test_a_turn_leaves_its_measurement_on_its_own_thread(monkeypatch):
+async def test_a_turn_leaves_its_measurement_on_its_own_thread(monkeypatch: pytest.MonkeyPatch):
     """What makes a reload able to break the window down at all — and the reason it is
     stored per conversation rather than remembered per mode.
 
@@ -465,15 +481,14 @@ async def test_a_turn_leaves_its_measurement_on_its_own_thread(monkeypatch):
     learn why their window is full, which is the decision they opened the breakdown to
     make. Storing it on the thread also means the split describes *this* conversation's
     request — a per-mode memory would hand one thread another's configuration."""
-    from ._helpers import client_app, collect_sse_events, patch_model_resolution
-
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, app):
-        created = (await client.post("/chat", json={"prompt": "hello"})).json()
-        await collect_sse_events(client, created["run_id"])
-        conversation_id = created["conversation_id"]
+        created = json_body(await client.post("/chat", json={"prompt": "hello"}))
+        _ = await collect_sse_events(client, s(created["run_id"]))
+        conversation_id = s(created["conversation_id"])
+        conversations = app_state(app, "conversations", ConversationStore)
 
-        overhead = await app.state.conversations.get_overhead(conversation_id)
+        overhead = await conversations.get_overhead(conversation_id)
         assert overhead is not None, "a completed turn must leave its overhead behind"
         # Both halves are real: the app assembles a full tool catalog and a standing brief,
         # so a zero in either would mean the measurement found nothing while the request
@@ -483,11 +498,13 @@ async def test_a_turn_leaves_its_measurement_on_its_own_thread(monkeypatch):
         # It belongs to the thread that ran the turn, and to no other. This is the whole
         # difference from the per-mode memory it replaces: that one would have handed this
         # second chat thread the first one's configuration.
-        other = await app.state.conversations.create_conversation("operator")
-        assert await app.state.conversations.get_overhead(other) is None
+        other = await conversations.create_conversation("operator")
+        assert await conversations.get_overhead(other) is None
 
 
-async def test_a_reopened_thread_reports_the_breakdown_without_another_turn(monkeypatch):
+async def test_a_reopened_thread_reports_the_breakdown_without_another_turn(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """The bug this exists to fix, end to end.
 
     Re-reading a conversation must serve the same itemised split the live stream did. The
@@ -500,23 +517,20 @@ async def test_a_reopened_thread_reports_the_breakdown_without_another_turn(monk
 
     from runs import BriefBlock, ToolGroupOverhead
     from runs import TurnOverhead as Overhead
-    from services.registry import ModelRegistry
-
-    from ._helpers import client_app
 
     # The window is the gauge's denominator and has its own tests; stub it so this one is
     # about the split rather than about role resolution.
-    async def main_context_window(self, owner_id):
+    async def main_context_window(_self: ModelRegistry, _owner_id: str) -> int | None:
         return 200_000
 
     monkeypatch.setattr(ModelRegistry, "main_context_window", main_context_window)
 
     async with client_app() as (client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         conversation_id = await store.create_conversation("operator")
         # A settled turn carrying real provider usage — the stub model reports none, and
         # a thread with no measured footprint has no gauge to break down at all.
-        store.record(
+        _ = store.record(
             conversation_id,
             [
                 ModelRequest(parts=[UserPromptPart(content="what is filling my window?")]),
@@ -536,20 +550,24 @@ async def test_a_reopened_thread_reports_the_breakdown_without_another_turn(monk
             ),
         )
 
-        context = (await client.get(f"/conversations/{conversation_id}")).json()["context"]
-        assert context is not None
-        parts = context["parts"]
-        assert parts is not None, "a reopened thread must not fall back to one flat figure"
-        assert parts["system"] > 0 and parts["tools"] > 0
+        context_value = json_body(await client.get(f"/conversations/{conversation_id}"))["context"]
+        assert context_value is not None
+        context = obj(context_value)
+        parts_value = context["parts"]
+        assert parts_value is not None, "a reopened thread must not fall back to one flat figure"
+        parts = obj(parts_value)
+        assert n(parts["system"]) > 0 and n(parts["tools"]) > 0
         # The split still agrees with the total printed above it, cold as well as warm.
-        assert parts["system"] + parts["tools"] + parts["messages"] == context["used"]
+        assert n(parts["system"]) + n(parts["tools"]) + n(parts["messages"]) == context["used"]
         # And the itemisation survives the round trip — it is the half the operator can
         # act on ("`external` is 60% of your window, across 68 tools" is a switch to find).
-        external = [s for s in parts["segments"] if s["id"] == "external"]
+        external = [obj(seg) for seg in arr(parts["segments"]) if obj(seg)["id"] == "external"]
         assert external and external[0]["count"] == 68
 
 
-async def test_a_reopened_thread_whose_endpoint_reported_no_usage_still_reads(monkeypatch):
+async def test_a_reopened_thread_whose_endpoint_reported_no_usage_still_reads(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """A local server that answers ``input_tokens=0`` is the case the estimate exists for.
 
     The live turn falls back to it and the gauge fills; a cold read of that same thread has
@@ -560,20 +578,17 @@ async def test_a_reopened_thread_whose_endpoint_reported_no_usage_still_reads(mo
     from core.config import get_settings
     from runs import TurnOverhead as Overhead
     from services.conversation_view import estimate_footprint
-    from services.registry import ModelRegistry
 
-    from ._helpers import client_app
-
-    async def main_context_window(self, owner_id):
+    async def main_context_window(_self: ModelRegistry, _owner_id: str) -> int | None:
         return 200_000
 
     monkeypatch.setattr(ModelRegistry, "main_context_window", main_context_window)
 
     async with client_app() as (client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         conversation_id = await store.create_conversation("operator")
         overhead = Overhead(system=4_000, tools=60_000)
-        store.record(
+        _ = store.record(
             conversation_id,
             [
                 ModelRequest(parts=[UserPromptPart(content="x" * 2_000)]),
@@ -585,16 +600,16 @@ async def test_a_reopened_thread_whose_endpoint_reported_no_usage_still_reads(mo
         )
         await store.set_overhead(conversation_id, overhead)
 
-        detail = (await client.get(f"/conversations/{conversation_id}")).json()
+        detail = json_body(await client.get(f"/conversations/{conversation_id}"))
         expected = estimate_footprint(
             await store.history(conversation_id),
             overhead,
             fallback_overhead_tokens=get_settings().context_overhead_fallback_tokens,
         )
         assert detail["context"] is not None
-        assert detail["context"]["used"] == expected
+        assert obj(detail["context"])["used"] == expected
         # And the readout beside the ring agrees with it, rather than reporting null.
-        assert detail["stats"]["context_used"] == expected
+        assert obj(detail["stats"])["context_used"] == expected
 
 
 # ── What counts as message weight ────────────────────────────────────────────────
@@ -769,7 +784,9 @@ def test_a_thread_with_no_overhead_record_assumes_a_catalog_rather_than_nothing(
     assert footprint == estimate_tokens(messages) + 12_000
 
 
-async def test_a_turn_that_parks_for_approval_records_its_overhead_before_resuming(tmp_path):
+async def test_a_turn_that_parks_for_approval_records_its_overhead_before_resuming(
+    tmp_path: Path,
+):
     """A turn parked awaiting approval has already measured its request, so it records
     what that request weighs rather than waiting for the operator to decide.
 
@@ -783,7 +800,6 @@ async def test_a_turn_that_parks_for_approval_records_its_overhead_before_resumi
     from core.db import init_db, make_engine
     from core.vault import Vault
     from runs import RunRegistry, RunStatus
-    from services.conversations import ConversationStore
     from tools import RunDeps
 
     engine = make_engine("sqlite:///:memory:")
@@ -841,7 +857,9 @@ def test_a_negative_figure_reads_as_absent():
     )
 
 
-async def test_a_failed_overhead_write_never_fails_the_turn(tmp_path, monkeypatch):
+async def test_a_failed_overhead_write_never_fails_the_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """The breakdown is a readout. If its write fails, the operator loses a reload's
     detail — they must not lose the answered turn, which is what letting the exception out
     would cost: the run would end `error` and its messages would route through the
@@ -852,7 +870,6 @@ async def test_a_failed_overhead_write_never_fails_the_turn(tmp_path, monkeypatc
     from core.db import init_db, make_engine
     from core.vault import Vault
     from runs import RunRegistry, RunStatus
-    from services.conversations import ConversationStore
 
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
@@ -861,7 +878,9 @@ async def test_a_failed_overhead_write_never_fails_the_turn(tmp_path, monkeypatc
     store = ConversationStore(engine, vault)
     conversation_id = await store.create_conversation("operator")
 
-    async def boom(self, conversation_id, overhead):
+    async def boom(
+        _self: ConversationStore, _conversation_id: str, _overhead: TurnOverhead | None
+    ) -> None:
         raise RuntimeError("database is locked")
 
     monkeypatch.setattr(ConversationStore, "set_overhead", boom)
