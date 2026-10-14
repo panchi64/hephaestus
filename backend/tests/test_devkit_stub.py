@@ -9,11 +9,16 @@ matters is that the client the app actually uses understands it.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 
 import httpx2
 import pytest
 from openai import AsyncOpenAI, InternalServerError
+from openai.types.chat import (
+    ChatCompletionFunctionToolParam,
+    ChatCompletionMessageFunctionToolCall,
+    ChatCompletionMessageParam,
+)
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -22,9 +27,13 @@ from devkit.stub import MODEL_ID, create_stub
 from devkit.stub.embeddings import DIMENSIONS, embed
 from devkit.stub.scripts import REQUEST_LOG_LIMIT
 
+from ._json import arr, obj, parse_json
+
+type _Stub = tuple[AsyncOpenAI, httpx2.AsyncClient]
+
 
 @pytest.fixture
-def stub():
+def stub() -> Iterator[_Stub]:
     app = create_stub()
     transport = httpx2.ASGITransport(app=app)
     http = httpx2.AsyncClient(transport=transport, base_url="http://stub")
@@ -34,7 +43,7 @@ def stub():
 #: Offered on every request that expects a tool call back. A scripted tool call is only
 #: delivered to a request that offered tools — see the guard test below — and passing
 #: them is what the agent does anyway, so the tests that want one say so.
-def _offer(*names: str) -> list[dict[str, object]]:
+def _offer(*names: str) -> list[ChatCompletionFunctionToolParam]:
     return [
         {"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
         for name in names
@@ -46,13 +55,13 @@ async def _script(http: httpx2.AsyncClient, *scenarios: Mapping[str, object]) ->
     assert response.status_code == 200
 
 
-async def test_it_advertises_a_model_so_the_picker_can_discover_one(stub):
+async def test_it_advertises_a_model_so_the_picker_can_discover_one(stub: _Stub):
     client, _ = stub
     listed = await client.models.list()
     assert [model.id for model in listed.data] == [MODEL_ID]
 
 
-async def test_an_unscripted_request_echoes_rather_than_saying_something_generic(stub):
+async def test_an_unscripted_request_echoes_rather_than_saying_something_generic(stub: _Stub):
     client, _ = stub
     answer = await client.chat.completions.create(
         model=MODEL_ID, messages=[{"role": "user", "content": "hello there"}]
@@ -61,7 +70,7 @@ async def test_an_unscripted_request_echoes_rather_than_saying_something_generic
     assert answer.choices[0].finish_reason == "stop"
 
 
-async def test_a_scripted_reply_is_matched_on_the_last_user_message(stub):
+async def test_a_scripted_reply_is_matched_on_the_last_user_message(stub: _Stub):
     client, http = stub
     await _script(http, {"match": "weather", "text": "It is raining."})
     answer = await client.chat.completions.create(
@@ -75,7 +84,7 @@ async def test_a_scripted_reply_is_matched_on_the_last_user_message(stub):
     assert answer.choices[0].message.content == "It is raining."
 
 
-async def test_streaming_deltas_reassemble_into_the_same_answer(stub):
+async def test_streaming_deltas_reassemble_into_the_same_answer(stub: _Stub):
     client, http = stub
     await _script(http, {"match": "poem", "text": "one two three four five six seven"})
     stream = await client.chat.completions.create(
@@ -98,7 +107,7 @@ async def test_streaming_deltas_reassemble_into_the_same_answer(stub):
     assert usage is not None and usage.total_tokens > 0
 
 
-async def test_a_scripted_tool_call_arrives_as_a_real_tool_call(stub):
+async def test_a_scripted_tool_call_arrives_as_a_real_tool_call(stub: _Stub):
     client, http = stub
     await _script(
         http,
@@ -114,17 +123,20 @@ async def test_a_scripted_tool_call_arrives_as_a_real_tool_call(stub):
     )
     calls = answer.choices[0].message.tool_calls
     assert answer.choices[0].finish_reason == "tool_calls"
-    assert calls is not None and calls[0].function.name == "calculator"
-    assert calls[0].function.arguments == '{"a": 2, "b": 40}'
+    assert calls is not None
+    call = calls[0]
+    assert isinstance(call, ChatCompletionMessageFunctionToolCall)
+    assert call.function.name == "calculator"
+    assert call.function.arguments == '{"a": 2, "b": 40}'
 
 
-async def test_tool_call_arguments_survive_being_split_across_deltas(stub):
+async def test_tool_call_arguments_survive_being_split_across_deltas(stub: _Stub):
     # The fragmenting is deliberate: a stub sending whole arguments in one delta would
     # never exercise the reassembly a real server forces on the client.
     client, http = stub
     arguments = '{"query": "something long enough to be split into several fragments"}'
-    call = {"name": "web", "arguments": arguments}
-    await _script(http, {"match": "search", "tool_calls": [call]})
+    scripted = {"name": "web", "arguments": arguments}
+    await _script(http, {"match": "search", "tool_calls": [scripted]})
     stream = await client.chat.completions.create(
         model=MODEL_ID,
         messages=[{"role": "user", "content": "search for it"}],
@@ -133,14 +145,15 @@ async def test_tool_call_arguments_survive_being_split_across_deltas(stub):
     )
     fragments, name = "", ""
     async for chunk in stream:
-        for call in (chunk.choices and chunk.choices[0].delta.tool_calls) or []:
+        deltas = chunk.choices[0].delta.tool_calls if chunk.choices else None
+        for call in deltas or []:
             name = name or (call.function.name if call.function else "") or ""
             fragments += (call.function.arguments if call.function else "") or ""
     assert name == "web"
     assert fragments == arguments
 
 
-async def test_a_tool_call_is_never_handed_to_a_request_that_offered_no_tools(stub):
+async def test_a_tool_call_is_never_handed_to_a_request_that_offered_no_tools(stub: _Stub):
     # The failure this prevents: one user message produces several requests — the chat
     # turn that offers tools, and the auto-title beside it that offers none and carries
     # the same last user message. Without the guard the titler consumes the scripted
@@ -152,7 +165,7 @@ async def test_a_tool_call_is_never_handed_to_a_request_that_offered_no_tools(st
         {"match": "clock", "tool_calls": [{"name": "builtin_now", "arguments": "{}"}], "uses": 1},
         {"match": "clock", "text": "It is late."},
     )
-    messages = [{"role": "user", "content": "check the clock"}]
+    messages: list[ChatCompletionMessageParam] = [{"role": "user", "content": "check the clock"}]
 
     titler = await client.chat.completions.create(model=MODEL_ID, messages=messages)
     assert titler.choices[0].message.tool_calls is None
@@ -165,26 +178,26 @@ async def test_a_tool_call_is_never_handed_to_a_request_that_offered_no_tools(st
     assert turn.choices[0].message.tool_calls is not None
 
 
-async def test_a_scripted_failure_reaches_the_client_as_an_error(stub):
+async def test_a_scripted_failure_reaches_the_client_as_an_error(stub: _Stub):
     # It survives the client's own retries, which is why failures are unlimited by
     # default: a one-shot 500 is consumed by the retry and the caller sees success —
     # a scripted failure that silently does not fail.
     client, http = stub
     await _script(http, {"match": "boom", "status": 500, "error": "upstream exploded"})
     with pytest.raises(InternalServerError):
-        await client.chat.completions.create(
+        _ = await client.chat.completions.create(
             model=MODEL_ID, messages=[{"role": "user", "content": "boom"}]
         )
 
 
-async def test_a_counted_scenario_is_consumed_so_a_two_step_exchange_can_be_scripted(stub):
+async def test_a_counted_scenario_is_consumed_so_a_two_step_exchange_can_be_scripted(stub: _Stub):
     client, http = stub
     await _script(
         http,
         {"match": "task", "tool_calls": [{"name": "step_one", "arguments": "{}"}], "uses": 1},
         {"match": "task", "text": "Done."},
     )
-    messages = [{"role": "user", "content": "do the task"}]
+    messages: list[ChatCompletionMessageParam] = [{"role": "user", "content": "do the task"}]
     tools = _offer("step_one")
     first = await client.chat.completions.create(model=MODEL_ID, messages=messages, tools=tools)
     assert first.choices[0].message.tool_calls is not None
@@ -192,7 +205,7 @@ async def test_a_counted_scenario_is_consumed_so_a_two_step_exchange_can_be_scri
     assert second.choices[0].message.content == "Done."
 
 
-async def test_two_scripted_tool_calls_keep_the_ids_they_were_given(stub):
+async def test_two_scripted_tool_calls_keep_the_ids_they_were_given(stub: _Stub):
     # Ids are how a client matches each result back to the call that asked for it, so a
     # test may well assert on ones it set deliberately — being one of several must not
     # rewrite them. Only a genuine duplicate is disambiguated.
@@ -217,7 +230,7 @@ async def test_two_scripted_tool_calls_keep_the_ids_they_were_given(stub):
     assert [call.id for call in calls] == ["call_a", "call_b"]
 
 
-async def test_duplicate_tool_call_ids_are_made_distinct(stub):
+async def test_duplicate_tool_call_ids_are_made_distinct(stub: _Stub):
     client, http = stub
     await _script(
         http,
@@ -239,35 +252,37 @@ async def test_duplicate_tool_call_ids_are_made_distinct(stub):
     assert len({call.id for call in calls}) == 2
 
 
-async def test_the_request_log_is_bounded(stub):
+async def test_the_request_log_is_bounded(stub: _Stub):
     # The stub outlives any one test. A request carries the whole replayed transcript
     # plus every tool schema, so an unbounded log grows without limit and eventually
     # makes `/_stub/requests` too large to read.
     client, http = stub
     for index in range(REQUEST_LOG_LIMIT + 5):
-        await client.chat.completions.create(
+        _ = await client.chat.completions.create(
             model=MODEL_ID, messages=[{"role": "user", "content": f"message {index}"}]
         )
-    recorded = (await http.get("/_stub/requests")).json()
+    recorded = obj(parse_json((await http.get("/_stub/requests")).content))
     assert recorded["count"] == REQUEST_LOG_LIMIT
     # Oldest first, and it is the newest that are kept.
-    last = recorded["requests"][-1]["messages"][-1]["content"]
-    assert last == f"message {REQUEST_LOG_LIMIT + 4}"
+    requests = arr(recorded["requests"])
+    last = arr(obj(requests[-1])["messages"])
+    assert obj(last[-1])["content"] == f"message {REQUEST_LOG_LIMIT + 4}"
 
 
-async def test_it_records_what_the_agent_actually_sent(stub):
+async def test_it_records_what_the_agent_actually_sent(stub: _Stub):
     client, http = stub
-    await client.chat.completions.create(
+    _ = await client.chat.completions.create(
         model=MODEL_ID,
         messages=[{"role": "user", "content": "hi"}],
         tools=_offer("calculator"),
     )
-    recorded = (await http.get("/_stub/requests")).json()
+    recorded = obj(parse_json((await http.get("/_stub/requests")).content))
     assert recorded["count"] == 1
-    assert recorded["requests"][0]["tools"][0]["function"]["name"] == "calculator"
+    tool = obj(arr(obj(arr(recorded["requests"])[0])["tools"])[0])
+    assert obj(tool["function"])["name"] == "calculator"
 
 
-async def test_embeddings_are_stable_and_unrelated_texts_are_not_close(stub):
+async def test_embeddings_are_stable_and_unrelated_texts_are_not_close(stub: _Stub):
     client, _ = stub
     response = await client.embeddings.create(model=MODEL_ID, input=["alpha", "beta"])
     alpha, beta = (item.embedding for item in response.data)
@@ -276,10 +291,10 @@ async def test_embeddings_are_stable_and_unrelated_texts_are_not_close(stub):
     assert abs(sum(a * b for a, b in zip(alpha, beta, strict=True))) < 0.3
 
 
-async def test_the_pydantic_ai_model_the_registry_builds_can_talk_to_it(stub):
+async def test_the_pydantic_ai_model_the_registry_builds_can_talk_to_it(stub: _Stub):
     # The end of the chain: not the OpenAI client but the model object the app's own
     # `openai-compatible` adapter constructs, running a real agent turn against it.
-    client, http = stub
+    _client, http = stub
     await _script(http, {"match": "ping", "text": "pong"})
     model = OpenAIChatModel(
         MODEL_ID,
