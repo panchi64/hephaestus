@@ -9,6 +9,7 @@ that is exactly what a shared, app-lifetime toolset object could get wrong.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 from pydantic_ai import ModelRetry, RunContext
@@ -26,8 +27,8 @@ class _Session:
     """A session whose workspace is a real directory on disk."""
 
     def __init__(self, workspace: Path) -> None:
-        self._workspace = workspace
-        self.ensured = 0
+        self._workspace: Path = workspace
+        self.ensured: int = 0
 
     def ensure_workspace(self) -> Path:
         self.ensured += 1
@@ -39,10 +40,11 @@ class _Manager:
     """Hands out one session per key, each with its own workspace directory."""
 
     def __init__(self, root: Path) -> None:
-        self._root = root
+        self._root: Path = root
         self.sessions: dict[str, _Session] = {}
 
     async def acquire(self, key: str, *, holder: object = None) -> _Session:
+        del holder
         if key not in self.sessions:
             self.sessions[key] = _Session(self._root / key)
         return self.sessions[key]
@@ -63,7 +65,13 @@ def _deps(manager: _Manager | None, conversation_id: str) -> tuple[Run, RunDeps]
 _TOOLSET = build_agent_toolsets({"files": files_toolset()})[0]
 
 
-async def _call(tool: str, args: dict[str, object], *, manager, conversation_id="conv-1"):
+async def _call(
+    tool: str,
+    args: dict[str, object],
+    *,
+    manager: _Manager | None,
+    conversation_id: str = "conv-1",
+) -> object:
     """Invoke one file tool with exact arguments through the real gated toolset stack.
 
     Driven directly rather than through a model: these assertions are about what a
@@ -85,15 +93,15 @@ async def _call(tool: str, args: dict[str, object], *, manager, conversation_id=
     )
     tools = await toolset.get_tools(ctx)
     name = f"files_{tool}"
-    return await toolset.call_tool(name, args, ctx, tools[name])
+    return cast(object, await toolset.call_tool(name, args, ctx, tools[name]))
 
 
-async def test_each_conversation_reads_and_writes_its_own_workspace(tmp_path):
+async def test_each_conversation_reads_and_writes_its_own_workspace(tmp_path: Path):
     manager = _Manager(tmp_path)
     (tmp_path / "conv-1").mkdir()
     (tmp_path / "conv-2").mkdir()
-    (tmp_path / "conv-1" / "note.txt").write_text("first thread")
-    (tmp_path / "conv-2" / "note.txt").write_text("second thread")
+    _ = (tmp_path / "conv-1" / "note.txt").write_text("first thread")
+    _ = (tmp_path / "conv-2" / "note.txt").write_text("second thread")
 
     one = await _call("read_file", {"path": "note.txt"}, manager=manager, conversation_id="conv-1")
     two = await _call("read_file", {"path": "note.txt"}, manager=manager, conversation_id="conv-2")
@@ -103,40 +111,40 @@ async def test_each_conversation_reads_and_writes_its_own_workspace(tmp_path):
     assert "second thread" in str(two)
 
 
-async def test_write_lands_in_the_conversation_workspace(tmp_path):
+async def test_write_lands_in_the_conversation_workspace(tmp_path: Path):
     manager = _Manager(tmp_path)
-    await _call("write_file", {"path": "result.txt", "content": "hello"}, manager=manager)
+    _ = await _call("write_file", {"path": "result.txt", "content": "hello"}, manager=manager)
     assert (tmp_path / "conv-1" / "result.txt").read_text() == "hello"
 
 
-async def test_paths_outside_the_workspace_are_refused(tmp_path):
+async def test_paths_outside_the_workspace_are_refused(tmp_path: Path):
     manager = _Manager(tmp_path)
     secret = tmp_path / "secret.txt"
-    secret.write_text("not the agent's")
+    _ = secret.write_text("not the agent's")
 
     # Refusal is a `ModelRetry`, not a returned string: the model is told to correct the
     # path rather than handed a value it might mistake for the file's contents.
     for path in ("../secret.txt", str(secret)):
         with pytest.raises(ModelRetry) as caught:
-            await _call("read_file", {"path": path}, manager=manager)
+            _ = await _call("read_file", {"path": path}, manager=manager)
         assert "not the agent's" not in str(caught.value)
 
 
-async def test_a_symlink_out_of_the_workspace_is_refused(tmp_path):
+async def test_a_symlink_out_of_the_workspace_is_refused(tmp_path: Path):
     manager = _Manager(tmp_path)
     outside = tmp_path / "outside.txt"
-    outside.write_text("host side")
+    _ = outside.write_text("host side")
     (tmp_path / "conv-1").mkdir(exist_ok=True)
     (tmp_path / "conv-1" / "link.txt").symlink_to(outside)
 
     # Containment resolves symlinks before authorizing, so a link is not a way out —
     # the case a naive prefix check on the *unresolved* path would miss.
     with pytest.raises(ModelRetry) as caught:
-        await _call("read_file", {"path": "link.txt"}, manager=manager)
+        _ = await _call("read_file", {"path": "link.txt"}, manager=manager)
     assert "host side" not in str(caught.value)
 
 
-async def test_a_correctable_failure_comes_back_as_a_retry_not_a_dead_run(tmp_path):
+async def test_a_correctable_failure_comes_back_as_a_retry_not_a_dead_run(tmp_path: Path):
     """The harness hands back what the model can fix — a missing file as a plain result,
     a failed edit as `ModelRetry` — so the turn continues and the agent tries something
     else.
@@ -149,27 +157,28 @@ async def test_a_correctable_failure_comes_back_as_a_retry_not_a_dead_run(tmp_pa
     (tmp_path / "conv-1").mkdir(exist_ok=True)
 
     missing = await _call("read_file", {"path": "nope.txt"}, manager=manager)
+    assert isinstance(missing, str)
     assert "nope.txt" in missing
     assert str(tmp_path) not in missing
 
     with pytest.raises(ModelRetry):
-        await _call(
+        _ = await _call(
             "edit_file",
             {"path": "nope.txt", "old_text": "a", "new_text": "b"},
             manager=manager,
         )
 
 
-async def test_no_sandbox_runtime_degrades_instead_of_failing(tmp_path):
+async def test_no_sandbox_runtime_degrades_instead_of_failing():
     # Fail-closed means the capability is absent, not that the turn dies: the model is
     # told its machine is unavailable and adapts.
     result = await _call("read_file", {"path": "note.txt"}, manager=None)
     assert "unavailable" in str(result).lower()
 
 
-async def test_reading_materializes_the_workspace_without_the_vm(tmp_path):
+async def test_reading_materializes_the_workspace_without_the_vm(tmp_path: Path):
     manager = _Manager(tmp_path)
-    await _call("list_directory", {"path": "."}, manager=manager)
+    _ = await _call("list_directory", {"path": "."}, manager=manager)
     # The session was asked for its workspace (which restores a sealed one), and nothing
     # else — browsing files must not pay for a VM round trip.
     assert manager.sessions["conv-1"].ensured >= 1
