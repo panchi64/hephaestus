@@ -13,12 +13,19 @@ from __future__ import annotations
 import asyncio
 import os
 import urllib.parse
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
+from typing import cast, final, override
 
 import httpx
 import pytest
+from playwright.async_api import Page, Route
+from pydantic_ai import ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.settings import ModelSettings
 
 from core.config import Settings
 from core.exceptions import SSRFError, WebFetchError
@@ -27,11 +34,14 @@ from services.vm import PlatformVM
 from services.vm.smolvm import SmolvmDriver
 from services.webfetch import BrowserFetcher, FetchedPage, ManagedBrowser
 from services.webfetch.cookies import DomainCookieJar
+from services.webfetch.distill import WebDistiller
 from services.webfetch.extract import extract
 from services.webfetch.fetcher import (
+    RenderBrowser,
     RenderContext,
     RenderPage,
     RenderResponse,
+    SnapshotPage,
     WaitUntil,
     _looks_like_challenge,
 )
@@ -184,7 +194,7 @@ def test_cookie_jar_later_set_overwrites_and_caps():
     assert got == {"b": "1", "c": "1"}
 
 
-def test_cookie_jar_evicts_on_ttl(monkeypatch):
+def test_cookie_jar_evicts_on_ttl(monkeypatch: pytest.MonkeyPatch):
     clock = {"t": 1000.0}
     monkeypatch.setattr("services.webfetch.cookies.time.monotonic", lambda: clock["t"])
     jar = DomainCookieJar(ttl_s=10, max_entries=10)
@@ -223,16 +233,16 @@ async def test_throttle_disabled_is_noop():
         pass  # never waits, never raises
 
 
-async def test_throttle_prune_keeps_a_locked_host(monkeypatch):
+async def test_throttle_prune_keeps_a_locked_host(monkeypatch: pytest.MonkeyPatch):
     # At the tracking cap, pruning must skip a host whose lock is held — else two same-host
     # fetches would acquire different locks and run in parallel (the race the throttle prevents).
     monkeypatch.setattr("services.webfetch.throttle._MAX_TRACKED", 1)
     throttle = DomainThrottle(min_interval_s=0.01)
     release = asyncio.Event()
 
-    async def hold_a():
+    async def hold_a() -> None:
         async with throttle.slot("https://a.com/"):
-            await release.wait()
+            _ = await release.wait()
 
     task = asyncio.create_task(hold_a())
     await asyncio.sleep(0.05)  # let it acquire a.com's slot
@@ -272,7 +282,7 @@ async def test_fetch_refuses_private_target_before_opening_browser():
         )
     )
     with pytest.raises(SSRFError):
-        await fetcher.fetch(OWNER, "http://10.0.0.1/admin")
+        _ = await fetcher.fetch(OWNER, "http://10.0.0.1/admin")
 
 
 async def test_fetch_degrades_when_browser_unavailable():
@@ -289,20 +299,29 @@ async def test_fetch_degrades_when_browser_unavailable():
     )
     # A public IP literal passes the pre-flight offline; the unavailable browser then degrades.
     with pytest.raises(WebFetchError):
-        await fetcher.fetch(OWNER, "http://93.184.216.34/")
+        _ = await fetcher.fetch(OWNER, "http://93.184.216.34/")
 
 
-class _DroppingBrowser:
+async def _unavailable_context() -> RenderContext:
+    raise RuntimeError("browser is not available")
+
+
+@final
+class _DroppingBrowser(RenderBrowser):
     """available reports True, but acquiring a context fails — models the browser dropping
     between the availability check and context entry (a TOCTOU disconnect)."""
 
-    available = True
+    @property
+    @override
+    def available(self) -> bool:
+        return True
 
+    @override
     @asynccontextmanager
-    async def context(self, url: str | None = None) -> AsyncIterator[RenderContext]:
-        raise RuntimeError("browser is not available")
-        yield  # pragma: no cover - unreachable
+    async def context(self, url: str | None = None) -> AsyncGenerator[RenderContext]:
+        yield await _unavailable_context()
 
+    @override
     async def apply_stealth(self, page: RenderPage) -> None:
         raise AssertionError("unexpected call: apply_stealth")
 
@@ -313,21 +332,27 @@ async def test_fetch_maps_browser_dropout_to_webfetch_error():
     # the tool can't translate.
     fetcher = BrowserFetcher(browser=_DroppingBrowser())
     with pytest.raises(WebFetchError):
-        await fetcher.fetch(OWNER, "http://93.184.216.34/")
+        _ = await fetcher.fetch(OWNER, "http://93.184.216.34/")
 
 
 # --- output cap + offset paging (no browser) -------------------------------
 
 
-class _AvailableBrowser:
+@final
+class _AvailableBrowser(RenderBrowser):
     """Reports available; never opens a context — the render is patched out so these
     tests exercise the cap/offset packaging on a synthetic oversized body."""
 
-    available = True
+    @property
+    @override
+    def available(self) -> bool:
+        return True
 
+    @override
     def context(self, url: str | None = None) -> AbstractAsyncContextManager[RenderContext]:
         raise AssertionError("unexpected call: context")
 
+    @override
     async def apply_stealth(self, page: RenderPage) -> None:
         raise AssertionError("unexpected call: apply_stealth")
 
@@ -336,7 +361,11 @@ _BIG_BODY = ("word " * 20_000).strip()  # ~100k chars of predictable text
 
 
 def _fetcher_with_body(
-    monkeypatch, body: str, *, output_max_tokens: int = 4000, distiller=None
+    monkeypatch: pytest.MonkeyPatch,
+    body: str,
+    *,
+    output_max_tokens: int = 4000,
+    distiller: WebDistiller | None = None,
 ) -> BrowserFetcher:
     fetcher = BrowserFetcher(
         browser=_AvailableBrowser(),
@@ -344,7 +373,7 @@ def _fetcher_with_body(
         distiller=distiller,
     )
 
-    async def _fake_render(url: str):
+    async def _fake_render(url: str) -> tuple[str, str, str]:
         # html="" so the extractor falls back to the rendered innerText verbatim, giving
         # a body of exactly the length we control.
         return "", body, url
@@ -353,7 +382,7 @@ def _fetcher_with_body(
     return fetcher
 
 
-async def test_fetch_caps_output_and_appends_truncation_note(monkeypatch):
+async def test_fetch_caps_output_and_appends_truncation_note(monkeypatch: pytest.MonkeyPatch):
     fetcher = _fetcher_with_body(monkeypatch, _BIG_BODY)
     page = await fetcher.fetch(OWNER, "http://93.184.216.34/")
 
@@ -371,7 +400,7 @@ async def test_fetch_caps_output_and_appends_truncation_note(monkeypatch):
     assert f"offset={end}" in page.content
 
 
-async def test_fetch_offset_returns_next_window(monkeypatch):
+async def test_fetch_offset_returns_next_window(monkeypatch: pytest.MonkeyPatch):
     fetcher = _fetcher_with_body(monkeypatch, _BIG_BODY)
     cap = tokens_to_chars(4000)
     first = truncate_on_boundary(_BIG_BODY, cap)
@@ -389,28 +418,41 @@ async def test_fetch_offset_returns_next_window(monkeypatch):
     assert "Fetched content truncated" not in last.content
 
 
-async def test_fetch_offset_past_end_raises(monkeypatch):
+async def test_fetch_offset_past_end_raises(monkeypatch: pytest.MonkeyPatch):
     fetcher = _fetcher_with_body(monkeypatch, _BIG_BODY)
     with pytest.raises(WebFetchError):
-        await fetcher.fetch(OWNER, "http://93.184.216.34/", offset=10**9)
+        _ = await fetcher.fetch(OWNER, "http://93.184.216.34/", offset=10**9)
 
 
 # --- goal-aware distillation (no browser) ----------------------------------
 
 
-class _FakeDistiller:
+async def _no_model() -> tuple[Model, ModelSettings | None]:
+    raise AssertionError("unexpected call: resolve_model")
+
+
+@final
+class _FakeDistiller(WebDistiller):
     """A stand-in distiller returning a fixed result and counting its calls."""
 
-    def __init__(self, result):
-        self.result = result
-        self.calls = 0
+    def __init__(self, result: str | None) -> None:
+        super().__init__(
+            resolve_model=_no_model,
+            instructions="",
+            window_tokens=1,
+            max_windows=1,
+            timeout_s=1.0,
+        )
+        self.result: str | None = result
+        self.calls: int = 0
 
-    async def distill(self, body: str, *, goal: str, url: str):
+    @override
+    async def distill(self, body: str, *, goal: str, url: str) -> str | None:
         self.calls += 1
         return self.result
 
 
-async def test_fetch_distills_when_goal_given_and_body_over_cap(monkeypatch):
+async def test_fetch_distills_when_goal_given_and_body_over_cap(monkeypatch: pytest.MonkeyPatch):
     distiller = _FakeDistiller("DISTILLED — RAV4 trim price: $38,795")
     fetcher = _fetcher_with_body(monkeypatch, _BIG_BODY, distiller=distiller)
     page = await fetcher.fetch(OWNER, "http://93.184.216.34/", goal="RAV4 prices")
@@ -421,7 +463,7 @@ async def test_fetch_distills_when_goal_given_and_body_over_cap(monkeypatch):
     assert "Fetched content truncated" not in page.content  # distilled, not truncated
 
 
-async def test_fetch_goal_ignored_when_body_under_cap(monkeypatch):
+async def test_fetch_goal_ignored_when_body_under_cap(monkeypatch: pytest.MonkeyPatch):
     distiller = _FakeDistiller("unused")
     fetcher = _fetcher_with_body(monkeypatch, "a small page body", distiller=distiller)
     page = await fetcher.fetch(OWNER, "http://93.184.216.34/", goal="anything")
@@ -429,7 +471,7 @@ async def test_fetch_goal_ignored_when_body_under_cap(monkeypatch):
     assert "a small page body" in page.content
 
 
-async def test_fetch_offset_wins_over_goal(monkeypatch):
+async def test_fetch_offset_wins_over_goal(monkeypatch: pytest.MonkeyPatch):
     distiller = _FakeDistiller("unused")
     fetcher = _fetcher_with_body(monkeypatch, _BIG_BODY, distiller=distiller)
     page = await fetcher.fetch(OWNER, "http://93.184.216.34/", offset=100, goal="x")
@@ -437,7 +479,7 @@ async def test_fetch_offset_wins_over_goal(monkeypatch):
     assert "Fetched content truncated" in page.content
 
 
-async def test_fetch_falls_back_to_truncation_when_distiller_fails(monkeypatch):
+async def test_fetch_falls_back_to_truncation_when_distiller_fails(monkeypatch: pytest.MonkeyPatch):
     distiller = _FakeDistiller(None)  # distillation failed/empty
     fetcher = _fetcher_with_body(monkeypatch, _BIG_BODY, distiller=distiller)
     page = await fetcher.fetch(OWNER, "http://93.184.216.34/", goal="x")
@@ -446,18 +488,11 @@ async def test_fetch_falls_back_to_truncation_when_distiller_fails(monkeypatch):
 
 
 async def test_distiller_windows_and_drops_irrelevant():
-    from pydantic_ai import ModelResponse, TextPart
-    from pydantic_ai.models.function import FunctionModel
-
-    from services.webfetch.distill import WebDistiller
-
-    def _respond(messages, info):
-        text = " ".join(
-            part.content
-            for m in messages
-            for part in m.parts
-            if isinstance(getattr(part, "content", None), str)
+    def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        contents = (
+            cast(object, getattr(part, "content", None)) for m in messages for part in m.parts
         )
+        text = " ".join(content for content in contents if isinstance(content, str))
         if "B" * 12 in text:
             out = "NO RELEVANT CONTENT"  # middle window is irrelevant
         elif "A" * 12 in text:
@@ -466,7 +501,7 @@ async def test_distiller_windows_and_drops_irrelevant():
             out = "KEPT-C"
         return ModelResponse(parts=[TextPart(content=out)])
 
-    async def _resolve():
+    async def _resolve() -> tuple[Model, ModelSettings | None]:
         return FunctionModel(_respond), None
 
     body = "A" * 12 + "B" * 12 + "C" * 12  # 3 windows at window_tokens=3 (12 chars each)
@@ -488,25 +523,32 @@ async def test_distiller_windows_and_drops_irrelevant():
 # --- adaptive settle loop (no browser) -------------------------------------
 
 
-class _SettlePage:
+@final
+class _SettlePage(SnapshotPage):
     """A page whose successive innerText snapshots follow ``texts`` (last value repeats).
     ``waits`` counts settle-loop waits — render_wait_ms is 0 in these tests, so a wait can
     only come from the settle loop."""
 
-    url = "http://93.184.216.34/"
-
     def __init__(self, texts: list[str]):
-        self._texts = texts
-        self._i = 0
-        self.waits = 0
+        self._texts: list[str] = texts
+        self._i: int = 0
+        self.waits: int = 0
 
-    async def wait_for_timeout(self, timeout: float):
+    @property
+    @override
+    def url(self) -> str:
+        return "http://93.184.216.34/"
+
+    @override
+    async def wait_for_timeout(self, timeout: float) -> None:
         self.waits += 1
 
-    async def content(self):
+    @override
+    async def content(self) -> str:
         return "<html><body></body></html>"
 
-    async def evaluate(self, expression: str):
+    @override
+    async def evaluate(self, expression: str) -> str:
         text = self._texts[min(self._i, len(self._texts) - 1)]
         self._i += 1
         return text
@@ -537,49 +579,61 @@ def _minimal_pdf(text: str = "Hello PDF World") -> bytes:
     stream = f"BT /F1 24 Tf 72 700 Td ({text}) Tj ET".encode()
     return (
         b"%PDF-1.4\n"
-        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
-        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
-        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n"
-        b"4 0 obj\n<< /Length "
+        + b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        + b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        + b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        + b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n"
+        + b"4 0 obj\n<< /Length "
         + str(len(stream)).encode()
         + b" >>\nstream\n"
         + stream
         + b"\nendstream\nendobj\n"
-        b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
-        b"trailer\n<< /Root 1 0 R >>\n%%EOF\n"
+        + b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+        + b"trailer\n<< /Root 1 0 R >>\n%%EOF\n"
     )
 
 
-class _PdfDownloadBrowser:
+@final
+class _PdfDownloadBrowser(RenderBrowser, RenderContext, RenderPage):
     """available; its page's goto raises the 'Download is starting' PlaywrightError that a
     `.pdf` URL provokes — the fetcher must route to the direct-download PDF path."""
 
-    available = True
+    @property
+    @override
+    def available(self) -> bool:
+        return True
 
+    @override
     @asynccontextmanager
-    async def context(self, url: str | None = None) -> AsyncIterator[_PdfDownloadBrowser]:
+    async def context(self, url: str | None = None) -> AsyncGenerator[_PdfDownloadBrowser]:
         yield self
 
+    @override
     async def new_page(self) -> _PdfDownloadBrowser:
         return self
 
+    @override
     async def apply_stealth(self, page: RenderPage) -> None:
         return None
 
     @property
+    @override
     def url(self) -> str:
         raise AssertionError("unexpected call: url")
 
+    @override
     async def wait_for_timeout(self, timeout: float) -> None:
         raise AssertionError("unexpected call: wait_for_timeout")
 
+    @override
     async def content(self) -> str:
         raise AssertionError("unexpected call: content")
 
+    @override
     async def evaluate(self, expression: str) -> str:
         raise AssertionError("unexpected call: evaluate")
 
+    @override
     async def goto(
         self, url: str, *, wait_until: WaitUntil, timeout: float
     ) -> RenderResponse | None:
@@ -588,8 +642,8 @@ class _PdfDownloadBrowser:
         raise PlaywrightError("Page.goto: net::ERR_ABORTED; Download is starting")
 
 
-async def test_download_error_routes_to_pdf_path(monkeypatch):
-    async def _fake_pdf(url, **kwargs):
+async def test_download_error_routes_to_pdf_path(monkeypatch: pytest.MonkeyPatch):
+    async def _fake_pdf(_url: str, **_kwargs: object) -> str:
         return "Attention Is All You Need — full paper text"
 
     monkeypatch.setattr("services.webfetch.fetcher.fetch_pdf_text", _fake_pdf)
@@ -599,7 +653,7 @@ async def test_download_error_routes_to_pdf_path(monkeypatch):
     assert "BEGIN UNTRUSTED CONTENT" in page.content
 
 
-async def test_fetch_pdf_text_follows_redirect_recheck(monkeypatch):
+async def test_fetch_pdf_text_follows_redirect_recheck(monkeypatch: pytest.MonkeyPatch):
     from services.webfetch import pdf as pdf_mod
 
     checked: list[str] = []
@@ -631,12 +685,12 @@ async def test_fetch_pdf_text_follows_redirect_recheck(monkeypatch):
     assert len(checked) >= 2  # re-checked SSRF before the redirect target too
 
 
-async def test_fetch_pdf_text_refuses_non_pdf_download(monkeypatch):
+async def test_fetch_pdf_text_refuses_non_pdf_download(monkeypatch: pytest.MonkeyPatch):
     from services.webfetch import pdf as pdf_mod
 
     monkeypatch.setattr(pdf_mod, "assert_public_url", _allow_all)
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200, headers={"content-type": "text/html"}, content=b"<html>nope</html>"
         )
@@ -644,7 +698,7 @@ async def test_fetch_pdf_text_refuses_non_pdf_download(monkeypatch):
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
         with pytest.raises(WebFetchError):
-            await pdf_mod.fetch_pdf_text(
+            _ = await pdf_mod.fetch_pdf_text(
                 "https://x.example/f",
                 timeout_s=5,
                 max_bytes=10_000_000,
@@ -655,25 +709,25 @@ async def test_fetch_pdf_text_refuses_non_pdf_download(monkeypatch):
         await client.aclose()
 
 
-async def test_fetch_pdf_text_scanned_pdf_raises(monkeypatch):
+async def test_fetch_pdf_text_scanned_pdf_raises(monkeypatch: pytest.MonkeyPatch):
     from services.webfetch import pdf as pdf_mod
 
     monkeypatch.setattr(pdf_mod, "assert_public_url", _allow_all)
     # A valid PDF header but no text layer at all (no content stream) → scanned.
     scanned = (
         b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
-        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
-        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
-        b"trailer\n<< /Root 1 0 R >>\n%%EOF\n"
+        + b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        + b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
+        + b"trailer\n<< /Root 1 0 R >>\n%%EOF\n"
     )
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, headers={"content-type": "application/pdf"}, content=scanned)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
         with pytest.raises(WebFetchError, match="no extractable text layer"):
-            await pdf_mod.fetch_pdf_text(
+            _ = await pdf_mod.fetch_pdf_text(
                 "https://x.example/scan.pdf",
                 timeout_s=5,
                 max_bytes=10_000_000,
@@ -684,12 +738,12 @@ async def test_fetch_pdf_text_scanned_pdf_raises(monkeypatch):
         await client.aclose()
 
 
-async def test_fetch_pdf_text_size_cap(monkeypatch):
+async def test_fetch_pdf_text_size_cap(monkeypatch: pytest.MonkeyPatch):
     from services.webfetch import pdf as pdf_mod
 
     monkeypatch.setattr(pdf_mod, "assert_public_url", _allow_all)
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             headers={"content-type": "application/pdf", "content-length": "99999999"},
@@ -699,7 +753,7 @@ async def test_fetch_pdf_text_size_cap(monkeypatch):
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
         with pytest.raises(WebFetchError, match="exceeds"):
-            await pdf_mod.fetch_pdf_text(
+            _ = await pdf_mod.fetch_pdf_text(
                 "https://x.example/big.pdf",
                 timeout_s=5,
                 max_bytes=1000,
@@ -713,7 +767,7 @@ async def test_fetch_pdf_text_size_cap(monkeypatch):
 # --- VM-hosted browser: a real render (skipped without a real VM) ------------
 
 
-async def _browser_or_skip(tmp_path) -> tuple[ManagedBrowser, PlatformVM]:
+async def _browser_or_skip(tmp_path: Path) -> tuple[ManagedBrowser, PlatformVM]:
     """A browser in a real platform VM; set ``HEPHAESTUS_TEST_VM=1`` on a host that has the
     VM backend and its image to run it."""
     if not os.environ.get("HEPHAESTUS_TEST_VM"):
@@ -755,11 +809,17 @@ async def _browser_or_skip(tmp_path) -> tuple[ManagedBrowser, PlatformVM]:
     return browser, vm
 
 
-async def _allow_all(url: str) -> None:
+async def _allow_all(_url: str) -> None:
     return None
 
 
-async def test_vm_browser_renders_js_extracts_and_is_stealthed(monkeypatch, tmp_path):
+async def _js(page: Page, expression: str) -> object:
+    return cast(object, await page.evaluate(expression))
+
+
+async def test_vm_browser_renders_js_extracts_and_is_stealthed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     browser, vm = await _browser_or_skip(tmp_path)
     try:
         # 1) The fetch pipeline renders a JS-built page and extracts its content as Markdown.
@@ -784,24 +844,28 @@ async def test_vm_browser_renders_js_extracts_and_is_stealthed(monkeypatch, tmp_
         async with browser.context() as ctx:
             probe = await ctx.new_page()
             await browser.apply_stealth(probe)  # client-hint/UA-metadata override
-            await probe.goto("data:text/html,<p>ok</p>", wait_until="domcontentloaded")
-            assert await probe.evaluate("() => navigator.webdriver") in (False, None)
-            user_agent = await probe.evaluate("() => navigator.userAgent")
+            _ = await probe.goto("data:text/html,<p>ok</p>", wait_until="domcontentloaded")
+            assert await _js(probe, "() => navigator.webdriver") in (False, None)
+            user_agent = await _js(probe, "() => navigator.userAgent")
+            assert isinstance(user_agent, str)
             assert "HeadlessChrome" not in user_agent and "Chrome/" in user_agent
-            assert await probe.evaluate("() => typeof window.chrome") == "object"
-            assert await probe.evaluate("() => navigator.languages.length") > 0
+            assert await _js(probe, "() => typeof window.chrome") == "object"
+            languages = await _js(probe, "() => navigator.languages.length")
+            assert isinstance(languages, int) and languages > 0
             # A fuller window.chrome (app/csi), not the bare { runtime } stub a probe spots.
-            assert await probe.evaluate("() => typeof window.chrome.app") == "object"
-            assert await probe.evaluate("() => typeof window.chrome.csi") == "function"
+            assert await _js(probe, "() => typeof window.chrome.app") == "object"
+            assert await _js(probe, "() => typeof window.chrome.csi") == "function"
             # Named plugin entries — the old [1,2,3,4,5] left plugins[0].name undefined.
-            assert await probe.evaluate("() => navigator.plugins.length") == 5
-            assert await probe.evaluate("() => navigator.plugins[0].name") == "PDF Viewer"
+            assert await _js(probe, "() => navigator.plugins.length") == 5
+            assert await _js(probe, "() => navigator.plugins[0].name") == "PDF Viewer"
             # The WebGL renderer agrees with the Linux UA — the old spoof leaked a macOS
             # 'Intel Iris' string under a Linux UA, a cross-check a fingerprinter flags.
-            renderer = await probe.evaluate(
+            renderer = await _js(
+                probe,
                 "() => { const c = document.createElement('canvas').getContext('webgl');"
-                " return c ? c.getParameter(37446) : ''; }"
+                + " return c ? c.getParameter(37446) : ''; }",
             )
+            assert isinstance(renderer, str)
             assert "Iris" not in renderer and ("Mesa" in renderer or "ANGLE" in renderer)
 
         # 3) Client hints agree with the UA (the tell a patched UA string alone misses):
@@ -810,18 +874,21 @@ async def test_vm_browser_renders_js_extracts_and_is_stealthed(monkeypatch, tmp_
         # route-fulfilled https URL provides offline — no network egress.
         async with browser.context() as ctx:
 
-            async def _ok(route):
+            async def _ok(route: Route) -> None:
                 await route.fulfill(status=200, content_type="text/html", body="<p>ok</p>")
 
-            await ctx.route("https://stealth.local/**", _ok)
+            _ = await ctx.route("https://stealth.local/**", _ok)
             probe = await ctx.new_page()
             await browser.apply_stealth(probe)
-            await probe.goto("https://stealth.local/", wait_until="domcontentloaded")
-            assert await probe.evaluate("() => isSecureContext") is True
-            brands = await probe.evaluate("() => navigator.userAgentData.brands.map(b => b.brand)")
+            _ = await probe.goto("https://stealth.local/", wait_until="domcontentloaded")
+            assert await _js(probe, "() => isSecureContext") is True
+            brands = cast(
+                list[str],
+                await probe.evaluate("() => navigator.userAgentData.brands.map(b => b.brand)"),
+            )
             assert brands and not any("HeadlessChrome" in b for b in brands)
             assert any("Chrome" in b for b in brands)
-            assert await probe.evaluate("() => navigator.userAgentData.platform") == "Linux"
+            assert await _js(probe, "() => navigator.userAgentData.platform") == "Linux"
     finally:
         await browser.stop()
         await vm.stop()
@@ -842,9 +909,7 @@ async def test_web_fetch_tool_reaches_the_fetcher():
     seen: dict[str, str] = {}
 
     class _StubFetcher:
-        async def fetch(
-            self, owner_id: str, url: str, *, offset: int = 0, goal: str | None = None
-        ) -> FetchedPage:
+        async def fetch(self, _owner_id: str, url: str, **_kwargs: object) -> FetchedPage:
             seen["url"] = url
             return FetchedPage(url=url, title="t", content="body")
 
@@ -857,7 +922,7 @@ async def test_web_fetch_tool_reaches_the_fetcher():
         capabilities=caps,
     )
     run = RunRegistry().submit(kind="chat", owner_id=OWNER, orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
 
     assert run.status is RunStatus.done
     assert "url" in seen, "the fetch tool should have reached the fetcher capability"
