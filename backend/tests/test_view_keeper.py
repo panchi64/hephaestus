@@ -6,52 +6,60 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
+import pytest
+
 from core.db import init_db, make_engine
 from core.vault import Vault
 from services.workspace_history import WorkspaceHistoryStore
 
-from ._helpers import client_app, collect_sse_events, patch_model_resolution
+from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from ._json import arr, json_body, obj, s
 
 
-async def _start_conversation(client) -> str:
+async def _start_conversation(client: httpx.AsyncClient) -> str:
     resp = await client.post("/chat", json={"prompt": "hi"})
-    body = resp.json()
-    await collect_sse_events(client, body["run_id"])
-    return body["conversation_id"]
+    body = json_body(resp)
+    _ = await collect_sse_events(client, s(body["run_id"]))
+    return s(body["conversation_id"])
 
 
-async def test_set_keeper_204_and_reflected_in_conversation_detail(monkeypatch):
+async def _first_snapshot(client: httpx.AsyncClient, conv: str) -> dict[str, object]:
+    detail = json_body(await client.get(f"/conversations/{conv}"))
+    return dict(obj(arr(detail["snapshots"])[0]))
+
+
+async def test_set_keeper_204_and_reflected_in_conversation_detail(
+    monkeypatch: pytest.MonkeyPatch,
+):
     patch_model_resolution(monkeypatch, output_text="hi")
     async with client_app() as (client, app):
         conv = await _start_conversation(client)
-        snap = await app.state.workspace_history.capture(
+        snap = await app_state(app, "workspace_history", WorkspaceHistoryStore).capture(
             "operator", conv, run_id="r1", files={"a.py": b"x"}
         )
         # Not yet a keeper.
-        detail = (await client.get(f"/conversations/{conv}")).json()
-        assert detail["snapshots"][0]["keeper"] is False
+        assert (await _first_snapshot(client, conv))["keeper"] is False
 
         resp = await client.post(f"/views/snapshots/{snap.id}/keeper", json={"keeper": True})
         assert resp.status_code == 204
 
-        detail = (await client.get(f"/conversations/{conv}")).json()
-        assert detail["snapshots"][0]["keeper"] is True
+        assert (await _first_snapshot(client, conv))["keeper"] is True
 
 
-async def test_unset_keeper(monkeypatch):
+async def test_unset_keeper(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch, output_text="hi")
     async with client_app() as (client, app):
         conv = await _start_conversation(client)
-        snap = await app.state.workspace_history.capture(
+        snap = await app_state(app, "workspace_history", WorkspaceHistoryStore).capture(
             "operator", conv, run_id="r1", files={"a.py": b"x"}
         )
-        await client.post(f"/views/snapshots/{snap.id}/keeper", json={"keeper": True})
+        _ = await client.post(f"/views/snapshots/{snap.id}/keeper", json={"keeper": True})
 
         resp = await client.post(f"/views/snapshots/{snap.id}/keeper", json={"keeper": False})
         assert resp.status_code == 204
 
-        detail = (await client.get(f"/conversations/{conv}")).json()
-        assert detail["snapshots"][0]["keeper"] is False
+        assert (await _first_snapshot(client, conv))["keeper"] is False
 
 
 async def test_keeper_unknown_snapshot_404():

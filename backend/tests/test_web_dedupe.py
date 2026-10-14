@@ -23,12 +23,14 @@ Five properties are the ones that break silently:
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 import pytest
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
+from core.container import ServiceContainer
 from core.exceptions import DegradedCapabilityError, WebFetchError
 from runs import Run, RunStream
 from services.search import SearchResults, SearchService
@@ -41,16 +43,18 @@ class _FakeSearch:
     def __init__(self, *, fail: bool = False, gate: asyncio.Event | None = None) -> None:
         self.queries: list[str] = []
         self.calls: list[tuple[str, int, str | None]] = []
-        self._fail = fail
+        self._fail: bool = fail
         # Held open to park a call mid-flight, so a second one runs while the first is
         # still awaiting — the shape a parallel tool-call batch produces.
-        self._gate = gate
+        self._gate: asyncio.Event | None = gate
 
-    async def search(self, owner_id, query, *, limit=5, time_range=None):
+    async def search(
+        self, _owner_id: str, query: str, *, limit: int = 5, time_range: str | None = None
+    ) -> SearchResults:
         self.queries.append(query)
         self.calls.append((query, limit, time_range))
         if self._gate is not None:
-            await self._gate.wait()
+            _ = await self._gate.wait()
         if self._fail:
             raise DegradedCapabilityError("no provider configured")
         return SearchResults(instruction="", results=[])
@@ -59,18 +63,20 @@ class _FakeSearch:
 class _FakeFetcher:
     def __init__(self, *, fail: bool = False) -> None:
         self.urls: list[tuple[str, int]] = []
-        self._fail = fail
+        self._fail: bool = fail
 
-    async def fetch(self, owner_id, url, *, offset=0, goal=None):
+    async def fetch(
+        self, _owner_id: str, url: str, *, offset: int = 0, **_kwargs: object
+    ) -> FetchedPage:
         self.urls.append((url, offset))
         if self._fail:
             raise WebFetchError("the page would not render")
         return FetchedPage(url=url, title="T", content="body")
 
 
-def _ctx(*, search=None, fetcher=None):
-    from core.container import ServiceContainer
-
+def _ctx(
+    *, search: _FakeSearch | None = None, fetcher: _FakeFetcher | None = None
+) -> RunContext[RunDeps]:
     caps = ServiceContainer()
     if search is not None:
         caps.add(search, as_type=SearchService)
@@ -82,15 +88,15 @@ def _ctx(*, search=None, fetcher=None):
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
-async def _call(name: str, ctx, **kwargs):
-    return await web_toolset().tools[name].function(ctx, **kwargs)
+async def _call(name: str, ctx: RunContext[RunDeps], **kwargs: object) -> object:
+    return cast(object, await web_toolset().tools[name].function(ctx, **kwargs))
 
 
 class TestSearch:
     async def test_the_same_query_is_not_asked_twice(self):
         svc = _FakeSearch()
         ctx = _ctx(search=svc)
-        await _call("search", ctx, query="hephaestus release date")
+        _ = await _call("search", ctx, query="hephaestus release date")
         again = await _call("search", ctx, query="  Hephaestus   Release Date ")
         # Folded to the same key, so it never reached the provider.
         assert svc.queries == ["hephaestus release date"]
@@ -102,8 +108,8 @@ class TestSearch:
     async def test_a_different_query_still_runs(self):
         svc = _FakeSearch()
         ctx = _ctx(search=svc)
-        await _call("search", ctx, query="a")
-        await _call("search", ctx, query="b")
+        _ = await _call("search", ctx, query="a")
+        _ = await _call("search", ctx, query="b")
         assert svc.queries == ["a", "b"]
 
     async def test_narrowing_the_window_is_a_new_search_not_a_repeat(self):
@@ -112,9 +118,9 @@ class TestSearch:
         the model evidence is already above that was never fetched."""
         svc = _FakeSearch()
         ctx = _ctx(search=svc)
-        await _call("search", ctx, query="cpi release", time_range="year")
-        await _call("search", ctx, query="cpi release", time_range="day")
-        await _call("search", ctx, query="cpi release", limit=20, time_range="day")
+        _ = await _call("search", ctx, query="cpi release", time_range="year")
+        _ = await _call("search", ctx, query="cpi release", time_range="day")
+        _ = await _call("search", ctx, query="cpi release", limit=20, time_range="day")
         assert svc.calls == [
             ("cpi release", 5, "year"),
             ("cpi release", 5, "day"),
@@ -142,7 +148,7 @@ class TestSearch:
             second = await asyncio.wait_for(_call("search", ctx, query="a"), timeout=1.0)
         finally:
             gate.set()
-            await first
+            _ = await first
         assert svc.queries == ["a"]
         assert isinstance(second, str)
         assert "already searched" in second.lower()
@@ -151,16 +157,17 @@ class TestSearch:
         svc = _FakeSearch(fail=True)
         ctx = _ctx(search=svc)
         first = await _call("search", ctx, query="a")
+        assert isinstance(first, str)
         assert "unavailable" in first
         # The provider was down, not the answer absent — the same query must still run
         # once it is back.
-        await _call("search", ctx, query="a")
+        _ = await _call("search", ctx, query="a")
         assert svc.queries == ["a", "a"]
 
     async def test_each_run_starts_with_a_clean_slate(self):
         svc = _FakeSearch()
-        await _call("search", _ctx(search=svc), query="a")
-        await _call("search", _ctx(search=svc), query="a")
+        _ = await _call("search", _ctx(search=svc), query="a")
+        _ = await _call("search", _ctx(search=svc), query="a")
         # "Already read" is a fact about one investigation, not a durable one.
         assert svc.queries == ["a", "a"]
 
@@ -169,7 +176,7 @@ class TestFetch:
     async def test_the_same_page_is_not_fetched_twice(self):
         fetcher = _FakeFetcher()
         ctx = _ctx(fetcher=fetcher)
-        await _call("fetch", ctx, url="https://example.com/page/")
+        _ = await _call("fetch", ctx, url="https://example.com/page/")
         again = await _call("fetch", ctx, url="http://example.com/page#top")
         assert fetcher.urls == [("https://example.com/page/", 0)]
         assert isinstance(again, str)
@@ -178,8 +185,8 @@ class TestFetch:
     async def test_paging_through_a_long_page_is_not_a_repeat(self):
         fetcher = _FakeFetcher()
         ctx = _ctx(fetcher=fetcher)
-        await _call("fetch", ctx, url="https://example.com/a")
-        await _call("fetch", ctx, url="https://example.com/a", offset=4000)
+        _ = await _call("fetch", ctx, url="https://example.com/a")
+        _ = await _call("fetch", ctx, url="https://example.com/a", offset=4000)
         # The tool's own docstring tells the model to do exactly this.
         assert fetcher.urls == [("https://example.com/a", 0), ("https://example.com/a", 4000)]
 
@@ -187,7 +194,7 @@ class TestFetch:
         fetcher = _FakeFetcher(fail=True)
         ctx = _ctx(fetcher=fetcher)
         with pytest.raises(ModelRetry):
-            await _call("fetch", ctx, url="https://example.com/a")
+            _ = await _call("fetch", ctx, url="https://example.com/a")
         with pytest.raises(ModelRetry):
-            await _call("fetch", ctx, url="https://example.com/a")
+            _ = await _call("fetch", ctx, url="https://example.com/a")
         assert len(fetcher.urls) == 2
