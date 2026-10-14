@@ -5,7 +5,7 @@ carries ``__tablename__``:
 
 .. code-block:: python
 
-    class Memory(SQLModel, table=True):
+    class Memory(Table, table=True):
         __tablename__ = "memories"
         __backup__ = BackupSpec(section="memories", natural_key=("content_enc",))
 

@@ -272,11 +272,11 @@ class TestDeletingAProject:
         # class to derive it from. Another scoped entity that forgets to join the tuple
         # would have its rows orphaned on the next project delete, silently and
         # permanently, so the list is checked against the live schema instead.
-        from sqlmodel import SQLModel
+        from models._table import Table
 
         scoped = {
             cls
-            for cls in SQLModel.__subclasses__()
+            for cls in Table.__subclasses__()
             if getattr(cls, "__tablename__", None) and "project_id" in cls.model_fields
         }
         assert scoped == set(SCOPED_MODELS)

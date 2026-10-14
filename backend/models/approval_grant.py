@@ -20,12 +20,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class ApprovalGrant(SQLModel, table=True):
+class ApprovalGrant(Table, table=True):
     __tablename__ = "approval_grants"
     # One grant per (owner, conversation, tool, command prefix): re-granting refreshes its
     # expiry.

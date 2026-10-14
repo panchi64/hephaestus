@@ -21,13 +21,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class Memory(SQLModel, table=True):
+class Memory(Table, table=True):
     __tablename__ = "memories"
     # Exported under "memories" (`BACKUP-1`). Two memories are the same memory when they say
     # the same thing, so the decrypted content is the merge key; the vector derives from it

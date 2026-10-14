@@ -12,12 +12,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlmodel import Field, SQLModel, UniqueConstraint
+from sqlmodel import Field, UniqueConstraint
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class Plugin(SQLModel, table=True):
+class Plugin(Table, table=True):
     __tablename__ = "plugins"
     __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_plugins_owner_name"),)
 
@@ -33,7 +34,7 @@ class Plugin(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class PluginSecret(SQLModel, table=True):
+class PluginSecret(Table, table=True):
     __tablename__ = "plugin_secrets"
     __table_args__ = (UniqueConstraint("plugin_id", "name", name="uq_plugin_secrets_plugin_name"),)
 

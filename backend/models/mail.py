@@ -27,9 +27,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import JSON, Column, UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 # Provider kinds a `MailAccount` can speak — which transport the service instantiates.
 PROVIDER_IMAP = "imap"
@@ -43,7 +44,7 @@ AUTH_PASSWORD = "password"
 AUTH_OAUTH = "oauth"
 
 
-class MailAccount(SQLModel, table=True):
+class MailAccount(Table, table=True):
     __tablename__ = "mail_accounts"
     # An operator's account labels are unique so routes/tools can refer to one stably
     # and a re-add can't silently duplicate a mailbox.
@@ -79,7 +80,7 @@ class MailAccount(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class MailMessage(SQLModel, table=True):
+class MailMessage(Table, table=True):
     """One cached message. The cache is what the inbox listing reads (`EMAIL-5`) and what
     triage (`EMAIL-2`) stamps its verdicts onto; the remote mailbox stays authoritative and
     a re-sync reconciles by ``(account_id, folder, uid)``."""
@@ -140,7 +141,7 @@ class MailMessage(SQLModel, table=True):
     cached_at: datetime = Field(default_factory=utcnow)
 
 
-class MailDraft(SQLModel, table=True):
+class MailDraft(Table, table=True):
     """A composed message that has not been sent — either the operator's own draft or a
     pre-generated reply suggestion (`EMAIL-3`)."""
 
@@ -168,7 +169,7 @@ class MailDraft(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class MailStyleProfile(SQLModel, table=True):
+class MailStyleProfile(Table, table=True):
     """The operator's writing-style profile, learned from their Sent mail and editable by
     hand (`EMAIL-3`). One per owner — the style is the person's, not the mailbox's."""
 

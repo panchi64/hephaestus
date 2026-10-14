@@ -26,12 +26,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class SecretVaultConfig(SQLModel, table=True):
+class SecretVaultConfig(Table, table=True):
     """How to re-derive the secrets manager's key — never the key itself.
 
     Mirrors ``core/vault``'s keyfile part for part (a verifier, a KDF salt, and a data key
@@ -59,7 +60,7 @@ class SecretVaultConfig(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class SecretEntry(SQLModel, table=True):
+class SecretEntry(Table, table=True):
     """One stored credential: what it is, who it's for, where it's used, and the secret."""
 
     __tablename__ = "secret_entries"

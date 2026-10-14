@@ -21,12 +21,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import JSON, Column
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class ApiToken(SQLModel, table=True):
+class ApiToken(Table, table=True):
     __tablename__ = "api_tokens"
 
     id: str = Field(default_factory=new_id, primary_key=True)

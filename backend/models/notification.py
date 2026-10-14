@@ -20,9 +20,10 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
 class NotificationKind(StrEnum):
@@ -42,7 +43,7 @@ class NotificationKind(StrEnum):
     SYSTEM = "system"
 
 
-class Notification(SQLModel, table=True):
+class Notification(Table, table=True):
     __tablename__ = "notifications"
 
     id: str = Field(default_factory=new_id, primary_key=True)

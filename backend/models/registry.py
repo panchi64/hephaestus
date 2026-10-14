@@ -22,13 +22,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import JSON, Column, UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class ModelEndpoint(SQLModel, table=True):
+class ModelEndpoint(Table, table=True):
     __tablename__ = "model_endpoints"
     # An operator's endpoint names are unique, so a chain can refer to them
     # stably and a re-import can't silently duplicate one.
@@ -77,7 +78,7 @@ class ModelEndpoint(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class ModelRole(SQLModel, table=True):
+class ModelRole(Table, table=True):
     __tablename__ = "model_roles"
     __table_args__ = (UniqueConstraint("owner_id", "role", name="uq_role_owner_role"),)
     # One binding per role, so the role name is its identity; imported after the endpoints

@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlmodel import Field, SQLModel, UniqueConstraint
+from sqlmodel import Field, UniqueConstraint
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class Revision(SQLModel, table=True):
+class Revision(Table, table=True):
     __tablename__ = "revisions"
     __table_args__ = (
         UniqueConstraint("kind", "subject_id", "number", name="uq_revisions_subject_number"),

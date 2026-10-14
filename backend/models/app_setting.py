@@ -11,13 +11,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class AppSetting(SQLModel, table=True):
+class AppSetting(Table, table=True):
     __tablename__ = "app_settings"
     # One value per (owner, key): a write upserts.
     __table_args__ = (UniqueConstraint("owner_id", "key", name="uq_app_setting_owner_key"),)

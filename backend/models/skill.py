@@ -33,10 +33,11 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from sqlmodel import Field, SQLModel, UniqueConstraint
+from sqlmodel import Field, UniqueConstraint
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
 class SkillSource(StrEnum):
@@ -52,7 +53,7 @@ class SkillSource(StrEnum):
     AGENT = "agent"
 
 
-class Skill(SQLModel, table=True):
+class Skill(Table, table=True):
     __tablename__ = "skills"
     __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_skills_owner_name"),)
     # Exported under "skills" (`BACKUP-1`), before its files. ``name`` is already the
@@ -94,7 +95,7 @@ class Skill(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
-class SkillFile(SQLModel, table=True):
+class SkillFile(Table, table=True):
     """One supporting file in a skill's bundle — a script, a reference doc, an asset."""
 
     __tablename__ = "skill_files"

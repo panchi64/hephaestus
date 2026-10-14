@@ -23,9 +23,10 @@ from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
 class UploadStatus(StrEnum):
@@ -40,7 +41,7 @@ class UploadStatus(StrEnum):
     ERROR = "error"
 
 
-class Upload(SQLModel, table=True):
+class Upload(Table, table=True):
     __tablename__ = "uploads"
     # Duplicate recognition (`UP-1`) is enforced, not best-effort: identical bytes for
     # one owner collide on this constraint, so a create race can't sneak two copies in.

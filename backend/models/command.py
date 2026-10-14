@@ -31,13 +31,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlmodel import Field, SQLModel, UniqueConstraint
+from sqlmodel import Field, UniqueConstraint
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class Command(SQLModel, table=True):
+class Command(Table, table=True):
     __tablename__ = "commands"
     __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_commands_owner_name"),)
     # Its own export section rather than a lodger in ``skills``: the operator chooses what

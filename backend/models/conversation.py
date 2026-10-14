@@ -22,12 +22,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import JSON, Column, UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class Conversation(SQLModel, table=True):
+class Conversation(Table, table=True):
     __tablename__ = "conversations"
 
     id: str = Field(default_factory=new_id, primary_key=True)
@@ -141,7 +142,7 @@ class Conversation(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class Message(SQLModel, table=True):
+class Message(Table, table=True):
     __tablename__ = "messages"
     # The creation counter is unique per conversation — a double-insert (e.g. a
     # retried write that partly landed) fails loudly instead of silently

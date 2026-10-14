@@ -11,13 +11,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlmodel import Field, SQLModel, UniqueConstraint
+from sqlmodel import Field, UniqueConstraint
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class Agent(SQLModel, table=True):
+class Agent(Table, table=True):
     __tablename__ = "agents"
     __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_agents_owner_name"),)
     __backup__ = BackupSpec(section="agents", natural_key=("name",))

@@ -27,12 +27,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class McpServer(SQLModel, table=True):
+class McpServer(Table, table=True):
     __tablename__ = "mcp_servers"
     # One server per (owner, name): the name is the operator-visible label and the seed
     # of `slug`, so duplicates would make two servers indistinguishable in the UI.
@@ -85,7 +86,7 @@ class McpServer(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class Integration(SQLModel, table=True):
+class Integration(Table, table=True):
     __tablename__ = "integrations"
     __table_args__ = (
         UniqueConstraint("owner_id", "name", name="uq_integrations_owner_name"),
@@ -114,7 +115,7 @@ class Integration(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class ExternalToolPolicy(SQLModel, table=True):
+class ExternalToolPolicy(Table, table=True):
     __tablename__ = "external_tool_policies"
     # One row per (owner, source kind, source, tool): a write upserts.
     __table_args__ = (

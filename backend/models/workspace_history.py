@@ -17,12 +17,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class WorkspaceBlob(SQLModel, table=True):
+class WorkspaceBlob(Table, table=True):
     __tablename__ = "workspace_blobs"
     # One row per distinct file content per owner — snapshots share blobs by hash.
     __table_args__ = (UniqueConstraint("owner_id", "sha256", name="uq_workspace_blob_owner_sha"),)
@@ -37,7 +38,7 @@ class WorkspaceBlob(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
-class WorkspaceSnapshot(SQLModel, table=True):
+class WorkspaceSnapshot(Table, table=True):
     __tablename__ = "workspace_snapshots"
 
     id: str = Field(default_factory=new_id, primary_key=True)

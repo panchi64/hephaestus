@@ -24,12 +24,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class SubagentRecord(SQLModel, table=True):
+class SubagentRecord(Table, table=True):
     __tablename__ = "subagent_records"
 
     #: The same id that rides the wire as ``subagent_id`` and keys a card in the panel. Not

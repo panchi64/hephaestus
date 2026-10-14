@@ -35,10 +35,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import JSON, Column, ForeignKey, String
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from core.timezone import local_zone_key
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
 def _default_timezone() -> str:
@@ -84,7 +85,7 @@ def new_uid() -> str:
     return f"{uuid.uuid4().hex}@hephaestus"
 
 
-class Calendar(SQLModel, table=True):
+class Calendar(Table, table=True):
     __tablename__ = "calendars"
 
     id: str = Field(default_factory=new_id, primary_key=True)
@@ -110,7 +111,7 @@ class Calendar(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class CalendarEvent(SQLModel, table=True):
+class CalendarEvent(Table, table=True):
     __tablename__ = "calendar_events"
 
     id: str = Field(default_factory=new_id, primary_key=True)

@@ -30,12 +30,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlmodel import Field, SQLModel, UniqueConstraint
+from sqlmodel import Field, UniqueConstraint
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class CorpusChunk(SQLModel, table=True):
+class CorpusChunk(Table, table=True):
     __tablename__ = "corpus_chunk"
     # Idempotent (re)index: the same content never inserts twice for the same *item*.
     # ``external_ref`` is in the key, not content alone: a source can hold many items (a
@@ -83,7 +84,7 @@ class CorpusChunk(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class CorpusSource(SQLModel, table=True):
+class CorpusSource(Table, table=True):
     __tablename__ = "corpus_source"
 
     id: str = Field(default_factory=new_id, primary_key=True)

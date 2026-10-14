@@ -13,12 +13,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class ServiceCredential(SQLModel, table=True):
+class ServiceCredential(Table, table=True):
     __tablename__ = "service_credentials"
     # One credential per (owner, service): a write upserts rather than duplicating.
     __table_args__ = (

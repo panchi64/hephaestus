@@ -13,13 +13,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import JSON, Column, UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
-class SearchProvider(SQLModel, table=True):
+class SearchProvider(Table, table=True):
     __tablename__ = "search_providers"
     # An operator's provider names are unique, so a re-import can't silently
     # duplicate one (same guard the model endpoints use).

@@ -32,9 +32,10 @@ from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import JSON, Column, ForeignKey, String
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field
 
 from models._fields import new_id, utcnow
+from models._table import Table
 
 
 class TaskKind(StrEnum):
@@ -68,7 +69,7 @@ def new_webhook_token() -> str:
     return secrets.token_urlsafe(32)
 
 
-class ScheduledTask(SQLModel, table=True):
+class ScheduledTask(Table, table=True):
     __tablename__ = "scheduled_tasks"
 
     id: str = Field(default_factory=new_id, primary_key=True)
@@ -124,7 +125,7 @@ class ScheduledTask(SQLModel, table=True):
     next_run_at: datetime | None = Field(default=None, index=True)
 
 
-class TaskRun(SQLModel, table=True):
+class TaskRun(Table, table=True):
     __tablename__ = "task_runs"
 
     id: str = Field(default_factory=new_id, primary_key=True)
