@@ -4,17 +4,25 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import final, override
 
 import pytest
+from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from core.db import in_session, init_db, make_engine
 from core.exceptions import NotFoundError
 from core.vault import Vault, VaultLocked
 from models.upload import Upload, UploadStatus
+from services.corpus.adapter import CorpusHit
 from services.corpus.chunk_store import CorpusChunkStore
 from services.corpus.uploads import UploadsAdapter
-from services.upload_extraction import BasicExtractor
+from services.upload_extraction import (
+    BasicExtractor,
+    ExtractionResult,
+    UploadExtractor,
+    VisionOCR,
+)
 from services.uploads import UploadStore
 
 from .test_memory import FakeEmbedder
@@ -23,7 +31,12 @@ from .test_uploads_extraction import FakeVisionOCR, FlakyVisionOCR, NoVisionOCR,
 OWNER = "operator"
 
 
-async def _store(ocr=None, *, extractor=None):
+type _Stack = tuple[Engine, Vault, CorpusChunkStore, UploadsAdapter, UploadStore]
+
+
+async def _store(
+    ocr: VisionOCR | None = None, *, extractor: UploadExtractor | None = None
+) -> _Stack:
     """A started UploadStore + its corpus adapter over a throwaway in-memory DB."""
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
@@ -37,25 +50,29 @@ async def _store(ocr=None, *, extractor=None):
     return engine, vault, chunk_store, adapter, store
 
 
-class _LockingExtractor:
+@final
+class _LockingExtractor(UploadExtractor):
     """Raises VaultLocked as if the vault locked mid-extraction (e.g. decrypting a
     vision endpoint's key) — a transient condition, not a bad file."""
 
-    async def extract(self, owner_id, raw, mime, filename):
+    @override
+    async def extract(
+        self, owner_id: str, raw: bytes, mime: str, filename: str
+    ) -> ExtractionResult:
         raise VaultLocked("vault locked mid-extraction")
 
 
-async def _drain(store, adapter):
+async def _drain(store: UploadStore, adapter: UploadsAdapter) -> None:
     await store._worker.join()  # extraction completes (and submits the index job)
     await adapter._worker.join()  # the index job is drained
 
 
-async def _teardown(store, adapter):
+async def _teardown(store: UploadStore, adapter: UploadsAdapter) -> None:
     await store.stop()
     await adapter.stop()
 
 
-async def _retrieve(adapter, token):
+async def _retrieve(adapter: UploadsAdapter, token: str) -> list[CorpusHit]:
     return await adapter.retrieve(OWNER, token, None, None, {token}, limit=5)
 
 
@@ -63,7 +80,7 @@ async def _retrieve(adapter, token):
 
 
 async def test_text_upload_is_extracted_indexed_and_labelled_basic():
-    engine, _vault, _chunks, adapter, store = await _store()
+    _engine, _vault, _chunks, adapter, store = await _store()
     view, created = await store.create(
         OWNER, "n.txt", "text/plain", b"the operator likes zebra facts"
     )
@@ -80,7 +97,7 @@ async def test_text_upload_is_extracted_indexed_and_labelled_basic():
 
 
 async def test_native_pdf_extracted():
-    engine, _vault, _chunks, adapter, store = await _store()
+    _engine, _vault, _chunks, adapter, store = await _store()
     view, _ = await store.create(OWNER, "d.pdf", "application/pdf", text_pdf("pdf marker quokka"))
     await _drain(store, adapter)
     got = await store.get(OWNER, view.id)
@@ -91,7 +108,7 @@ async def test_native_pdf_extracted():
 
 
 async def test_scanned_pdf_uses_vision():
-    engine, _vault, _chunks, adapter, store = await _store(FakeVisionOCR("scanned page words"))
+    _engine, _vault, _chunks, adapter, store = await _store(FakeVisionOCR("scanned page words"))
     view, _ = await store.create(OWNER, "scan.pdf", "application/pdf", image_pdf())
     await _drain(store, adapter)
     got = await store.get(OWNER, view.id)
@@ -101,7 +118,7 @@ async def test_scanned_pdf_uses_vision():
 
 
 async def test_scanned_pdf_without_vision_errors_with_reason():
-    engine, _vault, _chunks, adapter, store = await _store(NoVisionOCR())
+    _engine, _vault, _chunks, adapter, store = await _store(NoVisionOCR())
     view, _ = await store.create(OWNER, "scan.pdf", "application/pdf", image_pdf())
     await _drain(store, adapter)
     got = await store.get(OWNER, view.id)
@@ -112,13 +129,13 @@ async def test_scanned_pdf_without_vision_errors_with_reason():
 
 async def test_retry_recovers_after_vision_configured():
     flaky = FlakyVisionOCR()
-    engine, _vault, _chunks, adapter, store = await _store(flaky)
+    _engine, _vault, _chunks, adapter, store = await _store(flaky)
     view, _ = await store.create(OWNER, "scan.pdf", "application/pdf", image_pdf())
     await _drain(store, adapter)
     assert (await store.get(OWNER, view.id)).status == "error"
 
     flaky.enabled = True  # operator configures a vision model, then retries
-    await store.retry(OWNER, view.id)
+    _ = await store.retry(OWNER, view.id)
     await _drain(store, adapter)
     got = await store.get(OWNER, view.id)
     assert got.status == "done" and got.vision is True
@@ -129,7 +146,7 @@ async def test_retry_recovers_after_vision_configured():
 
 
 async def test_duplicate_bytes_are_recognized():
-    engine, _vault, _chunks, adapter, store = await _store()
+    _engine, _vault, _chunks, adapter, store = await _store()
     v1, c1 = await store.create(OWNER, "a.txt", "text/plain", b"identical bytes")
     v2, c2 = await store.create(OWNER, "b.txt", "text/plain", b"identical bytes")
     await _drain(store, adapter)
@@ -143,11 +160,11 @@ async def test_duplicate_bytes_are_recognized():
 
 
 async def test_correct_text_reindexes_and_marks_manual():
-    engine, _vault, _chunks, adapter, store = await _store()
+    _engine, _vault, _chunks, adapter, store = await _store()
     view, _ = await store.create(OWNER, "n.txt", "text/plain", b"alpha original marker")
     await _drain(store, adapter)
 
-    await store.correct_text(OWNER, view.id, "beta corrected marker")
+    _ = await store.correct_text(OWNER, view.id, "beta corrected marker")
     await adapter._worker.join()
     got = await store.get(OWNER, view.id)
     assert got.extracted_text == "beta corrected marker" and got.extractor == "manual"
@@ -160,7 +177,7 @@ async def test_correct_text_reindexes_and_marks_manual():
 
 
 async def test_delete_drops_chunks():
-    engine, _vault, chunk_store, adapter, store = await _store()
+    _engine, _vault, chunk_store, adapter, store = await _store()
     view, _ = await store.create(OWNER, "n.txt", "text/plain", b"deletable zebra note")
     await _drain(store, adapter)
     await store.delete(OWNER, view.id)
@@ -170,7 +187,7 @@ async def test_delete_drops_chunks():
 
 
 async def test_content_roundtrips_original_bytes():
-    engine, _vault, _chunks, adapter, store = await _store()
+    _engine, _vault, _chunks, adapter, store = await _store()
     view, _ = await store.create(OWNER, "f.bin", "application/octet-stream", b"\x00\x01raw")
     blob = await store.content(OWNER, view.id)
     assert blob.content == b"\x00\x01raw" and blob.filename == "f.bin"
@@ -178,16 +195,16 @@ async def test_content_roundtrips_original_bytes():
 
 
 async def test_owner_guard_raises_not_found():
-    engine, _vault, _chunks, adapter, store = await _store()
+    _engine, _vault, _chunks, adapter, store = await _store()
     view, _ = await store.create(OWNER, "n.txt", "text/plain", b"x")
     with pytest.raises(NotFoundError):
-        await store.get("intruder", view.id)
+        _ = await store.get("intruder", view.id)
     await _teardown(store, adapter)
 
 
 async def test_blob_and_filename_sealed_at_rest():
     engine, vault, _chunks, adapter, store = await _store()
-    await store.create(OWNER, "secret.txt", "text/plain", b"the wifi password is hunter2")
+    _ = await store.create(OWNER, "secret.txt", "text/plain", b"the wifi password is hunter2")
     await _drain(store, adapter)
 
     with Session(engine) as session:
@@ -230,7 +247,7 @@ async def test_start_requeues_stranded_extractions():
 async def test_vault_lock_during_extraction_does_not_become_error():
     """A VaultLocked mid-extraction must park/retry, never be recorded as a permanent
     error — the lock-aware worker's guarantee."""
-    engine, _vault, _chunks, adapter, store = await _store(extractor=_LockingExtractor())
+    _engine, _vault, _chunks, adapter, store = await _store(extractor=_LockingExtractor())
     view, _ = await store.create(OWNER, "n.txt", "text/plain", b"content")
     await _drain(store, adapter)  # the worker retries then drops; status is untouched
     assert (await store.get(OWNER, view.id)).status != "error"
