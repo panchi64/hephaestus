@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tempfile
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
@@ -73,13 +72,13 @@ async def _store() -> SkillStore:
     return SkillStore(engine, vault)
 
 
-def _tool(name: str) -> Callable[..., Awaitable[dict[str, JsonValue]]]:
-    function = skills_toolset().tools[name].function
+def _tool(name: str):
+    toolset = skills_toolset()
+    return toolset.tools[name].function
 
-    async def call(ctx: RunContext[RunDeps], *args: str) -> dict[str, JsonValue]:
-        return _RESULT.validate_python(await function(ctx, *args))
 
-    return call
+async def _invoke(name: str, ctx: RunContext[RunDeps], *args: str) -> dict[str, JsonValue]:
+    return _RESULT.validate_python(await _tool(name)(ctx, *args))
 
 
 def _ctx(deps: RunDeps) -> RunContext[RunDeps]:
@@ -126,8 +125,8 @@ async def test_open_returns_the_instructions_and_stages_the_bundle():
     _ = await store.set_published(OWNER, imported.id, True)
     sessions = FakeSessions()
 
-    result = await _tool("open")(
-        _ctx(_deps(skills=store, sandbox_sessions=sessions)), "pdf-processing"
+    result = await _invoke(
+        "open", _ctx(_deps(skills=store, sandbox_sessions=sessions)), "pdf-processing"
     )
 
     assert result["ok"] is True
@@ -148,9 +147,9 @@ async def test_reopening_a_skill_does_not_rewrite_identical_files():
     sessions = FakeSessions()
     deps = _deps(skills=store, sandbox_sessions=sessions)
 
-    _ = await _tool("open")(_ctx(deps), "release-notes")
+    _ = await _invoke("open", _ctx(deps), "release-notes")
     after_first = sessions.session.writes
-    _ = await _tool("open")(_ctx(deps), "release-notes")
+    _ = await _invoke("open", _ctx(deps), "release-notes")
 
     assert sessions.session.writes == after_first
 
@@ -163,7 +162,7 @@ async def test_open_refuses_a_draft_the_same_way_as_an_unknown_name():
     _ = await _published(store)
 
     with pytest.raises(ModelRetry) as caught:
-        _ = await _tool("open")(_ctx(_deps(skills=store)), "secret-draft")
+        _ = await _invoke("open", _ctx(_deps(skills=store)), "secret-draft")
     assert "secret-draft" not in str(caught.value).split("Available skills:")[1]
     assert "release-notes" in str(caught.value)
 
@@ -171,7 +170,7 @@ async def test_open_refuses_a_draft_the_same_way_as_an_unknown_name():
 async def test_open_without_a_sandbox_still_returns_instructions():
     store = await _store()
     _ = await _published(store)
-    result = await _tool("open")(_ctx(_deps(skills=store)), "release-notes")
+    result = await _invoke("open", _ctx(_deps(skills=store)), "release-notes")
     assert result["ok"] is True
     assert result["files"] == []
     assert "unavailable" in s(result["note"])
@@ -184,8 +183,8 @@ async def test_open_survives_a_sandbox_failure():
 
     store = await _store()
     _ = await _published(store)
-    result = await _tool("open")(
-        _ctx(_deps(skills=store, sandbox_sessions=FailingSessions())), "release-notes"
+    result = await _invoke(
+        "open", _ctx(_deps(skills=store, sandbox_sessions=FailingSessions())), "release-notes"
     )
     assert result["ok"] is True
     # A fail-closed sandbox is now indistinguishable from having no runtime at all —
@@ -196,12 +195,12 @@ async def test_open_survives_a_sandbox_failure():
 
 async def test_tools_degrade_when_the_capability_is_absent():
     with pytest.raises(ModelRetry):
-        _ = await _tool("open")(_ctx(_deps()), "anything")
+        _ = await _invoke("open", _ctx(_deps()), "anything")
     for name, args in [
         ("create", ("a-skill", "desc", "body")),
         ("edit", ("a-skill", "old", "new", "why")),
     ]:
-        result = await _tool(name)(_ctx(_deps()), *args)
+        result = await _invoke(name, _ctx(_deps()), *args)
         assert result["ok"] is False
         assert "unavailable" in s(result["error"])
 
@@ -211,8 +210,8 @@ async def test_tools_degrade_when_the_capability_is_absent():
 
 async def test_create_only_ever_writes_a_draft():
     store = await _store()
-    result = await _tool("create")(
-        _ctx(_deps(skills=store)), "deploy-checks", "Check a deploy is safe.", "1. Look."
+    result = await _invoke(
+        "create", _ctx(_deps(skills=store)), "deploy-checks", "Check a deploy is safe.", "1. Look."
     )
     assert result["ok"] is True
     assert result["status"] == "draft"
@@ -226,13 +225,14 @@ async def test_create_only_ever_writes_a_draft():
 async def test_create_asks_the_model_to_retry_on_an_invalid_name():
     store = await _store()
     with pytest.raises(ModelRetry, match="name"):
-        _ = await _tool("create")(_ctx(_deps(skills=store)), "Not A Slug", "desc", "body")
+        _ = await _invoke("create", _ctx(_deps(skills=store)), "Not A Slug", "desc", "body")
 
 
 async def test_edit_replaces_one_span():
     store = await _store()
     _ = await _published(store)
-    result = await _tool("edit")(
+    result = await _invoke(
+        "edit",
         _ctx(_deps(skills=store)),
         "release-notes",
         "Collect the merged PRs.",
@@ -254,7 +254,7 @@ async def test_edit_retries_with_a_precise_reason(body: str, old: str, expected:
     store = await _store()
     _ = await _published(store, body=body)
     with pytest.raises(ModelRetry, match=expected):
-        _ = await _tool("edit")(_ctx(_deps(skills=store)), "release-notes", old, "x", "why")
+        _ = await _invoke("edit", _ctx(_deps(skills=store)), "release-notes", old, "x", "why")
 
 
 async def test_rewriting_a_published_skill_is_the_one_gated_skill_tool():
@@ -362,8 +362,8 @@ async def test_edit_refuses_a_draft_the_same_way_open_does():
     _ = await _published(store)
 
     with pytest.raises(ModelRetry) as caught:
-        _ = await _tool("edit")(
-            _ctx(_deps(skills=store)), "secret-draft", "private", "public", "why"
+        _ = await _invoke(
+            "edit", _ctx(_deps(skills=store)), "secret-draft", "private", "public", "why"
         )
     message = str(caught.value)
     assert "No published skill named" in message
