@@ -4,8 +4,11 @@ file-collection seam, the engine capture hook, the REST surface, and delete clea
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
+import httpx
 import pytest
+from fastapi import FastAPI
 from sqlmodel import Session, select
 
 from core.config import Settings
@@ -16,14 +19,15 @@ from models.workspace_history import WorkspaceBlob, WorkspaceSnapshot
 from services.sandbox import SandboxSessionManager
 from services.workspace_history import WorkspaceHistoryStore
 
-from ._helpers import client_app, collect_sse_events, patch_model_resolution
+from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from ._json import arr, json_body, json_list, obj, s
 from .conftest import egress_policy
 from .vm_fakes import FakeVM
 
 _EXCLUDES = Settings().sandbox_walk_excludes
 
 
-async def _store(tmp_path) -> WorkspaceHistoryStore:
+async def _store(tmp_path: Path) -> WorkspaceHistoryStore:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
@@ -31,7 +35,7 @@ async def _store(tmp_path) -> WorkspaceHistoryStore:
     return WorkspaceHistoryStore(engine, vault)
 
 
-def _manager(tmp_path, vault) -> SandboxSessionManager:
+def _manager(tmp_path: Path, vault: Vault) -> SandboxSessionManager:
     return SandboxSessionManager(
         FakeVM(tmp_path / "sandbox" / "work"),
         vault,
@@ -44,7 +48,7 @@ def _manager(tmp_path, vault) -> SandboxSessionManager:
 
 
 # --- the store: capture, dedup, every-show-is-a-version ----------------------
-async def test_capture_records_a_snapshot(tmp_path):
+async def test_capture_records_a_snapshot(tmp_path: Path):
     store = await _store(tmp_path)
     snap = await store.capture(
         "operator", "conv-1", run_id="r1", files={"a.py": b"print(1)\n", "b.txt": b"hi"}
@@ -57,7 +61,7 @@ async def test_capture_records_a_snapshot(tmp_path):
     assert [s.id for s in await store.list("operator", "conv-1")] == [snap.id]
 
 
-async def test_exact_reshow_collapses_onto_the_existing_version(tmp_path):
+async def test_exact_reshow_collapses_onto_the_existing_version(tmp_path: Path):
     store = await _store(tmp_path)
     first = await store.capture(
         "operator",
@@ -80,7 +84,7 @@ async def test_exact_reshow_collapses_onto_the_existing_version(tmp_path):
     assert [s.id for s in await store.list("operator", "c")] == [first.id]
 
 
-async def test_same_tree_new_preview_records_a_new_version(tmp_path):
+async def test_same_tree_new_preview_records_a_new_version(tmp_path: Path):
     store = await _store(tmp_path)
     first = await store.capture(
         "operator",
@@ -104,7 +108,7 @@ async def test_same_tree_new_preview_records_a_new_version(tmp_path):
     assert [s.id for s in await store.list("operator", "c")] == [first.id, second.id]
 
 
-async def test_capture_stamps_and_reads_back_the_preview_descriptor(tmp_path):
+async def test_capture_stamps_and_reads_back_the_preview_descriptor(tmp_path: Path):
     store = await _store(tmp_path)
     snap = await store.capture(
         "operator",
@@ -121,10 +125,10 @@ async def test_capture_stamps_and_reads_back_the_preview_descriptor(tmp_path):
     assert listed.preview_artifact_id == "a1" and listed.preview_kind == "image"
 
 
-async def test_unchanged_file_shares_one_blob(tmp_path):
+async def test_unchanged_file_shares_one_blob(tmp_path: Path):
     store = await _store(tmp_path)
-    await store.capture("operator", "c", run_id="r1", files={"a.py": b"same", "b.py": b"one"})
-    await store.capture("operator", "c", run_id="r2", files={"a.py": b"same", "b.py": b"two"})
+    _ = await store.capture("operator", "c", run_id="r1", files={"a.py": b"same", "b.py": b"one"})
+    _ = await store.capture("operator", "c", run_id="r2", files={"a.py": b"same", "b.py": b"two"})
     with Session(store._engine) as session:
         rows = session.exec(select(WorkspaceBlob)).all()
     # a.py's content is stored once; b.py's two versions are two blobs → 3 total.
@@ -132,9 +136,9 @@ async def test_unchanged_file_shares_one_blob(tmp_path):
     assert all(b"same" not in r.blob_enc and b"two" not in r.blob_enc for r in rows)  # encrypted
 
 
-async def test_manifest_is_encrypted_at_rest(tmp_path):
+async def test_manifest_is_encrypted_at_rest(tmp_path: Path):
     store = await _store(tmp_path)
-    await store.capture("operator", "c", run_id="r1", files={"secret_dir/private.py": b"x"})
+    _ = await store.capture("operator", "c", run_id="r1", files={"secret_dir/private.py": b"x"})
     with Session(store._engine) as session:
         row = session.exec(select(WorkspaceSnapshot)).one()
     # The file tree (paths/names) is sealed, not stored in the clear.
@@ -143,9 +147,9 @@ async def test_manifest_is_encrypted_at_rest(tmp_path):
 
 
 # --- diff + file browsing ----------------------------------------------------
-async def test_diff_reports_added_modified_removed(tmp_path):
+async def test_diff_reports_added_modified_removed(tmp_path: Path):
     store = await _store(tmp_path)
-    await store.capture(
+    _ = await store.capture(
         "operator", "c", run_id="r1", files={"keep.py": b"v1\n", "gone.py": b"bye\n"}
     )
     snap2 = await store.capture(
@@ -158,9 +162,9 @@ async def test_diff_reports_added_modified_removed(tmp_path):
     assert diffs["gone.py"].status == "removed"
 
 
-async def test_files_lists_paths_with_change_status(tmp_path):
+async def test_files_lists_paths_with_change_status(tmp_path: Path):
     store = await _store(tmp_path)
-    await store.capture("operator", "c", run_id="r1", files={"a.py": b"1", "b.py": b"1"})
+    _ = await store.capture("operator", "c", run_id="r1", files={"a.py": b"1", "b.py": b"1"})
     snap2 = await store.capture(
         "operator", "c", run_id="r2", files={"a.py": b"1", "b.py": b"2", "c.py": b"new"}
     )
@@ -168,19 +172,23 @@ async def test_files_lists_paths_with_change_status(tmp_path):
     assert statuses == {"a.py": "unchanged", "b.py": "modified", "c.py": "added"}
 
 
-async def test_file_bytes_round_trips_and_404s_unknown(tmp_path):
+async def test_file_bytes_round_trips_and_404s_unknown(tmp_path: Path):
     store = await _store(tmp_path)
     snap = await store.capture("operator", "c", run_id="r1", files={"a.py": b"hello"})
     assert await store.file_bytes("operator", snap.id, "a.py") == b"hello"
     with pytest.raises(NotFoundError):
-        await store.file_bytes("operator", snap.id, "missing.py")
+        _ = await store.file_bytes("operator", snap.id, "missing.py")
 
 
 # --- delete cleanup (snapshots + orphan blobs, shared blobs kept) ------------
-async def test_delete_removes_snapshots_and_only_orphan_blobs(tmp_path):
+async def test_delete_removes_snapshots_and_only_orphan_blobs(tmp_path: Path):
     store = await _store(tmp_path)
-    await store.capture("operator", "c1", run_id="r1", files={"a.py": b"shared", "x.py": b"c1only"})
-    await store.capture("operator", "c2", run_id="r2", files={"a.py": b"shared", "y.py": b"c2only"})
+    _ = await store.capture(
+        "operator", "c1", run_id="r1", files={"a.py": b"shared", "x.py": b"c1only"}
+    )
+    _ = await store.capture(
+        "operator", "c2", run_id="r2", files={"a.py": b"shared", "y.py": b"c2only"}
+    )
 
     await store.delete_for_conversation("operator", "c1")
 
@@ -194,15 +202,15 @@ async def test_delete_removes_snapshots_and_only_orphan_blobs(tmp_path):
 
 
 # --- the sandbox file-collection seam ----------------------------------------
-async def test_collect_text_files_skips_excluded_and_binary(tmp_path):
+async def test_collect_text_files_skips_excluded_and_binary(tmp_path: Path):
     vault = Vault(tmp_path / "k.json")
     await vault.setup("pw")
     session = await _manager(tmp_path, vault).acquire("conv-a")
-    session.write_file("src/app.py", b"print('hi')\n")
-    session.write_file("notes.txt", b"text")
-    session.write_file("node_modules/dep/index.js", b"junk")  # excluded dir
-    session.write_file("logo.png", b"\x89PNG\r\n\x1a\n")  # binary (invalid utf-8)
-    session.write_file("data.bin", b"valid\x00utf8\x00but-binary")  # NUL: valid utf-8
+    _ = session.write_file("src/app.py", b"print('hi')\n")
+    _ = session.write_file("notes.txt", b"text")
+    _ = session.write_file("node_modules/dep/index.js", b"junk")  # excluded dir
+    _ = session.write_file("logo.png", b"\x89PNG\r\n\x1a\n")  # binary (invalid utf-8)
+    _ = session.write_file("data.bin", b"valid\x00utf8\x00but-binary")  # NUL: valid utf-8
 
     files = session.collect_text_files()
 
@@ -211,19 +219,23 @@ async def test_collect_text_files_skips_excluded_and_binary(tmp_path):
 
 
 # --- REST surface ------------------------------------------------------------
+def _history(app: FastAPI) -> WorkspaceHistoryStore:
+    return app_state(app, "workspace_history", WorkspaceHistoryStore)
+
+
 async def test_snapshot_routes_list_files_content_and_diff():
     async with client_app() as (client, app):
-        store = app.state.workspace_history
-        await store.capture("operator", "conv-1", run_id="r1", files={"a.py": b"v1\n"})
+        store = _history(app)
+        _ = await store.capture("operator", "conv-1", run_id="r1", files={"a.py": b"v1\n"})
         snap2 = await store.capture(
             "operator", "conv-1", run_id="r2", files={"a.py": b"v2\n", "b.py": b"new\n"}
         )
 
         listing = await client.get("/views/snapshots", params={"conversation_id": "conv-1"})
-        assert listing.status_code == 200 and len(listing.json()) == 2
+        assert listing.status_code == 200 and len(json_list(listing)) == 2
 
         files = await client.get(f"/views/snapshots/{snap2.id}/files")
-        statuses = {f["path"]: f["status"] for f in files.json()}
+        statuses = {s(obj(f)["path"]): obj(f)["status"] for f in json_list(files)}
         assert statuses == {"a.py": "modified", "b.py": "added"}
 
         content = await client.get(f"/views/snapshots/{snap2.id}/file", params={"path": "a.py"})
@@ -231,34 +243,35 @@ async def test_snapshot_routes_list_files_content_and_diff():
         assert "sandbox" in content.headers["content-security-policy"]
 
         diff = await client.get(f"/views/snapshots/{snap2.id}/diff")
-        dmap = {d["path"]: d for d in diff.json()}
-        assert dmap["a.py"]["status"] == "modified" and "+v2" in dmap["a.py"]["diff"]
+        dmap = {s(obj(d)["path"]): obj(d) for d in json_list(diff)}
+        assert dmap["a.py"]["status"] == "modified" and "+v2" in s(dmap["a.py"]["diff"])
 
         assert (await client.get("/views/snapshots/nope/files")).status_code == 404
 
 
 # --- cold-read integration + delete via the conversations surface ------------
-async def _start_conversation(client) -> str:
+async def _start_conversation(client: httpx.AsyncClient) -> str:
     resp = await client.post("/chat", json={"prompt": "hi"})
-    body = resp.json()
-    await collect_sse_events(client, body["run_id"])
-    return body["conversation_id"]
+    body = json_body(resp)
+    _ = await collect_sse_events(client, s(body["run_id"]))
+    return s(body["conversation_id"])
 
 
-async def test_conversation_detail_includes_snapshots_and_delete_clears_them(monkeypatch):
+async def test_conversation_detail_includes_snapshots_and_delete_clears_them(
+    monkeypatch: pytest.MonkeyPatch,
+):
     patch_model_resolution(monkeypatch, output_text="hi")
     async with client_app() as (client, app):
         conv = await _start_conversation(client)
-        await app.state.workspace_history.capture(
-            "operator", conv, run_id="r1", files={"a.py": b"x"}
-        )
+        _ = await _history(app).capture("operator", conv, run_id="r1", files={"a.py": b"x"})
 
-        detail = (await client.get(f"/conversations/{conv}")).json()
-        assert len(detail["snapshots"]) == 1
-        snap = detail["snapshots"][0]
+        detail = json_body(await client.get(f"/conversations/{conv}"))
+        snapshots = arr(detail["snapshots"])
+        assert len(snapshots) == 1
+        snap = obj(snapshots[0])
         assert snap["files_changed"] == 1
         # An auto/no-preview capture carries a null preview descriptor.
         assert snap["preview_kind"] is None and snap["preview_artifact_id"] is None
 
         assert (await client.delete(f"/conversations/{conv}")).status_code == 204
-        assert await app.state.workspace_history.list("operator", conv) == []
+        assert await _history(app).list("operator", conv) == []
