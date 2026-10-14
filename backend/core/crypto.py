@@ -17,20 +17,20 @@ from argon2.low_level import Type, hash_secret_raw
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # Argon2id work factors for key derivation (deliberately costly).
-_KEK_TIME_COST = 3
-_KEK_MEMORY_COST = 65536  # 64 MiB
-_KEK_PARALLELISM = 4
+KEK_TIME_COST = 3
+KEK_MEMORY_COST = 65536  # 64 MiB
+KEK_PARALLELISM = 4
 _KEK_LEN = 32
 
 _NONCE_LEN = 12
 _SALT_LEN = 16
 
-_PASSWORD_HASHER = PasswordHasher()
+PASSWORD_HASHER = PasswordHasher()
 
 
 def hash_password(password: str) -> str:
     """A verifier-only Argon2id hash (PHC string) for login checks."""
-    return _PASSWORD_HASHER.hash(password)
+    return PASSWORD_HASHER.hash(password)
 
 
 def verify_password(stored_hash: str, password: str) -> bool:
@@ -38,7 +38,7 @@ def verify_password(stored_hash: str, password: str) -> bool:
     # mismatch leaves every other verification failure (a truncated or foreign-format
     # PHC string) escaping as a 500 out of the login route instead of a clean "no".
     try:
-        return _PASSWORD_HASHER.verify(stored_hash, password)
+        return PASSWORD_HASHER.verify(stored_hash, password)
     except VerificationError, InvalidHashError:
         return False
 
@@ -51,7 +51,7 @@ def needs_rehash(stored_hash: str) -> bool:
     re-mints the verifier through this.
     """
     try:
-        return _PASSWORD_HASHER.check_needs_rehash(stored_hash)
+        return PASSWORD_HASHER.check_needs_rehash(stored_hash)
     except VerificationError, InvalidHashError:
         return False
 
@@ -61,9 +61,9 @@ def derive_kek(password: str, salt: bytes) -> bytes:
     return hash_secret_raw(
         password.encode(),
         salt,
-        time_cost=_KEK_TIME_COST,
-        memory_cost=_KEK_MEMORY_COST,
-        parallelism=_KEK_PARALLELISM,
+        time_cost=KEK_TIME_COST,
+        memory_cost=KEK_MEMORY_COST,
+        parallelism=KEK_PARALLELISM,
         hash_len=_KEK_LEN,
         type=Type.ID,
     )

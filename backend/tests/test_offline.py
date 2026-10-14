@@ -1,7 +1,7 @@
 """Offline mode — the connectivity state machine + the web-tool gate + the routes.
 
 The state machine is driven with stub containers (start/stop counters) and an injected
-probe, so no test touches the network. `_observe` folds one connectivity sample, exactly
+probe, so no test touches the network. `observe` folds one connectivity sample, exactly
 as the monitor loop does, letting us exercise the hysteresis without real timers.
 """
 
@@ -63,7 +63,7 @@ async def _make(
         settings_store=store,
         owner_id=OWNER,
         anchors=["unused"],
-        interval_s=3600,  # the monitor won't tick during a test; transitions via _observe
+        interval_s=3600,  # the monitor won't tick during a test; transitions via observe
         timeout_s=1,
         fail_threshold=fail_threshold,
         recover_threshold=recover_threshold,
@@ -131,19 +131,19 @@ async def test_fail_threshold_suspends_then_recovery_resumes():
     await svc.start()
     try:
         # Two failures stay under the threshold — no flapping.
-        await svc._observe(False)
-        await svc._observe(False)
+        await svc.observe(False)
+        await svc.observe(False)
         assert searxng.running and svc.state().online is True
         # The third crosses it → offline, containers torn down, web tools hidden.
-        await svc._observe(False)
+        await svc.observe(False)
         assert not searxng.running and not browser.running
         assert svc.state().online is False and svc.state().effective_offline is True
         assert svc.web_tools_disabled() == WEB_TOOLS
         # One success is under the recover threshold (2) — still offline.
-        await svc._observe(True)
+        await svc.observe(True)
         assert not searxng.running and svc.state().effective_offline is True
         # The second recovers → online, containers resumed.
-        await svc._observe(True)
+        await svc.observe(True)
         assert searxng.running and browser.running
         assert searxng.starts == 2  # boot + resume
         assert svc.state().online is True and svc.state().effective_offline is False
@@ -159,8 +159,8 @@ async def test_manual_offline_survives_a_connectivity_recovery():
         _ = await svc.set_manual(True)
         assert not searxng.running and svc.state().effective_offline is True
         # Connectivity is fine throughout; successes must not undo a manual offline.
-        await svc._observe(True)
-        await svc._observe(True)
+        await svc.observe(True)
+        await svc.observe(True)
         assert not searxng.running and svc.state().effective_offline is True
         # Clearing the manual switch comes back online (connectivity is up).
         _ = await svc.set_manual(False)
@@ -189,9 +189,9 @@ async def test_auto_off_ignores_connectivity_loss():
         assert searxng.running  # auto off + online → containers up at boot
         # Lose connectivity past the threshold: `online` tracks it, but with auto off the
         # effective state (and the containers) don't change.
-        await svc._observe(False)
-        await svc._observe(False)
-        await svc._observe(False)
+        await svc.observe(False)
+        await svc.observe(False)
+        await svc.observe(False)
         assert svc.state().online is False
         assert svc.state().effective_offline is False
         assert searxng.running and browser.running

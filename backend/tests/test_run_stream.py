@@ -84,7 +84,7 @@ async def test_backlog_then_live_no_gap_no_duplicate():
 async def test_slow_subscriber_is_dropped_not_grown_unbounded():
     # A consumer that never drains is evicted once its queue fills, instead of
     # letting emit() buffer for it without bound.
-    from runs.stream import _SUBSCRIBER_QUEUE_MAX
+    from runs.stream import SUBSCRIBER_QUEUE_MAX
 
     stream = RunStream()
 
@@ -94,13 +94,13 @@ async def test_slow_subscriber_is_dropped_not_grown_unbounded():
 
     task = asyncio.create_task(stalled())
     await asyncio.sleep(0)  # let it register and park on queue.get()
-    assert len(stream._subscribers) == 1
+    assert stream.subscriber_count == 1
 
-    for i in range(_SUBSCRIBER_QUEUE_MAX + 50):  # flood past the cap (no yields)
+    for i in range(SUBSCRIBER_QUEUE_MAX + 50):  # flood past the cap (no yields)
         _ = stream.emit(AnswerDelta(text=str(i)))
 
     # The wedged subscriber was evicted from the live set rather than ballooning.
-    assert len(stream._subscribers) == 0
+    assert stream.subscriber_count == 0
     _ = task.cancel()
 
 

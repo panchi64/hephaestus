@@ -102,7 +102,7 @@ class CommandRegistry:
         """
         withheld = frozenset(disabled_tools)
         # Assembled in **tier order** — what this installation ships, then what the
-        # operator wrote, then what the project declared — so that `_merge`'s tiebreak
+        # operator wrote, then what the project declared — so that `merge`'s tiebreak
         # between equals is also source order, and reading this list top to bottom is
         # reading the precedence rule. Actions and agents are both tier 0 and must stay
         # above skills and workflows, both tier 1, for that to remain true.
@@ -113,7 +113,7 @@ class CommandRegistry:
             *await self._commands.specs(owner_id),
             *(project_command_specs(root) if root is not None else ()),
         ]
-        return _merge([spec for spec in specs if _offered_in(spec, workspace_kind)])
+        return merge([spec for spec in specs if _offered_in(spec, workspace_kind)])
 
     async def resolve(
         self,
@@ -231,7 +231,7 @@ def _offered_in(spec: CommandSpec, workspace_kind: str) -> bool:
     return not spec.workspaces or workspace_kind in spec.workspaces
 
 
-def _merge(specs: Sequence[CommandSpec]) -> tuple[CatalogEntry, ...]:
+def merge(specs: Sequence[CommandSpec]) -> tuple[CatalogEntry, ...]:
     """Rank the bare-name collisions, keeping every spec.
 
     Highest tier wins; a tie goes to the one declared first, which within a tier means the

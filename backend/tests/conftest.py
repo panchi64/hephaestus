@@ -53,10 +53,10 @@ core.db.init_db = _schema.init_db
 # one, a stale verifier that gets re-minted), and none of that reads the work factors, so
 # they go to Argon2's floor here. Production takes its parameters from `core.crypto`
 # unchanged; nothing in this file is imported outside the suite.
-core.crypto._KEK_TIME_COST = 1
-core.crypto._KEK_MEMORY_COST = 8
-core.crypto._KEK_PARALLELISM = 1
-core.crypto._PASSWORD_HASHER = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
+core.crypto.KEK_TIME_COST = 1
+core.crypto.KEK_MEMORY_COST = 8
+core.crypto.KEK_PARALLELISM = 1
+core.crypto.PASSWORD_HASHER = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
 
 # Every agent carries `run_code` (`agent/code_mode.py`), and `TestModel`'s default of
 # calling *every* tool it is offered would call it too — with the placeholder string it

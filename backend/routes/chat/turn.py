@@ -90,7 +90,7 @@ async def resolve_turn_models(
     except DegradedCapabilityError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     # No context window, no turn. The window is discovered from the provider where the
-    # provider will say (`ModelRegistry._with_model_limits`), so reaching here means
+    # provider will say (`ModelRegistry.with_model_limits`), so reaching here means
     # this one won't and the operator hasn't filled it in either.
     #
     # A hard stop rather than a degraded run, because every guard that keeps a thread

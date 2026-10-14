@@ -92,7 +92,7 @@ async def _oauth_account(
         provider=PROVIDER_GMAIL,
         auth_kind=AUTH_OAUTH,
         config={"oauth_provider": "google", "oauth_client_id": "client-id"},
-        secret_enc=service._secrets.seal_bundle(bundle),
+        secret_enc=service.secrets.seal_bundle(bundle),
     )
 
     def work(session: Session) -> None:
@@ -113,8 +113,8 @@ async def test_a_live_token_reuses_the_cached_transport(
         raise AssertionError("a live token must not trigger a refresh")
 
     monkeypatch.setattr("services.mail.oauth.refresh_tokens", _never)
-    first = await service._transport(account)
-    assert await service._transport(account) is first
+    first = await service.transport(account)
+    assert await service.transport(account) is first
     assert len(_SpecRecorder.instances) == 1
 
 
@@ -129,16 +129,16 @@ async def test_every_call_resolves_credentials_before_consulting_the_cache(
     service, engine, vault = wired
     account = await _oauth_account(service, engine, vault, LIVE_BUNDLE)
     opened = 0
-    original = service._secrets.open_access
+    original = service.secrets.open_access
 
     async def counting(row: MailAccount) -> tuple[str | None, str | None]:
         nonlocal opened
         opened += 1
         return await original(row)
 
-    monkeypatch.setattr(service._secrets, "open_access", counting)
-    first = await service._transport(account)
-    second = await service._transport(account)
+    monkeypatch.setattr(service.secrets, "open_access", counting)
+    first = await service.transport(account)
+    second = await service.transport(account)
 
     assert second is first  # still one connection...
     assert opened == 2  # ...but the credentials behind it were re-checked
@@ -162,11 +162,11 @@ async def test_a_rotated_token_rebuilds_the_transport(
         return TokenBundle(access_token="fresh", refresh_token="rt-2", expires_at=LIVE)
 
     monkeypatch.setattr("services.mail.oauth.refresh_tokens", _refresh)
-    stale = await service._transport(account)
+    stale = await service.transport(account)
     assert _access_token(stale) == "fresh"  # the very first build already refreshed
 
     # Age the freshly-sealed bundle so the next call has to refresh again.
-    account.secret_enc = service._secrets.seal_bundle(
+    account.secret_enc = service.secrets.seal_bundle(
         TokenBundle(access_token="fresh", refresh_token="rt-2", expires_at=EXPIRED)
     )
 
@@ -174,7 +174,7 @@ async def test_a_rotated_token_rebuilds_the_transport(
         return TokenBundle(access_token="fresher", refresh_token="rt-3", expires_at=LIVE)
 
     monkeypatch.setattr("services.mail.oauth.refresh_tokens", _refresh_again)
-    rebuilt = await service._transport(account)
+    rebuilt = await service.transport(account)
 
     assert rebuilt is not stale
     assert _access_token(rebuilt) == "fresher"
@@ -191,16 +191,16 @@ async def test_an_installed_transport_is_cached_on_the_same_terms_as_a_built_one
     fake = _SpecRecorder(spec=None)
     await install_transport(service, "operator", account.id, fake)
 
-    assert await service._transport(account) is fake
-    assert service._transports[account.id].credentials == (None, "live")
+    assert await service.transport(account) is fake
+    assert service.transports[account.id].credentials == (None, "live")
 
 
 async def test_dropping_a_transport_forgets_its_credentials(wired: _Wired):
     service, engine, vault = wired
     account = await _oauth_account(service, engine, vault, LIVE_BUNDLE)
-    first = await service._transport(account)
-    await service._drop_transport(account.id)
+    first = await service.transport(account)
+    await service.drop_transport(account.id)
 
     assert _recorder(first).closed is True
-    assert account.id not in service._transports
-    assert await service._transport(account) is not first
+    assert account.id not in service.transports
+    assert await service.transport(account) is not first

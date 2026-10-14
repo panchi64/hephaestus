@@ -32,7 +32,7 @@ from core.shutdown import STOPPED, get_unless_shutdown
 from .events import Event, EventBody, now_utc
 
 # Per-subscriber backlog cap before we treat the consumer as wedged and drop it.
-_SUBSCRIBER_QUEUE_MAX = 1024
+SUBSCRIBER_QUEUE_MAX = 1024
 
 
 class RunStream:
@@ -97,7 +97,7 @@ class RunStream:
         Subscribing to an already-closed stream replays the backlog and stops —
         so a client reconnecting after the run ended still gets the full record.
         """
-        queue: asyncio.Queue[Event | None] = asyncio.Queue(maxsize=_SUBSCRIBER_QUEUE_MAX)
+        queue: asyncio.Queue[Event | None] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAX)
         # --- atomic: register before snapshot, no await between ---
         self._subscribers.add(queue)
         backlog = self.replay(after_seq)

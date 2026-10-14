@@ -153,6 +153,16 @@ class MailService:
         )
         self._loop_task: asyncio.Task[None] | None = None
 
+    @property
+    def secrets(self) -> MailSecrets:
+        """The sealed-credential store for this service's accounts."""
+        return self._secrets
+
+    @property
+    def transports(self) -> dict[str, LiveTransport]:
+        """The live per-account transport cache, keyed by account id."""
+        return self._transports
+
     async def start(self) -> None:
         await self._worker.start()
         self._loop_task = asyncio.create_task(self._sync_loop(), name="mail-sync-loop")
@@ -185,7 +195,7 @@ class MailService:
         return await in_session(self._engine, work)
 
     async def get_account(self, owner_id: str, account_id: str) -> AccountView:
-        return self._to_view(await self._row(owner_id, account_id))
+        return self._to_view(await self.row(owner_id, account_id))
 
     async def create_account(
         self,
@@ -234,7 +244,7 @@ class MailService:
         tokens: TokenBundle | None = None,
         enabled: bool | None = None,
     ) -> AccountView:
-        row = await self._row(owner_id, account_id)
+        row = await self.row(owner_id, account_id)
         updates: dict[str, object] = {"updated_at": utcnow()}
         if name is not None:
             updates["name"] = name
@@ -252,7 +262,7 @@ class MailService:
         def work(session: Session) -> MailAccount:
             stored = session.get(MailAccount, row.id)
             if stored is None:
-                # The row was there when `_row` loaded it, and an await has passed since:
+                # The row was there when `row` loaded it, and an await has passed since:
                 # a concurrent delete makes this None. Guarded like `delete_account`'s own
                 # lookup — otherwise `setattr(None, …)` raises AttributeError inside the
                 # worker thread and the caller sees a 500 where 404 is the truth.
@@ -263,11 +273,11 @@ class MailService:
             return stored
 
         updated = await in_session(self._engine, work)
-        await self._drop_transport(account_id)
+        await self.drop_transport(account_id)
         return self._to_view(updated)
 
     async def delete_account(self, owner_id: str, account_id: str) -> None:
-        row = await self._row(owner_id, account_id)
+        row = await self.row(owner_id, account_id)
 
         def work(session: Session) -> None:
             stored = session.get(MailAccount, row.id)
@@ -275,27 +285,27 @@ class MailService:
                 session.delete(stored)
 
         await in_session(self._engine, work)
-        await self._drop_transport(account_id)
+        await self.drop_transport(account_id)
 
     async def probe_account(self, owner_id: str, account_id: str) -> AccountView:
         """Test the connection and record the outcome as operator-facing health
         (`XC-DEG-3`). Never raises for a *connection* problem — a failed probe is a
         result, and the recorded status is what the operator reads."""
-        row = await self._row(owner_id, account_id)
+        row = await self.row(owner_id, account_id)
         status, detail = "ok", None
         try:
-            transport = await self._transport(row)
+            transport = await self.transport(row)
             await transport.probe()
         except MailError as exc:
             status, detail = "error", str(exc)
-            await self._drop_transport(account_id)
+            await self.drop_transport(account_id)
         await self._record_health(account_id, status, detail)
-        return self._to_view(await self._row(owner_id, account_id))
+        return self._to_view(await self.row(owner_id, account_id))
 
     # --- reading ---------------------------------------------------------------
 
     async def list_folders(self, owner_id: str, account_id: str) -> list[MailFolder]:
-        transport = await self._transport(await self._row(owner_id, account_id))
+        transport = await self.transport(await self.row(owner_id, account_id))
         return await transport.list_folders()
 
     async def list_messages(
@@ -314,7 +324,7 @@ class MailService:
         reached degrades to the cache rather than erroring (`XC-DEG-3`)."""
         if account_id is not None and (refresh or self._stale(account_id, folder)):
             with suppress(MailError):
-                await self._pull(owner_id, account_id, folder, full=refresh)
+                await self.pull(owner_id, account_id, folder, full=refresh)
         return await self.cache.list_messages(
             owner_id,
             account_id=account_id,
@@ -331,7 +341,7 @@ class MailService:
         if detail.body:
             return detail
         row = await self.cache.row_for(owner_id, message_id)
-        transport = await self._transport(await self._row(owner_id, row.account_id))
+        transport = await self.transport(await self.row(owner_id, row.account_id))
         body = await transport.fetch(row.folder, row.uid)
         await self.cache.store_body(message_id, body)
         return await self.cache.get(owner_id, message_id)
@@ -347,19 +357,19 @@ class MailService:
         """Write a flag remotely, then locally — the remote write is authoritative, so a
         failure leaves the cache honest rather than showing a state the server rejected."""
         row = await self.cache.row_for(owner_id, message_id)
-        transport = await self._transport(await self._row(owner_id, row.account_id))
+        transport = await self.transport(await self.row(owner_id, row.account_id))
         await transport.flag(row.folder, row.uid, seen=seen, flagged=flagged)
         await self.cache.set_flags(message_id, seen=seen, flagged=flagged)
 
     async def move_message(self, owner_id: str, message_id: str, destination: str) -> None:
         row = await self.cache.row_for(owner_id, message_id)
-        transport = await self._transport(await self._row(owner_id, row.account_id))
+        transport = await self.transport(await self.row(owner_id, row.account_id))
         await transport.move(row.folder, row.uid, destination)
         await self.cache.forget(message_id)
 
     async def delete_message(self, owner_id: str, message_id: str) -> None:
         row = await self.cache.row_for(owner_id, message_id)
-        transport = await self._transport(await self._row(owner_id, row.account_id))
+        transport = await self.transport(await self.row(owner_id, row.account_id))
         await transport.delete(row.folder, row.uid)
         await self.cache.forget(message_id)
 
@@ -382,8 +392,8 @@ class MailService:
         consented, while the model asking to must be asked."""
         if not to:
             raise MailError("a message needs at least one recipient")
-        account = await self._row(owner_id, account_id)
-        transport = await self._transport(account)
+        account = await self.row(owner_id, account_id)
+        transport = await self.transport(account)
         message = OutgoingMail(
             to=tuple(MailAddress(address=address) for address in to),
             cc=tuple(MailAddress(address=address) for address in cc or ()),
@@ -424,8 +434,8 @@ class MailService:
         stored = await self.profiles.get(owner_id)
         if stored is not None and stored.edited:
             return stored.profile
-        account = await self._row(owner_id, account_id)
-        transport = await self._transport(account)
+        account = await self.row(owner_id, account_id)
+        transport = await self.transport(account)
         sent = next((f for f in await transport.list_folders() if f.role == ROLE_SENT), None)
         if sent is None:
             raise MailError("this account has no Sent folder to learn from")
@@ -506,10 +516,10 @@ class MailService:
                 logger.warning("mail: scheduled sync pass failed", exc_info=True)
 
     async def _run_sync(self, job: SyncJob) -> None:
-        await self._pull(job.owner_id, job.account_id, job.folder)
+        await self.pull(job.owner_id, job.account_id, job.folder)
         await self._triage_backlog(job.owner_id)
 
-    async def _pull(
+    async def pull(
         self, owner_id: str, account_id: str, folder: str | None, *, full: bool = False
     ) -> None:
         """Reconcile one folder from the provider into the cache.
@@ -520,8 +530,8 @@ class MailService:
         another client changed on an older message, so an operator-driven refresh drops it
         and re-lists the newest page, reconciling read/flagged state as well as arrivals.
         """
-        account = await self._row(owner_id, account_id)
-        transport = await self._transport(account)
+        account = await self.row(owner_id, account_id)
+        transport = await self.transport(account)
         target = folder or await self._default_folder(transport)
         if target is None:
             return
@@ -567,7 +577,7 @@ class MailService:
         last = self._refreshed.get((account_id, folder or ""))
         return last is None or (time.monotonic() - last) > self._cache_ttl_s
 
-    async def _transport(self, account: MailAccount) -> MailTransport:
+    async def transport(self, account: MailAccount) -> MailTransport:
         """The adapter for ``account``, rebuilt whenever its credentials have rotated.
 
         Credentials are resolved *first*, on every call: :meth:`MailSecrets.open_access`
@@ -591,7 +601,7 @@ class MailService:
                 return live.transport
             # Rotated token or edited password: the cached adapter's spec is frozen, and
             # the connection it holds is authenticated with a secret that no longer works.
-            await self._drop_transport(account.id)
+            await self.drop_transport(account.id)
             spec = AccountSpec(
                 account_id=account.id,
                 address=self._vault.decrypt_str(account.address_enc),
@@ -605,7 +615,7 @@ class MailService:
             self._transports[account.id] = LiveTransport(transport, credentials)
             return transport
 
-    async def _drop_transport(self, account_id: str) -> None:
+    async def drop_transport(self, account_id: str) -> None:
         live = self._transports.pop(account_id, None)
         if live is not None:
             with suppress(Exception):
@@ -620,7 +630,7 @@ class MailService:
 
         return await in_session(self._engine, work)
 
-    async def _row(self, owner_id: str, account_id: str) -> MailAccount:
+    async def row(self, owner_id: str, account_id: str) -> MailAccount:
         def work(session: Session) -> MailAccount | None:
             row = session.get(MailAccount, account_id)
             return row if row is not None and row.owner_id == owner_id else None

@@ -10,7 +10,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 from sqlmodel import Session
 
-from core.db import _ALEMBIC_INI, make_engine
+from core.db import ALEMBIC_INI, make_engine
 from core.exceptions import SchemaMigrationError
 
 # The rest of the suite gets a cached copy of the schema instead of replaying the chain
@@ -19,7 +19,7 @@ from ._schema import real_init_db as init_db
 
 
 def _head_revision() -> str:
-    script = ScriptDirectory.from_config(Config(str(_ALEMBIC_INI)))
+    script = ScriptDirectory.from_config(Config(str(ALEMBIC_INI)))
     head = script.get_current_head()
     assert head is not None
     return head

@@ -111,7 +111,7 @@ async def mark_all_read(request: Request) -> MarkReadOut:
     return MarkReadOut(updated=updated)
 
 
-def _frame(event: NotificationEvent) -> str:
+def frame(event: NotificationEvent) -> str:
     """One notification as an SSE frame — the same framing the run transport emits, since
     the client parses both with one reader."""
     payload = _envelope(event).model_dump_json(by_alias=True)
@@ -126,4 +126,4 @@ async def stream_notifications(
     `Last-Event-ID` to replay from the in-memory ring buffer (process-lifetime)."""
     after = parse_last_event_id(request.headers.get("last-event-id"), last_event_id)
     service = deps.notifications(request)
-    return sse_stream(lambda: service.subscribe(after), _frame)
+    return sse_stream(lambda: service.subscribe(after), frame)

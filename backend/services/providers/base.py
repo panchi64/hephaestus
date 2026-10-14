@@ -80,7 +80,7 @@ class Provider(Protocol):
         URL. The window that matters is the one the server will accept.
 
         ``spec.context_window`` is the answer to the right question: the registry funnels
-        every resolution through ``_with_model_limits``, which prefers the operator's
+        every resolution through ``with_model_limits``, which prefers the operator's
         own figure and otherwise probes the server. **When it is set, it wins** — in
         every adapter.
 

@@ -256,7 +256,7 @@ async def test_a_fire_drops_a_once_only_pre_authorization(monkeypatch: pytest.Mo
             output="chat",
             pre_authorized=["code_request_egress", "platform_search"],
         )
-        result = await _scheduler(app)._executor(view)
+        result = await _scheduler(app).executor(view)
         assert result.outcome == "ok"
         assert result.conversation_id is not None
         granted = await _grants(app).list("operator", result.conversation_id)
@@ -278,7 +278,7 @@ async def test_run_now_starts_alongside_a_still_live_execution():
             _ = await release.wait()
             return TaskRunResult(outcome="ok")
 
-        _scheduler(app)._executor = slow_executor
+        _scheduler(app).executor = slow_executor
         first = await client.post(f"/tasks/{task_id}/run_now")
         _ = await asyncio.wait_for(started.wait(), timeout=2.0)
         second = await client.post(f"/tasks/{task_id}/run_now")
@@ -427,7 +427,7 @@ async def test_delete_task_cascades_its_runs():
         async def instant_ok(_view: ScheduledTaskView) -> TaskRunResult:
             return TaskRunResult(outcome="ok")
 
-        _scheduler(app)._executor = instant_ok
+        _scheduler(app).executor = instant_ok
         run_now = await client.post(f"/tasks/{task_id}/run_now")
         _ = await await_task_run_finalized(client, task_id, s(json_body(run_now)["taskRunId"]))
 

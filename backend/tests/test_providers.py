@@ -202,10 +202,10 @@ def test_migration_backfills_local_prefix_endpoints():
     from alembic import command
     from alembic.config import Config
 
-    from core.db import _ALEMBIC_INI
+    from core.db import ALEMBIC_INI
 
     engine = make_engine("sqlite:///:memory:")
-    config = Config(str(_ALEMBIC_INI))
+    config = Config(str(ALEMBIC_INI))
     config.attributes["connection"] = engine
     command.upgrade(config, "5a07sec0007")
 
@@ -256,7 +256,7 @@ def _window(provider_id: str, model: str, window: int | None) -> int | None:
 
 
 def test_the_endpoints_own_window_wins_for_every_provider():
-    """The registry funnels every resolution through `_with_model_limits`, which
+    """The registry funnels every resolution through `with_model_limits`, which
     prefers the operator's figure and otherwise probes the server. Whatever it lands on
     is what the model is built with — a library that resolved a different number from the
     model's name would give the gauge and the fold trigger a second source of truth."""

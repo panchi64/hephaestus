@@ -173,7 +173,7 @@ async def test_a_background_pull_is_incremental(mail: _Mail, monkeypatch: pytest
     _ = await service.list_messages("operator", account_id=account.id, refresh=True)
     seen: list[str | None] = []
     _spy_list_messages(monkeypatch, transport, lambda _folder, since_uid: seen.append(since_uid))
-    await service._pull("operator", account.id, None)
+    await service.pull("operator", account.id, None)
     assert seen == ["2"]
 
 

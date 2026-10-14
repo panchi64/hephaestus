@@ -109,7 +109,7 @@ async def stub_resolution(
     from services.registry import ResolvedModel
 
     spec = _stub_spec()
-    [resolved] = await registry._with_model_limits([spec])
+    [resolved] = await registry.with_model_limits([spec])
     return ResolvedModel(
         model=model,
         reasoning_off=reasoning_off or {},
@@ -120,7 +120,7 @@ async def stub_resolution(
 def _stub_spec() -> EndpointSpec:
     from services.endpoint_spec import EndpointSpec
 
-    # `context_window=None` is the point: it is what sends `_with_model_limits` to
+    # `context_window=None` is the point: it is what sends `with_model_limits` to
     # the provider instead of short-circuiting on an operator-set value.
     return EndpointSpec(
         base_url="http://stub.invalid/v1",
@@ -138,7 +138,7 @@ def register_stub_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     `/models/providers` listing it serves) depend on test order."""
     from services import providers
 
-    registry = dict(providers._registry())
+    registry = dict(providers.registry())
     registry[_STUB_PROVIDER_ID] = _StubProvider()
     monkeypatch.setattr(providers, "_PROVIDERS", registry)
 

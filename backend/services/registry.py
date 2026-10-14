@@ -364,7 +364,7 @@ class ModelRegistry:
 
     # --- resolution -------------------------------------------------------
 
-    async def _resolve_specs(
+    async def resolve_specs(
         self,
         role: str,
         *,
@@ -395,7 +395,7 @@ class ModelRegistry:
             # so reject it here rather than silently resolving to a benched endpoint.
             if not endpoint.enabled:
                 raise DegradedCapabilityError(f"endpoint {endpoint.name!r} is disabled")
-            return await self._with_model_limits(
+            return await self.with_model_limits(
                 [self._to_spec(endpoint, role, model_override=override_model)]
             )
 
@@ -423,7 +423,7 @@ class ModelRegistry:
         if not live:
             raise DegradedCapabilityError(f"all endpoints bound to role {role!r} are disabled")
         # Pin applies to the head only; the tail falls back on each endpoint's default.
-        return await self._with_model_limits(
+        return await self.with_model_limits(
             [
                 self._to_spec(endpoint, role, model_override=pinned_model if i == 0 else None)
                 for i, endpoint in enumerate(live)
@@ -474,7 +474,7 @@ class ModelRegistry:
         self._implicit_main[owner_id] = answer
         return answer
 
-    async def _with_model_limits(self, specs: list[EndpointSpec]) -> list[EndpointSpec]:
+    async def with_model_limits(self, specs: list[EndpointSpec]) -> list[EndpointSpec]:
         """Fill in each spec's context window and output ceiling from its provider.
 
         Here, at the single point every resolution path funnels through, so the model a
@@ -562,7 +562,7 @@ class ModelRegistry:
         normally. This is the one entry point that builds a chat model: there is
         deliberately no bare model-only sibling, so no caller can resolve a role while
         skipping the context window, vision, and reasoning facts that travel with it."""
-        specs = await self._resolve_specs(
+        specs = await self.resolve_specs(
             role,
             owner_id=owner_id,
             override_endpoint_id=override_endpoint_id,
@@ -629,11 +629,11 @@ class ModelRegistry:
         False when ``main`` itself cannot resolve: there is no chat prefix to evict.
         """
         try:
-            main = await self._resolve_specs("main", owner_id=owner_id)
+            main = await self.resolve_specs("main", owner_id=owner_id)
         except DegradedCapabilityError, NotFoundError:
             return False
         try:
-            utility = await self._resolve_specs("utility", owner_id=owner_id)
+            utility = await self.resolve_specs("utility", owner_id=owner_id)
         except DegradedCapabilityError, NotFoundError:
             return True
         return _same_server(utility[0].base_url, main[0].base_url)
@@ -676,7 +676,7 @@ class ModelRegistry:
         id left by an out-of-band delete): every caller here is a read path, and the
         ceiling is a nicety that must never fail the read it rides on."""
         try:
-            specs = await self._resolve_specs(role, owner_id=owner_id)
+            specs = await self.resolve_specs(role, owner_id=owner_id)
         except DegradedCapabilityError, NotFoundError:
             return None
         return specs[0].context_window if specs else None

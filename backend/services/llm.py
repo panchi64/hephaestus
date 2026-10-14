@@ -132,7 +132,7 @@ async def discover_openai_models(
     finally:
         if client is None:
             await http.aclose()
-    ids = _extract_model_ids(payload)
+    ids = extract_model_ids(payload)
     if ids is None:
         raise DegradedCapabilityError(f"{base_url!r} returned an unrecognized models payload")
     return ids
@@ -223,7 +223,7 @@ def _context_from_row(row: object, keys: Sequence[str]) -> int | None:
 
 def _find_model_row(payload: object, model: str) -> object | None:
     """The listing entry describing ``model``, across the same shapes
-    :func:`_extract_model_ids` understands."""
+    :func:`extract_model_ids` understands."""
     rows: list[object] = []
     mapping = as_dict(payload)
     if mapping is not None:
@@ -305,9 +305,7 @@ async def discover_openai_limits(
     # it goes. Debug, like the rest of the prefix diagnostic: an installation property nobody
     # is investigating is noise. Read from whichever source answered — a llama.cpp server's
     # own `/props`, or the native listing row already fetched above.
-    posture = await _llama_cpp_props(base_url, api_key, client=client) or _native_posture(
-        native_row
-    )
+    posture = await llama_cpp_props(base_url, api_key, client=client) or native_posture(native_row)
     if posture is not None:
         logger.debug("prompt cache posture base=%s %s", base_url, posture.summary())
     slots = posture.total_slots if posture is not None else None
@@ -426,7 +424,7 @@ class PromptCachePosture:
 _BACKEND_KEYS = ("compatibility_type", "format")
 
 
-def _native_posture(row: object) -> PromptCachePosture | None:
+def native_posture(row: object) -> PromptCachePosture | None:
     """A cache posture from a model listing row, for the servers that have no ``/props``.
 
     Written because the probe below was **inert on the most common local setup**. LM Studio
@@ -451,7 +449,7 @@ def _native_posture(row: object) -> PromptCachePosture | None:
     return PromptCachePosture(context_window=window, backend=backend)
 
 
-async def _llama_cpp_props(
+async def llama_cpp_props(
     base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
 ) -> PromptCachePosture | None:
     """llama.cpp's own `/props`, read for the context window **and** its cache posture.
@@ -532,7 +530,7 @@ async def _get_json(
             await http.aclose()
 
 
-def _extract_model_ids(payload: object) -> list[str] | None:
+def extract_model_ids(payload: object) -> list[str] | None:
     """Pull model identifiers out of whichever shape a provider returned.
 
     Each adapter recognizes one convention and returns its ids, or ``None`` if the

@@ -16,7 +16,7 @@ from models.external_tool import Integration
 from services.external_tools import ExternalPolicyStore
 from services.integrations import PRESETS, IntegrationService
 from services.integrations.presets import action
-from services.integrations.service import STATUS_UNTESTED, _assert_within, _fill_path
+from services.integrations.service import STATUS_UNTESTED, assert_within, fill_path
 
 from ._helpers import client_app
 from ._json import arr, json_body, json_list, obj, s
@@ -86,7 +86,7 @@ async def test_an_operator_base_url_overrides_the_preset_and_resets_the_test():
     assert view.base_url == "https://acme.atlassian.net"
 
     # Pretend a test had passed, then change the configuration under it.
-    await service._record_test(view.id, None)
+    await service.record_test(view.id, None)
     assert (await service.get(OWNER, view.id)).status == "ok"
 
     changed = await service.update(OWNER, view.id, base_url="https://other.atlassian.net")
@@ -144,29 +144,29 @@ async def test_only_usable_connectors_are_offered_to_the_agent():
 def test_path_parameters_fill_the_action_and_the_rest_become_query():
     get_repo = action("github", "get_repo")
     assert get_repo is not None
-    path, query = _fill_path(get_repo, {"owner": "acme", "repo": "widgets", "state": "open"})
+    path, query = fill_path(get_repo, {"owner": "acme", "repo": "widgets", "state": "open"})
 
     assert path == "/repos/acme/widgets"
     assert query == {"state": "open"}
 
     # A parameter can never add a path segment — the action's shape is the preset's.
-    escaped, _ = _fill_path(get_repo, {"owner": "a/../b", "repo": "r"})
+    escaped, _ = fill_path(get_repo, {"owner": "a/../b", "repo": "r"})
     assert escaped == "/repos/a%2F..%2Fb/r"
 
     with pytest.raises(InvalidInputError):
-        _ = _fill_path(get_repo, {"owner": "acme"})
+        _ = fill_path(get_repo, {"owner": "acme"})
 
 
 def test_a_resolved_url_must_stay_inside_the_configured_connector():
-    _assert_within("https://api.github.com", "https://api.github.com/repos/a/b")
-    _assert_within("https://gitlab.com/api/v4", "https://gitlab.com/api/v4/projects/1")
+    assert_within("https://api.github.com", "https://api.github.com/repos/a/b")
+    assert_within("https://gitlab.com/api/v4", "https://gitlab.com/api/v4/projects/1")
 
     with pytest.raises(InvalidInputError):
-        _assert_within("https://api.github.com", "https://evil.example/repos")
+        assert_within("https://api.github.com", "https://evil.example/repos")
     with pytest.raises(InvalidInputError):
-        _assert_within("https://gitlab.com/api/v4", "https://gitlab.com/admin")
+        assert_within("https://gitlab.com/api/v4", "https://gitlab.com/admin")
     with pytest.raises(InvalidInputError):
-        _assert_within("https://api.github.com", "https://api.github.com/a/../../b")
+        assert_within("https://api.github.com", "https://api.github.com/a/../../b")
 
 
 async def test_the_rest_surface_lists_presets_configures_and_gates_an_action():

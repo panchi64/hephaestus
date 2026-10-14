@@ -147,7 +147,7 @@ async def test_overview_omits_notification_channel_rows_when_none_are_wired():
     app wires both by default, so this drops them to prove the rows follow the channels
     rather than being hard-coded into the aggregate."""
     async with client_app() as (client, app):
-        app_state(app, "notifications", NotificationService)._channels = []
+        app_state(app, "notifications", NotificationService).channels = []
         body = json_body(await client.get("/overview"))
     caps = _capabilities(body)
     assert "email" not in caps

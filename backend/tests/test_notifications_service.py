@@ -129,7 +129,7 @@ async def test_ring_buffer_evicts_oldest_beyond_cap(tmp_path: Path):
 
 
 async def test_slow_subscriber_is_dropped_not_grown_unbounded(tmp_path: Path):
-    from services.notifications import _SUBSCRIBER_QUEUE_MAX
+    from services.notifications import SUBSCRIBER_QUEUE_MAX
 
     service = await _service(tmp_path)
 
@@ -139,12 +139,12 @@ async def test_slow_subscriber_is_dropped_not_grown_unbounded(tmp_path: Path):
 
     task = asyncio.create_task(stalled())
     await asyncio.sleep(0)
-    assert len(service._subscribers) == 1
+    assert service.subscriber_count == 1
 
-    for i in range(_SUBSCRIBER_QUEUE_MAX + 50):  # flood past the cap (no yields)
+    for i in range(SUBSCRIBER_QUEUE_MAX + 50):  # flood past the cap (no yields)
         _ = await service.notify(OWNER, "system", str(i))
 
-    assert len(service._subscribers) == 0  # evicted, not ballooning
+    assert service.subscriber_count == 0  # evicted, not ballooning
     _ = task.cancel()
     with suppress(asyncio.CancelledError):
         await task
@@ -266,8 +266,8 @@ async def test_cold_restart_rehydrates_prior_notifications(tmp_path: Path):
 
     cold = NotificationService(engine, vault)
     await cold.start()
-    assert cold._rehydrate_task is not None
-    await cold._rehydrate_task  # deterministic in tests: vault is already unlocked
+    assert cold.rehydrate_task is not None
+    await cold.rehydrate_task  # deterministic in tests: vault is already unlocked
     items, _ = await cold.list_notifications(OWNER)
     assert [i.id for i in items] == [view.id]
     assert items[0].title == "before restart"
@@ -299,8 +299,8 @@ async def test_rehydrated_and_live_notifications_sort_together(tmp_path: Path):
 
     cold = NotificationService(engine, vault)
     await cold.start()
-    assert cold._rehydrate_task is not None
-    await cold._rehydrate_task
+    assert cold.rehydrate_task is not None
+    await cold.rehydrate_task
     fresh = await cold.notify(OWNER, "system", "live")
 
     items, unread = await cold.list_notifications(OWNER)

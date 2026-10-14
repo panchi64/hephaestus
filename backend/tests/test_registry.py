@@ -488,24 +488,24 @@ async def test_model_discovery_degrades_when_provider_has_no_models_api(
         assert json_body(resp) == {"models": [], "supported": False}
 
 
-def test_extract_model_ids_handles_provider_shapes():
-    from services.llm import _extract_model_ids
+def testextract_model_ids_handles_provider_shapes():
+    from services.llm import extract_model_ids
 
     # OpenAI / Anthropic: {"data": [{"id": …}]}
-    assert _extract_model_ids({"data": [{"id": "b"}, {"id": "a"}]}) == ["a", "b"]
+    assert extract_model_ids({"data": [{"id": "b"}, {"id": "a"}]}) == ["a", "b"]
     # Gemini / Cohere / Ollama-native: {"models": [{"name": …}]}, "models/" stripped.
-    assert _extract_model_ids({"models": [{"name": "models/gemini-1.5-pro"}]}) == ["gemini-1.5-pro"]
+    assert extract_model_ids({"models": [{"name": "models/gemini-1.5-pro"}]}) == ["gemini-1.5-pro"]
     # The models/ strip is scoped to the named-models shape — an OpenAI-shaped id
     # that legitimately starts with models/ is preserved.
-    assert _extract_model_ids({"data": [{"id": "models/foo"}]}) == ["models/foo"]
+    assert extract_model_ids({"data": [{"id": "models/foo"}]}) == ["models/foo"]
     # A name that is only the prefix strips to empty and is dropped, not offered.
-    assert _extract_model_ids({"models": [{"name": "models/"}]}) == []
+    assert extract_model_ids({"models": [{"name": "models/"}]}) == []
     # Bare list of strings, de-duplicated.
-    assert _extract_model_ids(["qwen", "llama3", "qwen"]) == ["llama3", "qwen"]
+    assert extract_model_ids(["qwen", "llama3", "qwen"]) == ["llama3", "qwen"]
     # Recognized shape that lists nothing → empty (supported but empty).
-    assert _extract_model_ids({"object": "list", "data": []}) == []
+    assert extract_model_ids({"object": "list", "data": []}) == []
     # Unrecognized payload → None (no models API), distinct from empty.
-    assert _extract_model_ids({"foo": "bar"}) is None
+    assert extract_model_ids({"foo": "bar"}) is None
 
 
 # --- endpoint health & disable -------------------------------------------

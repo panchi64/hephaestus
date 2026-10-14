@@ -113,7 +113,7 @@ class ImapTransport(MailTransport, WatchableTransport):
             status, lines = await self._command(client.list('""', "*"))
             if status != "OK":
                 raise MailError("the server refused to list this account's folders")
-            return [folder for folder in map(_parse_list_line, lines) if folder is not None]
+            return [folder for folder in map(parse_list_line, lines) if folder is not None]
 
     @override
     async def list_messages(
@@ -129,7 +129,7 @@ class ImapTransport(MailTransport, WatchableTransport):
             status, lines = await self._command(client.uid_search(criteria))
             if status != "OK":
                 raise MailError(f"the server refused to search {folder!r}")
-            uids = _search_uids(lines)
+            uids = search_uids(lines)
             # A `since_uid` search that finds nothing still returns the highest uid on
             # some servers (the `:*` range always matches one message); drop it.
             if since_uid:
@@ -143,7 +143,7 @@ class ImapTransport(MailTransport, WatchableTransport):
             client = await self._connect()
             await self._select(client, folder)
             status, lines = await self._command(client.uid("fetch", uid, "(BODY.PEEK[])"))
-            raw = _first_literal(lines)
+            raw = first_literal(lines)
             if status != "OK" or raw is None:
                 raise MailError("that message is no longer on the server")
             return parse_message(raw, uid=uid)
@@ -341,7 +341,7 @@ class ImapTransport(MailTransport, WatchableTransport):
         status, lines = await self._command(
             client.uid("fetch", uid, "(FLAGS RFC822.SIZE BODY.PEEK[])")
         )
-        raw = _first_literal(lines)
+        raw = first_literal(lines)
         if status != "OK" or raw is None:
             raise MailError(f"message {uid} could not be read")
         flags = _flags_of(lines)
@@ -378,7 +378,7 @@ def _flags_of(lines: list[object]) -> set[str]:
     return set()
 
 
-def _first_literal(lines: list[object]) -> bytes | None:
+def first_literal(lines: list[object]) -> bytes | None:
     """The first literal in a FETCH response — the raw RFC 5322 message.
 
     aioimaplib returns a flat list mixing the untagged response line, the literal
@@ -390,7 +390,7 @@ def _first_literal(lines: list[object]) -> bytes | None:
     return bytes(max(literals, key=len)) if literals else None
 
 
-def _search_uids(lines: list[object]) -> list[str]:
+def search_uids(lines: list[object]) -> list[str]:
     for line in lines:
         text = line.decode("utf-8", "replace") if isinstance(line, bytes | bytearray) else str(line)
         tokens = text.split()
@@ -404,7 +404,7 @@ def _int_setting(value: object, default: int) -> int:
     return int(value) if value and isinstance(value, str | int | float) else default
 
 
-def _parse_list_line(line: object) -> MailFolder | None:
+def parse_list_line(line: object) -> MailFolder | None:
     text = line.decode("utf-8", "replace") if isinstance(line, bytes | bytearray) else str(line)
     match = _LIST_LINE.match(text.strip())
     if match is None:

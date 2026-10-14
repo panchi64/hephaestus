@@ -326,7 +326,7 @@ async def test_a_failed_schedule_claim_fires_nothing_until_the_next_tick(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     def break_first_claim(scheduler: SchedulerService) -> None:
-        real_advance = scheduler._advance
+        real_advance = scheduler.advance
         failed = False
 
         async def flaky_advance(task_id: str, **kwargs: Unpack[_AdvanceKwargs]) -> None:
@@ -336,7 +336,7 @@ async def test_a_failed_schedule_claim_fires_nothing_until_the_next_tick(
                 raise RuntimeError("transient DB failure")
             await real_advance(task_id, **kwargs)
 
-        monkeypatch.setattr(scheduler, "_advance", flaky_advance)
+        monkeypatch.setattr(scheduler, "advance", flaky_advance)
 
     await _fires_once_after(tmp_path, break_first_claim)
 
@@ -371,8 +371,8 @@ async def test_transient_locked_db_on_finalize_retries_and_never_double_fires(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """The live-drive regression: a concurrent write-behind drainer held SQLite's
-    write lock, `_finalize_task_run` raised `database is locked`, the error escaped
-    `_finalize_parked` (which only parked on `VaultLocked`) so `_advance` never ran —
+    write lock, `finalize_task_run` raised `database is locked`, the error escaped
+    `_finalize_parked` (which only parked on `VaultLocked`) so `advance` never ran —
     yet `_fire`'s `finally` still freed the in-flight claim, and the next tick
     re-dispatched a duplicate REAL fire. A transient lock must be retried like a
     vault park: exactly one fire, the row finalized, a spent `once` disabled."""
@@ -388,7 +388,7 @@ async def test_transient_locked_db_on_finalize_retries_and_never_double_fires(
         engine, vault, schedule_type=ScheduleType.ONCE.value, run_at=utcnow(), next_run_at=utcnow()
     )
     scheduler = SchedulerService(engine, vault, executor, _never_notify)
-    real_finalize = scheduler._finalize_task_run
+    real_finalize = scheduler.finalize_task_run
     failed = False
 
     async def flaky_finalize(run_row_id: str, **kwargs: Unpack[_FinalizeKwargs]) -> None:
@@ -398,7 +398,7 @@ async def test_transient_locked_db_on_finalize_retries_and_never_double_fires(
             raise _locked_error()
         await real_finalize(run_row_id, **kwargs)
 
-    monkeypatch.setattr(scheduler, "_finalize_task_run", flaky_finalize)
+    monkeypatch.setattr(scheduler, "finalize_task_run", flaky_finalize)
     await scheduler.start()
     try:
         # Long enough to span the retry backoff plus several ticks — with the old
@@ -412,7 +412,7 @@ async def test_transient_locked_db_on_finalize_retries_and_never_double_fires(
         task = _get_task(engine, task_id)
         assert task.enabled is False  # the once self-disabled — not re-fireable
         assert task.next_run_at is None
-        assert not scheduler._running  # the execution isn't stranded
+        assert not scheduler.running  # the execution isn't stranded
     finally:
         await scheduler.stop()
 
@@ -421,7 +421,7 @@ async def test_transient_locked_db_on_advance_retries_and_schedule_still_advance
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Same invariant one write later: finalize lands, then the schedule advance hits
-    a transient lock. `_advance` must retry it out — a once task that stayed due with
+    a transient lock. `advance` must retry it out — a once task that stayed due with
     its claim freed would be re-dispatched for real on the very next tick."""
     engine = _engine()
     vault = await _vault(tmp_path)
@@ -435,7 +435,7 @@ async def test_transient_locked_db_on_advance_retries_and_schedule_still_advance
         engine, vault, schedule_type=ScheduleType.ONCE.value, run_at=utcnow(), next_run_at=utcnow()
     )
     scheduler = SchedulerService(engine, vault, executor, _never_notify)
-    real_advance_once = scheduler._advance_once
+    real_advance_once = scheduler.advance_once
     failed = False
 
     async def flaky_advance_once(task_id: str, **kwargs: Unpack[_AdvanceKwargs]) -> None:
@@ -445,7 +445,7 @@ async def test_transient_locked_db_on_advance_retries_and_schedule_still_advance
             raise _locked_error()
         await real_advance_once(task_id, **kwargs)
 
-    monkeypatch.setattr(scheduler, "_advance_once", flaky_advance_once)
+    monkeypatch.setattr(scheduler, "advance_once", flaky_advance_once)
     await scheduler.start()
     try:
         await asyncio.sleep(0.5)
@@ -486,20 +486,20 @@ async def test_permanently_locked_db_gives_up_after_bounded_retries(
         attempts += 1
         raise _locked_error()
 
-    monkeypatch.setattr(scheduler, "_finalize_task_run", always_locked)
+    monkeypatch.setattr(scheduler, "finalize_task_run", always_locked)
 
     # Fire on demand (no tick loop) so the one detached fire task is directly awaitable.
     run_row_id = await scheduler.fire_now(task_id)
     assert run_row_id is not None
-    fire_task = scheduler._running.get(run_row_id)
+    fire_task = scheduler.running.get(run_row_id)
     assert fire_task is not None
     [outcome] = await asyncio.wait_for(
         asyncio.gather(fire_task, return_exceptions=True), timeout=2.0
     )
     assert isinstance(outcome, OperationalError)  # surfaced, not swallowed or looped
-    assert attempts == scheduler_mod._DB_LOCK_RETRIES  # exactly the bounded budget
+    assert attempts == scheduler_mod.DB_LOCK_RETRIES  # exactly the bounded budget
     await asyncio.sleep(0)
-    assert run_row_id not in scheduler._running  # the execution was still released
+    assert run_row_id not in scheduler.running  # the execution was still released
 
 
 # --- overlapping occurrences ---------------------------------------------------------------
@@ -535,7 +535,7 @@ async def test_a_fire_due_while_the_last_is_live_starts_on_time(tmp_path: Path):
     try:
         _ = await asyncio.wait_for(executing.wait(), timeout=2.0)
         # The next occurrence comes due while the first is still running.
-        await scheduler._advance(task_id, next_run_at=utcnow() - timedelta(milliseconds=10))
+        await scheduler.advance(task_id, next_run_at=utcnow() - timedelta(milliseconds=10))
         scheduler.wake()
         await _until(lambda: len(calls) == 2)
         assert len(_list_runs(engine, task_id)) == 2  # both live at once

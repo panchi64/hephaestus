@@ -64,7 +64,7 @@ _MIN_POLL_S = 0.05
 # so a colliding write normally just waits the lock out, but a wait can still lose
 # under pathological contention, and an escaped advance delays a due fire to a later
 # tick. Bounded so a genuinely broken database still surfaces instead of looping forever.
-_DB_LOCK_RETRIES = 5
+DB_LOCK_RETRIES = 5
 _DB_LOCK_RETRY_BASE_S = 0.05
 _DB_LOCK_RETRY_MAX_S = 0.5
 
@@ -163,6 +163,20 @@ class SchedulerService:
         self._stopping: asyncio.Event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
+    @property
+    def executor(self) -> TaskExecutor:
+        """The callable that runs a due task."""
+        return self._executor
+
+    @executor.setter
+    def executor(self, value: TaskExecutor) -> None:
+        self._executor = value
+
+    @property
+    def running(self) -> dict[str, asyncio.Task[None]]:
+        """In-flight executions keyed by their `TaskRun` id."""
+        return self._running
+
     async def start(self) -> None:
         self._stopping.clear()
         self._task = asyncio.create_task(self._run(), name="scheduler")
@@ -254,7 +268,7 @@ class SchedulerService:
         occurrence nothing has claimed."""
         try:
             if task.schedule_type == ScheduleType.ONCE:
-                await self._advance(task.id, next_run_at=None, enabled=False)
+                await self.advance(task.id, next_run_at=None, enabled=False)
             else:
                 next_run = compute_next_run(
                     task.schedule_type,
@@ -264,7 +278,7 @@ class SchedulerService:
                     cron_expr=task.cron_expr,
                     timezone=task.timezone,
                 )
-                await self._advance(task.id, next_run_at=next_run)
+                await self.advance(task.id, next_run_at=next_run)
         except Exception:  # a failed reschedule must never kill the loop
             logger.exception("scheduler: task %s schedule advance failed", task.id)
             return
@@ -323,7 +337,7 @@ class SchedulerService:
             return
         # Bookkeeping only; a failure here must never kill the loop.
         try:
-            await self._advance(task.id, last_run_at=finished)
+            await self.advance(task.id, last_run_at=finished)
         except Exception:
             logger.exception("scheduler: task %s last-run stamp failed", task.id)
 
@@ -409,7 +423,7 @@ class SchedulerService:
         while True:
             try:
                 await self._retry_locked(
-                    lambda: self._finalize_task_run(
+                    lambda: self.finalize_task_run(
                         run_row_id,
                         finished_at=finished_at,
                         outcome=outcome,
@@ -428,7 +442,7 @@ class SchedulerService:
                 if not await self._wait_unlocked():
                     return False
 
-    async def _finalize_task_run(
+    async def finalize_task_run(
         self,
         run_row_id: str,
         *,
@@ -461,7 +475,7 @@ class SchedulerService:
         contention. Bounded with backoff so a genuinely permanent error (or a lock that
         outlives every attempt) still surfaces rather than looping."""
         delay = _DB_LOCK_RETRY_BASE_S
-        for attempts_left in range(_DB_LOCK_RETRIES - 1, -1, -1):
+        for attempts_left in range(DB_LOCK_RETRIES - 1, -1, -1):
             try:
                 return await attempt()
             except OperationalError as exc:
@@ -472,7 +486,7 @@ class SchedulerService:
                         "scheduler: %s still hitting a locked database after %d attempts"
                         + " — giving up",
                         what,
-                        _DB_LOCK_RETRIES,
+                        DB_LOCK_RETRIES,
                     )
                     raise
                 logger.warning(
@@ -481,7 +495,7 @@ class SchedulerService:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, _DB_LOCK_RETRY_MAX_S)
 
-    async def _advance(
+    async def advance(
         self,
         task_id: str,
         *,
@@ -493,13 +507,13 @@ class SchedulerService:
         `next_run_at` is what claims an occurrence before it fires, so a moment's lock
         contention must not push the fire to a later tick."""
         await self._retry_locked(
-            lambda: self._advance_once(
+            lambda: self.advance_once(
                 task_id, next_run_at=next_run_at, last_run_at=last_run_at, enabled=enabled
             ),
             what=f"task {task_id} schedule advance",
         )
 
-    async def _advance_once(
+    async def advance_once(
         self,
         task_id: str,
         *,

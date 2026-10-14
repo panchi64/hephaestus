@@ -25,7 +25,7 @@ from services.commands.definitions import (
     parse_command_file,
     project_specs,
 )
-from services.commands.registry import _merge
+from services.commands.registry import merge
 from services.commands.store import CommandStore
 
 from ._helpers import app_state, client_app
@@ -263,7 +263,7 @@ class TestPrecedenceAcrossTheNewSources:
             description="d",
             body="my way",
         )
-        entries = _merge([workflow, project])
+        entries = merge([workflow, project])
         winner = next(e.spec for e in entries if e.shadowed_by is None)
         # The repository knows something this installation does not, which is the same
         # rule ``services/subagents/roster`` already states one level down.

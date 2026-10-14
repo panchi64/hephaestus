@@ -51,9 +51,9 @@ async def install_transport(
     against that rule — an installed transport is cached on the same terms as a built one,
     and a test never has to restate the account's secret.
     """
-    account = await service._row(owner_id, account_id)
-    credentials = await service._secrets.open_access(account)
-    service._transports[account_id] = LiveTransport(cast(MailTransport, transport), credentials)
+    account = await service.row(owner_id, account_id)
+    credentials = await service.secrets.open_access(account)
+    service.transports[account_id] = LiveTransport(cast(MailTransport, transport), credentials)
 
 
 class FakeTransport:

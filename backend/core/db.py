@@ -46,14 +46,14 @@ _CONN_LOCKS: WeakKeyDictionary[Engine, threading.Lock] = WeakKeyDictionary()
 
 # alembic.ini lives at the backend root (core/db.py is backend/core/db.py); its
 # script_location is `%(here)s/migrations`, so resolution is cwd-independent.
-_ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
+ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 
 # How long a connection waits for SQLite's single write lock before erroring with
 # "database is locked". File-backed engines hand every threadpool thread its own
 # connection, so the write-behind drainers (conversations, notifications, corpus,
 # the scheduler) routinely collide on that one lock — 5s comfortably outlasts any
 # of their short bookkeeping transactions.
-_BUSY_TIMEOUT_MS = 5000
+BUSY_TIMEOUT_MS = 5000
 
 # How many times a write that *still* lost the lock after that budget is tried again, and
 # how long it waits between tries (growing linearly).
@@ -73,7 +73,7 @@ _BUSY_TIMEOUT_MS = 5000
 #
 # The work callable is re-run from the top, so it must be idempotent. Every caller's
 # already is: they are `session.get` + mutate, or an `add` of a row built outside.
-_LOCK_RETRIES = 3
+LOCK_RETRIES = 3
 _LOCK_RETRY_DELAY_S = 0.25
 
 
@@ -127,7 +127,7 @@ def make_engine(url: str) -> Engine:
         # into a hard `database is locked`. A busy_timeout makes the loser wait the
         # lock out and only error once the budget is truly exhausted. Per-connection,
         # like foreign_keys, so it rides along on every pooled connect.
-        cursor.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         cursor.close()
 
     @event.listens_for(engine, "begin")
@@ -153,7 +153,7 @@ def init_db(engine: Engine) -> None:
     (the ``no such column`` class). Either fails the boot with a one-line diagnostic
     — DB path and *stamped vs head* revision — instead of a deep migration traceback.
     """
-    config = Config(str(_ALEMBIC_INI))
+    config = Config(str(ALEMBIC_INI))
     config.attributes["connection"] = engine
     try:
         command.upgrade(config, "head")
@@ -237,7 +237,7 @@ async def in_session[T](engine: Engine, work: Callable[[Session], T]) -> T:
     threadpool calls never drive the one shared connection at the same time.
 
     A write that loses SQLite's single writer lock for longer than ``busy_timeout`` is
-    retried rather than raised — see :data:`_LOCK_RETRIES`.
+    retried rather than raised — see :data:`LOCK_RETRIES`.
     """
     lock = _CONN_LOCKS.get(engine)
 
@@ -253,17 +253,17 @@ async def in_session[T](engine: Engine, work: Callable[[Session], T]) -> T:
         with lock:
             return _run()
 
-    for attempt in range(_LOCK_RETRIES + 1):
+    for attempt in range(LOCK_RETRIES + 1):
         try:
             return await asyncio.to_thread(_run_guarded)
         except OperationalError as exc:
-            if attempt == _LOCK_RETRIES or not _is_locked(exc):
+            if attempt == LOCK_RETRIES or not _is_locked(exc):
                 raise
             logger.warning(
                 "db: write lock still held after %sms, retrying (%s/%s)",
-                _BUSY_TIMEOUT_MS,
+                BUSY_TIMEOUT_MS,
                 attempt + 1,
-                _LOCK_RETRIES,
+                LOCK_RETRIES,
             )
             await asyncio.sleep(_LOCK_RETRY_DELAY_S * (attempt + 1))
     raise AssertionError("unreachable")  # pragma: no cover

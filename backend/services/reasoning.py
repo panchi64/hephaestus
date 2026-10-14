@@ -100,23 +100,23 @@ def _openai_reasoning(descriptor: ModelDescriptor) -> ModelSettings | None:
 
 
 _BUILTIN_STRATEGIES: tuple[ThinkingStrategy, ...] = (_qwen, _openai_reasoning)
-_strategies: list[ThinkingStrategy] = list(_BUILTIN_STRATEGIES)
+strategies: list[ThinkingStrategy] = list(_BUILTIN_STRATEGIES)
 
 
 def register_strategy(strategy: ThinkingStrategy, *, first: bool = False) -> None:
     """Register a thinking-off strategy. ``first=True`` gives it priority over the
     built-ins (useful to override a built-in for a specific deployment)."""
     if first:
-        _strategies.insert(0, strategy)
+        strategies.insert(0, strategy)
     else:
-        _strategies.append(strategy)
+        strategies.append(strategy)
 
 
 def disable_thinking(descriptor: ModelDescriptor) -> ModelSettings:
     """The settings that turn off ``descriptor``'s reasoning, or ``{}`` when no
     strategy recognizes it (left to think — the safe default that never sends a
     rejected argument)."""
-    for strategy in _strategies:
+    for strategy in strategies:
         settings = strategy(descriptor)
         if settings is not None:
             return settings

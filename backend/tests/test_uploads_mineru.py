@@ -24,7 +24,7 @@ from services.upload_extraction import (
     FallbackExtractor,
     UploadExtractor,
 )
-from services.upload_mineru import MinerUExtractor, _clean, _read_markdown
+from services.upload_mineru import MinerUExtractor, _clean, read_markdown
 
 from .test_uploads_extraction import text_pdf
 
@@ -79,7 +79,7 @@ def test_read_markdown_picks_largest():
         (root / "a").mkdir()
         _ = (root / "a" / "small.md").write_text("hi")
         _ = (root / "a" / "big.md").write_text("the bigger document body")
-        assert _read_markdown(root) == "the bigger document body"
+        assert read_markdown(root) == "the bigger document body"
 
 
 # --- FallbackExtractor -----------------------------------------------------

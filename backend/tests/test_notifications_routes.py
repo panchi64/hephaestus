@@ -42,9 +42,9 @@ async def _collect_stream_frames(
     while still exercising the exact code the route serves over HTTP.
     """
     from core.sse import sse_stream
-    from routes.notifications import _frame
+    from routes.notifications import frame
 
-    resp = sse_stream(lambda: service.subscribe(after_seq), _frame)
+    resp = sse_stream(lambda: service.subscribe(after_seq), frame)
     frames: list[dict[str, JsonValue]] = []
     gen = resp.body_iterator
     assert isinstance(gen, AsyncGenerator)
@@ -101,9 +101,9 @@ async def test_list_spans_rehydrated_and_live_notifications(monkeypatch: pytest.
         old = await service.notify(OPERATOR_ID, "system", "persisted")
         await service.flush()
         # Drop it from the cache and reload from the DB — the restart path, without a
-        # second app: `_rehydrate` skips ids already cached.
+        # second app: `rehydrate` skips ids already cached.
         service.evict_cached(old.id)
-        await service._rehydrate()
+        await service.rehydrate()
         fresh = await service.notify(OPERATOR_ID, "system", "live")
 
         resp = await client.get("/notifications")

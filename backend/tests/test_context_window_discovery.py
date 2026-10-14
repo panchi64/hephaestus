@@ -365,7 +365,7 @@ async def _registry(
     from services import providers
 
     stub = _ProbeStub(window, max_output)
-    registry_map = dict(providers._registry())
+    registry_map = dict(providers.registry())
     registry_map["probe-stub"] = stub
     monkeypatch.setattr(providers, "_PROVIDERS", registry_map)
 
@@ -413,7 +413,7 @@ async def test_the_output_ceiling_is_discovered_even_beside_an_operator_window(
     registry, stub = await _registry(tmp_path, monkeypatch, window=200_000, max_output=64_000)
     _ = await _bind(registry, context_window=8192)
     for _ in range(3):
-        [spec] = await registry._resolve_specs("main", owner_id="operator")
+        [spec] = await registry.resolve_specs("main", owner_id="operator")
         assert (spec.context_window, spec.max_output_tokens) == (8192, 64_000)
     assert stub.asked == 1
 
@@ -545,7 +545,7 @@ async def test_the_props_response_also_yields_the_servers_cache_posture():
         )
 
     async with _client(handler) as client:
-        posture = await llm._llama_cpp_props("http://s", None, client=client)
+        posture = await llm.llama_cpp_props("http://s", None, client=client)
 
     assert posture is not None
     assert posture.context_window == 32768
@@ -588,7 +588,7 @@ async def test_a_server_that_mentions_no_cache_settings_says_so_rather_than_gues
         return httpx.Response(200, json={"default_generation_settings": {"n_ctx": 8192}})
 
     async with _client(handler) as client:
-        posture = await llm._llama_cpp_props("http://s", None, client=client)
+        posture = await llm.llama_cpp_props("http://s", None, client=client)
 
     assert posture is not None
     assert posture.cache_settings == {}
@@ -614,7 +614,7 @@ async def test_a_server_without_props_still_reports_its_backend():
         "state": "not-loaded",
     }
 
-    posture = llm._native_posture(row)
+    posture = llm.native_posture(row)
 
     assert posture is not None
     assert posture.backend == "gguf"
@@ -627,7 +627,7 @@ async def test_a_server_without_props_still_reports_its_backend():
 
 
 async def test_an_mlx_row_is_reported_as_mlx():
-    posture = llm._native_posture({"id": "m", "compatibility_type": "mlx"})
+    posture = llm.native_posture({"id": "m", "compatibility_type": "mlx"})
     assert posture is not None
     assert posture.backend == "mlx"
 
@@ -635,8 +635,8 @@ async def test_an_mlx_row_is_reported_as_mlx():
 async def test_a_row_that_names_nothing_yields_no_posture():
     """Absent reads as "did not say", as everywhere else here — a posture with no backend and
     no window is a row of question marks in the log, which is worse than no row."""
-    assert llm._native_posture({"id": "m", "object": "model"}) is None
-    assert llm._native_posture(None) is None
+    assert llm.native_posture({"id": "m", "object": "model"}) is None
+    assert llm.native_posture(None) is None
 
 
 async def test_the_posture_probe_never_changes_the_window_that_is_returned():

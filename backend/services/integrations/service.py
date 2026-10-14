@@ -254,7 +254,7 @@ class IntegrationService:
         except Exception as exc:  # noqa: BLE001 - any outbound failure is a status
             logger.info("integrations: test of %r failed: %s", row.name, exc)
             error = _reason(exc)
-        await self._record_test(integration_id, error)
+        await self.record_test(integration_id, error)
         return await self.get(owner_id, integration_id)
 
     async def call(
@@ -284,7 +284,7 @@ class IntegrationService:
             raise DegradedCapabilityError(f"action {action_name!r} on {row.name!r} is disabled")
         if body and not chosen.takes_body:
             raise InvalidInputError(f"action {action_name!r} does not take a body")
-        path, query = _fill_path(chosen, params or {})
+        path, query = fill_path(chosen, params or {})
         return await self._request(row, found, path, chosen.method, query, body)
 
     async def live_connectors(self, owner_id: str) -> list[IntegrationView]:
@@ -312,7 +312,7 @@ class IntegrationService:
         # The model supplies path parameters, so the *resolved* URL is what must be
         # checked — both that it still belongs to the operator's connector and that it
         # points somewhere publicly routable.
-        _assert_within(row.base_url, url)
+        assert_within(row.base_url, url)
         await assert_public_url(url)
 
         headers = {"Accept": "application/json", **dict(found.extra_headers)}
@@ -407,7 +407,7 @@ class IntegrationService:
             raise NotFoundError(f"connector {row.name!r} names an unknown preset")
         return found
 
-    async def _record_test(self, integration_id: str, error: str | None) -> None:
+    async def record_test(self, integration_id: str, error: str | None) -> None:
         now = utcnow()
 
         def work(session: Session) -> None:
@@ -474,7 +474,7 @@ class IntegrationService:
         )
 
 
-def _fill_path(chosen: IntegrationAction, params: dict[str, str]) -> tuple[str, dict[str, str]]:
+def fill_path(chosen: IntegrationAction, params: dict[str, str]) -> tuple[str, dict[str, str]]:
     """Substitute the action's ``{placeholder}`` segments from ``params``; whatever is
     left over becomes the query string.
 
@@ -498,7 +498,7 @@ def _join(base_url: str, path: str) -> str:
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
 
-def _assert_within(base_url: str, url: str) -> None:
+def assert_within(base_url: str, url: str) -> None:
     """The resolved URL must still be the operator's connector — same scheme, host and
     port, and still under its path prefix. Path parameters come from the model, so this
     is the check that keeps one from walking the request off the configured service."""

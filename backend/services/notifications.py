@@ -61,8 +61,8 @@ from services.notification_view import NotificationView
 logger = logging.getLogger(__name__)
 
 # Per-subscriber backlog cap before a stalled consumer is dropped (mirrors
-# `runs/stream.py`'s `_SUBSCRIBER_QUEUE_MAX`).
-_SUBSCRIBER_QUEUE_MAX = 1024
+# `runs/stream.py`'s `SUBSCRIBER_QUEUE_MAX`).
+SUBSCRIBER_QUEUE_MAX = 1024
 
 # The stream's ring-buffer depth. Unlike a per-run `RunStream` (buffered for the run's
 # whole lifetime), this surface lives as long as the process — a true ring keeps replay
@@ -155,9 +155,7 @@ class NotificationService:
         # Best-effort, off the critical path: once unlocked, lift prior history into
         # the cache so a restart's REST/unread state reflects it, not just what's
         # notified after this boot (mirrors the embedding backfill's posture).
-        self._rehydrate_task = asyncio.create_task(
-            self._rehydrate(), name="notifications-rehydrate"
-        )
+        self._rehydrate_task = asyncio.create_task(self.rehydrate(), name="notifications-rehydrate")
 
     async def flush(self) -> None:
         """Wait until the write-behind queue has drained."""
@@ -184,6 +182,29 @@ class NotificationService:
     @property
     def last_seq(self) -> int:
         return self._seq
+
+    @property
+    def channels(self) -> list[NotificationChannel]:
+        """The delivery channels notifications fan out to."""
+        return self._channels
+
+    @channels.setter
+    def channels(self, value: list[NotificationChannel]) -> None:
+        self._channels = value
+
+    @property
+    def subscriber_count(self) -> int:
+        """How many live subscribers are attached right now."""
+        return len(self._subscribers)
+
+    @property
+    def rehydrate_task(self) -> asyncio.Task[None] | None:
+        """The startup history-rehydration task, or None before `start`."""
+        return self._rehydrate_task
+
+    async def flush(self) -> None:
+        """Wait until every queued channel delivery has been attempted."""
+        await self._deliveries.join()
 
     async def channel_health(self, owner_id: str) -> list[ChannelHealth]:
         """Every configured channel's health, for the operator's status surface
@@ -298,9 +319,7 @@ class NotificationService:
         ends on its own — this surface is process-lifetime, not tied to one run's
         terminal state — so iteration only stops when the caller does (a client
         disconnect cancelling the pump task, in the SSE route) or the app begins shutting down."""
-        queue: asyncio.Queue[NotificationEvent | None] = asyncio.Queue(
-            maxsize=_SUBSCRIBER_QUEUE_MAX
-        )
+        queue: asyncio.Queue[NotificationEvent | None] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAX)
         # --- atomic: register before snapshot, no await between ---
         self._subscribers.add(queue)
         backlog = (
@@ -393,7 +412,7 @@ class NotificationService:
             exc,
         )
 
-    async def _rehydrate(self) -> None:
+    async def rehydrate(self) -> None:
         _ = await self._vault.unlocked_event.wait()
         try:
             rows = await in_session(

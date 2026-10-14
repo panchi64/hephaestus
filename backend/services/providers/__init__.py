@@ -38,7 +38,7 @@ def _discover() -> dict[str, Provider]:
 _PROVIDERS: dict[str, Provider] = {}
 
 
-def _registry() -> dict[str, Provider]:
+def registry() -> dict[str, Provider]:
     # Deferred (not import-time) so the package can be imported without pulling in
     # every SDK; built once per process thereafter.
     if not _PROVIDERS:
@@ -48,11 +48,11 @@ def _registry() -> dict[str, Provider]:
 
 def get_provider(provider_id: str) -> Provider:
     try:
-        return _registry()[provider_id]
+        return registry()[provider_id]
     except KeyError:
         raise LookupError(f"unknown model provider {provider_id!r}") from None
 
 
 def all_providers() -> list[Provider]:
     """Every adapter, stable-ordered by id — the ``GET /models/providers`` listing."""
-    return [p for _, p in sorted(_registry().items())]
+    return [p for _, p in sorted(registry().items())]

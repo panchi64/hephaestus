@@ -9,7 +9,7 @@ from sqlalchemy import Connection, CursorResult, text
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session
 
-from core.db import _BUSY_TIMEOUT_MS, _LOCK_RETRIES, get_owned, in_session, init_db, make_engine
+from core.db import BUSY_TIMEOUT_MS, LOCK_RETRIES, get_owned, in_session, init_db, make_engine
 from core.exceptions import NotFoundError
 from models.memory import Memory
 
@@ -32,14 +32,14 @@ def test_file_backed_connections_get_the_busy_timeout(tmp_path: Path):
     engine = make_engine(f"sqlite:///{tmp_path / 'app.db'}")
     with engine.connect() as connection:
         value = _pragma(connection, "busy_timeout")
-    assert value == _BUSY_TIMEOUT_MS
+    assert value == BUSY_TIMEOUT_MS
 
     # The handler fires per *connect*, not once per engine — a genuinely fresh
     # DBAPI connection (the pool's is discarded) must come armed the same way.
     engine.dispose()
     with engine.connect() as connection:
         value = _pragma(connection, "busy_timeout")
-    assert value == _BUSY_TIMEOUT_MS
+    assert value == BUSY_TIMEOUT_MS
 
 
 def test_foreign_keys_are_on_per_connection(tmp_path: Path):
@@ -127,7 +127,7 @@ class TestLosingTheWriteLock:
         with pytest.raises(OperationalError):
             await in_session(engine, work)
         # A caller blocked forever on a lock nobody is releasing is worse than one told.
-        assert attempts == _LOCK_RETRIES + 1
+        assert attempts == LOCK_RETRIES + 1
 
     async def test_a_real_fault_is_raised_at_once(self):
         engine = make_engine("sqlite:///:memory:")

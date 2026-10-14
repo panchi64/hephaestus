@@ -15,7 +15,7 @@ import aioimaplib
 import pytest
 
 from services.mail.errors import MailAuthError, MailError, MailUnavailableError
-from services.mail.imap import ImapTransport, _first_literal, _parse_list_line, _search_uids
+from services.mail.imap import ImapTransport, first_literal, parse_list_line, search_uids
 from services.mail.models import ROLE_SENT, ROLE_SPAM, AccountSpec
 
 RAW = (
@@ -341,8 +341,8 @@ async def test_a_missing_folder_is_a_domain_error(monkeypatch: pytest.MonkeyPatc
 
 
 def test_response_parsing_helpers():
-    assert _search_uids([b"* SEARCH", b"4 5 6"]) == ["4", "5", "6"]
-    assert _search_uids([b"* SEARCH"]) == []
-    assert _first_literal([b"1 FETCH (", RAW, b")"]) == RAW
-    assert _first_literal([b")"]) is None
-    assert _parse_list_line(b'(\\Noselect) "/" "[Gmail]"') is None
+    assert search_uids([b"* SEARCH", b"4 5 6"]) == ["4", "5", "6"]
+    assert search_uids([b"* SEARCH"]) == []
+    assert first_literal([b"1 FETCH (", RAW, b")"]) == RAW
+    assert first_literal([b")"]) is None
+    assert parse_list_line(b'(\\Noselect) "/" "[Gmail]"') is None

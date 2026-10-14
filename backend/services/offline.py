@@ -191,13 +191,13 @@ class OfflineModeService:
         while True:
             await asyncio.sleep(self._interval_s)
             try:
-                await self._observe(await self._safe_probe())
+                await self.observe(await self._safe_probe())
             except Exception:
                 # The heartbeat must outlive a transient error on the service-toggle
                 # path; if it died, connectivity would stop being tracked silently.
                 logger.exception("offline mode: monitor iteration failed")
 
-    async def _observe(self, online: bool) -> None:
+    async def observe(self, online: bool) -> None:
         """Fold one connectivity sample into the debounced ``online`` verdict, applying a
         service transition when the streak crosses a threshold. Split out from the
         monitor loop so the state machine is unit-testable without real timers."""

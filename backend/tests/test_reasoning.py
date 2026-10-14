@@ -42,14 +42,14 @@ def test_register_strategy_extends_the_registry():
     def mylab(d: ModelDescriptor) -> ModelSettings | None:
         return sentinel if d.model_id.startswith("mylab-") else None
 
-    original = list(reasoning._strategies)
+    original = list(reasoning.strategies)
     try:
         reasoning.register_strategy(mylab)
         assert disable_thinking(ModelDescriptor(model_id="mylab-7b")) == sentinel
         # Unrelated models still fall through to the built-ins / empty default.
         assert disable_thinking(ModelDescriptor(model_id="gpt-4o")) == {}
     finally:
-        reasoning._strategies[:] = original
+        reasoning.strategies[:] = original
 
 
 def test_register_first_takes_priority_over_builtins():
@@ -58,9 +58,9 @@ def test_register_first_takes_priority_over_builtins():
     def qwen_override(d: ModelDescriptor) -> ModelSettings | None:
         return override if "qwen" in d.model_id.lower() else None
 
-    original = list(reasoning._strategies)
+    original = list(reasoning.strategies)
     try:
         reasoning.register_strategy(qwen_override, first=True)
         assert disable_thinking(ModelDescriptor(model_id="qwen3")) == override
     finally:
-        reasoning._strategies[:] = original
+        reasoning.strategies[:] = original

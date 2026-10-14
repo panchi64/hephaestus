@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from services.commands import CommandRegistry, CommandSource, expand
-from services.commands.registry import LAUNCH_TOOL, _merge
+from services.commands.registry import LAUNCH_TOOL, merge
 from services.commands.spec import CommandSpec
 from services.permissions import PERMISSION_LADDER
 
@@ -35,12 +35,12 @@ class TestPrecedence:
     """Locality ranks a shared name — and never drops the loser."""
 
     def test_the_more_local_source_wins_the_bare_name(self):
-        entries = _merge([_spec("reviewer", "agent"), _spec("reviewer", "skill")])
+        entries = merge([_spec("reviewer", "agent"), _spec("reviewer", "skill")])
         winners = [e.spec for e in entries if e.shadowed_by is None]
         assert [w.source for w in winners] == ["skill"]
 
     def test_the_shadowed_row_still_ships_naming_its_winner(self):
-        entries = _merge([_spec("reviewer", "agent"), _spec("reviewer", "skill")])
+        entries = merge([_spec("reviewer", "agent"), _spec("reviewer", "skill")])
         # Both are real things the operator may have meant; hiding one would be a
         # deletion wearing a precedence rule.
         assert len(entries) == 2
@@ -49,12 +49,12 @@ class TestPrecedence:
         assert shadowed.shadowed_by == "skill:reviewer"
 
     def test_a_project_command_outranks_an_operator_workflow(self):
-        entries = _merge([_spec("deploy", "workflow"), _spec("deploy", "project")])
+        entries = merge([_spec("deploy", "workflow"), _spec("deploy", "project")])
         winner = next(e.spec for e in entries if e.shadowed_by is None)
         assert winner.source == "project"
 
     def test_distinct_names_shadow_nothing(self):
-        entries = _merge([_spec("a", "agent"), _spec("b", "skill")])
+        entries = merge([_spec("a", "agent"), _spec("b", "skill")])
         assert all(e.shadowed_by is None for e in entries)
 
 

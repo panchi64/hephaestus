@@ -121,7 +121,7 @@ class MinerUExtractor(UploadExtractor):
             if proc.returncode != 0:
                 detail = stderr.decode("utf-8", errors="replace")[-500:]
                 raise RuntimeError(f"MinerU exited {proc.returncode}: {detail}")
-            return _read_markdown(out_dir)
+            return read_markdown(out_dir)
 
 
 def _input_ext(mime: str, filename: str) -> str | None:
@@ -136,7 +136,7 @@ def _input_ext(mime: str, filename: str) -> str | None:
     return None
 
 
-def _read_markdown(out_dir: Path) -> str:
+def read_markdown(out_dir: Path) -> str:
     """The largest ``.md`` MinerU wrote under the output dir (it nests by stem/method)."""
     candidates = sorted(out_dir.rglob("*.md"), key=lambda p: p.stat().st_size, reverse=True)
     if not candidates:
