@@ -3,26 +3,28 @@ that stands between an operator-supplied server URL and the host's own network."
 
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import Any
+from collections.abc import Callable
 
 import httpx
 import pytest
+from pydantic import JsonValue
 
 from services.mail.errors import MailAuthError, MailError
 from services.mail.jmap import JmapTransport
 from services.mail.models import ROLE_INBOX, ROLE_SENT, AccountSpec, MailAddress, OutgoingMail
 from services.mail.transport import MailTransport
 
+from ._json import arr, obj, parse_json, s
+
 SESSION_URL = "https://jmap.example.com/.well-known/jmap"
 API_URL = "https://jmap.example.com/api/"
 
-SESSION = {
+SESSION: dict[str, JsonValue] = {
     "apiUrl": API_URL,
     "primaryAccounts": {"urn:ietf:params:jmap:mail": "acct-1"},
 }
 
-MAILBOXES = {
+MAILBOXES: dict[str, JsonValue] = {
     "list": [
         {"id": "mb1", "name": "Inbox", "role": "inbox", "totalEmails": 3, "unreadEmails": 1},
         {"id": "mb2", "name": "Sent", "role": "sent"},
@@ -31,7 +33,7 @@ MAILBOXES = {
     ]
 }
 
-EMAILS = [
+EMAILS: list[dict[str, JsonValue]] = [
     {
         "id": "e2",
         "threadId": "t2",
@@ -56,9 +58,11 @@ EMAILS = [
     },
 ]
 
+type _Call = tuple[str, dict[str, JsonValue], str]
 
-def _spec(**overrides) -> AccountSpec:
-    base = AccountSpec(
+
+def _spec() -> AccountSpec:
+    return AccountSpec(
         account_id="a1",
         address="operator@example.com",
         provider="jmap",
@@ -66,18 +70,17 @@ def _spec(**overrides) -> AccountSpec:
         config={"session_url": SESSION_URL},
         password="api-token",
     )
-    return replace(base, **overrides)
 
 
 class _Server:
     """A scripted JMAP endpoint: one session document, and a handler per method name."""
 
     def __init__(self, *, status: int = 200) -> None:
-        self.status = status
+        self.status: int = status
         self.requests: list[httpx.Request] = []
-        self.handlers = {
+        self.handlers: dict[str, Callable[[dict[str, JsonValue]], JsonValue]] = {
             "Mailbox/get": lambda _args: MAILBOXES,
-            "Email/query": lambda _args: {"ids": [e["id"] for e in EMAILS]},
+            "Email/query": lambda _args: {"ids": [obj(e)["id"] for e in EMAILS]},
             "Email/get": self._email_get,
             "Email/set": lambda _args: {"created": {"draft": {"id": "e9"}}},
             "EmailSubmission/set": lambda _args: {"created": {"s0": {"id": "sub1"}}},
@@ -85,16 +88,19 @@ class _Server:
                 "list": [{"id": "id1", "email": "operator@example.com"}]
             },
         }
-        self.last_calls: list[Any] = []
+        self.last_calls: list[_Call] = []
 
-    def _email_get(self, args):
+    def _email_get(self, args: dict[str, JsonValue]) -> JsonValue:
         ids = args.get("ids")
         if ids is None:  # the query's `#ids` back-reference
-            return {"list": EMAILS}
-        wanted: list[dict[str, Any]] = [dict(e) for e in EMAILS if e["id"] in ids]
-        for email in wanted:
-            email["bodyValues"] = {"p1": {"value": "Hello from JMAP."}}
-            email["textBody"] = [{"partId": "p1", "type": "text/plain"}]
+            return {"list": list(EMAILS)}
+        wanted: list[JsonValue] = []
+        for e in EMAILS:
+            if e["id"] in arr(ids):
+                email = dict(e)
+                email["bodyValues"] = {"p1": {"value": "Hello from JMAP."}}
+                email["textBody"] = [{"partId": "p1", "type": "text/plain"}]
+                wanted.append(email)
         return {"list": wanted}
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -103,13 +109,13 @@ class _Server:
             return httpx.Response(self.status, json={})
         if request.method == "GET":
             return httpx.Response(200, json=SESSION)
-        import json
-
-        body = json.loads(request.content)
-        self.last_calls = body["methodCalls"]
+        body = obj(parse_json(request.content))
+        self.last_calls = []
+        for call in arr(body["methodCalls"]):
+            name, args, call_id = arr(call)
+            self.last_calls.append((s(name), obj(args), s(call_id)))
         responses = [
-            [name, self.handlers[name](args), call_id]
-            for name, args, call_id in body["methodCalls"]
+            [name, self.handlers[name](args), call_id] for name, args, call_id in self.last_calls
         ]
         return httpx.Response(200, json={"methodResponses": responses})
 
@@ -120,7 +126,7 @@ def _transport(server: _Server, spec: AccountSpec | None = None) -> JmapTranspor
 
 
 @pytest.fixture(autouse=True)
-def _allow_outbound(monkeypatch):
+def _allow_outbound(monkeypatch: pytest.MonkeyPatch):
     """The SSRF guard resolves hostnames for real; stub it so tests do no DNS. The guard
     itself is exercised by `test_a_private_server_url_is_refused` below."""
 
@@ -136,7 +142,7 @@ def test_the_adapter_satisfies_the_transport_protocol():
 
 async def test_probe_loads_the_session_and_resolves_the_account():
     server = _Server()
-    await _transport(server).probe()
+    _ = await _transport(server).probe()
     assert str(server.requests[0].url) == SESSION_URL
 
 
@@ -154,7 +160,7 @@ async def test_a_listing_is_one_batched_round_trip():
     # Session GET + a single POST carrying both the query and the get.
     assert len([r for r in server.requests if r.method == "POST"]) == 1
     assert [name for name, _args, _id in server.last_calls] == ["Email/query", "Email/get"]
-    assert server.last_calls[1][1]["#ids"]["resultOf"] == "q0"
+    assert obj(server.last_calls[1][1]["#ids"])["resultOf"] == "q0"
     assert [h.uid for h in headers] == ["e2", "e1"]
     assert headers[0].sender == MailAddress(address="ada@example.org", name="Ada")
     assert headers[0].seen is True
@@ -176,14 +182,14 @@ async def test_fetch_resolves_body_values_by_reference():
 async def test_flag_patches_only_the_requested_keyword():
     server = _Server()
     await _transport(server).flag("mb1", "e1", seen=True)
-    update = server.last_calls[0][1]["update"]["e1"]
+    update = obj(server.last_calls[0][1]["update"])["e1"]
     assert update == {"keywords/$seen": True}
 
 
 async def test_move_patches_both_mailbox_memberships():
     server = _Server()
     await _transport(server).move("mb1", "e1", "mb3")
-    assert server.last_calls[0][1]["update"]["e1"] == {
+    assert obj(server.last_calls[0][1]["update"])["e1"] == {
         "mailboxIds/mb1": None,
         "mailboxIds/mb3": True,
     }
@@ -217,7 +223,7 @@ async def test_deleting_from_trash_destroys_rather_than_re_trashing():
 async def test_deleting_from_elsewhere_still_trashes():
     server = _Server()
     await _transport(server).delete("mb1", "e1")
-    assert server.last_calls[0][1]["update"]["e1"] == {
+    assert obj(server.last_calls[0][1]["update"])["e1"] == {
         "mailboxIds/mb1": None,
         "mailboxIds/mb-trash": True,
     }
@@ -231,17 +237,17 @@ async def test_send_creates_a_draft_and_submits_it():
     names = [name for name, _args, _id in server.last_calls]
     assert names == ["Email/set", "EmailSubmission/set"]
     submission = server.last_calls[1][1]
-    assert submission["create"]["s0"] == {"emailId": "#draft", "identityId": "id1"}
+    assert obj(submission["create"])["s0"] == {"emailId": "#draft", "identityId": "id1"}
     assert submission["onSuccessDestroyEmail"] == ["#draft"]
     assert message_id == "e9"
 
 
 async def test_an_unauthorized_response_is_an_auth_error():
     with pytest.raises(MailAuthError):
-        await _transport(_Server(status=401)).probe()
+        _ = await _transport(_Server(status=401)).probe()
 
 
-async def test_a_private_server_url_is_refused(monkeypatch):
+async def test_a_private_server_url_is_refused(monkeypatch: pytest.MonkeyPatch):
     """The guard is re-run per request, so a host that resolves privately is refused even
     though the account was added successfully."""
     from core.exceptions import SSRFError
@@ -252,5 +258,5 @@ async def test_a_private_server_url_is_refused(monkeypatch):
     monkeypatch.setattr("services.mail.jmap.assert_public_url", _blocked)
     server = _Server()
     with pytest.raises(MailError):
-        await _transport(server).probe()
+        _ = await _transport(server).probe()
     assert server.requests == []
