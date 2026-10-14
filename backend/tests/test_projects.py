@@ -14,7 +14,13 @@ kind of failure that looks like a working feature in every other test.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import NoReturn
+
+import httpx
 import pytest
+from fastapi import FastAPI
+from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, select
 
 from core.db import in_session, init_db, make_engine
@@ -23,13 +29,15 @@ from core.vault import Vault, VaultLocked
 from models.conversation import Conversation
 from models.corpus import CorpusSource
 from models.task import ScheduledTask
+from services.corpus import CorpusIndex
 from services.projects import ProjectStore, project_clause, visible_project_ids
 from services.projects.store import SCOPED_MODELS
 from services.settings_store import SettingsStore
-from tests._helpers import client_app
+from tests._helpers import app_state, client_app
+from tests._json import arr, json_body, json_list, obj, s
 
 
-async def _store(tmp_path) -> ProjectStore:
+async def _store(tmp_path: Path) -> ProjectStore:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
@@ -50,7 +58,7 @@ class TestScopeRule:
 
 
 class TestCatalog:
-    async def test_create_seals_the_path_and_probes_the_repo(self, tmp_path):
+    async def test_create_seals_the_path_and_probes_the_repo(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "work"
         work.mkdir()
@@ -64,32 +72,32 @@ class TestCatalog:
         assert view.probe.is_git_repo is False
         assert view.probe.uncommitted_changes is None
 
-    async def test_name_defaults_to_the_directory_name(self, tmp_path):
+    async def test_name_defaults_to_the_directory_name(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "hephaestus"
         work.mkdir()
         view = await store.create("operator", "  ", str(work))
         assert view.name == "hephaestus"
 
-    async def test_relative_path_is_refused(self, tmp_path):
+    async def test_relative_path_is_refused(self, tmp_path: Path):
         store = await _store(tmp_path)
         # A relative path would resolve against the *server's* cwd, never what the
         # operator meant, so it is rejected rather than silently reinterpreted.
         with pytest.raises(InvalidInputError):
-            await store.create("operator", "x", "relative/dir")
+            _ = await store.create("operator", "x", "relative/dir")
 
-    async def test_missing_directory_is_refused(self, tmp_path):
+    async def test_missing_directory_is_refused(self, tmp_path: Path):
         store = await _store(tmp_path)
         with pytest.raises(InvalidInputError):
-            await store.create("operator", "x", str(tmp_path / "nope"))
+            _ = await store.create("operator", "x", str(tmp_path / "nope"))
 
-    async def test_another_owners_project_is_not_found(self, tmp_path):
+    async def test_another_owners_project_is_not_found(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "work"
         work.mkdir()
         view = await store.create("operator", "Work", str(work))
         with pytest.raises(NotFoundError):
-            await store.get("someone-else", view.id)
+            _ = await store.get("someone-else", view.id)
 
 
 class TestEnsureForPath:
@@ -100,7 +108,7 @@ class TestEnsureForPath:
     that disagree about the same tree.
     """
 
-    async def test_creates_a_project_named_after_the_directory(self, tmp_path):
+    async def test_creates_a_project_named_after_the_directory(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "hephaestus"
         work.mkdir()
@@ -114,7 +122,7 @@ class TestEnsureForPath:
         assert view.git_initialized is False
         assert view.probe.is_git_repo is False
 
-    async def test_the_same_directory_returns_the_same_project(self, tmp_path):
+    async def test_the_same_directory_returns_the_same_project(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "work"
         work.mkdir()
@@ -127,7 +135,7 @@ class TestEnsureForPath:
         assert second.id == first.id
         assert len(await store.list("operator")) == 1
 
-    async def test_it_matches_a_project_that_was_created_by_hand(self, tmp_path):
+    async def test_it_matches_a_project_that_was_created_by_hand(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "work"
         work.mkdir()
@@ -140,12 +148,12 @@ class TestEnsureForPath:
         assert found.id == named.id
         assert found.name == "Client work"
 
-    async def test_an_archived_project_comes_back_unarchived(self, tmp_path):
+    async def test_an_archived_project_comes_back_unarchived(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "work"
         work.mkdir()
         stale = await store.create("operator", "Work", str(work))
-        await store.update("operator", stale.id, archived=True)
+        _ = await store.update("operator", stale.id, archived=True)
 
         revived = await store.ensure_for_path("operator", str(work))
 
@@ -153,7 +161,7 @@ class TestEnsureForPath:
         assert revived.id == stale.id
         assert revived.archived is False
 
-    async def test_another_owners_project_is_not_adopted(self, tmp_path):
+    async def test_another_owners_project_is_not_adopted(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "work"
         work.mkdir()
@@ -163,15 +171,15 @@ class TestEnsureForPath:
 
         assert mine.id != theirs.id
 
-    async def test_a_missing_directory_is_still_refused(self, tmp_path):
+    async def test_a_missing_directory_is_still_refused(self, tmp_path: Path):
         store = await _store(tmp_path)
         # Removing the ceremony does not remove the check: a path that is not a
         # directory cannot be worked in, and inventing a project for it would fail
         # later, further from the operator's action.
         with pytest.raises(InvalidInputError):
-            await store.ensure_for_path("operator", str(tmp_path / "nope"))
+            _ = await store.ensure_for_path("operator", str(tmp_path / "nope"))
 
-    async def test_workspace_names_are_basenames_and_never_paths(self, tmp_path):
+    async def test_workspace_names_are_basenames_and_never_paths(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "acme-api"
         work.mkdir()
@@ -190,52 +198,54 @@ class TestWorkspaceRootsAreMemoised:
     while anything is running — so it must not be a table scan plus an AEAD decrypt per
     project each time, and it must still be *right* the moment a project is written."""
 
-    async def test_a_repeat_read_costs_no_query_and_no_decrypt(self, tmp_path, monkeypatch):
+    async def test_a_repeat_read_costs_no_query_and_no_decrypt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         store = await _store(tmp_path)
         (tmp_path / "acme").mkdir()
-        await store.ensure_for_path("operator", str(tmp_path / "acme"))
+        _ = await store.ensure_for_path("operator", str(tmp_path / "acme"))
         first = await store.workspace_roots("operator")
 
-        def explode(*_args, **_kwargs):
+        def explode(*_args: object, **_kwargs: object) -> NoReturn:
             raise AssertionError("workspace_roots re-read the catalog on a warm call")
 
         monkeypatch.setattr(store._vault, "decrypt_str", explode)
         assert await store.workspace_roots("operator") == first
         assert await store.workspace_names("operator") == {pid: "acme" for pid in first}
 
-    async def test_a_caller_cannot_edit_the_memo_through_what_it_was_handed(self, tmp_path):
+    async def test_a_caller_cannot_edit_the_memo_through_what_it_was_handed(self, tmp_path: Path):
         store = await _store(tmp_path)
         (tmp_path / "acme").mkdir()
-        await store.ensure_for_path("operator", str(tmp_path / "acme"))
+        _ = await store.ensure_for_path("operator", str(tmp_path / "acme"))
 
         (await store.workspace_roots("operator")).clear()
 
         assert await store.workspace_roots("operator") != {}
 
-    async def test_a_new_project_shows_up_without_waiting_for_anything(self, tmp_path):
+    async def test_a_new_project_shows_up_without_waiting_for_anything(self, tmp_path: Path):
         store = await _store(tmp_path)
         (tmp_path / "acme").mkdir()
         (tmp_path / "beta").mkdir()
-        await store.ensure_for_path("operator", str(tmp_path / "acme"))
-        await store.workspace_roots("operator")  # warm the memo
+        _ = await store.ensure_for_path("operator", str(tmp_path / "acme"))
+        _ = await store.workspace_roots("operator")  # warm the memo
 
         beta = await store.ensure_for_path("operator", str(tmp_path / "beta"))
 
         assert beta.id in await store.workspace_roots("operator")
 
-    async def test_a_rename_and_a_delete_are_both_visible_immediately(self, tmp_path):
+    async def test_a_rename_and_a_delete_are_both_visible_immediately(self, tmp_path: Path):
         store = await _store(tmp_path)
         (tmp_path / "acme").mkdir()
         acme = await store.ensure_for_path("operator", str(tmp_path / "acme"))
-        await store.workspace_roots("operator")
+        _ = await store.workspace_roots("operator")
 
-        await store.update("operator", acme.id, archived=True)
+        _ = await store.update("operator", acme.id, archived=True)
         assert acme.id in await store.workspace_roots("operator")  # archived ≠ gone
 
         await store.delete("operator", acme.id)
         assert await store.workspace_roots("operator") == {}
 
-    async def test_activating_a_project_reorders_the_memo_it_invalidates(self, tmp_path):
+    async def test_activating_a_project_reorders_the_memo_it_invalidates(self, tmp_path: Path):
         # Insertion order is the answer, not decoration: opening a path the model named
         # searches these directories in order, and the one worked in most recently is the
         # one meant. A memo that survived `activate` would search yesterday's project.
@@ -246,22 +256,22 @@ class TestWorkspaceRootsAreMemoised:
         beta = await store.ensure_for_path("operator", str(tmp_path / "beta"))
         assert list(await store.workspace_roots("operator")) == [beta.id, acme.id]
 
-        await store.activate("operator", acme.id)
+        _ = await store.activate("operator", acme.id)
 
         assert list(await store.workspace_roots("operator")) == [acme.id, beta.id]
 
-    async def test_locking_the_vault_drops_the_decrypted_paths(self, tmp_path):
+    async def test_locking_the_vault_drops_the_decrypted_paths(self, tmp_path: Path):
         # The path names the operator's clients, which is why it is sealed at rest. A
         # memo that outlived the key would keep answering with it.
         store = await _store(tmp_path)
         (tmp_path / "acme").mkdir()
-        await store.ensure_for_path("operator", str(tmp_path / "acme"))
-        await store.workspace_roots("operator")
+        _ = await store.ensure_for_path("operator", str(tmp_path / "acme"))
+        _ = await store.workspace_roots("operator")
 
         store._vault.lock()
 
         with pytest.raises(VaultLocked):
-            await store.workspace_roots("operator")
+            _ = await store.workspace_roots("operator")
 
 
 class TestDeletingAProject:
@@ -283,7 +293,7 @@ class TestDeletingAProject:
         }
         assert scoped == set(SCOPED_MODELS)
 
-    async def test_its_rows_are_unfiled_rather_than_orphaned(self, tmp_path):
+    async def test_its_rows_are_unfiled_rather_than_orphaned(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "work"
         work.mkdir()
@@ -306,7 +316,7 @@ class TestDeletingAProject:
             )
             session.commit()
 
-        await in_session(store._db, seed)  # noqa: SLF001 — seeding the store's own engine
+        await in_session(store._db, seed)
         await store.delete("operator", project.id)
 
         def read(session: Session) -> list[str | None]:
@@ -317,39 +327,39 @@ class TestDeletingAProject:
 
         # A deleted id can never be active again, so rows still pointing at it would
         # drop out of `visible = unfiled ∪ active` forever with no way back from the UI.
-        assert await in_session(store._db, read) == [None, None]  # noqa: SLF001
+        assert await in_session(store._db, read) == [None, None]
 
 
 class TestActiveSelection:
-    async def test_nothing_is_active_by_default(self, tmp_path):
+    async def test_nothing_is_active_by_default(self, tmp_path: Path):
         store = await _store(tmp_path)
         assert await store.active_id("operator") is None
 
-    async def test_activate_then_deactivate_round_trips(self, tmp_path):
+    async def test_activate_then_deactivate_round_trips(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "work"
         work.mkdir()
         view = await store.create("operator", "Work", str(work))
 
-        await store.activate("operator", view.id)
+        _ = await store.activate("operator", view.id)
         assert await store.active_id("operator") == view.id
 
-        await store.activate("operator", None)
+        _ = await store.activate("operator", None)
         assert await store.active_id("operator") is None
 
-    async def test_activating_an_unknown_project_is_refused(self, tmp_path):
+    async def test_activating_an_unknown_project_is_refused(self, tmp_path: Path):
         store = await _store(tmp_path)
         # Refused rather than stored, so the selection can never dangle.
         with pytest.raises(NotFoundError):
-            await store.activate("operator", "no-such-project")
+            _ = await store.activate("operator", "no-such-project")
         assert await store.active_id("operator") is None
 
-    async def test_deleting_the_active_project_clears_the_selection(self, tmp_path):
+    async def test_deleting_the_active_project_clears_the_selection(self, tmp_path: Path):
         store = await _store(tmp_path)
         work = tmp_path / "work"
         work.mkdir()
         view = await store.create("operator", "Work", str(work))
-        await store.activate("operator", view.id)
+        _ = await store.activate("operator", view.id)
 
         await store.delete("operator", view.id)
 
@@ -365,7 +375,7 @@ class TestProjectClause:
     """
 
     @staticmethod
-    def _seeded():
+    def _seeded() -> Engine:
         engine = make_engine("sqlite:///:memory:")
         init_db(engine)
         with Session(engine) as session:
@@ -376,7 +386,7 @@ class TestProjectClause:
         return engine
 
     @staticmethod
-    def _ids(engine, visible) -> list[str]:
+    def _ids(engine: Engine, visible: tuple[str | None, ...] | None) -> list[str]:
         with Session(engine) as session:
             query = select(Conversation)
             clause = project_clause(Conversation.project_id, visible)
@@ -401,7 +411,7 @@ class TestProjectClause:
 
 
 class TestRoutes:
-    async def test_feature_wires_up_and_round_trips(self, tmp_path):
+    async def test_feature_wires_up_and_round_trips(self, tmp_path: Path):
         async with client_app() as (client, app):
             assert hasattr(app.state, "projects")
 
@@ -409,31 +419,31 @@ class TestRoutes:
             work.mkdir()
             created = await client.post("/projects", json={"name": "P", "rootPath": str(work)})
             assert created.status_code == 201, created.text
-            pid = created.json()["id"]
+            pid = json_body(created)["id"]
 
-            listing = (await client.get("/projects")).json()
-            assert [p["id"] for p in listing["projects"]] == [pid]
+            listing = json_body(await client.get("/projects"))
+            assert [obj(p)["id"] for p in arr(listing["projects"])] == [pid]
             assert listing["activeId"] is None
 
-            activated = (await client.post(f"/projects/{pid}/activate")).json()
+            activated = json_body(await client.post(f"/projects/{pid}/activate"))
             assert activated["activeId"] == pid
 
-            assert (await client.post("/projects/deactivate")).json()["activeId"] is None
+            assert json_body(await client.post("/projects/deactivate"))["activeId"] is None
 
-    async def test_ensure_files_a_directory_and_is_idempotent(self, tmp_path):
+    async def test_ensure_files_a_directory_and_is_idempotent(self, tmp_path: Path):
         async with client_app() as (client, _app):
             work = tmp_path / "acme-api"
             work.mkdir()
 
             first = await client.post("/projects/ensure", json={"rootPath": str(work)})
             assert first.status_code == 200, first.text
-            assert first.json()["name"] == "acme-api"
+            assert json_body(first)["name"] == "acme-api"
 
             second = await client.post("/projects/ensure", json={"rootPath": str(work)})
-            assert second.json()["id"] == first.json()["id"]
-            assert len((await client.get("/projects")).json()["projects"]) == 1
+            assert json_body(second)["id"] == json_body(first)["id"]
+            assert len(arr(json_body(await client.get("/projects"))["projects"])) == 1
 
-    async def test_ensure_is_not_swallowed_by_the_id_route(self, tmp_path):
+    async def test_ensure_is_not_swallowed_by_the_id_route(self, tmp_path: Path):
         async with client_app() as (client, _app):
             # `/projects/{project_id}` is a GET and `/projects/ensure` a POST, but the
             # two share a path shape — declaration order is what keeps `ensure` from
@@ -441,12 +451,12 @@ class TestRoutes:
             resp = await client.post("/projects/ensure", json={"rootPath": str(tmp_path / "no")})
             assert resp.status_code == 422, resp.text
 
-    async def test_a_worktree_thread_carries_its_workspace_into_the_listing(self, tmp_path):
+    async def test_a_worktree_thread_carries_its_workspace_into_the_listing(self, tmp_path: Path):
         async with client_app() as (client, app):
             work = tmp_path / "acme-api"
             work.mkdir()
             ensured = await client.post("/projects/ensure", json={"rootPath": str(work)})
-            pid = ensured.json()["id"]
+            pid = s(json_body(ensured)["id"])
 
             def seed(session: Session) -> None:
                 session.add(
@@ -456,10 +466,10 @@ class TestRoutes:
                 )
                 session.commit()
 
-            await in_session(app.state.db_engine, seed)
+            await in_session(app_state(app, "db_engine", Engine), seed)
 
             listing = await client.get("/conversations", headers={"X-Heph-Project": "all"})
-            row = next(c for c in listing.json() if c["id"] == "c-code")
+            row = next(obj(c) for c in json_list(listing) if obj(c)["id"] == "c-code")
             # The rail groups on these two and nothing else — the workspace kind picks the section,
             # the workspace names it, and the path stays on the server.
             assert row["workspace_kind"] == "worktree"
@@ -469,7 +479,7 @@ class TestRoutes:
         async with client_app() as (_client, app):
             # Registered as an ordinary category, so it appears in the operator's
             # tool settings and can be toggled like every other tool.
-            assert "project" in app.state.tool_categories
+            assert "project" in app_state(app, "tool_categories", dict)
 
 
 class TestScopedSurfaces:
@@ -480,7 +490,7 @@ class TestScopedSurfaces:
     """
 
     @staticmethod
-    async def _seed(app) -> None:
+    async def _seed(app: FastAPI) -> None:
         # Ids are fixed so the assertions can name *which* rows came back, not just how
         # many — a count would pass while the wrong project's threads were returned.
         # Written through `in_session` like every other writer: a booted app's in-memory
@@ -491,14 +501,14 @@ class TestScopedSurfaces:
             session.add(Conversation(id="c-b", owner_id="operator", project_id="proj-b"))
             session.commit()
 
-        await in_session(app.state.db_engine, work)
+        await in_session(app_state(app, "db_engine", Engine), work)
 
     @staticmethod
-    async def _listed(client, header: str | None) -> list[str]:
+    async def _listed(client: httpx.AsyncClient, header: str | None) -> list[str]:
         headers = {"X-Heph-Project": header} if header is not None else {}
         resp = await client.get("/conversations", headers=headers)
         assert resp.status_code == 200, resp.text
-        return sorted(c["id"] for c in resp.json())
+        return sorted(s(obj(c)["id"]) for c in json_list(resp))
 
     async def test_no_active_project_shows_only_unfiled(self):
         async with client_app() as (client, app):
@@ -527,27 +537,30 @@ class TestCreationStampsTheScope:
     """
 
     @staticmethod
-    async def _active(client, tmp_path, name: str) -> str:
+    async def _active(client: httpx.AsyncClient, tmp_path: Path, name: str) -> str:
         root = tmp_path / name
         root.mkdir()
-        project = (
+        project = json_body(
             await client.post("/projects", json={"name": name, "rootPath": str(root)})
-        ).json()
-        await client.post(f"/projects/{project['id']}/activate")
-        return project["id"]
+        )
+        project_id = s(project["id"])
+        _ = await client.post(f"/projects/{project_id}/activate")
+        return project_id
 
     @staticmethod
-    async def _filed(app, model_cls, row_id: str) -> str | None:
+    async def _filed(
+        app: FastAPI, model_cls: type[ScheduledTask] | type[CorpusSource], row_id: str
+    ) -> str | None:
         def work(session: Session) -> str | None:
             row = session.get(model_cls, row_id)
             return None if row is None else row.project_id
 
-        return await in_session(app.state.db_engine, work)
+        return await in_session(app_state(app, "db_engine", Engine), work)
 
-    async def test_a_task_is_filed(self, tmp_path):
+    async def test_a_task_is_filed(self, tmp_path: Path):
         async with client_app() as (client, app):
             project_id = await self._active(client, tmp_path, "work")
-            created = (
+            created = json_body(
                 await client.post(
                     "/tasks",
                     json={
@@ -558,21 +571,21 @@ class TestCreationStampsTheScope:
                         "schedule": {"type": "interval", "everySeconds": 3600},
                     },
                 )
-            ).json()
-            assert await self._filed(app, ScheduledTask, created["id"]) == project_id
+            )
+            assert await self._filed(app, ScheduledTask, s(created["id"])) == project_id
 
-    async def test_a_corpus_folder_is_filed(self, tmp_path):
+    async def test_a_corpus_folder_is_filed(self, tmp_path: Path):
         async with client_app() as (client, app):
             project_id = await self._active(client, tmp_path, "work")
             folder = tmp_path / "notes"
             folder.mkdir()
-            created = (await client.post("/corpus/folders", json={"path": str(folder)})).json()
-            assert await self._filed(app, CorpusSource, created["id"]) == project_id
+            created = json_body(await client.post("/corpus/folders", json={"path": str(folder)}))
+            assert await self._filed(app, CorpusSource, s(created["id"])) == project_id
 
-    async def test_all_projects_files_nothing(self, tmp_path):
+    async def test_all_projects_files_nothing(self, tmp_path: Path):
         async with client_app() as (client, app):
-            await self._active(client, tmp_path, "work")
-            created = (
+            _ = await self._active(client, tmp_path, "work")
+            created = json_body(
                 await client.post(
                     "/tasks",
                     json={
@@ -584,9 +597,9 @@ class TestCreationStampsTheScope:
                     },
                     headers={"X-Heph-Project": "all"},
                 )
-            ).json()
+            )
             # Asking to *see* everything is not a statement about where new work goes.
-            assert await self._filed(app, ScheduledTask, created["id"]) is None
+            assert await self._filed(app, ScheduledTask, s(created["id"])) is None
 
 
 class TestCorpusScopeIsAUnion:
@@ -598,7 +611,7 @@ class TestCorpusScopeIsAUnion:
     """
 
     @staticmethod
-    async def _excluded(app, active: str | None) -> frozenset[str]:
+    async def _excluded(app: FastAPI, active: str | None) -> frozenset[str]:
         def work(session: Session) -> None:
             session.add(
                 CorpusSource(
@@ -621,8 +634,8 @@ class TestCorpusScopeIsAUnion:
             )
             session.commit()
 
-        await in_session(app.state.db_engine, work)
-        return await app.state.corpus._out_of_scope_source_ids(
+        await in_session(app_state(app, "db_engine", Engine), work)
+        return await app_state(app, "corpus", CorpusIndex)._out_of_scope_source_ids(
             "operator", visible_project_ids(active)
         )
 
