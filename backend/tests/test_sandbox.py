@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import os
 import stat
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -25,28 +26,28 @@ from services.sandbox.host import _configure, confine
 
 
 # --- paths stay inside the workspace ----------------------------------------
-def test_contained_path_resolves_inside_the_root(tmp_path):
+def test_contained_path_resolves_inside_the_root(tmp_path: Path):
     assert contained_path(tmp_path, "a/b.txt") == tmp_path.resolve() / "a" / "b.txt"
 
 
 @pytest.mark.parametrize("relpath", ["../escape", "a/../../escape", "/etc/passwd"])
-def test_contained_path_refuses_an_escape(tmp_path, relpath):
+def test_contained_path_refuses_an_escape(tmp_path: Path, relpath: str):
     with pytest.raises(SandboxError, match="escapes"):
-        contained_path(tmp_path, relpath)
+        _ = contained_path(tmp_path, relpath)
 
 
-def test_contained_path_refuses_a_symlink_out_of_the_root(tmp_path):
+def test_contained_path_refuses_a_symlink_out_of_the_root(tmp_path: Path):
     outside = tmp_path / "outside"
     outside.mkdir()
     root = tmp_path / "root"
     root.mkdir()
     (root / "link").symlink_to(outside)
     with pytest.raises(SandboxError):
-        contained_path(root, "link/x")
+        _ = contained_path(root, "link/x")
 
 
-def test_contained_file_answers_none_instead_of_raising(tmp_path):
-    (tmp_path / "here.txt").write_text("x")
+def test_contained_file_answers_none_instead_of_raising(tmp_path: Path):
+    _ = (tmp_path / "here.txt").write_text("x")
     (tmp_path / "dir").mkdir()
     assert contained_file(tmp_path, "here.txt") == tmp_path.resolve() / "here.txt"
     assert contained_file(tmp_path, "dir") is None
@@ -72,11 +73,11 @@ async def test_run_on_host_executes_and_reports_exit():
     assert bad.exit_code == 3 and not bad.ok
 
 
-async def test_a_host_command_runs_where_the_caller_says(tmp_path):
+async def test_a_host_command_runs_where_the_caller_says(tmp_path: Path):
     # Without a `cwd` a subprocess inherits the *server process's* working directory —
     # wherever the backend was started — and every relative path in the command means
     # something among this application's own files instead.
-    (tmp_path / "here.txt").write_text("found")
+    _ = (tmp_path / "here.txt").write_text("found")
     result = await run_on_host("cat here.txt", cwd=tmp_path)
     assert result.ok and "found" in result.stdout
 
@@ -102,7 +103,9 @@ def test_the_scratch_directory_is_this_user_s_alone():
     assert stat.S_IMODE(scratch.lstat().st_mode) == 0o700
 
 
-def test_a_scratch_path_someone_else_planted_is_refused(monkeypatch, tmp_path):
+def test_a_scratch_path_someone_else_planted_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     # `Path.mkdir(exist_ok=True)` swallows the already-there case whenever `is_dir()` is
     # true, and `is_dir()` follows symlinks — so before this, a link planted at the scratch
     # path was silently adopted, and it is both the cwd of every approved host command and
@@ -111,31 +114,31 @@ def test_a_scratch_path_someone_else_planted_is_refused(monkeypatch, tmp_path):
     elsewhere.mkdir()
     planted = tmp_path / "tmproot"
     planted.mkdir()
-    monkeypatch.setattr(host_mod.tempfile, "gettempdir", lambda: str(planted))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(planted))
     link = host_mod.scratch_path()
     link.symlink_to(elsewhere, target_is_directory=True)
     with pytest.raises(HostExecutionError, match="symlink"):
-        host_scratch_dir()
+        _ = host_scratch_dir()
 
 
 def test_a_scratch_directory_this_process_owns_is_tightened_rather_than_refused(
-    monkeypatch, tmp_path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     # The ordinary case for an existing install: our own directory, created before it was
     # created narrowly. Refusing it would break the tool over a mode we can simply fix.
     root = tmp_path / "tmproot"
     root.mkdir()
-    monkeypatch.setattr(host_mod.tempfile, "gettempdir", lambda: str(root))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(root))
     host_mod.scratch_path().mkdir(mode=0o755)
     assert stat.S_IMODE(host_scratch_dir().lstat().st_mode) == 0o700
 
 
-async def test_a_host_command_takes_the_environment_it_is_given(tmp_path):
+async def test_a_host_command_takes_the_environment_it_is_given():
     result = await run_on_host("echo $HEPHAESTUS_TEST_MARK", env={"HEPHAESTUS_TEST_MARK": "pinned"})
     assert "pinned" in result.stdout
 
 
-async def test_host_timeout_kills_the_whole_process_group(tmp_path):
+async def test_host_timeout_kills_the_whole_process_group(tmp_path: Path):
     # A child the command backgrounds must die with the timeout, not orphan.
     marker = tmp_path / "orphan-ran"
     cmd = f"( sleep 2; touch {marker} ) & wait"
@@ -160,7 +163,7 @@ async def test_a_disabled_confinement_still_runs_the_command():
     assert result.ok and "ran" in result.stdout
 
 
-async def test_the_hatch_runs_where_and_with_what_it_was_told(tmp_path):
+async def test_the_hatch_runs_where_and_with_what_it_was_told(tmp_path: Path):
     # `cwd` and `env` exist so the project-folder shell can share this spawn; the hatch itself
     # passes neither, and a regression that dropped them would be silent there.
     result = await run_on_host(
@@ -176,7 +179,9 @@ async def test_the_hatch_runs_where_and_with_what_it_was_told(tmp_path):
     assert "carried" in result.stdout
 
 
-async def test_the_hatch_does_not_hand_the_operators_model_keys_to_the_command(monkeypatch):
+async def test_the_hatch_does_not_hand_the_operators_model_keys_to_the_command(
+    monkeypatch: pytest.MonkeyPatch,
+):
     # The fence denies the paths those keys are *stored* at and says nothing about the
     # environment, so an inherited one puts them in the transcript of the single command
     # the operator approved without ever being shown that it could read them. The
@@ -189,7 +194,9 @@ async def test_the_hatch_does_not_hand_the_operators_model_keys_to_the_command(m
     assert "kept" in result.stdout  # only the credentials go, not the whole environment
 
 
-async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(monkeypatch):
+async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(
+    monkeypatch: pytest.MonkeyPatch,
+):
     # One proxy serves every confined process here, and it filters each request against
     # the *process-global* configuration. So teaching it a caller's domains would widen
     # the fence around everything else running at that moment — another conversation's
@@ -205,7 +212,9 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(m
 
     seen: list[SandboxRuntimeConfig | None] = []
 
-    async def wrap(command, *, custom_config=None, **_kwargs):
+    async def wrap(
+        command: str, *, custom_config: SandboxRuntimeConfig | None = None, **_kwargs: object
+    ) -> str:
         # Stubbed rather than run: what a real wrap produces is seatbelt's or bubblewrap's
         # business, and only on the machines that have them.
         seen.append(custom_config)
@@ -220,7 +229,7 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(m
         )
     )
     try:
-        await confine(
+        _ = await confine(
             "curl https://files.example.com",
             allowed_domains=["files.example.com"],
             allow_write=["/work"],
@@ -241,7 +250,7 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(m
         runtime_manager._config = before
 
 
-async def test_confinement_denies_reading_the_data_directory(tmp_path):
+async def test_confinement_denies_reading_the_data_directory(tmp_path: Path):
     # The one path whose exposure would undo at-rest encryption wholesale: the vault,
     # the sealed workspaces and the database all live under it.
     # Enabled explicitly: conftest switches host confinement off for the rest of the suite.
@@ -253,7 +262,7 @@ async def test_confinement_denies_reading_the_data_directory(tmp_path):
         if not confinement.active:
             pytest.skip(f"no host sandbox primitive here: {confinement.reason}")
         secret = tmp_path / "keyfile.json"
-        secret.write_text("SEALEDKEYMATERIAL")
+        _ = secret.write_text("SEALEDKEYMATERIAL")
         result = await run_on_host(f"cat {secret}", confinement=confinement)
         assert "SEALEDKEYMATERIAL" not in result.stdout
     finally:

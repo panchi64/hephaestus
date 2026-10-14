@@ -12,14 +12,23 @@ from __future__ import annotations
 
 import asyncio
 
-from runs import CHAT_TURN_KINDS, LANE_BY_KIND, LaneLimits, RunRegistry, RunStatus, lane_for
+from runs import (
+    CHAT_TURN_KINDS,
+    LANE_BY_KIND,
+    LaneLimits,
+    Orchestrator,
+    Run,
+    RunRegistry,
+    RunStatus,
+    lane_for,
+)
 from runs.lanes import DEFAULT_LANE, LANES
 
 
-def _blocking(started: asyncio.Event, release: asyncio.Event):
-    async def orchestrator(run) -> None:
+def _blocking(started: asyncio.Event, release: asyncio.Event) -> Orchestrator:
+    async def orchestrator(_run: Run) -> None:
         started.set()
-        await release.wait()
+        _ = await release.wait()
 
     return orchestrator
 
@@ -70,15 +79,15 @@ async def test_a_saturated_background_lane_does_not_queue_the_operators_turn():
     second_task = reg.submit(
         kind="job", owner_id="operator", orchestrator=_blocking(asyncio.Event(), release_task)
     )
-    await task_started.wait()
-    await linked_started.wait()
+    _ = await task_started.wait()
+    _ = await linked_started.wait()
 
     chat = reg.submit(
         kind="chat", owner_id="operator", orchestrator=_blocking(chat_started, release_chat)
     )
     # The interactive lane is empty, so this starts while both unattended lanes are full
     # and a second task is queued behind the first.
-    await asyncio.wait_for(chat_started.wait(), timeout=1.0)
+    _ = await asyncio.wait_for(chat_started.wait(), timeout=1.0)
     assert chat.status is RunStatus.running
     assert second_task.status is RunStatus.queued
 
@@ -101,7 +110,7 @@ async def test_two_interactive_turns_still_share_their_own_lane():
     second = reg.submit(
         kind="chat", owner_id="operator", orchestrator=_blocking(asyncio.Event(), release)
     )
-    await first_started.wait()
+    _ = await first_started.wait()
     assert second.status is RunStatus.queued
 
     release.set()
@@ -133,8 +142,8 @@ async def test_a_lane_cannot_push_the_host_past_its_ceiling():
         reg.submit(kind="job", owner_id="operator", orchestrator=_blocking(started[1], release)),
         reg.submit(kind="chat", owner_id="operator", orchestrator=_blocking(started[2], release)),
     ]
-    await started[0].wait()
-    await started[1].wait()
+    _ = await started[0].wait()
+    _ = await started[1].wait()
     await asyncio.sleep(0)  # let the third run reach its gate
 
     assert not started[2].is_set()
@@ -152,7 +161,7 @@ async def test_a_failed_run_releases_its_lane_permit():
     # out of service for the life of the process, with nothing to see but queued turns.
     reg = RunRegistry(lanes=LaneLimits(interactive=1))
 
-    async def boom(run) -> None:
+    async def boom(_run: Run) -> None:
         raise RuntimeError("the model refused")
 
     failed = reg.submit(kind="chat", owner_id="operator", orchestrator=boom)
@@ -161,7 +170,7 @@ async def test_a_failed_run_releases_its_lane_permit():
 
     started, release = asyncio.Event(), asyncio.Event()
     after = reg.submit(kind="chat", owner_id="operator", orchestrator=_blocking(started, release))
-    await asyncio.wait_for(started.wait(), timeout=1.0)
+    _ = await asyncio.wait_for(started.wait(), timeout=1.0)
 
     release.set()
     await after.wait()
@@ -180,14 +189,14 @@ async def test_a_cancelled_run_releases_its_lane_permit():
     second = reg.submit(
         kind="chat", owner_id="operator", orchestrator=_blocking(second_started, release)
     )
-    await first_started.wait()
+    _ = await first_started.wait()
     assert second.status is RunStatus.queued
 
-    await reg.cancel(first.id)
+    _ = await reg.cancel(first.id)
     await first.wait()
     assert first.status is RunStatus.cancelled
 
-    await asyncio.wait_for(second_started.wait(), timeout=1.0)
+    _ = await asyncio.wait_for(second_started.wait(), timeout=1.0)
     release.set()
     await second.wait()
     assert second.status is RunStatus.done
@@ -206,10 +215,10 @@ async def test_a_run_cancelled_while_queued_releases_the_permit_it_was_waiting_f
     waiting = reg.submit(
         kind="chat", owner_id="operator", orchestrator=_blocking(asyncio.Event(), asyncio.Event())
     )
-    await first_started.wait()
+    _ = await first_started.wait()
     assert waiting.status is RunStatus.queued
 
-    await reg.cancel(waiting.id)
+    _ = await reg.cancel(waiting.id)
     await waiting.wait()
     release_first.set()
     await first.wait()
@@ -218,7 +227,7 @@ async def test_a_run_cancelled_while_queued_releases_the_permit_it_was_waiting_f
     third = reg.submit(
         kind="chat", owner_id="operator", orchestrator=_blocking(third_started, release_third)
     )
-    await asyncio.wait_for(third_started.wait(), timeout=1.0)
+    _ = await asyncio.wait_for(third_started.wait(), timeout=1.0)
     release_third.set()
     await third.wait()
 
@@ -232,11 +241,11 @@ async def test_routines_run_in_reserved_slots_beside_a_full_ceiling():
     chat = reg.submit(
         kind="chat", owner_id="operator", orchestrator=_blocking(chat_started, release)
     )
-    await chat_started.wait()
+    _ = await chat_started.wait()
     routine = reg.submit(
         kind="task", owner_id="operator", orchestrator=_blocking(routine_started, release)
     )
-    await asyncio.wait_for(routine_started.wait(), timeout=1.0)
+    _ = await asyncio.wait_for(routine_started.wait(), timeout=1.0)
     second = reg.submit(
         kind="task", owner_id="operator", orchestrator=_blocking(asyncio.Event(), release)
     )
@@ -257,11 +266,11 @@ async def test_routines_never_take_the_operators_slots():
         for started in routines_started
     ]
     for started in routines_started:
-        await started.wait()
+        _ = await started.wait()
     chat = reg.submit(
         kind="chat", owner_id="operator", orchestrator=_blocking(chat_started, release)
     )
-    await asyncio.wait_for(chat_started.wait(), timeout=1.0)
+    _ = await asyncio.wait_for(chat_started.wait(), timeout=1.0)
 
     release.set()
     for run in (*runs, chat):

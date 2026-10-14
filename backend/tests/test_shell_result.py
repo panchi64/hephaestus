@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from services.sandbox import shell_runner
 from services.sandbox.shell_runner import HostShell
 
@@ -30,7 +32,7 @@ def _shell(root: Path, *, timeout: float = 30.0, max_chars: int = 1_000_000) -> 
 # --- the structure ---------------------------------------------------------------------
 
 
-async def test_the_two_streams_come_back_apart(tmp_path):
+async def test_the_two_streams_come_back_apart(tmp_path: Path):
     result = await _shell(tmp_path / "w").run(
         "echo out; echo err >&2",
     )
@@ -39,7 +41,7 @@ async def test_the_two_streams_come_back_apart(tmp_path):
     assert result.exit_code == 0 and result.ok and not result.timed_out
 
 
-async def test_a_silent_command_is_two_empty_strings_and_not_a_sentence(tmp_path):
+async def test_a_silent_command_is_two_empty_strings_and_not_a_sentence(tmp_path: Path):
     # "(no output)" was prose in the slot where the output goes — a renderer had to know
     # the phrase to avoid printing it as if the command had said it.
     result = await _shell(tmp_path / "w").run("true")
@@ -47,18 +49,18 @@ async def test_a_silent_command_is_two_empty_strings_and_not_a_sentence(tmp_path
     assert result.ok
 
 
-async def test_a_failing_command_carries_its_status_as_a_number(tmp_path):
+async def test_a_failing_command_carries_its_status_as_a_number(tmp_path: Path):
     result = await _shell(tmp_path / "w").run("echo nope >&2; exit 3")
     assert result.exit_code == 3 and not result.ok
     assert "nope" in result.stderr
 
 
-async def test_a_command_is_timed_and_the_duration_is_its_own(tmp_path):
+async def test_a_command_is_timed_and_the_duration_is_its_own(tmp_path: Path):
     result = await _shell(tmp_path / "w").run("sleep 0.3")
     assert result.duration_ms >= 250  # wall clock, measured around the spawn
 
 
-async def test_a_timed_out_command_keeps_what_it_printed(tmp_path):
+async def test_a_timed_out_command_keeps_what_it_printed(tmp_path: Path):
     # The whole reason this is worth a test: the labelled string answered a timeout with
     # the timeout line *alone*, throwing away the output that says where it hung.
     result = await _shell(tmp_path / "w").run("echo reached-here; sleep 5", timeout_seconds=0.4)
@@ -68,20 +70,20 @@ async def test_a_timed_out_command_keeps_what_it_printed(tmp_path):
     assert result.exit_code is None and not result.ok
 
 
-async def test_a_timed_out_command_does_not_move_the_working_directory(tmp_path):
+async def test_a_timed_out_command_does_not_move_the_working_directory(tmp_path: Path):
     # The directory is only adopted from a command that exited cleanly; a `cd` that was
     # killed mid-flight leaves the next command where the last good one left it.
     shell = _shell(tmp_path / "w")
     (tmp_path / "w" / "sub").mkdir()
     before = shell.cwd
-    await shell.run("cd sub; sleep 5", timeout_seconds=0.3)
+    _ = await shell.run("cd sub; sleep 5", timeout_seconds=0.3)
     assert shell.cwd == before
 
 
 # --- streaming -------------------------------------------------------------------------
 
 
-async def test_output_arrives_while_the_command_is_still_running(tmp_path):
+async def test_output_arrives_while_the_command_is_still_running(tmp_path: Path):
     chunks: list[tuple[str, float]] = []
 
     async def hook(chunk: str, elapsed_s: float) -> None:
@@ -101,7 +103,7 @@ async def test_output_arrives_while_the_command_is_still_running(tmp_path):
 
 
 async def test_the_last_thing_a_command_printed_is_not_lost_to_the_polling_interval(
-    tmp_path,
+    tmp_path: Path,
 ):
     # A command that finishes between two ticks still gets a read: the pump stops on a
     # signal rather than a cancellation precisely so there is one more pass after the
@@ -111,11 +113,11 @@ async def test_the_last_thing_a_command_printed_is_not_lost_to_the_polling_inter
     async def hook(chunk: str, _elapsed: float) -> None:
         chunks.append(chunk)
 
-    await _shell(tmp_path / "w").run("echo quick", on_progress=hook)
+    _ = await _shell(tmp_path / "w").run("echo quick", on_progress=hook)
     assert "quick" in "".join(chunks)
 
 
-async def test_a_progress_hook_that_fails_does_not_fail_the_command(tmp_path):
+async def test_a_progress_hook_that_fails_does_not_fail_the_command(tmp_path: Path):
     async def hook(_chunk: str, _elapsed: float) -> None:
         raise RuntimeError("the stream went away")
 
@@ -124,7 +126,7 @@ async def test_a_progress_hook_that_fails_does_not_fail_the_command(tmp_path):
 
 
 async def test_streaming_stops_at_its_budget_and_the_result_still_has_everything(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     # The live stream is held in memory and replayed to a reattaching client; a command
     # that prints megabytes must not be able to put all of it there. What it prints is
@@ -142,7 +144,7 @@ async def test_streaming_stops_at_its_budget_and_the_result_still_has_everything
     assert "aaaaaaaaaa" in result.stdout and "bbbbbbbbbb" in result.stdout
 
 
-async def test_a_cancelled_command_does_not_leave_its_watcher_running(tmp_path):
+async def test_a_cancelled_command_does_not_leave_its_watcher_running(tmp_path: Path):
     ticks: list[str] = []
 
     async def hook(chunk: str, _elapsed: float) -> None:
@@ -151,7 +153,7 @@ async def test_a_cancelled_command_does_not_leave_its_watcher_running(tmp_path):
     shell = _shell(tmp_path / "w")
     task = asyncio.ensure_future(shell.run("echo up; sleep 5", on_progress=hook))
     await asyncio.sleep(0.7)  # past the first tick, so the watcher is certainly alive
-    task.cancel()
+    _ = task.cancel()
     try:
         await task
     except asyncio.CancelledError:
@@ -164,7 +166,7 @@ async def test_a_cancelled_command_does_not_leave_its_watcher_running(tmp_path):
 # --- the background trio -----------------------------------------------------------------
 
 
-async def test_a_background_command_reports_status_and_streams_as_fields(tmp_path):
+async def test_a_background_command_reports_status_and_streams_as_fields(tmp_path: Path):
     shell = _shell(tmp_path / "w")
     command_id = await shell.start("echo up; sleep 30")
     status = await shell.check(command_id)
@@ -182,7 +184,7 @@ async def test_a_background_command_reports_status_and_streams_as_fields(tmp_pat
     assert stopped is not None and stopped.status == "stopped"
 
 
-async def test_an_unknown_background_id_is_none_rather_than_a_sentence(tmp_path):
+async def test_an_unknown_background_id_is_none_rather_than_a_sentence(tmp_path: Path):
     # The prose for it belongs where the rest of this tool's prose is; the runner's
     # answer is the absence itself, which a caller cannot mistake for output.
     shell = _shell(tmp_path / "w")
