@@ -40,16 +40,16 @@ async def wired(tmp_path):
 
 
 async def _account(engine, vault, **overrides) -> MailAccount:
-    fields = {
-        "owner_id": "operator",
-        "name": "Personal",
-        "address_enc": vault.encrypt_str("operator@example.com"),
-        "provider": "gmail",
-        "auth_kind": AUTH_OAUTH,
-        "config": {"oauth_provider": "google", "oauth_client_id": "client-id"},
-    }
-    fields.update(overrides)
-    account = MailAccount(**fields)
+    account = MailAccount(
+        owner_id="operator",
+        name="Personal",
+        address_enc=vault.encrypt_str("operator@example.com"),
+        provider="gmail",
+        auth_kind=AUTH_OAUTH,
+        config={"oauth_provider": "google", "oauth_client_id": "client-id"},
+    )
+    for key, value in overrides.items():
+        setattr(account, key, value)
 
     def work(session: Session) -> None:
         session.add(account)
@@ -121,7 +121,7 @@ async def test_an_expiring_token_refreshes_and_is_resealed(wired, monkeypatch):
     engine, vault, secrets = wired
     stale = TokenBundle(access_token="stale", refresh_token="rt-1", expires_at=EXPIRED)
     account = await _account(engine, vault, secret_enc=secrets.seal_bundle(stale))
-    seen: dict = {}
+    seen: dict[str, object] = {}
 
     async def _refresh(provider, *, client_id, client_secret, refresh_token):
         seen.update(

@@ -4,6 +4,7 @@ resolve transitions, and the lock-aware drainer."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
@@ -13,7 +14,7 @@ from sqlmodel import select
 from core.db import in_session, init_db, make_engine
 from core.vault import Vault
 from models.notification import Notification
-from services.notifications import NotificationService
+from services.notifications import NotificationEvent, NotificationService
 
 OWNER = "operator"
 
@@ -36,7 +37,8 @@ async def _collect(service: NotificationService, *, after_seq: int, n: int):
     """Pull exactly ``n`` events off `subscribe`, then close it cleanly — `subscribe`
     never ends on its own (this surface is process-lifetime, not tied to a run)."""
     gen = service.subscribe(after_seq)
-    out = []
+    assert isinstance(gen, AsyncGenerator)
+    out: list[NotificationEvent] = []
     try:
         for _ in range(n):
             out.append(await gen.__anext__())
@@ -71,7 +73,7 @@ async def test_subscribe_resumes_only_after_last_seen_seq(tmp_path):
 
 async def test_live_subscriber_receives_new_notifications(tmp_path):
     service = await _service(tmp_path)
-    received: list = []
+    received: list[NotificationEvent] = []
 
     async def consume():
         async for event in service.subscribe():
@@ -88,8 +90,8 @@ async def test_live_subscriber_receives_new_notifications(tmp_path):
 
 async def test_fanout_to_multiple_subscribers(tmp_path):
     service = await _service(tmp_path)
-    out_a: list = []
-    out_b: list = []
+    out_a: list[NotificationEvent] = []
+    out_b: list[NotificationEvent] = []
 
     async def consume(sink):
         async for event in service.subscribe():
@@ -166,7 +168,7 @@ async def test_mark_read_flags_and_reports_count(tmp_path):
 async def test_mark_read_emits_notification_updated_live(tmp_path):
     service = await _service(tmp_path)
     view = await service.notify(OWNER, "system", "a")
-    received: list = []
+    received: list[NotificationEvent] = []
 
     async def consume():
         async for event in service.subscribe(after_seq=service.last_seq):
@@ -258,6 +260,7 @@ async def test_cold_restart_rehydrates_prior_notifications(tmp_path):
 
     cold = NotificationService(engine, vault)
     await cold.start()
+    assert cold._rehydrate_task is not None
     await cold._rehydrate_task  # deterministic in tests: vault is already unlocked
     items, _ = await cold.list_notifications(OWNER)
     assert [i.id for i in items] == [view.id]
@@ -290,6 +293,7 @@ async def test_rehydrated_and_live_notifications_sort_together(tmp_path):
 
     cold = NotificationService(engine, vault)
     await cold.start()
+    assert cold._rehydrate_task is not None
     await cold._rehydrate_task
     fresh = await cold.notify(OWNER, "system", "live")
 

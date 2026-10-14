@@ -142,6 +142,7 @@ async def test_only_usable_connectors_are_offered_to_the_agent():
 
 def test_path_parameters_fill_the_action_and_the_rest_become_query():
     get_repo = action("github", "get_repo")
+    assert get_repo is not None
     path, query = _fill_path(get_repo, {"owner": "acme", "repo": "widgets", "state": "open"})
 
     assert path == "/repos/acme/widgets"

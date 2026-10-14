@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
@@ -14,7 +16,7 @@ from runs import RunRegistry, RunStatus
 
 
 # --- LoopBreaker (unit) ------------------------------------------------------
-def _ask(breaker: LoopBreaker, name: str, args: dict, answer: object, call_id: str) -> None:
+def _ask(breaker: LoopBreaker, name: str, args: dict[str, Any], answer: object, call_id: str) -> None:
     """One whole tool call: the guard's pre-check, then the answer it came back with."""
     breaker.check(name, args, call_id)
     breaker.observe(call_id, answer)
@@ -113,7 +115,7 @@ async def test_run_blocks_when_loop_detected(monkeypatch):
 async def test_utility_judge_forwards_reasoning_off_settings():
     # The judge is background work that needn't reason: its model_settings (the
     # utility model's reasoning-off settings) must reach the model call.
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
     async def capture(messages, info):
         captured["settings"] = dict(info.model_settings or {})

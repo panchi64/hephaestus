@@ -63,7 +63,7 @@ def _deps(manager: _Manager | None, conversation_id: str) -> tuple[Run, RunDeps]
 _TOOLSET = build_agent_toolsets({"files": files_toolset()})[0]
 
 
-async def _call(tool: str, args: dict, *, manager, conversation_id="conv-1"):
+async def _call(tool: str, args: dict[str, object], *, manager, conversation_id="conv-1"):
     """Invoke one file tool with exact arguments through the real gated toolset stack.
 
     Driven directly rather than through a model: these assertions are about what a

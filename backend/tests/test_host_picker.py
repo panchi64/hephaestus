@@ -12,17 +12,21 @@ from __future__ import annotations
 import asyncio
 import sys
 
+from typing import Literal
+
 import pytest
 
 from services import host_picker
-from services.host_picker import _Helper
+from services.host_picker import PickMode, _Helper
+
+type _Kind = Literal["osascript", "zenity", "kdialog", "powershell"]
 
 
 def _no_helper(monkeypatch) -> None:
     monkeypatch.setattr(host_picker, "_resolve", lambda: None)
 
 
-def _helper(monkeypatch, name: str, kind: str) -> None:
+def _helper(monkeypatch, name: str, kind: _Kind) -> None:
     monkeypatch.setattr(host_picker, "_resolve", lambda: _Helper(name, kind))
 
 
@@ -77,9 +81,9 @@ async def test_pick_raises_when_no_chooser_exists(monkeypatch):
 # --- argv shape -------------------------------------------------------------
 
 
-def _argv(kind: str, mode, **kwargs) -> list[str]:
+def _argv(kind: _Kind, mode: PickMode, **kwargs) -> list[str]:
     return host_picker._build_argv(
-        _Helper("tool", kind),  # type: ignore[arg-type]
+        _Helper("tool", kind),
         mode,
         kwargs.pop("title", "Choose"),
         kwargs.pop("start_dir", None),

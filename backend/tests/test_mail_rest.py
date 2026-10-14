@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import Any
 
 import httpx
 import pytest
@@ -49,10 +50,10 @@ def _spec(provider: str) -> AccountSpec:
 class _Recorder:
     """Records every request and replies from a path → payload table."""
 
-    def __init__(self, routes: dict[str, dict], *, status: int = 200) -> None:
+    def __init__(self, routes: dict[str, dict[str, Any]], *, status: int = 200) -> None:
         self.routes = routes
         self.status = status
-        self.calls: list[tuple[str, str, dict | None]] = []
+        self.calls: list[tuple[str, str, dict[str, Any] | None]] = []
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content) if request.content else None
@@ -161,6 +162,7 @@ async def test_gmail_send_posts_a_base64url_rfc5322_message():
     )
     _method, path, body = recorder.calls[-1]
     assert path.endswith("/messages/send")
+    assert body is not None
     raw = base64.urlsafe_b64decode(body["raw"])
     assert b"In-Reply-To: <n1@example.org>" in raw
     assert message_id.startswith("<")
@@ -265,6 +267,7 @@ async def test_graph_send_threads_with_internet_message_headers():
     )
     _method, path, body = recorder.calls[-1]
     assert path.endswith("/sendMail")
+    assert body is not None
     headers = {h["name"]: h["value"] for h in body["message"]["internetMessageHeaders"]}
     assert headers["In-Reply-To"] == "<g1@example.org>"
     assert headers["References"] == "<root@example.org> <g1@example.org>"

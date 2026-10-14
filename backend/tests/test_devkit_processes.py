@@ -37,7 +37,7 @@ def sleeper(tmp_path):
     supervisor.stop_all()
 
 
-def _recorded(root) -> dict:
+def _recorded(root) -> dict[str, int]:
     return json.loads((root / processes.PIDFILE).read_text())
 
 
@@ -115,6 +115,7 @@ def test_stop_recorded_kills_the_whole_group_and_clears_the_file(tmp_path):
         log_dir=tmp_path / "logs",
     )
     group = processes._group_of(supervisor.services[0])
+    assert group is not None
     supervisor.record(tmp_path)
 
     assert processes.stop_recorded(tmp_path) == ["backend"]

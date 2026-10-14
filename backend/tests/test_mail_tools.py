@@ -14,7 +14,8 @@ from agent import build_chat_orchestrator
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import RunRegistry, RunStatus
+from runs import Run, RunRegistry, RunStatus
+from runs.stream import RunStream
 from services.credential_store import CredentialStore
 from services.mail.models import MailAddress, MailBody
 from services.mail.service import MailService
@@ -55,12 +56,11 @@ async def wired(tmp_path):
 
 
 def _deps(service, run=None) -> RunDeps:
-    return RunDeps(run=run or _StubRun(), owner_id="operator", caps=ServiceContainer.of(service))
+    return RunDeps(run=run or _stub_run(), owner_id="operator", caps=ServiceContainer.of(service))
 
 
-class _StubRun:
-    id = "run-1"
-    owner_id = "operator"
+def _stub_run() -> Run:
+    return Run(id="run-1", kind="chat", owner_id="operator", stream=RunStream())
 
 
 def _ctx(deps: RunDeps) -> RunContext[RunDeps]:
@@ -143,7 +143,7 @@ async def test_every_read_body_is_wrapped_before_it_can_reach_the_model(wired):
 
 async def test_an_unwired_run_degrades_rather_than_failing():
     result = await _call(
-        mail_toolset(), "list_messages", RunDeps(run=_StubRun(), owner_id="operator")
+        mail_toolset(), "list_messages", RunDeps(run=_stub_run(), owner_id="operator")
     )
     assert result["ok"] is False
     assert "not available" in result["error"]

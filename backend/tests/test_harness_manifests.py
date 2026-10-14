@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from typing import override
 
 import pytest
 
 from harness.discovery import discover_manifests, order_manifests
 from harness.manifest import FeatureManifest, ServiceContainer
 from harness.run_terminal import RunTerminalDispatcher
+from runs.run import Run
+from runs.stream import RunStream
 
 
 def test_order_respects_after_edges_and_breaks_ties_by_name():
@@ -125,15 +127,21 @@ def test_container_get_is_loud_and_optional_is_quiet():
         container.add(_Memory())
 
 
-@dataclass
-class _FakeStream:
-    subscriber_count: int = 0
+class _WatchedStream(RunStream):
+    def __init__(self, subscribers: int) -> None:
+        super().__init__()
+        self._watchers = subscribers
+
+    @property
+    @override
+    def subscriber_count(self) -> int:
+        return self._watchers
 
 
-@dataclass
-class _FakeRun:
-    id: str = "run-1"
-    stream: _FakeStream = field(default_factory=_FakeStream)
+def _run(subscribers: int = 0) -> Run:
+    return Run(
+        id="run-1", kind="chat", owner_id="o", stream=_WatchedStream(subscribers)
+    )
 
 
 async def test_dispatcher_runs_sync_inline_then_async_as_tracked_tasks():
@@ -145,7 +153,7 @@ async def test_dispatcher_runs_sync_inline_then_async_as_tracked_tasks():
         log.append(f"async:{run.id}:watched={watched}")
 
     dispatcher.add(notice)
-    run = _FakeRun(stream=_FakeStream(subscriber_count=2))
+    run = _run(subscribers=2)
     dispatcher(run)
     assert log == ["sync:run-1"]  # sync ran inline; async is scheduled, not run
     assert len(dispatcher.tasks) == 1
@@ -169,7 +177,7 @@ async def test_dispatcher_isolates_hook_failures():
     dispatcher.add_sync(bad_sync)
     dispatcher.add(bad_async)
     dispatcher.add(good)
-    dispatcher(_FakeRun())
+    dispatcher(_run())
     await asyncio.gather(*dispatcher.tasks)
     assert log == ["good"]
 
@@ -183,7 +191,7 @@ async def test_dispatcher_drain_cancels_pending_tasks():
         await asyncio.Event().wait()
 
     dispatcher.add(forever)
-    dispatcher(_FakeRun())
+    dispatcher(_run())
     await parked.wait()
     await dispatcher.drain()
     assert not dispatcher.tasks

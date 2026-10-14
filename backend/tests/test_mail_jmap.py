@@ -3,6 +3,9 @@ that stands between an operator-supplied server URL and the host's own network."
 
 from __future__ import annotations
 
+from dataclasses import replace
+from typing import Any
+
 import httpx
 import pytest
 
@@ -55,16 +58,15 @@ EMAILS = [
 
 
 def _spec(**overrides) -> AccountSpec:
-    fields = {
-        "account_id": "a1",
-        "address": "operator@example.com",
-        "provider": "jmap",
-        "auth_kind": "password",
-        "config": {"session_url": SESSION_URL},
-        "password": "api-token",
-    }
-    fields.update(overrides)
-    return AccountSpec(**fields)
+    base = AccountSpec(
+        account_id="a1",
+        address="operator@example.com",
+        provider="jmap",
+        auth_kind="password",
+        config={"session_url": SESSION_URL},
+        password="api-token",
+    )
+    return replace(base, **overrides)
 
 
 class _Server:
@@ -83,13 +85,13 @@ class _Server:
                 "list": [{"id": "id1", "email": "operator@example.com"}]
             },
         }
-        self.last_calls: list = []
+        self.last_calls: list[Any] = []
 
     def _email_get(self, args):
         ids = args.get("ids")
         if ids is None:  # the query's `#ids` back-reference
             return {"list": EMAILS}
-        wanted = [dict(e) for e in EMAILS if e["id"] in ids]
+        wanted: list[dict[str, Any]] = [dict(e) for e in EMAILS if e["id"] in ids]
         for email in wanted:
             email["bodyValues"] = {"p1": {"value": "Hello from JMAP."}}
             email["textBody"] = [{"partId": "p1", "type": "text/plain"}]

@@ -4,7 +4,11 @@ never break the park" guarantee — without driving a full model turn."""
 
 from __future__ import annotations
 
-from pydantic_ai import ToolApproved
+from pathlib import Path
+from typing import override
+
+from pydantic_ai import Agent, DeferredToolRequests, ToolApproved, ToolCallPart
+from pydantic_ai.models.test import TestModel
 
 from agent.parking import ParkedTurn, park_for_input
 from core.db import init_db, make_engine
@@ -12,38 +16,9 @@ from core.vault import Vault
 from runs.run import Run, RunStatus
 from runs.stream import RunStream
 from services.conversations import ConversationStore
-from services.notifications import NotificationService
+from services.notifications import NotificationService, NotificationView
 
 OWNER = "operator"
-
-
-class _FakeApproval:
-    def __init__(self, tool_call_id: str, tool_name: str) -> None:
-        self.tool_call_id = tool_call_id
-        self.tool_name = tool_name
-
-    def args_as_dict(self) -> dict:
-        return {}
-
-
-class _FakeQuestion:
-    """A deferred `ask_user` call — the other pile a park can arrive with."""
-
-    def __init__(self, tool_call_id: str, args: dict) -> None:
-        self.tool_call_id = tool_call_id
-        self.tool_name = "builtin_ask_user"
-        self._args = args
-
-    def args_as_dict(self) -> dict:
-        return self._args
-
-
-class _FakeRequests:
-    def __init__(
-        self, approvals: list[_FakeApproval], calls: list[_FakeQuestion] | None = None
-    ) -> None:
-        self.approvals = approvals
-        self.calls = calls or []
 
 
 def _run(conversation_id: str | None = "c1") -> Run:
@@ -53,9 +28,14 @@ def _run(conversation_id: str | None = "c1") -> Run:
 
 
 _APPROVALS = [
-    _FakeApproval("call-1", "danger.delete_thing"),
-    _FakeApproval("call-2", "danger.wipe_all"),
+    ToolCallPart("danger.delete_thing", {}, tool_call_id="call-1"),
+    ToolCallPart("danger.wipe_all", {}, tool_call_id="call-2"),
 ]
+_AGENT = Agent(TestModel(), deps_type=object)
+
+
+def _requests() -> DeferredToolRequests:
+    return DeferredToolRequests(approvals=list(_APPROVALS))
 
 
 async def _notification_service(tmp_path) -> NotificationService:
@@ -74,9 +54,9 @@ async def test_park_names_conversation_and_pending_tools(tmp_path):
 
     await park_for_input(
         run,
-        None,
+        _AGENT,
         [],
-        _FakeRequests(_APPROVALS),
+        _requests(),
         set(),
         notifications=service,
         store=None,
@@ -100,9 +80,9 @@ async def test_park_excludes_grant_covered_tool_names(tmp_path):
 
     await park_for_input(
         run,
-        None,
+        _AGENT,
         [],
-        _FakeRequests(_APPROVALS),
+        _requests(),
         set(),
         settled={"call-1": ToolApproved()},
         notifications=service,
@@ -123,9 +103,9 @@ async def test_park_skips_notifying_when_every_call_is_grant_covered(tmp_path):
 
     await park_for_input(
         run,
-        None,
+        _AGENT,
         [],
-        _FakeRequests(_APPROVALS),
+        _requests(),
         set(),
         settled={"call-1": ToolApproved(), "call-2": ToolApproved()},
         notifications=service,
@@ -144,7 +124,7 @@ async def test_park_is_a_no_op_notify_when_notifications_is_none():
     run = _run()
     # Must not raise — a run without a wired notifier simply doesn't notify.
     await park_for_input(
-        run, None, [], _FakeRequests(_APPROVALS), set(), notifications=None, conversation_id="c1"
+        run, _AGENT, [], _requests(), set(), notifications=None, conversation_id="c1"
     )
     assert run.status is RunStatus.awaiting_input
 
@@ -164,9 +144,9 @@ async def test_park_uses_the_conversation_title_when_one_exists(tmp_path):
 
     await park_for_input(
         run,
-        None,
+        _AGENT,
         [],
-        _FakeRequests(_APPROVALS),
+        _requests(),
         set(),
         notifications=service,
         store=store,
@@ -187,9 +167,9 @@ async def test_park_falls_back_to_a_generic_label_without_a_title(tmp_path):
     # failing the notify.
     await park_for_input(
         run,
-        None,
+        _AGENT,
         [],
-        _FakeRequests(_APPROVALS),
+        _requests(),
         set(),
         notifications=service,
         store=None,
@@ -202,17 +182,31 @@ async def test_park_falls_back_to_a_generic_label_without_a_title(tmp_path):
 
 
 async def test_a_raising_notifier_never_breaks_the_park():
-    class _RaisingNotifier:
-        async def notify(self, *args, **kwargs):
+    class _RaisingNotifier(NotificationService):
+        def __init__(self) -> None:
+            super().__init__(make_engine("sqlite:///:memory:"), Vault(Path("unused-keyfile.json")))
+
+        @override
+        async def notify(
+            self,
+            owner_id: str,
+            kind: str,
+            title: str,
+            body: str | None = None,
+            *,
+            conversation_id: str | None = None,
+            run_id: str | None = None,
+            task_id: str | None = None,
+        ) -> NotificationView:
             raise RuntimeError("boom")
 
     run = _run()
     # Must not raise — the parked run's own outcome must survive a notify failure.
     await park_for_input(
         run,
-        None,
+        _AGENT,
         [],
-        _FakeRequests(_APPROVALS),
+        _requests(),
         set(),
         notifications=_RaisingNotifier(),
         store=None,

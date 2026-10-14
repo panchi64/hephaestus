@@ -52,7 +52,7 @@ async def test_get_owned_answers_identically_for_missing_and_foreign_rows():
     init_db(engine)
 
     def insert(session: Session) -> str:
-        memory = Memory(owner_id="someone-else", content_enc=b"x")
+        memory = Memory(owner_id="someone-else", content_enc="x")
         session.add(memory)
         session.flush()
         return memory.id
@@ -73,7 +73,7 @@ async def test_get_owned_returns_the_row_for_its_owner():
     init_db(engine)
 
     def insert(session: Session) -> str:
-        memory = Memory(owner_id="operator", content_enc=b"x")
+        memory = Memory(owner_id="operator", content_enc="x")
         session.add(memory)
         session.flush()
         return memory.id

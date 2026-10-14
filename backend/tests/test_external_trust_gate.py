@@ -46,7 +46,7 @@ async def _wired() -> tuple[ExternalTools, McpServerView]:
     return external, view
 
 
-def _agent(stream_fn) -> Agent:
+def _agent(stream_fn) -> Agent[RunDeps, DeferredToolRequests | str]:
     """The agent a chat turn builds, narrowed to the external category — same toolset
     stack, same ``output_type``, so approval really defers instead of erroring."""
     return Agent(
@@ -57,16 +57,17 @@ def _agent(stream_fn) -> Agent:
     )
 
 
-async def _run(agent: Agent, external: ExternalTools | None, run_id: str):
+async def _run(agent: Agent[RunDeps, DeferredToolRequests | str], external: ExternalTools | None, run_id: str):
     run = Run(id=run_id, kind="chat", owner_id=OWNER, stream=RunStream())
     caps = ServiceContainer.of(external) if external is not None else ServiceContainer()
     deps = RunDeps(run=run, owner_id=OWNER, conversation_id=CONV, caps=caps)
     async with agent.iter("go", deps=deps) as agent_run:
         await stream_agent_run(agent_run, run)
+        assert agent_run.result is not None
         return agent_run.result.output, run
 
 
-def _call_once(tool_name: str, args: dict):
+def _call_once(tool_name: str, args: dict[str, object]):
     """A model that calls one tool once, then answers with text once it has run."""
 
     def _tool_ran(messages) -> bool:
@@ -85,7 +86,7 @@ def _call_once(tool_name: str, args: dict):
     return stream_fn
 
 
-async def _drive(external: ExternalTools, tool_name: str, args: dict):
+async def _drive(external: ExternalTools, tool_name: str, args: dict[str, object]):
     """Compose the external category the way a chat turn does and run one turn."""
     return await _run(_agent(_call_once(tool_name, args)), external, "r1")
 

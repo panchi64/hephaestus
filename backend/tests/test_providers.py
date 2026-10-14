@@ -73,9 +73,10 @@ async def test_openai_wire_carries_one_leading_system_message():
         api_key=None,
     )
     model = llm.build_model(spec)
+    assert isinstance(model, OpenAIChatModel)
     mapped = await model._map_messages(history, ModelRequestParameters())
     assert [m["role"] for m in mapped] == ["system", "user"]
-    assert mapped[0]["content"] == "IDENTITY\n\nRULES"
+    assert mapped[0].get("content") == "IDENTITY\n\nRULES"
 
 
 def test_reasoning_off_is_provider_shaped():
@@ -205,7 +206,7 @@ def test_migration_backfills_local_prefix_endpoints():
     command.upgrade(config, "5a07sec0007")
 
     with Session(engine) as session:
-        session.exec(
+        session.connection().execute(
             text(
                 "INSERT INTO model_endpoints "
                 "(id, owner_id, name, base_url, enabled, native_tools, vision, thinking, "
@@ -222,8 +223,9 @@ def test_migration_backfills_local_prefix_endpoints():
 
     columns = "provider, enabled"
     with Session(engine) as session:
-        local = session.exec(text(f"SELECT {columns} FROM model_endpoints WHERE id='e1'")).one()
-        cloud = session.exec(text(f"SELECT {columns} FROM model_endpoints WHERE id='e2'")).one()
+        connection = session.connection()
+        local = connection.execute(text(f"SELECT {columns} FROM model_endpoints WHERE id='e1'")).one()
+        cloud = connection.execute(text(f"SELECT {columns} FROM model_endpoints WHERE id='e2'")).one()
     # The row that was off only because it wasn't running: `enabled` handed back on, and
     # the retired `local` provider folded into the OpenAI-compatible one it always was.
     assert tuple(local) == ("openai-compatible", 1)
@@ -300,7 +302,7 @@ def test_a_requests_own_max_tokens_still_wins():
     from pydantic_ai.settings import merge_model_settings
 
     merged = merge_model_settings(_anthropic(128_000).settings, {"max_tokens": 512})
-    assert merged is not None and merged["max_tokens"] == 512
+    assert merged is not None and merged.get("max_tokens") == 512
 
 
 def test_the_other_wires_carry_no_output_ceiling():

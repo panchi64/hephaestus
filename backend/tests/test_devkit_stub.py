@@ -9,7 +9,9 @@ matters is that the client the app actually uses understands it.
 
 from __future__ import annotations
 
-import httpx
+from collections.abc import Mapping
+
+import httpx2
 import pytest
 from openai import AsyncOpenAI, InternalServerError
 from pydantic_ai import Agent
@@ -24,22 +26,22 @@ from devkit.stub.scripts import REQUEST_LOG_LIMIT
 @pytest.fixture
 def stub():
     app = create_stub()
-    transport = httpx.ASGITransport(app=app)
-    http = httpx.AsyncClient(transport=transport, base_url="http://stub")
+    transport = httpx2.ASGITransport(app=app)
+    http = httpx2.AsyncClient(transport=transport, base_url="http://stub")
     yield AsyncOpenAI(base_url="http://stub/v1", api_key="unused", http_client=http), http
 
 
 #: Offered on every request that expects a tool call back. A scripted tool call is only
 #: delivered to a request that offered tools — see the guard test below — and passing
 #: them is what the agent does anyway, so the tests that want one say so.
-def _offer(*names: str) -> list[dict]:
+def _offer(*names: str) -> list[dict[str, object]]:
     return [
         {"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
         for name in names
     ]
 
 
-async def _script(http: httpx.AsyncClient, *scenarios: dict) -> None:
+async def _script(http: httpx2.AsyncClient, *scenarios: Mapping[str, object]) -> None:
     response = await http.post("/_stub/script", json=list(scenarios))
     assert response.status_code == 200
 

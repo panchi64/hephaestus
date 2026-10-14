@@ -7,7 +7,7 @@ unavailability the next call recovers from), all of which are ours.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
 import aioimaplib
@@ -31,7 +31,7 @@ RAW = (
 @dataclass
 class _Response:
     result: str
-    lines: list
+    lines: list[object]
 
 
 class _StubTransport:
@@ -57,7 +57,7 @@ class _StubClient:
     def __init__(self, *, login_ok: bool = True, capabilities=("MOVE", "UIDPLUS")) -> None:
         self.login_ok = login_ok
         self.capabilities = set(capabilities)
-        self.commands: list[tuple] = []
+        self.commands: list[tuple[object, ...]] = []
         self.selected: list[str] = []
         self.protocol = SimpleNamespace(transport=_StubTransport())
 
@@ -113,20 +113,19 @@ class _StubClient:
 
 
 def _spec(**overrides) -> AccountSpec:
-    fields = {
-        "account_id": "a1",
-        "address": "operator@example.com",
-        "provider": "imap",
-        "auth_kind": "password",
-        "config": {
+    base = AccountSpec(
+        account_id="a1",
+        address="operator@example.com",
+        provider="imap",
+        auth_kind="password",
+        config={
             "imap_host": "mail.example.com",
             "imap_port": 993,
             "smtp_host": "mail.example.com",
         },
-        "password": "hunter2",
-    }
-    fields.update(overrides)
-    return AccountSpec(**fields)
+        password="hunter2",
+    )
+    return replace(base, **overrides)
 
 
 def _install(monkeypatch, client) -> None:

@@ -12,20 +12,30 @@ stub so the test is about the client and nothing else.
 
 from __future__ import annotations
 
-import httpx
+from pathlib import Path
+from typing import override
+
+import httpx2
 import pytest
 from openai import APIConnectionError
 
+from core.db import make_engine
 from core.exceptions import DegradedCapabilityError
+from core.vault import Vault
 from services import embeddings, llm
+from services.registry import ModelRegistry
 
 OWNER = "operator"
 SPEC = llm.EndpointSpec(base_url="http://127.0.0.1:9/v1", model="embed-model", api_key=None)
 
 
-class _StubRegistry:
+class _StubRegistry(ModelRegistry):
     """Resolves straight to `SPEC` — the registry's own resolution is tested elsewhere."""
 
+    def __init__(self) -> None:
+        super().__init__(make_engine("sqlite:///:memory:"), Vault(Path("unused-keyfile.json")))
+
+    @override
     async def resolve_embedding_spec(self, owner_id: str) -> llm.EndpointSpec:
         return SPEC
 
@@ -89,7 +99,7 @@ def _install_client(monkeypatch, *, fail: Exception | None = None) -> list[_Reco
 
 async def test_the_client_is_closed_after_a_successful_embed(monkeypatch):
     made = _install_client(monkeypatch)
-    embedder = embeddings.RegistryEmbedder(_StubRegistry())  # type: ignore[arg-type]
+    embedder = embeddings.RegistryEmbedder(_StubRegistry())
 
     batch = await embedder.embed(OWNER, ["hello", "world"])
 
@@ -104,9 +114,9 @@ async def test_the_client_is_closed_when_the_endpoint_is_unreachable(monkeypatch
     """The path that actually leaked: a local model server that isn't running is the
     ordinary case, and it repeats on every persisted turn. Leaking a connection pool per
     turn is how a workspace runs out of sockets while nothing appears to be happening."""
-    request = httpx.Request("POST", "http://127.0.0.1:9/v1/embeddings")
+    request = httpx2.Request("POST", "http://127.0.0.1:9/v1/embeddings")
     made = _install_client(monkeypatch, fail=APIConnectionError(request=request))
-    embedder = embeddings.RegistryEmbedder(_StubRegistry())  # type: ignore[arg-type]
+    embedder = embeddings.RegistryEmbedder(_StubRegistry())
 
     with pytest.raises(DegradedCapabilityError, match="127.0.0.1:9"):
         await embedder.embed(OWNER, ["hello"])
@@ -118,7 +128,7 @@ async def test_the_client_is_closed_when_the_server_errors(monkeypatch):
     """A 5xx/timeout isn't caught here — it propagates to the caller, who degrades. The
     client still has to be closed on the way out."""
     made = _install_client(monkeypatch, fail=RuntimeError("the server fell over"))
-    embedder = embeddings.RegistryEmbedder(_StubRegistry())  # type: ignore[arg-type]
+    embedder = embeddings.RegistryEmbedder(_StubRegistry())
 
     with pytest.raises(RuntimeError):
         await embedder.embed(OWNER, ["hello"])
@@ -131,7 +141,7 @@ async def test_every_call_closes_its_own_client(monkeypatch):
     the moment the operator rebinds the embedding role. What must not vary is that each
     one is closed, so repeated embedding leaves nothing behind."""
     made = _install_client(monkeypatch)
-    embedder = embeddings.RegistryEmbedder(_StubRegistry())  # type: ignore[arg-type]
+    embedder = embeddings.RegistryEmbedder(_StubRegistry())
 
     for _ in range(3):
         await embedder.embed(OWNER, ["hello"])

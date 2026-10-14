@@ -137,13 +137,18 @@ def test_the_cors_origins_are_json_the_settings_layer_can_parse(tmp_path):
 def test_the_settings_layer_accepts_the_environment_verbatim(tmp_path, monkeypatch):
     # The end of the contract: every name above has to be one `Settings` actually reads,
     # and a typo in any of them would isolate nothing while looking like it did.
-    from core.config import Settings
+    from pydantic_settings import SettingsConfigDict
+
+    from core.config import Settings as BaseAppSettings
+
+    class Settings(BaseAppSettings):
+        model_config = SettingsConfigDict(env_file=None)
 
     instance = resolve(root=tmp_path, name="alpha")
     for key, value in instance.env().items():
         if key.startswith("HEPHAESTUS_"):
             monkeypatch.setenv(key, value)
-    settings = Settings(_env_file=None)
+    settings = Settings()
     assert settings.port == instance.backend_port
     assert settings.data_dir == instance.data_dir
     assert settings.worktrees_dir == instance.worktrees_dir

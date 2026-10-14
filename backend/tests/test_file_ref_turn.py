@@ -9,18 +9,19 @@ there is no file text in it to be untrusted about.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from tests._helpers import client_app, collect_sse_events, patch_model_resolution
 from tests.test_code_mode import _project
 
 
-def _injections(events: list[dict], contributor: str) -> list[dict]:
+def _injections(events: list[dict[str, Any]], contributor: str) -> list[dict[str, Any]]:
     return [
         e for e in events if e["type"] == "context.injected" and e["contributor"] == contributor
     ]
 
 
-async def _project_turn(client, project_id: str, refs: list[str]) -> list[dict]:
+async def _project_turn(client, project_id: str, refs: list[str]) -> list[dict[str, Any]]:
     resp = await client.post(
         "/chat",
         json={
@@ -90,7 +91,7 @@ class TestWhatIsWrittenDown:
     is already in the history a regenerate replays.
     """
 
-    async def _turn_with_refs(self, client, tmp_path: Path) -> tuple[str, dict]:
+    async def _turn_with_refs(self, client, tmp_path: Path) -> tuple[str, dict[str, Any]]:
         project = await _project(client, tmp_path)
         resp = await client.post(
             "/chat",

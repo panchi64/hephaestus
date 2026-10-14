@@ -9,7 +9,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from runs import Endpoint, EndpointGate, RunRegistry, RunStatus
+from runs import Endpoint, EndpointGate, Run, RunRegistry, RunStatus
 from services.gated_model import EndpointGatedModel
 
 ONE = Endpoint(id="ep", name="local", capacity=1)
@@ -198,6 +198,11 @@ async def test_a_gated_model_waits_for_its_endpoint_outside_a_lease():
     assert await outside == "ok"
 
 
+def _task(run: Run) -> asyncio.Task[None]:
+    assert run.task is not None
+    return run.task
+
+
 def _registry_run(reg: RunRegistry, kind: str, conversation: str, orchestrator):
     return reg.submit(
         kind=kind,
@@ -226,11 +231,11 @@ async def test_a_parent_and_its_child_on_a_one_slot_endpoint_both_finish():
         finished.append("parent")
 
     first = _registry_run(reg, "chat", "parent", parent)
-    await first.task
-    await child_runs[0].task
+    await _task(first)
+    await _task(child_runs[0])
     wake = reg.active_run_for("parent", "o")
     assert wake is not None
-    await wake.task
+    await _task(wake)
     assert finished == ["parent", "child", "parent woken"]
     assert child_runs[0].status is RunStatus.done
     assert [e.body.type for e in child_runs[0].stream.replay()][:2] == ["run.queued", "run.started"]
@@ -263,5 +268,5 @@ async def test_three_queued_runs_start_in_priority_order_and_report_their_place(
     assert [q.position for q in queued] == [1, 2, 3]
     assert queued[-1].endpoint == "local"
     hold.set()
-    await asyncio.gather(first.task, *(r.task for r in runs))
+    await asyncio.gather(_task(first), *(_task(r) for r in runs))
     assert order == ["operator", "wake", "routine"]

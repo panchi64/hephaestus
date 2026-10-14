@@ -4,12 +4,15 @@ never does, and how a broken channel degrades (`XC-DEG-3`)."""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import override
 
 import httpx
 import pytest
 
 from core.db import init_db, make_engine
 from core.vault import Vault
+from services.credential_store import CredentialStore
+from services.mail.service import AccountView, MailService
 from services.notification_channels import (
     EmailChannel,
     PushChannel,
@@ -21,25 +24,51 @@ from services.settings_store import SettingsStore
 OWNER = "operator"
 
 
-class _Account:
-    def __init__(self, account_id="acct-1", address="operator@example.com", enabled=True):
-        self.id = account_id
-        self.address = address
-        self.enabled = enabled
+def _account(
+    account_id: str = "acct-1", address: str = "operator@example.com", enabled: bool = True
+) -> AccountView:
+    return AccountView(
+        id=account_id,
+        name="Personal",
+        address=address,
+        provider="imap",
+        auth_kind="password",
+        enabled=enabled,
+        status="ok",
+        error_detail=None,
+        last_synced_at=None,
+        has_secret=True,
+    )
 
 
-class _FakeMail:
+class _FakeMail(MailService):
     """Stands in for `MailService` — the channel only needs `list_accounts` and `send`."""
 
-    def __init__(self, accounts=None, fail: Exception | None = None):
-        self.accounts = accounts if accounts is not None else [_Account()]
-        self.sent: list[tuple] = []
+    def __init__(self, accounts: list[AccountView] | None = None, fail: Exception | None = None):
+        engine = make_engine("sqlite:///:memory:")
+        vault = Vault(Path("unused-keyfile.json"))
+        super().__init__(engine, vault, CredentialStore(engine, vault), None)
+        self.accounts = accounts if accounts is not None else [_account()]
+        self.sent: list[tuple[str, str, tuple[str, ...], str, str]] = []
         self.fail = fail
 
-    async def list_accounts(self, owner_id):
+    @override
+    async def list_accounts(self, owner_id: str) -> list[AccountView]:
         return self.accounts
 
-    async def send(self, owner_id, account_id, *, to, subject, body, **_kwargs):
+    @override
+    async def send(
+        self,
+        owner_id: str,
+        account_id: str,
+        *,
+        to: list[str],
+        subject: str,
+        body: str,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        in_reply_to: str | None = None,
+    ) -> str:
         if self.fail is not None:
             raise self.fail
         self.sent.append((owner_id, account_id, tuple(to), subject, body))
@@ -131,7 +160,7 @@ async def test_no_mail_account_degrades_to_in_app_only(tmp_path):
 
 
 async def test_a_disabled_account_is_never_sent_from(tmp_path):
-    mail = _FakeMail(accounts=[_Account(enabled=False)])
+    mail = _FakeMail(accounts=[_account(enabled=False)])
     service, _mail, _email, _push, _settings = await _wired(tmp_path, mail=mail)
     await service.notify(OWNER, "reminder", "Call the dentist")
     await service._deliveries.join()

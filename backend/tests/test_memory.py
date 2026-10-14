@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from sqlalchemy import Engine
 
 from core.db import init_db, make_engine
 from core.exceptions import DegradedCapabilityError, NotFoundError
@@ -60,7 +61,7 @@ class DegradedEmbedder:
         raise DegradedCapabilityError("no embedding endpoint configured")
 
 
-def _store(embedder) -> MemoryStore:
+def _store(embedder) -> tuple[Engine, Vault, MemoryStore]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")

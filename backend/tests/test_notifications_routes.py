@@ -4,6 +4,7 @@ gating, and the camelCase out-shape."""
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from itertools import count as _count
 
@@ -40,8 +41,10 @@ async def _collect_stream_frames(service, *, after_seq: int, n: int):
     resp = sse_stream(lambda: service.subscribe(after_seq), _frame)
     frames = []
     gen = resp.body_iterator
+    assert isinstance(gen, AsyncGenerator)
     try:
         async for chunk in gen:
+            assert isinstance(chunk, str)
             for line in chunk.splitlines():
                 if line.startswith("data:"):
                     frames.append(json.loads(line[len("data:") :].strip()))
