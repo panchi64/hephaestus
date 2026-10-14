@@ -7,13 +7,15 @@ from pathlib import Path
 import pytest
 
 from core.exceptions import AgentValidationError
-from services.agents import DEFAULT_AGENT, AgentCatalog, builtin_roster, lower_of
+from services.agents import DEFAULT_AGENT, AgentCatalog, AgentStore, builtin_roster, lower_of
 
 from ._agent_helpers import OWNER, agent_values, make_stores
 
+Parts = tuple[AgentStore, AgentCatalog]
+
 
 @pytest.fixture
-async def parts(tmp_path):
+async def parts(tmp_path: Path) -> Parts:
     store, _ = await make_stores(tmp_path)
     return store, AgentCatalog(store)
 
@@ -21,15 +23,15 @@ async def parts(tmp_path):
 def _project_agent(root: Path, name: str, description: str) -> None:
     path = root / ".claude" / "agents" / f"{name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\nname: {name}\ndescription: {description}\n---\n\nDo it.\n")
+    _ = path.write_text(f"---\nname: {name}\ndescription: {description}\n---\n\nDo it.\n")
 
 
-async def test_the_builtins_are_there_with_no_other_source(parts):
+async def test_the_builtins_are_there_with_no_other_source(parts: Parts):
     _, catalog = parts
     assert set(await catalog.agents(OWNER)) == set(builtin_roster())
 
 
-async def test_a_project_agent_shadows_a_builtin(parts, tmp_path):
+async def test_a_project_agent_shadows_a_builtin(parts: Parts, tmp_path: Path):
     _, catalog = parts
     _project_agent(tmp_path, "reviewer", "Ours.")
     agents = await catalog.agents(OWNER, project_root=tmp_path)
@@ -37,43 +39,43 @@ async def test_a_project_agent_shadows_a_builtin(parts, tmp_path):
     assert agents["reviewer"].source == "project"
 
 
-async def test_a_stored_agent_shadows_a_project_agent(parts, tmp_path):
+async def test_a_stored_agent_shadows_a_project_agent(parts: Parts, tmp_path: Path):
     store, catalog = parts
     _project_agent(tmp_path, "reviewer", "Ours.")
-    await store.create(OWNER, agent_values("reviewer", description="Stored."), published=True)
+    _ = await store.create(OWNER, agent_values("reviewer", description="Stored."), published=True)
     agents = await catalog.agents(OWNER, project_root=tmp_path)
     assert agents["reviewer"].description == "Stored."
 
 
-async def test_drafts_are_hidden_unless_asked_for(parts):
+async def test_drafts_are_hidden_unless_asked_for(parts: Parts):
     store, catalog = parts
-    await store.create(OWNER, agent_values("wip"))
+    _ = await store.create(OWNER, agent_values("wip"))
     assert "wip" not in await catalog.agents(OWNER)
     assert "wip" in await catalog.agents(OWNER, include_drafts=True)
 
 
-async def test_a_stored_agent_cannot_be_named_default(parts):
+async def test_a_stored_agent_cannot_be_named_default(parts: Parts):
     store, _ = parts
     with pytest.raises(AgentValidationError):
-        await store.create(OWNER, agent_values(DEFAULT_AGENT), published=True)
+        _ = await store.create(OWNER, agent_values(DEFAULT_AGENT), published=True)
 
 
-async def test_a_project_file_named_default_does_not_shadow_it(parts, tmp_path):
+async def test_a_project_file_named_default_does_not_shadow_it(parts: Parts, tmp_path: Path):
     _, catalog = parts
     _project_agent(tmp_path, DEFAULT_AGENT, "Impostor.")
     agents = await catalog.agents(OWNER, project_root=tmp_path)
     assert agents[DEFAULT_AGENT] == builtin_roster()[DEFAULT_AGENT]
 
 
-async def test_resolve_finds_a_published_agent(parts):
+async def test_resolve_finds_a_published_agent(parts: Parts):
     store, catalog = parts
-    await store.create(OWNER, agent_values("live"), published=True)
+    _ = await store.create(OWNER, agent_values("live"), published=True)
     assert (await catalog.resolve(OWNER, "live")).name == "live"
 
 
-async def test_resolve_falls_back_to_the_default(parts):
+async def test_resolve_falls_back_to_the_default(parts: Parts):
     store, catalog = parts
-    await store.create(OWNER, agent_values("wip"))
+    _ = await store.create(OWNER, agent_values("wip"))
     for name in (None, "nobody", "wip"):
         assert (await catalog.resolve(OWNER, name)).name == DEFAULT_AGENT
 

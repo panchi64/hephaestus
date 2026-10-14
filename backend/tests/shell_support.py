@@ -12,7 +12,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
@@ -28,10 +28,10 @@ from services.vm.project import ProjectCopies
 from services.workspace_kind import WorkspaceKind
 from tools.deps import RunDeps
 
+from ._json import JSON
 from .vm_local import local_vm
 
 OWNER = "operator"
-_JSON = TypeAdapter(JsonValue)
 
 
 def git(root: Path, *args: str) -> str:
@@ -129,6 +129,6 @@ class Shell:
         tools = self._tools
         if tools is None:
             tools = self._tools = await self._toolset.get_tools(self.ctx)
-        return _JSON.validate_python(
+        return JSON.validate_python(
             await self._toolset.call_tool(name, args, self.ctx, tools[name])
         )

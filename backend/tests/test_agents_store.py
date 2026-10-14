@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from core.exceptions import AgentValidationError, NotFoundError
-from services.agents import ToolAccess
+from services.agents import AgentStore, ToolAccess
+from services.conversations import ConversationStore
 
 from ._agent_helpers import OWNER, agent_values, make_stores
 
+Stores = tuple[AgentStore, ConversationStore]
+
 
 @pytest.fixture
-async def stores(tmp_path):
+async def stores(tmp_path: Path) -> Stores:
     return await make_stores(tmp_path)
 
 
-async def test_a_new_agent_is_a_draft_by_default(stores):
+async def test_a_new_agent_is_a_draft_by_default(stores: Stores):
     store, _ = stores
     agent = await store.create(OWNER, agent_values())
     assert agent.published is False
@@ -23,28 +28,28 @@ async def test_a_new_agent_is_a_draft_by_default(stores):
     assert agent.id is not None
 
 
-async def test_the_source_and_published_flag_are_the_callers_to_set(stores):
+async def test_the_source_and_published_flag_are_the_callers_to_set(stores: Stores):
     store, _ = stores
     agent = await store.create(OWNER, agent_values(), source="agent", published=True)
     assert (agent.source, agent.published) == ("agent", True)
 
 
-async def test_the_default_name_is_reserved(stores):
+async def test_the_default_name_is_reserved(stores: Stores):
     store, _ = stores
     with pytest.raises(AgentValidationError) as raised:
-        await store.create(OWNER, agent_values("default"))
+        _ = await store.create(OWNER, agent_values("default"))
     assert raised.value.field == "name"
 
 
-async def test_a_duplicate_name_is_refused(stores):
+async def test_a_duplicate_name_is_refused(stores: Stores):
     store, _ = stores
-    await store.create(OWNER, agent_values())
+    _ = await store.create(OWNER, agent_values())
     with pytest.raises(AgentValidationError) as raised:
-        await store.create(OWNER, agent_values())
+        _ = await store.create(OWNER, agent_values())
     assert raised.value.field == "name"
 
 
-async def test_names_are_normalised(stores):
+async def test_names_are_normalised(stores: Stores):
     store, _ = stores
     assert (await store.create(OWNER, agent_values("Helper Two"))).name == "helper-two"
 
@@ -63,14 +68,14 @@ async def test_names_are_normalised(stores):
         ({"source": "builtin"}, "source"),
     ],
 )
-async def test_bad_input_names_the_field(stores, values, field):
+async def test_bad_input_names_the_field(stores: Stores, values: dict[str, object], field: str):
     store, _ = stores
     with pytest.raises(AgentValidationError) as raised:
-        await store.create(OWNER, agent_values(**values))
+        _ = await store.create(OWNER, {**agent_values(), **values})
     assert raised.value.field == field
 
 
-async def test_every_field_round_trips(stores):
+async def test_every_field_round_trips(stores: Stores):
     store, _ = stores
     created = await store.create(
         OWNER,
@@ -96,13 +101,13 @@ async def test_every_field_round_trips(stores):
     assert got.can_delegate is True
 
 
-async def test_unrestricted_tools_come_back_unrestricted(stores):
+async def test_unrestricted_tools_come_back_unrestricted(stores: Stores):
     store, _ = stores
     created = await store.create(OWNER, agent_values())
     assert created.tools == ToolAccess()
 
 
-async def test_an_update_changes_only_what_it_names(stores):
+async def test_an_update_changes_only_what_it_names(stores: Stores):
     store, _ = stores
     created = await store.create(OWNER, agent_values())
     assert created.id is not None
@@ -111,29 +116,29 @@ async def test_an_update_changes_only_what_it_names(stores):
     assert changed.instructions == "Be helpful."
 
 
-async def test_renaming_carries_the_threads_that_ran_it(stores):
+async def test_renaming_carries_the_threads_that_ran_it(stores: Stores):
     store, conversations = stores
     created = await store.create(OWNER, agent_values())
     assert created.id is not None
     mine = await conversations.create_conversation(OWNER, agent_name="helper")
     other = await conversations.create_conversation(OWNER, agent_name="someone-else")
 
-    await store.update(OWNER, created.id, {"name": "assistant"})
+    _ = await store.update(OWNER, created.id, {"name": "assistant"})
 
     assert (await conversations.binding(mine)).agent_name == "assistant"
     assert (await conversations.binding(other)).agent_name == "someone-else"
 
 
-async def test_renaming_onto_a_taken_name_is_refused(stores):
+async def test_renaming_onto_a_taken_name_is_refused(stores: Stores):
     store, _ = stores
-    await store.create(OWNER, agent_values("one"))
+    _ = await store.create(OWNER, agent_values("one"))
     two = await store.create(OWNER, agent_values("two"))
     assert two.id is not None
     with pytest.raises(AgentValidationError):
-        await store.update(OWNER, two.id, {"name": "one"})
+        _ = await store.update(OWNER, two.id, {"name": "one"})
 
 
-async def test_publishing_and_unpublishing(stores):
+async def test_publishing_and_unpublishing(stores: Stores):
     store, _ = stores
     created = await store.create(OWNER, agent_values())
     assert created.id is not None
@@ -141,7 +146,7 @@ async def test_publishing_and_unpublishing(stores):
     assert (await store.set_published(OWNER, created.id, False)).published is False
 
 
-async def test_listing_can_be_limited_to_published(stores):
+async def test_listing_can_be_limited_to_published(stores: Stores):
     store, _ = stores
     draft = await store.create(OWNER, agent_values("draft"))
     live = await store.create(OWNER, agent_values("live"), published=True)
@@ -150,20 +155,20 @@ async def test_listing_can_be_limited_to_published(stores):
     assert [a.name for a in await store.list(OWNER, published_only=True)] == [live.name]
 
 
-async def test_delete_removes_it(stores):
+async def test_delete_removes_it(stores: Stores):
     store, _ = stores
     created = await store.create(OWNER, agent_values())
     assert created.id is not None
     await store.delete(OWNER, created.id)
     assert await store.get_by_name(OWNER, "helper") is None
     with pytest.raises(NotFoundError):
-        await store.get(OWNER, created.id)
+        _ = await store.get(OWNER, created.id)
 
 
-async def test_another_owners_agent_is_not_found(stores):
+async def test_another_owners_agent_is_not_found(stores: Stores):
     store, _ = stores
     created = await store.create(OWNER, agent_values())
     assert created.id is not None
     with pytest.raises(NotFoundError):
-        await store.get("someone-else", created.id)
+        _ = await store.get("someone-else", created.id)
     assert await store.list("someone-else") == []

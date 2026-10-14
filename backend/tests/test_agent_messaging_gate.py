@@ -4,7 +4,7 @@ A message that reaches an agent able to write from across or below asks first.""
 from __future__ import annotations
 
 import pytest
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.models.test import TestModel
@@ -18,9 +18,8 @@ from services.subagents import Recipient, SubagentLauncher
 from tools.agents import agents_toolset
 from tools.deps import RunDeps
 
-from ._json import obj
+from ._json import JSON, obj
 
-_JSON = TypeAdapter(JsonValue)
 OWNER = "operator"
 
 RECIPIENTS = {
@@ -61,7 +60,7 @@ async def _message(ctx: RunContext[RunDeps], to: str) -> dict[str, JsonValue]:
     toolset = agents_toolset()
     tools = await toolset.get_tools(ctx)
     return obj(
-        _JSON.validate_python(
+        JSON.validate_python(
             await toolset.call_tool(
                 "message", {"to": to, "text": "found it"}, ctx, tools["message"]
             )

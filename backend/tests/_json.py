@@ -5,12 +5,12 @@ from __future__ import annotations
 import httpx
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
-_JSON = TypeAdapter(JsonValue)
+JSON = TypeAdapter(JsonValue)
 
 
 def parse_json(text: str | bytes) -> JsonValue:
     """The JSON document in ``text``."""
-    return _JSON.validate_json(text)
+    return JSON.validate_json(text)
 
 
 def obj(v: JsonValue) -> dict[str, JsonValue]:
