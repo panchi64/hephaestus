@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import final, override
 
 import pytest
 from pydantic_ai import (
@@ -38,7 +40,7 @@ from agent.work_summary import _MAX_SUMMARY_LEN, _clean, summarize_work, work_tr
 from core.config import Settings, get_settings
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import RunRegistry
+from runs import Run, RunRegistry
 from services import work_summaries as work_summaries_module
 from services.conversations import ConversationStore
 from services.registry import ResolvedModel
@@ -49,9 +51,10 @@ from services.settings_store import (
     get_work_summary_idle_minutes,
     set_work_summary_idle_minutes,
 )
-from services.work_summaries import WorkSummaryService
+from services.work_summaries import BackgroundModels, WorkSummaryService
 
 from ._helpers import client_app
+from ._json import json_body, n
 
 OWNER = "op"
 
@@ -96,11 +99,11 @@ def _fenced_regions(rendered: str) -> tuple[list[str], list[str]]:
     return clear, fenced
 
 
-def _replies(text: str):
+def _replies(text: str) -> tuple[FunctionModel, list[str]]:
     """A utility model answering every call with ``text``, recording what it was asked."""
     seen: list[str] = []
 
-    async def respond(messages, info: AgentInfo) -> ModelResponse:
+    async def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         seen.append(
             "\n".join(
                 part.content
@@ -115,8 +118,8 @@ def _replies(text: str):
     return FunctionModel(respond), seen
 
 
-def _raises():
-    async def respond(messages, info: AgentInfo) -> ModelResponse:
+def _raises() -> FunctionModel:
+    async def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise RuntimeError("the endpoint is down")
 
     return FunctionModel(respond)
@@ -236,7 +239,7 @@ class TestTheModelCall:
 # --- the sweep --------------------------------------------------------------
 
 
-async def _store(tmp_path) -> ConversationStore:
+async def _store(tmp_path: Path) -> ConversationStore:
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
     engine = make_engine("sqlite:///:memory:")
@@ -246,12 +249,14 @@ async def _store(tmp_path) -> ConversationStore:
     return store
 
 
-class _Registry:
+@final
+class _Registry(BackgroundModels):
     """The one registry method the sweep calls, answering ``model``."""
 
     def __init__(self, model: Model) -> None:
-        self._model = model
+        self._model: Model = model
 
+    @override
     async def resolve_background(
         self,
         *,
@@ -272,7 +277,7 @@ async def _seeded(store: ConversationStore, *, messages: int, age_minutes: float
     history: list[ModelMessage] = []
     for index in range(messages // 2 + messages % 2):
         history.extend(_turn(f"ask {index}", f"answer {index}"))
-    store.record(conversation_id, history[:messages])
+    _ = store.record(conversation_id, history[:messages])
     await store._worker.join()
     _stamp(store, conversation_id, datetime.now(UTC) - timedelta(minutes=age_minutes))
     return conversation_id
@@ -303,7 +308,9 @@ def _stamp(
         session.commit()
 
 
-def _service(store: ConversationStore, model, runs: RunRegistry | None = None):
+def _service(
+    store: ConversationStore, model: Model, runs: RunRegistry | None = None
+) -> WorkSummaryService:
     settings_engine = make_engine("sqlite:///:memory:")
     init_db(settings_engine)
     return WorkSummaryService(
@@ -321,16 +328,16 @@ def _service(store: ConversationStore, model, runs: RunRegistry | None = None):
 
 
 class TestTheSweep:
-    async def test_a_fresh_conversation_is_not_a_candidate(self, tmp_path):
+    async def test_a_fresh_conversation_is_not_a_candidate(self, tmp_path: Path):
         """A thread the operator is still working in would be summarized mid-sentence, and
         the summary would be stale before the next turn lands."""
         store = await _store(tmp_path)
-        await _seeded(store, messages=4, age_minutes=1)
+        _ = await _seeded(store, messages=4, age_minutes=1)
         model, seen = _replies("never called")
         assert await _service(store, model).sweep() == 0
         assert seen == []
 
-    async def test_an_idle_conversation_with_a_stale_summary_is_summarized(self, tmp_path):
+    async def test_an_idle_conversation_with_a_stale_summary_is_summarized(self, tmp_path: Path):
         store = await _store(tmp_path)
         conversation_id = await _seeded(store, messages=4, age_minutes=60)
         model, _ = _replies("Answered four questions about the parser.")
@@ -339,18 +346,20 @@ class TestTheSweep:
         assert summary is not None
         assert summary.work_summary == "Answered four questions about the parser."
 
-    async def test_a_thread_already_summarized_since_its_last_message_is_skipped(self, tmp_path):
+    async def test_a_thread_already_summarized_since_its_last_message_is_skipped(
+        self, tmp_path: Path
+    ):
         """The staleness rule is what keeps an idle workspace from costing a model call per
         thread per minute forever."""
         store = await _store(tmp_path)
-        await _seeded(store, messages=4, age_minutes=60)
+        _ = await _seeded(store, messages=4, age_minutes=60)
         model, seen = _replies("Answered four questions.")
         service = _service(store, model)
         assert await service.sweep() == 1
         assert await service.sweep() == 0
         assert len(seen) == 1
 
-    async def test_a_thread_that_spoke_again_becomes_a_candidate_again(self, tmp_path):
+    async def test_a_thread_that_spoke_again_becomes_a_candidate_again(self, tmp_path: Path):
         """The mirror of the test above: staleness is a comparison, not a flag, so a thread
         that moved after being summarized is stale again with nothing to reset."""
         store = await _store(tmp_path)
@@ -368,7 +377,7 @@ class TestTheSweep:
         )
         assert await service.sweep() == 1
 
-    async def test_a_conversation_with_a_live_run_is_skipped(self, tmp_path):
+    async def test_a_conversation_with_a_live_run_is_skipped(self, tmp_path: Path):
         """Idle is measured off ``updated_at``, which an in-flight turn has not moved — so
         without this check a streaming answer is summarized as though it had not happened."""
         store = await _store(tmp_path)
@@ -376,53 +385,53 @@ class TestTheSweep:
         runs = RunRegistry()
         started, release = asyncio.Event(), asyncio.Event()
 
-        async def orch(run):
+        async def orch(_run: Run) -> None:
             started.set()
-            await release.wait()
+            _ = await release.wait()
 
         run = runs.submit(
             kind="chat", owner_id=OWNER, orchestrator=orch, conversation_id=conversation_id
         )
-        await started.wait()
+        _ = await started.wait()
         model, seen = _replies("never called")
         assert await _service(store, model, runs).sweep() == 0
         assert seen == []
         release.set()
-        await run.wait()
+        _ = await run.wait()
 
-    async def test_a_thread_with_one_message_has_no_work_to_account_for(self, tmp_path):
+    async def test_a_thread_with_one_message_has_no_work_to_account_for(self, tmp_path: Path):
         store = await _store(tmp_path)
-        await _seeded(store, messages=1, age_minutes=60)
+        _ = await _seeded(store, messages=1, age_minutes=60)
         model, seen = _replies("never called")
         assert await _service(store, model).sweep() == 0
         assert seen == []
 
-    async def test_a_locked_vault_sweeps_nothing(self, tmp_path):
+    async def test_a_locked_vault_sweeps_nothing(self, tmp_path: Path):
         """No key means nothing to decrypt the history with and nothing to seal the summary
         under — the pass returns rather than raising its way through a decrypt."""
         store = await _store(tmp_path)
-        await _seeded(store, messages=4, age_minutes=60)
+        _ = await _seeded(store, messages=4, age_minutes=60)
         store._vault.lock()
         model, seen = _replies("never called")
         assert await _service(store, model).sweep() == 0
         assert seen == []
 
-    async def test_a_sweep_is_bounded_so_a_first_pass_cannot_stampede(self, tmp_path):
+    async def test_a_sweep_is_bounded_so_a_first_pass_cannot_stampede(self, tmp_path: Path):
         store = await _store(tmp_path)
         for _ in range(Settings().work_summary_max_per_sweep + 3):
-            await _seeded(store, messages=2, age_minutes=60)
+            _ = await _seeded(store, messages=2, age_minutes=60)
         model, _ = _replies("an account")
         assert await _service(store, model).sweep() == Settings().work_summary_max_per_sweep
 
-    async def test_a_model_failure_on_one_thread_leaves_the_others_summarized(self, tmp_path):
+    async def test_a_model_failure_on_one_thread_leaves_the_others_summarized(self, tmp_path: Path):
         """One bad thread must not end the pass — the sweep is the only thing that will ever
         try again, and it only tries once a minute."""
         store = await _store(tmp_path)
-        await _seeded(store, messages=4, age_minutes=60)
-        await _seeded(store, messages=4, age_minutes=60)
+        _ = await _seeded(store, messages=4, age_minutes=60)
+        _ = await _seeded(store, messages=4, age_minutes=60)
         calls = {"n": 0}
 
-        async def respond(messages, info: AgentInfo) -> ModelResponse:
+        async def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("the endpoint is down")
@@ -430,35 +439,35 @@ class TestTheSweep:
 
         assert await _service(store, FunctionModel(respond)).sweep() == 1
 
-    async def test_a_run_anywhere_holds_the_whole_pass(self, tmp_path):
+    async def test_a_run_anywhere_holds_the_whole_pass(self, tmp_path: Path):
         """A summary is a model call on the servers the operator chats on, so a turn in any
         other thread puts every summary off until nothing is running."""
         store = await _store(tmp_path)
-        await _seeded(store, messages=4, age_minutes=60)
+        _ = await _seeded(store, messages=4, age_minutes=60)
         busy_thread = await store.create_conversation(OWNER)
         runs = RunRegistry()
         started, release = asyncio.Event(), asyncio.Event()
 
-        async def orch(run):
+        async def orch(_run: Run) -> None:
             started.set()
-            await release.wait()
+            _ = await release.wait()
 
         run = runs.submit(
             kind="chat", owner_id=OWNER, orchestrator=orch, conversation_id=busy_thread
         )
-        await started.wait()
+        _ = await started.wait()
         model, seen = _replies("never called")
         assert await _service(store, model, runs).sweep() == 0
         assert seen == []
         release.set()
-        await run.wait()
+        _ = await run.wait()
 
-    async def test_a_failing_thread_is_not_retried_every_pass(self, tmp_path):
+    async def test_a_failing_thread_is_not_retried_every_pass(self, tmp_path: Path):
         store = await _store(tmp_path)
-        await _seeded(store, messages=4, age_minutes=60)
+        _ = await _seeded(store, messages=4, age_minutes=60)
         calls = {"n": 0}
 
-        async def respond(messages, info: AgentInfo) -> ModelResponse:
+        async def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             calls["n"] += 1
             raise RuntimeError("the endpoint is down")
 
@@ -467,7 +476,9 @@ class TestTheSweep:
         assert await service.sweep() == 0
         assert calls["n"] == 1
 
-    async def test_a_summary_in_flight_yields_to_a_run_that_starts(self, tmp_path, monkeypatch):
+    async def test_a_summary_in_flight_yields_to_a_run_that_starts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         """The chat must never share a model with a summary: one already running is
         cancelled, and the thread is simply a candidate again once the run is over."""
         monkeypatch.setattr(work_summaries_module, "_YIELD_POLL_S", 0.01)
@@ -478,23 +489,23 @@ class TestTheSweep:
         asked, release = asyncio.Event(), asyncio.Event()
         replies = {"n": 0}
 
-        async def respond(messages, info: AgentInfo) -> ModelResponse:
+        async def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             replies["n"] += 1
             if replies["n"] == 1:
                 asked.set()
-                await asyncio.Event().wait()
+                _ = await asyncio.Event().wait()
             return ModelResponse(parts=[TextPart(content="after the turn")])
 
-        async def orch(run):
-            await release.wait()
+        async def orch(_run: Run) -> None:
+            _ = await release.wait()
 
         service = _service(store, FunctionModel(respond), runs)
         sweep = asyncio.create_task(service.sweep())
-        await asyncio.wait_for(asked.wait(), 5)
+        _ = await asyncio.wait_for(asked.wait(), 5)
         run = runs.submit(kind="chat", owner_id=OWNER, orchestrator=orch, conversation_id=other)
         assert await asyncio.wait_for(sweep, 5) == 0
         release.set()
-        await run.wait()
+        _ = await run.wait()
 
         assert await service.sweep() == 1
         summary = await store.get_summary(conversation_id, OWNER)
@@ -537,43 +548,46 @@ class TestTheIdleSetting:
             get_settings().work_summary_idle_minutes
         )
 
-    async def test_the_sweep_reads_the_stored_setting_not_the_config_default(self, tmp_path):
+    async def test_the_sweep_reads_the_stored_setting_not_the_config_default(self, tmp_path: Path):
         """The dial is only a dial if the sweep reads it — a thread idle for 20 minutes is a
         candidate at the default 15 and not at a stored 60."""
         store = await _store(tmp_path)
-        await _seeded(store, messages=4, age_minutes=20)
+        _ = await _seeded(store, messages=4, age_minutes=20)
         model, _ = _replies("an account")
         service = _service(store, model)
-        await set_work_summary_idle_minutes(service._settings_store, OWNER, 60)
+        _ = await set_work_summary_idle_minutes(service._settings_store, OWNER, 60)
         assert await service.sweep() == 0
-        await set_work_summary_idle_minutes(service._settings_store, OWNER, 10)
+        _ = await set_work_summary_idle_minutes(service._settings_store, OWNER, 10)
         assert await service.sweep() == 1
 
 
 class TestTheChatSettingsRoute:
     async def test_it_is_exposed_and_round_trips(self):
         async with client_app() as (client, _app):
-            got = (await client.get("/chat/settings")).json()
+            got = json_body(await client.get("/chat/settings"))
             assert got["work_summary_idle_minutes"] == get_settings().work_summary_idle_minutes
 
             put = await client.put("/chat/settings", json={"work_summary_idle_minutes": 45})
             assert put.status_code == 200
-            assert put.json()["work_summary_idle_minutes"] == 45
-            assert (await client.get("/chat/settings")).json()["work_summary_idle_minutes"] == 45
+            assert json_body(put)["work_summary_idle_minutes"] == 45
+            reread = json_body(await client.get("/chat/settings"))
+            assert reread["work_summary_idle_minutes"] == 45
 
     async def test_a_put_touching_only_this_leaves_the_rest_alone(self):
         async with client_app() as (client, _app):
-            await client.put("/chat/settings", json={"auto_compact_threshold": 0.6})
-            body = (
+            _ = await client.put("/chat/settings", json={"auto_compact_threshold": 0.6})
+            body = json_body(
                 await client.put("/chat/settings", json={"work_summary_idle_minutes": 30})
-            ).json()
+            )
             assert body["work_summary_idle_minutes"] == 30
-            assert body["auto_compact_threshold"] == pytest.approx(0.6)
+            assert n(body["auto_compact_threshold"]) == pytest.approx(0.6)
 
     async def test_a_put_touching_another_field_leaves_this_alone(self):
         async with client_app() as (client, _app):
-            await client.put("/chat/settings", json={"work_summary_idle_minutes": 30})
-            body = (await client.put("/chat/settings", json={"auto_compact_threshold": 0.5})).json()
+            _ = await client.put("/chat/settings", json={"work_summary_idle_minutes": 30})
+            body = json_body(
+                await client.put("/chat/settings", json={"auto_compact_threshold": 0.5})
+            )
             assert body["work_summary_idle_minutes"] == 30
 
     @pytest.mark.parametrize("bad", [0, -1, WORK_SUMMARY_IDLE_MINUTES_MAX + 1, 1.5])
@@ -587,7 +601,7 @@ class TestTheChatSettingsRoute:
 
 
 class TestTheReadPath:
-    async def test_the_listing_carries_the_summary_decrypted(self, tmp_path):
+    async def test_the_listing_carries_the_summary_decrypted(self, tmp_path: Path):
         """It rides the listing beside `preview` because that is the payload the re-entry
         band is drawn over — and it is sealed at rest, so the listing is also where the
         decrypt has to work."""
@@ -597,13 +611,13 @@ class TestTheReadPath:
         [row] = [c for c in await store.list_conversations(OWNER) if c.id == conversation_id]
         assert row.work_summary == "Rewrote the parser; the suite is green."
 
-    async def test_an_unsummarized_thread_reads_as_none(self, tmp_path):
+    async def test_an_unsummarized_thread_reads_as_none(self, tmp_path: Path):
         store = await _store(tmp_path)
         conversation_id = await _seeded(store, messages=4, age_minutes=60)
         summary = await store.get_summary(conversation_id, OWNER)
         assert summary is not None and summary.work_summary is None
 
-    async def test_a_second_summary_replaces_the_first(self, tmp_path):
+    async def test_a_second_summary_replaces_the_first(self, tmp_path: Path):
         """A plain replace, unlike the title's fill-only guard: there is no operator-authored
         twin here to clobber, and a fresher account is strictly better."""
         store = await _store(tmp_path)
@@ -613,7 +627,7 @@ class TestTheReadPath:
         summary = await store.get_summary(conversation_id, OWNER)
         assert summary is not None and summary.work_summary == "second"
 
-    async def test_storing_a_summary_does_not_make_the_thread_look_busy(self, tmp_path):
+    async def test_storing_a_summary_does_not_make_the_thread_look_busy(self, tmp_path: Path):
         """``updated_at`` is what both the idle window and the staleness rule read, so a
         write that bumped it would rewrite the two facts it is measured against."""
         store = await _store(tmp_path)
