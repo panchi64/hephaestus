@@ -42,7 +42,7 @@ from services.settings_store import SettingsStore
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from services.mail import MailService
+    from services.mail import AccountView
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,25 @@ class NotificationChannel(Protocol):
         ...
 
 
+class MailSender(Protocol):
+    """The slice of the mail service the email channel lists accounts and sends through."""
+
+    async def list_accounts(self, owner_id: str) -> list[AccountView]: ...
+
+    async def send(
+        self,
+        owner_id: str,
+        account_id: str,
+        *,
+        to: list[str],
+        subject: str,
+        body: str,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        in_reply_to: str | None = None,
+    ) -> str: ...
+
+
 class EmailChannel:
     """Delivers through the operator's own mail account (`EMAIL-1`).
 
@@ -124,7 +143,7 @@ class EmailChannel:
 
     def __init__(
         self,
-        mail: Callable[[], MailService | None],
+        mail: Callable[[], MailSender | None],
         settings: SettingsStore,
         vault: Vault,
     ) -> None:
@@ -300,7 +319,7 @@ class PushChannel:
 
 
 def default_channels(
-    mail: Callable[[], MailService | None], settings: SettingsStore, vault: Vault
+    mail: Callable[[], MailSender | None], settings: SettingsStore, vault: Vault
 ) -> list[NotificationChannel]:
     """The channels every workspace gets, in the order the operator sees them."""
     return [EmailChannel(mail, settings, vault), PushChannel(settings, vault)]

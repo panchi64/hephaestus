@@ -4,15 +4,13 @@ never does, and how a broken channel degrades (`XC-DEG-3`)."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import override
 
 import httpx
 import pytest
 
 from core.db import init_db, make_engine
 from core.vault import Vault
-from services.credential_store import CredentialStore
-from services.mail.service import AccountView, MailService
+from services.mail.service import AccountView
 from services.notification_channels import (
     EmailChannel,
     PushChannel,
@@ -41,22 +39,17 @@ def _account(
     )
 
 
-class _FakeMail(MailService):
-    """Stands in for `MailService` — the channel only needs `list_accounts` and `send`."""
+class _FakeMail:
+    """Stands in for the mail service — the channel only needs `list_accounts` and `send`."""
 
     def __init__(self, accounts: list[AccountView] | None = None, fail: Exception | None = None):
-        engine = make_engine("sqlite:///:memory:")
-        vault = Vault(Path("unused-keyfile.json"))
-        super().__init__(engine, vault, CredentialStore(engine, vault), None)
         self.accounts = accounts if accounts is not None else [_account()]
         self.sent: list[tuple[str, str, tuple[str, ...], str, str]] = []
         self.fail = fail
 
-    @override
     async def list_accounts(self, owner_id: str) -> list[AccountView]:
         return self.accounts
 
-    @override
     async def send(
         self,
         owner_id: str,

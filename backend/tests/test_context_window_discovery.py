@@ -14,7 +14,6 @@ rather than letting it run unguarded.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import override
 
 import httpx
 import pytest
@@ -26,9 +25,8 @@ from services import llm
 from services.llm import EndpointSpec
 from services.providers import get_provider
 from services.providers.anthropic import PROVIDER as ANTHROPIC
-from services.providers.base import ModelLimits
+from services.providers.base import ModelLimits, ProviderPreset
 from services.providers.google import PROVIDER as GOOGLE
-from services.providers.openai_compat import OpenAICompatProvider
 from services.reasoning import ModelDescriptor
 
 
@@ -301,13 +299,29 @@ async def _registry(tmp_path, monkeypatch, *, window: int | None, max_output: in
     from services import providers
     from services.registry import ModelRegistry
 
-    class _Stub(OpenAICompatProvider):
+    class _Stub:
         id = "probe-stub"
         display_name = "Probe stub"
         requires_key = False
+        preset = ProviderPreset()
         asked = 0
 
-        @override
+        async def discover(
+            self, base_url: str, api_key: str | None, *, client: object = None
+        ) -> list[str]:
+            raise AssertionError("unexpected call: discover")
+
+        async def probe(self, base_url: str, api_key: str | None, *, client: object = None) -> None:
+            raise AssertionError("unexpected call: probe")
+
+        async def context_window(
+            self, base_url: str, api_key: str | None, model: str, *, client: object = None
+        ) -> int | None:
+            raise AssertionError("unexpected call: context_window")
+
+        def model_settings(self, descriptor: ModelDescriptor) -> ModelSettings:
+            return {}
+
         async def model_limits(
             self,
             base_url: str,
@@ -319,14 +333,12 @@ async def _registry(tmp_path, monkeypatch, *, window: int | None, max_output: in
             type(self).asked += 1
             return ModelLimits(context_window=window, max_output_tokens=max_output)
 
-        # Overridden so a full resolve runs without a network: the gate test goes through
+        # Stubbed so a full resolve runs without a network: the gate test goes through
         # `resolve_detailed`, which builds a model and asks the adapter how to quiet its
         # reasoning before it ever reaches the window check.
-        @override
         def build_model(self, spec: EndpointSpec) -> TestModel:
             return TestModel(custom_output_text="ok")
 
-        @override
         def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
             return {}
 

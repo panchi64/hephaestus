@@ -4,9 +4,6 @@ never break the park" guarantee — without driving a full model turn."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import override
-
 from pydantic_ai import Agent, DeferredToolRequests, ToolApproved, ToolCallPart
 from pydantic_ai.models.test import TestModel
 
@@ -182,11 +179,7 @@ async def test_park_falls_back_to_a_generic_label_without_a_title(tmp_path):
 
 
 async def test_a_raising_notifier_never_breaks_the_park():
-    class _RaisingNotifier(NotificationService):
-        def __init__(self) -> None:
-            super().__init__(make_engine("sqlite:///:memory:"), Vault(Path("unused-keyfile.json")))
-
-        @override
+    class _RaisingNotifier:
         async def notify(
             self,
             owner_id: str,

@@ -53,7 +53,7 @@ from core.periodic import PeriodicTask
 from core.vault import Vault
 from runs import RunRegistry
 from services.conversations import ConversationStore
-from services.registry import ModelRegistry
+from services.registry import ResolvedModel
 from services.settings_store import SettingsStore, get_work_summary_idle_minutes
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,18 @@ class SummarizeWork(Protocol):
     ) -> str | None: ...
 
 
+class BackgroundModels(Protocol):
+    """The slice of the model registry a sweep resolves its summarizing model through."""
+
+    async def resolve_background(
+        self,
+        *,
+        owner_id: str,
+        override_endpoint_id: str | None = None,
+        override_model: str | None = None,
+    ) -> ResolvedModel: ...
+
+
 class WorkSummaryService:
     """Owns the sweep loop and one pass of it.
 
@@ -100,7 +112,7 @@ class WorkSummaryService:
         *,
         store: ConversationStore,
         settings_store: SettingsStore,
-        models: ModelRegistry,
+        models: BackgroundModels,
         runs: RunRegistry,
         vault: Vault,
         settings: Settings,

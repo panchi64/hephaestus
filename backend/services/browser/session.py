@@ -33,7 +33,7 @@ import logging
 import secrets
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from playwright.async_api import StorageState
 from pydantic_ai_harness.playwright import EgressPolicy
@@ -41,9 +41,19 @@ from pydantic_ai_harness.playwright import EgressPolicy
 from core.periodic import PeriodicTask
 
 from .live import ControlledBrowserSession, LiveBrowser, Profile
-from .vm import VMBrowser
 
 logger = logging.getLogger(__name__)
+
+
+class BrowserHost(Protocol):
+    """The slice of the VM's browser that sessions attach to and disguise pages through."""
+
+    @property
+    def cdp_url(self) -> str | None: ...
+
+    async def ensure(self) -> str | None: ...
+
+    async def apply_stealth(self, page: object) -> None: ...
 
 
 class BrowserSessionManager:
@@ -56,7 +66,7 @@ class BrowserSessionManager:
 
     def __init__(
         self,
-        host: VMBrowser,
+        host: BrowserHost,
         *,
         idle_ttl_s: float,
         reap_interval_s: float,

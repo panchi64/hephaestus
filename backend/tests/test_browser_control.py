@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import cast, override
+from typing import cast
 
 import pytest
 from playwright.async_api import Browser
@@ -28,8 +28,7 @@ from core.container import ServiceContainer
 from runs import Run, RunStream
 from services.browser import BrowserSessionManager, ControlledBrowserSession, LiveBrowser
 from services.browser import session as session_module
-from services.browser.vm import VMBrowser
-from services.webfetch import ManagedBrowser
+from services.browser.session import BrowserHost
 from tools import RunDeps
 from tools.browse import TOOL_NAMES, BrowserToolset, browse_instructions, browse_toolset
 
@@ -92,41 +91,26 @@ class _FakeSession:
         return self.page
 
 
-class _FakeHost(VMBrowser):
-    """A VMBrowser stand-in whose browser a test can take away."""
+class _FakeHost:
+    """A browser host whose browser a test can take away."""
 
     def __init__(self, cdp_url: str | None = "http://127.0.0.1:9222") -> None:
-        super().__init__(
-            ManagedBrowser(
-                enabled=False,
-                vm=None,
-                startup_timeout_s=0.0,
-                concurrency=1,
-                user_agent="",
-                locale="en-US",
-                timezone_id="UTC",
-            ),
-            launch_timeout_s=0.0,
-        )
         self.fake_cdp_url = cdp_url
         self.stealthed: list[object] = []
 
     @property
-    @override
     def cdp_url(self) -> str | None:
         return self.fake_cdp_url
 
-    @override
     async def ensure(self) -> str | None:
         return self.fake_cdp_url
 
-    @override
     async def apply_stealth(self, page: object) -> None:
         self.stealthed.append(page)
 
 
 def _manager(
-    host: VMBrowser,
+    host: BrowserHost,
     *,
     idle_ttl_s: float = 900.0,
     reap_interval_s: float = 60.0,

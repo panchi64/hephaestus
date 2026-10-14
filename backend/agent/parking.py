@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic_ai import (
     DeferredToolRequests,
@@ -46,13 +46,30 @@ from pydantic_ai import (
 from runs import ApprovalRequired, QuestionAsked, Run
 from services.answers import questions_of
 from services.conversations import ConversationBinding, ConversationStore
-from services.notifications import NotificationService
+from services.notification_view import NotificationView
 
 from .compaction_context import CompactionContext
 from .factory import TurnAgent
 from .naming import TitleContext, approval_conversation_title
 
 logger = logging.getLogger(__name__)
+
+
+class ParkNotifier(Protocol):
+    """The slice of the notification service a park announces itself through."""
+
+    async def notify(
+        self,
+        owner_id: str,
+        kind: str,
+        title: str,
+        body: str | None = None,
+        *,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        task_id: str | None = None,
+    ) -> NotificationView: ...
+
 
 # A stateless turn's workspace binding: an unfiled Normal thread. The conservative
 # default — Normal never reaches the host — so a caller that forgets to resolve one
@@ -175,7 +192,7 @@ async def park_for_input(
     announced: set[str],
     *,
     settled: dict[str, ToolApproved | ToolDenied] | None = None,
-    notifications: NotificationService | None = None,
+    notifications: ParkNotifier | None = None,
     store: ConversationStore | None = None,
     conversation_id: str | None = None,
     request_limit: int | None = None,

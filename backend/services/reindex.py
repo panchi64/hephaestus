@@ -19,13 +19,11 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Protocol
 
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
-from services.conversations import ConversationStore
-from services.corpus.chunk_store import CorpusChunkStore
-from services.memory import MemoryStore
-from services.registry import ModelRegistry
+from services.endpoint_spec import EndpointSpec
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +40,49 @@ class ReindexStatus:
     completed_at: datetime | None = None
 
 
+class EmbeddingSpecSource(Protocol):
+    """The slice of the model registry that names the current embedding model."""
+
+    async def resolve_embedding_spec(self, owner_id: str) -> EndpointSpec: ...
+
+
+class MemoryReembedder(Protocol):
+    """The slice of the memory store a reindex heals."""
+
+    async def reembed(
+        self, owner_id: str, *, current_model: str | None = None, batch_size: int = 64
+    ) -> int: ...
+
+
+class MessageReindexer(Protocol):
+    """The slice of the conversation store a reindex heals."""
+
+    async def reindex_embeddings(
+        self, owner_id: str, *, current_model: str | None = None, batch_size: int = 64
+    ) -> int: ...
+
+
+class ChunkReembedder(Protocol):
+    """The slice of the corpus chunk store a reindex heals."""
+
+    async def reembed(
+        self,
+        owner_id: str,
+        source_id: str | None = None,
+        *,
+        source_kind: str | None = None,
+        current_model: str | None = None,
+        batch_size: int = 64,
+    ) -> int: ...
+
+
 class EmbeddingReindexer:
     def __init__(
         self,
-        registry: ModelRegistry,
-        memory: MemoryStore,
-        conversations: ConversationStore,
-        chunks: CorpusChunkStore,
+        registry: EmbeddingSpecSource,
+        memory: MemoryReembedder,
+        conversations: MessageReindexer,
+        chunks: ChunkReembedder,
     ) -> None:
         self._registry = registry
         self._memory = memory

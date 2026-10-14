@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import override
 
 import pytest
 from pydantic_ai import (
@@ -42,7 +41,7 @@ from core.vault import Vault
 from runs import RunRegistry
 from services import work_summaries as work_summaries_module
 from services.conversations import ConversationStore
-from services.registry import ModelRegistry, ResolvedModel
+from services.registry import ResolvedModel
 from services.settings_store import (
     WORK_SUMMARY_IDLE_MINUTES_KEY,
     WORK_SUMMARY_IDLE_MINUTES_MAX,
@@ -247,14 +246,12 @@ async def _store(tmp_path) -> ConversationStore:
     return store
 
 
-class _Registry(ModelRegistry):
-    """The model registry with the one method the sweep calls answering ``model``."""
+class _Registry:
+    """The one registry method the sweep calls, answering ``model``."""
 
-    def __init__(self, model: Model, vault: Vault) -> None:
-        super().__init__(make_engine("sqlite:///:memory:"), vault)
+    def __init__(self, model: Model) -> None:
         self._model = model
 
-    @override
     async def resolve_background(
         self,
         *,
@@ -312,7 +309,7 @@ def _service(store: ConversationStore, model, runs: RunRegistry | None = None):
     return WorkSummaryService(
         store=store,
         settings_store=SettingsStore(settings_engine),
-        models=_Registry(model, store._vault),
+        models=_Registry(model),
         runs=runs or RunRegistry(),
         vault=store._vault,
         settings=Settings(),
