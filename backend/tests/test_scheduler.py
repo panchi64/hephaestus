@@ -6,9 +6,13 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from datetime import timedelta
+from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import NotRequired, TypedDict, Unpack
 
+import pytest
+from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
@@ -29,23 +33,45 @@ async def _vault(tmp_path: Path) -> Vault:
     return v
 
 
-def _engine():
+class _AdvanceKwargs(TypedDict, total=False):
+    next_run_at: datetime | None
+    last_run_at: datetime | None
+    enabled: bool | None
+
+
+class _FinalizeKwargs(TypedDict):
+    finished_at: datetime
+    outcome: str
+    run_id: str | None
+    conversation_id: str | None
+    summary: str | None
+
+
+class _ComputeKwargs(TypedDict):
+    anchor: datetime
+    run_at: NotRequired[datetime | None]
+    every_seconds: NotRequired[float | None]
+    cron_expr: NotRequired[str | None]
+    timezone: NotRequired[str]
+
+
+def _engine() -> Engine:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     return engine
 
 
 def _add_task(
-    engine,
+    engine: Engine,
     vault: Vault,
     *,
     kind: str = TaskKind.AGENT.value,
     schedule_type: str = ScheduleType.ONCE.value,
-    run_at=None,
+    run_at: datetime | None = None,
     every_seconds: float | None = None,
     cron_expr: str | None = None,
     output: str = TaskOutput.CHAT.value,
-    next_run_at=None,
+    next_run_at: datetime | None = None,
     enabled: bool = True,
     title: str = "a task",
     prompt: str = "do the thing",
@@ -75,20 +101,20 @@ def _add_task(
 # same in-memory engine, which is a single shared connection — so they take the engine's
 # connection lock like `in_session` does. A bare `Session(engine)` here raced the loop
 # into "cannot start a transaction within a transaction".
-def _get_task(engine, task_id: str) -> ScheduledTask:
+def _get_task(engine: Engine, task_id: str) -> ScheduledTask:
     with read_session(engine) as session:
         task = session.get(ScheduledTask, task_id)
         assert task is not None
         return task
 
 
-def _list_runs(engine, task_id: str) -> list[TaskRun]:
+def _list_runs(engine: Engine, task_id: str) -> list[TaskRun]:
     with read_session(engine) as session:
         return list(session.exec(select(TaskRun).where(TaskRun.task_id == task_id)).all())
 
 
 async def _settled_runs(
-    engine, task_id: str, *, count: int = 1, timeout: float = 5.0
+    engine: Engine, task_id: str, *, count: int = 1, timeout: float = 5.0
 ) -> list[TaskRun]:
     """``task_id``'s runs, once at least ``count`` exist and every one has finished.
 
@@ -114,23 +140,23 @@ async def _settled_runs(
         if loop.time() >= deadline:
             raise AssertionError(
                 f"no run settled for {task_id} within {timeout}s — saw {len(runs)} run(s): "
-                f"{[(run.id, run.outcome) for run in runs]}"
+                + f"{[(run.id, run.outcome) for run in runs]}"
             )
         await asyncio.sleep(0.01)
 
 
-async def _never_notify(view: ScheduledTaskView) -> None:
+async def _never_notify(_view: ScheduledTaskView) -> None:
     raise AssertionError("notify must not be called for an agent task")
 
 
-async def _never_execute(view: ScheduledTaskView) -> TaskRunResult:
+async def _never_execute(_view: ScheduledTaskView) -> TaskRunResult:
     raise AssertionError("executor must not be called for a reminder task")
 
 
 # --- firing due tasks ---------------------------------------------------------
 
 
-async def test_once_agent_task_fires_records_the_run_and_self_disables(tmp_path):
+async def test_once_agent_task_fires_records_the_run_and_self_disables(tmp_path: Path):
     engine = _engine()
     vault = await _vault(tmp_path)
 
@@ -172,7 +198,7 @@ async def test_once_agent_task_fires_records_the_run_and_self_disables(tmp_path)
         await scheduler.stop()
 
 
-async def test_interval_task_recomputes_forward_and_stays_enabled(tmp_path):
+async def test_interval_task_recomputes_forward_and_stays_enabled(tmp_path: Path):
     engine = _engine()
     vault = await _vault(tmp_path)
     calls: list[str] = []
@@ -203,7 +229,7 @@ async def test_interval_task_recomputes_forward_and_stays_enabled(tmp_path):
         await scheduler.stop()
 
 
-async def test_reminder_task_calls_notify_verbatim_not_the_executor(tmp_path):
+async def test_reminder_task_calls_notify_verbatim_not_the_executor(tmp_path: Path):
     engine = _engine()
     vault = await _vault(tmp_path)
     notified: list[tuple[str, str]] = []
@@ -233,11 +259,11 @@ async def test_reminder_task_calls_notify_verbatim_not_the_executor(tmp_path):
         await scheduler.stop()
 
 
-async def test_executor_exception_records_error_outcome_without_killing_the_loop(tmp_path):
+async def test_executor_exception_records_error_outcome_without_killing_the_loop(tmp_path: Path):
     engine = _engine()
     vault = await _vault(tmp_path)
 
-    async def bad_executor(view: ScheduledTaskView) -> TaskRunResult:
+    async def bad_executor(_view: ScheduledTaskView) -> TaskRunResult:
         raise RuntimeError("boom")
 
     task_id = _add_task(
@@ -258,7 +284,9 @@ async def test_executor_exception_records_error_outcome_without_killing_the_loop
         await scheduler.stop()
 
 
-async def _fires_once_after(tmp_path, break_first_claim) -> None:
+async def _fires_once_after(
+    tmp_path: Path, break_first_claim: Callable[[SchedulerService], None]
+) -> None:
     """A due task whose first schedule claim fails: nothing fires unclaimed, the loop
     survives, and the next tick claims and fires it exactly once."""
     engine = _engine()
@@ -282,7 +310,7 @@ async def _fires_once_after(tmp_path, break_first_claim) -> None:
     break_first_claim(scheduler)
     await scheduler.start()
     try:
-        await asyncio.wait_for(fired.wait(), timeout=2.0)
+        _ = await asyncio.wait_for(fired.wait(), timeout=2.0)
         runs = await _settled_runs(engine, task_id)
         await asyncio.sleep(0.2)
         assert calls == [task_id]
@@ -294,28 +322,32 @@ async def _fires_once_after(tmp_path, break_first_claim) -> None:
         await scheduler.stop()
 
 
-async def test_a_failed_schedule_claim_fires_nothing_until_the_next_tick(tmp_path):
+async def test_a_failed_schedule_claim_fires_nothing_until_the_next_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     def break_first_claim(scheduler: SchedulerService) -> None:
         real_advance = scheduler._advance
         failed = False
 
-        async def flaky_advance(task_id: str, **kwargs) -> None:
+        async def flaky_advance(task_id: str, **kwargs: Unpack[_AdvanceKwargs]) -> None:
             nonlocal failed
             if not failed and "next_run_at" in kwargs:
                 failed = True
                 raise RuntimeError("transient DB failure")
             await real_advance(task_id, **kwargs)
 
-        scheduler._advance = flaky_advance
+        monkeypatch.setattr(scheduler, "_advance", flaky_advance)
 
     await _fires_once_after(tmp_path, break_first_claim)
 
 
-async def test_a_failed_recompute_fires_nothing_until_the_next_tick(tmp_path, monkeypatch):
+async def test_a_failed_recompute_fires_nothing_until_the_next_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     real_compute = scheduler_mod.compute_next_run
     failed = False
 
-    def flaky_compute(schedule_type: str, **kwargs):
+    def flaky_compute(schedule_type: str, **kwargs: Unpack[_ComputeKwargs]) -> datetime | None:
         nonlocal failed
         if not failed:
             failed = True
@@ -335,7 +367,9 @@ def _locked_error() -> OperationalError:
     return OperationalError("UPDATE taskrun …", {}, sqlite3.OperationalError("database is locked"))
 
 
-async def test_transient_locked_db_on_finalize_retries_and_never_double_fires(tmp_path):
+async def test_transient_locked_db_on_finalize_retries_and_never_double_fires(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """The live-drive regression: a concurrent write-behind drainer held SQLite's
     write lock, `_finalize_task_run` raised `database is locked`, the error escaped
     `_finalize_parked` (which only parked on `VaultLocked`) so `_advance` never ran —
@@ -357,14 +391,14 @@ async def test_transient_locked_db_on_finalize_retries_and_never_double_fires(tm
     real_finalize = scheduler._finalize_task_run
     failed = False
 
-    async def flaky_finalize(run_row_id: str, **kwargs) -> None:
+    async def flaky_finalize(run_row_id: str, **kwargs: Unpack[_FinalizeKwargs]) -> None:
         nonlocal failed
         if not failed:
             failed = True
             raise _locked_error()
         await real_finalize(run_row_id, **kwargs)
 
-    scheduler._finalize_task_run = flaky_finalize
+    monkeypatch.setattr(scheduler, "_finalize_task_run", flaky_finalize)
     await scheduler.start()
     try:
         # Long enough to span the retry backoff plus several ticks — with the old
@@ -383,7 +417,9 @@ async def test_transient_locked_db_on_finalize_retries_and_never_double_fires(tm
         await scheduler.stop()
 
 
-async def test_transient_locked_db_on_advance_retries_and_schedule_still_advances(tmp_path):
+async def test_transient_locked_db_on_advance_retries_and_schedule_still_advances(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Same invariant one write later: finalize lands, then the schedule advance hits
     a transient lock. `_advance` must retry it out — a once task that stayed due with
     its claim freed would be re-dispatched for real on the very next tick."""
@@ -402,14 +438,14 @@ async def test_transient_locked_db_on_advance_retries_and_schedule_still_advance
     real_advance_once = scheduler._advance_once
     failed = False
 
-    async def flaky_advance_once(task_id: str, **kwargs) -> None:
+    async def flaky_advance_once(task_id: str, **kwargs: Unpack[_AdvanceKwargs]) -> None:
         nonlocal failed
         if not failed:
             failed = True
             raise _locked_error()
         await real_advance_once(task_id, **kwargs)
 
-    scheduler._advance_once = flaky_advance_once
+    monkeypatch.setattr(scheduler, "_advance_once", flaky_advance_once)
     await scheduler.start()
     try:
         await asyncio.sleep(0.5)
@@ -425,7 +461,9 @@ async def test_transient_locked_db_on_advance_retries_and_schedule_still_advance
         await scheduler.stop()
 
 
-async def test_permanently_locked_db_gives_up_after_bounded_retries(tmp_path, monkeypatch):
+async def test_permanently_locked_db_gives_up_after_bounded_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """A lock that never clears must surface after the bounded retry budget — never
     loop forever holding the fire task open (a permanent DB failure has to become
     visible, not spin silently)."""
@@ -434,7 +472,7 @@ async def test_permanently_locked_db_gives_up_after_bounded_retries(tmp_path, mo
     engine = _engine()
     vault = await _vault(tmp_path)
 
-    async def executor(view: ScheduledTaskView) -> TaskRunResult:
+    async def executor(_view: ScheduledTaskView) -> TaskRunResult:
         return TaskRunResult(outcome=TaskOutcome.OK.value)
 
     task_id = _add_task(
@@ -443,12 +481,12 @@ async def test_permanently_locked_db_gives_up_after_bounded_retries(tmp_path, mo
     scheduler = SchedulerService(engine, vault, executor, _never_notify)
     attempts = 0
 
-    async def always_locked(run_row_id: str, **kwargs) -> None:
+    async def always_locked(*_args: object, **_kwargs: object) -> None:
         nonlocal attempts
         attempts += 1
         raise _locked_error()
 
-    scheduler._finalize_task_run = always_locked
+    monkeypatch.setattr(scheduler, "_finalize_task_run", always_locked)
 
     # Fire on demand (no tick loop) so the one detached fire task is directly awaitable.
     run_row_id = await scheduler.fire_now(task_id)
@@ -475,13 +513,13 @@ def _slow():
     async def executor(view: ScheduledTaskView) -> TaskRunResult:
         calls.append(view.id)
         executing.set()
-        await release.wait()
+        _ = await release.wait()
         return TaskRunResult(outcome=TaskOutcome.OK.value)
 
     return executor, executing, release, calls
 
 
-async def test_a_fire_due_while_the_last_is_live_starts_on_time(tmp_path):
+async def test_a_fire_due_while_the_last_is_live_starts_on_time(tmp_path: Path):
     engine = _engine()
     vault = await _vault(tmp_path)
     executor, executing, release, calls = _slow()
@@ -495,7 +533,7 @@ async def test_a_fire_due_while_the_last_is_live_starts_on_time(tmp_path):
     scheduler = SchedulerService(engine, vault, executor, _never_notify)
     await scheduler.start()
     try:
-        await asyncio.wait_for(executing.wait(), timeout=2.0)
+        _ = await asyncio.wait_for(executing.wait(), timeout=2.0)
         # The next occurrence comes due while the first is still running.
         await scheduler._advance(task_id, next_run_at=utcnow() - timedelta(milliseconds=10))
         scheduler.wake()
@@ -509,7 +547,7 @@ async def test_a_fire_due_while_the_last_is_live_starts_on_time(tmp_path):
         await scheduler.stop()
 
 
-async def _until(condition, timeout: float = 2.0) -> None:
+async def _until(condition: Callable[[], bool], timeout: float = 2.0) -> None:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while not condition():
@@ -520,7 +558,7 @@ async def _until(condition, timeout: float = 2.0) -> None:
 # --- lock-awareness --------------------------------------------------------------
 
 
-async def test_vault_locked_mid_execution_parks_finalize_until_unlock(tmp_path):
+async def test_vault_locked_mid_execution_parks_finalize_until_unlock(tmp_path: Path):
     """The operator can lock the vault via `POST /auth/lock` while an agent task's
     executor is still running. The finalize step (which encrypts the summary) must
     park and retry rather than let `VaultLocked` escape the detached `_fire` task —
@@ -528,7 +566,7 @@ async def test_vault_locked_mid_execution_parks_finalize_until_unlock(tmp_path):
     engine = _engine()
     vault = await _vault(tmp_path)
 
-    async def executor(view: ScheduledTaskView) -> TaskRunResult:
+    async def executor(_view: ScheduledTaskView) -> TaskRunResult:
         vault.lock()  # simulates the operator locking mid-execution
         return TaskRunResult(outcome=TaskOutcome.OK.value, summary="finished while locked")
 
@@ -544,7 +582,7 @@ async def test_vault_locked_mid_execution_parks_finalize_until_unlock(tmp_path):
         assert len(runs) == 1
         assert runs[0].finished_at is None
 
-        await vault.unlock("pw")
+        _ = await vault.unlock("pw")
         await asyncio.sleep(0.2)
 
         [run] = _list_runs(engine, task_id)
@@ -556,7 +594,7 @@ async def test_vault_locked_mid_execution_parks_finalize_until_unlock(tmp_path):
         await scheduler.stop()
 
 
-async def test_locked_vault_parks_and_fires_at_most_one_catch_up_on_unlock(tmp_path):
+async def test_locked_vault_parks_and_fires_at_most_one_catch_up_on_unlock(tmp_path: Path):
     engine = _engine()
     vault = await _vault(tmp_path)
     calls: list[str] = []
@@ -580,7 +618,7 @@ async def test_locked_vault_parks_and_fires_at_most_one_catch_up_on_unlock(tmp_p
         await asyncio.sleep(0.1)
         assert calls == []  # parked while locked — never touches the encrypted prompt
 
-        await vault.unlock("pw")
+        _ = await vault.unlock("pw")
         await asyncio.sleep(0.2)
         assert calls == [task_id]  # exactly one catch-up fire, not a backlog burst
 
@@ -595,12 +633,12 @@ async def test_locked_vault_parks_and_fires_at_most_one_catch_up_on_unlock(tmp_p
 # --- wake / re-arm ---------------------------------------------------------------
 
 
-async def test_wake_picks_up_a_freshly_armed_task_without_waiting_out_the_old_sleep(tmp_path):
+async def test_wake_picks_up_a_freshly_armed_task_without_waiting_out_the_old_sleep(tmp_path: Path):
     engine = _engine()
     vault = await _vault(tmp_path)
     fired = asyncio.Event()
 
-    async def executor(view: ScheduledTaskView) -> TaskRunResult:
+    async def executor(_view: ScheduledTaskView) -> TaskRunResult:
         fired.set()
         return TaskRunResult(outcome=TaskOutcome.OK.value)
 
@@ -610,7 +648,7 @@ async def test_wake_picks_up_a_freshly_armed_task_without_waiting_out_the_old_sl
         await asyncio.sleep(0.05)  # nothing scheduled yet — the loop parks indefinitely
 
         # What a task-creation route does: insert directly, then nudge the scheduler.
-        _add_task(
+        _ = _add_task(
             engine,
             vault,
             schedule_type=ScheduleType.ONCE.value,
@@ -619,7 +657,7 @@ async def test_wake_picks_up_a_freshly_armed_task_without_waiting_out_the_old_sl
         )
         scheduler.wake()
 
-        await asyncio.wait_for(fired.wait(), timeout=1.0)
+        _ = await asyncio.wait_for(fired.wait(), timeout=1.0)
     finally:
         await scheduler.stop()
 
@@ -627,7 +665,7 @@ async def test_wake_picks_up_a_freshly_armed_task_without_waiting_out_the_old_sl
 # --- on-demand fire (fire_now) ---------------------------------------------------
 
 
-async def test_fire_now_fires_a_not_yet_due_task_immediately(tmp_path):
+async def test_fire_now_fires_a_not_yet_due_task_immediately(tmp_path: Path):
     engine = _engine()
     vault = await _vault(tmp_path)
     calls: list[str] = []
@@ -657,7 +695,7 @@ async def test_fire_now_fires_a_not_yet_due_task_immediately(tmp_path):
         await scheduler.stop()
 
 
-async def test_fire_now_returns_none_for_an_unknown_task(tmp_path):
+async def test_fire_now_returns_none_for_an_unknown_task(tmp_path: Path):
     engine = _engine()
     vault = await _vault(tmp_path)
     scheduler = SchedulerService(engine, vault, _never_execute, _never_notify)
@@ -668,7 +706,7 @@ async def test_fire_now_returns_none_for_an_unknown_task(tmp_path):
         await scheduler.stop()
 
 
-async def test_fire_now_refuses_a_disabled_task(tmp_path):
+async def test_fire_now_refuses_a_disabled_task(tmp_path: Path):
     # Mirrors the tick loop's own due-detection (`_load_due` filters on `enabled`) —
     # an operator disabling a task must actually stop it from firing on-demand too,
     # not just stop its own schedule. This is the one gate shared by `run_now` and
@@ -693,7 +731,7 @@ async def test_fire_now_refuses_a_disabled_task(tmp_path):
         await scheduler.stop()
 
 
-async def test_fire_now_starts_alongside_a_live_execution(tmp_path):
+async def test_fire_now_starts_alongside_a_live_execution(tmp_path: Path):
     """A manual fire runs at once, even while the scheduled one is still going."""
     engine = _engine()
     vault = await _vault(tmp_path)
@@ -708,7 +746,7 @@ async def test_fire_now_starts_alongside_a_live_execution(tmp_path):
     scheduler = SchedulerService(engine, vault, executor, _never_notify)
     await scheduler.start()
     try:
-        await asyncio.wait_for(executing.wait(), timeout=2.0)
+        _ = await asyncio.wait_for(executing.wait(), timeout=2.0)
         manual = await scheduler.fire_now(task_id)
         await _until(lambda: len(calls) == 2)
 
@@ -719,11 +757,11 @@ async def test_fire_now_starts_alongside_a_live_execution(tmp_path):
         await scheduler.stop()
 
 
-async def test_running_a_one_off_by_hand_keeps_its_scheduled_moment(tmp_path):
+async def test_running_a_one_off_by_hand_keeps_its_scheduled_moment(tmp_path: Path):
     engine = _engine()
     vault = await _vault(tmp_path)
 
-    async def executor(view: ScheduledTaskView) -> TaskRunResult:
+    async def executor(_view: ScheduledTaskView) -> TaskRunResult:
         return TaskRunResult(outcome=TaskOutcome.OK.value)
 
     later = utcnow() + timedelta(days=7)
@@ -733,8 +771,8 @@ async def test_running_a_one_off_by_hand_keeps_its_scheduled_moment(tmp_path):
     scheduler = SchedulerService(engine, vault, executor, _never_notify)
     await scheduler.start()
     try:
-        await scheduler.fire_now(task_id)
-        await _settled_runs(engine, task_id)
+        _ = await scheduler.fire_now(task_id)
+        _ = await _settled_runs(engine, task_id)
         task = _get_task(engine, task_id)
         assert task.enabled and as_utc(task.next_run_at) == later
         assert task.last_run_at is not None
