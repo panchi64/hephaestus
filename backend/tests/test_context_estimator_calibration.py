@@ -20,6 +20,8 @@ all three cancels, and only the difference between them survives.
 from __future__ import annotations
 
 import json
+from importlib.util import find_spec
+from typing import TYPE_CHECKING
 
 import pytest
 from pydantic_ai import ModelRequest, ModelResponse
@@ -31,15 +33,21 @@ from runs import TurnOverhead
 from services.context_budget import compose
 from services.conversation_view import estimate_footprint, estimate_tokens, message_chars
 
-tiktoken = pytest.importorskip("tiktoken", reason="calibration needs a real tokenizer")
+if TYPE_CHECKING:
+    from tiktoken import Encoding
+
+if find_spec("tiktoken") is None:
+    pytest.skip("calibration needs a real tokenizer", allow_module_level=True)
 
 
 @pytest.fixture(scope="module")
-def encoder():
+def encoder() -> Encoding:
+    from tiktoken import get_encoding
+
     # The encoding is downloaded on first use; without network access there is nothing to
     # calibrate against.
     try:
-        return tiktoken.get_encoding("cl100k_base")
+        return get_encoding("cl100k_base")
     except OSError as exc:
         pytest.skip(f"cl100k could not be fetched: {exc}")
 
@@ -118,14 +126,14 @@ insurance market if that is the part that matters for your purposes.
 """.strip()
 
 
-def _rate(encoder, text: str) -> float:
+def _rate(encoder: Encoding, text: str) -> float:
     return len(text) / len(encoder.encode(text))
 
 
 # ── The constants ────────────────────────────────────────────────────────────────
 
 
-def test_prose_and_json_really_do_tokenize_differently(encoder):
+def test_prose_and_json_really_do_tokenize_differently(encoder: Encoding):
     """The premise the two constants rest on. If these converged, one divisor would be
     right and the split's extra machinery would be dead weight."""
     prose_rate = _rate(encoder, _PROSE)
@@ -145,7 +153,9 @@ def test_prose_and_json_really_do_tokenize_differently(encoder):
         (CHARS_PER_TOKEN_JSON, json.dumps(_tool_result())),
     ],
 )
-def test_each_constant_is_within_ten_percent_of_the_real_rate(encoder, constant, sample):
+def test_each_constant_is_within_ten_percent_of_the_real_rate(
+    encoder: Encoding, constant: float, sample: str
+):
     """Absolute accuracy, held loosely on purpose. The parts are scaled to the provider's
     total afterwards, so what a shared bias costs is nothing; 10% is tight enough that a
     constant can't drift into being wrong about the *kind* of content it describes."""
@@ -156,11 +166,11 @@ def test_each_constant_is_within_ten_percent_of_the_real_rate(encoder, constant,
 # ── The split ────────────────────────────────────────────────────────────────────
 
 
-def _tokens(encoder, text: str) -> int:
+def _tokens(encoder: Encoding, text: str) -> int:
     return len(encoder.encode(text))
 
 
-def test_the_split_lands_close_to_what_a_tokenizer_says(encoder):
+def test_the_split_lands_close_to_what_a_tokenizer_says(encoder: Encoding):
     """End to end, on a thread built to be adversarial: heavy tool schemas, heavy
     structured results, and a fair amount of prose — the mix where a single divisor goes
     furthest wrong."""
@@ -188,13 +198,15 @@ def test_the_split_lands_close_to_what_a_tokenizer_says(encoder):
     split = compose(used, TurnOverhead(system=len(brief), tools=len(schemas)), messages)
     assert split is not None
 
+    parts = {"system": split.system, "tools": split.tools, "messages": split.messages}
     for name, actual in truth.items():
-        estimated = getattr(split, name)
+        estimated = parts[name]
         error = abs(estimated - actual) / actual
         assert error < 0.15, f"{name}: estimated {estimated}, tokenizer says {actual}"
 
 
-def test_the_dominant_part_is_never_misidentified(encoder):
+@pytest.mark.usefixtures("encoder")
+def test_the_dominant_part_is_never_misidentified():
     """The failure that would actually mislead someone. Whatever else the split gets
     wrong, the largest part has to be the largest part — that is the whole question the
     operator opens the breakdown to answer."""
@@ -218,7 +230,8 @@ def test_the_dominant_part_is_never_misidentified(encoder):
     assert split.messages > split.tools
 
 
-def test_structured_results_are_credited_to_messages_not_to_tools(encoder):
+@pytest.mark.usefixtures("encoder")
+def test_structured_results_are_credited_to_messages_not_to_tools():
     """The specific misreading this readout was shipped with. Tool *results* live in the
     conversation; only the *schemas* are overhead. Scoring a dict result as zero — which
     is what the estimator did — blamed the tool catalog for weight the search results had
@@ -240,7 +253,7 @@ def test_structured_results_are_credited_to_messages_not_to_tools(encoder):
 # ── The footprint the trigger measures ───────────────────────────────────────────
 
 
-def test_the_message_estimate_lands_close_to_what_a_tokenizer_says(encoder):
+def test_the_message_estimate_lands_close_to_what_a_tokenizer_says(encoder: Encoding):
     """`estimate_tokens` is not only an input to the split — it is the number the
     compaction trigger projects against the window, so its *absolute* accuracy matters in
     a way the split's does not (nothing scales it to a provider's total afterwards). An
@@ -257,7 +270,7 @@ def test_the_message_estimate_lands_close_to_what_a_tokenizer_says(encoder):
     assert abs(estimated - truth) / truth < 0.15, f"estimated {estimated}, truth {truth}"
 
 
-def test_a_footprint_counts_the_brief_and_the_schemas_too(encoder):
+def test_a_footprint_counts_the_brief_and_the_schemas_too(encoder: Encoding):
     """The whole request, not just the conversation. A full tool catalog is a five-figure
     number on its own, so a threshold checked against the messages alone is checked
     against roughly half of what will actually be sent."""
@@ -274,7 +287,7 @@ def test_a_footprint_counts_the_brief_and_the_schemas_too(encoder):
     assert abs(estimated - truth) / truth < 0.15, f"estimated {estimated}, truth {truth}"
 
 
-def test_tag_mode_thinking_is_measured_and_field_mode_is_not(encoder):
+def test_tag_mode_thinking_is_measured_and_field_mode_is_not(encoder: Encoding):
     """Whether a thinking model's scratch work counts is **template-dependent**, and the
     two halves are measured here rather than asserted, because getting either one wrong
     moves the compaction trigger.

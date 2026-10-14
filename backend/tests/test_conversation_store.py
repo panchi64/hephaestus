@@ -29,6 +29,7 @@ async def _model_after_cold_read(store: ConversationStore, conversation_id: str)
     await store._worker.join()
     store._cache.clear()
     summary = await store.get_summary(conversation_id, OPERATOR_ID)
+    assert summary is not None
     return summary.model
 
 
