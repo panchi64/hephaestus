@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import Tool
 from pydantic_ai.usage import RunUsage
+from sqlalchemy import Engine
 from sqlmodel import Session
 
 from core.container import ServiceContainer
+from core.vault import Vault
 from models.conversation import Conversation
 from models.subagent import SubagentRecord
 from models.task import ScheduledTask, TaskRun
 from runs import Run, RunStream
+from services.conversations import ConversationStore
 from services.corpus import (
     ConversationAdapter,
     CorpusChunkStore,
@@ -30,7 +36,7 @@ from services.plugins import PluginStore
 from services.registry import ModelRegistry
 from services.skills import SkillStore
 from tools.deps import RunDeps
-from tools.platform import platform_toolset
+from tools.platform import PlatformDocument, PlatformResults, Source, platform_toolset
 
 from ._plugin_helpers import bundle
 from .test_conversation_search import DegradedEmbedder, _record, _setup
@@ -39,15 +45,24 @@ OWNER = "operator"
 
 
 class Platform:
-    def __init__(self, engine, vault, store, index, memory, skills, plugins) -> None:
-        self.engine = engine
-        self.vault = vault
-        self.store = store
-        self.index = index
-        self.memory = memory
-        self.skills = skills
-        self.plugins = plugins
-        self.tools = platform_toolset().tools
+    def __init__(
+        self,
+        engine: Engine,
+        vault: Vault,
+        store: ConversationStore,
+        index: CorpusIndex,
+        memory: MemoryStore,
+        skills: SkillStore,
+        plugins: PluginStore,
+    ) -> None:
+        self.engine: Engine = engine
+        self.vault: Vault = vault
+        self.store: ConversationStore = store
+        self.index: CorpusIndex = index
+        self.memory: MemoryStore = memory
+        self.skills: SkillStore = skills
+        self.plugins: PluginStore = plugins
+        self.tools: dict[str, Tool[RunDeps]] = platform_toolset().tools
 
     def ctx(self, conversation_id: str | None = "current") -> RunContext[RunDeps]:
         run = Run(id="r1", kind="chat", owner_id=OWNER, stream=RunStream())
@@ -59,15 +74,36 @@ class Platform:
         )
         return RunContext(deps=deps, model=TestModel(), usage=RunUsage(), tool_call_approved=True)
 
-    async def search(self, query: str, **kwargs):
-        return await self.tools["search"].function(self.ctx(), query, **kwargs)
+    async def search(
+        self,
+        query: str,
+        sources: list[Source] | None = None,
+        since: str | None = None,
+        *,
+        conversation_id: str | None = "current",
+    ) -> PlatformResults:
+        result = cast(
+            PlatformResults | str,
+            await self.tools["search"].function(
+                self.ctx(conversation_id), query, sources=sources, since=since
+            ),
+        )
+        assert isinstance(result, PlatformResults)
+        return result
 
-    async def read(self, ref: str):
-        return await self.tools["read"].function(self.ctx(), ref)
+    async def read_text(self, ref: str) -> str:
+        result = cast(PlatformDocument | str, await self.tools["read"].function(self.ctx(), ref))
+        assert isinstance(result, str)
+        return result
+
+    async def read(self, ref: str) -> PlatformDocument:
+        result = cast(PlatformDocument | str, await self.tools["read"].function(self.ctx(), ref))
+        assert isinstance(result, PlatformDocument)
+        return result
 
 
 @pytest.fixture
-async def platform():
+async def platform() -> AsyncIterator[Platform]:
     engine, vault, store, search = await _setup(DegradedEmbedder())
     embedder = DegradedEmbedder()
     memory = MemoryStore(engine, vault, embedder)
@@ -85,11 +121,11 @@ async def platform():
     await store.stop()
 
 
-def _refs(results) -> list[str]:
+def _refs(results: PlatformResults) -> list[str]:
     return [hit.ref for hit in results.hits]
 
 
-async def test_a_fact_from_another_conversation_is_found_and_read_back(platform):
+async def test_a_fact_from_another_conversation_is_found_and_read_back(platform: Platform):
     older = await _record(
         platform.store, OWNER, ("which port does the staging proxy use", "port 8443")
     )
@@ -103,14 +139,13 @@ async def test_a_fact_from_another_conversation_is_found_and_read_back(platform)
     assert document.citations()[0].engagement == "read"
 
 
-async def test_the_callers_own_conversation_is_never_a_hit(platform):
+async def test_the_callers_own_conversation_is_never_a_hit(platform: Platform):
     current = await _record(platform.store, OWNER, ("the staging proxy", "uses 8443"))
-    ctx = platform.ctx(conversation_id=current)
-    results = await platform.tools["search"].function(ctx, "staging proxy")
+    results = await platform.search("staging proxy", conversation_id=current)
     assert results.hits == []
 
 
-async def test_reports_summaries_and_routine_outputs_are_searchable(platform):
+async def test_reports_summaries_and_routine_outputs_are_searchable(platform: Platform):
     vault = platform.vault
     conversation = await _record(platform.store, OWNER, ("hello", "hi"))
     now = datetime.now(UTC)
@@ -166,34 +201,34 @@ async def test_reports_summaries_and_routine_outputs_are_searchable(platform):
     assert "races the clock" in document.text and "Find the flaky" in document.text
 
 
-async def test_since_drops_older_material(platform):
+async def test_since_drops_older_material(platform: Platform):
     memory = await platform.memory.remember(OWNER, "the boiler code is 4471")
     later = (memory.created_at + timedelta(days=1)).isoformat()
     assert (await platform.search("boiler", sources=["memory"])).hits
     assert not (await platform.search("boiler", sources=["memory"], since=later)).hits
     with pytest.raises(ModelRetry):
-        await platform.search("boiler", since="last tuesday")
+        _ = await platform.search("boiler", since="last tuesday")
 
 
-async def test_sources_narrow_the_search(platform):
-    await platform.memory.remember(OWNER, "the boiler code is 4471")
-    await _record(platform.store, OWNER, ("the boiler", "is in the cellar"))
+async def test_sources_narrow_the_search(platform: Platform):
+    _ = await platform.memory.remember(OWNER, "the boiler code is 4471")
+    _ = await _record(platform.store, OWNER, ("the boiler", "is in the cellar"))
     results = await platform.search("boiler", sources=["memory"])
     assert {hit.source for hit in results.hits} == {"memory"}
 
 
-async def test_the_catalogs_are_searched_by_description(platform):
+async def test_the_catalogs_are_searched_by_description(platform: Platform):
     skill = await platform.skills.create(
         OWNER,
         name="release-notes",
         description="Draft release notes from a changelog.",
         body="Collect the merged PRs.",
     )
-    await platform.skills.set_published(OWNER, skill.id, True)
+    _ = await platform.skills.set_published(OWNER, skill.id, True)
     results = await platform.search("changelog", sources=["skills"])
     assert _refs(results) == ["skill:release-notes"]
     assert results.instruction == ""
-    assert "skills_open" in await platform.read("skill:release-notes")
+    assert "skills_open" in await platform.read_text("skill:release-notes")
 
     agents = await platform.search("researcher", sources=["agents"])
     assert "agent:researcher" in _refs(agents)
@@ -201,19 +236,19 @@ async def test_the_catalogs_are_searched_by_description(platform):
     assert document.title == "researcher"
 
 
-async def test_published_plugins_are_searched_by_their_tools(platform):
+async def test_published_plugins_are_searched_by_their_tools(platform: Platform):
     view = await platform.plugins.write_draft(OWNER, "weather", bundle(), source="agent")
     assert _refs(await platform.search("forecast", sources=["plugins"])) == []
 
-    await platform.plugins.publish(OWNER, view.id)
+    _ = await platform.plugins.publish(OWNER, view.id)
     results = await platform.search("forecast", sources=["plugins"])
     assert _refs(results) == ["plugin:weather"]
     assert "plugins_weather_forecast" in results.hits[0].excerpt
-    assert "search_tools" in await platform.read("plugin:weather")
+    assert "search_tools" in await platform.read_text("plugin:weather")
 
 
-async def test_a_file_reads_back_whole(platform, tmp_path: Path):
-    (tmp_path / "notes.txt").write_text(" ".join(f"word{i}" for i in range(1200)))
+async def test_a_file_reads_back_whole(platform: Platform, tmp_path: Path):
+    _ = (tmp_path / "notes.txt").write_text(" ".join(f"word{i}" for i in range(1200)))
     folder = platform.index._folder
     await folder.start()
     source = await platform.index.add_folder(OWNER, str(tmp_path))
@@ -226,9 +261,9 @@ async def test_a_file_reads_back_whole(platform, tmp_path: Path):
     assert "word0" in document.text and "word1199" in document.text
 
 
-async def test_an_unknown_ref_says_so(platform):
-    assert "Nothing found" in await platform.read("surf-memory:missing")
-    assert "Nothing found" in await platform.read("nonsense")
+async def test_an_unknown_ref_says_so(platform: Platform):
+    assert "Nothing found" in await platform.read_text("surf-memory:missing")
+    assert "Nothing found" in await platform.read_text("nonsense")
 
 
 def test_stitching_drops_the_overlap_between_chunks():
