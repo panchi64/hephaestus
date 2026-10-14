@@ -12,6 +12,7 @@ directly — while the same call made directly still parks.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 
 from pydantic_ai import (
     ApprovalRequired,
@@ -20,10 +21,13 @@ from pydantic_ai import (
     FunctionToolset,
     RunContext,
 )
-from pydantic_ai.messages import ModelRequest, RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness.code_mode._toolset import _RunCodeTool
 
 from agent import stream_agent_run
 from agent.code_mode import (
@@ -35,9 +39,9 @@ from agent.code_mode import (
 )
 from agent.factory import build_agent
 from core.config import Settings
-from runs import Run, RunStream
+from runs import Run, RunStream, ToolCompleted, ToolFailed, ToolProgress, ToolStarted
 from services.conversation_view import project_tree
-from services.permissions import blocked_message
+from services.permissions import PermissionLevel, blocked_message
 from services.workspace_kind import WorkspaceKind
 from tools import RunDeps, build_agent_toolsets, core_categories
 
@@ -65,16 +69,28 @@ def _probe_category() -> FunctionToolset[RunDeps]:
     return toolset
 
 
+def _wrapped(categories: Mapping[str, AbstractToolset[RunDeps]]) -> AbstractToolset[RunDeps]:
+    stack = build_agent_toolsets(categories)[0]
+    wrapper = code_mode_capability().get_wrapper_toolset(stack)
+    assert wrapper is not None
+    return wrapper
+
+
+def _callable(tools: dict[str, ToolsetTool[RunDeps]]) -> dict[str, ToolDefinition]:
+    run_code = tools[RUN_CODE]
+    assert isinstance(run_code, _RunCodeTool)
+    return run_code.callable_defs
+
+
 async def _script_catalog(
-    permission: str, kind: WorkspaceKind = "sandbox"
+    permission: PermissionLevel, kind: WorkspaceKind = "sandbox"
 ) -> tuple[set[str], set[str]]:
     """``(what a script may call, what the model is offered directly)`` at this level."""
     categories = {**core_categories(), "x": _probe_category()}
-    stack = build_agent_toolsets(categories)[0]
     deps = RunDeps(run=_run(), owner_id="operator", permission=permission, workspace_kind=kind)
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
-    tools = await code_mode_capability().get_wrapper_toolset(stack).get_tools(ctx)
-    return set(tools[RUN_CODE].callable_defs), set(tools) - {RUN_CODE}
+    tools = await _wrapped(categories).get_tools(ctx)
+    return set(_callable(tools)), set(tools) - {RUN_CODE}
 
 
 class TestWhatAScriptMayCall:
@@ -114,25 +130,28 @@ class TestWhatAScriptMayCall:
     async def test_a_level_change_moves_the_catalog_at_the_next_read(self):
         """`CodeMode` re-reads the catalog every step, off the live `deps.permission`."""
         categories = {**core_categories(), "x": _probe_category()}
-        stack = code_mode_capability().get_wrapper_toolset(build_agent_toolsets(categories)[0])
+        stack = _wrapped(categories)
         deps = RunDeps(run=_run(), owner_id="operator", permission="auto")
         ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
-        assert "x_jot" in (await stack.get_tools(ctx))[RUN_CODE].callable_defs
+        assert "x_jot" in _callable(await stack.get_tools(ctx))
         deps.permission = "manual"
-        assert "x_jot" not in (await stack.get_tools(ctx))[RUN_CODE].callable_defs
+        assert "x_jot" not in _callable(await stack.get_tools(ctx))
 
     async def test_run_code_is_described_as_a_read_with_a_narration(self):
         categories = {**core_categories(), "x": _probe_category()}
-        stack = code_mode_capability().get_wrapper_toolset(build_agent_toolsets(categories)[0])
+        stack = _wrapped(categories)
         deps = RunDeps(run=_run(), owner_id="operator", permission="auto")
         tool_def = (
             await stack.get_tools(RunContext(deps=deps, model=TestModel(), usage=RunUsage()))
         )[RUN_CODE].tool_def
+        assert tool_def.metadata is not None
         assert tool_def.metadata["sensitivity"] == "read"
         assert "narration" in tool_def.parameters_json_schema["properties"]
         # Bare signatures: the prose is on the direct definition, not repeated here.
-        assert "async def x_look(" in tool_def.description
-        assert "narration" not in tool_def.description.split("```python", 1)[1]
+        description = tool_def.description
+        assert description is not None
+        assert "async def x_look(" in description
+        assert "narration" not in description.split("```python", 1)[1]
 
 
 class TestTheLimits:
@@ -144,9 +163,9 @@ class TestTheLimits:
 # --- a script's calls, end to end -------------------------------------------------------
 
 
-def _script_then_answer(code: str, *, direct: tuple[str, dict] | None = None):
+def _script_then_answer(code: str, *, direct: tuple[str, dict[str, str]] | None = None):
     """A model that sends one call — a script, or ``direct`` — then answers."""
-    seen: list[list] = []
+    seen: list[list[ModelMessage]] = []
 
     async def stream_fn(messages, info):
         seen.append(messages)
@@ -201,21 +220,26 @@ def _gated_categories(calls: list[str]):
     return {"corpus": corpus, "x": other}
 
 
-async def _drive(model, categories, *, permission="auto", limits=None):
+async def _drive(model, categories, *, permission: PermissionLevel = "auto", limits=None):
     agent = build_agent(model, categories=categories, code_mode=limits)
     run = _run()
     deps = RunDeps(run=run, owner_id="operator", permission=permission)
     async with agent.iter("go", deps=deps) as agent_run:
         await stream_agent_run(agent_run, run)
+    assert agent_run.result is not None
     return run, agent_run.result, deps
 
 
-def _frames(run: Run):
-    return [e.body for e in run.stream.replay() if e.body.type.startswith("tool.")]
+def _frames(run: Run) -> list[ToolStarted | ToolCompleted | ToolFailed]:
+    bodies = [e.body for e in run.stream.replay() if e.body.type.startswith("tool.")]
+    assert not any(isinstance(b, ToolProgress) for b in bodies)
+    return [b for b in bodies if isinstance(b, ToolStarted | ToolCompleted | ToolFailed)]
 
 
-def _script_result(run: Run):
-    return next(f for f in _frames(run) if f.type == "tool.completed" and f.tool_call_id == "s")
+def _script_result(run: Run) -> ToolCompleted:
+    return next(
+        f for f in _frames(run) if isinstance(f, ToolCompleted) and f.tool_call_id == "s"
+    )
 
 
 class TestAScriptsCalls:
@@ -228,7 +252,9 @@ class TestAScriptsCalls:
         assert result.output == "done"
         nested = [f for f in _frames(run) if f.parent_tool_call_id == "s"]
         assert [f.type for f in nested] == ["tool.started", "tool.completed"]
-        assert nested[1].result == "passages for q"
+        completed = nested[1]
+        assert isinstance(completed, ToolCompleted)
+        assert completed.result == "passages for q"
         script = _script_result(run)
         assert script.result == "passages for q"
         # Live, and in order: the script opens, its call runs inside it, the script closes.
@@ -258,7 +284,7 @@ class TestAScriptsCalls:
 
         assert calls == []
         assert not isinstance(result.output, DeferredToolRequests)
-        failed = next(f for f in _frames(run) if f.type == "tool.failed")
+        failed = next(f for f in _frames(run) if isinstance(f, ToolFailed))
         assert failed.parent_tool_call_id == "s"
         assert "directly, outside `run_code`" in failed.error
         script = _script_result(run)
@@ -274,7 +300,7 @@ class TestAScriptsCalls:
         assert calls == []
 
     @staticmethod
-    async def _narrowed_to(level: str) -> tuple[list[str], Run]:
+    async def _narrowed_to(level: PermissionLevel) -> tuple[list[str], Run]:
         """A script that narrows the thread to ``level`` and then calls a workspace write
         its catalog still offers — the catalog was read before the level moved."""
         calls: list[str] = []
@@ -306,7 +332,7 @@ class TestAScriptsCalls:
         calls, run = await self._narrowed_to("manual")
 
         assert calls == []
-        failed = next(f for f in _frames(run) if f.type == "tool.failed")
+        failed = next(f for f in _frames(run) if isinstance(f, ToolFailed))
         assert failed.name == "x_jot"
         assert "directly, outside `run_code`" in failed.error
 
@@ -317,7 +343,7 @@ class TestAScriptsCalls:
         calls, run = await self._narrowed_to("plan")
 
         assert calls == []
-        failed = next(f for f in _frames(run) if f.type == "tool.failed")
+        failed = next(f for f in _frames(run) if isinstance(f, ToolFailed))
         assert failed.name == "x_jot"
         assert failed.error == blocked_message("plan", "x_jot")
 
@@ -342,7 +368,9 @@ class TestAScriptsCalls:
         assert not isinstance(result.output, DeferredToolRequests)
         nested = [f for f in _frames(run) if f.parent_tool_call_id == "s"]
         assert [f.type for f in nested] == ["tool.started", "tool.failed"]
-        assert "directly, outside `run_code`" in nested[1].error
+        nested_failure = nested[1]
+        assert isinstance(nested_failure, ToolFailed)
+        assert "directly, outside `run_code`" in nested_failure.error
         assert "directly, outside `run_code`" in _script_result(run).result
 
     async def test_the_call_cap_is_enforced(self):
@@ -398,6 +426,7 @@ class TestAScriptsCalls:
             assert {t.parent_tool_call_id for t in nested} == {"s"}
             assert [t.status for t in nested] == ["ok", "ok", "error"]
             assert nested[0].args == {"name": "a"} and nested[0].result == "saw a"
+            assert nested[2].error is not None
             assert "directly, outside `run_code`" in nested[2].error
 
         # And the route hands the parent on, which is what a client nests the row by.
