@@ -90,6 +90,7 @@ dev = [
     # real server, so it imports the SDK directly rather than riding the client path the
     # app uses. Resolved transitively anyway (pydantic-ai-slim[mcp] → fastmcp-slim[client]
     # → mcp), but pinned here because we import it: a transitive dep is not a contract.
+    "httpx2>=2.13.1",
     "mcp>=2.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",

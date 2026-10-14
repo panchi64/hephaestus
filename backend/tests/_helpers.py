@@ -20,8 +20,7 @@ from services.providers.base import ModelLimits
 from services.providers.openai_compat import OpenAICompatProvider
 
 if TYPE_CHECKING:
-    from pydantic_ai import Agent
-
+    from agent.factory import TurnAgent
     from tools import RunDeps
 
 #: The window the stub provider reports. It lives on the *provider*, not on the
@@ -130,7 +129,7 @@ def fold_aware_model(*, answer: str = "the answer", summary: str = "FOLDED AWAY"
 
 
 class FoldArgs(TypedDict):
-    agent: Agent
+    agent: TurnAgent
     deps: RunDeps
 
 

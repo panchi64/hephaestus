@@ -49,7 +49,7 @@ from agent.compaction_summary import (
     summary_request,
 )
 from agent.emit import ChassisEvent
-from agent.factory import build_agent
+from agent.factory import TurnAgent, build_agent
 from agent.summarize import FoldFailed, summarize_history
 from agent.turn import turn_deps
 from core.compaction_sections import section_key, summary_sections
@@ -109,7 +109,7 @@ def _model(
     return FunctionModel(respond, stream_function=streamed)
 
 
-def _agent(model: FunctionModel) -> Agent:
+def _agent(model: FunctionModel) -> TurnAgent:
     """The agent the engine builds for a turn — the real brief and the real catalog."""
     return build_agent(model, categories=core_categories())
 

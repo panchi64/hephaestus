@@ -29,7 +29,7 @@ from runs import (
     Endpoint,
     RunRegistry,
 )
-from runs.registry import _UNSET
+from runs.registry import _UNSET, _Unset
 from services.commands import Invocation
 from services.conversations import ConversationBinding, ConversationStore
 from services.registry import ModelRegistry
@@ -153,8 +153,8 @@ def compose_turn(
     auto_compact: AutoCompactPolicy | None = None,
     request_limit: int | None = None,
     context_thresholds: ContextThresholds = DEFAULT_CONTEXT_THRESHOLDS,
-    inactivity_timeout_s: float | None | object = _UNSET,
-    wall_clock_timeout_s: float | None | object = _UNSET,
+    inactivity_timeout_s: float | None | _Unset = _UNSET,
+    wall_clock_timeout_s: float | None | _Unset = _UNSET,
     kind: str = "chat",
     workspace_key: str = "",
 ) -> ChatCreated:

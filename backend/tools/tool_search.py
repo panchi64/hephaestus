@@ -32,7 +32,7 @@ from collections.abc import Mapping, Sequence
 from pydantic_ai import RunContext, ToolDefinition
 from pydantic_ai.capabilities import ToolSearch
 
-from .deps import InstructionProvider, RunDeps
+from .deps import AsyncInstructionProvider, RunDeps
 from .describe import category_of
 
 __all__ = ["dormant_index_instructions", "tool_search_capability"]
@@ -155,7 +155,7 @@ _QUERIES_DESCRIPTION = (
 def dormant_index_instructions(
     dormant: Mapping[str, str],
     names_by_category: Mapping[str, frozenset[str]],
-) -> InstructionProvider:
+) -> AsyncInstructionProvider:
     """The standing one-line index of the dormant groups.
 
     Built as a factory over the assembled declarations because a provider is handed

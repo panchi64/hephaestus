@@ -122,7 +122,8 @@ class RunDeps:
 # capability through the run's bag, and returns "" to no-op when the capability is
 # absent. Part of the deps contract for the same reason `RunDeps` is — both the engine
 # and the feature layer must name the shape without a cycle.
-type InstructionProvider = Callable[[RunContext[RunDeps]], Awaitable[str]]
+type AsyncInstructionProvider = Callable[[RunContext[RunDeps]], Awaitable[str]]
+type InstructionProvider = Callable[[RunContext[RunDeps]], str] | AsyncInstructionProvider
 
 
 @dataclass(frozen=True, slots=True)

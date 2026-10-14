@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypedDict
 
 from .base import _Body
+
+
+class TaskPayload(TypedDict):
+    """One task as the frontend reads it. ``status`` is one of pending, in_progress,
+    completed or cancelled."""
+
+    id: str
+    content: str
+    status: str
+    active_form: str | None
 
 
 class TasksUpdated(_Body):
     """The agent's task list changed. Carries the **whole** list, not a delta: the stream
     is replayable from any seq, so full state is idempotent on replay and needs no ordering
-    rules, and the list is small enough that the bytes don't matter. Each item is
-    ``{id, content, status, active_form}`` with status one of pending/in_progress/
-    completed/cancelled. Additive to v1; no bump."""
+    rules, and the list is small enough that the bytes don't matter. Additive to v1; no
+    bump."""
 
     type: Literal["tasks.updated"] = "tasks.updated"
-    items: list[dict[str, object]]
+    items: list[TaskPayload]
 
 
 class PlanUpdated(_Body):

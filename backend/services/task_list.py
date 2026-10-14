@@ -44,6 +44,7 @@ from core.vault import Vault, VaultError, VaultLocked
 from models._fields import new_id, utcnow
 from models.task_list import ConversationTaskList
 from runs import Run, TasksUpdated
+from runs.events.plan import TaskPayload
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def _load(raw: str) -> list[TaskItem]:
     return [TaskItem.model_validate(row) for row in json.loads(raw)]
 
 
-def tasks_payload(items: list[TaskItem]) -> list[dict[str, object]]:
+def tasks_payload(items: list[TaskItem]) -> list[TaskPayload]:
     """The task list as the frontend consumes it — the same shape on the event and on the
     REST backfill, so a reload rebuilds exactly what the stream was drawing."""
     return [

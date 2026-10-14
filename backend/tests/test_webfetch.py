@@ -158,7 +158,7 @@ def test_extract_empty_returns_none():
 def test_cookie_jar_seeds_by_host_suffix():
     jar = DomainCookieJar(ttl_s=100, max_entries=10)
     jar.store([{"name": "sess", "value": "1", "domain": ".reddit.com", "path": "/"}])
-    assert [c["name"] for c in jar.seed_for("https://www.reddit.com/r/x")] == ["sess"]
+    assert [c.get("name") for c in jar.seed_for("https://www.reddit.com/r/x")] == ["sess"]
     assert jar.seed_for("https://example.com/") == []  # different site → nothing
 
 
@@ -174,7 +174,7 @@ def test_cookie_jar_later_set_overwrites_and_caps():
     jar.store([{"name": "a", "value": "2", "domain": "x.com", "path": "/"}])  # same key
     jar.store([{"name": "b", "value": "1", "domain": "x.com", "path": "/"}])
     jar.store([{"name": "c", "value": "1", "domain": "x.com", "path": "/"}])  # evicts oldest (a)
-    got = {c["name"]: c["value"] for c in jar.seed_for("https://x.com/")}
+    got = {c.get("name"): c.get("value") for c in jar.seed_for("https://x.com/")}
     assert got == {"b": "1", "c": "1"}
 
 
@@ -184,7 +184,7 @@ def test_cookie_jar_evicts_on_ttl(monkeypatch):
     jar = DomainCookieJar(ttl_s=10, max_entries=10)
     jar.store([{"name": "s", "value": "1", "domain": "x.com", "path": "/"}])
     clock["t"] += 5
-    assert [c["name"] for c in jar.seed_for("https://x.com/")] == ["s"]  # within TTL
+    assert [c.get("name") for c in jar.seed_for("https://x.com/")] == ["s"]  # within TTL
     clock["t"] += 10
     assert jar.seed_for("https://x.com/") == []  # past TTL → evicted
 
