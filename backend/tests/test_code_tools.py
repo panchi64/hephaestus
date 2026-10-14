@@ -7,8 +7,11 @@ and continues, because what these tests are about is what the tool does once it 
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterable
+from pathlib import Path
 
+import pytest
+from pydantic import JsonValue
 from pydantic_ai import (
     Agent,
     DeferredToolRequests,
@@ -46,18 +49,21 @@ from tools import code as code_module
 from tools.code import code_toolset
 
 from ._helpers import bodies_of, first_body, parked_turn, run_bodies
+from ._json import dump, obj, s
 
 
 class _CannedSession:
     """A session that returns a preset result or raises a preset error."""
 
-    is_warm = False
+    is_warm: bool = False
 
-    def __init__(self, *, result: SandboxResult | None = None, error: Exception | None = None):
-        self._result = result
-        self._error = error
+    def __init__(
+        self, *, result: SandboxResult | None = None, error: Exception | None = None
+    ) -> None:
+        self._result: SandboxResult | None = result
+        self._error: Exception | None = error
 
-    async def run(self, spec: SandboxSpec) -> SandboxResult:
+    async def run(self, _spec: SandboxSpec) -> SandboxResult:
         if self._error is not None:
             raise self._error
         assert self._result is not None
@@ -65,19 +71,21 @@ class _CannedSession:
 
 
 class _CannedManager:
-    vm_starting = False
+    vm_starting: bool = False
 
     def __init__(self, session: _CannedSession) -> None:
-        self._session = session
+        self._session: _CannedSession = session
+        self.holder: object = None
 
-    async def acquire(self, key: str, *, holder: object = None) -> _CannedSession:
+    async def acquire(self, _key: str, *, holder: object = None) -> _CannedSession:
+        self.holder = holder
         return self._session
 
 
 class FakeSession:
     """Records each spec it runs and returns a canned result."""
 
-    is_warm = False
+    is_warm: bool = False
 
     def __init__(self) -> None:
         self.specs: list[SandboxSpec] = []
@@ -92,10 +100,10 @@ class FakeSessionManager:
     under."""
 
     def __init__(self) -> None:
-        self.session = FakeSession()
+        self.session: FakeSession = FakeSession()
         self.acquired: str | None = None
         self.holder: object = None
-        self.vm_starting = False
+        self.vm_starting: bool = False
 
     async def acquire(self, key: str, *, holder: object = None) -> FakeSession:
         self.acquired = key
@@ -109,14 +117,14 @@ class FakeEgressPolicy:
 
     def __init__(self) -> None:
         self.granted: list[tuple[str, list[str]]] = []
-        self.allowed = {"pypi.org"}
+        self.allowed: set[str] = {"pypi.org"}
 
-    async def allow(self, key: str, domains) -> frozenset[str]:
+    async def allow(self, key: str, domains: Iterable[str]) -> frozenset[str]:
         self.granted.append((key, list(domains)))
         self.allowed |= set(domains)
         return frozenset(self.allowed)
 
-    async def allowed_for(self, key: str) -> frozenset[str]:
+    async def allowed_for(self, _key: str) -> frozenset[str]:
         return frozenset(self.allowed)
 
 
@@ -135,7 +143,13 @@ def _one_tool_agent(tool: str) -> Agent[RunDeps, DeferredToolRequests | str]:
     )
 
 
-def _one_tool_deps(run: Run, sessions, egress=None, *, delegated_approved: bool = False) -> RunDeps:
+def _one_tool_deps(
+    run: Run,
+    sessions: object | None,
+    egress: object | None = None,
+    *,
+    delegated_approved: bool = False,
+) -> RunDeps:
     caps = ServiceContainer()
     if sessions is not None:
         # The fake manager registers under the class the code tools resolve.
@@ -152,7 +166,11 @@ def _one_tool_deps(run: Run, sessions, egress=None, *, delegated_approved: bool 
 
 
 async def _run_one_tool(
-    tool: str, *, sessions=None, egress=None, delegated_approved: bool = False
+    tool: str,
+    *,
+    sessions: object | None = None,
+    egress: object | None = None,
+    delegated_approved: bool = False,
 ) -> Run:
     """Drive a single code tool through an agent and return the finished Run.
 
@@ -219,8 +237,7 @@ async def test_execute_code_runs_in_the_conversation_session():
     spec = manager.session.specs[0]
     assert spec.command[:2] == ["python", "-c"]
     # The result reached the model, once the call was approved.
-    completed = first_body(run, ToolCompleted)
-    assert completed.result["stdout"] == "hello from box"
+    assert _result(run)["stdout"] == "hello from box"
     # Announced once across both passes, not re-announced on the continuation.
     assert len(bodies_of(run, ToolStarted)) == 1
 
@@ -253,34 +270,42 @@ async def test_cold_session_announces_the_vm_boot_when_the_vm_is_still_starting(
 async def test_execute_code_fails_closed_without_a_runtime():
     # No sandbox wired in ⇒ the tool reports unavailable and does NOT touch host.
     run = await _run_one_tool("code_execute", sessions=None)
-    completed = first_body(run, ToolCompleted)
-    assert completed.result["ok"] is False
-    assert "unavailable" in completed.result["error"].lower()
+    result = _result(run)
+    assert result["ok"] is False
+    assert "unavailable" in s(result["error"]).lower()
 
 
 # --- failures feed back to the model (the iterate-fix loop) -------------------
+def _result(run: Run) -> dict[str, JsonValue]:
+    return obj(dump(first_body(run, ToolCompleted))["result"])
+
+
 async def _run_canned(
     *, result: SandboxResult | None = None, error: Exception | None = None
-) -> dict[str, Any]:
+) -> dict[str, JsonValue]:
     manager = _CannedManager(_CannedSession(result=result, error=error))
     run = await _run_one_tool("code_execute", sessions=manager)
-    return first_body(run, ToolCompleted).result
+    return _result(run)
+
+
+async def _hint(result: SandboxResult) -> str:
+    return s((await _run_canned(result=result))["error"])
 
 
 async def test_failed_run_feeds_stderr_and_a_hint_back():
     failing = SandboxResult(exit_code=1, stdout="", stderr="Traceback: NameError: x")
     result = await _run_canned(result=failing)
     assert result["ok"] is False
-    assert "NameError" in result["stderr"]  # the real error reaches the model
-    assert "non-zero" in result["error"]  # plus a plain-language hint
+    assert "NameError" in s(result["stderr"])  # the real error reaches the model
+    assert "non-zero" in s(result["error"])  # plus a plain-language hint
 
 
 async def test_timeout_and_oom_get_legible_hints():
     timed = SandboxResult(exit_code=124, stdout="", stderr="", timed_out=True)
-    assert "time limit" in (await _run_canned(result=timed))["error"]
+    assert "time limit" in await _hint(timed)
 
     killed = SandboxResult(exit_code=137, stdout="", stderr="")  # SIGKILL, empty stderr
-    assert "memory" in (await _run_canned(result=killed))["error"]
+    assert "memory" in await _hint(killed)
 
 
 async def test_sandbox_failure_feeds_back_instead_of_crashing_the_run():
@@ -288,7 +313,7 @@ async def test_sandbox_failure_feeds_back_instead_of_crashing_the_run():
     # model can act on — the run completes, it does not error out.
     result = await _run_canned(error=SandboxError("container would not start"))
     assert result["ok"] is False
-    assert "container would not start" in result["error"]
+    assert "container would not start" in s(result["error"])
 
 
 # --- sandbox-07: failure hints name the actual configured cap ----------------
@@ -296,24 +321,24 @@ async def test_sandbox_failure_feeds_back_instead_of_crashing_the_run():
 
 async def test_sigsegv_hint_is_distinguished_from_oom_and_pid_cap():
     crashed = SandboxResult(exit_code=139, stdout="", stderr="")
-    hint = (await _run_canned(result=crashed))["error"]
+    hint = await _hint(crashed)
     assert "139" in hint and "SIGSEGV" in hint
     assert "memory" not in hint.lower()
     assert "processes/threads" not in hint
 
 
-async def test_memory_hint_names_the_actual_configured_cap(monkeypatch):
+async def test_memory_hint_names_the_actual_configured_cap(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(code_module, "get_settings", lambda: Settings(sandbox_memory="777m"))
     killed = SandboxResult(exit_code=137, stdout="", stderr="")
-    hint = (await _run_canned(result=killed))["error"]
+    hint = await _hint(killed)
     assert "777m" in hint
 
 
-async def test_pid_cap_hint_is_distinguished_from_plain_nonzero(monkeypatch):
+async def test_pid_cap_hint_is_distinguished_from_plain_nonzero(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(code_module, "get_settings", lambda: Settings(sandbox_pids_limit=64))
     stderr = "OSError: [Errno 11] Resource temporarily unavailable: fork failed"
     failing = SandboxResult(exit_code=1, stdout="", stderr=stderr)
-    hint = (await _run_canned(result=failing))["error"]
+    hint = await _hint(failing)
     assert "processes/threads" in hint
     assert "64" in hint  # the actual configured pids_limit, not a guess
 
@@ -329,7 +354,7 @@ async def test_missing_module_hint_states_the_exact_install_mechanics():
         "ModuleNotFoundError: No module named 'matplotlib'\n"
     )
     failing = SandboxResult(exit_code=1, stdout="", stderr=stderr)
-    hint = (await _run_canned(result=failing))["error"]
+    hint = await _hint(failing)
     assert "pip install matplotlib" in hint
     assert "network" not in hint.lower()
 
@@ -342,7 +367,7 @@ async def test_a_blocked_host_points_at_the_egress_request():
         stdout="",
         stderr="urllib.error.HTTPError: HTTP Error 403: hephaestus-egress: denied",
     )
-    hint = (await _run_canned(result=denied))["error"]
+    hint = await _hint(denied)
     assert "code_request_egress" in hint
     assert "allowlist" in hint
 
@@ -355,7 +380,7 @@ async def test_a_resolution_failure_points_at_the_same_egress_request():
         "ERROR: No matching distribution found for internal-mirror\n"
     )
     failing = SandboxResult(exit_code=1, stdout="", stderr=stderr)
-    hint = (await _run_canned(result=failing))["error"]
+    hint = await _hint(failing)
     assert "code_request_egress" in hint
     assert "retry this same code unchanged" in hint
 
@@ -367,7 +392,7 @@ async def test_a_refused_tunnel_points_at_the_same_egress_request():
     # for most of what the agent actually fetches.
     stderr = "urllib.error.URLError: <urlopen error Tunnel connection failed: 403 Forbidden>\n"
     failing = SandboxResult(exit_code=1, stdout="", stderr=stderr)
-    hint = (await _run_canned(result=failing))["error"]
+    hint = await _hint(failing)
     assert "code_request_egress" in hint
 
 
@@ -382,7 +407,7 @@ async def test_a_misspelled_package_is_not_diagnosed_as_a_blocked_host():
         "ERROR: No matching distribution found for pandsa\n"
     )
     failing = SandboxResult(exit_code=1, stdout="", stderr=stderr)
-    hint = (await _run_canned(result=failing))["error"]
+    hint = await _hint(failing)
     assert "code_request_egress" not in hint
     assert "stderr" in hint  # the ordinary non-zero hint, pointing at the real error
 
@@ -391,15 +416,15 @@ async def test_fallback_hint_points_at_the_stream_that_holds_the_error():
     # Some runtimes print their error to stdout with an empty stderr — "see
     # stderr" would send the model looking at nothing.
     stdout_only = SandboxResult(exit_code=128, stdout="something exploded", stderr="")
-    hint = (await _run_canned(result=stdout_only))["error"]
+    hint = await _hint(stdout_only)
     assert "stdout" in hint
 
     silent = SandboxResult(exit_code=3, stdout="", stderr="")
-    hint = (await _run_canned(result=silent))["error"]
+    hint = await _hint(silent)
     assert "no output" in hint
 
 
-async def test_execute_description_states_the_live_config_caps(monkeypatch):
+async def test_execute_description_states_the_live_config_caps(monkeypatch: pytest.MonkeyPatch):
     settings = Settings(
         sandbox_memory="256m",
         sandbox_cpus="0.5",
@@ -457,8 +482,7 @@ async def test_request_egress_records_and_returns_domains():
     assert len(policy.granted) == 1
     key, domains = policy.granted[0]
     assert key == "conv-1"  # the workspace key, so a fork's grant lands on the fork
-    result = first_body(run, ToolCompleted).result
-    assert result["allowed"] == sorted({"pypi.org", *domains})
+    assert _result(run)["allowed"] == sorted({"pypi.org", *domains})
 
 
 async def test_the_tools_that_ask_are_not_offered_inside_a_delegation():
@@ -499,7 +523,7 @@ async def test_a_delegate_is_not_sent_after_tools_it_was_never_offered():
     denied = SandboxResult(exit_code=1, stdout="", stderr="hephaestus-egress: denied")
     manager = _CannedManager(_CannedSession(result=denied))
     child = await _run_one_tool("code_execute", sessions=manager, delegated_approved=True)
-    hint = first_body(child, ToolCompleted).result["error"]
+    hint = s(_result(child)["error"])
     assert "code_request_egress" not in hint
     assert "report" in hint  # what it does instead
 
@@ -508,15 +532,15 @@ async def test_request_egress_degrades_without_a_policy():
     # Same contract as a missing sandbox runtime: the tool says so and the model adapts.
     run = await _run_one_tool("code_request_egress")
 
-    result = first_body(run, ToolCompleted).result
+    result = _result(run)
     assert result["ok"] is False
-    assert "allowlist" in result["error"]
+    assert "allowlist" in s(result["error"])
 
 
 # --- output is returned whole ------------------------------------------------
 
 
-async def test_output_is_returned_whole(monkeypatch):
+async def test_output_is_returned_whole(monkeypatch: pytest.MonkeyPatch):
     # The blanket per-stream cap is gone. It fired on every run regardless of context
     # pressure and cost the model the middle of exactly the output it had just asked
     # for; the turn's own context-overflow stop is what catches a pathological run.
@@ -525,7 +549,7 @@ async def test_output_is_returned_whole(monkeypatch):
     result = await _run_canned(result=SandboxResult(exit_code=0, stdout=big, stderr="world"))
     assert result["stdout"] == big
     assert result["stderr"] == "world"
-    assert "elided" not in result["stdout"]
+    assert "elided" not in s(result["stdout"])
 
 
 async def test_host_command_output_is_returned_whole():
@@ -544,11 +568,10 @@ async def test_host_command_output_is_returned_whole():
     decision = {
         call_id: ToolApproved(override_args={"command": f"echo {big_echo}", "explanation": "x"})
     }
-    await reg.resume(run.id, build_resume_orchestrator(parked, decision))
+    _ = await reg.resume(run.id, build_resume_orchestrator(parked, decision))
     await run.wait()
 
-    completed = first_body(run, ToolCompleted)
-    assert completed.result["stdout"].strip() == big_echo
+    assert s(_result(run)["stdout"]).strip() == big_echo
 
 
 # --- host execution (the deliberate, approval-gated escape hatch) ------------
@@ -586,30 +609,31 @@ async def test_approved_host_command_runs_on_host():
     # Approve with safe override args so the host path runs a harmless echo.
     safe = {"command": "echo HOSTRAN", "explanation": "x"}
     decision = {call_id: ToolApproved(override_args=safe)}
-    await reg.resume(run.id, build_resume_orchestrator(parked, decision))
+    _ = await reg.resume(run.id, build_resume_orchestrator(parked, decision))
     await run.wait()
 
     assert run.status is RunStatus.done
-    completed = first_body(run, ToolCompleted)
-    assert "HOSTRAN" in completed.result["stdout"]
+    assert "HOSTRAN" in s(_result(run)["stdout"])
 
 
 async def test_the_hatch_is_fenced_with_the_installations_allowlist_not_the_threads(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """One proxy serves every confined process on the host, and it filters against the
     configuration installed at boot. A domain granted to *this* thread could only reach an
     approved host command by being written there — where it would also widen the fence
     around every other command running at that moment and outlive this one."""
     egress = FakeEgressPolicy()
-    await egress.allow("conv-1", ["files.example.com"])
+    _ = await egress.allow("conv-1", ["files.example.com"])
     seen: list[HostConfinement | None] = []
 
-    async def capture(command, *, confinement=None, **_kwargs):
+    async def capture(
+        _command: str, *, confinement: HostConfinement | None = None, **_kwargs: object
+    ) -> SandboxResult:
         seen.append(confinement)
         return SandboxResult(exit_code=0, stdout="", stderr="")
 
-    async def active(_settings):
+    async def active(_settings: Settings) -> HostConfinement:
         return HostConfinement(True, allow_write=("/tmp",), allowed_domains=("pypi.org",))
 
     monkeypatch.setattr("tools.code.run_on_host", capture)
@@ -632,7 +656,9 @@ async def test_the_hatch_is_fenced_with_the_installations_allowlist_not_the_thre
     assert confinement.allow_write == ("/tmp",)  # nothing else was disturbed
 
 
-async def test_an_approved_host_command_runs_in_its_own_scratch_directory(monkeypatch, tmp_path):
+async def test_an_approved_host_command_runs_in_its_own_scratch_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """Not the server process's working directory, which is this backend's source tree.
 
     That is where a host command used to start, so every relative path the model wrote
@@ -642,7 +668,7 @@ async def test_an_approved_host_command_runs_in_its_own_scratch_directory(monkey
     cannot even resolve its own working directory.
     """
     monkeypatch.setattr(code_module, "host_scratch_dir", lambda: tmp_path)
-    (tmp_path / "here.txt").write_text("IN THE SCRATCH DIRECTORY")
+    _ = (tmp_path / "here.txt").write_text("IN THE SCRATCH DIRECTORY")
 
     reg = RunRegistry()
     orch = build_chat_orchestrator(
@@ -657,8 +683,7 @@ async def test_an_approved_host_command_runs_in_its_own_scratch_directory(monkey
     decision = {
         call_id: ToolApproved(override_args={"command": "cat here.txt", "explanation": "x"})
     }
-    await reg.resume(run.id, build_resume_orchestrator(parked, decision))
+    _ = await reg.resume(run.id, build_resume_orchestrator(parked, decision))
     await run.wait()
 
-    completed = first_body(run, ToolCompleted)
-    assert "IN THE SCRATCH DIRECTORY" in completed.result["stdout"]
+    assert "IN THE SCRATCH DIRECTORY" in s(_result(run)["stdout"])
