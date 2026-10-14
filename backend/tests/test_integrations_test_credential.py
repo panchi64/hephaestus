@@ -77,7 +77,9 @@ async def test_a_passing_test_records_ok_and_sends_the_credential_as_the_preset_
     assert seen[0].headers["accept"] == "application/vnd.github+json"
 
 
-async def test_a_header_auth_preset_puts_the_token_in_its_own_header(monkeypatch: pytest.MonkeyPatch):
+async def test_a_header_auth_preset_puts_the_token_in_its_own_header(
+    monkeypatch: pytest.MonkeyPatch,
+):
     service, seen = await _service(lambda _r: httpx.Response(200), monkeypatch)
     view = await service.configure(OWNER, "gitlab", credentials={"token": "glpat-x"})
 
@@ -126,7 +128,9 @@ async def test_an_unreachable_service_is_recorded_too(monkeypatch: pytest.Monkey
     assert tested.last_error
 
 
-async def test_calling_an_action_fills_its_path_and_caps_the_response(monkeypatch: pytest.MonkeyPatch):
+async def test_calling_an_action_fills_its_path_and_caps_the_response(
+    monkeypatch: pytest.MonkeyPatch,
+):
     body = "x" * (MAX_BODY_CHARS + 500)
     service, seen = await _service(lambda _r: httpx.Response(200, text=body), monkeypatch)
     view = await service.configure(OWNER, "github", credentials={"token": "t"})
@@ -158,7 +162,9 @@ async def test_a_disabled_connector_or_action_refuses_the_call(monkeypatch: pyte
         _ = await service.call(OWNER, view.id, "list_issues", params={"owner": "a", "repo": "b"})
 
 
-async def test_a_body_is_refused_on_an_action_that_does_not_take_one(monkeypatch: pytest.MonkeyPatch):
+async def test_a_body_is_refused_on_an_action_that_does_not_take_one(
+    monkeypatch: pytest.MonkeyPatch,
+):
     service, _seen = await _service(lambda _r: httpx.Response(200), monkeypatch)
     view = await service.configure(OWNER, "github", credentials={"token": "t"})
 

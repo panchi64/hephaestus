@@ -35,7 +35,7 @@ async def test_sync_stop_callables_are_supported():
     registers the plain callable — no async wrapper boilerplate at the call site."""
     stopped: list[str] = []
     registry = LifecycleRegistry()
-    registry.on_stop("sync",lambda: stopped.append("sync"))
+    registry.on_stop("sync", lambda: stopped.append("sync"))
     await registry.stop_all()
     assert stopped == ["sync"]
 

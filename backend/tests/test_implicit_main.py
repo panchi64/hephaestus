@@ -118,7 +118,9 @@ async def test_benching_the_default_moves_it_on():
 
 async def test_an_explicit_binding_wins_over_the_default():
     reg = await _registry()
-    _ = await reg.create_endpoint(OWNER, name="aaa default", base_url="http://a/v1", model="a-model")
+    _ = await reg.create_endpoint(
+        OWNER, name="aaa default", base_url="http://a/v1", model="a-model"
+    )
     chosen = await reg.create_endpoint(OWNER, name="zzz chosen", base_url="http://z/v1", model="z")
     await reg.set_role(OWNER, "main", [chosen.id], model="z")
 

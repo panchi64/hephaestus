@@ -291,7 +291,9 @@ def _deps(*, conversation_id: str | None = None, ledger: PrefixLedger | None = N
     return RunDeps(run=run, owner_id=OWNER, conversation_id=conversation_id, caps=caps)
 
 
-async def _drive(model: FunctionModel, deps: RunDeps, *, dormant: Mapping[str, str] = NO_DORMANT) -> Run:
+async def _drive(
+    model: FunctionModel, deps: RunDeps, *, dormant: Mapping[str, str] = NO_DORMANT
+) -> Run:
     """One real turn on the agent the engine actually builds. ``dormant`` defaults to
     nothing withheld, so a test that is not about deferral gets the whole catalog on step 1
     and the reveal test is the only one paying for a second tool array."""
@@ -392,7 +394,9 @@ async def test_without_a_ledger_each_turn_starts_cold_and_still_watches_within_i
     assert verdict.divergence_kind == "append"
 
 
-async def test_the_watch_is_on_by_default_and_switching_it_off_silences_it(monkeypatch: pytest.MonkeyPatch):
+async def test_the_watch_is_on_by_default_and_switching_it_off_silences_it(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """On by default, because a diagnostic nobody switched on is a diagnostic that is not
     there the one time it was needed. The escape hatch is asserted through a real turn
     rather than by inspecting the capability list — an instrument that is registered but
