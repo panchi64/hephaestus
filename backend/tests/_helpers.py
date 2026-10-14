@@ -23,8 +23,9 @@ from agent import ParkedTurn
 from app import create_app
 from core.config import Settings
 from runs import EventBody, Run
-from services.providers.base import ModelLimits
-from services.providers.openai_compat import OpenAICompatProvider
+from services.providers.base import ModelLimits, Provider, ProviderPreset
+from services.providers.openai_compat import PROVIDER as OPENAI_COMPAT
+from services.reasoning import ModelDescriptor
 
 from ._json import obj, parse_json
 
@@ -44,7 +45,7 @@ STUB_CONTEXT_WINDOW = 128_000
 _STUB_PROVIDER_ID = "test-stub"
 
 
-class _StubProvider(OpenAICompatProvider):
+class _StubProvider(Provider):
     """A provider adapter that reports a context window and no other limit.
 
     Exists so a stubbed resolution still travels the real discovery path. A test that
@@ -53,18 +54,47 @@ class _StubProvider(OpenAICompatProvider):
     production — the provider lookup, the manual-value-wins precedence, and the
     memoization — leaving all of it unexercised by any route test.
 
-    Only the limits are overridden; the rest is the OpenAI-compatible adapter's, and
-    resolution is stubbed before it ever builds a model."""
+    Request settings are the OpenAI-compatible adapter's. Anything that would reach the
+    network fails the test: resolution is stubbed before a model is ever built."""
 
     id: str = _STUB_PROVIDER_ID
     display_name: str = "Test stub"
     requires_key: bool = False
+    preset: ProviderPreset = ProviderPreset()
+
+    @override
+    def build_model(self, spec: EndpointSpec) -> Model:
+        raise AssertionError("unexpected call: build_model")
+
+    @override
+    async def discover(
+        self, base_url: str, api_key: str | None, *, client: object = None
+    ) -> list[str]:
+        raise AssertionError("unexpected call: discover")
+
+    @override
+    async def probe(self, base_url: str, api_key: str | None, *, client: object = None) -> None:
+        raise AssertionError("unexpected call: probe")
+
+    @override
+    async def context_window(
+        self, base_url: str, api_key: str | None, model: str, *, client: object = None
+    ) -> int | None:
+        raise AssertionError("unexpected call: context_window")
 
     @override
     async def model_limits(
         self, base_url: str, api_key: str | None, model: str, *, client: object = None
     ) -> ModelLimits:
         return ModelLimits(context_window=STUB_CONTEXT_WINDOW)
+
+    @override
+    def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
+        return OPENAI_COMPAT.reasoning_off(descriptor)
+
+    @override
+    def model_settings(self, descriptor: ModelDescriptor) -> ModelSettings:
+        return OPENAI_COMPAT.model_settings(descriptor)
 
 
 async def stub_resolution(

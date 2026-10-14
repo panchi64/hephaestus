@@ -17,7 +17,13 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from argon2 import PasswordHasher
+from pydantic_ai.models.test import TestModel as _TestModel
+
 if TYPE_CHECKING:
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.tools import ToolDefinition
+
     from services.egress import EgressPolicy
 
 # Host-command confinement is a *process-global* singleton (`sandbox-runtime` configures
@@ -31,8 +37,6 @@ if TYPE_CHECKING:
 _ = os.environ.setdefault("HEPHAESTUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
 # The app would otherwise boot a real QEMU VM; the VM tests drive a local stand-in.
 _ = os.environ.setdefault("HEPHAESTUS_VM_ENABLED", "false")
-
-from argon2 import PasswordHasher  # noqa: E402
 
 import core.crypto  # noqa: E402 — must follow the environment default above
 import core.db  # noqa: E402
@@ -61,10 +65,6 @@ core.crypto._PASSWORD_HASHER = PasswordHasher(time_cost=1, memory_cost=8, parall
 # catalog, not about scripts; the ones that are about scripts name `run_code` and write
 # real code (`test_run_code.py`). So "call everything" leaves `run_code` out, and an
 # explicit `call_tools=[...]` list is untouched.
-from pydantic_ai.models import ModelRequestParameters  # noqa: E402
-from pydantic_ai.models.test import TestModel as _TestModel  # noqa: E402
-from pydantic_ai.tools import ToolDefinition  # noqa: E402
-
 _call_everything = _TestModel._get_tool_calls
 
 
