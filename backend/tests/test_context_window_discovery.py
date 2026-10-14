@@ -319,9 +319,9 @@ async def _registry(tmp_path, monkeypatch, *, window: int | None, max_output: in
             type(self).asked += 1
             return ModelLimits(context_window=window, max_output_tokens=max_output)
 
-        # Enough of the rest of the contract for a full resolve to run: the gate test
-        # goes through `resolve_detailed`, which builds a model and asks the adapter
-        # how to quiet its reasoning before it ever reaches the window check.
+        # Overridden so a full resolve runs without a network: the gate test goes through
+        # `resolve_detailed`, which builds a model and asks the adapter how to quiet its
+        # reasoning before it ever reaches the window check.
         @override
         def build_model(self, spec: EndpointSpec) -> TestModel:
             return TestModel(custom_output_text="ok")

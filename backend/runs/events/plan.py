@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
+from pydantic import ConfigDict, with_config
+
 from .base import _Body
 
 
+# Forbidding extra keys makes a field added to the payload but not here fail loudly
+# instead of silently vanishing from the wire.
+@with_config(ConfigDict(extra="forbid"))
 class TaskPayload(TypedDict):
     """One task as the frontend reads it. ``status`` is one of pending, in_progress,
     completed or cancelled."""

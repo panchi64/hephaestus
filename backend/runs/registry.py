@@ -35,7 +35,15 @@ _UNSET = _Unset.UNSET
 
 
 def _ended(run: Run) -> RunEnded:
-    return RunEnded.model_validate({"outcome": run.status.value, "detail": run.detail})
+    match run.status:
+        case RunStatus.done:
+            return RunEnded(outcome="done", detail=run.detail)
+        case RunStatus.blocked:
+            return RunEnded(outcome="blocked", detail=run.detail)
+        case RunStatus.cancelled:
+            return RunEnded(outcome="cancelled", detail=run.detail)
+        case _:
+            raise ValueError(f"run {run.id} has no ended outcome for status {run.status}")
 
 
 class ConversationBusyError(Exception):

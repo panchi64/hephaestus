@@ -19,9 +19,13 @@ from __future__ import annotations
 import time
 import urllib.parse
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from playwright._impl._api_structures import SetCookieParam
-from playwright.async_api import Cookie
+if TYPE_CHECKING:
+    # Playwright exports this shape only from its private package, so it is never imported
+    # at runtime.
+    from playwright._impl._api_structures import SetCookieParam
+    from playwright.async_api import Cookie
 
 
 def _host_matches(host: str, cookie_domain: str) -> bool:
@@ -72,7 +76,7 @@ class DomainCookieJar:
         cached entry it shadows, then `_evict` drops it on the spot."""
         now_mono = time.monotonic()
         for raw in cookies:
-            cookie = SetCookieParam(**raw)
+            cookie: SetCookieParam = {**raw}
             key = _key(cookie)
             self._entries.pop(key, None)  # re-insert so eviction order tracks recency
             self._entries[key] = (cookie, now_mono)

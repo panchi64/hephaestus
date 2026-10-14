@@ -12,30 +12,20 @@ stub so the test is about the client and nothing else.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import override
-
 import httpx2
 import pytest
 from openai import APIConnectionError
 
-from core.db import make_engine
 from core.exceptions import DegradedCapabilityError
-from core.vault import Vault
 from services import embeddings, llm
-from services.registry import ModelRegistry
 
 OWNER = "operator"
 SPEC = llm.EndpointSpec(base_url="http://127.0.0.1:9/v1", model="embed-model", api_key=None)
 
 
-class _StubRegistry(ModelRegistry):
+class _StubRegistry:
     """Resolves straight to `SPEC` — the registry's own resolution is tested elsewhere."""
 
-    def __init__(self) -> None:
-        super().__init__(make_engine("sqlite:///:memory:"), Vault(Path("unused-keyfile.json")))
-
-    @override
     async def resolve_embedding_spec(self, owner_id: str) -> llm.EndpointSpec:
         return SPEC
 

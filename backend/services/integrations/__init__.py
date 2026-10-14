@@ -5,7 +5,7 @@ knows about a service before the operator supplies anything (address, auth shape
 credential-proving request, the actions worth exposing) — and
 :mod:`services.integrations.service` owns the operator's side: configure from a preset with
 the credential sealed, test it, call an action, and the per-action enable/trust decisions
-that ride the shared :mod:`services.external_tools` policy store.
+that ride the shared :mod:`services.external_policy` store.
 """
 
 from .presets import PRESETS, IntegrationAction, IntegrationPreset, action, preset

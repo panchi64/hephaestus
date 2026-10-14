@@ -23,7 +23,10 @@ from models._discovery import import_all_models
 
 
 class BackupModel(SQLModel):
-    """The shape every backed-up table shares; typing only, never mapped."""
+    """The shape every backed-up table shares, for typing only.
+
+    No table inherits it, so ``isinstance``/``issubclass`` against it is always False.
+    """
 
     __table__: ClassVar[Table]
     id: str
