@@ -203,7 +203,7 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(m
     )
     from sandbox_runtime import manager as runtime_manager
 
-    seen: list = []
+    seen: list[SandboxRuntimeConfig | None] = []
 
     async def wrap(command, *, custom_config=None, **_kwargs):
         # Stubbed rather than run: what a real wrap produces is seatbelt's or bubblewrap's
@@ -228,10 +228,13 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(m
         )
         # The filesystem half is per-call, because the OS wrapper is what enforces it...
         [config] = seen
+        assert config is not None
         assert config.filesystem.allow_write == ["/work"]
         # ...and the installation's allowlist is still the only thing the proxy will
         # filter against for anything else on this host.
-        assert SandboxManager.get_config().network.allowed_domains == ["pypi.org"]
+        installed = SandboxManager.get_config()
+        assert installed is not None
+        assert installed.network.allowed_domains == ["pypi.org"]
     finally:
         # Restored through the module global rather than `update_config`, which has no way
         # to say "there was no configuration here".
@@ -241,11 +244,18 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(m
 async def test_confinement_denies_reading_the_data_directory(tmp_path):
     # The one path whose exposure would undo at-rest encryption wholesale: the vault,
     # the sealed workspaces and the database all live under it.
-    settings = Settings(data_dir=tmp_path)
-    confinement = await _configure(settings)
-    if not confinement.active:
-        pytest.skip(f"no host sandbox primitive here: {confinement.reason}")
-    secret = tmp_path / "keyfile.json"
-    secret.write_text("SEALEDKEYMATERIAL")
-    result = await run_on_host(f"cat {secret}", confinement=confinement)
-    assert "SEALEDKEYMATERIAL" not in result.stdout
+    # Enabled explicitly: conftest switches host confinement off for the rest of the suite.
+    settings = Settings(data_dir=tmp_path, host_command_sandbox_enabled=True)
+    from sandbox_runtime import SandboxManager
+
+    try:
+        confinement = await _configure(settings)
+        if not confinement.active:
+            pytest.skip(f"no host sandbox primitive here: {confinement.reason}")
+        secret = tmp_path / "keyfile.json"
+        secret.write_text("SEALEDKEYMATERIAL")
+        result = await run_on_host(f"cat {secret}", confinement=confinement)
+        assert "SEALEDKEYMATERIAL" not in result.stdout
+    finally:
+        # The runtime is process-global; leave it unconfigured for the next test on this worker.
+        await SandboxManager.reset()
