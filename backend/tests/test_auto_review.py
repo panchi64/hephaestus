@@ -16,12 +16,21 @@ import re
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal
 
 import pytest
-from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset, ToolApproved, ToolDenied
+from pydantic_ai import (
+    Agent,
+    DeferredToolRequests,
+    FunctionToolset,
+    ModelMessage,
+    ToolApproved,
+    ToolDenied,
+)
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -40,7 +49,9 @@ import services.permissions.reviewer as reviewer_module
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
 from agent.gating import GrantApproved
 from agent.history import TurnStart
+from agent.meta import Verdict
 from agent.turn import TurnResult, drive_turn
+from core.config import Settings
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from models._fields import utcnow
@@ -51,7 +62,9 @@ from services.approval_grants import ApprovalGrantStore, GrantInfo
 from services.conversations import ConversationBinding
 from services.permissions import (
     ActionKind,
+    Authorization,
     Decision,
+    PermissionLevel,
     ReviewBudget,
     ReviewRequest,
     ReviewVerdict,
@@ -69,7 +82,9 @@ from tools.agents import agents_toolset
 from tools.browse import browse_toolset
 from tools.calendar import calendar_toolset
 from tools.code import code_toolset
+from tools.delegation import ProjectRoster
 from tools.mail import mail_toolset
+from tools.rebound import ReboundToolset
 from tools.skills import skills_toolset
 from tools.vault import vault_toolset
 
@@ -89,7 +104,11 @@ def reviewer_of(verdict: ReviewVerdict | None):
     return reviewer
 
 
-def verdict(risk: str, authorization: str = "neutral", correctness: str | None = None):
+def verdict(
+    risk: Literal["low", "high", "too_destructive"],
+    authorization: Authorization = "neutral",
+    correctness: str | None = None,
+):
     return ReviewVerdict(risk=risk, authorization=authorization, correctness=correctness)
 
 
@@ -636,7 +655,9 @@ class TestWhatEachToolSaysAboutItself:
         toolsets = {name: build() for name, build in factories.items()}
         for tool, projection in PROJECTIONS.items():
             category, name = tool.split("_", 1)
-            tools = toolsets[category].tools
+            toolset = toolsets[category]
+            assert isinstance(toolset, FunctionToolset | ReboundToolset | ProjectRoster)
+            tools = toolset.tools
             assert name in tools, f"{tool} names no tool in the {category} category"
             schema = tools[name].function_schema.json_schema.get("properties", {})
             projected = set(projection.identity + projection.content + projection.measured)
@@ -913,16 +934,16 @@ class TestWhatTwoReviewsOfOneBatchShare:
         assert "message 20" not in transcript
 
 
-def _round_trips(n: int, *, say: str | None = None) -> list:
+def _round_trips(n: int, *, say: str | None = None) -> list[ModelMessage]:
     """A turn that ran ``n`` tools: a response with a call, then its result, ``n`` times.
 
     Two messages per tool, which is the shape the window used to be spent on. ``say`` adds
     the sentence a model usually writes beside its call — the prose that then competes for
     the window with the request that opened the turn.
     """
-    messages = []
+    messages: list[ModelMessage] = []
     for index in range(n):
-        parts = [ToolCallPart("files_read_file", {"path": f"{index}.py"})]
+        parts: list[ModelResponsePart] = [ToolCallPart("files_read_file", {"path": f"{index}.py"})]
         if say is not None:
             parts.insert(0, TextPart(f"{say} {index}"))
         messages.append(ModelResponse(parts=parts))
@@ -947,7 +968,7 @@ class TestTheOpeningRequestIsAlwaysRead:
     prompt said "the operator has said nothing" and every high-risk act parked.
     """
 
-    def _turn(self, tools: int) -> list:
+    def _turn(self, tools: int) -> list[ModelMessage]:
         return [
             ModelRequest(parts=[UserPromptPart("delete the stale build artifacts")]),
             *_round_trips(tools, say="reading"),
@@ -1077,7 +1098,7 @@ class TestTheOpeningRequestIsAlwaysRead:
         # window, with no ceiling on what the turn spends on model calls.
         from core.config import get_settings
 
-        seen: dict = {}
+        seen: dict[str, object] = {}
 
         async def capturing(run, approvals, **kwargs):
             seen.update(kwargs)
@@ -1102,20 +1123,22 @@ class TestTheOpeningRequestIsAlwaysRead:
             turn_start=boundary,
         )
         assert seen["turn_start"] is boundary
-        assert seen["budget"].limit == get_settings().review_max_per_turn
+        budget = seen["budget"]
+        assert isinstance(budget, ReviewBudget)
+        assert budget.limit == get_settings().review_max_per_turn
 
     async def test_a_correction_reviews_against_the_same_opening_request(self, monkeypatch):
         # A verifier correction is this turn continuing, not a turn of its own — and it is
         # the moment a turn has run furthest past its own opening request, so a review
         # inside one is exactly where the tail window is emptiest of it.
-        seen: dict = {}
+        seen: dict[str, object] = {}
 
         async def capturing(run, agent, **kwargs):
             seen.update(kwargs)
             return TurnResult(answer="corrected", messages=[])
 
         async def reject(_prompt: str, _answer: str):
-            return SimpleNamespace(ok=False, reason="incomplete")
+            return Verdict(ok=False, reason="incomplete")
 
         monkeypatch.setattr(agent_verify, "drive_turn", capturing)
         monkeypatch.setattr(agent_verify, "no_room_for", lambda *a, **k: False)
@@ -1128,7 +1151,7 @@ class TestTheOpeningRequestIsAlwaysRead:
             TurnResult(answer="an answer", messages=[]),
             set(),
             reject,
-            settings=SimpleNamespace(),
+            settings=Settings(),
             turn_start=boundary,
         )
         assert seen["turn_start"] is boundary
@@ -1138,7 +1161,7 @@ class TestTheOpeningRequestIsAlwaysRead:
         # opened it is on the payload — `persist_from` is where it begins. Rebuilt there
         # rather than re-derived, so the reviewer of a resumed turn reads what the reviewer
         # of the parked one read.
-        captured: dict = {}
+        captured: dict[str, object] = {}
 
         async def capturing(run, agent, **kwargs):
             captured.update(kwargs)
@@ -1465,7 +1488,7 @@ def _grant_store(ttl_s: float = 3600) -> ApprovalGrantStore:
     return ApprovalGrantStore(engine, ttl_s)
 
 
-async def _settle(permission: str, calls: list[ToolCallPart], *, caps=None, budget=None):
+async def _settle(permission: PermissionLevel, calls: list[ToolCallPart], *, caps=None, budget=None):
     """One hop's deferred calls, ruled on by the engine's own gate."""
     run = Run(id="r1", kind="chat", owner_id=OWNER, stream=RunStream())
     return await gating.settle_deferred(
@@ -1892,7 +1915,7 @@ class TestOneBatchPaysOnce:
         # over the same recent messages — and it is measured in kilobytes.
         walks: list[int] = []
 
-        def counting_transcript(messages, **kwargs) -> str:
+        def counting_transcript(messages, **kwargs) -> tuple[TranscriptEntry, ...]:
             walks.append(len(messages))
             return (TranscriptEntry("operator", "the thread"),)
 

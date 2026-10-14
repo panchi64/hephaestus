@@ -9,6 +9,7 @@ leaf — which navigation has moved to create a branch.
 from __future__ import annotations
 
 from pydantic_ai.models.test import TestModel
+from sqlalchemy import Engine
 
 from agent import build_chat_orchestrator
 from core.db import init_db, make_engine
@@ -26,7 +27,7 @@ async def _unlocked_vault(tmp_path, name: str = "keyfile.json") -> Vault:
     return vault
 
 
-async def _fresh_store(tmp_path) -> tuple[ConversationStore, object]:
+async def _fresh_store(tmp_path) -> tuple[ConversationStore, Engine]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     return ConversationStore(engine, await _unlocked_vault(tmp_path)), engine
