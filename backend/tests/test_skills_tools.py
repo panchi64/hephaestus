@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
+from pydantic import JsonValue, TypeAdapter
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -21,9 +23,11 @@ from tools.deps import RunDeps
 from tools.skills import _skill_catalog_block, skills_toolset
 
 from ._helpers import client_app
-from .test_skills_bundle import SKILL_MD, _zip
+from ._json import json_list, obj, s
+from .test_skills_bundle import SKILL_MD, zip_entries
 
 OWNER = "operator"
+_RESULT = TypeAdapter(dict[str, JsonValue])
 
 
 class FakeSession:
@@ -32,7 +36,7 @@ class FakeSession:
 
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
-        self.writes = 0
+        self.writes: int = 0
 
     def read_file(self, relpath: str) -> bytes:
         if relpath not in self.files:
@@ -51,14 +55,14 @@ class FakeSession:
 
 class FakeSessions:
     def __init__(self, session: FakeSession | None = None) -> None:
-        self.session = session or FakeSession()
+        self.session: FakeSession = session or FakeSession()
 
-    async def acquire(self, _key: str, *, holder: object = None) -> FakeSession:
+    async def acquire(self, _key: str, **_kwargs: object) -> FakeSession:
         return self.session
 
 
 class FakeRun:
-    id = "run-1"
+    id: str = "run-1"
 
 
 async def _store() -> SkillStore:
@@ -69,9 +73,13 @@ async def _store() -> SkillStore:
     return SkillStore(engine, vault)
 
 
-def _tool(name: str):
-    toolset = skills_toolset()
-    return toolset.tools[name].function
+def _tool(name: str) -> Callable[..., Awaitable[dict[str, JsonValue]]]:
+    function = skills_toolset().tools[name].function
+
+    async def call(ctx: RunContext[RunDeps], *args: str) -> dict[str, JsonValue]:
+        return _RESULT.validate_python(await function(ctx, *args))
+
+    return call
 
 
 def _ctx(deps: RunDeps) -> RunContext[RunDeps]:
@@ -107,7 +115,7 @@ async def test_open_returns_the_instructions_and_stages_the_bundle():
     store = await _store()
     imported, _ = await store.import_bundle(
         OWNER,
-        _zip(
+        zip_entries(
             {
                 "pdf-processing/SKILL.md": SKILL_MD.encode(),
                 "pdf-processing/scripts/fill.py": b"print('filling')\n",
@@ -115,7 +123,7 @@ async def test_open_returns_the_instructions_and_stages_the_bundle():
         ),
         "pdf-processing.zip",
     )
-    await store.set_published(OWNER, imported.id, True)
+    _ = await store.set_published(OWNER, imported.id, True)
     sessions = FakeSessions()
 
     result = await _tool("open")(
@@ -123,7 +131,7 @@ async def test_open_returns_the_instructions_and_stages_the_bundle():
     )
 
     assert result["ok"] is True
-    assert "PDF processing" in result["instructions"]
+    assert "PDF processing" in s(result["instructions"])
     assert result["allowed_tools"] == ["Read", "Bash"]
     assert result["files"] == [
         "/work/skills/pdf-processing/SKILL.md",
@@ -136,13 +144,13 @@ async def test_open_returns_the_instructions_and_stages_the_bundle():
 
 async def test_reopening_a_skill_does_not_rewrite_identical_files():
     store = await _store()
-    await _published(store)
+    _ = await _published(store)
     sessions = FakeSessions()
     deps = _deps(skills=store, sandbox_sessions=sessions)
 
-    await _tool("open")(_ctx(deps), "release-notes")
+    _ = await _tool("open")(_ctx(deps), "release-notes")
     after_first = sessions.session.writes
-    await _tool("open")(_ctx(deps), "release-notes")
+    _ = await _tool("open")(_ctx(deps), "release-notes")
 
     assert sessions.session.writes == after_first
 
@@ -151,31 +159,31 @@ async def test_open_refuses_a_draft_the_same_way_as_an_unknown_name():
     """A draft must be indistinguishable from nonexistent — the operator hasn't
     published it, so the agent should not learn it exists."""
     store = await _store()
-    await store.create(OWNER, name="secret-draft", description="Not ready.", body="x")
-    await _published(store)
+    _ = await store.create(OWNER, name="secret-draft", description="Not ready.", body="x")
+    _ = await _published(store)
 
     with pytest.raises(ModelRetry) as caught:
-        await _tool("open")(_ctx(_deps(skills=store)), "secret-draft")
+        _ = await _tool("open")(_ctx(_deps(skills=store)), "secret-draft")
     assert "secret-draft" not in str(caught.value).split("Available skills:")[1]
     assert "release-notes" in str(caught.value)
 
 
 async def test_open_without_a_sandbox_still_returns_instructions():
     store = await _store()
-    await _published(store)
+    _ = await _published(store)
     result = await _tool("open")(_ctx(_deps(skills=store)), "release-notes")
     assert result["ok"] is True
     assert result["files"] == []
-    assert "unavailable" in result["note"]
+    assert "unavailable" in s(result["note"])
 
 
 async def test_open_survives_a_sandbox_failure():
     class FailingSessions:
-        async def acquire(self, _key, *, holder=None):
+        async def acquire(self, _key: str, **_kwargs: object) -> FakeSession:
             raise SandboxError("no runtime")
 
     store = await _store()
-    await _published(store)
+    _ = await _published(store)
     result = await _tool("open")(
         _ctx(_deps(skills=store, sandbox_sessions=FailingSessions())), "release-notes"
     )
@@ -183,19 +191,19 @@ async def test_open_survives_a_sandbox_failure():
     # A fail-closed sandbox is now indistinguishable from having no runtime at all —
     # both are "there is no workspace", answered once by the resolver. The skill still
     # opens; only its files are missing, and the note says so.
-    assert "not staged" in result["note"]
+    assert "not staged" in s(result["note"])
 
 
 async def test_tools_degrade_when_the_capability_is_absent():
     with pytest.raises(ModelRetry):
-        await _tool("open")(_ctx(_deps()), "anything")
+        _ = await _tool("open")(_ctx(_deps()), "anything")
     for name, args in [
         ("create", ("a-skill", "desc", "body")),
         ("edit", ("a-skill", "old", "new", "why")),
     ]:
         result = await _tool(name)(_ctx(_deps()), *args)
         assert result["ok"] is False
-        assert "unavailable" in result["error"]
+        assert "unavailable" in s(result["error"])
 
 
 # ── create / edit ────────────────────────────────────────────────────────────────────────
@@ -218,12 +226,12 @@ async def test_create_only_ever_writes_a_draft():
 async def test_create_asks_the_model_to_retry_on_an_invalid_name():
     store = await _store()
     with pytest.raises(ModelRetry, match="name"):
-        await _tool("create")(_ctx(_deps(skills=store)), "Not A Slug", "desc", "body")
+        _ = await _tool("create")(_ctx(_deps(skills=store)), "Not A Slug", "desc", "body")
 
 
 async def test_edit_replaces_one_span():
     store = await _store()
-    await _published(store)
+    _ = await _published(store)
     result = await _tool("edit")(
         _ctx(_deps(skills=store)),
         "release-notes",
@@ -242,11 +250,11 @@ async def test_edit_replaces_one_span():
         ("dup dup", "dup", "matched 2 places"),
     ],
 )
-async def test_edit_retries_with_a_precise_reason(body, old, expected):
+async def test_edit_retries_with_a_precise_reason(body: str, old: str, expected: str):
     store = await _store()
-    await _published(store, body=body)
+    _ = await _published(store, body=body)
     with pytest.raises(ModelRetry, match=expected):
-        await _tool("edit")(_ctx(_deps(skills=store)), "release-notes", old, "x", "why")
+        _ = await _tool("edit")(_ctx(_deps(skills=store)), "release-notes", old, "x", "why")
 
 
 async def test_rewriting_a_published_skill_is_the_one_gated_skill_tool():
@@ -269,7 +277,9 @@ async def test_the_edit_gate_reaches_the_approval_scope_vocabulary():
     becomes a name a conversation grant or a task pre-authorization can name — without
     the skills manifest having to declare it in `gated_tools`."""
     async with client_app() as (client, _app):
-        scopes = {row["name"] for row in (await client.get("/tools/approval-scopes")).json()}
+        scopes = {
+            s(obj(row)["name"]) for row in json_list(await client.get("/tools/approval-scopes"))
+        }
     assert "skills_edit" in scopes
     assert "skills_create" not in scopes  # a draft needs no approval
 
@@ -325,8 +335,8 @@ def test_past_the_pin_limit_the_most_recently_touched_pins_stay():
 
 async def test_catalog_reaches_the_block_with_published_skills_only():
     store = await _store()
-    await store.create(OWNER, name="a-draft", description="Draft.", body="x")
-    await _published(store)
+    _ = await store.create(OWNER, name="a-draft", description="Draft.", body="x")
+    _ = await _published(store)
     entries = await store.catalog(OWNER)
     assert [entry.name for entry in entries] == ["release-notes"]
     assert "1 saved skill," in _skill_catalog_block(entries)
@@ -335,7 +345,7 @@ async def test_catalog_reaches_the_block_with_published_skills_only():
 async def test_a_pinned_skill_is_named_in_the_block():
     store = await _store()
     skill = await _published(store)
-    await store.set_pinned(OWNER, skill.id, True)
+    _ = await store.set_pinned(OWNER, skill.id, True)
     assert "- release-notes:" in _skill_catalog_block(await store.catalog(OWNER))
 
 
@@ -349,10 +359,12 @@ async def test_edit_refuses_a_draft_the_same_way_open_does():
     draft = await store.create(
         OWNER, name="secret-draft", description="Not ready.", body="do the private thing"
     )
-    await _published(store)
+    _ = await _published(store)
 
     with pytest.raises(ModelRetry) as caught:
-        await _tool("edit")(_ctx(_deps(skills=store)), "secret-draft", "private", "public", "why")
+        _ = await _tool("edit")(
+            _ctx(_deps(skills=store)), "secret-draft", "private", "public", "why"
+        )
     message = str(caught.value)
     assert "No published skill named" in message
     assert "secret-draft" not in message.split("Available skills:")[1]

@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+from pydantic import TypeAdapter
 from pydantic_ai import ModelRequest
 from pydantic_ai.models.test import TestModel
 
@@ -144,52 +146,60 @@ class TestTheDateLine:
 
 class TestTheClock:
     def test_now_reports_the_operators_own_time_with_its_offset(self):
-        stamp = builtin_toolset().tools["now"].function_schema.function()
+        stamp = TypeAdapter(str).validate_python(
+            builtin_toolset().tools["now"].function_schema.function()
+        )
         parsed = datetime.fromisoformat(stamp)
         assert parsed.utcoffset() is not None
         assert parsed.utcoffset() == datetime.now().astimezone().utcoffset()
 
 
 class TestTheZoneLookup:
-    def test_an_explicit_tz_wins(self, monkeypatch):
+    def test_an_explicit_tz_wins(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("TZ", "Europe/Madrid")
         assert local_zone_key() == "Europe/Madrid"
 
-    def test_a_blank_tz_is_the_utc_it_means(self, monkeypatch):
+    def test_a_blank_tz_is_the_utc_it_means(self, monkeypatch: pytest.MonkeyPatch):
         """POSIX reads a set-but-empty ``TZ`` as UTC. Reading it as "unset" instead sends
         the lookup to ``/etc/localtime`` and names a zone the host's clock is not on."""
         monkeypatch.setenv("TZ", "   ")
         assert local_zone_key() == "UTC"
 
-    def test_a_leading_colon_is_not_part_of_the_key(self, monkeypatch):
+    def test_a_leading_colon_is_not_part_of_the_key(self, monkeypatch: pytest.MonkeyPatch):
         """`glibc` documents the colon and ignores it. Kept, it reaches the calendar as a
         key `ZoneInfo` rejects, so the brief says Madrid while events are filed in UTC."""
         monkeypatch.setenv("TZ", ":Europe/Madrid")
         assert local_zone_key() == "Europe/Madrid"
         assert ZoneInfo(local_zone_key())
 
-    def test_a_tz_holding_a_path_is_read_the_way_the_link_is(self, monkeypatch):
+    def test_a_tz_holding_a_path_is_read_the_way_the_link_is(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("TZ", ":/usr/share/zoneinfo/Europe/Madrid")
         assert local_zone_key() == "Europe/Madrid"
 
-    def test_a_posix_rule_string_answers_with_the_offset_it_puts_the_host_on(self, monkeypatch):
+    def test_a_posix_rule_string_answers_with_the_offset_it_puts_the_host_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """`TZ` can hold a rule rather than a name. Handed back verbatim it is a key no
         caller can build a zone from; falling back to `/etc/localtime` would name the very
         zone this `TZ` overrides, so the offset is the only answer still on this clock."""
         monkeypatch.setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3")
         assert re.fullmatch(r"UTC[+-]\d{2}:\d{2}", local_zone_key())
 
-    def test_the_zoneinfo_link_names_the_zone(self, monkeypatch, tmp_path):
+    def test_the_zoneinfo_link_names_the_zone(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
         monkeypatch.delenv("TZ", raising=False)
         link = tmp_path / "localtime"
         target = tmp_path / "usr" / "share" / "zoneinfo" / "Europe" / "Madrid"
         target.parent.mkdir(parents=True)
-        target.write_bytes(b"")
+        _ = target.write_bytes(b"")
         link.symlink_to(target)
         monkeypatch.setattr("core.timezone._LOCALTIME", link)
         assert local_zone_key() == "Europe/Madrid"
 
-    def test_no_localtime_falls_back_to_the_offset(self, monkeypatch, tmp_path):
+    def test_no_localtime_falls_back_to_the_offset(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
         """A container with no tz database still has a real offset, and an offset is worth
         more to a model reasoning about "tomorrow morning" than nothing."""
         monkeypatch.delenv("TZ", raising=False)

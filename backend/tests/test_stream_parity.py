@@ -18,14 +18,25 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
 
-from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall, FunctionModel
+import pytest
+from pydantic import JsonValue
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaThinkingCalls,
+    DeltaThinkingPart,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
 
-from services.registry import ModelRegistry
+from services.registry import ModelRegistry, ResolvedModel
 
 from ._helpers import client_app, collect_sse_events, register_stub_provider, stub_resolution
+from ._json import arr, json_body, obj, s
 
 FIXTURE = (
     Path(__file__).resolve().parents[2]
@@ -38,13 +49,18 @@ _BLOCK_EVENTS = {"thinking.delta", "answer.delta", "tool.started", "tool.complet
 _EVENT_KEYS = ("type", "text", "tool_call_id", "name", "args", "result", "error")
 
 
-def _returns(messages) -> int:
+def _returns(messages: list[ModelMessage]) -> int:
     return sum(
-        type(part).__name__ == "ToolReturnPart" for message in messages for part in message.parts
+        isinstance(part, ToolReturnPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
     )
 
 
-async def _interleaved(messages, info):
+async def _interleaved(
+    messages: list[ModelMessage], _info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]:
     """think → text → call, then think → call, then the answer — every kind change the
     live fold turns into a new block."""
     done = _returns(messages)
@@ -60,7 +76,7 @@ async def _interleaved(messages, info):
         yield "Done."
 
 
-def _event(ev: dict[str, Any], seq: int) -> dict[str, Any]:
+def _event(ev: dict[str, JsonValue], seq: int) -> dict[str, JsonValue]:
     out = {k: ev[k] for k in _EVENT_KEYS if k in ev}
     # The clock's reading changes every run; what it said is not what parity is about.
     if "result" in out:
@@ -68,9 +84,10 @@ def _event(ev: dict[str, Any], seq: int) -> dict[str, Any]:
     return {**out, "seq": seq}
 
 
-def _message(msg: dict[str, Any]) -> dict[str, Any]:
-    tools = [
-        {**t, "result": "<result>" if t.get("result") is not None else None} for t in msg["tools"]
+def _message(msg: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    tools: list[JsonValue] = [
+        {**obj(t), "result": "<result>" if obj(t).get("result") is not None else None}
+        for t in arr(msg["tools"])
     ]
     return {
         "id": "a1",
@@ -82,28 +99,28 @@ def _message(msg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def test_the_stream_and_the_reload_record_the_same_turn(monkeypatch):
-    async def resolve_detailed(self, role, **kwargs):
+async def test_the_stream_and_the_reload_record_the_same_turn(monkeypatch: pytest.MonkeyPatch):
+    async def resolve_detailed(self: ModelRegistry, _role: str, **_kwargs: object) -> ResolvedModel:
         return await stub_resolution(self, FunctionModel(stream_function=_interleaved))
 
     register_stub_provider(monkeypatch)
     monkeypatch.setattr(ModelRegistry, "resolve_detailed", resolve_detailed)
 
     async with client_app() as (client, _app):
-        started = (await client.post("/chat", json={"prompt": "what time is it?"})).json()
-        events = await collect_sse_events(client, started["run_id"])
-        detail = (await client.get(f"/conversations/{started['conversation_id']}")).json()
+        started = json_body(await client.post("/chat", json={"prompt": "what time is it?"}))
+        events = await collect_sse_events(client, s(started["run_id"]))
+        detail = json_body(await client.get(f"/conversations/{s(started['conversation_id'])}"))
 
     live = [ev for ev in events if ev["type"] in _BLOCK_EVENTS]
     fixture = {
         "events": [_event(ev, i + 1) for i, ev in enumerate(live)],
-        "message": _message(detail["messages"][-1]),
+        "message": _message(obj(arr(detail["messages"])[-1])),
     }
     rendered = json.dumps(fixture, indent=2, ensure_ascii=False) + "\n"
 
     if os.environ.get("UPDATE_STREAM_PARITY"):
         FIXTURE.parent.mkdir(parents=True, exist_ok=True)
-        FIXTURE.write_text(rendered)
+        _ = FIXTURE.write_text(rendered)
     assert FIXTURE.exists() and FIXTURE.read_text() == rendered, (
         "The live stream or the reload changed shape. Regenerate the fixture with "
         "UPDATE_STREAM_PARITY=1 and run the frontend's streamParity.test.ts against it."

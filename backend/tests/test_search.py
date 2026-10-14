@@ -4,6 +4,7 @@ through the toolset stack. (Page fetching lives in test_webfetch.py.)"""
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -19,21 +20,29 @@ from services.search import SearchService
 OWNER = "operator"
 
 
-async def _make_service(handler, **bounds) -> SearchService:
+def _ok(_request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200)
+
+
+async def _make_service(
+    handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    managed_url: Callable[[], str | None] | None = None,
+) -> SearchService:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     tmp = tempfile.mkdtemp()
     vault = Vault(Path(tmp) / "keyfile.json")
     await vault.setup("pw")
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False)
-    return SearchService(engine, vault, http_client=client, **bounds)
+    return SearchService(engine, vault, http_client=client, managed_url=managed_url)
 
 
 # --- provider catalog + encryption ----------------------------------------
 
 
 async def test_provider_crud_and_api_key_encrypted_at_rest():
-    svc = await _make_service(lambda req: httpx.Response(200))
+    svc = await _make_service(_ok)
     created = await svc.create_provider(
         OWNER, name="local-searx", base_url="http://searx.local", api_key="s3cret"
     )
@@ -49,7 +58,7 @@ async def test_provider_crud_and_api_key_encrypted_at_rest():
     listed = await svc.list_providers(OWNER)
     assert [p.id for p in listed] == [created.id]
 
-    await svc.update_provider(OWNER, created.id, enabled=False)
+    _ = await svc.update_provider(OWNER, created.id, enabled=False)
     assert (await svc.get_provider(OWNER, created.id)).enabled is False
 
     await svc.delete_provider(OWNER, created.id)
@@ -57,14 +66,14 @@ async def test_provider_crud_and_api_key_encrypted_at_rest():
 
 
 async def test_search_unconfigured_is_degraded():
-    svc = await _make_service(lambda req: httpx.Response(200))
+    svc = await _make_service(_ok)
     with pytest.raises(DegradedCapabilityError):
-        await svc.search(OWNER, "anything")
+        _ = await svc.search(OWNER, "anything")
 
 
 async def test_search_uses_managed_instance_when_no_provider():
     # Zero operator config: the backend's managed SearXNG is queried automatically.
-    seen = {}
+    seen: dict[str, str] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
@@ -80,30 +89,30 @@ async def test_search_uses_managed_instance_when_no_provider():
 
 async def test_enabled_provider_overrides_managed_instance():
     # An operator-configured provider wins over the managed default.
-    seen = {}
+    seen: dict[str, str] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
         return httpx.Response(200, json={"results": []})
 
     svc = await _make_service(handler, managed_url=lambda: "http://managed.local")
-    await svc.create_provider(OWNER, name="searx", base_url="http://override.local")
-    await svc.search(OWNER, "q")
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://override.local")
+    _ = await svc.search(OWNER, "q")
     assert seen["url"].startswith("http://override.local/search")
 
 
 async def test_search_degraded_when_managed_not_ready_and_no_provider():
     # Managed instance still booting (URL None) and no provider ⇒ degrade cleanly.
-    svc = await _make_service(lambda req: httpx.Response(200), managed_url=lambda: None)
+    svc = await _make_service(_ok, managed_url=lambda: None)
     with pytest.raises(DegradedCapabilityError):
-        await svc.search(OWNER, "q")
+        _ = await svc.search(OWNER, "q")
 
 
 # --- search -----------------------------------------------------------------
 
 
 async def test_search_maps_searxng_json_and_wraps_snippets():
-    seen = {}
+    seen: dict[str, str] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
@@ -118,7 +127,7 @@ async def test_search_maps_searxng_json_and_wraps_snippets():
         )
 
     svc = await _make_service(handler)
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
     results = await svc.search(OWNER, "edible plants", limit=5)
 
     assert seen["url"].startswith("http://searx.local/search")
@@ -134,33 +143,33 @@ async def test_search_maps_searxng_json_and_wraps_snippets():
 
 
 async def test_search_passes_time_range_param():
-    seen = {}
+    seen: dict[str, str] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
         return httpx.Response(200, json={"results": []})
 
     svc = await _make_service(handler)
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
-    await svc.search(OWNER, "q", time_range="week")
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    _ = await svc.search(OWNER, "q", time_range="week")
     assert "time_range=week" in seen["url"]
 
 
 async def test_search_ignores_invalid_time_range():
-    seen = {}
+    seen: dict[str, str] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
         return httpx.Response(200, json={"results": []})
 
     svc = await _make_service(handler)
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
-    await svc.search(OWNER, "q", time_range="decade")
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    _ = await svc.search(OWNER, "q", time_range="decade")
     assert "time_range" not in seen["url"]
 
 
 async def test_search_dedupes_exact_urls_before_limit():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
@@ -173,14 +182,14 @@ async def test_search_dedupes_exact_urls_before_limit():
         )
 
     svc = await _make_service(handler)
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
     # limit=2 must yield two *distinct* pages, not spend a slot on the duplicate.
     results = await svc.search(OWNER, "q", limit=2)
     assert [r.url for r in results.results] == ["https://a.example", "https://b.example"]
 
 
 async def test_search_carries_published_date():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
@@ -197,7 +206,7 @@ async def test_search_carries_published_date():
         )
 
     svc = await _make_service(handler)
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
     results = await svc.search(OWNER, "q")
     assert results.results[0].published == "2026-06-01T00:00:00"
     assert results.results[1].published is None
@@ -206,7 +215,7 @@ async def test_search_carries_published_date():
 async def test_search_results_share_one_nonce_per_call():
     import re
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
@@ -218,43 +227,43 @@ async def test_search_results_share_one_nonce_per_call():
         )
 
     svc = await _make_service(handler)
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
     results = await svc.search(OWNER, "q")
-    nonces = set()
+    nonces: set[str] = set()
     for r in results.results:
         match = re.search(r"\[BEGIN UNTRUSTED CONTENT (\w+)", r.snippet)
         assert match
-        nonces.add(match.group(1))
+        nonces.add(str(match.group(1)))
     assert len(nonces) == 1  # every fence in the call shares the one nonce
     assert nonces.pop() in results.instruction  # the preamble carries that same nonce
 
 
 async def test_search_non_json_is_degraded():
-    svc = await _make_service(lambda req: httpx.Response(200, text="<html>not json</html>"))
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    svc = await _make_service(lambda _request: httpx.Response(200, text="<html>not json</html>"))
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
     with pytest.raises(DegradedCapabilityError):
-        await svc.search(OWNER, "q")
+        _ = await svc.search(OWNER, "q")
 
 
 async def test_search_unexpected_json_shape_is_degraded():
     # A provider returning a JSON list (not the expected object) degrades cleanly
     # rather than raising AttributeError out of the tool.
-    svc = await _make_service(lambda req: httpx.Response(200, json=["not", "an", "object"]))
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    svc = await _make_service(lambda _request: httpx.Response(200, json=["not", "an", "object"]))
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
     with pytest.raises(DegradedCapabilityError):
-        await svc.search(OWNER, "q")
+        _ = await svc.search(OWNER, "q")
 
 
 async def test_search_does_not_follow_redirects():
     # An unguarded redirect on the search path would be an SSRF hole; search refuses
     # to follow and reports the provider as degraded instead.
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(302, headers={"location": "http://169.254.169.254/"})
 
     svc = await _make_service(handler)
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
     with pytest.raises(DegradedCapabilityError):
-        await svc.search(OWNER, "q")
+        _ = await svc.search(OWNER, "q")
 
 
 # --- agent reaches the capability through the toolset stack ----------------
@@ -268,9 +277,9 @@ async def test_agent_search_tool_reaches_the_service():
     from runs import RunRegistry, RunStatus
     from tools.search import web_toolset
 
-    seen = {}
+    seen: dict[str, bool] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         seen["hit"] = True
         # A populated result exercises SearchResult serialization through Pydantic AI.
         return httpx.Response(
@@ -278,7 +287,7 @@ async def test_agent_search_tool_reaches_the_service():
         )
 
     svc = await _make_service(handler)
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
     orch = build_chat_orchestrator(
         "look it up",
         # Tools are namespaced by category → "web_search"; only call search
@@ -302,7 +311,7 @@ async def test_agent_search_emits_a_citation_per_result():
     from runs import RunRegistry, RunStatus
     from tools.search import web_toolset
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
@@ -316,7 +325,7 @@ async def test_agent_search_emits_a_citation_per_result():
         )
 
     svc = await _make_service(handler)
-    await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
+    _ = await svc.create_provider(OWNER, name="searx", base_url="http://searx.local")
     orch = build_chat_orchestrator(
         "look it up",
         model=TestModel(call_tools=["web_search"]),

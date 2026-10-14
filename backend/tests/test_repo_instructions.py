@@ -53,12 +53,12 @@ def test_the_last_file_standing_is_cut_rather_than_dropped():
     assert "rule 499" not in body
 
 
-async def test_a_repo_with_no_instruction_file_contributes_nothing(tmp_path):
+async def test_a_repo_with_no_instruction_file_contributes_nothing(tmp_path: Path):
     assert await repo_instruction_text(tmp_path) == ""
 
 
-async def test_a_repos_own_file_is_rendered_whole_when_it_is_a_sane_size(tmp_path):
-    (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
+async def test_a_repos_own_file_is_rendered_whole_when_it_is_a_sane_size(tmp_path: Path):
+    _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
 
     text = await repo_instruction_text(tmp_path)
 
@@ -66,8 +66,8 @@ async def test_a_repos_own_file_is_rendered_whole_when_it_is_a_sane_size(tmp_pat
     assert 'path="CLAUDE.md"' in text  # labelled relative to the worktree root
 
 
-async def test_an_oversized_file_cannot_swallow_the_prompt_head(tmp_path):
-    (tmp_path / "CLAUDE.md").write_text("x" * (INSTRUCTIONS_BYTE_BUDGET * 3))
+async def test_an_oversized_file_cannot_swallow_the_prompt_head(tmp_path: Path):
+    _ = (tmp_path / "CLAUDE.md").write_text("x" * (INSTRUCTIONS_BYTE_BUDGET * 3))
 
     text = await repo_instruction_text(tmp_path)
 
@@ -79,36 +79,38 @@ async def test_an_oversized_file_cannot_swallow_the_prompt_head(tmp_path):
 # --- the brief is built once per run, not once per model request ----------------------
 
 
-async def test_a_runs_brief_is_read_from_disk_once_however_many_requests_it_makes(tmp_path):
+async def test_a_runs_brief_is_read_from_disk_once_however_many_requests_it_makes(
+    tmp_path: Path,
+):
     """The provider re-resolves on every model request and a turn makes up to
     `agent_request_limit` of them — twenty-five walks of the worktree, twenty-five SHA256
     passes and twenty-five budget encodes, for content the module calls static per
     project. Worse, an agent that edited the project's own `CLAUDE.md` mid-turn would
     rewrite the prompt head under itself and invalidate the whole turn's prefix cache."""
-    (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
+    _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
     first = await _run_brief("run-1", tmp_path)
 
-    (tmp_path / "CLAUDE.md").write_text("Something else entirely.\n")
+    _ = (tmp_path / "CLAUDE.md").write_text("Something else entirely.\n")
 
     assert await _run_brief("run-1", tmp_path) == first
     assert "uv run pytest" in first
 
 
-async def test_the_next_turn_reads_the_file_again(tmp_path):
+async def test_the_next_turn_reads_the_file_again(tmp_path: Path):
     # A turn boundary is the one place the file may legitimately have changed since it
     # was read — the agent's own edit landed, or the operator's did.
-    (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
-    await _run_brief("run-1", tmp_path)
+    _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
+    _ = await _run_brief("run-1", tmp_path)
 
-    (tmp_path / "CLAUDE.md").write_text("Run the tests with `just test`.\n")
+    _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `just test`.\n")
 
     assert "just test" in await _run_brief("run-2", tmp_path)
 
 
-async def test_the_memo_does_not_grow_with_every_run_the_process_ever_serves(tmp_path):
-    (tmp_path / "CLAUDE.md").write_text("Keep it short.\n")
+async def test_the_memo_does_not_grow_with_every_run_the_process_ever_serves(tmp_path: Path):
+    _ = (tmp_path / "CLAUDE.md").write_text("Keep it short.\n")
     for n in range(_MAX_BRIEFS * 3):
-        await _run_brief(f"run-{n}", tmp_path)
+        _ = await _run_brief(f"run-{n}", tmp_path)
     assert len(_briefs) <= _MAX_BRIEFS
 
 
@@ -122,11 +124,11 @@ def test_the_budget_is_sized_against_a_small_window_not_a_large_one():
     assert INSTRUCTIONS_BYTE_BUDGET == 16 * 1024
 
 
-async def test_the_brief_names_the_inventory_tool_the_way_it_is_offered(tmp_path):
+async def test_the_brief_names_the_inventory_tool_the_way_it_is_offered(tmp_path: Path):
     """The harness writes its own un-namespaced function name into the hint; the catalog
     offers the tool namespaced. A brief that points at `inventory_agent_context` sends the
     model to call a tool that is not there."""
-    (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
+    _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
 
     brief = await _run_brief("run-inventory", tmp_path)
 

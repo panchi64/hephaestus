@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import httpx
+
 from services.revisions import diff
 
 from ._helpers import client_app
+from ._json import arr, json_body, json_list, n, obj, s
 
 
-async def _put_file(client, skill_id: str, relpath: str, content: bytes) -> None:
+async def _put_file(client: httpx.AsyncClient, skill_id: str, relpath: str, content: bytes) -> None:
     response = await client.put(
         f"/skills/{skill_id}/files/{relpath}", files={"file": (relpath, content, "text/plain")}
     )
     assert response.status_code == 200, response.text
 
 
-async def _published_skill(client) -> str:
+async def _published_skill(client: httpx.AsyncClient) -> str:
     created = await client.post(
         "/skills",
         json={
@@ -23,7 +26,7 @@ async def _published_skill(client) -> str:
             "body": "Group the merged PRs by area.",
         },
     )
-    skill_id = created.json()["id"]
+    skill_id = s(json_body(created)["id"])
     await _put_file(client, skill_id, "notes.txt", b"first\n")
     assert (await client.post(f"/skills/{skill_id}/publish")).status_code == 200
     return skill_id
@@ -35,22 +38,22 @@ async def test_a_draft_has_no_history_until_it_is_published():
             "/skills",
             json={"name": "draft-only", "description": "A draft.", "body": "Steps."},
         )
-        skill_id = created.json()["id"]
-        await client.patch(f"/skills/{skill_id}", json={"body": "Other steps."})
-        assert (await client.get(f"/skills/{skill_id}/revisions")).json() == []
+        skill_id = s(json_body(created)["id"])
+        _ = await client.patch(f"/skills/{skill_id}", json={"body": "Other steps."})
+        assert json_list(await client.get(f"/skills/{skill_id}/revisions")) == []
 
-        changes = (await client.get(f"/skills/{skill_id}/revisions/changes")).json()
-        assert [change["status"] for change in changes] == ["added"]
+        changes = json_list(await client.get(f"/skills/{skill_id}/revisions/changes"))
+        assert [obj(change)["status"] for change in changes] == ["added"]
 
 
 async def test_each_change_to_a_published_skill_is_a_version():
     async with client_app() as (client, _app):
         skill_id = await _published_skill(client)
-        await client.patch(f"/skills/{skill_id}", json={"body": "Group by area, then by size."})
+        _ = await client.patch(f"/skills/{skill_id}", json={"body": "Group by area, then by size."})
         await _put_file(client, skill_id, "notes.txt", b"second\n")
 
-        history = (await client.get(f"/skills/{skill_id}/revisions")).json()
-        assert [(v["number"], v["note"]) for v in history] == [
+        history = json_list(await client.get(f"/skills/{skill_id}/revisions"))
+        assert [(n(obj(v)["number"]), obj(v)["note"]) for v in history] == [
             (3, "edited"),
             (2, "edited"),
             (1, "published"),
@@ -60,38 +63,38 @@ async def test_each_change_to_a_published_skill_is_a_version():
 async def test_publishing_again_without_changes_adds_no_version():
     async with client_app() as (client, _app):
         skill_id = await _published_skill(client)
-        await client.post(f"/skills/{skill_id}/unpublish")
-        await client.post(f"/skills/{skill_id}/publish")
-        assert len((await client.get(f"/skills/{skill_id}/revisions")).json()) == 1
+        _ = await client.post(f"/skills/{skill_id}/unpublish")
+        _ = await client.post(f"/skills/{skill_id}/publish")
+        assert len(json_list(await client.get(f"/skills/{skill_id}/revisions"))) == 1
 
 
 async def test_restoring_a_skill_brings_back_its_instructions_and_files():
     async with client_app() as (client, _app):
         skill_id = await _published_skill(client)
-        await client.patch(f"/skills/{skill_id}", json={"body": "Something else."})
+        _ = await client.patch(f"/skills/{skill_id}", json={"body": "Something else."})
         await _put_file(client, skill_id, "extra.txt", b"new\n")
 
-        since = (await client.get(f"/skills/{skill_id}/revisions/1")).json()
-        assert {(c["path"], c["status"]) for c in since} == {
+        since = json_list(await client.get(f"/skills/{skill_id}/revisions/1"))
+        assert {(s(obj(c)["path"]), s(obj(c)["status"])) for c in since} == {
             ("SKILL.md", "changed"),
             ("extra.txt", "added"),
         }
 
         restored = await client.post(f"/skills/{skill_id}/revisions/1/restore")
         assert restored.status_code == 204
-        skill = (await client.get(f"/skills/{skill_id}")).json()
-        assert skill["body"].strip() == "Group the merged PRs by area."
-        assert [f["relpath"] for f in skill["files"]] == ["notes.txt"]
+        skill = json_body(await client.get(f"/skills/{skill_id}"))
+        assert s(skill["body"]).strip() == "Group the merged PRs by area."
+        assert [obj(f)["relpath"] for f in arr(skill["files"])] == ["notes.txt"]
 
-        history = (await client.get(f"/skills/{skill_id}/revisions")).json()
-        assert history[0]["note"] == "restored version 1"
-        assert (await client.get(f"/skills/{skill_id}/revisions/1")).json() == []
+        history = json_list(await client.get(f"/skills/{skill_id}/revisions"))
+        assert obj(history[0])["note"] == "restored version 1"
+        assert json_list(await client.get(f"/skills/{skill_id}/revisions/1")) == []
 
 
 async def test_deleting_a_skill_drops_its_history():
     async with client_app() as (client, _app):
         skill_id = await _published_skill(client)
-        await client.delete(f"/skills/{skill_id}")
+        _ = await client.delete(f"/skills/{skill_id}")
         assert (await client.get(f"/skills/{skill_id}/revisions")).status_code == 404
 
 
@@ -101,16 +104,18 @@ async def test_restoring_an_agent_brings_back_its_instructions_and_model():
             "/agents",
             json={"name": "helper", "description": "Helps.", "instructions": "Be brief."},
         )
-        agent_id = created.json()["id"]
-        await client.post(f"/agents/{agent_id}/publish")
-        await client.patch(
+        agent_id = s(json_body(created)["id"])
+        _ = await client.post(f"/agents/{agent_id}/publish")
+        _ = await client.patch(
             f"/agents/{agent_id}", json={"instructions": "Be thorough.", "model": "other"}
         )
 
-        await client.post(f"/agents/{agent_id}/revisions/1/restore")
-        agent = (await client.get(f"/agents/{agent_id}")).json()
+        _ = await client.post(f"/agents/{agent_id}/revisions/1/restore")
+        agent = json_body(await client.get(f"/agents/{agent_id}"))
         assert (agent["instructions"], agent["model"]) == ("Be brief.", None)
-        notes = [v["note"] for v in (await client.get(f"/agents/{agent_id}/revisions")).json()]
+        notes = [
+            obj(v)["note"] for v in json_list(await client.get(f"/agents/{agent_id}/revisions"))
+        ]
         assert notes == ["restored version 1", "edited", "published"]
 
 

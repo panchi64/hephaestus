@@ -43,7 +43,7 @@ Re-open the output and confirm every field is populated.
 """
 
 
-def _zip(entries: dict[str, bytes]) -> bytes:
+def zip_entries(entries: dict[str, bytes]) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         for name, blob in entries.items():
@@ -52,7 +52,7 @@ def _zip(entries: dict[str, bytes]) -> bytes:
 
 
 def _bundle_zip() -> bytes:
-    return _zip(
+    return zip_entries(
         {
             "pdf-processing/SKILL.md": SKILL_MD.encode(),
             "pdf-processing/scripts/fill.py": b"print('filling')\n",
@@ -166,7 +166,7 @@ def test_read_bundle_splits_skill_md_from_supporting_files():
 
 def test_bundle_directory_may_differ_by_case_and_underscores():
     text = SKILL_MD.replace("name: pdf-processing", "name: pdf-processing")
-    data = _zip({"PDF_Processing/SKILL.md": text.encode(), "PDF_Processing/x.txt": b"x"})
+    data = zip_entries({"PDF_Processing/SKILL.md": text.encode(), "PDF_Processing/x.txt": b"x"})
     assert bundle.read_bundle(data).skill.name == "pdf-processing"
 
 
@@ -183,7 +183,7 @@ def test_bundle_directory_may_differ_by_case_and_underscores():
 )
 def test_invalid_bundles_are_rejected(entries: dict[str, bytes], expected_field: str):
     with pytest.raises(SkillValidationError) as caught:
-        _ = bundle.read_bundle(_zip(entries))
+        _ = bundle.read_bundle(zip_entries(entries))
     assert caught.value.field == expected_field
 
 
@@ -293,7 +293,7 @@ def test_yaml_dates_survive_as_iso_strings():
 
 def test_macos_sidecar_entries_are_ignored():
     """Finder always adds a `__MACOSX/` tree, which read as a second top-level directory."""
-    data = _zip(
+    data = zip_entries(
         {
             "pdf-processing/SKILL.md": SKILL_MD.encode(),
             "pdf-processing/scripts/fill.py": b"x",
@@ -308,6 +308,8 @@ def test_macos_sidecar_entries_are_ignored():
 
 def test_a_flat_archive_is_accepted():
     """Zipping a skill's *contents* puts SKILL.md at the archive root; that's still a skill."""
-    imported = bundle.read_bundle(_zip({"SKILL.md": SKILL_MD.encode(), "scripts/fill.py": b"x"}))
+    imported = bundle.read_bundle(
+        zip_entries({"SKILL.md": SKILL_MD.encode(), "scripts/fill.py": b"x"})
+    )
     assert imported.skill.name == "pdf-processing"
     assert [relpath for relpath, _ in imported.files] == ["scripts/fill.py"]
