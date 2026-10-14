@@ -75,15 +75,15 @@ class SubagentWake:
     """Delivers reports and messages between the agents of a delegation tree."""
 
     def __init__(self, ctx: HarnessContext, records: SubagentStore) -> None:
-        self._ctx = ctx
-        self._records = records
-        self._conversations = ctx.services.get(ConversationStore)
-        self._models = ctx.services.get(ModelRegistry)
-        self._runs = ctx.services.get(RunRegistry)
-        self._settings = ctx.services.get(SettingsStore)
-        self._offline = ctx.services.get(OfflineModeService)
-        self._uploads = ctx.services.get(UploadStore)
-        self._agents = ctx.services.get(AgentCatalog)
+        self._ctx: HarnessContext = ctx
+        self._records: SubagentStore = records
+        self._conversations: ConversationStore = ctx.services.get(ConversationStore)
+        self._models: ModelRegistry = ctx.services.get(ModelRegistry)
+        self._runs: RunRegistry = ctx.services.get(RunRegistry)
+        self._settings: SettingsStore = ctx.services.get(SettingsStore)
+        self._offline: OfflineModeService = ctx.services.get(OfflineModeService)
+        self._uploads: UploadStore = ctx.services.get(UploadStore)
+        self._agents: AgentCatalog = ctx.services.get(AgentCatalog)
         # One lock per parent thread, bounded like every other per-conversation cache a
         # long-lived process keeps.
         self._locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
@@ -100,7 +100,7 @@ class SubagentWake:
         self._roots[conversation_id] = root
         self._roots.move_to_end(conversation_id)
         while len(self._roots) > _ROOTS_CACHED:
-            self._roots.popitem(last=False)
+            _ = self._roots.popitem(last=False)
 
     async def _root_of(self, conversation_id: str) -> str:
         cached = self._roots.get(conversation_id)
@@ -119,7 +119,7 @@ class SubagentWake:
         its wake budget before anything reacts to the turn ending."""
         if run.kind == "chat" and run.conversation_id:
             root = self._roots.get(run.conversation_id, run.conversation_id)
-            self._chain.pop(root, None)
+            _ = self._chain.pop(root, None)
 
     async def settled(self, run: Run, _watched: bool) -> None:
         """The async half: a run reached terminal. If it was a spawned agent's turn, report
@@ -164,7 +164,7 @@ class SubagentWake:
             logger.exception("subagents: could not close out %s", row.id)
         if not row.parent_conversation_id:
             return  # spawned from a run with no thread of its own
-        await self.deliver(
+        _ = await self.deliver(
             row.owner_id,
             row.parent_conversation_id,
             _report_text(row.handle or row.spec_name, row.spec_name, summary, error, merged),
@@ -192,7 +192,7 @@ class SubagentWake:
             (t.content for t in reversed(turns) if t.role == "assistant" and t.content), None
         )
 
-    async def _merge(self, row) -> str | None:
+    async def _merge(self, row: SubagentRecord) -> str | None:
         """Land an isolated sub-agent's work back where it was forked from.
 
         Only for one that worked apart: a sharing sub-agent's changes are already in the
@@ -245,7 +245,7 @@ class SubagentWake:
             run = self._runs.active_run_for(conversation_id, owner_id)
             if run is not None and not run.is_terminal:
                 # Running, or parked on an approval: handed over at its next request.
-                run.enqueue_message(text, source=source, sender=sender)
+                _ = run.enqueue_message(text, source=source, sender=sender)
                 return True
             row = await self._records.by_child(conversation_id)
             if row is not None and row.status == "cancelled":
@@ -345,7 +345,7 @@ class SubagentWake:
             # place after all.
             run = self._runs.active_run_for(conversation_id, owner_id)
             if run is not None and not run.is_terminal:
-                run.enqueue_message(text, source=source, sender=sender)
+                _ = run.enqueue_message(text, source=source, sender=sender)
                 return
             logger.warning("subagents: lost the race to wake %s", conversation_id)
             return
@@ -354,7 +354,7 @@ class SubagentWake:
         self._chain[root] = spent + 1
         self._chain.move_to_end(root)
         while len(self._chain) > 64:
-            self._chain.popitem(last=False)
+            _ = self._chain.popitem(last=False)
 
     # -- the delivery that nearly got dropped ---------------------------------------
 
@@ -375,10 +375,10 @@ class SubagentWake:
         ]
         reports = [m.text for m in stranded if m.source == "subagent"]
         if reports:
-            await self.deliver(run.owner_id, run.conversation_id, "\n\n".join(reports))
+            _ = await self.deliver(run.owner_id, run.conversation_id, "\n\n".join(reports))
         for message in stranded:
             if message.source == "agent":
-                await self.deliver(
+                _ = await self.deliver(
                     run.owner_id,
                     run.conversation_id,
                     message.text,
@@ -397,7 +397,7 @@ class SubagentWake:
             oldest, candidate = next(iter(self._locks.items()))
             if candidate.locked():
                 break
-            self._locks.pop(oldest)
+            _ = self._locks.pop(oldest)
         return lock
 
 

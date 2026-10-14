@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import cast, override
 
 from pydantic_ai import InstructionPart, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -72,11 +73,11 @@ _PAIR = b"\x1d"
 _PAYLOAD_FIELDS = ("tool_name", "tool_call_id", "id", "content", "args", "signature")
 
 
-def _hasher() -> Any:
+def _hasher() -> hashlib.blake2b:
     return hashlib.blake2b(digest_size=_DIGEST_BYTES)
 
 
-def _absorb(digest: Any, value: object) -> None:
+def _absorb(digest: hashlib.blake2b, value: object) -> None:
     """Fold one value into a hash, structurally, without ever building a copy of it.
 
     Recursive rather than ``json.dumps`` for one load-bearing reason: a user prompt's content
@@ -97,31 +98,35 @@ def _absorb(digest: Any, value: object) -> None:
         case bool() | int() | float() | None:
             digest.update(repr(value).encode())
         case list() | tuple():
-            for item in value:
+            for item in cast(Sequence[object], value):
                 digest.update(_ITEM)
                 _absorb(digest, item)
         case dict():
-            for key in sorted(value, key=str):
+            mapping = cast(dict[object, object], value)
+            for key in sorted(mapping, key=str):
                 digest.update(_PAIR)
                 _absorb(digest, str(key))
-                _absorb(digest, value[key])
+                _absorb(digest, mapping[key])
         case _:
             # A library object — ``BinaryContent``, a nested model, an enum. Its own field
             # mapping where it has one (both pydantic models and dataclasses do), whose byte
             # payloads then land in the ``bytes`` branch above; its repr otherwise.
-            fields = getattr(value, "__dict__", None)
-            _absorb(digest, fields if isinstance(fields, dict) else repr(value))
+            fields: object = getattr(value, "__dict__", None)
+            if isinstance(fields, dict):
+                _absorb(digest, cast(dict[object, object], fields))
+            else:
+                _absorb(digest, repr(value))
 
 
 def _message_digest(message: ModelMessage) -> str:
     """One message's fingerprint: its type, then each part's type and payload, in order."""
     digest = _hasher()
     digest.update(type(message).__name__.encode())
-    for part in getattr(message, "parts", ()):
+    for part in message.parts:
         digest.update(_FIELD)
         digest.update(type(part).__name__.encode())
         for name in _PAYLOAD_FIELDS:
-            value = getattr(part, name, None)
+            value: object = getattr(part, name, None)
             if value is None:
                 continue
             digest.update(_FIELD)
@@ -299,6 +304,7 @@ class WatchPrefix(AbstractCapability[RunDeps]):
     #: The last request this capability measured, for the within-turn comparison.
     previous: PrefixDigest | None = field(default=None, repr=False)
 
+    @override
     async def before_model_request(
         self, ctx: RunContext[RunDeps], request_context: ModelRequestContext
     ) -> ModelRequestContext:
@@ -327,7 +333,7 @@ class WatchPrefix(AbstractCapability[RunDeps]):
         self.previous = current
         if ledger is not None:
             ledger.remember(conversation_id, current)
-        await ctx.emit(PrefixWatched(verdict=verdict))
+        _ = await ctx.emit(PrefixWatched(verdict=verdict))
         return request_context
 
 

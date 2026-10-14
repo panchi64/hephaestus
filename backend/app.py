@@ -13,6 +13,7 @@ import sys
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
+from typing import cast
 
 import httpx
 from fastapi import FastAPI
@@ -48,7 +49,7 @@ from routes import (
     tools,
     vm,
 )
-from routes.deps import OPERATOR_ID
+from routes.deps import OPERATOR_ID, state_of
 from runs import LaneLimits, PrefixLedger, RunRegistry
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
@@ -97,7 +98,7 @@ async def _backfill_sealed_columns(engine: Engine, vault: Vault) -> None:
     there is no key. This waits for unlock like ``_backfill_embeddings``, is idempotent (a
     healed row no longer matches), and is best-effort per column — one table failing must
     not stop the other from being healed, and neither must take the boot down."""
-    await vault.unlocked_event.wait()
+    _ = await vault.unlocked_event.wait()
     for model_cls, legacy, sealed in (
         (Conversation, "title", "title_enc"),
         (CorpusSource, "path", "path_enc"),
@@ -105,7 +106,7 @@ async def _backfill_sealed_columns(engine: Engine, vault: Vault) -> None:
         (Artifact, "filename", "filename_enc"),
     ):
         try:
-            await seal_legacy_column(
+            _ = await seal_legacy_column(
                 engine=engine,
                 vault=vault,
                 model_cls=model_cls,
@@ -124,7 +125,7 @@ async def lifespan(app: FastAPI):
     write-behind drainer). Shutdown flushes pending writes. Capability handles
     (``services/``) wire in here as they land.
     """
-    settings: Settings = app.state.settings
+    settings = state_of(app)["settings"]
     # Owns every background start/stop below: a unit registers at its construction
     # point and shutdown unwinds in reverse registration order — the `finally` block
     # is one call, not a hand-maintained mirror of this sequence. Something that must
@@ -158,6 +159,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     so the caller's single ``stop_all`` unwinds the whole graph — including a partially
     built one, when a build raises part-way through.
     """
+    assembled = state_of(app)
     # Typed capability handles. Core wiring adds what it builds; each feature
     # manifest's build resolves its cross-feature dependencies here and adds what
     # it hands back — never by importing another feature's wiring.
@@ -220,7 +222,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # The one instance both the auth gate and the `/tokens` routes use — a token revoked
     # through the route has to invalidate exactly what the gate trusts, which two stores
     # with two verification caches wouldn't do.
-    app.state.api_tokens = ApiTokenStore(engine, app.state.api_scope_table)
+    app.state.api_tokens = ApiTokenStore(engine, assembled["api_scope_table"])
 
     # The at-rest encryption vault. A passphrase (auth-disabled path) sets it up
     # or unlocks it at boot; otherwise it stays locked until the operator unlocks
@@ -229,7 +231,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     app.state.vault = vault
     if settings.unlock_passphrase:
         if vault.is_initialized:
-            await vault.unlock(settings.unlock_passphrase)
+            _ = await vault.unlock(settings.unlock_passphrase)
         else:
             await vault.setup(settings.unlock_passphrase)
 
@@ -283,7 +285,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # Seal the columns that predate their own encryption: the migration that added
     # the sealed column ran before unlock with no key, so the healing happens here
     # once unlocked (XC-SEC-3).
-    lifecycle.track("sealing-backfill", _backfill_sealed_columns(engine, vault))
+    _ = lifecycle.track("sealing-backfill", _backfill_sealed_columns(engine, vault))
     # The platform VM, where agent code, previews, headless Chromium and SearXNG run.
     # It boots in the background; until it is up (or if it never comes up) what needs
     # it reports unavailable rather than running on the host.
@@ -441,14 +443,14 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         lifecycle=lifecycle,
         services=container,
         capabilities=agent_capabilities,
-        tool_categories=app.state.tool_categories,
-        instruction_providers=app.state.instruction_providers,
-        prompt_context_providers=app.state.prompt_context_providers,
-        network_tools=app.state.network_tools,
-        dormant_categories=app.state.dormant_categories,
-        category_availability=app.state.category_availability,
+        tool_categories=assembled["tool_categories"],
+        instruction_providers=assembled["instruction_providers"],
+        prompt_context_providers=assembled["prompt_context_providers"],
+        network_tools=assembled["network_tools"],
+        dormant_categories=assembled["dormant_categories"],
+        category_availability=assembled["category_availability"],
     )
-    for manifest in app.state.feature_manifests:
+    for manifest in assembled["feature_manifests"]:
         if manifest.enabled is not None and not manifest.enabled(settings):
             continue
         if manifest.build is None:
@@ -461,7 +463,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
             # by an abstraction, so a capability living above `tools/` stays reachable
             # from one. See `FeatureRuntime.capabilities`.
             if isinstance(capability, tuple):
-                instance, as_type = capability
+                instance, as_type = cast(tuple[object, type[object]], capability)
                 agent_capabilities.add(instance, as_type=as_type)
             else:
                 agent_capabilities.add(capability)
@@ -540,7 +542,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if category in tool_categories:
                 raise RuntimeError(
                     f"tool category {category!r} declared twice "
-                    f"(second claim by manifest {manifest.name!r})"
+                    + f"(second claim by manifest {manifest.name!r})"
                 )
             tool_categories[category] = factory()
             if manifest.available is not None:
@@ -565,7 +567,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if manifest.available is not None and not manifest.toolsets:
             raise RuntimeError(
                 f"manifest {manifest.name!r} declares an availability check "
-                "but registers no tool category"
+                + "but registers no tool category"
             )
     # Resolved to the namespaced names the disabled set speaks, so the run-time check
     # only has to answer yes or no (`services/tool_policy.py`).

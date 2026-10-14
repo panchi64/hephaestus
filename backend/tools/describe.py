@@ -44,9 +44,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from types import MappingProxyType
-from typing import Any
+from typing import cast
 
-from pydantic_ai import ToolDefinition
+from pydantic import JsonValue
+from pydantic_ai import AbstractToolset, ToolDefinition
+
+from .deps import RunDeps
 
 #: The whole description when a docstring had both a summary and a ``Returns:`` section.
 _SUMMARY_AND_RETURNS = re.compile(
@@ -56,7 +59,7 @@ _SUMMARY_AND_RETURNS = re.compile(
 #: summary is empty, so the return text is all the model would have to go on.
 _RETURNS_ONLY = re.compile(
     r"\A<returns>\s*(?:<type>.*?</type>\s*)?<description>(?P<description>.*?)</description>"
-    r"\s*</returns>\s*\Z",
+    + r"\s*</returns>\s*\Z",
     re.DOTALL,
 )
 #: One run of backticks around text that stays on a single line — the form every
@@ -93,7 +96,7 @@ NARRATION_TEXT = (
     'making *this* call right now — not what the tool does. E.g. "Checking whether the '
     'migration already ran before I add another."'
 )
-NARRATION_PROPERTY: Mapping[str, Any] = MappingProxyType(
+NARRATION_PROPERTY: Mapping[str, JsonValue] = MappingProxyType(
     {"type": "string", "description": NARRATION_TEXT}
 )
 
@@ -134,14 +137,14 @@ def strip_docstring_xml(description: str | None) -> str | None:
     return description
 
 
-def drop_properties(schema: Mapping[str, Any], names: Iterable[str]) -> dict[str, Any]:
+def drop_properties(schema: Mapping[str, JsonValue], names: Iterable[str]) -> dict[str, JsonValue]:
     """Remove top-level properties, and any mention of them in ``required``."""
     dropped = frozenset(names)
     out = copy.deepcopy(dict(schema))
     properties = out.get("properties")
     if isinstance(properties, dict):
         for name in dropped:
-            properties.pop(name, None)
+            _ = properties.pop(name, None)
     required = out.get("required")
     if isinstance(required, list):
         out["required"] = [name for name in required if name not in dropped]
@@ -151,8 +154,8 @@ def drop_properties(schema: Mapping[str, Any], names: Iterable[str]) -> dict[str
 
 
 def add_property(
-    schema: Mapping[str, Any], name: str, subschema: Mapping[str, Any]
-) -> dict[str, Any]:
+    schema: Mapping[str, JsonValue], name: str, subschema: Mapping[str, JsonValue]
+) -> dict[str, JsonValue]:
     """Offer one more top-level property, **without** making it required.
 
     The mirror of :func:`drop_properties`, and deliberately not its exact inverse: nothing
@@ -204,7 +207,7 @@ def prefix_references(
     return patterns.dotted.sub(lambda m: m[0].replace(".", "_", 1), text)
 
 
-def strip_schema_leaks(name: str, schema: Mapping[str, Any]) -> dict[str, Any]:
+def strip_schema_leaks(name: str, schema: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
     """Take the library's unreachable vocabulary out of one tool's JSON schema.
 
     Keyed per tool rather than applied by pattern: the fields are a specific library's
@@ -256,7 +259,7 @@ def describe(
 
 
 def category_names(
-    categories: Mapping[str, Any],
+    categories: Mapping[str, AbstractToolset[RunDeps]],
 ) -> dict[str, frozenset[str]]:
     """The category → tool-name map the rewrite resolves references against.
 
@@ -266,7 +269,7 @@ def category_names(
     are someone else's text and are left exactly as they arrived.
     """
     return {
-        category: frozenset(getattr(toolset, "tools", {}))
+        category: frozenset(cast(Mapping[str, object], getattr(toolset, "tools", {})))
         for category, toolset in categories.items()
     }
 
@@ -291,7 +294,7 @@ def category_of(name: str, names_by_category: Mapping[str, frozenset[str]]) -> s
 _SUBTASKS_LEAKED = frozenset({"tasks_write", "tasks_update_statuses"})
 
 
-def _strip_subtasks(schema: dict[str, Any]) -> None:
+def _strip_subtasks(schema: dict[str, JsonValue]) -> None:
     """Edit one already-copied task-list schema in place."""
     defs = schema.get("$defs")
     if not isinstance(defs, dict):
@@ -311,7 +314,7 @@ def _strip_subtasks(schema: dict[str, Any]) -> None:
         if not isinstance(properties, dict):
             continue
         for property_name in _SUBTASK_PROPERTIES:
-            properties.pop(property_name, None)
+            _ = properties.pop(property_name, None)
         if isinstance(required := definition.get("required"), list):
             definition["required"] = [name for name in required if name not in _SUBTASK_PROPERTIES]
         for property_name, property_schema in properties.items():
@@ -322,7 +325,7 @@ def _strip_subtasks(schema: dict[str, Any]) -> None:
 
 
 def _prefix_schema_text(
-    node: Any, names_by_category: Mapping[str, frozenset[str]], category: str | None
+    node: JsonValue, names_by_category: Mapping[str, frozenset[str]], category: str | None
 ) -> None:
     """Rewrite every ``description`` in an already-copied schema, at any depth.
 

@@ -12,6 +12,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from routes import deps
 from services.vm import PlatformVM
 
 router = APIRouter(prefix="/vm", tags=["vm"])
@@ -24,7 +25,7 @@ class VMStatus(BaseModel):
 
 
 def _vm(request: Request) -> PlatformVM:
-    vm = getattr(request.app.state, "vm", None)
+    vm = deps.vm(request)
     if vm is None:
         raise HTTPException(status_code=404, detail="the platform VM is not configured")
     return vm

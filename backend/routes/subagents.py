@@ -150,7 +150,7 @@ async def list_subagents(conversation_id: str, request: Request) -> SubagentList
     sub-agents out would otherwise pay five round trips of database latency in series for a
     frame that has to land inside one polling interval.
     """
-    launcher = request.app.state.capabilities.get_optional(SubagentLauncher)
+    launcher = deps.capabilities(request).get_optional(SubagentLauncher)
     if launcher is None:
         raise HTTPException(status_code=404, detail="sub-agents are not available")
     views = await launcher.below(OPERATOR_ID, conversation_id)

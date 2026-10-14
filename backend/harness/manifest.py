@@ -92,7 +92,7 @@ class HarnessContext:
     # The assembled tool-category mapping and instruction providers (core + every
     # enabled manifest's declarations, complete before any build runs) — so a feature
     # composing agent runs hands the engine exactly what an interactive turn gets.
-    tool_categories: Mapping[str, AbstractToolset[RunDeps]] = field(default_factory=dict)
+    tool_categories: Mapping[str, AbstractToolset[RunDeps]] = field(default_factory=lambda: {})
     instruction_providers: tuple[InstructionProvider, ...] = ()
     prompt_context_providers: tuple[PromptContextProvider, ...] = ()
     # Every enabled manifest's ``network_tools``, unioned — for the feature that enforces
@@ -127,10 +127,10 @@ class FeatureRuntime:
     # class in a tool would invert the dependency order. Declaring the abstraction in
     # ``services/`` and registering the implementation under it keeps the arrow pointing
     # down.
-    capabilities: tuple[object | tuple[object, type], ...] = ()
+    capabilities: tuple[object | tuple[object, type[object]], ...] = ()
     # Names hung on ``app.state`` — the transitional seam ``routes/deps.py``'s
     # accessors read; shrinks as those accessors move onto the container.
-    state: Mapping[str, object] = field(default_factory=dict)
+    state: Mapping[str, object] = field(default_factory=lambda: {})
     # Run-terminal participation (see ``harness/run_terminal.py``): sync hooks run
     # inline in the registry's terminal transition, async hooks run as tracked tasks.
     run_terminal_sync: tuple[SyncRunTerminalHook, ...] = ()

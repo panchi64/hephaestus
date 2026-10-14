@@ -14,7 +14,7 @@ import logging
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -138,9 +138,9 @@ class ToolCallAnswerOut(BaseModel):
 class ToolCallOut(BaseModel):
     id: str
     name: str
-    args: dict[str, Any]
+    args: dict[str, object]
     status: str
-    result: Any = None
+    result: object = None
     error: str | None = None
     images: list[ToolCallImageOut] = Field(default_factory=list)
     answers: list[ToolCallAnswerOut] = Field(default_factory=list)
@@ -502,34 +502,37 @@ async def _detail(
     # by-id map the cold-read uses to re-attach each turn's inline chips.
     snapshots = await deps.workspace_history(request).list(OPERATOR_ID, conversation_id)
     by_id = {s.id: s for s in snapshots}
-    return ConversationDetail(
-        **_summary(
-            summary,
-            activity=active_run.status if active_run else None,
-            workspaces=await deps.projects(request).workspace_names(OPERATOR_ID),
-            last_outcome=_outcomes(request).get(conversation_id),
-        ).model_dump(),
-        messages=[_message(m, by_id) for m in messages],
-        snapshots=[
-            ViewSnapshotRefOut(
-                snapshot_id=s.id,
-                title=s.title,
-                created_at=s.created_at,
-                files_changed=s.files_changed,
-                summary=s.summary,
-                preview_kind=s.preview_kind,
-                preview_artifact_id=s.preview_artifact_id,
-                keeper=s.keeper,
-            )
-            for s in snapshots
-        ],
-        context=context,
-        stats=stats,
-        active_run=active_run,
-        # Off the thread's own binding, resolved through the registry — so a row written
-        # by an older build, or carrying a value this one has no rule for, opens at the
-        # level that does the least rather than at whatever the string happens to say.
-        permission_level=(await store.binding(conversation_id)).permission,
+    base: dict[str, object] = _summary(
+        summary,
+        activity=active_run.status if active_run else None,
+        workspaces=await deps.projects(request).workspace_names(OPERATOR_ID),
+        last_outcome=_outcomes(request).get(conversation_id),
+    ).model_dump()
+    return ConversationDetail.model_validate(
+        {
+            **base,
+            "messages": [_message(m, by_id) for m in messages],
+            "snapshots": [
+                ViewSnapshotRefOut(
+                    snapshot_id=s.id,
+                    title=s.title,
+                    created_at=s.created_at,
+                    files_changed=s.files_changed,
+                    summary=s.summary,
+                    preview_kind=s.preview_kind,
+                    preview_artifact_id=s.preview_artifact_id,
+                    keeper=s.keeper,
+                )
+                for s in snapshots
+            ],
+            "context": context,
+            "stats": stats,
+            "active_run": active_run,
+            # Off the thread's own binding, resolved through the registry — so a row written
+            # by an older build, or carrying a value this one has no rule for, opens at the
+            # level that does the least rather than at whatever the string happens to say.
+            "permission_level": (await store.binding(conversation_id)).permission,
+        }
     )
 
 
@@ -682,7 +685,7 @@ async def _discard_subagents(request: Request, conversation_id: str) -> None:
     conversation row is already gone, and a sandbox that would not stop must not turn a
     delete the operator has already seen succeed into a 500.
     """
-    records = getattr(request.app.state, "subagent_records", None)
+    records = deps.subagent_records(request)
     if records is None:
         return  # sub-agents are not wired in this deployment
     try:
@@ -694,7 +697,7 @@ async def _discard_subagents(request: Request, conversation_id: str) -> None:
     store = deps.store(request)
     for row in rows:
         try:
-            await registry.cancel(row.run_id)
+            _ = await registry.cancel(row.run_id)
             run = registry.get(row.run_id)
             if run is not None:
                 # Before its thread is deleted, not after: a run finalising into a
@@ -735,12 +738,12 @@ async def _purge_uploads(request: Request, upload_ids: list[str]) -> None:
 async def orphan_image_attachments(
     conversation_id: str,
     request: Request,
-    message_id: str | None = Query(default=None, alias="messageId"),
+    message_id: Annotated[str | None, Query(alias="messageId")] = None,
 ) -> OrphanImageAttachments:
     """Pre-delete probe: which image attachments would lose their last reference if this
     message (``message_id``) or the whole conversation (omit it) were deleted. The frontend
     asks this first and only prompts keep-or-delete when the list is non-empty."""
-    await _require_owned(request, conversation_id)
+    _ = await _require_owned(request, conversation_id)
     upload_ids = await _image_orphans(request, conversation_id, message_id=message_id)
     return OrphanImageAttachments(upload_ids=upload_ids)
 
@@ -786,8 +789,8 @@ async def _settle_code_branch(request: Request, conversation_id: str, *, discard
 async def delete_conversation(
     conversation_id: str,
     request: Request,
-    purge_images: bool = Query(default=False, alias="purgeImages"),
-    discard_branch: bool = Query(default=False, alias="discardBranch"),
+    purge_images: Annotated[bool, Query(alias="purgeImages")] = False,
+    discard_branch: Annotated[bool, Query(alias="discardBranch")] = False,
 ) -> None:
     """Delete a conversation. With ``purgeImages=true`` the operator chose to also delete
     the image attachments this would orphan; the default keeps them.
@@ -861,7 +864,7 @@ async def delete_message(
     conversation_id: str,
     message_id: str,
     request: Request,
-    purge_images: bool = Query(default=False, alias="purgeImages"),
+    purge_images: Annotated[bool, Query(alias="purgeImages")] = False,
 ) -> ConversationDetail:
     """Remove a turn and everything after it on every branch (its subtree). The
     active path falls back to the deleted turn's parent. With ``purgeImages=true`` the
@@ -916,7 +919,7 @@ async def pin_message(
 ) -> None:
     """Pin or unpin a turn — a durable bookmark surfaced in the projection."""
     store = deps.store(request)
-    await _require_owned(request, conversation_id)
+    _ = await _require_owned(request, conversation_id)
     # A tree mutation like the others here — rejected while a run is live on this
     # conversation, same as switch_version/rewind/delete_message.
     deps.claim_conversation(request, conversation_id)
@@ -954,7 +957,7 @@ async def fork(conversation_id: str, message_id: str, request: Request) -> Conve
     The source is claimed for the duration of the walk: a run appending to it mid-copy
     would produce a fork of a history that never existed.
     """
-    await _require_owned(request, conversation_id)
+    _ = await _require_owned(request, conversation_id)
     store = deps.store(request)
     deps.claim_conversation(request, conversation_id)
     try:
@@ -1021,7 +1024,7 @@ class ApprovalGrantOut(BaseModel):
 @router.get("/{conversation_id}/grants", response_model=list[ApprovalGrantOut])
 async def list_grants(conversation_id: str, request: Request) -> list[ApprovalGrantOut]:
     """What the operator allowed to auto-approve for the rest of this conversation."""
-    await _require_owned(request, conversation_id)
+    _ = await _require_owned(request, conversation_id)
     grants = await deps.approval_grants(request).list(OPERATOR_ID, conversation_id)
     return [
         ApprovalGrantOut(
@@ -1050,7 +1053,7 @@ async def read_tasks(conversation_id: str, request: Request) -> list[TaskOut]:
     reloads a conversation has no stream to replay — this is how it starts from the
     truth rather than from an empty panel that only fills on the next mutation.
     """
-    await _require_owned(request, conversation_id)
+    _ = await _require_owned(request, conversation_id)
     items = await deps.conversation_tasks(request).items(OPERATOR_ID, conversation_id)
     return [TaskOut(**row) for row in tasks_payload(items)]
 
@@ -1074,7 +1077,7 @@ async def read_plan(conversation_id: str, request: Request) -> PlanOut | None:
     should disappear because the operator refreshed the page. ``null`` rather than a 404 —
     "this thread has no plan" is the ordinary state of nearly every thread, not a miss.
     """
-    await _require_owned(request, conversation_id)
+    _ = await _require_owned(request, conversation_id)
     plan = await deps.plan_mode(request).current(OPERATOR_ID, conversation_id)
     return PlanOut(**plan.payload()) if plan is not None else None
 
@@ -1095,7 +1098,7 @@ async def revoke_grant(
     grant; a scope that matches nothing is a no-op, like revoking a grant that already
     lapsed.
     """
-    await _require_owned(request, conversation_id)
+    _ = await _require_owned(request, conversation_id)
     await deps.approval_grants(request).revoke(
         OPERATOR_ID, conversation_id, tool_name, tuple(command_prefix or ())
     )
@@ -1143,7 +1146,7 @@ async def get_auto_compact_override(
 ) -> CompactionOverrideOut:
     """This thread's conversation-compaction state (its override + the effective on/off) —
     whether its older turns fold into a summary once the context window fills."""
-    await _require_owned(request, conversation_id)
+    _ = await _require_owned(request, conversation_id)
     return await _compaction_state(request, conversation_id)
 
 
@@ -1153,7 +1156,7 @@ async def set_auto_compact_override(
 ) -> CompactionOverrideOut:
     """Force conversation compaction on/off for this thread, or clear it (``null``) to
     inherit the operator's global setting."""
-    await _require_owned(request, conversation_id)
+    _ = await _require_owned(request, conversation_id)
     await deps.store(request).set_compaction_override(conversation_id, body.override)
     return await _compaction_state(request, conversation_id)
 

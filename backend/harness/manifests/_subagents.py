@@ -21,6 +21,9 @@ import asyncio
 import logging
 import secrets
 from dataclasses import dataclass, replace
+from typing import override
+
+from pydantic_ai import RunContext
 
 from agent.summarize import resolve_auto_compact_policy
 from harness.manifest import DormantCategory, HarnessContext
@@ -63,6 +66,7 @@ from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
 from services.workspace import DELEGATION_SEP
 from services.workspace_kind import workspace_kind
+from tools import InstructionProvider, RunDeps
 
 from ._subagent_wake import SubagentWake
 
@@ -102,24 +106,25 @@ class ConversationSubagents(SubagentLauncher):
     """
 
     def __init__(self, ctx: HarnessContext, records: SubagentStore, wake: SubagentWake) -> None:
-        self._ctx = ctx
-        self._records = records
-        self._wake = wake
-        self._conversations = ctx.services.get(ConversationStore)
-        self._models = ctx.services.get(ModelRegistry)
-        self._runs = ctx.services.get(RunRegistry)
-        self._settings = ctx.services.get(SettingsStore)
-        self._offline = ctx.services.get(OfflineModeService)
-        self._uploads = ctx.services.get(UploadStore)
-        self._agents = ctx.services.get(AgentCatalog)
+        self._ctx: HarnessContext = ctx
+        self._records: SubagentStore = records
+        self._wake: SubagentWake = wake
+        self._conversations: ConversationStore = ctx.services.get(ConversationStore)
+        self._models: ModelRegistry = ctx.services.get(ModelRegistry)
+        self._runs: RunRegistry = ctx.services.get(RunRegistry)
+        self._settings: SettingsStore = ctx.services.get(SettingsStore)
+        self._offline: OfflineModeService = ctx.services.get(OfflineModeService)
+        self._uploads: UploadStore = ctx.services.get(UploadStore)
+        self._agents: AgentCatalog = ctx.services.get(AgentCatalog)
         #: Handles chosen but not yet recorded, as (owner, root, handle). A launch picks its
         #: name before a whole turn is composed and records it after, so concurrent
         #: launches in one step consult these as well as the register.
         self._reserved: set[tuple[str, str, str]] = set()
-        self._reserve_lock = asyncio.Lock()
+        self._reserve_lock: asyncio.Lock = asyncio.Lock()
 
     # -- spawning ------------------------------------------------------------------
 
+    @override
     async def launch(
         self,
         owner_id: str,
@@ -199,7 +204,7 @@ class ConversationSubagents(SubagentLauncher):
         if withheld:
             raise SubagentUnavailableError(
                 f"`{agent.name}` needs {', '.join(sorted(withheld))}, which "
-                f"{'is' if len(withheld) == 1 else 'are'} switched off or unavailable."
+                + f"{'is' if len(withheld) == 1 else 'are'} switched off or unavailable."
             )
 
         policy = _isolation(agent.workspace, isolate=isolate)
@@ -210,7 +215,7 @@ class ConversationSubagents(SubagentLauncher):
             if policy == "isolated":
                 raise SubagentUnavailableError(
                     "This conversation has no workspace to give an agent its own copy "
-                    "of. Spawn it without isolation, or do the work here."
+                    + "of. Spawn it without isolation, or do the work here."
                 )
             policy = "own"
         workspace_key = _workspace_key(base, policy, delegation_id)
@@ -219,8 +224,8 @@ class ConversationSubagents(SubagentLauncher):
         if policy == "isolated" and parent_kind == "checkout":
             raise SubagentUnavailableError(
                 "This conversation works directly in the project's folder, which cannot "
-                "be copied for an agent. Call `project_open_worktree` first, or spawn "
-                "it without isolation."
+                + "be copied for an agent. Call `project_open_worktree` first, or spawn "
+                + "it without isolation."
             )
         child_kind = "sandbox" if policy == "own" else parent_kind
         binding = ConversationBinding(
@@ -321,8 +326,8 @@ class ConversationSubagents(SubagentLauncher):
         if not may_delegate(spawner, position.depth, self._ctx.settings.agent_max_depth):
             raise SubagentUnavailableError(
                 "The delegation tree is already as deep as it may grow, so you cannot "
-                "spawn agents of your own. Do the work yourself, or message `parent` if "
-                "it needs splitting further."
+                + "spawn agents of your own. Do the work yourself, or message `parent` if "
+                + "it needs splitting further."
             )
 
     async def _thread_agent(self, owner_id: str, thread: str) -> AgentDefinition:
@@ -376,13 +381,14 @@ class ConversationSubagents(SubagentLauncher):
             return
         raise SubagentUnavailableError(
             f"{running} agents are already working in this tree, which is the most allowed "
-            "at once. Do not spawn another yet and do not retry this — you will be told as "
-            "each one finishes. Carry on with whatever does not depend on them, or end "
-            "your turn."
+            + "at once. Do not spawn another yet and do not retry this — you will be told as "
+            + "each one finishes. Carry on with whatever does not depend on them, or end "
+            + "your turn."
         )
 
     # -- reaching agents in the tree -----------------------------------------------
 
+    @override
     async def recipient(self, owner_id: str, conversation_id: str, to: str) -> Recipient:
         position = await self._position(owner_id, conversation_id)
         address = _address(to)
@@ -413,6 +419,7 @@ class ConversationSubagents(SubagentLauncher):
             raise SubagentUnavailableError(f"`{to}` is you; there is nobody to send it to.")
         return found
 
+    @override
     async def message(self, owner_id: str, conversation_id: str, to: str, text: str) -> str:
         text = text.strip()
         if not text:
@@ -426,10 +433,11 @@ class ConversationSubagents(SubagentLauncher):
         if not delivered:
             raise SubagentUnavailableError(
                 f"`{found.label}` was stopped, so nothing will read this. Spawn a new agent "
-                "if the work still needs doing."
+                + "if the work still needs doing."
             )
         return found.label
 
+    @override
     async def read(self, owner_id: str, conversation_id: str, handle: str) -> SubagentView:
         position = await self._position(owner_id, conversation_id)
         view = self._live_view(await self._resolve(owner_id, position.root, handle))
@@ -439,13 +447,14 @@ class ConversationSubagents(SubagentLauncher):
             view = replace(view, summary=await self._latest_answer(view.conversation_id))
         return view
 
+    @override
     async def stop(self, owner_id: str, conversation_id: str, handle: str) -> list[str]:
         position = await self._position(owner_id, conversation_id)
         row = await self._resolve(owner_id, position.root, handle)
         if not await self._is_below(row, conversation_id):
             raise SubagentUnavailableError(
                 f"`{row.handle}` was not spawned by you or by an agent below you, so it is "
-                "not yours to stop. Message it, or its parent, instead."
+                + "not yours to stop. Message it, or its parent, instead."
             )
         rows = [row, *await self._records.descendants(row.child_conversation_id, owner_id)]
         # Marked stopped before any run is cancelled, so the reports the cancellations
@@ -459,11 +468,13 @@ class ConversationSubagents(SubagentLauncher):
                 stopped.append(each.handle or each.spec_name)
         return stopped
 
+    @override
     async def tree(self, owner_id: str, conversation_id: str) -> list[SubagentView]:
         position = await self._position(owner_id, conversation_id)
         rows = await self._records.tree(position.root, owner_id)
         return [self._live_view(row) for row in rows]
 
+    @override
     async def below(self, owner_id: str, conversation_id: str) -> list[SubagentView]:
         rows = await self._records.descendants(conversation_id, owner_id)
         return [self._live_view(row) for row in rows]
@@ -504,7 +515,7 @@ class ConversationSubagents(SubagentLauncher):
         if row is None:
             raise SubagentUnavailableError(
                 f"Nothing in your delegation tree is called {handle!r}. `agents_list` has "
-                "every agent in it."
+                + "every agent in it."
             )
         return row
 
@@ -551,11 +562,11 @@ def _workspace_key(base: str, policy: WorkspacePolicy, delegation_id: str) -> st
     return f"{base}{DELEGATION_SEP}{delegation_id}"
 
 
-def _briefing(text: str):
+def _briefing(text: str) -> InstructionProvider:
     """The agent's brief as a dynamic instruction, rebuilt every turn, so nothing it later
     reads can rewrite the terms it works under."""
 
-    async def provider(_ctx) -> str:
+    async def provider(_ctx: RunContext[RunDeps]) -> str:
         return text
 
     return provider

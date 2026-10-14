@@ -117,7 +117,7 @@ async def login(body: PasswordBody, request: Request, response: Response) -> Tok
         raise HTTPException(status_code=409, detail="not set up yet")
     # Password guessing is rate-bound per caller (`AUTH-1`), through the same limiter the
     # gate throttles API-token guesses with — one attack, one throttle.
-    limiter = auth_attempt_limiter(request.app.state)
+    limiter = auth_attempt_limiter(deps.app_state(request))
     key = f"login:{client_key(request.scope.get('client'))}"
     try:
         limiter.check(key)

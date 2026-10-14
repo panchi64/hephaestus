@@ -15,9 +15,12 @@ claimed cannot become a document with a foothold on the API origin.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from core.exceptions import SSRFError
+from routes import deps
 from services.webimage import ImageFetchError, fetch_image
 
 router = APIRouter(prefix="/media", tags=["media"])
@@ -39,7 +42,7 @@ _IMAGE_HEADERS = {
 @router.get("/remote-image")
 async def remote_image(
     request: Request,
-    url: str = Query(..., description="Absolute http(s) URL of the image to fetch."),
+    url: Annotated[str, Query(description="Absolute http(s) URL of the image to fetch.")],
 ) -> Response:
     """Fetch ``url`` server-side and return it as an image, or fail plainly.
 
@@ -47,11 +50,11 @@ async def remote_image(
     frontend renders a caption in the answer's own voice for a picture that didn't
     load, and a fake image would be a worse lie than an honest gap.
     """
-    settings = request.app.state.settings
+    settings = deps.settings(request)
     try:
         image = await fetch_image(
             url,
-            client=request.app.state.web_client,
+            client=deps.web_client(request),
             timeout_s=settings.web_image_timeout_s,
             max_bytes=settings.web_image_max_bytes,
         )

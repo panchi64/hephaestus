@@ -28,12 +28,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import override
 
 from openai import AsyncOpenAI
 from pydantic_ai.models import Model
 
-from services.embeddings import EmbeddingBatch
-from services.llm import EndpointSpec, build_model
+from services.embeddings import Embedder, EmbeddingBatch
+from services.endpoint_spec import EndpointSpec
+from services.llm import build_model
 
 # The six env vars that gate the whole suite. All-present ⇒ the live tests run.
 EMBED_ENV = ("HEPH_EVAL_EMBED_BASE_URL", "HEPH_EVAL_EMBED_MODEL", "HEPH_EVAL_EMBED_KEY")
@@ -47,7 +49,7 @@ def missing_env() -> list[str]:
 
 
 @dataclass(frozen=True)
-class EnvEmbedder:
+class EnvEmbedder(Embedder):
     """An :class:`~services.embeddings.Embedder` backed by an env endpoint.
 
     Mirrors ``RegistryEmbedder.embed`` exactly — same ``AsyncOpenAI`` client,
@@ -69,9 +71,11 @@ class EnvEmbedder:
             api_key=os.environ["HEPH_EVAL_EMBED_KEY"],
         )
 
+    @override
     async def is_available(self, owner_id: str) -> bool:
         return True
 
+    @override
     async def embed(self, owner_id: str, texts: list[str]) -> EmbeddingBatch:
         client = AsyncOpenAI(base_url=self.base_url, api_key=self.api_key or "not-needed")
         response = await client.embeddings.create(model=self.model, input=texts)

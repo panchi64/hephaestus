@@ -70,7 +70,7 @@ async def get_overview(request: Request) -> Overview:
     usable_chat_endpoints = [e for e in endpoints if e.native_tools and e.enabled]
     embedding_configured = bool(roles.get("embedding"))
     sandbox_present = deps.sandbox_sessions(request) is not None
-    vm = getattr(request.app.state, "vm", None)
+    vm = deps.vm(request)
     vm_ready = vm is not None and vm.available
     provider_enabled = any(p.enabled for p in search_providers)
     managed_search_ready = deps.searxng(request).base_url is not None

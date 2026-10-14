@@ -25,6 +25,9 @@ import numpy as np
 from evals.dataset import Corpus, RetrievalQuery, conversation_corpus, memory_corpus
 from evals.live import EnvEmbedder
 from services import ranking
+from services.conversation_search import ConversationSearch
+from services.conversations import ConversationStore
+from services.memory import MemoryStore
 
 OWNER = "operator"
 
@@ -120,11 +123,11 @@ async def run_ablation(
 # --- consumer seeding + hybrid capture ----------------------------------------
 
 
-async def _memory_hybrid(store, corpus: Corpus) -> dict[str, list[str]]:
+async def _memory_hybrid(store: MemoryStore, corpus: Corpus) -> dict[str, list[str]]:
     """Seed the memory corpus through ``remember`` and capture the real ``recall``
     ranking (mapped back to memory ids) for every query."""
     for m in corpus.memories:
-        await store.remember(OWNER, m.content)
+        _ = await store.remember(OWNER, m.content)
     # Recover content→id so a recall hit (which carries decrypted content) maps back
     # to the gold id without reaching into the store internals.
     id_by_content = {m.content: m.id for m in corpus.memories}
@@ -137,7 +140,9 @@ async def _memory_hybrid(store, corpus: Corpus) -> dict[str, list[str]]:
     return hybrid
 
 
-async def _conversation_hybrid(store, search, corpus: Corpus) -> dict[str, list[str]]:
+async def _conversation_hybrid(
+    store: ConversationStore, search: ConversationSearch, corpus: Corpus
+) -> dict[str, list[str]]:
     """Seed the conversation corpus through the persistence path (so the drainer
     embeds each turn) and capture the real ``search`` ranking by conversation id."""
     from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -148,7 +153,7 @@ async def _conversation_hybrid(store, search, corpus: Corpus) -> dict[str, list[
         cid = await store.create_conversation(OWNER, title=c.title)
         real_to_gold[cid] = c.id
         for prompt, answer in c.turns:
-            store.record(
+            _ = store.record(
                 cid,
                 [
                     ModelRequest(parts=[UserPromptPart(content=prompt)]),
@@ -213,14 +218,16 @@ def _assert_embeddings_earn_keep(table: dict[str, dict[str, dict[str, float]]]) 
 # --- tests --------------------------------------------------------------------
 
 
-async def test_memory_retrieval_ablation(embedder, memory_store):
+async def test_memory_retrieval_ablation(embedder: EnvEmbedder, memory_store: MemoryStore) -> None:
     corpus = memory_corpus()
     hybrid = await _memory_hybrid(memory_store, corpus)
     table = await run_ablation(embedder, _memory_texts(corpus), corpus.queries, hybrid)
     _assert_embeddings_earn_keep(table)
 
 
-async def test_conversation_retrieval_ablation(embedder, conversation_search):
+async def test_conversation_retrieval_ablation(
+    embedder: EnvEmbedder, conversation_search: tuple[ConversationStore, ConversationSearch]
+) -> None:
     store, search = conversation_search
     corpus = conversation_corpus()
     hybrid = await _conversation_hybrid(store, search, corpus)
