@@ -23,7 +23,7 @@ from typing import Protocol
 
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
-from services.endpoint_spec import EndpointSpec
+from services.embeddings import EmbeddingSpecSource
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +38,6 @@ class ReindexStatus:
     chunks: int = 0  # corpus chunks re-embedded in the current/last run
     detail: str | None = None
     completed_at: datetime | None = None
-
-
-class EmbeddingSpecSource(Protocol):
-    """The slice of the model registry that names the current embedding model."""
-
-    async def resolve_embedding_spec(self, owner_id: str) -> EndpointSpec: ...
 
 
 class MemoryReembedder(Protocol):
