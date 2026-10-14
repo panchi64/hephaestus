@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import cast
 
 from services.mail.errors import MailError, MailUnsupportedError
 from services.mail.models import (
@@ -40,7 +41,7 @@ def sample_header(uid: str = "1", **overrides: object) -> MailHeader:
 
 
 async def install_transport(
-    service: MailService, owner_id: str, account_id: str, transport: MailTransport
+    service: MailService, owner_id: str, account_id: str, transport: object
 ) -> None:
     """Wire ``transport`` into the service's per-account cache in place of a real one.
 
@@ -52,7 +53,7 @@ async def install_transport(
     """
     account = await service._row(owner_id, account_id)
     credentials = await service._secrets.open_access(account)
-    service._transports[account_id] = LiveTransport(transport, credentials)
+    service._transports[account_id] = LiveTransport(cast(MailTransport, transport), credentials)
 
 
 class FakeTransport:

@@ -11,7 +11,6 @@ from fastapi import FastAPI
 from pydantic import JsonValue
 from pydantic_ai import FunctionToolset
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import AbstractToolset
 
 from runs import Orchestrator, Run, RunRegistry
 from services.approval_grants import ApprovalGrantStore
@@ -33,7 +32,7 @@ from ._helpers import (
 from ._json import JSON, arr, json_body, json_list, obj, s
 
 
-def danger_categories() -> dict[str, AbstractToolset[RunDeps]]:
+def danger_categories() -> dict[str, FunctionToolset[RunDeps]]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool_plain(requires_approval=True)
@@ -43,7 +42,7 @@ def danger_categories() -> dict[str, AbstractToolset[RunDeps]]:
     return {"danger": toolset}
 
 
-def egress_categories() -> dict[str, AbstractToolset[RunDeps]]:
+def egress_categories() -> dict[str, FunctionToolset[RunDeps]]:
     """A `code` category whose one tool is namespaced `code_request_egress` — the name
     `ONCE_ONLY_TOOLS` pins."""
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
@@ -192,7 +191,7 @@ async def test_approve_with_conversation_scope_records_grant(monkeypatch: pytest
         )
 
 
-def command_categories() -> dict[str, AbstractToolset[RunDeps]]:
+def command_categories() -> dict[str, FunctionToolset[RunDeps]]:
     """A catalog holding one approval-gated tool that *runs a command* — the shape a
     conversation grant is scoped to rather than granted wholesale."""
     toolset: FunctionToolset[RunDeps] = FunctionToolset()

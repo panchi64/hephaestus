@@ -13,7 +13,6 @@ from pathlib import Path
 import httpx
 import pytest
 from fastapi import FastAPI
-from pydantic import JsonValue
 
 from runs import RunRegistry
 from runs.run import TERMINAL_STATUSES
@@ -54,13 +53,12 @@ async def _settled(app: FastAPI, run_id: str) -> None:
     raise AssertionError(f"run {run_id} never settled")
 
 
-async def _project(
-    client: httpx.AsyncClient, tmp_path: Path, name: str = "work"
-) -> dict[str, JsonValue]:
+async def _project(client: httpx.AsyncClient, tmp_path: Path, name: str = "work") -> dict[str, str]:
+    """The created project's text fields (`id`, `rootPath`, `baseRef`, …)."""
     root = await _repo(tmp_path / name)
     resp = await client.post("/projects", json={"name": name, "rootPath": str(root)})
     assert resp.status_code == 201, resp.text
-    return json_body(resp)
+    return {key: value for key, value in json_body(resp).items() if isinstance(value, str)}
 
 
 def _conversations(app: FastAPI) -> ConversationStore:
@@ -106,7 +104,7 @@ class TestTheBinding:
     ):
         async with client_app() as (client, app):
             project = await _project(client, tmp_path)
-            _ = await client.post(f"/projects/{s(project['id'])}/activate")
+            _ = await client.post(f"/projects/{project['id']}/activate")
             patch_model_resolution(monkeypatch)
             created = await client.post("/chat", json={"prompt": "hi"})
             conversation_id = s(json_body(created)["conversation_id"])
@@ -171,7 +169,7 @@ class TestDeletingAThread:
         app: FastAPI,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-    ) -> tuple[dict[str, JsonValue], str]:
+    ) -> tuple[dict[str, str], str]:
         project = await _project(client, tmp_path)
         patch_model_resolution(monkeypatch)
         created = json_body(
@@ -186,9 +184,9 @@ class TestDeletingAThread:
         # session is in when the operator opens the diff. Committing here by hand is what
         # made an earlier version of these tests pass against inert code.
         state = await app_state(app, "worktrees", WorktreeManager).acquire(
-            project_id=s(project["id"]),
-            root=Path(s(project["rootPath"])),
-            base_ref=s(project["baseRef"]),
+            project_id=project["id"],
+            root=Path(project["rootPath"]),
+            base_ref=project["baseRef"],
             conversation_id=conversation_id,
         )
         _ = (state.path / "hello.txt").write_text("changed by the agent\n")
@@ -222,7 +220,7 @@ class TestDeletingAThread:
     ):
         async with client_app() as (client, app):
             project, conversation_id = await self._with_work(client, app, tmp_path, monkeypatch)
-            root = Path(s(project["rootPath"]))
+            root = Path(project["rootPath"])
             # Untouched right up until the operator says so — the point of the design.
             assert (root / "hello.txt").read_text() == "original\n"
 
