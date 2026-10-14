@@ -16,10 +16,12 @@ anyone deciding to.
 from __future__ import annotations
 
 import hashlib
+import importlib
+import pkgutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -56,7 +58,7 @@ def fixture(name: str, *, order: int) -> Callable[[Fixture], Fixture]:
     return register
 
 
-def rows(response: httpx.Response) -> list[dict]:
+def rows(response: httpx.Response) -> list[dict[str, Any]]:
     """The rows in a listing, whichever shape the surface returns.
 
     Some listings are a bare JSON array and others wrap one in ``items`` — a difference
@@ -77,8 +79,16 @@ def rows(response: httpx.Response) -> list[dict]:
     return body if isinstance(body, list) else []
 
 
+def _import_fixtures() -> None:
+    """Import every fixture module, so a module's presence in the pack is its registration."""
+    for info in pkgutil.iter_modules([str(_SEED_DIR)]):
+        if info.name != "registry" and not info.name.startswith("_"):
+            _ = importlib.import_module(f"devkit.seed.{info.name}")
+
+
 def registered() -> list[tuple[int, str, Fixture]]:
-    """Every fixture, in the order they run. Importing :mod:`devkit.seed` fills this."""
+    """Every fixture, in the order they run."""
+    _import_fixtures()
     return sorted(_REGISTERED, key=lambda entry: (entry[0], entry[1]))
 
 
@@ -100,8 +110,6 @@ def seed_version() -> str:
 
 async def run_seed(ctx: SeedContext) -> list[str]:
     """Run every registered fixture in order, returning what each reported."""
-    import devkit.seed  # noqa: F401 — importing the package is what registers them
-
     summaries = []
     for _order, name, function in registered():
         summaries.append(f"{name}: {await function(ctx)}")

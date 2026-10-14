@@ -2,7 +2,7 @@
 
 These are the transport-level endpoints every orchestrator inherits. Creating a
 Run is a feature concern (the chat and agent routes), not here — those call
-``request.app.state.runs.submit(...)`` and hand the client back the run id.
+``deps.registry(request).submit(...)`` and hand the client back the run id.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from pydantic_ai import ToolApproved, ToolDenied
 from pydantic_ai.messages import ToolCallPart
 
@@ -61,12 +61,8 @@ def refusal_message(intent: str, written: str | None) -> str:
 
 
 class RunView(BaseModel):
-    # Existing fields stay snake_case (this surface predates the camelCase
-    # convention); the two new dashboard fields below are camelCase to match the
-    # newer surfaces (corpus/uploads/notifications) — `populate_by_name`
-    # lets this model still build from the plain attribute names below.
-    model_config = ConfigDict(populate_by_name=True)
-
+    # The older fields serialize as snake_case. The two conversation fields serialize as
+    # camelCase to match the newer surfaces (corpus, uploads, notifications).
     id: str
     kind: str
     status: str
@@ -77,11 +73,9 @@ class RunView(BaseModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
     last_seq: int
-    # The conversation this run drives, and its (possibly not-yet-titled) name — lets
-    # the dashboard label + link an in-flight run without a second lookup. `status`
-    # above already carries queued/running/awaiting_input for the active listing.
-    conversation_id: str | None = Field(default=None, alias="conversationId")
-    conversation_title: str | None = Field(default=None, alias="conversationTitle")
+    # Lets the dashboard label and link an in-flight run without a second lookup.
+    conversation_id: str | None = Field(default=None, serialization_alias="conversationId")
+    conversation_title: str | None = Field(default=None, serialization_alias="conversationTitle")
 
 
 def _view(run: Run, title: str | None) -> RunView:
@@ -380,7 +374,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     # Emitted only once every answer has rendered: a body whose second answer is refused
     # settles nothing, so a frame for its first would announce an answer the run never got.
     for frame in announced:
-        run.emit(frame)
+        _ = run.emit(frame)
 
     grants = deps.approval_grants(request)
     # Re-validate the grant-driven pre-approvals against the *current* grants: a grant
@@ -486,7 +480,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
             if call_by_id[decision.tool_call_id].tool_name == PLAN_SUBMIT_TOOL and (
                 conversation := parked.conversation_id
             ):
-                await deps.plan_mode(request).settle(
+                _ = await deps.plan_mode(request).settle(
                     deps.OPERATOR_ID,
                     conversation,
                     "revising" if decision.intent == "revise" else "denied",
@@ -497,7 +491,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     # grant-covered) — resolve the park's notification here rather than waiting for the
     # run to reach terminal. Idempotent: a run with no pending approval_needed (or one
     # already resolved) is simply a no-op.
-    await deps.notifications(request).resolve_for_run(deps.OPERATOR_ID, run_id)
+    _ = await deps.notifications(request).resolve_for_run(deps.OPERATOR_ID, run_id)
 
     orchestrator = build_resume_orchestrator(
         parked,
@@ -543,7 +537,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
             (g.tool_name, g.command_prefix) for g in await grants.list(deps.OPERATOR_ID, conv_id)
         }
         for tool_name, scope, decisive in to_grant:
-            await grants.grant(deps.OPERATOR_ID, conv_id, tool_name, scope, decisive)
+            _ = await grants.grant(deps.OPERATOR_ID, conv_id, tool_name, scope, decisive)
     # A resumed turn runs under the *operator's* bounds, not the registry defaults. Both
     # are settings now, and a continuation that quietly ran unbounded (or under a config
     # default the operator had overridden) would make the setting a half-truth — approval

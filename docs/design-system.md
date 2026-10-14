@@ -360,7 +360,7 @@ Hierarchy comes from brightness, and hue is reserved for meaning (§1.3, §5). T
 
 ## 7. Corners & borders
 
-Corners are **square.** The 1.0 system rounded controls to 3px and containers to 6px; the console register (1.2) resolved that contradiction in favour of the machined edge, and the two radius tokens are gone. Nothing takes a radius: buttons, inputs, chips, checkboxes, tabs, menus, panels, modals, popovers, toasts, rows, cells, state marks (square, not round dots) and count badges. Square is the absence of a radius, so it has no token. The one curve left in the product is the scrollbar thumb.
+Corners are **square.** The 1.0 system rounded controls to 3px and containers to 6px; the console register (1.2) resolved that contradiction in favour of the machined edge, and the two radius tokens are gone. Nothing takes a radius: buttons, inputs, chips, checkboxes, tabs, menus, panels, modals, popovers, toasts, rows, cells, state marks (square, not round dots) and count badges. Square is the absence of a radius, so it has no token. Outside icon glyphs (§9), the one curve left in the product is the scrollbar thumb.
 
 **Selection and hover are fills, not shapes.** Hover is the `surface-raised` fill and nothing else — no outline box, no radius, no accent. A selected row is `surface-raised` plus a 2px bright inset edge on its leading side (a tab: under it); a selected segmented cell is inverted. The edge is an inset shadow, so it costs no layout.
 
@@ -516,7 +516,7 @@ Bouncing, springs, overshoot, staggered cascades, eased *decorative* spinners, p
 ## 9. Iconography
 
 - **Stroke-based, 1.5px visual weight**, geometric, never friendly or filled. Two source grids (16px bespoke, 24px Iconoir) are normalized to a uniform stroke by the `Icon` primitive, which also supplies round caps and joins.
-- **Corners are smoothed, not square.** A rect-based glyph carries `rx="1"` on the 16px grid, so an icon's corners speak the same 3px/6px language as the controls and panels around it (§7). Hard corners survive only where the shape *is* a hard corner — a registration mark, a crosshair.
+- **Corners are smoothed, not square.** A rect-based glyph carries `rx="1"` on the 16px grid so it matches the rounded joins of the Iconoir set. Glyphs are the one exception to §7's square corners. Hard corners survive only where the shape *is* a hard corner — a registration mark, a crosshair.
 - **Every glyph fills ~75% of its box.** That is where the Iconoir set sits; a bespoke glyph drawn edge-to-edge reads a full size step larger than its neighbours even though both render at 16px. Optical size, not nominal size, is what the eye compares.
 - **Colour comes from `currentColor`**, so an icon takes the tone of the text beside it and re-colours with the theme. Never hardcode a fill or stroke colour.
 - **The glyph names the action, not the metaphor everyone else uses.** A paper plane for send and an upload tray for attach are the two most generic marks in messaging UI — the exact look this system is trying not to have, and both were also the busiest shapes in the set at 16px. Send is a **departure arrow** (a diagonal, three straight lines); attaching a document is the **`file` body carrying a `plus`**, because attaching is not uploading — `upload`/`download` keep the arrow-and-tray, and they mean the server.

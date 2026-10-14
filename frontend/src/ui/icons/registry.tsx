@@ -7,9 +7,9 @@ import type { JSX } from "solid-js";
  *
  * Two rules keep a hand-authored glyph consistent with the Iconoir set:
  * - **Corners are smoothed, not square.** A rect-based glyph carries `rx="1"` on
- *   the 16px grid, so an icon's corners match the 3px/6px language of the
- *   controls and panels it sits inside (§7). Hard corners survive only where the
- *   shape *is* a hard corner — a registration mark, a crosshair.
+ *   the 16px grid, the one exception to the square corners of §7. Hard corners
+ *   survive only where the shape *is* a hard corner — a registration mark, a
+ *   crosshair.
  * - **Every glyph fills ~75% of its box.** That is where the Iconoir set sits, so
  *   a bespoke glyph drawn edge-to-edge reads a full size step larger than its
  *   neighbours even though both render at 16px.
