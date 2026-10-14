@@ -15,10 +15,12 @@ regenerate that writes the question again, a verifier correction dropping the wr
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from pathlib import Path
 
 from pydantic_ai import FunctionToolset, ModelRequest, ModelResponse, TextPart, ToolApproved
 from pydantic_ai.messages import (
+    ModelMessage,
     RetryPromptPart,
     SystemPromptPart,
     ThinkingPart,
@@ -26,8 +28,10 @@ from pydantic_ai.messages import (
     UserContent,
     UserPromptPart,
 )
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
 from sqlalchemy import Engine
 
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
@@ -40,11 +44,13 @@ from core.vault import Vault
 from routes.deps import OPERATOR_ID
 from runs import Run, RunRegistry, RunStatus, RunStream
 from services.conversations import ConversationStore
+from tools import RunDeps
 
-from ._helpers import client_app
+from ._helpers import app_state, client_app
+from ._json import arr, json_body, obj
 
 
-async def _fresh_store(tmp_path) -> tuple[ConversationStore, Engine]:
+async def _fresh_store(tmp_path: Path) -> tuple[ConversationStore, Engine]:
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
     engine = make_engine("sqlite:///:memory:")
@@ -76,16 +82,16 @@ def _answering(answer: str) -> TestModel:
 def _hanging_model(reached: asyncio.Event) -> FunctionModel:
     """A model that is asked, signals it, and never answers."""
 
-    async def stream(messages, info):
+    async def stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
         reached.set()
-        await asyncio.Event().wait()
+        _ = await asyncio.Event().wait()
         yield "unreachable"
 
     return FunctionModel(stream_function=stream)
 
 
-def _approval_toolset() -> FunctionToolset:
-    toolset = FunctionToolset()
+def _approval_toolset() -> FunctionToolset[RunDeps]:
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool_plain(requires_approval=True)
     def delete_thing(name: str) -> str:
@@ -94,10 +100,17 @@ def _approval_toolset() -> FunctionToolset:
     return toolset
 
 
-def _submit(reg, store, conv, prompt, model, **kwargs):
+def _submit(
+    reg: RunRegistry,
+    store: ConversationStore,
+    conv: str,
+    prompt: str | None,
+    model: Model,
+    categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
+) -> Run:
     orch = build_chat_orchestrator(
-        prompt, model=model, categories=kwargs.pop("categories", {}), store=store,
-        conversation_id=conv, **kwargs,
+        prompt, model=model, categories={} if categories is None else categories, store=store,
+        conversation_id=conv,
     )  # fmt: skip
     return reg.submit(kind="chat", owner_id="operator", orchestrator=orch, conversation_id=conv)
 
@@ -107,43 +120,46 @@ def _submit(reg, store, conv, prompt, model, **kwargs):
 
 async def test_the_prompt_is_on_record_and_named_while_the_run_is_in_flight():
     async with client_app() as (client, app):
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         cid = await store.create_conversation(OPERATOR_ID)
         reached, release = asyncio.Event(), asyncio.Event()
 
-        async def stream(messages, info):
+        async def stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
             reached.set()
-            await release.wait()
+            _ = await release.wait()
             yield "the answer"
 
         orch = build_chat_orchestrator(
             "hello", model=FunctionModel(stream_function=stream), categories={},
             store=store, conversation_id=cid,
         )  # fmt: skip
-        run = app.state.runs.submit(
+        run = app_state(app, "runs", RunRegistry).submit(
             kind="chat", owner_id=OPERATOR_ID, orchestrator=orch, conversation_id=cid
         )
-        await asyncio.wait_for(reached.wait(), 5)
+        _ = await asyncio.wait_for(reached.wait(), 5)
 
-        detail = (await client.get(f"/conversations/{cid}")).json()
-        assert [(m["role"], m["content"]) for m in detail["messages"]] == [("user", "hello")]
-        assert detail["active_run"]["id"] == run.id
-        prompt_id = detail["messages"][0]["id"]
-        assert detail["active_run"]["prompt_message_id"] == prompt_id
+        detail = json_body(await client.get(f"/conversations/{cid}"))
+        assert [(obj(m)["role"], obj(m)["content"]) for m in arr(detail["messages"])] == [
+            ("user", "hello")
+        ]
+        active_run = obj(detail["active_run"])
+        assert active_run["id"] == run.id
+        prompt_id = obj(arr(detail["messages"])[0])["id"]
+        assert active_run["prompt_message_id"] == prompt_id
 
         release.set()
         await run.wait()
-        done = (await client.get(f"/conversations/{cid}")).json()
-        assert [m["role"] for m in done["messages"]] == ["user", "assistant"]
+        done = json_body(await client.get(f"/conversations/{cid}"))
+        assert [obj(m)["role"] for m in arr(done["messages"])] == ["user", "assistant"]
         # The same row before and after: the id the client held mid-run is still valid.
-        assert done["messages"][0]["id"] == prompt_id
+        assert obj(arr(done["messages"])[0])["id"] == prompt_id
         assert done["active_run"] is None
 
 
 # --- finalize records only the remainder -----------------------------------------
 
 
-async def test_finalize_appends_the_answer_without_a_second_copy_of_the_prompt(tmp_path):
+async def test_finalize_appends_the_answer_without_a_second_copy_of_the_prompt(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator")
@@ -157,7 +173,7 @@ async def test_finalize_appends_the_answer_without_a_second_copy_of_the_prompt(t
     await store.stop()
 
 
-async def test_the_prompts_stamps_land_on_it_and_never_on_a_steering_message(tmp_path):
+async def test_the_prompts_stamps_land_on_it_and_never_on_a_steering_message(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator")
@@ -165,7 +181,7 @@ async def test_the_prompts_stamps_land_on_it_and_never_on_a_steering_message(tmp
     prompt_id = store.record_prompt(
         conv, ModelRequest(parts=[UserPromptPart("look at @a.py")]), file_refs=["a.py"]
     )
-    store.record(
+    _ = store.record(
         conv,
         [
             ModelRequest(parts=[UserPromptPart("and one more thing")]),
@@ -200,7 +216,7 @@ async def test_an_opening_request_carrying_steering_yields_it_as_its_own_request
 # --- the verifier's drop range -------------------------------------------------
 
 
-async def test_a_verifier_drop_range_still_drops_the_rejected_answer_and_the_nudge(tmp_path):
+async def test_a_verifier_drop_range_still_drops_the_rejected_answer_and_the_nudge(tmp_path: Path):
     """`clean_drop` is a pair of absolute indices into the turn's whole message list. The
     prompt being set aside happens after the range is applied, so the indices keep meaning
     what the verifier took them to mean — pinned here because shifting the start past the
@@ -208,7 +224,7 @@ async def test_a_verifier_drop_range_still_drops_the_rejected_answer_and_the_nud
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator")
-    store.record(
+    _ = store.record(
         conv,
         [ModelRequest(parts=[UserPromptPart("earlier")]), ModelResponse(parts=[TextPart("old")])],
     )
@@ -248,14 +264,14 @@ async def test_a_verifier_drop_range_still_drops_the_rejected_answer_and_the_nud
 # --- stops ---------------------------------------------------------------------
 
 
-async def test_a_cancel_before_the_first_token_keeps_the_prompt_and_its_marker(tmp_path):
+async def test_a_cancel_before_the_first_token_keeps_the_prompt_and_its_marker(tmp_path: Path):
     store, db_engine = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator")
     reached = asyncio.Event()
     reg = RunRegistry()
     run = _submit(reg, store, conv, "never answered", _hanging_model(reached))
-    await asyncio.wait_for(reached.wait(), 5)
+    _ = await asyncio.wait_for(reached.wait(), 5)
 
     assert await reg.cancel(run.id) is True
     await run.wait()
@@ -276,7 +292,7 @@ async def test_a_cancel_before_the_first_token_keeps_the_prompt_and_its_marker(t
     await cold.stop()
 
 
-async def test_a_park_holds_the_prompt_and_the_resume_adds_only_the_rest(tmp_path):
+async def test_a_park_holds_the_prompt_and_the_resume_adds_only_the_rest(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator")
@@ -295,7 +311,7 @@ async def test_a_park_holds_the_prompt_and_the_resume_adds_only_the_rest(tmp_pat
     assert parked.prompt_message_id == run.prompt_message_id is not None
 
     call_id = parked.requests.approvals[0].tool_call_id
-    await reg.resume(
+    _ = await reg.resume(
         run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}, store=store)
     )
     await run.wait()
@@ -308,7 +324,7 @@ async def test_a_park_holds_the_prompt_and_the_resume_adds_only_the_rest(tmp_pat
     await store.stop()
 
 
-async def test_cancelling_a_parked_run_keeps_the_prompt_and_the_partial_turn(tmp_path):
+async def test_cancelling_a_parked_run_keeps_the_prompt_and_the_partial_turn(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator")
@@ -333,25 +349,27 @@ async def test_cancelling_a_parked_run_keeps_the_prompt_and_the_partial_turn(tmp
 # --- steering ---------------------------------------------------------------------
 
 
-async def test_a_message_sent_mid_run_persists_behind_the_prompt_and_before_the_rest(tmp_path):
+async def test_a_message_sent_mid_run_persists_behind_the_prompt_and_before_the_rest(
+    tmp_path: Path,
+):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator")
-    toolset = FunctionToolset()
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
     started, proceed = asyncio.Event(), asyncio.Event()
 
     @toolset.tool_plain(metadata={"sensitivity": "read"})
     async def slow(x: int) -> int:
         started.set()
-        await proceed.wait()
+        _ = await proceed.wait()
         return x
 
     run = _submit(
         RunRegistry(), store, conv, "call the tool", TestModel(call_tools=["x_slow"]),
         categories={"x": toolset},
     )  # fmt: skip
-    await started.wait()
-    run.enqueue_message("also check the other one")
+    _ = await started.wait()
+    _ = run.enqueue_message("also check the other one")
     proceed.set()
     await run.wait()
 
@@ -368,7 +386,7 @@ async def test_a_message_sent_mid_run_persists_behind_the_prompt_and_before_the_
 # --- branching: exactly one prompt write per path ------------------------------------
 
 
-async def test_a_regenerate_reuses_the_prompt_and_names_it(tmp_path):
+async def test_a_regenerate_reuses_the_prompt_and_names_it(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
@@ -391,7 +409,7 @@ async def test_a_regenerate_reuses_the_prompt_and_names_it(tmp_path):
     await store.stop()
 
 
-async def test_an_edit_records_one_new_version_of_the_prompt(tmp_path):
+async def test_an_edit_records_one_new_version_of_the_prompt(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
@@ -417,15 +435,15 @@ async def test_an_edit_records_one_new_version_of_the_prompt(tmp_path):
 # --- the compaction plan ---------------------------------------------------------------
 
 
-async def test_a_fold_never_swallows_the_prompt_being_answered(tmp_path):
+async def test_a_fold_never_swallows_the_prompt_being_answered(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator")
-    store.record(
+    _ = store.record(
         conv,
         [ModelRequest(parts=[UserPromptPart("earlier")]), ModelResponse(parts=[TextPart("old")])],
     )
-    store.record_prompt(conv, ModelRequest(parts=[UserPromptPart("in flight")]))
+    _ = store.record_prompt(conv, ModelRequest(parts=[UserPromptPart("in flight")]))
 
     plan = await store.compaction_plan(conv)
 
