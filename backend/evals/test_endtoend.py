@@ -47,11 +47,14 @@ from evals.dataset import (
     conversation_corpus,
     memory_corpus,
 )
+from evals.live import EnvEmbedder
 from runs import RunRegistry, RunStatus
 from runs.events import AnswerDelta, ToolStarted
 from services.conversation_search import ConversationSearch
+from services.conversations import ConversationStore
 from services.corpus import ConversationAdapter, CorpusChunkStore, CorpusIndex, FolderAdapter
 from services.embeddings import Embedder
+from services.memory import MemoryStore
 from services.registry import ModelRegistry
 from tools.deps import RunDeps
 from tools.memory import memory_toolset
@@ -205,16 +208,16 @@ async def score_consumer(
 # --- seeding ------------------------------------------------------------------
 
 
-async def _seed_memory(store, corpus: Corpus) -> None:
+async def seed_memory(store: MemoryStore, corpus: Corpus) -> None:
     for m in corpus.memories:
-        await store.remember(OWNER, m.content)
+        _ = await store.remember(OWNER, m.content)
 
 
-async def _seed_conversations(store, corpus: Corpus) -> None:
+async def seed_conversations(store: ConversationStore, corpus: Corpus) -> None:
     for c in corpus.conversations:
         cid = await store.create_conversation(OWNER, title=c.title)
         for prompt, answer in c.turns:
-            store.record(
+            _ = store.record(
                 cid,
                 [
                     ModelRequest(parts=[UserPromptPart(content=prompt)]),
@@ -250,9 +253,9 @@ def _assert_agent_benefits(scores: ConsumerScores) -> None:
 # --- tests --------------------------------------------------------------------
 
 
-async def test_memory_end_to_end_benefit(chat_model, memory_store):
+async def test_memory_end_to_end_benefit(chat_model: Model, memory_store: MemoryStore) -> None:
     corpus = memory_corpus()
-    await _seed_memory(memory_store, corpus)
+    await seed_memory(memory_store, corpus)
     scores = await score_consumer(
         consumer="memory",
         retrieval_tool=MEMORY_RETRIEVAL_TOOL,
@@ -276,10 +279,14 @@ def platform_over(search: ConversationSearch, embedder: Embedder) -> CorpusIndex
     return index
 
 
-async def test_conversation_end_to_end_benefit(chat_model, embedder, conversation_search):
+async def test_conversation_end_to_end_benefit(
+    chat_model: Model,
+    embedder: EnvEmbedder,
+    conversation_search: tuple[ConversationStore, ConversationSearch],
+) -> None:
     store, search = conversation_search
     corpus = conversation_corpus()
-    await _seed_conversations(store, corpus)
+    await seed_conversations(store, corpus)
     scores = await score_consumer(
         consumer="conversations",
         retrieval_tool=CONVERSATION_RETRIEVAL_TOOL,

@@ -311,7 +311,7 @@ class WatchPrefix(AbstractCapability[RunDeps]):
         # A side run (the compaction summary) is not one of the turn's requests: its verdict
         # would reach nobody, and remembering it would make the turn's next request report
         # against a request the operator never saw sent.
-        if is_side_run(ctx):
+        if is_side_run(ctx.metadata):
             return request_context
         params = request_context.model_request_parameters
         # The array the provider will render, which is neither of the two lists the request

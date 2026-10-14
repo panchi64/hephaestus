@@ -35,7 +35,6 @@ from pydantic_ai.tools import ToolDefinition
 
 from runs import BriefBlock, ToolGroupOverhead, TurnOverhead
 from services.tool_sensitivity import CHASSIS_TOOLS
-from tools import RunDeps
 
 from .assembled import declared_function_tools
 from .emit import OverheadMeasured
@@ -47,7 +46,7 @@ BASE_BLOCK = "base"
 
 
 @dataclass
-class MeasureOverhead(AbstractCapability[RunDeps]):
+class MeasureOverhead[DepsT = object](AbstractCapability[DepsT]):
     """Size the standing brief and the tool schemas for each request as it goes out.
 
     A capability rather than a step-end measurement because the hook is where the
@@ -65,7 +64,7 @@ class MeasureOverhead(AbstractCapability[RunDeps]):
 
     @override
     async def before_model_request(
-        self, ctx: RunContext[RunDeps], request_context: ModelRequestContext
+        self, ctx: RunContext[DepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         params = request_context.model_request_parameters
         _ = await ctx.emit(

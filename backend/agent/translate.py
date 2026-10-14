@@ -51,7 +51,6 @@ from runs import (
     ToolStarted,
 )
 from services.conversation_view import tool_images
-from tools import RunDeps
 from tools.emit import RunEventEmitted
 from tools.narration import strip_narration
 
@@ -298,14 +297,14 @@ def _on_tool_event(
             )
 
 
-async def stream_agent_run(
-    agent_run: AgentRun[RunDeps, object],
+async def stream_agent_run[DepsT](
+    agent_run: AgentRun[DepsT, object],
     run: Run,
     *,
     announced: set[str] | None = None,
     loop_breaker: LoopBreaker | None = None,
     on_step: Callable[[list[ModelMessage]], None] | None = None,
-    on_request_node: Callable[[ModelRequestNode[RunDeps, object]], None] | None = None,
+    on_request_node: Callable[[ModelRequestNode[DepsT, object]], None] | None = None,
 ) -> None:
     """Iterate the AgentRun's graph nodes, emitting our events as they happen.
 

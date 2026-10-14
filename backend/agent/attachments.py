@@ -33,14 +33,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from pydantic_ai import BinaryContent
+from pydantic_ai.messages import UserContent
 
 from core.untrusted import wrap_untrusted
 from models.upload import UploadStatus
 from services.sandbox import stage_attachment
-from services.uploads import UploadStore
+from services.uploads import UploadStore, UploadView
 from services.workspace import RunWorkspace
 
 logger = logging.getLogger(__name__)
@@ -59,8 +59,8 @@ class ResolvedAttachments:
     image's pixels ride in both. ``ids`` are the uploads that actually resolved
     (foreign/deleted ids dropped), so only real attachments get stamped as chips."""
 
-    content: list[Any]  # live-turn UserContent
-    persisted: list[Any]  # durable UserContent
+    content: list[UserContent]  # live-turn
+    persisted: list[UserContent]  # durable
     ids: list[str]
 
 
@@ -97,8 +97,8 @@ async def resolve_attachments(
     instructions) and the marker says so rather than naming a path that isn't there. A
     file still being extracted contributes a short placeholder. Unknown or foreign ids are
     skipped."""
-    content: list[Any] = []
-    persisted: list[Any] = []
+    content: list[UserContent] = []
+    persisted: list[UserContent] = []
     staged: list[_Staged] = []
     resolved_ids: list[str] = []
     views = await uploads.get_many(owner_id, ids)
@@ -173,7 +173,7 @@ def _stage(
     return workspace.display(relpath)
 
 
-def _inline_fallback(view: Any) -> str:
+def _inline_fallback(view: UploadView) -> str:
     """What a file contributes when it could not be staged: its extracted text in full
     (wrapped untrusted), or a short placeholder while extraction is still running."""
     if view.status == UploadStatus.DONE and view.extracted_text:

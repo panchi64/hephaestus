@@ -123,7 +123,7 @@ async def run_ablation(
 # --- consumer seeding + hybrid capture ----------------------------------------
 
 
-async def _memory_hybrid(store: MemoryStore, corpus: Corpus) -> dict[str, list[str]]:
+async def memory_hybrid(store: MemoryStore, corpus: Corpus) -> dict[str, list[str]]:
     """Seed the memory corpus through ``remember`` and capture the real ``recall``
     ranking (mapped back to memory ids) for every query."""
     for m in corpus.memories:
@@ -140,7 +140,7 @@ async def _memory_hybrid(store: MemoryStore, corpus: Corpus) -> dict[str, list[s
     return hybrid
 
 
-async def _conversation_hybrid(
+async def conversation_hybrid(
     store: ConversationStore, search: ConversationSearch, corpus: Corpus
 ) -> dict[str, list[str]]:
     """Seed the conversation corpus through the persistence path (so the drainer
@@ -172,11 +172,11 @@ async def _conversation_hybrid(
     return hybrid
 
 
-def _memory_texts(corpus: Corpus) -> dict[str, str]:
+def memory_texts(corpus: Corpus) -> dict[str, str]:
     return {m.id: m.content for m in corpus.memories}
 
 
-def _conversation_texts(corpus: Corpus) -> dict[str, str]:
+def conversation_texts(corpus: Corpus) -> dict[str, str]:
     # The per-message vectors the drainer stores are one per turn-text; for the
     # offline ablation we score against the joined conversation text (the unit the
     # search collapses to). Faithful for recall@k at the conversation grain.
@@ -220,8 +220,8 @@ def _assert_embeddings_earn_keep(table: dict[str, dict[str, dict[str, float]]]) 
 
 async def test_memory_retrieval_ablation(embedder: EnvEmbedder, memory_store: MemoryStore) -> None:
     corpus = memory_corpus()
-    hybrid = await _memory_hybrid(memory_store, corpus)
-    table = await run_ablation(embedder, _memory_texts(corpus), corpus.queries, hybrid)
+    hybrid = await memory_hybrid(memory_store, corpus)
+    table = await run_ablation(embedder, memory_texts(corpus), corpus.queries, hybrid)
     _assert_embeddings_earn_keep(table)
 
 
@@ -230,6 +230,6 @@ async def test_conversation_retrieval_ablation(
 ) -> None:
     store, search = conversation_search
     corpus = conversation_corpus()
-    hybrid = await _conversation_hybrid(store, search, corpus)
-    table = await run_ablation(embedder, _conversation_texts(corpus), corpus.queries, hybrid)
+    hybrid = await conversation_hybrid(store, search, corpus)
+    table = await run_ablation(embedder, conversation_texts(corpus), corpus.queries, hybrid)
     _assert_embeddings_earn_keep(table)

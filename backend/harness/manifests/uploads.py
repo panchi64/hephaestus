@@ -13,6 +13,7 @@ import logging
 
 from agent.vision import VisionTranscriber
 from core.api_scopes import ScopeClaim
+from core.config import Settings
 from core.ratelimit import RateLimiter
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from routes import uploads as uploads_routes
@@ -27,7 +28,7 @@ from tools.attachments import attachments_toolset
 logger = logging.getLogger(__name__)
 
 
-def _build_extractor(registry: ModelRegistry, settings) -> UploadExtractor:
+def _build_extractor(registry: ModelRegistry, settings: Settings) -> UploadExtractor:
     """Pick the extraction engine. The built-in (pypdfium2 text + vision OCR) is
     always available; when MinerU is pinned or detected on the host it goes in
     front, with the built-in as the fallback so a missing/broken/out-of-resources

@@ -23,6 +23,8 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic_ai.models import Model
+
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
@@ -32,16 +34,16 @@ from evals.test_endtoend import (
     CONVERSATION_RETRIEVAL_TOOL,
     MEMORY_RETRIEVAL_TOOL,
     ConsumerScores,
-    _seed_conversations,
-    _seed_memory,
     platform_over,
     score_consumer,
+    seed_conversations,
+    seed_memory,
 )
 from evals.test_retrieval import (
-    _conversation_hybrid,
-    _conversation_texts,
-    _memory_hybrid,
-    _memory_texts,
+    conversation_hybrid,
+    conversation_texts,
+    memory_hybrid,
+    memory_texts,
     run_ablation,
 )
 from services.conversation_search import ConversationSearch
@@ -66,18 +68,19 @@ async def _unlocked_vault() -> Vault:
 type Ablation = dict[str, dict[str, dict[str, float]]]
 
 
-async def _memory_run(embedder: EnvEmbedder, chat) -> tuple[Ablation, ConsumerScores]:
+async def _memory_run(embedder: EnvEmbedder, chat: Model) -> tuple[Ablation, ConsumerScores]:
     corpus = memory_corpus()
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = await _unlocked_vault()
     store = MemoryStore(engine, vault, embedder)
-    hybrid = await _memory_hybrid(store, corpus)
-    ablation = await run_ablation(embedder, _memory_texts(corpus), corpus.queries, hybrid)
+    hybrid = await memory_hybrid(store, corpus)
+    ablation = await run_ablation(embedder, memory_texts(corpus), corpus.queries, hybrid)
     # A fresh store for the end-to-end seeding (independent of the ablation seeding).
-    e2e_store = MemoryStore(make_engine("sqlite:///:memory:"), await _unlocked_vault(), embedder)
-    init_db(e2e_store._engine)
-    await _seed_memory(e2e_store, corpus)
+    e2e_engine = make_engine("sqlite:///:memory:")
+    init_db(e2e_engine)
+    e2e_store = MemoryStore(e2e_engine, await _unlocked_vault(), embedder)
+    await seed_memory(e2e_store, corpus)
     scores = await score_consumer(
         consumer="memory",
         retrieval_tool=MEMORY_RETRIEVAL_TOOL,
@@ -89,7 +92,7 @@ async def _memory_run(embedder: EnvEmbedder, chat) -> tuple[Ablation, ConsumerSc
     return ablation, scores
 
 
-async def _conversation_run(embedder: EnvEmbedder, chat) -> tuple[Ablation, ConsumerScores]:
+async def _conversation_run(embedder: EnvEmbedder, chat: Model) -> tuple[Ablation, ConsumerScores]:
     corpus = conversation_corpus()
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
@@ -98,18 +101,19 @@ async def _conversation_run(embedder: EnvEmbedder, chat) -> tuple[Ablation, Cons
     await store.start()
     search = ConversationSearch(engine, vault, embedder, store)
     try:
-        hybrid = await _conversation_hybrid(store, search, corpus)
-        ablation = await run_ablation(embedder, _conversation_texts(corpus), corpus.queries, hybrid)
+        hybrid = await conversation_hybrid(store, search, corpus)
+        ablation = await run_ablation(embedder, conversation_texts(corpus), corpus.queries, hybrid)
     finally:
         await store.stop()
 
     e2e_engine = make_engine("sqlite:///:memory:")
     init_db(e2e_engine)
-    e2e_store = ConversationStore(e2e_engine, await _unlocked_vault(), embedder)
+    e2e_vault = await _unlocked_vault()
+    e2e_store = ConversationStore(e2e_engine, e2e_vault, embedder)
     await e2e_store.start()
-    e2e_search = ConversationSearch(e2e_engine, e2e_store._vault, embedder, e2e_store)
+    e2e_search = ConversationSearch(e2e_engine, e2e_vault, embedder, e2e_store)
     try:
-        await _seed_conversations(e2e_store, corpus)
+        await seed_conversations(e2e_store, corpus)
         scores = await score_consumer(
             consumer="conversations",
             retrieval_tool=CONVERSATION_RETRIEVAL_TOOL,
@@ -132,7 +136,7 @@ def _ablation_table(ablation: Ablation) -> list[str]:
         for slice_name, m in sorted(ablation[variant].items()):
             lines.append(
                 f"| {variant} | {slice_name} | {m['recall@1']:.2f} | "
-                f"{m['recall@5']:.2f} | {m['mrr']:.2f} | {m['n']} |"
+                + f"{m['recall@5']:.2f} | {m['mrr']:.2f} | {m['n']} |"
             )
     return lines
 
@@ -152,26 +156,26 @@ def _retrieval_verdict(ablation: Ablation) -> str:
     para_sparse = ablation["sparse"].get("paraphrase", {}).get("recall@5", 0.0)
     rare_hybrid = ablation["hybrid"].get("rare_token", {}).get("recall@5", 0.0)
     rare_sparse = ablation["sparse"].get("rare_token", {}).get("recall@5", 0.0)
-    parts = []
+    parts: list[str] = []
     if para_dense >= para_sparse + 0.5:
         parts.append(
             f"PASS on paraphrases — dense recall@5 {para_dense:.2f} clearly beats "
-            f"sparse {para_sparse:.2f} (embeddings earn their keep)."
+            + f"sparse {para_sparse:.2f} (embeddings earn their keep)."
         )
     else:
         parts.append(
             f"WEAK on paraphrases — dense {para_dense:.2f} did not clearly beat sparse "
-            f"{para_sparse:.2f}; the embedding model may be weak or degraded."
+            + f"{para_sparse:.2f}; the embedding model may be weak or degraded."
         )
     if rare_hybrid >= rare_sparse - 1e-9:
         parts.append(
             f"PASS on rare tokens — hybrid {rare_hybrid:.2f} holds the keyword path "
-            f"{rare_sparse:.2f}."
+            + f"{rare_sparse:.2f}."
         )
     else:
         parts.append(
             f"FAIL on rare tokens — hybrid {rare_hybrid:.2f} regressed below sparse "
-            f"{rare_sparse:.2f}; fusion is dropping exact-id hits."
+            + f"{rare_sparse:.2f}; fusion is dropping exact-id hits."
         )
     return " ".join(parts)
 
@@ -179,13 +183,13 @@ def _retrieval_verdict(ablation: Ablation) -> str:
 def _grounding_verdict(s: ConsumerScores) -> str:
     if s.grounding_delta > 0 and s.judged_delta > 0:
         return (
-            f"PASS — capability-on grounds better than off "
-            f"(deterministic +{s.grounding_delta:.2f}, judged +{s.judged_delta:.2f})."
+            "PASS — capability-on grounds better than off "
+            + f"(deterministic +{s.grounding_delta:.2f}, judged +{s.judged_delta:.2f})."
         )
     return (
-        f"FAIL — the recalled content did not improve the answer "
-        f"(deterministic +{s.grounding_delta:.2f}, judged +{s.judged_delta:.2f}); "
-        "the model is retrieving but not using it."
+        "FAIL — the recalled content did not improve the answer "
+        + f"(deterministic +{s.grounding_delta:.2f}, judged +{s.judged_delta:.2f}); "
+        + "the model is retrieving but not using it."
     )
 
 
@@ -200,11 +204,11 @@ def _consumer_section(name: str, ablation: Ablation, scores: ConsumerScores) -> 
     lines.append(f"- Trigger recall: {scores.trigger_recall:.2f}")
     lines.append(
         f"- Grounding (deterministic) on/off: {scores.grounded_on}/{scores.grounded_off} "
-        f"of {scores.triggerable} → delta +{scores.grounding_delta:.2f}"
+        + f"of {scores.triggerable} → delta +{scores.grounding_delta:.2f}"
     )
     lines.append(
         f"- Grounding (judged 0–2) on/off totals: {scores.judged_on_total}/"
-        f"{scores.judged_off_total} → delta +{scores.judged_delta:.2f}"
+        + f"{scores.judged_off_total} → delta +{scores.judged_delta:.2f}"
     )
     lines.append("")
     lines.append("### Verdict")
@@ -221,11 +225,11 @@ def _render(results: dict[str, tuple[Ablation, ConsumerScores]]) -> str:
         "# Embeddings eval findings",
         "",
         f"Generated {now} by `python -m evals.report` against the live `HEPH_EVAL_*` "
-        "models, over synthetic corpora (`evals/dataset.py`).",
+        + "models, over synthetic corpora (`evals/dataset.py`).",
         "",
         "Three failure points are scored per consumer: **trigger** (does the agent "
-        "call retrieval?), **retrieval** (do the embeddings beat keyword?), and "
-        "**grounding** (does the answer use what was recalled?).",
+        + "call retrieval?), **retrieval** (do the embeddings beat keyword?), and "
+        + "**grounding** (does the answer use what was recalled?).",
         "",
     ]
     for name, (ablation, scores) in results.items():
@@ -255,7 +259,7 @@ async def _main() -> int:
     }
 
     report = _render(results)
-    FINDINGS.write_text(report)
+    _ = FINDINGS.write_text(report)
     print(report)
     print(f"\nWrote {FINDINGS}")
     return 0

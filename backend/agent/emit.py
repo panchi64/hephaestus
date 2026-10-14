@@ -25,13 +25,13 @@ dependency points this way — the agent layer knows about both — and not back
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
-from pydantic_ai import CapabilityEvent, RunContext
+from pydantic_ai import CapabilityEvent
 from pydantic_ai.messages import ToolCallPart
 
 from runs import EventBody, PrefixVerdict, TurnOverhead
-from tools import RunDeps
 
 #: Namespace for every capability event this codebase defines. The library requires one
 #: and uses it to prefix the event's kind (``hephaestus.chassis_event``), which is what
@@ -121,6 +121,6 @@ class NestedToolFinished(CapabilityEvent, namespace=NAMESPACE):
 SIDE_RUN = "hephaestus.side_run"
 
 
-def is_side_run(ctx: RunContext[RunDeps]) -> bool:
-    """Whether this request belongs to a side run, so an observer should leave it be."""
-    return bool((ctx.metadata or {}).get(SIDE_RUN))
+def is_side_run(metadata: Mapping[str, object] | None) -> bool:
+    """Whether a request's run metadata marks a side run, so an observer should leave it be."""
+    return bool((metadata or {}).get(SIDE_RUN))

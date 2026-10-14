@@ -47,7 +47,6 @@ from pydantic_ai.models import ModelRequestContext
 
 from core.text import CHARS_PER_TOKEN_PROSE, truncate_on_boundary
 from runs import INJECTED_TEXT_LIMIT, ContextInjected, Run
-from tools import RunDeps
 
 from .emit import ChassisEvent, is_side_run
 
@@ -116,7 +115,7 @@ def announce_injection(
 
 
 @dataclass
-class AnnounceInjections(AbstractCapability[RunDeps]):
+class AnnounceInjections[DepsT = object](AbstractCapability[DepsT]):
     """Announce the standing brief's named contributors as each request goes out.
 
     A capability rather than a wrapper around every provider for the reason
@@ -144,12 +143,12 @@ class AnnounceInjections(AbstractCapability[RunDeps]):
 
     @override
     async def before_model_request(
-        self, ctx: RunContext[RunDeps], request_context: ModelRequestContext
+        self, ctx: RunContext[DepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         # A side run (the compaction summary) sends the same brief on the same agent, and
         # its stream reaches nobody — marking the parts seen there would leave the turn's
         # own first request announcing nothing.
-        if is_side_run(ctx):
+        if is_side_run(ctx.metadata):
             return request_context
         for body in self.announce(request_context.model_request_parameters.instruction_parts):
             _ = await ctx.emit(ChassisEvent(body=body))
