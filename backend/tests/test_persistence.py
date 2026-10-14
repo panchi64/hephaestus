@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
+from typing import Any, override
 
-from pydantic_ai import FunctionToolset, ToolApproved
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai import FunctionToolset, RunContext, ToolApproved
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
+from sqlalchemy import Engine
 
 import agent.engine as engine
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
@@ -15,7 +26,7 @@ from agent.meta import Verdict
 from core.config import Settings
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import RunRegistry, RunStatus
+from runs import Run, RunEnded, RunRegistry, RunStatus
 from services.conversations import ConversationStore
 from services.conversations.projection import _project
 from tools import RunDeps
@@ -37,7 +48,7 @@ async def _unlocked_vault(tmp_path, name: str = "keyfile.json") -> Vault:
     return vault
 
 
-async def _fresh_store(tmp_path) -> tuple[ConversationStore, object]:
+async def _fresh_store(tmp_path) -> tuple[ConversationStore, Engine]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     return ConversationStore(engine, await _unlocked_vault(tmp_path)), engine
@@ -326,10 +337,16 @@ async def test_inactivity_timeout_in_setup_window_persists_the_prompt(tmp_path):
         # Never yields a first token — the request stream hangs, so the inactivity
         # watchdog trips while the model is still silent.
         @asynccontextmanager
+        @override
         async def request_stream(
-            self, messages, model_settings, model_request_parameters, run_context=None
-        ):
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncIterator[StreamedResponse]:
             await asyncio.Event().wait()
+            raise AssertionError("unreachable")  # pragma: no cover
             yield  # pragma: no cover
 
     store, db_engine = await _fresh_store(tmp_path)
@@ -365,7 +382,9 @@ async def test_inactivity_timeout_in_setup_window_persists_the_prompt(tmp_path):
     await cold.stop()
 
 
-async def test_inactivity_timeout_during_the_orchestrator_prelude_persists_the_prompt(tmp_path):
+async def test_inactivity_timeout_during_the_orchestrator_prelude_persists_the_prompt(
+    tmp_path, monkeypatch
+):
     # Everything before the first model call — the history read, auto-compaction, the
     # attachment and prompt-context resolution — awaits and emits nothing, so the
     # inactivity watchdog is ticking against a run that looks idle. Compaction's own
@@ -386,7 +405,7 @@ async def test_inactivity_timeout_during_the_orchestrator_prelude_persists_the_p
     async def _hangs(conversation_id):  # stands in for a slow compaction/history read
         await asyncio.Event().wait()
 
-    store.model_history = _hangs  # type: ignore[method-assign]
+    monkeypatch.setattr(store, "model_history", _hangs)
 
     reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.05)
     orch = build_chat_orchestrator(
@@ -444,7 +463,8 @@ async def test_cancel_persists_the_partial_turn(tmp_path):
     await run.wait()
 
     assert run.status is RunStatus.cancelled
-    assert run.stream.replay()[-1].body.outcome == "cancelled"
+    ended = run.stream.replay()[-1].body
+    assert isinstance(ended, RunEnded) and ended.outcome == "cancelled"
     views = await store.messages_view(conv)
     assert views[0].role == "user"
     assert views[-1].blocked_reason == "cancelled by the operator"
@@ -605,11 +625,13 @@ async def test_cooperative_cancel_flag_stops_the_turn(tmp_path):
     # next step boundary (`agent/turn.py`'s `report_progress`) — proving the flag is now a
     # real, independently-effective cooperative-cancel signal rather than dead state.
     toolset = FunctionToolset()
-    run_ref: list = [None]
+    run_ref: list[Run | None] = [None]
 
     @toolset.tool_plain(metadata={"sensitivity": "read"})
     def flag(x: int) -> int:
-        run_ref[0].cancel_requested = True
+        current = run_ref[0]
+        assert current is not None
+        current.cancel_requested = True
         return x
 
     store, _ = await _fresh_store(tmp_path)
@@ -645,7 +667,14 @@ async def test_foreign_keys_are_enforced():
     raised = False
     with Session(engine) as session:
         session.add(
-            Message(conversation_id="no-such-conv", seq=0, kind="response", text="x", blob="y")
+            Message(
+                conversation_id="no-such-conv",
+                seq=0,
+                kind="response",
+                text="x",
+                blob="y",
+                attachment_ids=[],
+            )
         )
         try:
             session.commit()
@@ -786,7 +815,8 @@ async def test_verify_park_persists_once_on_resume(tmp_path, monkeypatch):
     # prompt (written down as the turn began) on record.
     assert run.status is RunStatus.awaiting_input
     assert [_project(m)[1] for m in await store.history(conv)] == ["do the thing"]
-    parked: ParkedTurn = run.parked_payload
+    parked = run.parked_payload
+    assert isinstance(parked, ParkedTurn)
     assert parked.conversation_id == conv
     assert parked.persist_from == 0
     assert parked.prompt_message_id == run.prompt_message_id is not None
