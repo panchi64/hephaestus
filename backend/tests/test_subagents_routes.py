@@ -10,31 +10,47 @@ carries the ids that reach them, and the list is what survives a restart.
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
+import httpx
+import pytest
+from fastapi import FastAPI
+from pydantic import JsonValue
+
+from core.container import ServiceContainer
+from runs import RunRegistry
 from services.agents import builtin_roster
-from services.subagents import SubagentLauncher
-from tests._helpers import client_app, patch_model_resolution
+from services.subagents import LaunchedSubagent, SubagentLauncher
+from services.task_list import ConversationTasks
+from tests._helpers import app_state, client_app, patch_model_resolution
+from tests._json import arr, json_body, obj
 
 EXPLORER = builtin_roster()["explorer"]
 
 
-async def _settle(app, run_id: str) -> None:
-    run = app.state.runs.get(run_id)
+def _terminal_tasks(app: FastAPI) -> list[asyncio.Task[None]]:
+    return list(cast(set[asyncio.Task[None]], app_state(app, "run_terminal_tasks", set)))
+
+
+async def _settle(app: FastAPI, run_id: str) -> None:
+    run = app_state(app, "runs", RunRegistry).get(run_id)
     assert run is not None
     if run.task is not None:
         await run.task
     for _ in range(5):
-        pending = list(app.state.run_terminal_tasks)
+        pending = _terminal_tasks(app)
         if not pending:
             await asyncio.sleep(0)
-            if not app.state.run_terminal_tasks:
+            if not _terminal_tasks(app):
                 return
             continue
-        await asyncio.gather(*pending, return_exceptions=True)
+        _ = await asyncio.gather(*pending, return_exceptions=True)
 
 
-async def _launch(app, conversation_id: str, task: str, handle: str = "the-explorer"):
-    launcher = app.state.capabilities.get_optional(SubagentLauncher)
+async def _launch(
+    app: FastAPI, conversation_id: str, task: str, handle: str = "the-explorer"
+) -> LaunchedSubagent:
+    launcher = app_state(app, "capabilities", ServiceContainer).get_optional(SubagentLauncher)
     assert launcher is not None
     from services.subagents import SubagentParent
 
@@ -49,7 +65,14 @@ async def _launch(app, conversation_id: str, task: str, handle: str = "the-explo
     return started
 
 
-async def test_a_thread_with_no_subagents_answers_with_an_empty_list(monkeypatch):
+async def _first_card(client: httpx.AsyncClient) -> dict[str, JsonValue]:
+    listed = json_body(await client.get("/conversations/parent-1/subagents"))
+    return obj(arr(listed["subagents"])[0])
+
+
+async def test_a_thread_with_no_subagents_answers_with_an_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+):
     async with client_app() as (client, _app):
         patch_model_resolution(monkeypatch)
         got = await client.get("/conversations/never-delegated/subagents")
@@ -57,15 +80,15 @@ async def test_a_thread_with_no_subagents_answers_with_an_empty_list(monkeypatch
         # Not a 404. The panel asks this for every thread the operator opens, and an
         # error for the ordinary case is an error the client has to learn to ignore.
         assert got.status_code == 200
-        assert got.json() == {"subagents": []}
+        assert json_body(got) == {"subagents": []}
 
 
-async def test_each_card_carries_the_ids_its_other_links_need(monkeypatch):
+async def test_each_card_carries_the_ids_its_other_links_need(monkeypatch: pytest.MonkeyPatch):
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="found it in parser.py")
         started = await _launch(app, "parent-1", "find the parser", "parser-finder")
 
-        card = (await client.get("/conversations/parent-1/subagents")).json()["subagents"][0]
+        card = await _first_card(client)
 
         # These three are the whole integration: the transcript is that conversation's
         # messages, and the live tail, the approval and the cancel are all that run's
@@ -80,12 +103,14 @@ async def test_each_card_carries_the_ids_its_other_links_need(monkeypatch):
         assert card["handle"] == "parser-finder"
 
 
-async def test_a_finished_subagent_stays_on_the_list_with_what_it_reported(monkeypatch):
+async def test_a_finished_subagent_stays_on_the_list_with_what_it_reported(
+    monkeypatch: pytest.MonkeyPatch,
+):
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="found it in parser.py")
-        await _launch(app, "parent-1", "find the parser")
+        _ = await _launch(app, "parent-1", "find the parser")
 
-        card = (await client.get("/conversations/parent-1/subagents")).json()["subagents"][0]
+        card = await _first_card(client)
 
         # Kept for the life of the thread. The operator's reason for looking is usually
         # that something went wrong, which is exactly when the card is no longer live.
@@ -94,21 +119,21 @@ async def test_a_finished_subagent_stays_on_the_list_with_what_it_reported(monke
         assert card["ended_at"] is not None
 
 
-async def test_the_list_is_newest_first(monkeypatch):
+async def test_the_list_is_newest_first(monkeypatch: pytest.MonkeyPatch):
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="done")
-        await _launch(app, "parent-1", "the first one", "first")
-        await _launch(app, "parent-1", "the second one", "second")
+        _ = await _launch(app, "parent-1", "the first one", "first")
+        _ = await _launch(app, "parent-1", "the second one", "second")
 
-        listed = (await client.get("/conversations/parent-1/subagents")).json()
-        tasks = [s["task"] for s in listed["subagents"]]
+        listed = json_body(await client.get("/conversations/parent-1/subagents"))
+        tasks = [obj(card)["task"] for card in arr(listed["subagents"])]
         # The card the operator wants is almost always the most recent, and a list that
         # grew downwards would put it off the bottom of a long session.
         assert tasks == ["the second one", "the first one"]
 
 
 async def test_a_cards_transcript_opens_through_the_ordinary_conversation_route(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="found it in parser.py")
@@ -120,10 +145,13 @@ async def test_a_cards_transcript_opens_through_the_ordinary_conversation_route(
         # sub-agent's thread is hidden from the session list but is otherwise an ordinary
         # conversation, so the transcript needs no route and no renderer of its own.
         assert got.status_code == 200
-        assert [m["role"] for m in got.json()["messages"]] == ["user", "assistant"]
+        messages = arr(json_body(got)["messages"])
+        assert [obj(m)["role"] for m in messages] == ["user", "assistant"]
 
 
-async def test_a_card_carries_the_task_list_the_subagent_wrote_for_itself(monkeypatch):
+async def test_a_card_carries_the_task_list_the_subagent_wrote_for_itself(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """The most legible account of what a long-running sub-agent is actually doing.
 
     A card showing "running" and a context ring says only that it has not stopped. The
@@ -134,40 +162,41 @@ async def test_a_card_carries_the_task_list_the_subagent_wrote_for_itself(monkey
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="found it in parser.py")
         started = await _launch(app, "parent-1", "find the parser", "parser-finder")
-        await app.state.conversation_tasks.seed(
+        _ = await app_state(app, "conversation_tasks", ConversationTasks).seed(
             "operator", started.conversation_id, ["read parser.py", "check the callers"]
         )
 
-        card = (await client.get("/conversations/parent-1/subagents")).json()["subagents"][0]
+        card = await _first_card(client)
 
-        assert [t["content"] for t in card["tasks"]] == [
+        tasks = arr(card["tasks"])
+        assert [obj(t)["content"] for t in tasks] == [
             "read parser.py",
             "check the callers",
         ]
         # The same shape `GET /conversations/{id}/tasks` serves, because it is that list —
         # so the panel renders it with the component it already has rather than a second.
-        assert card["tasks"][0]["status"] == "pending"
+        assert obj(tasks[0])["status"] == "pending"
 
 
 async def test_a_subagent_that_wrote_no_tasks_has_an_empty_list_not_a_missing_one(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="found it")
-        await _launch(app, "parent-1", "find the parser", "parser-finder")
+        _ = await _launch(app, "parent-1", "find the parser", "parser-finder")
 
-        card = (await client.get("/conversations/parent-1/subagents")).json()["subagents"][0]
+        card = await _first_card(client)
 
         # Most short sub-agents never write one, and a client that had to tell "no tasks"
         # from "the field is absent" would grow a branch for a case that means nothing.
         assert card["tasks"] == []
 
 
-async def test_one_threads_subagents_are_not_anothers(monkeypatch):
+async def test_one_threads_subagents_are_not_anothers(monkeypatch: pytest.MonkeyPatch):
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="done")
-        await _launch(app, "parent-1", "mine")
-        await _launch(app, "parent-2", "theirs")
+        _ = await _launch(app, "parent-1", "mine")
+        _ = await _launch(app, "parent-2", "theirs")
 
-        listed = (await client.get("/conversations/parent-1/subagents")).json()["subagents"]
-        assert [s["task"] for s in listed] == ["mine"]
+        listed = arr(json_body(await client.get("/conversations/parent-1/subagents"))["subagents"])
+        assert [obj(card)["task"] for card in listed] == ["mine"]

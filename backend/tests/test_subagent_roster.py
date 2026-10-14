@@ -21,11 +21,14 @@ with a checkout and nobody approved it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 import pytest
-from pydantic_ai import RunContext
+from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RunUsage
 
 from core.config import Settings
@@ -44,7 +47,7 @@ from tools.catalog import tool_catalog
 from tools.delegation import ProjectRoster
 from tools.deps import RunDeps
 
-from ._helpers import full_tool_categories
+from ._helpers import app_state, client_app, full_tool_categories
 
 
 def _agents_roster() -> ProjectRoster:
@@ -62,11 +65,10 @@ You are this project's reviewer. Check the conventions in docs/style.md.
 """
 
 
-def _write(root: Path, relative: str, text: str) -> Path:
+def _write(root: Path, relative: str, text: str) -> None:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
+    _ = path.write_text(text, encoding="utf-8")
 
 
 class TestTheBuiltIns:
@@ -155,7 +157,7 @@ class TestReadingAProjectsOwnFiles:
         assert spec.name == "tidy-up"
 
     @pytest.mark.parametrize(
-        ("text", "why"),
+        ("text", "_why"),
         [
             ("no frontmatter here", "not a definition at all"),
             ("---\nname: x\n---\n\nbody", "nothing for the model to choose it by"),
@@ -163,11 +165,11 @@ class TestReadingAProjectsOwnFiles:
             ("---\nname: Not A Name!\ndescription: y\n---\n\nbody", "unusable name"),
         ],
     )
-    def test_a_file_that_is_not_a_usable_definition_is_refused(self, text, why):
+    def test_a_file_that_is_not_a_usable_definition_is_refused(self, text: str, _why: str):
         with pytest.raises(AgentFileError):
-            parse_agent_file(text, name="fallback")
+            _ = parse_agent_file(text, name="fallback")
 
-    def test_a_broken_file_costs_its_own_agent_and_nothing_else(self, tmp_path):
+    def test_a_broken_file_costs_its_own_agent_and_nothing_else(self, tmp_path: Path):
         _write(tmp_path, ".claude/agents/good.md", _AGENT_FILE)
         _write(tmp_path, ".claude/agents/broken.md", "this is not an agent definition")
 
@@ -177,12 +179,12 @@ class TestReadingAProjectsOwnFiles:
         # watching this process. One bad file must not cost the roster the others.
         assert [spec.name for spec in specs] == ["house-reviewer"]
 
-    def test_a_project_with_no_agent_files_adds_nothing(self, tmp_path):
+    def test_a_project_with_no_agent_files_adds_nothing(self, tmp_path: Path):
         assert project_agents(tmp_path) == ()
 
 
 class TestWhereTheFilesAre:
-    def test_it_reads_the_places_the_inventory_tool_reports(self, tmp_path):
+    def test_it_reads_the_places_the_inventory_tool_reports(self, tmp_path: Path):
         _write(tmp_path, ".claude/agents/one.md", _AGENT_FILE)
         _write(tmp_path, ".codex/agents/two.md", _AGENT_FILE)
 
@@ -192,13 +194,13 @@ class TestWhereTheFilesAre:
         # files live" and "which ones were loaded" cannot disagree.
         assert found == {"one.md", "two.md"}
 
-    def test_a_file_sitting_directly_in_dot_agents_counts(self, tmp_path):
+    def test_a_file_sitting_directly_in_dot_agents_counts(self, tmp_path: Path):
         _write(tmp_path, ".agents/flat.md", _AGENT_FILE)
 
         # A directory named that is an agents directory, whatever shape the scan expects.
         assert [path.name for path in agent_files(tmp_path)] == ["flat.md"]
 
-    def test_the_order_is_stable_between_checkouts(self, tmp_path):
+    def test_the_order_is_stable_between_checkouts(self, tmp_path: Path):
         for name in ("zebra.md", "alpha.md", "middle.md"):
             _write(tmp_path, f".claude/agents/{name}", _AGENT_FILE)
 
@@ -270,14 +272,14 @@ class TestReadingItOncePerRun:
         )
 
     @staticmethod
-    def _tree(monkeypatch, root):
-        async def tree(_ctx):
+    def _tree(monkeypatch: pytest.MonkeyPatch, root: Path | None):
+        async def tree(_ctx: RunContext[RunDeps]) -> Path | None:
             return root
 
         monkeypatch.setattr("tools.project_agents.project_tree", tree)
 
     async def test_a_runs_files_are_read_once_however_many_requests_it_makes(
-        self, tmp_path, monkeypatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         from tools.project_agents import run_catalog
 
@@ -290,24 +292,26 @@ class TestReadingItOncePerRun:
         # invalidates its prefix cache.
         assert await run_catalog(self._ctx("run-1")) == first
 
-    async def test_the_next_turn_reads_them_again(self, tmp_path, monkeypatch):
+    async def test_the_next_turn_reads_them_again(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from tools.project_agents import run_catalog
 
         self._tree(monkeypatch, tmp_path)
         _write(tmp_path, ".claude/agents/one.md", _AGENT_FILE)
-        await run_catalog(self._ctx("run-1"))
+        _ = await run_catalog(self._ctx("run-1"))
         _write(tmp_path, ".claude/agents/one.md", _AGENT_FILE.replace("house-", "other-"))
 
         assert "other-reviewer" in await run_catalog(self._ctx("run-2"))
 
     async def test_the_memo_does_not_grow_with_every_run_the_process_serves(
-        self, tmp_path, monkeypatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         from tools.project_agents import _MAX_CATALOGS, _catalogs, run_catalog
 
         self._tree(monkeypatch, tmp_path)
         for n in range(_MAX_CATALOGS + 10):
-            await run_catalog(self._ctx(f"bounded-{n}"))
+            _ = await run_catalog(self._ctx(f"bounded-{n}"))
 
         assert len(_catalogs) <= _MAX_CATALOGS
 
@@ -320,7 +324,9 @@ class TestWhatTheModelActuallySees:
     the feature does nothing.
     """
 
-    async def test_the_launch_tool_is_described_against_the_runs_own_roster(self, monkeypatch):
+    async def test_the_launch_tool_is_described_against_the_runs_own_roster(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         mine = parse_agent_file(
             "---\nname: house-style\ndescription: Checks our house style.\n---\n\nCheck it.",
             name="house-style",
@@ -333,7 +339,7 @@ class TestWhatTheModelActuallySees:
         assert "Checks our house style." in (tools["spawn"].tool_def.description or "")
 
     async def test_a_run_with_no_project_agents_is_described_exactly_as_it_was_built(
-        self, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ):
         from tools.delegation import spawn_description
 
@@ -359,10 +365,10 @@ class TestWhatTheModelActuallySees:
         }
 
     async def test_the_app_the_operator_runs_has_the_rewrite_in_its_stack(self):
-        from tests._helpers import client_app
-
         async with client_app() as (_client, app):
-            category = app.state.tool_categories["agents"]
+            category = cast(Mapping[str, object], app_state(app, "tool_categories", Mapping))[
+                "agents"
+            ]
             # Built through the manifest rather than by this test: a wrapper that only
             # exists when the test constructs it is a wrapper no run ever passes through.
             assert hasattr(category, "wrapped")
@@ -380,10 +386,13 @@ class TestWhichLaunchesAreTheOperatorsToAllow:
     """
 
     def test_launching_is_not_gated_by_name_alone(self):
-        launch = _agents_roster().tools["spawn"]
-        assert launch.requires_approval is False
+        category = _agents_roster().wrapped
+        assert isinstance(category, FunctionToolset)
+        assert category.tools["spawn"].requires_approval is False
 
-    async def test_the_tool_the_model_is_offered_is_not_pre_deferred(self, monkeypatch):
+    async def test_the_tool_the_model_is_offered_is_not_pre_deferred(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         tools = await _launch_tools(monkeypatch, builtin_roster())
 
         # `unapproved` is the kind the static marking produces, and it is what makes the
@@ -422,7 +431,9 @@ class TestWhichLaunchesAreTheOperatorsToAllow:
         assert _can_write(edits)
 
 
-async def _launch_tools(monkeypatch, roster):
+async def _launch_tools(
+    monkeypatch: pytest.MonkeyPatch, roster: dict[str, AgentDefinition]
+) -> dict[str, ToolsetTool[RunDeps]]:
     """The tools this category offers a run whose project declares ``roster``.
 
     The roster is injected rather than written to a real worktree: what is under test here
@@ -436,13 +447,12 @@ async def _launch_tools(monkeypatch, roster):
     from runs import Run, RunStream
     from tools import RunDeps, agents, delegation
 
-    monkeypatch.setattr(delegation, "run_roster", lambda _ctx: _resolved(roster))
+    async def run_roster(_ctx: RunContext[RunDeps]) -> dict[str, AgentDefinition]:
+        return roster
+
+    monkeypatch.setattr(delegation, "run_roster", run_roster)
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     ctx = RunContext(
         deps=RunDeps(run=run, owner_id="operator"), model=TestModel(), usage=RunUsage()
     )
     return await agents.agents_toolset().get_tools(ctx)
-
-
-async def _resolved(value):
-    return value
