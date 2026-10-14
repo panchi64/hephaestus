@@ -21,6 +21,7 @@ that a thread is waiting on an answer.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlmodel import Field
 
@@ -29,7 +30,7 @@ from models._table import Table
 
 
 class ConversationPlan(Table, table=True):
-    __tablename__ = "conversation_plans"
+    __tablename__: ClassVar[str] = "conversation_plans"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import ClassVar
 
 from sqlmodel import Field
 
@@ -44,7 +45,7 @@ class NotificationKind(StrEnum):
 
 
 class Notification(Table, table=True):
-    __tablename__ = "notifications"
+    __tablename__: ClassVar[str] = "notifications"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

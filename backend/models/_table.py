@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import SQLModel
+
+type TableArgs = tuple[UniqueConstraint, ...]
 
 
 class Table(SQLModel):

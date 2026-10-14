@@ -20,23 +20,28 @@ The per-conversation ``main`` override is a runtime argument, not stored here.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class ModelEndpoint(Table, table=True):
-    __tablename__ = "model_endpoints"
+    __tablename__: ClassVar[str] = "model_endpoints"
     # An operator's endpoint names are unique, so a chain can refer to them
     # stably and a re-import can't silently duplicate one.
-    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_endpoint_owner_name"),)
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "name", name="uq_endpoint_owner_name"),
+    )
     # Exported under "settings" (`BACKUP-1`), before the roles that bind to it. The unique
     # name is already the "same endpoint" test a merge-import needs.
-    __backup__ = BackupSpec(section="settings", natural_key=("name",), order=0)
+    __backup__: ClassVar[BackupSpec] = BackupSpec(
+        section="settings", natural_key=("name",), order=0
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
@@ -79,11 +84,15 @@ class ModelEndpoint(Table, table=True):
 
 
 class ModelRole(Table, table=True):
-    __tablename__ = "model_roles"
-    __table_args__ = (UniqueConstraint("owner_id", "role", name="uq_role_owner_role"),)
+    __tablename__: ClassVar[str] = "model_roles"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "role", name="uq_role_owner_role"),
+    )
     # One binding per role, so the role name is its identity; imported after the endpoints
     # its chain refers to (ids survive an import, so the chain stays intact).
-    __backup__ = BackupSpec(section="settings", natural_key=("role",), order=1)
+    __backup__: ClassVar[BackupSpec] = BackupSpec(
+        section="settings", natural_key=("role",), order=1
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

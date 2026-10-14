@@ -23,6 +23,7 @@ belongs to.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlmodel import Field
 
@@ -31,7 +32,7 @@ from models._table import Table
 
 
 class SubagentRecord(Table, table=True):
-    __tablename__ = "subagent_records"
+    __tablename__: ClassVar[str] = "subagent_records"
 
     #: The same id that rides the wire as ``subagent_id`` and keys a card in the panel. Not
     #: shown to the *model*, which addresses a sub-agent by ``handle`` below.

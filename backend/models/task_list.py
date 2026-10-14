@@ -21,6 +21,7 @@ which is content, not policy (`XC-SEC-3`).
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlmodel import Field
 
@@ -29,7 +30,7 @@ from models._table import Table
 
 
 class ConversationTaskList(Table, table=True):
-    __tablename__ = "conversation_tasks"
+    __tablename__: ClassVar[str] = "conversation_tasks"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

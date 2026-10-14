@@ -11,16 +11,19 @@ A secret's value is sealed here and is sent only by the egress gateway, to ``dom
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlmodel import Field, UniqueConstraint
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class Plugin(Table, table=True):
-    __tablename__ = "plugins"
-    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_plugins_owner_name"),)
+    __tablename__: ClassVar[str] = "plugins"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "name", name="uq_plugins_owner_name"),
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
@@ -35,8 +38,10 @@ class Plugin(Table, table=True):
 
 
 class PluginSecret(Table, table=True):
-    __tablename__ = "plugin_secrets"
-    __table_args__ = (UniqueConstraint("plugin_id", "name", name="uq_plugin_secrets_plugin_name"),)
+    __tablename__: ClassVar[str] = "plugin_secrets"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("plugin_id", "name", name="uq_plugin_secrets_plugin_name"),
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

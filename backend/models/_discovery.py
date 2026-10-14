@@ -18,4 +18,4 @@ import models
 def import_all_models() -> None:
     for info in pkgutil.iter_modules(models.__path__):
         if not info.name.startswith("_"):
-            importlib.import_module(f"{models.__name__}.{info.name}")
+            _ = importlib.import_module(f"{models.__name__}.{info.name}")

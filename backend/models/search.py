@@ -11,23 +11,28 @@ a schema change — the same at-rest posture as model endpoints.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class SearchProvider(Table, table=True):
-    __tablename__ = "search_providers"
+    __tablename__: ClassVar[str] = "search_providers"
     # An operator's provider names are unique, so a re-import can't silently
     # duplicate one (same guard the model endpoints use).
-    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_search_provider_owner_name"),)
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "name", name="uq_search_provider_owner_name"),
+    )
     # Part of the operator's configuration, so it exports under "settings" (`BACKUP-1`),
     # merged on that same unique name.
-    __backup__ = BackupSpec(section="settings", natural_key=("name",), order=2)
+    __backup__: ClassVar[BackupSpec] = BackupSpec(
+        section="settings", natural_key=("name",), order=2
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

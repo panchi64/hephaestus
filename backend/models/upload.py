@@ -21,12 +21,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import ClassVar
 
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Field
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class UploadStatus(StrEnum):
@@ -42,12 +43,14 @@ class UploadStatus(StrEnum):
 
 
 class Upload(Table, table=True):
-    __tablename__ = "uploads"
+    __tablename__: ClassVar[str] = "uploads"
     # Duplicate recognition (`UP-1`) is enforced, not best-effort: identical bytes for
     # one owner collide on this constraint, so a create race can't sneak two copies in.
     # The unique index also serves the dedup lookup (owner_id + sha256), so sha256
     # needs no separate index.
-    __table_args__ = (UniqueConstraint("owner_id", "sha256", name="uq_uploads_owner_sha256"),)
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "sha256", name="uq_uploads_owner_sha256"),
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

@@ -19,6 +19,7 @@ token's label and last use stay auditable.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import JSON, Column
 from sqlmodel import Field
@@ -28,7 +29,7 @@ from models._table import Table
 
 
 class ApiToken(Table, table=True):
-    __tablename__ = "api_tokens"
+    __tablename__: ClassVar[str] = "api_tokens"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

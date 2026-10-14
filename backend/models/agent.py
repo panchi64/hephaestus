@@ -10,18 +10,21 @@ lists, limits, and the ``published`` flag that is its trust boundary.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlmodel import Field, UniqueConstraint
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class Agent(Table, table=True):
-    __tablename__ = "agents"
-    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_agents_owner_name"),)
-    __backup__ = BackupSpec(section="agents", natural_key=("name",))
+    __tablename__: ClassVar[str] = "agents"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "name", name="uq_agents_owner_name"),
+    )
+    __backup__: ClassVar[BackupSpec] = BackupSpec(section="agents", natural_key=("name",))
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

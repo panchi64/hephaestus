@@ -20,16 +20,17 @@ collision-free across branches.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class Conversation(Table, table=True):
-    __tablename__ = "conversations"
+    __tablename__: ClassVar[str] = "conversations"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
@@ -143,12 +144,14 @@ class Conversation(Table, table=True):
 
 
 class Message(Table, table=True):
-    __tablename__ = "messages"
+    __tablename__: ClassVar[str] = "messages"
     # The creation counter is unique per conversation — a double-insert (e.g. a
     # retried write that partly landed) fails loudly instead of silently
     # duplicating. seq no longer implies linear order (the tree does), only the
     # order in which rows were created.
-    __table_args__ = (UniqueConstraint("conversation_id", "seq", name="uq_message_conv_seq"),)
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("conversation_id", "seq", name="uq_message_conv_seq"),
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     conversation_id: str = Field(index=True, foreign_key="conversations.id")

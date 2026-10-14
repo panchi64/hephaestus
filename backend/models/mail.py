@@ -25,12 +25,13 @@ tags) so the inbox can be filtered and ordered in the DB without decrypting ever
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 # Provider kinds a `MailAccount` can speak — which transport the service instantiates.
 PROVIDER_IMAP = "imap"
@@ -45,10 +46,12 @@ AUTH_OAUTH = "oauth"
 
 
 class MailAccount(Table, table=True):
-    __tablename__ = "mail_accounts"
+    __tablename__: ClassVar[str] = "mail_accounts"
     # An operator's account labels are unique so routes/tools can refer to one stably
     # and a re-add can't silently duplicate a mailbox.
-    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_mail_account_owner_name"),)
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "name", name="uq_mail_account_owner_name"),
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
@@ -85,8 +88,8 @@ class MailMessage(Table, table=True):
     triage (`EMAIL-2`) stamps its verdicts onto; the remote mailbox stays authoritative and
     a re-sync reconciles by ``(account_id, folder, uid)``."""
 
-    __tablename__ = "mail_messages"
-    __table_args__ = (
+    __tablename__: ClassVar[str] = "mail_messages"
+    __table_args__: ClassVar[TableArgs] = (
         UniqueConstraint("account_id", "folder", "uid", name="uq_mail_message_account_uid"),
     )
 
@@ -145,7 +148,7 @@ class MailDraft(Table, table=True):
     """A composed message that has not been sent — either the operator's own draft or a
     pre-generated reply suggestion (`EMAIL-3`)."""
 
-    __tablename__ = "mail_drafts"
+    __tablename__: ClassVar[str] = "mail_drafts"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
@@ -173,8 +176,10 @@ class MailStyleProfile(Table, table=True):
     """The operator's writing-style profile, learned from their Sent mail and editable by
     hand (`EMAIL-3`). One per owner — the style is the person's, not the mailbox's."""
 
-    __tablename__ = "mail_style_profiles"
-    __table_args__ = (UniqueConstraint("owner_id", name="uq_mail_style_owner"),)
+    __tablename__: ClassVar[str] = "mail_style_profiles"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", name="uq_mail_style_owner"),
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

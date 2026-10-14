@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import ClassVar
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import JSON, Column, ForeignKey, String
@@ -61,7 +62,7 @@ def _default_timezone() -> str:
     """
     key = local_zone_key()
     try:
-        ZoneInfo(key)
+        _ = ZoneInfo(key)
     except KeyError, ValueError, OSError:
         return "UTC"
     return key
@@ -86,7 +87,7 @@ def new_uid() -> str:
 
 
 class Calendar(Table, table=True):
-    __tablename__ = "calendars"
+    __tablename__: ClassVar[str] = "calendars"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
@@ -112,7 +113,7 @@ class Calendar(Table, table=True):
 
 
 class CalendarEvent(Table, table=True):
-    __tablename__ = "calendar_events"
+    __tablename__: ClassVar[str] = "calendar_events"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

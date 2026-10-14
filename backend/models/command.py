@@ -30,22 +30,25 @@ trust decision, and calling it ``published`` would imply a gate that does not ex
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlmodel import Field, UniqueConstraint
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class Command(Table, table=True):
-    __tablename__ = "commands"
-    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_commands_owner_name"),)
+    __tablename__: ClassVar[str] = "commands"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "name", name="uq_commands_owner_name"),
+    )
     # Its own export section rather than a lodger in ``skills``: the operator chooses what
     # to carry to another host by section, and "my saved prompts" and "my skills" are
     # separate answers to that question. Sections are discovered from these markers, so
     # there is no central list this has to be added to.
-    __backup__ = BackupSpec(section="commands", natural_key=("name",))
+    __backup__: ClassVar[BackupSpec] = BackupSpec(section="commands", natural_key=("name",))
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

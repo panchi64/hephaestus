@@ -32,12 +32,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import ClassVar
 
 from sqlmodel import Field, UniqueConstraint
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class SkillSource(StrEnum):
@@ -54,11 +55,13 @@ class SkillSource(StrEnum):
 
 
 class Skill(Table, table=True):
-    __tablename__ = "skills"
-    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_skills_owner_name"),)
+    __tablename__: ClassVar[str] = "skills"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "name", name="uq_skills_owner_name"),
+    )
     # Exported under "skills" (`BACKUP-1`), before its files. ``name`` is already the
     # library's uniqueness key, so it is the merge key too.
-    __backup__ = BackupSpec(section="skills", natural_key=("name",), order=0)
+    __backup__: ClassVar[BackupSpec] = BackupSpec(section="skills", natural_key=("name",), order=0)
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
@@ -98,11 +101,15 @@ class Skill(Table, table=True):
 class SkillFile(Table, table=True):
     """One supporting file in a skill's bundle — a script, a reference doc, an asset."""
 
-    __tablename__ = "skill_files"
-    __table_args__ = (UniqueConstraint("skill_id", "relpath", name="uq_skill_files_skill_relpath"),)
+    __tablename__: ClassVar[str] = "skill_files"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("skill_id", "relpath", name="uq_skill_files_skill_relpath"),
+    )
     # Rides its skill's section and lands after it. Ids are preserved across an import, so
     # ``skill_id`` still points at the right bundle on the far host.
-    __backup__ = BackupSpec(section="skills", natural_key=("skill_id", "relpath"), order=1)
+    __backup__: ClassVar[BackupSpec] = BackupSpec(
+        section="skills", natural_key=("skill_id", "relpath"), order=1
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

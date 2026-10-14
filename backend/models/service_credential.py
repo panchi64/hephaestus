@@ -11,18 +11,19 @@ tokens to clients is a separate concern.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Field
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class ServiceCredential(Table, table=True):
-    __tablename__ = "service_credentials"
+    __tablename__: ClassVar[str] = "service_credentials"
     # One credential per (owner, service): a write upserts rather than duplicating.
-    __table_args__ = (
+    __table_args__: ClassVar[TableArgs] = (
         UniqueConstraint("owner_id", "service", name="uq_service_credential_owner_service"),
     )
 

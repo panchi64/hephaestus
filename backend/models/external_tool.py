@@ -25,19 +25,20 @@ offered to the agent, but approval-gated.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Field
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class McpServer(Table, table=True):
-    __tablename__ = "mcp_servers"
+    __tablename__: ClassVar[str] = "mcp_servers"
     # One server per (owner, name): the name is the operator-visible label and the seed
     # of `slug`, so duplicates would make two servers indistinguishable in the UI.
-    __table_args__ = (
+    __table_args__: ClassVar[TableArgs] = (
         UniqueConstraint("owner_id", "name", name="uq_mcp_servers_owner_name"),
         UniqueConstraint("owner_id", "slug", name="uq_mcp_servers_owner_slug"),
     )
@@ -87,8 +88,8 @@ class McpServer(Table, table=True):
 
 
 class Integration(Table, table=True):
-    __tablename__ = "integrations"
-    __table_args__ = (
+    __tablename__: ClassVar[str] = "integrations"
+    __table_args__: ClassVar[TableArgs] = (
         UniqueConstraint("owner_id", "name", name="uq_integrations_owner_name"),
         UniqueConstraint("owner_id", "slug", name="uq_integrations_owner_slug"),
     )
@@ -116,9 +117,9 @@ class Integration(Table, table=True):
 
 
 class ExternalToolPolicy(Table, table=True):
-    __tablename__ = "external_tool_policies"
+    __tablename__: ClassVar[str] = "external_tool_policies"
     # One row per (owner, source kind, source, tool): a write upserts.
-    __table_args__ = (
+    __table_args__: ClassVar[TableArgs] = (
         UniqueConstraint(
             "owner_id",
             "source_kind",

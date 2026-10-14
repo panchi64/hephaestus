@@ -24,12 +24,13 @@ operator's business, not a schema violation.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Field
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class SecretVaultConfig(Table, table=True):
@@ -41,9 +42,11 @@ class SecretVaultConfig(Table, table=True):
     key is what lets the vault passphrase change later without re-sealing every entry.
     """
 
-    __tablename__ = "secret_vault_config"
+    __tablename__: ClassVar[str] = "secret_vault_config"
     # One vault per operator: configuring twice is an error, not a second row.
-    __table_args__ = (UniqueConstraint("owner_id", name="uq_secret_vault_config_owner"),)
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", name="uq_secret_vault_config_owner"),
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
@@ -63,7 +66,7 @@ class SecretVaultConfig(Table, table=True):
 class SecretEntry(Table, table=True):
     """One stored credential: what it is, who it's for, where it's used, and the secret."""
 
-    __tablename__ = "secret_entries"
+    __tablename__: ClassVar[str] = "secret_entries"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

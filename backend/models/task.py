@@ -30,6 +30,7 @@ from __future__ import annotations
 import secrets
 from datetime import datetime
 from enum import StrEnum
+from typing import ClassVar
 
 from sqlalchemy import JSON, Column, ForeignKey, String
 from sqlmodel import Field
@@ -70,7 +71,7 @@ def new_webhook_token() -> str:
 
 
 class ScheduledTask(Table, table=True):
-    __tablename__ = "scheduled_tasks"
+    __tablename__: ClassVar[str] = "scheduled_tasks"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
@@ -126,7 +127,7 @@ class ScheduledTask(Table, table=True):
 
 
 class TaskRun(Table, table=True):
-    __tablename__ = "task_runs"
+    __tablename__: ClassVar[str] = "task_runs"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     # Cascades: a task's execution history is meaningless once the task itself is gone.

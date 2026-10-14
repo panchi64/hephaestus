@@ -29,15 +29,16 @@ falls back to keyword for them until a rebuild re-embeds them.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlmodel import Field, UniqueConstraint
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class CorpusChunk(Table, table=True):
-    __tablename__ = "corpus_chunk"
+    __tablename__: ClassVar[str] = "corpus_chunk"
     # Idempotent (re)index: the same content never inserts twice for the same *item*.
     # ``external_ref`` is in the key, not content alone: a source can hold many items (a
     # folder crawl holds a whole tree), and two byte-identical files under it — a repeated
@@ -45,7 +46,7 @@ class CorpusChunk(Table, table=True):
     # two items that must both be indexable. Keyed on content alone the second one can
     # never be stored, so it is invisible to search and every hit on the shared text is
     # cited against the first file's path.
-    __table_args__ = (
+    __table_args__: ClassVar[TableArgs] = (
         UniqueConstraint(
             "owner_id",
             "source_id",
@@ -85,7 +86,7 @@ class CorpusChunk(Table, table=True):
 
 
 class CorpusSource(Table, table=True):
-    __tablename__ = "corpus_source"
+    __tablename__: ClassVar[str] = "corpus_source"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

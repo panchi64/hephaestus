@@ -18,19 +18,20 @@ records that they did.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Field
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class ApprovalGrant(Table, table=True):
-    __tablename__ = "approval_grants"
+    __tablename__: ClassVar[str] = "approval_grants"
     # One grant per (owner, conversation, tool, command prefix): re-granting refreshes its
     # expiry.
-    __table_args__ = (
+    __table_args__: ClassVar[TableArgs] = (
         UniqueConstraint(
             "owner_id",
             "conversation_id",

@@ -18,6 +18,7 @@ what the operator sees and never subtracts.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlmodel import Field
 
@@ -27,12 +28,14 @@ from models._table import Table
 
 
 class Project(Table, table=True):
-    __tablename__ = "projects"
+    __tablename__: ClassVar[str] = "projects"
     # The operator's own configuration, so it belongs in an export. Keyed on the path:
     # the same directory *is* the same project, and the importer compares decrypted
     # values, so a re-seal on another host still matches. A restored path may not exist
     # on the new machine — losing the project list would be worse than a path to fix.
-    __backup__ = BackupSpec(section="settings", natural_key=("root_path_enc",), order=3)
+    __backup__: ClassVar[BackupSpec] = BackupSpec(
+        section="settings", natural_key=("root_path_enc",), order=3
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

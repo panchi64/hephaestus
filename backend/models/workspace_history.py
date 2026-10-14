@@ -15,18 +15,21 @@ seam.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Field
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class WorkspaceBlob(Table, table=True):
-    __tablename__ = "workspace_blobs"
+    __tablename__: ClassVar[str] = "workspace_blobs"
     # One row per distinct file content per owner — snapshots share blobs by hash.
-    __table_args__ = (UniqueConstraint("owner_id", "sha256", name="uq_workspace_blob_owner_sha"),)
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "sha256", name="uq_workspace_blob_owner_sha"),
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
@@ -39,7 +42,7 @@ class WorkspaceBlob(Table, table=True):
 
 
 class WorkspaceSnapshot(Table, table=True):
-    __tablename__ = "workspace_snapshots"
+    __tablename__: ClassVar[str] = "workspace_snapshots"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)

@@ -9,16 +9,17 @@ the last one without a decrypt.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlmodel import Field, UniqueConstraint
 
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class Revision(Table, table=True):
-    __tablename__ = "revisions"
-    __table_args__ = (
+    __tablename__: ClassVar[str] = "revisions"
+    __table_args__: ClassVar[TableArgs] = (
         UniqueConstraint("kind", "subject_id", "number", name="uq_revisions_subject_number"),
     )
 

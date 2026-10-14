@@ -20,6 +20,7 @@ recall can re-embed or skip them rather than compare across incompatible spaces.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from sqlmodel import Field
 
@@ -29,11 +30,11 @@ from models._table import Table
 
 
 class Memory(Table, table=True):
-    __tablename__ = "memories"
+    __tablename__: ClassVar[str] = "memories"
     # Exported under "memories" (`BACKUP-1`). Two memories are the same memory when they say
     # the same thing, so the decrypted content is the merge key; the vector derives from it
     # and is re-embedded on the importing host.
-    __backup__ = BackupSpec(section="memories", natural_key=("content_enc",))
+    __backup__: ClassVar[BackupSpec] = BackupSpec(section="memories", natural_key=("content_enc",))
 
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
