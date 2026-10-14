@@ -9,7 +9,10 @@ it), none of which needs a browser.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from pathlib import Path
 
+from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from app import create_app
@@ -21,14 +24,14 @@ class _FakeCdp:
     one frame."""
 
     def __init__(self) -> None:
-        self.sent: list[tuple[str, dict]] = []
-        self._handlers: dict = {}
+        self.sent: list[tuple[str, dict[str, object]]] = []
+        self._handlers: dict[str, Callable[[dict[str, object]], object]] = {}
         self.on_ack = lambda: None
 
-    def on(self, event: str, handler) -> None:
+    def on(self, event: str, handler: Callable[[dict[str, object]], object]) -> None:
         self._handlers[event] = handler
 
-    async def send(self, method: str, params: dict | None = None) -> dict:
+    async def send(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         self.sent.append((method, params or {}))
         if method == "Page.screencastFrameAck":
             self.on_ack()
@@ -109,7 +112,7 @@ class _FakeManager:
         self.forgot += 1
 
 
-def _app(tmp_path, manager: _FakeManager | None):
+def _app[M: _FakeManager | None](tmp_path: Path, manager: M) -> tuple[FastAPI, TestClient, M]:
     settings = Settings(
         db_url="sqlite:///:memory:",
         data_dir=tmp_path,

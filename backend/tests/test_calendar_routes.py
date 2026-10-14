@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from pydantic_ai import ModelResponse, ToolCallPart
+from pydantic_ai import ModelResponse, RunContext, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
 from core.container import ServiceContainer
+from runs import Run, RunStream
 from tools import RunDeps
 from tools.calendar import calendar_toolset
 
@@ -360,11 +363,13 @@ def _tool(name: str):
     return calendar_toolset().tools[name]
 
 
-class _Ctx:
-    """The slice of ``RunContext`` a calendar tool actually touches."""
+def _deps(owner: str, caps: ServiceContainer | None = None) -> RunDeps:
+    run = Run(id="t", kind="chat", owner_id=owner, stream=RunStream())
+    return RunDeps(run=run, owner_id=owner, caps=caps if caps is not None else ServiceContainer())
 
-    def __init__(self, deps: RunDeps) -> None:
-        self.deps = deps
+
+def _ctx(deps: RunDeps) -> RunContext[RunDeps]:
+    return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
 async def _service_deps(app):
@@ -379,20 +384,20 @@ async def test_the_agent_can_read_and_write_the_calendar():
     async with client_app() as (client, app):
         owner, service = await _service_deps(app)
         calendar = await service.create_calendar(owner, "Personal")
-        deps = RunDeps(run=None, owner_id=owner, caps=ServiceContainer.of(service))  # type: ignore[arg-type]
+        deps = _deps(owner, ServiceContainer.of(service))
 
         created = await (_tool("create_event")).function(
-            _Ctx(deps), title="Dentist", start="2026-06-09T10:00:00Z"
+            _ctx(deps), title="Dentist", start="2026-06-09T10:00:00Z"
         )
         assert created["calendar_id"] == calendar.id
 
         found = await (_tool("agenda")).function(
-            _Ctx(deps), start="2026-06-01T00:00:00Z", end="2026-06-30T00:00:00Z"
+            _ctx(deps), start="2026-06-01T00:00:00Z", end="2026-06-30T00:00:00Z"
         )
         assert [item["title"] for item in found] == ["Dentist"]
 
         assert "Deleted" in await (_tool("delete_event")).function(
-            _Ctx(deps), event_id=created["event_id"]
+            _ctx(deps), event_id=created["event_id"]
         )
         assert await service.list_events(owner) == []
 
@@ -402,10 +407,10 @@ async def test_the_agent_falls_back_to_the_first_writable_calendar():
         owner, service = await _service_deps(app)
         await service.create_calendar(owner, "Read-only", read_only=True)
         writable = await service.create_calendar(owner, "Personal")
-        deps = RunDeps(run=None, owner_id=owner, caps=ServiceContainer.of(service))  # type: ignore[arg-type]
+        deps = _deps(owner, ServiceContainer.of(service))
 
         created = await (_tool("create_event")).function(
-            _Ctx(deps), title="Coffee", start="2026-06-09T10:00:00Z"
+            _ctx(deps), title="Coffee", start="2026-06-09T10:00:00Z"
         )
         assert created["calendar_id"] == writable.id
 
@@ -416,17 +421,17 @@ async def test_a_bad_timestamp_asks_the_model_to_retry():
     async with client_app() as (client, app):
         owner, service = await _service_deps(app)
         await service.create_calendar(owner, "Personal")
-        deps = RunDeps(run=None, owner_id=owner, caps=ServiceContainer.of(service))  # type: ignore[arg-type]
+        deps = _deps(owner, ServiceContainer.of(service))
 
         with pytest.raises(ModelRetry):
             await (_tool("create_event")).function(
-                _Ctx(deps), title="Whenever", start="next tuesday-ish"
+                _ctx(deps), title="Whenever", start="next tuesday-ish"
             )
 
 
 async def test_the_calendar_tools_degrade_when_the_capability_is_absent():
-    deps = RunDeps(run=None, owner_id="operator")  # type: ignore[arg-type]
-    found = await _tool("agenda").function(_Ctx(deps))
+    deps = _deps("operator")
+    found = await _tool("agenda").function(_ctx(deps))
     assert found == [{"error": "The calendar is unavailable."}]
 
 
