@@ -119,17 +119,17 @@ class WorkSummaryService:
         owner_id: str,
         summarize: SummarizeWork,
     ) -> None:
-        self._store = store
-        self._settings_store = settings_store
-        self._models = models
-        self._runs = runs
-        self._vault = vault
-        self._settings = settings
-        self._owner_id = owner_id
-        self._summarize_work = summarize
+        self._store: ConversationStore = store
+        self._settings_store: SettingsStore = settings_store
+        self._models: BackgroundModels = models
+        self._runs: RunRegistry = runs
+        self._vault: Vault = vault
+        self._settings: Settings = settings
+        self._owner_id: str = owner_id
+        self._summarize_work: SummarizeWork = summarize
         #: Failed threads: failures so far, and when the next try may run (monotonic).
         self._failures: dict[str, tuple[int, float]] = {}
-        self._task = PeriodicTask(
+        self._task: PeriodicTask = PeriodicTask(
             "work-summaries",
             interval_s=settings.work_summary_sweep_interval_s,
             work=self.sweep,
@@ -179,7 +179,7 @@ class WorkSummaryService:
                 stored = False
             if stored:
                 written += 1
-                self._failures.pop(conversation_id, None)
+                _ = self._failures.pop(conversation_id, None)
             else:
                 delay = _BACKOFF[min(failures, len(_BACKOFF) - 1)]
                 self._failures[conversation_id] = (failures + 1, time.monotonic() + delay)
@@ -196,7 +196,7 @@ class WorkSummaryService:
                 if self._runs.busy(self._owner_id):
                     raise _Yielded
         finally:
-            task.cancel()
+            _ = task.cancel()
 
     async def _summarize(self, conversation_id: str) -> bool:
         """Summarize one thread and store the result; False when there was nothing to store.

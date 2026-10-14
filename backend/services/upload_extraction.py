@@ -127,8 +127,8 @@ class BasicExtractor:
     high-fidelity path degrades to."""
 
     def __init__(self, ocr: VisionOCR, *, max_pages: int = 50) -> None:
-        self._ocr = ocr
-        self._max_pages = max_pages
+        self._ocr: VisionOCR = ocr
+        self._max_pages: int = max_pages
 
     async def extract(
         self, owner_id: str, raw: bytes, mime: str, filename: str
@@ -204,13 +204,13 @@ def scan_pdf(raw: bytes, max_pages: int) -> PdfScan:
             page = pdf[index]
             textpage = page.get_textpage()
             native = (textpage.get_text_range() or "").strip()
-            textpage.close()
+            _ = textpage.close()
             image = _render_jpeg(page) if len(native) < _SPARSE_TEXT_THRESHOLD else None
-            page.close()
+            _ = page.close()
             scan.pages.append(ScannedPage(index=index, native_text=native, image=image))
         return scan
     finally:
-        pdf.close()
+        _ = pdf.close()
 
 
 def _render_jpeg(page: pdfium.PdfPage) -> bytes:
@@ -222,7 +222,7 @@ def _render_jpeg(page: pdfium.PdfPage) -> bytes:
         pil.close()
         return buffer.getvalue()
     finally:
-        bitmap.close()
+        _ = bitmap.close()
 
 
 # How many leading pages to sample when probing for a text layer. Bounded so a fully
@@ -248,13 +248,13 @@ def pdf_has_text_layer(raw: bytes) -> bool:
             page = pdf[index]
             textpage = page.get_textpage()
             has = len((textpage.get_text_range() or "").strip()) >= _SPARSE_TEXT_THRESHOLD
-            textpage.close()
-            page.close()
+            _ = textpage.close()
+            _ = page.close()
             if has:
                 return True
         return False
     finally:
-        pdf.close()
+        _ = pdf.close()
 
 
 class FallbackExtractor:
@@ -264,8 +264,8 @@ class FallbackExtractor:
     to a working extraction rather than an error (the project's fail-soft posture)."""
 
     def __init__(self, primary: UploadExtractor, fallback: UploadExtractor) -> None:
-        self._primary = primary
-        self._fallback = fallback
+        self._primary: UploadExtractor = primary
+        self._fallback: UploadExtractor = fallback
 
     async def extract(
         self, owner_id: str, raw: bytes, mime: str, filename: str

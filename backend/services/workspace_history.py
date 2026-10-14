@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
+from pydantic import TypeAdapter
 from sqlalchemy import Engine, delete
 from sqlmodel import Session, col, select
 
@@ -26,6 +27,9 @@ from core.db import in_session
 from core.exceptions import NotFoundError
 from core.vault import Vault
 from models.workspace_history import WorkspaceBlob, WorkspaceSnapshot
+
+_MANIFEST = TypeAdapter(dict[str, str])
+_STATS = TypeAdapter(dict[str, int])
 
 
 @dataclass(frozen=True)
@@ -66,8 +70,8 @@ class FileDiff:
 
 class WorkspaceHistoryStore:
     def __init__(self, engine: Engine, vault: Vault) -> None:
-        self._engine = engine
-        self._vault = vault
+        self._engine: Engine = engine
+        self._vault: Vault = vault
 
     async def capture(
         self,
@@ -269,7 +273,7 @@ class WorkspaceHistoryStore:
                 still_used |= set(self._manifest(snapshot).values())
             orphans = freed - still_used
             if orphans:
-                session.exec(
+                _ = session.exec(
                     delete(WorkspaceBlob)
                     .where(col(WorkspaceBlob.owner_id) == owner_id)
                     .where(col(WorkspaceBlob.sha256).in_(orphans))
@@ -280,7 +284,7 @@ class WorkspaceHistoryStore:
     # -- internals ------------------------------------------------------------
     def _manifest(self, snapshot: WorkspaceSnapshot) -> dict[str, str]:
         """The decrypted ``{relpath: sha256}`` tree for a snapshot."""
-        return json.loads(self._vault.decrypt_bytes(snapshot.manifest_enc).decode("utf-8"))
+        return _MANIFEST.validate_json(self._vault.decrypt_bytes(snapshot.manifest_enc))
 
     @staticmethod
     def _require(session: Session, owner_id: str, snapshot_id: str) -> WorkspaceSnapshot:
@@ -331,7 +335,7 @@ def _stats(prev: dict[str, str], curr: dict[str, str]) -> dict[str, int]:
 
 
 def _to_view(row: WorkspaceSnapshot) -> SnapshotView:
-    stats = json.loads(row.stats_json)
+    stats = _STATS.validate_json(row.stats_json)
     added, modified, removed = (stats.get(k, 0) for k in ("added", "modified", "removed"))
     return SnapshotView(
         id=row.id,

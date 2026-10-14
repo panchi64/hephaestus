@@ -26,7 +26,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from core.container import ServiceContainer
 from core.fork import MergeReport
@@ -88,23 +87,36 @@ def reopen_fork(
     if kind == "worktree":
         projects = caps.get_optional(ProjectStore)
         worktrees = caps.get_optional(WorktreeManager)
-        if projects is None or worktrees is None or not target.project_id:
+        if (
+            projects is None
+            or worktrees is None
+            or not target.project_id
+            or target.conversation_id is None
+        ):
             return None
 
-        async def where() -> dict[str, Any]:
-            project = await projects.get(target.owner_id, target.project_id or "")
-            return {
-                "project_id": target.project_id,
-                "root": Path(project.root_path),
-                "conversation_id": target.conversation_id,
-                "delegation_id": target.delegation_id,
-            }
+        project_id = target.project_id
+        conversation_id = target.conversation_id
+
+        async def root() -> Path:
+            project = await projects.get(target.owner_id, project_id)
+            return Path(project.root_path)
 
         async def merge_worktree() -> MergeReport:
-            return await worktrees.merge_back(**await where())
+            return await worktrees.merge_back(
+                project_id=project_id,
+                root=await root(),
+                conversation_id=conversation_id,
+                delegation_id=target.delegation_id,
+            )
 
         async def discard_worktree() -> None:
-            await worktrees.discard_child(**await where())
+            await worktrees.discard_child(
+                project_id=project_id,
+                root=await root(),
+                conversation_id=conversation_id,
+                delegation_id=target.delegation_id,
+            )
 
         return OpenFork(merge=merge_worktree, discard=discard_worktree)
 
@@ -136,10 +148,10 @@ def merge_summary(report: MergeReport) -> str:
     if report.conflicts:
         lines.append(
             "Not merged — you changed these while the sub-agent ran, so your versions "
-            "stand: "
+            + "stand: "
             + ", ".join(report.conflicts)
             + ". Its copy is gone with the fork; if you still want its change, make it "
-            "yourself from what it reported above."
+            + "yourself from what it reported above."
         )
     if report.deleted:
         # Named on their own line rather than folded into the merged files: "your file
