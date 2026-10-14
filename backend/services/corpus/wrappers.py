@@ -17,6 +17,7 @@ hold is just a source the operator can never index, so it went with it.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import override
 
 import numpy as np
 
@@ -29,12 +30,13 @@ from services.memory import MemoryStore
 class MemoryAdapter(SourceAdapter):
     """Long-term memory as a corpus source — wraps :class:`MemoryStore`."""
 
-    source_kind = "memory"
-    SOURCE_ID = "surf-memory"
+    source_kind: str = "memory"
+    SOURCE_ID: str = "surf-memory"
 
     def __init__(self, store: MemoryStore) -> None:
-        self._store = store
+        self._store: MemoryStore = store
 
+    @override
     async def retrieve(
         self,
         owner_id: str,
@@ -64,6 +66,7 @@ class MemoryAdapter(SourceAdapter):
             for hit in hits
         ]
 
+    @override
     async def read(self, owner_id: str, ref: str) -> CorpusDocument | None:
         try:
             memory = await self._store.get(owner_id, ref)
@@ -71,6 +74,7 @@ class MemoryAdapter(SourceAdapter):
             return None
         return CorpusDocument(title="Memory", text=memory.content, at=memory.created_at)
 
+    @override
     async def status(self, owner_id: str) -> SourceStatus:
         count = await self._store.count(owner_id)
         return SourceStatus(
@@ -83,6 +87,7 @@ class MemoryAdapter(SourceAdapter):
             href="/memory",
         )
 
+    @override
     async def reindex(self, owner_id: str, *, current_model: str | None = None) -> int:
         return await self._store.reembed(owner_id, current_model=current_model)
 
@@ -90,12 +95,13 @@ class MemoryAdapter(SourceAdapter):
 class ConversationAdapter(SourceAdapter):
     """Cross-chat history as a corpus source — wraps :class:`ConversationSearch`."""
 
-    source_kind = "conversations"
-    SOURCE_ID = "surf-conversations"
+    source_kind: str = "conversations"
+    SOURCE_ID: str = "surf-conversations"
 
     def __init__(self, search: ConversationSearch) -> None:
-        self._search = search
+        self._search: ConversationSearch = search
 
+    @override
     async def retrieve(
         self,
         owner_id: str,
@@ -124,6 +130,7 @@ class ConversationAdapter(SourceAdapter):
             for hit in hits
         ]
 
+    @override
     async def read(self, owner_id: str, ref: str) -> CorpusDocument | None:
         transcript = await self._search.read(owner_id, ref)
         if transcript is None:
@@ -132,6 +139,7 @@ class ConversationAdapter(SourceAdapter):
             title=transcript.title or "(untitled conversation)", text=transcript.text
         )
 
+    @override
     async def status(self, owner_id: str) -> SourceStatus:
         return SourceStatus(
             source_id=self.SOURCE_ID,

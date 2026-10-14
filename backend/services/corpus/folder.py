@@ -18,16 +18,19 @@ it no longer finds, so a file deleted or edited on disk stops being retrievable.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import override
 
 import numpy as np
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from core.db import in_session
+from core.vault import Vault
 from core.worker import WriteBehindWorker
 from models.corpus import CorpusSource
 from services.chunking import chunk_text
@@ -94,13 +97,15 @@ class IndexJob:
 
 
 class FolderAdapter(SourceAdapter):
-    source_kind = "folder"
+    source_kind: str = "folder"
 
-    def __init__(self, engine: Engine, chunk_store: CorpusChunkStore, unlocked) -> None:
-        self._engine = engine
-        self._chunks = chunk_store
+    def __init__(
+        self, engine: Engine, chunk_store: CorpusChunkStore, unlocked: asyncio.Event | None
+    ) -> None:
+        self._engine: Engine = engine
+        self._chunks: CorpusChunkStore = chunk_store
         # The registry's own host path is sealed with the same key its chunks are.
-        self._vault = chunk_store.vault
+        self._vault: Vault = chunk_store.vault
         self._worker: WriteBehindWorker[IndexJob] = WriteBehindWorker(
             self._index, name="corpus-folder", unlocked=unlocked
         )
@@ -186,6 +191,7 @@ class FolderAdapter(SourceAdapter):
 
     # --- adapter contract -------------------------------------------------
 
+    @override
     async def retrieve(
         self,
         owner_id: str,
@@ -209,6 +215,7 @@ class FolderAdapter(SourceAdapter):
             since=since,
         )
 
+    @override
     async def status(self, owner_id: str) -> list[SourceStatus]:
         def work(session: Session) -> list[CorpusSource]:
             return list(
@@ -233,6 +240,7 @@ class FolderAdapter(SourceAdapter):
             )
         return statuses
 
+    @override
     async def reindex(self, owner_id: str, *, current_model: str | None = None) -> int:
         # Scoped to folder chunks — reindexing one surface shouldn't re-embed every other.
         return await self._chunks.reembed(
@@ -290,14 +298,14 @@ class FolderAdapter(SourceAdapter):
                 content_hash(chunk.text) for chunk in chunks if chunk.text.strip()
             }
             if chunks:
-                await self._chunks.upsert(
+                _ = await self._chunks.upsert(
                     job.owner_id, self.source_kind, job.source_id, file_path, chunks
                 )
-        await self._chunks.prune_stale(
+        _ = await self._chunks.prune_stale(
             job.owner_id, job.source_id, live_refs=live_refs, live_hashes=live_hashes
         )
         # Best-effort embed of the freshly inserted (null-vector) chunks.
-        await self._chunks.reembed(job.owner_id, job.source_id)
+        _ = await self._chunks.reembed(job.owner_id, job.source_id)
         await self._mark(job.source_id, status="indexed", last_indexed_at=datetime.now(UTC))
 
     def _walk(self, root: str) -> list[str]:

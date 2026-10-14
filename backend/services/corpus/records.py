@@ -11,9 +11,10 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import override
 
 import numpy as np
-from sqlalchemy import Engine, func
+from sqlalchemy import ColumnElement, Engine, func
 from sqlmodel import Session, col, select
 
 from core.db import in_session
@@ -38,28 +39,32 @@ class RecordMeta:
 
 
 class SummaryCollection(Collection[RecordMeta]):
-    name = "work-summaries"
+    name: str = "work-summaries"
 
     @staticmethod
-    def _owned(stmt, owner_id: str):
-        return stmt.where(Conversation.owner_id == owner_id).where(
-            col(Conversation.work_summary_enc).is_not(None)
+    def _owned(owner_id: str) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
+        return (
+            col(Conversation.owner_id) == owner_id,
+            col(Conversation.work_summary_enc).is_not(None),
         )
 
+    @override
     def signature(self, session: Session, owner_id: str) -> Hashable:
-        stmt = self._owned(
-            select(Conversation.ephemeral, func.count(), func.max(Conversation.work_summary_at)),
-            owner_id,
-        ).group_by(col(Conversation.ephemeral))
+        stmt = (
+            select(Conversation.ephemeral, func.count(), func.max(Conversation.work_summary_at))
+            .where(*self._owned(owner_id))
+            .group_by(col(Conversation.ephemeral))
+        )
         return frozenset(session.exec(stmt).all())
 
+    @override
     def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
-        stmt = self._owned(
-            select(Conversation.id, Conversation.work_summary_at, Conversation.ephemeral),
-            owner_id,
+        stmt = select(Conversation.id, Conversation.work_summary_at, Conversation.ephemeral).where(
+            *self._owned(owner_id)
         )
         return {cid: (at, ephemeral) for cid, at, ephemeral in session.exec(stmt).all()}
 
+    @override
     def load(
         self, session: Session, vault: Vault, owner_id: str, ids: list[str]
     ) -> list[Loaded[RecordMeta]]:
@@ -82,22 +87,26 @@ class SummaryCollection(Collection[RecordMeta]):
 
 
 class ReportCollection(Collection[RecordMeta]):
-    name = "agent-reports"
+    name: str = "agent-reports"
 
     @staticmethod
-    def _owned(stmt, owner_id: str):
-        return stmt.where(SubagentRecord.owner_id == owner_id).where(
-            col(SubagentRecord.summary_enc).is_not(None)
+    def _owned(owner_id: str) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
+        return (
+            col(SubagentRecord.owner_id) == owner_id,
+            col(SubagentRecord.summary_enc).is_not(None),
         )
 
+    @override
     def signature(self, session: Session, owner_id: str) -> Hashable:
-        stmt = self._owned(select(func.count(), func.max(SubagentRecord.ended_at)), owner_id)
+        stmt = select(func.count(), func.max(SubagentRecord.ended_at)).where(*self._owned(owner_id))
         return tuple(session.exec(stmt).one())
 
+    @override
     def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
-        stmt = self._owned(select(SubagentRecord.id, SubagentRecord.ended_at), owner_id)
+        stmt = select(SubagentRecord.id, SubagentRecord.ended_at).where(*self._owned(owner_id))
         return dict(session.exec(stmt).all())
 
+    @override
     def load(
         self, session: Session, vault: Vault, owner_id: str, ids: list[str]
     ) -> list[Loaded[RecordMeta]]:
@@ -113,24 +122,34 @@ class ReportCollection(Collection[RecordMeta]):
 
 
 class RoutineRunCollection(Collection[RecordMeta]):
-    name = "routine-runs"
+    name: str = "routine-runs"
 
     @staticmethod
-    def _owned(stmt, owner_id: str):
+    def _owned(owner_id: str) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
         return (
-            stmt.join(ScheduledTask, col(TaskRun.task_id) == col(ScheduledTask.id))
-            .where(ScheduledTask.owner_id == owner_id)
-            .where(col(TaskRun.summary_enc).is_not(None))
+            col(ScheduledTask.owner_id) == owner_id,
+            col(TaskRun.summary_enc).is_not(None),
         )
 
+    @override
     def signature(self, session: Session, owner_id: str) -> Hashable:
-        stmt = self._owned(select(func.count(), func.max(TaskRun.finished_at)), owner_id)
+        stmt = (
+            select(func.count(), func.max(TaskRun.finished_at))
+            .join(ScheduledTask, col(TaskRun.task_id) == col(ScheduledTask.id))
+            .where(*self._owned(owner_id))
+        )
         return tuple(session.exec(stmt).one())
 
+    @override
     def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
-        stmt = self._owned(select(TaskRun.id, TaskRun.finished_at), owner_id)
+        stmt = (
+            select(TaskRun.id, TaskRun.finished_at)
+            .join(ScheduledTask, col(TaskRun.task_id) == col(ScheduledTask.id))
+            .where(*self._owned(owner_id))
+        )
         return dict(session.exec(stmt).all())
 
+    @override
     def load(
         self, session: Session, vault: Vault, owner_id: str, ids: list[str]
     ) -> list[Loaded[RecordMeta]]:
@@ -167,15 +186,16 @@ class RecordAdapter(SourceAdapter):
         label: str,
         read_text: ReadText,
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._collection = collection
-        self._index = RecallIndex(engine, vault)
-        self._label = label
-        self._read_text = read_text
-        self.source_kind = source_kind
-        self.SOURCE_ID = source_id
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._collection: Collection[RecordMeta] = collection
+        self._index: RecallIndex = RecallIndex(engine, vault)
+        self._label: str = label
+        self._read_text: ReadText = read_text
+        self.source_kind: str = source_kind
+        self.SOURCE_ID: str = source_id
 
+    @override
     async def retrieve(
         self,
         owner_id: str,
@@ -218,6 +238,7 @@ class RecordAdapter(SourceAdapter):
             if texts.get(hit.doc.id)
         ]
 
+    @override
     async def read(self, owner_id: str, ref: str) -> CorpusDocument | None:
         docs = {doc.id: doc for doc in await self._index.docs(self._collection, owner_id)}
         doc = docs.get(ref)
@@ -230,6 +251,7 @@ class RecordAdapter(SourceAdapter):
             return None
         return CorpusDocument(title=doc.meta.title, text=text, at=doc.at)
 
+    @override
     async def status(self, owner_id: str) -> SourceStatus:
         docs = await self._index.docs(self._collection, owner_id)
         return SourceStatus(

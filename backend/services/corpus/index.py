@@ -43,10 +43,10 @@ class CorpusIndex:
         chunk_store: CorpusChunkStore,
         folder: FolderAdapter,
     ) -> None:
-        self._embedder = embedder
-        self._registry = registry
-        self._chunks = chunk_store
-        self._folder = folder
+        self._embedder: Embedder = embedder
+        self._registry: ModelRegistry = registry
+        self._chunks: CorpusChunkStore = chunk_store
+        self._folder: FolderAdapter = folder
         # An ordered list, not a kind-keyed map: several stub surface adapters share
         # the "surface" kind, so keying by kind would drop all but the last.
         self._adapters: list[SourceAdapter] = []

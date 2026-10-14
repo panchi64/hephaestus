@@ -17,8 +17,10 @@ correction that shortens the text must not strand orphan chunks.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
+from typing import override
 
 import numpy as np
 from sqlalchemy import Engine
@@ -61,12 +63,14 @@ UploadJob = UploadIndexJob | UploadExcludeJob
 
 
 class UploadsAdapter(SourceAdapter):
-    source_kind = "uploads"
-    SOURCE_ID = "surf-uploads"
+    source_kind: str = "uploads"
+    SOURCE_ID: str = "surf-uploads"
 
-    def __init__(self, engine: Engine, chunk_store: CorpusChunkStore, unlocked) -> None:
-        self._engine = engine
-        self._chunks = chunk_store
+    def __init__(
+        self, engine: Engine, chunk_store: CorpusChunkStore, unlocked: asyncio.Event | None
+    ) -> None:
+        self._engine: Engine = engine
+        self._chunks: CorpusChunkStore = chunk_store
         self._worker: WriteBehindWorker[UploadJob] = WriteBehindWorker(
             self._handle, name="corpus-uploads", unlocked=unlocked
         )
@@ -98,6 +102,7 @@ class UploadsAdapter(SourceAdapter):
 
     # --- adapter contract -------------------------------------------------
 
+    @override
     async def retrieve(
         self,
         owner_id: str,
@@ -119,6 +124,7 @@ class UploadsAdapter(SourceAdapter):
             since=since,
         )
 
+    @override
     async def status(self, owner_id: str) -> SourceStatus:
         return SourceStatus(
             source_id=self.SOURCE_ID,
@@ -130,6 +136,7 @@ class UploadsAdapter(SourceAdapter):
             href="/uploads",
         )
 
+    @override
     async def reindex(self, owner_id: str, *, current_model: str | None = None) -> int:
         return await self._chunks.reembed(
             owner_id, source_kind=self.source_kind, current_model=current_model
@@ -154,7 +161,7 @@ class UploadsAdapter(SourceAdapter):
         # Stamp the upload's *current* exclusion onto the rebuilt chunks (read live, so a
         # reindex of an already-excluded file doesn't quietly re-admit it to the corpus).
         excluded = await self._is_excluded(job.owner_id, job.upload_id)
-        await self._chunks.upsert(
+        _ = await self._chunks.upsert(
             job.owner_id,
             self.source_kind,
             job.upload_id,
@@ -162,7 +169,7 @@ class UploadsAdapter(SourceAdapter):
             chunks,
             kb_excluded=excluded,
         )
-        await self._chunks.reembed(job.owner_id, job.upload_id)
+        _ = await self._chunks.reembed(job.owner_id, job.upload_id)
 
     async def _is_excluded(self, owner_id: str, upload_id: str) -> bool:
         """The upload row's authoritative ``kb_excluded`` (False if it's gone)."""

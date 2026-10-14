@@ -104,10 +104,12 @@ class SourceAdapter(ABC):
 
     async def read(self, owner_id: str, ref: str) -> CorpusDocument | None:
         """One item in full by its ref, or None when this source has no such item."""
+        del owner_id, ref
         return None
 
     async def reindex(self, owner_id: str, *, current_model: str | None = None) -> int:
         """(Re-)embed this source's pending/stale chunks into ``current_model``'s
         space. Default no-op for adapters whose store embeds on its own write path
         (memory, conversations); chunked adapters override. Returns rows embedded."""
+        del owner_id, current_model
         return 0

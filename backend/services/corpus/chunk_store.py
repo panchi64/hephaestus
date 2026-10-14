@@ -23,6 +23,7 @@ import hashlib
 from collections.abc import Collection, Hashable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import override
 
 import numpy as np
 from sqlalchemy import Engine, func, or_
@@ -67,8 +68,9 @@ class ChunkMeta:
 
 
 class ChunkCollection(RecallCollection[ChunkMeta]):
-    name = "chunks"
+    name: str = "chunks"
 
+    @override
     def signature(self, session: Session, owner_id: str) -> Hashable:
         stmt = (
             select(
@@ -82,6 +84,7 @@ class ChunkCollection(RecallCollection[ChunkMeta]):
         )
         return frozenset(session.exec(stmt).all())
 
+    @override
     def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
         stmt = select(
             CorpusChunk.id,
@@ -91,6 +94,7 @@ class ChunkCollection(RecallCollection[ChunkMeta]):
         ).where(CorpusChunk.owner_id == owner_id)
         return {cid: (at, model, excluded) for cid, at, model, excluded in session.exec(stmt).all()}
 
+    @override
     def load(
         self, session: Session, vault: Vault, owner_id: str, ids: list[str]
     ) -> list[Loaded[ChunkMeta]]:
@@ -134,11 +138,11 @@ def _stitch(passages: list[str]) -> str:
 
 class CorpusChunkStore:
     def __init__(self, engine: Engine, vault: Vault, embedder: Embedder) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._embedder = embedder
-        self._index = RecallIndex(engine, vault)
-        self._collection = ChunkCollection()
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._embedder: Embedder = embedder
+        self._index: RecallIndex = RecallIndex(engine, vault)
+        self._collection: ChunkCollection = ChunkCollection()
 
     @property
     def vault(self) -> Vault:
@@ -260,7 +264,7 @@ class CorpusChunkStore:
                 if item not in live or (keep is not None and chash not in keep):
                     doomed.append(row_id)
             for start in range(0, len(doomed), _DELETE_BATCH):
-                session.exec(
+                _ = session.exec(
                     delete(CorpusChunk).where(
                         col(CorpusChunk.id).in_(doomed[start : start + _DELETE_BATCH])
                     )
@@ -273,7 +277,7 @@ class CorpusChunkStore:
         """Drop every chunk a source contributed (folder removal)."""
 
         def work(session: Session) -> None:
-            session.exec(
+            _ = session.exec(
                 delete(CorpusChunk).where(
                     col(CorpusChunk.owner_id) == owner_id,
                     col(CorpusChunk.source_id) == source_id,
@@ -291,7 +295,7 @@ class CorpusChunkStore:
         an already-indexed file vanish from (or return to) general recall. Idempotent."""
 
         def work(session: Session) -> None:
-            session.exec(
+            _ = session.exec(
                 update(CorpusChunk)
                 .where(
                     col(CorpusChunk.owner_id) == owner_id,
