@@ -114,7 +114,7 @@ _CHALLENGE_MARKERS = (
 _CHALLENGE_URL_MARKERS = ("js_challenge=", "__cf_chl", "cf_chl_", "/cdn-cgi/challenge")
 
 
-def _looks_like_challenge(html: str, text: str) -> bool:
+def looks_like_challenge(html: str, text: str) -> bool:
     """Whether a rendered page reads as a bot-wall interstitial rather than real content."""
     blob = (text or "")[:2000].lower()
     markup = (html or "")[:6000].lower()
@@ -291,7 +291,7 @@ class BrowserFetcher:
                     raise WebFetchError(f"could not load {url!r}: {_reason(exc)}") from exc
                 if response is not None and response.status >= 400:
                     raise WebFetchError(f"{page.url!r} returned HTTP {response.status}")
-                final_url, html, text = await self._capture(url, page)
+                final_url, html, text = await self.capture(url, page)
         except WebFetchError:
             raise
         except RuntimeError as exc:
@@ -305,7 +305,7 @@ class BrowserFetcher:
         # from ballooning the extractor's input. trafilatura/lxml recover from a mid-tag cut.
         return html[: self._max_bytes], (text or "")[: self._max_bytes], final_url
 
-    async def _capture(self, url: str, page: SnapshotPage) -> tuple[str, str, str]:
+    async def capture(self, url: str, page: SnapshotPage) -> tuple[str, str, str]:
         """Snapshot the page, and if it reads as a bot-wall interstitial, wait for it to
         clear and re-snapshot — up to ``challenge_waits`` times. A real browser often
         settles a soft challenge on its own within a few seconds; this stops us returning
@@ -315,7 +315,7 @@ class BrowserFetcher:
             # A challenge URL alone isn't enough to keep waiting — some walls keep their
             # param in the URL after the real content loads; only wait while content is thin.
             thin = len((text or "").strip()) < self._min_chars
-            if not (_looks_like_challenge(html, text) or (_is_challenge_url(final_url) and thin)):
+            if not (looks_like_challenge(html, text) or (_is_challenge_url(final_url) and thin)):
                 break
             try:
                 await page.wait_for_timeout(self._challenge_wait_ms)

@@ -169,7 +169,8 @@ async def test_a_grant_without_secrets_tunnels_untouched(
 async def test_a_secret_is_never_sent_to_another_host(tmp_path: Path):
     grant_secrets = [Secret(PLACEHOLDER, "s3cret", HOST)]
     gateway = EgressGateway(Interceptor())
-    _ = gateway.grant(_allow(tmp_path), grant_secrets)
-    grant = next(iter(gateway._grants.values()))
+    credentials = gateway.grant(_allow(tmp_path), grant_secrets)
+    grant = gateway.grant_for(credentials)
+    assert grant is not None
     assert grant.secrets_for("API.example.com.") == tuple(grant_secrets)
     assert grant.secrets_for("other.example.com") == ()

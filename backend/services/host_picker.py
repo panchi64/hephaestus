@@ -72,14 +72,14 @@ class PickerAvailability(BaseModel):
 
 
 @dataclass(frozen=True)
-class _Helper:
+class Helper:
     """One host's dialog program and how to drive it."""
 
     name: str
     kind: Literal["osascript", "zenity", "kdialog", "powershell"]
 
 
-def _resolve() -> _Helper | None:
+def resolve() -> Helper | None:
     """The dialog program available here, or ``None``.
 
     Ordered by how native the result looks on each platform. macOS always has
@@ -89,12 +89,12 @@ def _resolve() -> _Helper | None:
     system = platform.system()
     if system == "Darwin":
         if shutil.which("osascript"):
-            return _Helper("osascript", "osascript")
+            return Helper("osascript", "osascript")
         return None
     if system == "Windows":
         for name in ("pwsh", "powershell"):
             if shutil.which(name):
-                return _Helper(name, "powershell")
+                return Helper(name, "powershell")
         return None
     candidates: tuple[tuple[str, Literal["zenity", "kdialog"]], ...] = (
         ("zenity", "zenity"),
@@ -103,14 +103,14 @@ def _resolve() -> _Helper | None:
     )
     for name, kind in candidates:
         if shutil.which(name):
-            return _Helper(name, kind)
+            return Helper(name, kind)
     return None
 
 
 def probe() -> PickerAvailability:
     """Whether to offer a BROWSE control. Cheap (``shutil.which``), so a surface can ask
     on load without caching."""
-    helper = _resolve()
+    helper = resolve()
     if helper is not None:
         return PickerAvailability(available=True, tool=helper.name)
     if platform.system() == "Darwin":
@@ -140,10 +140,10 @@ async def pick(
     supports it; it is a convenience, never the validation — the adapter re-checks the
     artifact regardless of how the path was chosen.
     """
-    helper = _resolve()
+    helper = resolve()
     if helper is None:
         raise RuntimeError(probe().reason or "no native file chooser on this host")
-    argv = _build_argv(helper, mode, title, start_dir, extensions)
+    argv = build_argv(helper, mode, title, start_dir, extensions)
     async with _dialog_lock():
         path = await _run(argv)
     if not path:
@@ -151,8 +151,8 @@ async def pick(
     return path
 
 
-def _build_argv(
-    helper: _Helper,
+def build_argv(
+    helper: Helper,
     mode: PickMode,
     title: str,
     start_dir: str | None,

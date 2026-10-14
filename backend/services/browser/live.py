@@ -175,6 +175,15 @@ class LiveBrowser:
         self._events_seen: int = session.events_recorded
         self._urls_seen: tuple[str, ...] = self._open_urls()
 
+    @property
+    def last_used(self) -> float:
+        """The monotonic time of the last call on this session."""
+        return self._last_used
+
+    @last_used.setter
+    def last_used(self, value: float) -> None:
+        self._last_used = value
+
     def touch(self) -> None:
         self._last_used = time.monotonic()
 

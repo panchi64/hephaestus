@@ -176,9 +176,9 @@ async def test_the_reaper_runs_with_the_vault_locked(tmp_path: Path):
     session = await manager.acquire("conv-a")
     session.write_file("f.txt", b"data")
 
-    await manager._sweep()
+    await manager.sweep()
 
-    assert not manager._sessions  # reaped, key or no key
+    assert not manager.sessions  # reaped, key or no key
     assert session.read_file("f.txt") == b"data"  # and the files are untouched
 
 
@@ -192,7 +192,7 @@ async def test_the_cap_is_enforced_with_the_vault_locked(tmp_path: Path):
 
     second = await manager.acquire("conv-b")
 
-    assert set(manager._sessions) == {safe_key("conv-b")}
+    assert set(manager.sessions) == {safe_key("conv-b")}
     assert second is not first
     assert first.read_file("f.txt") == b"data"
 
@@ -410,16 +410,16 @@ async def test_shutdown_wipes_the_guest_copy_and_revokes_the_credentials(tmp_pat
     vm = _vm(tmp_path)
     session = await _manager(tmp_path, vault, vm=vm).acquire("conv-a")
     _ = await session.run(SandboxSpec(command=["true"]))
-    assert session._credentials is not None
-    token = session._credentials.partition(":")[2]
-    assert token in vm.gateway._grants
+    credentials = session.credentials
+    assert credentials is not None
+    assert vm.gateway.grant_for(credentials) is not None
 
     await session.shutdown()
 
     assert not session.is_warm
     assert vm.events[-1] == ("wipe", session.key)
-    assert token not in vm.gateway._grants
-    assert session._credentials is None
+    assert vm.gateway.grant_for(credentials) is None
+    assert session.credentials is None
 
 
 async def test_each_run_after_a_reap_is_granted_fresh_credentials(tmp_path: Path):
@@ -479,9 +479,9 @@ async def test_reaper_drops_an_idle_session_and_keeps_its_files(tmp_path: Path):
     session = await manager.acquire("conv-a")
     session.write_file("notes.txt", b"keep me")
 
-    await manager._sweep()
+    await manager.sweep()
 
-    assert not manager._sessions  # reaped from the registry
+    assert not manager.sessions  # reaped from the registry
     assert session.workspace.exists()  # the guest copy went; the files did not
 
     # Resuming the conversation finds them exactly where it left them.
@@ -493,26 +493,26 @@ async def test_start_stop_manages_the_reaper_task(tmp_path: Path):
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
     await manager.start()
-    assert manager._reaper.running
+    assert manager.reaper.running
     await manager.stop()  # cancels the reaper and tears down any live sessions
-    assert not manager._reaper.running
+    assert not manager.reaper.running
 
 
 async def test_reaper_spares_fresh_and_busy_sessions(tmp_path: Path):
     vault = await _vault(tmp_path)
     fresh_mgr = _manager(tmp_path / "a", vault, idle_ttl_s=3600.0)
     _ = await fresh_mgr.acquire("conv-a")
-    await fresh_mgr._sweep()
-    assert fresh_mgr._sessions  # within TTL → spared
+    await fresh_mgr.sweep()
+    assert fresh_mgr.sessions  # within TTL → spared
 
     busy_mgr = _manager(tmp_path / "b", vault, idle_ttl_s=0.0)
     session = await busy_mgr.acquire("conv-b")
-    _ = await session._lock.acquire()  # simulate a call in flight
+    _ = await session.lock.acquire()  # simulate a call in flight
     try:
-        await busy_mgr._sweep()
-        assert busy_mgr._sessions  # never reaped mid-run, even past TTL
+        await busy_mgr.sweep()
+        assert busy_mgr.sessions  # never reaped mid-run, even past TTL
     finally:
-        session._lock.release()
+        session.lock.release()
 
 
 # --- the live-session cap: a ceiling in count, not only in time --------------
@@ -527,8 +527,8 @@ async def test_a_new_session_displaces_the_least_recently_used_one_at_the_cap(tm
 
     third = await manager.acquire("conv-c")
 
-    assert set(manager._sessions) == {safe_key("conv-a"), safe_key("conv-c")}
-    assert third is manager._sessions[safe_key("conv-c")]
+    assert set(manager.sessions) == {safe_key("conv-a"), safe_key("conv-c")}
+    assert third is manager.sessions[safe_key("conv-c")]
     # Displaced, not discarded: torn down exactly as an idle reap tears down, and the
     # files are still there the next time that conversation runs code.
     assert second.workspace.exists()
@@ -540,14 +540,14 @@ async def test_the_cap_never_displaces_a_session_with_a_call_in_flight(tmp_path:
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault, max_sessions=1)
     busy = await manager.acquire("conv-a")
-    _ = await busy._lock.acquire()  # simulate a call in flight
+    _ = await busy.lock.acquire()  # simulate a call in flight
     try:
         _ = await manager.acquire("conv-b")
         # Over the cap rather than failing the tool call the operator is watching; the
         # idle sweep collects the overflow once the work finishes.
-        assert set(manager._sessions) == {safe_key("conv-a"), safe_key("conv-b")}
+        assert set(manager.sessions) == {safe_key("conv-a"), safe_key("conv-b")}
     finally:
-        busy._lock.release()
+        busy.lock.release()
 
 
 class _Work:
@@ -571,7 +571,7 @@ async def test_the_cap_never_displaces_a_session_a_live_run_is_working_in(tmp_pa
     _ = await manager.acquire("conv-b")  # thinking, not executing: the lock is free
 
     assert not working.is_busy  # the old signal says "reap me"
-    assert set(manager._sessions) == {safe_key("conv-a"), safe_key("conv-b")}
+    assert set(manager.sessions) == {safe_key("conv-a"), safe_key("conv-b")}
     assert (working.workspace / "node_modules").exists()
 
 
@@ -589,7 +589,7 @@ async def test_the_claim_lasts_exactly_as_long_as_the_run_does(tmp_path: Path):
 
     assert working.is_displaceable
     _ = await manager.acquire("conv-c")
-    assert safe_key("conv-a") not in manager._sessions
+    assert safe_key("conv-a") not in manager.sessions
     assert working.read_file("notes.txt") == b"keep me"
 
 
@@ -601,12 +601,12 @@ async def test_the_cap_never_displaces_a_conversation_serving_a_live_preview(tmp
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault, max_sessions=1)
     serving = await manager.acquire("conv-a")
-    serving._preview = _fake_preview("tok-live")
-    manager._preview_tokens.index("tok-live", serving.key)
+    serving.preview = _fake_preview("tok-live")
+    manager.preview_tokens.index("tok-live", serving.key)
 
     _ = await manager.acquire("conv-b")
 
-    assert set(manager._sessions) == {safe_key("conv-a"), safe_key("conv-b")}
+    assert set(manager.sessions) == {safe_key("conv-a"), safe_key("conv-b")}
     assert manager.preview_status("tok-live") == "running"
 
 
@@ -637,7 +637,7 @@ async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown
 
     acquiring = asyncio.create_task(manager.acquire("conv-b"))
     _ = await asyncio.wait_for(tearing.wait(), timeout=2.0)
-    in_flight = list(manager._teardowns)
+    in_flight = list(manager.teardowns)
     _ = acquiring.cancel()
     with pytest.raises(asyncio.CancelledError):
         await acquiring
@@ -650,7 +650,7 @@ async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown
     assert not displaced.is_warm
     assert ("wipe", displaced.key) in vm.events
     assert displaced.read_file("notes.txt") == b"keep me"
-    assert set(manager._sessions) == {safe_key("conv-b")}
+    assert set(manager.sessions) == {safe_key("conv-b")}
 
 
 async def test_a_failed_teardown_leaves_the_session_live_for_the_sweeper(
@@ -670,8 +670,8 @@ async def test_a_failed_teardown_leaves_the_session_live_for_the_sweeper(
 
     _ = await manager.acquire("conv-b")
 
-    assert manager._sessions[safe_key("conv-a")] is displaced
-    assert not manager._tearing_down  # and not wedged behind a tombstone either
+    assert manager.sessions[safe_key("conv-a")] is displaced
+    assert not manager.tearing_down  # and not wedged behind a tombstone either
     assert await manager.acquire("conv-a") is displaced
 
 
@@ -693,7 +693,7 @@ async def test_sweep_does_not_block_acquire_for_an_unrelated_conversation(
 
     monkeypatch.setattr(SandboxSession, "shutdown", slow_shutdown)
 
-    sweep_task = asyncio.create_task(manager._sweep())
+    sweep_task = asyncio.create_task(manager.sweep())
     _ = await asyncio.wait_for(seal_started.wait(), timeout=1.0)
 
     # A different conversation must proceed immediately — it must not wait on
@@ -722,7 +722,7 @@ async def test_acquire_for_a_mid_seal_key_waits_for_its_own_teardown(
 
     monkeypatch.setattr(SandboxSession, "shutdown", slow_shutdown)
 
-    sweep_task = asyncio.create_task(manager._sweep())
+    sweep_task = asyncio.create_task(manager.sweep())
     _ = await asyncio.wait_for(seal_started.wait(), timeout=1.0)
 
     acquire_task = asyncio.create_task(manager.acquire("conv-a"))
@@ -733,7 +733,7 @@ async def test_acquire_for_a_mid_seal_key_waits_for_its_own_teardown(
     revived = await asyncio.wait_for(acquire_task, timeout=1.0)
     _ = await asyncio.wait_for(sweep_task, timeout=1.0)
     assert revived is not original  # a fresh session, minted only once teardown finished
-    assert not manager._tearing_down  # the tombstone is cleared afterward
+    assert not manager.tearing_down  # the tombstone is cleared afterward
 
 
 async def test_purge_waits_for_an_in_flight_sweep_seal_on_the_same_key(
@@ -753,7 +753,7 @@ async def test_purge_waits_for_an_in_flight_sweep_seal_on_the_same_key(
 
     monkeypatch.setattr(SandboxSession, "shutdown", slow_shutdown)
 
-    sweep_task = asyncio.create_task(manager._sweep())
+    sweep_task = asyncio.create_task(manager.sweep())
     _ = await asyncio.wait_for(seal_started.wait(), timeout=1.0)
 
     purge_task = asyncio.create_task(manager.purge("conv-a"))
@@ -763,7 +763,7 @@ async def test_purge_waits_for_an_in_flight_sweep_seal_on_the_same_key(
     release_seal.set()
     _ = await asyncio.wait_for(purge_task, timeout=1.0)
     _ = await asyncio.wait_for(sweep_task, timeout=1.0)
-    assert not manager._tearing_down
+    assert not manager.tearing_down
 
 
 # --- purge: deleting a conversation removes its sandbox outright -------------
@@ -776,7 +776,7 @@ async def test_purge_drops_the_session_and_deletes_its_workspace(tmp_path: Path)
 
     await manager.purge("conv-a")
 
-    assert not manager._sessions  # evicted from the registry
+    assert not manager.sessions  # evicted from the registry
     assert not session.workspace.exists()  # plaintext deleted, not sealed
     assert not session.sealed.exists()  # nothing preserved
 
@@ -803,7 +803,7 @@ async def test_purge_is_safe_when_there_is_nothing_to_remove(tmp_path: Path):
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
     await manager.purge("never-existed")  # must not raise
-    assert not manager._sessions
+    assert not manager.sessions
 
 
 # --- live-preview status: reap/purge leave a legible "stopped" signal --------
@@ -821,8 +821,8 @@ async def test_preview_status_is_running_while_the_preview_is_live(tmp_path: Pat
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
     session = await manager.acquire("conv-a")
-    session._preview = _fake_preview("tok-1")
-    manager._preview_tokens.index("tok-1", session.key)
+    session.preview = _fake_preview("tok-1")
+    manager.preview_tokens.index("tok-1", session.key)
 
     assert manager.preview_status("tok-1") == "running"
 
@@ -835,13 +835,13 @@ async def test_idle_reap_marks_the_running_previews_token_stopped(tmp_path: Path
     manager = _manager(tmp_path, vault, idle_ttl_s=0.0)
     session = await manager.acquire("conv-a")
     session.workspace.mkdir(parents=True, exist_ok=True)
-    session._preview = _fake_preview("tok-1")
-    manager._preview_tokens.index("tok-1", session.key)
+    session.preview = _fake_preview("tok-1")
+    manager.preview_tokens.index("tok-1", session.key)
     assert manager.preview_status("tok-1") == "running"
 
-    await manager._sweep()
+    await manager.sweep()
 
-    assert not manager._sessions  # the session itself was reaped, as before
+    assert not manager.sessions  # the session itself was reaped, as before
     assert manager.preview_status("tok-1") == "stopped"  # but the token now says why
 
 
@@ -850,8 +850,8 @@ async def test_purge_marks_the_running_previews_token_stopped(tmp_path: Path):
     manager = _manager(tmp_path, vault)
     session = await manager.acquire("conv-a")
     session.workspace.mkdir(parents=True, exist_ok=True)
-    session._preview = _fake_preview("tok-1")
-    manager._preview_tokens.index("tok-1", session.key)
+    session.preview = _fake_preview("tok-1")
+    manager.preview_tokens.index("tok-1", session.key)
 
     await manager.purge("conv-a")
 
@@ -865,20 +865,20 @@ async def test_stopped_tokens_are_pruned_after_their_ttl(
     manager = _manager(tmp_path, vault, idle_ttl_s=0.0)
     session = await manager.acquire("conv-a")
     session.workspace.mkdir(parents=True, exist_ok=True)
-    session._preview = _fake_preview("tok-1")
-    manager._preview_tokens.index("tok-1", session.key)
+    session.preview = _fake_preview("tok-1")
+    manager.preview_tokens.index("tok-1", session.key)
 
-    await manager._sweep()
+    await manager.sweep()
     assert manager.preview_status("tok-1") == "stopped"
 
     # Fast-forward past the tombstone's TTL, then force a prune via another mark
     # (mirrors real usage — the map is pruned lazily on the next stop/reap/purge).
-    frozen_future = time.monotonic() + preview_tokens._STOPPED_TTL_S + 1
+    frozen_future = time.monotonic() + preview_tokens.STOPPED_TTL_S + 1
     monkeypatch.setattr("time.monotonic", lambda: frozen_future)
     other = await manager.acquire("conv-b")
     other.workspace.mkdir(parents=True, exist_ok=True)
-    other._preview = _fake_preview("tok-2")
-    manager._preview_tokens.index("tok-2", other.key)
+    other.preview = _fake_preview("tok-2")
+    manager.preview_tokens.index("tok-2", other.key)
     await manager.purge("conv-b")
 
     assert manager.preview_status("tok-1") == "unknown"  # aged out
@@ -921,10 +921,10 @@ async def test_fork_copies_the_parents_workspace_including_what_a_seal_drops(tmp
     assert (child.workspace / ".venv" / "lib" / "big.so").read_bytes() == b"x" * 1000
     assert child.workspace != parent.workspace
     # A delegated agent may reach exactly what the conversation that delegated to it may.
-    assert child._egress_dir == manager._egress.allow_dir("conv-parent")
+    assert child.egress_dir == manager.egress.allow_dir("conv-parent")
     # And a domain approved during the delegated run is written to that same directory,
     # not to one nothing has mounted — which would read as an approval that did nothing.
-    assert manager._egress.allow_dir(_CHILD) == child._egress_dir
+    assert manager.egress.allow_dir(_CHILD) == child.egress_dir
     # The record the merge decides against: the parent as it stood, minus the bloat the
     # merge never walks.
     assert child.fork_manifest.keys() == {"notes.txt", "keep.txt"}
@@ -945,7 +945,7 @@ async def test_a_fork_holds_the_parent_still_for_the_whole_copy(
     locked: list[bool] = []
 
     def watched(source: Path, dest: Path) -> None:
-        locked.append(_held_elsewhere(parent._disk))
+        locked.append(_held_elsewhere(parent.disk_lock))
         real_clone(source, dest)
 
     monkeypatch.setattr(session_mod, "clone_workspace", watched)
@@ -1002,7 +1002,7 @@ async def test_merge_back_lands_the_childs_work_and_purges_the_fork(tmp_path: Pa
     assert (parent.workspace / "report" / "out.md").read_bytes() == b"and something new"
     # The fork is gone with it — a second copy of the parent's files kept "just in case"
     # is how a disk fills up, and what was refused is in the report.
-    assert safe_key(_CHILD) not in manager._sessions
+    assert safe_key(_CHILD) not in manager.sessions
     assert not child.workspace.exists()
     assert not child.sealed.exists()
 
@@ -1092,8 +1092,8 @@ async def test_a_merge_that_never_reported_keeps_the_fork(
     assert (child.workspace / "notes.txt").read_bytes() == b"what the delegated agent changed"
     # Back in the map with its tombstone released, so the merge can simply be asked for
     # again rather than the fork being stranded behind an event nothing will set.
-    assert manager._sessions[safe_key(_CHILD)] is child
-    assert not manager._tearing_down
+    assert manager.sessions[safe_key(_CHILD)] is child
+    assert not manager.tearing_down
     monkeypatch.undo()
     assert (await asyncio.wait_for(manager.merge_back(_CHILD, "conv-parent"), 2.0)).merged
 
@@ -1117,8 +1117,8 @@ async def test_a_fork_whose_copy_fails_releases_the_sessions_it_displaced(
     with pytest.raises(OSError):
         _ = await manager.fork("conv-parent", _CHILD)
 
-    assert not manager._tearing_down
-    assert safe_key(_CHILD) not in manager._sessions
+    assert not manager.tearing_down
+    assert safe_key(_CHILD) not in manager.sessions
     # The displaced conversation comes back rather than waiting forever on its own
     # teardown.
     _ = await asyncio.wait_for(manager.acquire("conv-other"), 2.0)
@@ -1143,7 +1143,7 @@ async def test_a_fork_stopped_mid_copy_leaves_no_session_over_a_half_copy(
     with pytest.raises(asyncio.CancelledError):
         _ = await manager.fork("conv-parent", _CHILD)
 
-    assert safe_key(_CHILD) not in manager._sessions
+    assert safe_key(_CHILD) not in manager.sessions
     assert not (tmp_path / "sandbox" / "work" / safe_key(_CHILD)).exists()
 
 
@@ -1154,7 +1154,7 @@ async def test_purging_a_fork_drops_the_allowlist_alias_it_borrowed(tmp_path: Pa
     # delegation for the life of the process.
     vault = await _vault(tmp_path)
     manager, _parent, _child = await _forked(tmp_path, vault)
-    policy = manager._egress
+    policy = manager.egress
     _ = await policy.allow("conv-parent", ["example.com"])
     assert "example.com" in await policy.allowed_for(_CHILD)
 
@@ -1180,12 +1180,12 @@ async def test_a_refused_fork_leaves_no_allowlist_alias(tmp_path: Path):
     manager = _manager(tmp_path, vault)
     parent = await manager.acquire("conv-parent")
     _ = parent.ensure_workspace()
-    manager._tearing_down[safe_key(_CHILD)] = asyncio.Event()
+    manager.tearing_down[safe_key(_CHILD)] = asyncio.Event()
 
     with pytest.raises(SandboxError):
         _ = await manager.fork("conv-parent", _CHILD)
 
-    assert manager._egress._fenced_by(_CHILD) == _CHILD
+    assert manager.egress.fenced_by(_CHILD) == _CHILD
 
 
 async def test_a_fork_is_not_displaced_by_the_cap_while_its_run_is_live(tmp_path: Path):
@@ -1198,7 +1198,7 @@ async def test_a_fork_is_not_displaced_by_the_cap_while_its_run_is_live(tmp_path
 
     _ = await manager.acquire("conv-other")
 
-    assert safe_key(_CHILD) in manager._sessions
+    assert safe_key(_CHILD) in manager.sessions
     assert (child.workspace / "notes.txt").exists()
 
 
@@ -1209,7 +1209,7 @@ async def test_taking_a_fork_does_not_displace_the_parent_it_was_forked_from(tmp
     vault = await _vault(tmp_path)
     manager, parent, _child = await _forked(tmp_path, vault, max_sessions=1)
 
-    assert parent.key in manager._sessions
+    assert parent.key in manager.sessions
     assert (parent.workspace / "notes.txt").exists()
 
 
@@ -1222,9 +1222,9 @@ async def test_the_sweep_leaves_a_fork_whose_run_is_still_live_alone(tmp_path: P
     manager, _parent, child = await _forked(tmp_path, vault, idle_ttl_s=0.0)
     child.hold(_Work())
 
-    await manager._sweep()
+    await manager.sweep()
 
-    assert safe_key(_CHILD) in manager._sessions
+    assert safe_key(_CHILD) in manager.sessions
     assert (child.workspace / "notes.txt").exists()
 
 
@@ -1235,24 +1235,24 @@ async def test_the_sweep_discards_a_stranded_fork_instead_of_keeping_it(tmp_path
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
     safe = safe_key("conv-parent#d9")
-    stranded = manager._work_root / safe
+    stranded = manager.work_root / safe
     stranded.mkdir(parents=True)
     _ = (stranded / "notes.txt").write_text("a delegated agent's leftovers")
     fork_marker(stranded).touch()
 
-    await manager._sweep()
+    await manager.sweep()
 
-    assert not (manager._sealed_root / f"{safe}.tar.enc.gz").exists()
+    assert not (manager.sealed_root / f"{safe}.tar.enc.gz").exists()
     assert not stranded.exists()
     assert not fork_marker(stranded).exists()
-    assert not manager._tearing_down
+    assert not manager.tearing_down
 
 
 # --- what an unclean shutdown leaves behind ----------------------------------
 def _strand_fork(manager: SandboxSessionManager, key: str) -> Path:
     """A delegated fork on disk with nobody left to merge it — what a crash mid-
     delegation leaves behind."""
-    workspace = manager._work_root / safe_key(key)
+    workspace = manager.work_root / safe_key(key)
     workspace.mkdir(parents=True)
     _ = (workspace / "notes.txt").write_text("a sub-agent's copy of its parent's files")
     fork_marker(workspace).touch()
@@ -1264,14 +1264,14 @@ async def test_sweep_leaves_a_stranded_conversation_workspace_alone(tmp_path: Pa
     waiting for its next turn. Collecting it would be deleting the agent's work."""
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault)
-    orphan = manager._work_root / safe_key("conv-orphan")
+    orphan = manager.work_root / safe_key("conv-orphan")
     orphan.mkdir(parents=True)
     _ = (orphan / "notes.txt").write_text("the last process died before it could finish")
 
-    await manager._sweep()
+    await manager.sweep()
 
     assert (orphan / "notes.txt").read_text() == "the last process died before it could finish"
-    assert not manager._sessions  # and nothing was revived as a session either
+    assert not manager.sessions  # and nothing was revived as a session either
 
 
 async def test_sweep_collects_a_stranded_delegated_fork(tmp_path: Path):
@@ -1282,12 +1282,12 @@ async def test_sweep_collects_a_stranded_delegated_fork(tmp_path: Path):
     manager = _manager(tmp_path, vault)
     orphan = _strand_fork(manager, "conv-a/deleg-1")
 
-    await manager._sweep()
+    await manager.sweep()
 
     assert not orphan.exists()
     assert not fork_marker(orphan).exists()
-    assert not manager._sessions  # collecting one does not revive it as a session
-    assert not manager._tearing_down  # the tombstone it went through is released
+    assert not manager.sessions  # collecting one does not revive it as a session
+    assert not manager.tearing_down  # the tombstone it went through is released
 
 
 async def test_sweep_collects_stranded_forks_a_slice_at_a_time(tmp_path: Path):
@@ -1299,14 +1299,14 @@ async def test_sweep_collects_stranded_forks_a_slice_at_a_time(tmp_path: Path):
     manager = _manager(tmp_path, vault)
     forks = [
         _strand_fork(manager, f"conv-a/deleg-{i}")
-        for i in range(manager_mod._ORPHAN_FORKS_PER_SWEEP + 2)
+        for i in range(manager_mod.ORPHAN_FORKS_PER_SWEEP + 2)
     ]
 
-    await manager._sweep()
-    assert sum(not f.exists() for f in forks) == manager_mod._ORPHAN_FORKS_PER_SWEEP
-    assert not manager._tearing_down  # and every tombstone in the slice is released
+    await manager.sweep()
+    assert sum(not f.exists() for f in forks) == manager_mod.ORPHAN_FORKS_PER_SWEEP
+    assert not manager.tearing_down  # and every tombstone in the slice is released
 
-    await manager._sweep()
+    await manager.sweep()
 
     assert not any(f.exists() for f in forks)
 
@@ -1325,9 +1325,9 @@ async def test_a_stranded_forks_failed_teardown_releases_its_tombstone(
     manager = _manager(tmp_path, vault)
     orphan = _strand_fork(manager, "conv-a/deleg-1")
 
-    await manager._sweep()
+    await manager.sweep()
 
-    assert not manager._tearing_down
+    assert not manager.tearing_down
     assert orphan.exists()  # not collected, and retried by the next sweep
     assert await asyncio.wait_for(manager.acquire("conv-a/deleg-1"), timeout=1.0)
 
@@ -1374,7 +1374,7 @@ async def test_sweep_does_not_touch_a_workspace_its_own_session_still_holds(tmp_
     _ = session.ensure_workspace()
     _ = (session.workspace / "wip.txt").write_text("still working")
 
-    await manager._sweep()
+    await manager.sweep()
 
     assert (session.workspace / "wip.txt").exists()
     assert manager.existing("conv-live") is session

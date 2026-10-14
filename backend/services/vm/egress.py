@@ -171,6 +171,10 @@ class EgressGateway:
             credentials = self._standing[allow_dir] = self.grant(allow_dir)
         return credentials
 
+    def grant_for(self, credentials: str) -> Grant | None:
+        """The grant ``credentials`` name, or ``None`` once revoked."""
+        return self._grants.get(credentials.partition(":")[2])
+
     def revoke(self, credentials: str) -> None:
         _ = self._grants.pop(credentials.partition(":")[2], None)
 

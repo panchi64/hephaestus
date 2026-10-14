@@ -19,7 +19,7 @@ import pytest
 
 from core.exceptions import InvalidInputError, NotFoundError, PermissionDeniedError
 from services import host_open
-from services.host_open import _Opener
+from services.host_open import Opener
 from tests._helpers import client_app
 from tests._json import json_body, s
 
@@ -138,7 +138,7 @@ class TestOpener:
     async def test_the_path_is_one_argument_never_a_command_line(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr(host_open, "_resolve", lambda: _Opener("open", "open"))
+        monkeypatch.setattr(host_open, "resolve", lambda: Opener("open", "open"))
         seen = _spawns(monkeypatch, _FakeProc(0))
         target = tmp_path / "a file; rm -rf ~.txt"
         await host_open.open_path(target)
@@ -149,7 +149,7 @@ class TestOpener:
     ):
         # The one argv that isn't `<program> <path>`; getting it wrong would open
         # nothing on a desktop that has gio and no xdg-open.
-        monkeypatch.setattr(host_open, "_resolve", lambda: _Opener("gio", "gio"))
+        monkeypatch.setattr(host_open, "resolve", lambda: Opener("gio", "gio"))
         seen = _spawns(monkeypatch, _FakeProc(0))
         await host_open.open_path(tmp_path / "f.txt")
         assert seen == [["gio", "open", str(tmp_path / "f.txt")]]
@@ -157,14 +157,14 @@ class TestOpener:
     async def test_a_host_with_no_opener_says_so(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr(host_open, "_resolve", lambda: None)
+        monkeypatch.setattr(host_open, "resolve", lambda: None)
         with pytest.raises(RuntimeError):
             await host_open.open_path(tmp_path / "f.txt")
 
     async def test_a_failed_open_is_reported_rather_than_swallowed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr(host_open, "_resolve", lambda: _Opener("xdg-open", "xdg-open"))
+        monkeypatch.setattr(host_open, "resolve", lambda: Opener("xdg-open", "xdg-open"))
         _ = _spawns(monkeypatch, _FakeProc(3))
         with pytest.raises(RuntimeError, match="no application is registered"):
             await host_open.open_path(tmp_path / "f.txt")
@@ -174,7 +174,7 @@ class TestOpener:
     ):
         # `explorer` reports a nonzero exit on a perfectly successful open, so reading
         # its code as a failure would make every Windows open look broken.
-        monkeypatch.setattr(host_open, "_resolve", lambda: _Opener("explorer", "explorer"))
+        monkeypatch.setattr(host_open, "resolve", lambda: Opener("explorer", "explorer"))
         _ = _spawns(monkeypatch, _FakeProc(1))
         await host_open.open_path(tmp_path / "f.txt")
 
@@ -184,14 +184,14 @@ class TestOpener:
         # Some handlers stay attached to the editor they launched. The file is open;
         # waiting for the editor to be closed would hang the request.
         monkeypatch.setattr(host_open, "_LAUNCH_TIMEOUT_S", 0.05)
-        monkeypatch.setattr(host_open, "_resolve", lambda: _Opener("open", "open"))
+        monkeypatch.setattr(host_open, "resolve", lambda: Opener("open", "open"))
         _ = _spawns(monkeypatch, _FakeProc(0, hangs=True))
         await host_open.open_path(tmp_path / "f.txt")
         # The wait carries on behind the request rather than being dropped, so the child
         # is reaped when the editor finally exits.
-        assert host_open._reapers
+        assert host_open.reapers
         await asyncio.sleep(_HANG_S * 2)
-        assert not host_open._reapers
+        assert not host_open.reapers
 
 
 class TestOpenRoute:
@@ -274,7 +274,7 @@ class TestOpenRoute:
     async def test_a_host_with_no_opener_answers_409(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr("services.host_open._resolve", lambda: None)
+        monkeypatch.setattr("services.host_open.resolve", lambda: None)
         async with client_app() as (client, _app):
             root = tmp_path / "acme-api"
             root.mkdir()

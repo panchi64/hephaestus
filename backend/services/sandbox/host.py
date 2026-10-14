@@ -65,7 +65,7 @@ class HostConfinement:
 # the outcome cached: the answer cannot change between commands, and re-deciding per call
 # would re-run the dependency probe on a hot path.
 _resolved: HostConfinement | None = None
-# Guards the configure-once: `_configure` awaits, so two approvals resolving at the same
+# Guards the configure-once: `configure` awaits, so two approvals resolving at the same
 # moment would both pass a bare `is None` check and initialize the singleton twice.
 _resolve_lock = asyncio.Lock()
 
@@ -170,7 +170,7 @@ async def resolve_confinement(settings: Settings) -> HostConfinement:
     async with _resolve_lock:
         if (cached := _cached()) is not None:  # settled while this call waited for the lock
             return cached
-        resolved = await _configure(settings)
+        resolved = await configure(settings)
         if not resolved.active:
             # Worth one line: an operator who believes their host commands are fenced
             # should not have to read a tool result to discover otherwise.
@@ -179,7 +179,7 @@ async def resolve_confinement(settings: Settings) -> HostConfinement:
         return resolved
 
 
-async def _configure(settings: Settings) -> HostConfinement:
+async def configure(settings: Settings) -> HostConfinement:
     if not settings.host_command_sandbox_enabled:
         return HostConfinement(False, "disabled by configuration")
     try:

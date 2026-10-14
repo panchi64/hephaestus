@@ -140,7 +140,7 @@ def _live(manager: BrowserSessionManager, key: str, page: _FakePage | None = Non
         None,
         session.page.context,
     )
-    manager._sessions[key] = live  # noqa: SLF001 — constructing the state under test
+    manager.sessions[key] = live  # constructing the state under test
     return live
 
 
@@ -279,7 +279,7 @@ async def test_a_session_whose_window_is_gone_is_not_handed_out_again():
 async def test_an_idle_session_is_reaped():
     manager = _manager(_FakeHost(), idle_ttl_s=0.0)
     live = _live(manager, "c1")
-    await manager._sweep()  # noqa: SLF001 — driving the reaper directly, no clock wait
+    await manager.sweep()  # driving the reaper directly, no clock wait
 
     assert manager.existing("c1") is None
     assert _fake(live).exited
@@ -293,11 +293,11 @@ async def test_the_operators_own_browsing_counts_as_use():
 
     _fake(events).events_recorded += 1
     _fake(navigation).page.url = "https://example.com/billing"
-    await manager._sweep()  # noqa: SLF001
+    await manager.sweep()
 
     assert manager.existing("c1") is events and manager.existing("c2") is navigation
 
-    await manager._sweep()  # noqa: SLF001 — nothing moved this time
+    await manager.sweep()  # nothing moved this time
 
     assert manager.existing("c1") is None and manager.existing("c2") is None
 
@@ -309,7 +309,7 @@ async def test_a_window_with_no_tabs_left_is_released():
     live = _live(manager, "c1")
     _context(live).pages.clear()
 
-    await manager._sweep()  # noqa: SLF001
+    await manager.sweep()
 
     assert manager.existing("c1") is None
     assert _fake(live).exited
@@ -326,13 +326,13 @@ async def test_a_tab_the_operator_opened_keeps_the_session_alive():
     _fake(live).pages = []  # never held their tab
     _fake(live).page = theirs
 
-    await manager._sweep()  # noqa: SLF001
+    await manager.sweep()
 
     assert manager.existing("c1") is live
 
     # And what they do in it counts as use, the same way the agent's own tab does.
     theirs.url = "https://example.com/inbox/1"
-    await manager._sweep()  # noqa: SLF001
+    await manager.sweep()
 
     assert manager.existing("c1") is live
 
@@ -345,7 +345,7 @@ async def test_the_browser_going_away_reaps_every_session():
     first, second = _live(manager, "c1"), _live(manager, "c2")
 
     host.fake_cdp_url = None
-    await manager._sweep()  # noqa: SLF001
+    await manager.sweep()
 
     assert manager.existing("c1") is None and manager.existing("c2") is None
     assert _fake(first).exited and _fake(second).exited
@@ -354,10 +354,10 @@ async def test_the_browser_going_away_reaps_every_session():
 async def test_the_live_cap_evicts_the_least_recently_used():
     manager = _manager(_FakeHost(), max_live=2)
     oldest, middle, newest = (_live(manager, k) for k in ("c1", "c2", "c3"))
-    oldest._last_used -= 100  # noqa: SLF001 — make the LRU order unambiguous
-    middle._last_used -= 50  # noqa: SLF001
+    oldest.last_used -= 100  # make the LRU order unambiguous
+    middle.last_used -= 50
 
-    await manager._enforce_cap()  # noqa: SLF001
+    await manager.enforce_cap()
 
     assert manager.existing("c1") is None
     assert manager.existing("c2") is middle
@@ -371,14 +371,14 @@ async def test_creation_locks_do_not_accumulate_forever():
     manager = _manager(_FakeHost(cdp_url=None), idle_ttl_s=0.0)
     for key in ("c1", "c2", "c3"):
         _ = await manager.acquire(key)  # degrades (no browser), but takes a lock on the way
-    assert len(manager._creating) == 3  # noqa: SLF001
+    assert len(manager.creating) == 3
 
     live = _live(manager, "c4")
-    _ = manager._creating.setdefault("c4", asyncio.Lock())  # noqa: SLF001
-    await manager._sweep()  # noqa: SLF001
+    _ = manager.creating.setdefault("c4", asyncio.Lock())
+    await manager.sweep()
 
     # The three that hold nothing are gone; c4's went with its own reaped session.
-    assert manager._creating == {}  # noqa: SLF001
+    assert manager.creating == {}
     assert _fake(live).exited
 
 
@@ -466,7 +466,7 @@ async def test_a_new_session_gets_a_new_binding():
     before = await toolset.bind("navigate", _ctx(caps, "c1"))
     await manager.release("c1")
     _ = _live(manager, "c1", page=_FakePage(url="https://example.com/after"))
-    manager._sessions["c1"].token = "token-fresh"  # noqa: SLF001 — a genuinely new session
+    manager.sessions["c1"].token = "token-fresh"  # a genuinely new session
     after = await toolset.bind("navigate", _ctx(caps, "c1"))
 
     assert before is not after
@@ -537,7 +537,7 @@ async def test_an_idle_reap_leaves_no_such_record():
     manager = _manager(_FakeHost(), idle_ttl_s=0.0)
     _ = _live(manager, "c1")
 
-    await manager._sweep()  # noqa: SLF001
+    await manager.sweep()
 
     assert manager.existing("c1") is None
     assert not manager.closed("c1")
@@ -553,7 +553,7 @@ async def test_the_browser_going_away_is_not_the_operators_doing():
     _ = _live(manager, "c1")
     host.fake_cdp_url = None
 
-    await manager._sweep()  # noqa: SLF001
+    await manager.sweep()
 
     assert not manager.closed("c1")
 

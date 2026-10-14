@@ -92,9 +92,19 @@ class BrowserSessionManager:
         self._reaper: PeriodicTask = PeriodicTask(
             "browser-reaper",
             interval_s=reap_interval_s,
-            work=self._sweep,
+            work=self.sweep,
             logger=logger,
         )
+
+    @property
+    def sessions(self) -> dict[str, LiveBrowser]:
+        """The live sessions by conversation key; mutated only under this manager's lock."""
+        return self._sessions
+
+    @property
+    def creating(self) -> dict[str, asyncio.Lock]:
+        """The per-conversation creation locks."""
+        return self._creating
 
     # ── lookup ───────────────────────────────────────────────────────────────────
 
@@ -147,7 +157,7 @@ class BrowserSessionManager:
                     self._closed.discard(key)
                     async with self._lock:
                         self._sessions[key] = live
-                    await self._enforce_cap()
+                    await self.enforce_cap()
         live.touch()
         return live
 
@@ -222,7 +232,7 @@ class BrowserSessionManager:
         with contextlib.suppress(OSError):
             self.profile.forget()
 
-    async def _enforce_cap(self) -> None:
+    async def enforce_cap(self) -> None:
         """Evict least-recently-used sessions past the cap.
 
         Each live session holds a Playwright driver subprocess and a browser context in the
@@ -278,7 +288,7 @@ class BrowserSessionManager:
         for live in sessions:
             await live.teardown()
 
-    async def _sweep(self) -> None:
+    async def sweep(self) -> None:
         """Reap what nobody is using, and save what somebody is.
 
         A session ends here when the browser went away (a VM reset, offline mode), when

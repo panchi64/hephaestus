@@ -90,6 +90,13 @@ class ManagedSearxng:
         """The instance's URL once reachable, else ``None`` (degrade web search)."""
         return self._base_url
 
+    async def wait_available(self, timeout_s: float) -> bool:
+        """Wait up to ``timeout_s`` for a bring-up in progress to finish."""
+        task = self._task
+        if task is not None and self._base_url is None:
+            _ = await asyncio.wait({task}, timeout=timeout_s)
+        return self._base_url is not None
+
     async def start(self) -> None:
         """Begin bring-up. Returns immediately — waiting for the VM and launching the
         service run in a background task so app startup is never blocked. A no-op when
@@ -134,7 +141,7 @@ class ManagedSearxng:
             return
         _ = await vm.wait_ready(float("inf"))
         try:
-            await vm.put_text(_SETTINGS_PATH, self._settings(vm.layout.platform_proxy))
+            await vm.put_text(_SETTINGS_PATH, self.settings(vm.layout.platform_proxy))
             await vm.stop_service(_SERVICE)
             await vm.start_service(
                 _SERVICE,
@@ -153,7 +160,7 @@ class ManagedSearxng:
         self._base_url = f"http://127.0.0.1:{host_port}"
         logger.info("search: managed SearXNG ready at %s", self._base_url)
 
-    def _settings(self, proxy: str) -> str:
+    def settings(self, proxy: str) -> str:
         """The settings file, with a secret key persisted across boots."""
         self._dir.mkdir(parents=True, exist_ok=True)
         key_file = self._dir / "secret_key"

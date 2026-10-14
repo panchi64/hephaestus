@@ -212,6 +212,39 @@ class SandboxSession:
     def preview(self) -> PreviewHandle | None:
         return self._preview
 
+    @preview.setter
+    def preview(self, handle: PreviewHandle | None) -> None:
+        self._preview = handle
+
+    @property
+    def last_used(self) -> float:
+        """The monotonic time of the last call on this session."""
+        return self._last_used
+
+    @last_used.setter
+    def last_used(self, value: float) -> None:
+        self._last_used = value
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        """The lock that spans one call; held while a call is in flight."""
+        return self._lock
+
+    @property
+    def disk_lock(self) -> threading.RLock:
+        """The thread lock that orders the multi-step disk transitions on this workspace."""
+        return self._disk
+
+    @property
+    def credentials(self) -> str | None:
+        """The egress proxy credentials granted to this session, or ``None`` when it holds none."""
+        return self._credentials
+
+    @property
+    def egress_dir(self) -> Path:
+        """This workspace's allowlist directory."""
+        return self._egress_dir
+
     def touch(self) -> None:
         self._last_used = time.monotonic()
 

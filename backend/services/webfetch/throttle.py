@@ -43,6 +43,10 @@ class DomainThrottle:
         self._min_interval_s: float = min_interval_s
         self._slots: dict[str, _Slot] = {}  # host -> its lock + last-finish time
 
+    def tracks(self, host: str) -> bool:
+        """Whether ``host`` still has a slot in the pruned table."""
+        return host in self._slots
+
     @asynccontextmanager
     async def slot(self, url: str) -> AsyncGenerator[None]:
         """Acquire this host's politeness slot: serialize with other same-host fetches and

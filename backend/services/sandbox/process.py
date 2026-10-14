@@ -39,7 +39,7 @@ _GRACE_S = 2.0
 #: reaped, and the group lives on — nothing else remembers it, so without this a quit app
 #: left every such server running on the operator's machine. Pruned on each spawn, so it
 #: never grows past what is actually running.
-_groups: dict[int, asyncio.subprocess.Process] = {}
+groups: dict[int, asyncio.subprocess.Process] = {}
 
 
 def _group_alive(pgid: int) -> bool:
@@ -62,7 +62,7 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
-def _group_is_ours(pgid: int, leader: asyncio.subprocess.Process) -> bool:
+def group_is_ours(pgid: int, leader: asyncio.subprocess.Process) -> bool:
     """Whether ``pgid`` still names the group ``leader`` opened, rather than a number the
     OS has since handed to something else.
 
@@ -94,20 +94,20 @@ async def stop_all_groups(grace_s: float = 1.0) -> None:
     """SIGTERM every process group this app started and still has running, give them
     ``grace_s`` to leave, then SIGKILL what remains. Called once, from app shutdown.
 
-    Ownership is re-checked (:func:`_group_is_ours`) before each signal and on every poll
+    Ownership is re-checked (:func:`group_is_ours`) before each signal and on every poll
     of the grace window, not once up front: a group that empties during the grace period
     frees its number, and the SIGKILL pass must not land on whatever claimed it.
     """
-    tracked = dict(_groups)
-    _groups.clear()
-    live = {g: p for g, p in tracked.items() if _group_is_ours(g, p)}
+    tracked = dict(groups)
+    groups.clear()
+    live = {g: p for g, p in tracked.items() if group_is_ours(g, p)}
     for pgid in live:
         with contextlib.suppress(OSError):
             os.killpg(pgid, signal.SIGTERM)
     deadline = asyncio.get_running_loop().time() + grace_s
     while live and asyncio.get_running_loop().time() < deadline:
         await asyncio.sleep(0.05)
-        live = {g: p for g, p in live.items() if _group_is_ours(g, p)}
+        live = {g: p for g, p in live.items() if group_is_ours(g, p)}
     for pgid in live:
         with contextlib.suppress(OSError):
             os.killpg(pgid, signal.SIGKILL)
@@ -204,11 +204,11 @@ async def spawn_confined(
         start_new_session=True,  # own process group, so we can kill the whole tree
     )
     # The session leader's pid is the group id. Recorded so app shutdown can reach a
-    # backgrounded child whose shell has long since exited (see ``_groups``).
-    for pgid, leader in list(_groups.items()):
-        if not _group_is_ours(pgid, leader):
-            del _groups[pgid]
-    _groups[proc.pid] = proc
+    # backgrounded child whose shell has long since exited (see ``groups``).
+    for pgid, leader in list(groups.items()):
+        if not group_is_ours(pgid, leader):
+            del groups[pgid]
+    groups[proc.pid] = proc
     return proc
 
 

@@ -19,17 +19,17 @@ from typing import Literal
 import pytest
 
 from services import host_picker
-from services.host_picker import PickMode, _Helper
+from services.host_picker import Helper, PickMode
 
 type _Kind = Literal["osascript", "zenity", "kdialog", "powershell"]
 
 
 def _no_helper(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(host_picker, "_resolve", lambda: None)
+    monkeypatch.setattr(host_picker, "resolve", lambda: None)
 
 
 def _helper(monkeypatch: pytest.MonkeyPatch, name: str, kind: _Kind) -> None:
-    monkeypatch.setattr(host_picker, "_resolve", lambda: _Helper(name, kind))
+    monkeypatch.setattr(host_picker, "resolve", lambda: Helper(name, kind))
 
 
 def _which_everything(name: str) -> str:
@@ -70,14 +70,14 @@ def test_probe_names_the_tool_it_would_use(monkeypatch: pytest.MonkeyPatch):
 def test_resolution_prefers_osascript_on_macos(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(platform, "system", lambda: "Darwin")
     monkeypatch.setattr(shutil, "which", _which_everything)
-    helper = host_picker._resolve()
+    helper = host_picker.resolve()
     assert helper is not None and helper.kind == "osascript"
 
 
 def test_resolution_finds_a_linux_chooser_in_order(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     monkeypatch.setattr(shutil, "which", _which_only("kdialog"))
-    helper = host_picker._resolve()
+    helper = host_picker.resolve()
     assert helper is not None and helper.name == "kdialog"
 
 
@@ -86,7 +86,7 @@ def test_a_linux_server_with_no_desktop_chooser_resolves_to_nothing(
 ):
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     monkeypatch.setattr(shutil, "which", _which_nothing)
-    assert host_picker._resolve() is None
+    assert host_picker.resolve() is None
 
 
 async def test_pick_raises_when_no_chooser_exists(monkeypatch: pytest.MonkeyPatch):
@@ -108,7 +108,7 @@ def _argv(
     start_dir: str | None = None,
     extensions: list[str] | None = None,
 ) -> list[str]:
-    return host_picker._build_argv(_Helper("tool", kind), mode, title, start_dir, extensions)
+    return host_picker.build_argv(Helper("tool", kind), mode, title, start_dir, extensions)
 
 
 def test_osascript_chooses_a_folder_or_a_file_by_mode():
@@ -166,8 +166,8 @@ def _script_helper(monkeypatch: pytest.MonkeyPatch, body: str) -> None:
     def script_argv(*_args: object, **_kwargs: object) -> list[str]:
         return [sys.executable, "-c", body]
 
-    monkeypatch.setattr(host_picker, "_resolve", lambda: _Helper(sys.executable, "zenity"))
-    monkeypatch.setattr(host_picker, "_build_argv", script_argv)
+    monkeypatch.setattr(host_picker, "resolve", lambda: Helper(sys.executable, "zenity"))
+    monkeypatch.setattr(host_picker, "build_argv", script_argv)
 
 
 async def test_a_chosen_path_comes_back_stripped(monkeypatch: pytest.MonkeyPatch):
@@ -233,7 +233,7 @@ async def test_only_one_dialog_opens_at_a_time(monkeypatch: pytest.MonkeyPatch):
         live -= 1
         return "/tmp/x"
 
-    monkeypatch.setattr(host_picker, "_resolve", lambda: _Helper("zenity", "zenity"))
+    monkeypatch.setattr(host_picker, "resolve", lambda: Helper("zenity", "zenity"))
     monkeypatch.setattr(host_picker, "_run", fake_run)
     _ = await asyncio.gather(*(host_picker.pick("file") for _ in range(4)))
     assert peak == 1

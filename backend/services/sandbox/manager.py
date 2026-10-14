@@ -69,7 +69,7 @@ _SESSION_STOP_TIMEOUT_S = 10.0
 # show the operator — so the batch is kept to a couple of rounds rather than however
 # many a crashed process happened to leave. The next sweep takes the next slice, which
 # is soon enough for directories nobody is waiting on.
-_ORPHAN_FORKS_PER_SWEEP = 2 * _TEARDOWN_CONCURRENCY
+ORPHAN_FORKS_PER_SWEEP = 2 * _TEARDOWN_CONCURRENCY
 
 
 #: A session taken out of the live map and awaiting its teardown, with the event that
@@ -126,7 +126,7 @@ class SandboxSessionManager:
         self._reaper: PeriodicTask = PeriodicTask(
             "sandbox-reaper",
             interval_s=reap_interval_s,
-            work=self._sweep,
+            work=self.sweep,
             logger=logger,
         )
         # Teardowns in flight, owned by the manager rather than by whoever triggered
@@ -139,6 +139,46 @@ class SandboxSessionManager:
         """Whether the platform VM is still coming up — lets a caller (e.g. the
         ``code_execute`` tool) tell an ordinary cold start from one waiting on the VM."""
         return not self._vm.available and self._vm.failure is None
+
+    @property
+    def sessions(self) -> dict[str, SandboxSession]:
+        """The live sessions by safe key; mutated only under this manager's lock."""
+        return self._sessions
+
+    @property
+    def tearing_down(self) -> dict[str, asyncio.Event]:
+        """The tombstones of keys whose session teardown is in flight."""
+        return self._tearing_down
+
+    @property
+    def teardowns(self) -> set[asyncio.Task[None]]:
+        """The teardown tasks still running."""
+        return self._teardowns
+
+    @property
+    def preview_tokens(self) -> PreviewTokens:
+        """The preview token index."""
+        return self._preview_tokens
+
+    @property
+    def work_root(self) -> Path:
+        """The directory holding every conversation's workspace."""
+        return self._work_root
+
+    @property
+    def sealed_root(self) -> Path:
+        """The directory that held sealed workspace archives."""
+        return self._sealed_root
+
+    @property
+    def egress(self) -> EgressPolicy:
+        """The allowlist policy workspaces are fenced by."""
+        return self._egress
+
+    @property
+    def reaper(self) -> PeriodicTask:
+        """The periodic task that sweeps idle sessions."""
+        return self._reaper
 
     def existing(self, key: str) -> SandboxSession | None:
         """The live session for a conversation if one exists, **without creating** it,
@@ -557,7 +597,7 @@ class SandboxSessionManager:
             self._sessions.clear()
             self._preview_tokens.clear()
 
-    async def _sweep(self) -> None:
+    async def sweep(self) -> None:
         now = time.monotonic()
         async with self._lock:
             # A claimed fork is the one thing time may not collect. Reaping an ordinary
@@ -607,7 +647,7 @@ class SandboxSessionManager:
             # the answer — which is the whole reason the key discovery takes them as an
             # argument rather than reaching for them itself.
             taken = self._sessions.keys() | self._tearing_down.keys()
-            for safe in orphan_fork_keys(self._work_root, taken)[:_ORPHAN_FORKS_PER_SWEEP]:
+            for safe in orphan_fork_keys(self._work_root, taken)[:ORPHAN_FORKS_PER_SWEEP]:
                 event = asyncio.Event()
                 self._tearing_down[safe] = event
                 session = self._new_session(safe, self._egress.dir_for(safe), ephemeral=True)

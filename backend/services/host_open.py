@@ -54,14 +54,14 @@ _LAUNCH_TIMEOUT_S = 10.0
 
 
 @dataclass(frozen=True)
-class _Opener:
+class Opener:
     """One host's "open this with whatever handles it" program."""
 
     name: str
     kind: Literal["open", "explorer", "xdg-open", "gio"]
 
 
-def _resolve() -> _Opener | None:
+def resolve() -> Opener | None:
     """The opener available here, or ``None`` on a host that has none.
 
     Deliberately the *desktop's* choice of application rather than ``$EDITOR``: the
@@ -70,18 +70,18 @@ def _resolve() -> _Opener | None:
     """
     system = platform.system()
     if system == "Darwin":
-        return _Opener("open", "open") if shutil.which("open") else None
+        return Opener("open", "open") if shutil.which("open") else None
     if system == "Windows":
         # `explorer <path>` is the shell's own "open with the registered handler", and it
         # is always present — unlike a chooser, there is no fallback to look for.
-        return _Opener("explorer", "explorer") if shutil.which("explorer") else None
+        return Opener("explorer", "explorer") if shutil.which("explorer") else None
     candidates: tuple[tuple[str, Literal["xdg-open", "gio"]], ...] = (
         ("xdg-open", "xdg-open"),
         ("gio", "gio"),
     )
     for name, kind in candidates:
         if shutil.which(name):
-            return _Opener(name, kind)
+            return Opener(name, kind)
     return None
 
 
@@ -151,7 +151,7 @@ async def open_path(target: Path) -> None:
     caller says so in words, because a control that silently does nothing is worse than
     one that explains why it couldn't.
     """
-    opener = _resolve()
+    opener = resolve()
     if opener is None:
         raise RuntimeError(_unavailable_reason())
     # `gio` is the only one whose verb is a subcommand rather than the program itself.
@@ -183,7 +183,7 @@ async def open_path(target: Path) -> None:
 #: Waits still outliving the request that started them. Held so the tasks are not
 #: garbage-collected mid-flight, which is the documented way to keep a fire-and-forget
 #: task alive; each one drops itself when the application it is attached to exits.
-_reapers: set[asyncio.Task[int]] = set()
+reapers: set[asyncio.Task[int]] = set()
 
 
 def _reap_later(proc: asyncio.subprocess.Process) -> None:
@@ -194,8 +194,8 @@ def _reap_later(proc: asyncio.subprocess.Process) -> None:
     the log of every long-lived editor the operator opens a file in.
     """
     reaper = asyncio.create_task(proc.wait())
-    _reapers.add(reaper)
-    reaper.add_done_callback(_reapers.discard)
+    reapers.add(reaper)
+    reaper.add_done_callback(reapers.discard)
 
 
 #: `xdg-open`'s documented exit codes. Worth translating: "exit 3" tells the operator
@@ -207,7 +207,7 @@ _XDG_REASONS = {
 }
 
 
-def _failure_reason(opener: _Opener, code: int, target: Path) -> str:
+def _failure_reason(opener: Opener, code: int, target: Path) -> str:
     detail = _XDG_REASONS.get(code) if opener.kind in ("xdg-open", "gio") else None
     tail = detail or f"{opener.name} exited with {code}"
     return f"couldn't open {target.name}: {tail}"

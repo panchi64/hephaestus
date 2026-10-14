@@ -26,7 +26,7 @@ class TestWhereTheToolRunsACommand:
         workspace = RunWorkspace(
             root=tmp_path, kind="worktree", files=HostFiles(tmp_path), branch=BRANCH
         )
-        boundary = shell_tool._boundary("run_command", command, reach, workspace)
+        boundary = shell_tool.boundary("run_command", command, reach, workspace)
         assert boundary.reach == reach
         assert boundary.fenced is (boundary.where == "vm")
         assert (boundary.reason is None) is boundary.fenced

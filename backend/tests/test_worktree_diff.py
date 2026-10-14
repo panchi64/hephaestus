@@ -194,7 +194,7 @@ class TestStaleness:
         manager = _manager(tmp_path)
         _ = await manager.acquire(project_id="p1", root=root, base_ref="main", conversation_id="c1")
 
-        ahead, behind = await manager._divergence(
+        ahead, behind = await manager.divergence(
             root, base_ref="no-such-ref", branch=branch_for("c1")
         )
 

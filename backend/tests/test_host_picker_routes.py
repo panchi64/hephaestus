@@ -16,7 +16,7 @@ from tests._json import json_body
 async def test_file_picker_availability_is_reported_either_way(monkeypatch: pytest.MonkeyPatch):
     # The UI only shows a BROWSE control when this says yes; the path field works
     # regardless, so an unavailable chooser is a clean answer, never an error.
-    monkeypatch.setattr("services.host_picker._resolve", lambda: None)
+    monkeypatch.setattr("services.host_picker.resolve", lambda: None)
     async with client_app() as (client, _app):
         body = json_body(await client.get("/host/file-picker"))
         assert body["available"] is False
@@ -24,7 +24,7 @@ async def test_file_picker_availability_is_reported_either_way(monkeypatch: pyte
 
 
 async def test_opening_a_chooser_on_a_host_without_one_is_a_409(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("services.host_picker._resolve", lambda: None)
+    monkeypatch.setattr("services.host_picker.resolve", lambda: None)
     async with client_app() as (client, _app):
         resp = await client.post("/host/file-picker", json={"mode": "directory"})
         assert resp.status_code == 409

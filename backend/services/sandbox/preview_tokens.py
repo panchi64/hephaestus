@@ -23,7 +23,7 @@ import time
 #: How long a tombstone is worth keeping. Long enough that an operator who leaves a tab
 #: open and comes back still learns what happened to it, short enough that the map is
 #: bounded by the sessions of one sitting.
-_STOPPED_TTL_S = 3600.0
+STOPPED_TTL_S = 3600.0
 
 
 class PreviewTokens:
@@ -58,7 +58,7 @@ class PreviewTokens:
         """Mark a token as stopped-without-a-signal, and prune tombstones that have
         aged out. Called *before* the preview it names is torn down."""
         now = time.monotonic()
-        cutoff = now - _STOPPED_TTL_S
+        cutoff = now - STOPPED_TTL_S
         self._stopped = {t: ts for t, ts in self._stopped.items() if ts > cutoff}
         self._stopped[token] = now
 

@@ -43,7 +43,7 @@ from services.webfetch.fetcher import (
     RenderResponse,
     SnapshotPage,
     WaitUntil,
-    _looks_like_challenge,
+    looks_like_challenge,
 )
 from services.webfetch.throttle import DomainThrottle
 
@@ -248,7 +248,7 @@ async def test_throttle_prune_keeps_a_locked_host(monkeypatch: pytest.MonkeyPatc
     await asyncio.sleep(0.05)  # let it acquire a.com's slot
     async with throttle.slot("https://b.com/"):  # at cap ⇒ triggers a prune
         pass
-    assert "a.com" in throttle._slots  # locked host survived the prune
+    assert throttle.tracks("a.com")  # locked host survived the prune
     release.set()
     await task
 
@@ -257,12 +257,12 @@ async def test_throttle_prune_keeps_a_locked_host(monkeypatch: pytest.MonkeyPatc
 
 
 def test_detects_challenge_interstitial():
-    assert _looks_like_challenge("<title>Just a moment...</title>", "Checking your browser")
-    assert _looks_like_challenge("<div class='challenge-platform'></div>", "")
+    assert looks_like_challenge("<title>Just a moment...</title>", "Checking your browser")
+    assert looks_like_challenge("<div class='challenge-platform'></div>", "")
 
 
 def test_normal_page_is_not_a_challenge():
-    assert not _looks_like_challenge("<h1>Guide</h1>", "Real content about foraging dandelions")
+    assert not looks_like_challenge("<h1>Guide</h1>", "Real content about foraging dandelions")
 
 
 # --- BrowserFetcher: pre-flight + degrade (no browser) ---------------------
@@ -557,7 +557,7 @@ class _SettlePage(SnapshotPage):
 async def test_capture_resnapshots_thin_page_until_content_appears():
     fetcher = BrowserFetcher(browser=_AvailableBrowser(), render_wait_ms=0)
     page = _SettlePage(["thin shell", "RICHBODY " * 6000])  # first snapshot thin, then ~54k
-    _final_url, _html, text = await fetcher._capture("http://93.184.216.34/", page)
+    _final_url, _html, text = await fetcher.capture("http://93.184.216.34/", page)
     assert "RICHBODY" in text  # settled onto the filled-in content
     assert page.waits > 0  # the settle loop actually waited
 
@@ -565,7 +565,7 @@ async def test_capture_resnapshots_thin_page_until_content_appears():
 async def test_capture_fast_path_skips_settle_waits():
     fetcher = BrowserFetcher(browser=_AvailableBrowser(), render_wait_ms=0)
     page = _SettlePage(["RICHBODY " * 6000])  # already rich and stable on the first snapshot
-    _final_url, _html, text = await fetcher._capture("http://93.184.216.34/", page)
+    _final_url, _html, text = await fetcher.capture("http://93.184.216.34/", page)
     assert "RICHBODY" in text
     assert page.waits == 0  # a rich, stable first snapshot pays no extra settle waits
 
@@ -800,9 +800,7 @@ async def _browser_or_skip(tmp_path: Path) -> tuple[ManagedBrowser, PlatformVM]:
         timezone_id="America/New_York",
     )
     await browser.start()
-    assert browser._task is not None  # enabled=True, so start() created it
-    await browser._task
-    if not browser.available:
+    if not await browser.wait_available(600.0):
         await browser.stop()
         await vm.stop()
         pytest.fail("the browser did not connect in the platform VM")

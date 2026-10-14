@@ -74,7 +74,7 @@ def _request(
 
 
 def _populate(manager: SandboxSessionManager, key: str, files: dict[str, str]) -> Path:
-    root = manager._work_root / safe_key(key)
+    root = manager.work_root / safe_key(key)
     for rel, text in files.items():
         target = root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -239,8 +239,8 @@ async def test_it_creates_neither_a_session_nor_a_directory(tmp_path: Path):
 
     assert await workspace_context(_request(caps)) == ""
 
-    assert manager._sessions == {}
-    assert not manager._work_root.exists()
+    assert manager.sessions == {}
+    assert not manager.work_root.exists()
 
 
 async def test_a_delegated_run_is_described_its_own_fork(tmp_path: Path):

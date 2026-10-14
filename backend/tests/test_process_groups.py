@@ -26,9 +26,9 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process g
 
 @pytest.fixture(autouse=True)
 def _clean_groups() -> Iterator[None]:
-    process._groups.clear()
+    process.groups.clear()
     yield
-    process._groups.clear()
+    process.groups.clear()
 
 
 def _leader(returncode: int | None) -> asyncio.subprocess.Process:
@@ -62,7 +62,7 @@ async def test_a_reaped_leader_whose_pid_was_reused_is_never_signalled(
     # The group at this number "exists" and so does a process at it — but our leader is
     # reaped, so whatever holds the number now is someone else's.
     monkeypatch.setattr(process, "_pid_exists", _always_exists)
-    process._groups[4242] = _leader(returncode=0)
+    process.groups[4242] = _leader(returncode=0)
 
     await process.stop_all_groups(grace_s=0.1)
 
@@ -73,7 +73,7 @@ async def test_an_unreaped_leader_still_holds_its_group(
     monkeypatch: pytest.MonkeyPatch, signals: list[tuple[int, int]]
 ):
     monkeypatch.setattr(process, "_pid_exists", _always_exists)
-    process._groups[4242] = _leader(returncode=None)
+    process.groups[4242] = _leader(returncode=None)
 
     await process.stop_all_groups(grace_s=0.1)
 
@@ -89,7 +89,7 @@ async def test_a_group_that_emptied_is_not_signalled(
 
     monkeypatch.setattr(os, "killpg", killpg)
     monkeypatch.setattr(process, "_pid_exists", _never_exists)
-    process._groups[4242] = _leader(returncode=0)
+    process.groups[4242] = _leader(returncode=0)
 
     await process.stop_all_groups(grace_s=0.1)
 
@@ -114,7 +114,7 @@ async def test_ownership_is_rechecked_before_the_kill_pass(
 
     monkeypatch.setattr(process, "_pid_exists", pid_exists)
     monkeypatch.setattr(os, "killpg", killpg)
-    process._groups[4242] = _leader(returncode=0)
+    process.groups[4242] = _leader(returncode=0)
 
     await process.stop_all_groups(grace_s=0.2)
 
@@ -130,7 +130,7 @@ async def test_a_backgrounded_child_outliving_its_shell_is_still_stopped():
     pgid = proc.pid
     _ = await proc.wait()  # the shell is reaped; its child lives on in the group
     try:
-        assert process._group_is_ours(pgid, proc)
+        assert process.group_is_ours(pgid, proc)
 
         await process.stop_all_groups(grace_s=2.0)
 

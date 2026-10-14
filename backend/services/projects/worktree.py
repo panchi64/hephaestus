@@ -414,7 +414,7 @@ class WorktreeManager:
         stat = await run_git_ok(root, "diff", "--shortstat", spec)
         numstat = await run_git_ok(root, "diff", "--numstat", "-M", "-z", spec)
         name_status = await run_git_ok(root, "diff", "--name-status", "-M", "-z", spec)
-        ahead, behind = await self._divergence(root, base_ref=base_ref, branch=branch)
+        ahead, behind = await self.divergence(root, base_ref=base_ref, branch=branch)
         return Diff(
             branch=branch,
             files_changed=_stat_field(stat, "file"),
@@ -427,7 +427,7 @@ class WorktreeManager:
             last_commit_at=await self._last_commit_at(root, branch),
         )
 
-    async def _divergence(self, root: Path, *, base_ref: str, branch: str) -> tuple[int, int]:
+    async def divergence(self, root: Path, *, base_ref: str, branch: str) -> tuple[int, int]:
         """(ahead, behind) — commits the branch has that the base does not, and the
         other way round.
 

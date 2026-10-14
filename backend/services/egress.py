@@ -158,12 +158,13 @@ class EgressPolicy:
         delegation, forever."""
         _ = self._shared.pop(key, None)
 
-    def _fenced_by(self, key: str) -> str:
+    def fenced_by(self, key: str) -> str:
+        """The key whose allowlist fences ``key``: its own, or the parent it shares."""
         return self._shared.get(key, key)
 
     async def allowed_for(self, key: str) -> frozenset[str]:
         """Everything the workspace behind ``key`` may reach."""
-        key = self._fenced_by(key)
+        key = self.fenced_by(key)
         if not key:
             return self._global
 
@@ -190,7 +191,7 @@ class EgressPolicy:
         the approval refuses that retry — which reads, to whoever is watching, as an
         approval that did nothing.
         """
-        key = self._fenced_by(key)
+        key = self.fenced_by(key)
         if not key:
             raise InvalidInputError("egress is granted to a workspace; none was named")
         wanted = sorted({normalise_domain(d) for d in domains})
@@ -248,7 +249,7 @@ class EgressPolicy:
         """The directory holding this workspace's allowlist file. Derived from the same
         ``safe_key`` the session manager names workspaces with, so a
         workspace and its allowlist can never end up under two different tokens."""
-        return self.dir_for(safe_key(self._fenced_by(key)))
+        return self.dir_for(safe_key(self.fenced_by(key)))
 
     def dir_for(self, safe: str) -> Path:
         """The allowlist directory an already-``safe_key``-ed name maps to.

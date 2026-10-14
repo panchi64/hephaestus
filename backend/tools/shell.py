@@ -173,7 +173,7 @@ class _Boundary:
 _HOST_DECLARED = "the command declared `host`, which asks for the operator's machine itself"
 
 
-def _boundary(name: str, command: str, reach: Reach, workspace: RunWorkspace) -> _Boundary:
+def boundary(name: str, command: str, reach: Reach, workspace: RunWorkspace) -> _Boundary:
     """Where this command runs, built from the declaration rather than from a judgement:
     the permission layer answers *who must approve*, and this answers *where it runs*.
 
@@ -324,7 +324,7 @@ def _tools_for(project: ProjectShell, host: HostShell) -> FunctionToolset[RunDep
         workspace = await run_workspace(ctx)
         if workspace is None:  # pragma: no cover — `bind` refuses this before we get here
             return _Boundary(reach=reach, where="vm", network=False, reason=None)
-        return _boundary(name, command, reach, workspace)
+        return boundary(name, command, reach, workspace)
 
     def copies_of(ctx: RunContext[RunDeps]) -> ProjectCopies:
         copies = ctx.deps.caps.get_optional(ProjectCopies)

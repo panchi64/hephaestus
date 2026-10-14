@@ -22,7 +22,7 @@ from services.sandbox import (
     run_on_host,
 )
 from services.sandbox.base import contained_file, contained_path
-from services.sandbox.host import _configure, confine
+from services.sandbox.host import configure, confine
 
 
 # --- paths stay inside the workspace ----------------------------------------
@@ -150,7 +150,7 @@ async def test_host_timeout_kills_the_whole_process_group(tmp_path: Path):
 
 async def test_confinement_is_off_when_the_operator_disables_it():
     settings = Settings(host_command_sandbox_enabled=False)
-    confinement = await _configure(settings)
+    confinement = await configure(settings)
     assert not confinement.active and "disabled" in confinement.reason
 
 
@@ -258,7 +258,7 @@ async def test_confinement_denies_reading_the_data_directory(tmp_path: Path):
     from sandbox_runtime import SandboxManager
 
     try:
-        confinement = await _configure(settings)
+        confinement = await configure(settings)
         if not confinement.active:
             pytest.skip(f"no host sandbox primitive here: {confinement.reason}")
         secret = tmp_path / "keyfile.json"

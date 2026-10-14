@@ -158,11 +158,11 @@ async def test_starting_a_second_preview_replaces_the_first(tmp_path: Path, vm: 
 async def test_resolve_preview_keeps_the_session_warm(tmp_path: Path, vm: FakeVM):
     mgr = _manager(tmp_path, await _vault(tmp_path), vm)
     handle = await mgr.start_preview("conv-a", ["srv"], 8000)
-    session = mgr._sessions[safe_key("conv-a")]
+    session = mgr.sessions[safe_key("conv-a")]
 
-    session._last_used = 0.0  # pretend it went idle
+    session.last_used = 0.0  # pretend it went idle
     _ = mgr.resolve_preview(handle.token)
-    assert session._last_used > 0.0  # a proxied request refreshed it
+    assert session.last_used > 0.0  # a proxied request refreshed it
 
 
 async def test_stop_preview_deindexes_and_tears_down(tmp_path: Path, vm: FakeVM):
@@ -174,16 +174,16 @@ async def test_stop_preview_deindexes_and_tears_down(tmp_path: Path, vm: FakeVM)
     assert mgr.resolve_preview(handle.token) is None
     assert _forward(handle).closed
     assert not vm.background[f"preview-{safe_key('conv-a')}"]["running"]
-    assert mgr._sessions  # the exec session itself survives an explicit stop
+    assert mgr.sessions  # the exec session itself survives an explicit stop
 
 
 async def test_reaping_a_session_stops_its_preview_and_drops_the_token(tmp_path: Path, vm: FakeVM):
     mgr = _manager(tmp_path, await _vault(tmp_path), vm, idle_ttl_s=0.0)
     handle = await mgr.start_preview("conv-a", ["srv"], 8000)
 
-    await mgr._sweep()  # idle past TTL → reaped
+    await mgr.sweep()  # idle past TTL → reaped
 
-    assert not mgr._sessions
+    assert not mgr.sessions
     assert mgr.resolve_preview(handle.token) is None
     assert mgr.preview_status(handle.token) == "stopped"
     assert _forward(handle).closed

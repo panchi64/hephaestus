@@ -94,8 +94,7 @@ def _manager(
 
 
 async def _ready(m: ManagedSearxng) -> None:
-    assert m._task is not None
-    await asyncio.wait_for(m._task, timeout=5.0)
+    _ = await m.wait_available(5.0)
 
 
 async def test_disabled_is_a_noop():
@@ -193,11 +192,11 @@ def test_settings_enable_json_and_keep_a_stable_secret_key():
     data_dir = Path(tempfile.mkdtemp())
     m = _manager(data_dir=data_dir)
 
-    text = m._settings("127.0.0.1:3129")
+    text = m.settings("127.0.0.1:3129")
     assert "json" in text  # the JSON API the agent queries is enabled
     assert "limiter: false" in text  # a single local operator, not a public instance
 
     key_first = (data_dir / "searxng" / "secret_key").read_text()
-    _ = m._settings("127.0.0.1:3129")  # a re-boot rewrites settings...
+    _ = m.settings("127.0.0.1:3129")  # a re-boot rewrites settings...
     key_second = (data_dir / "searxng" / "secret_key").read_text()
     assert key_first == key_second  # ...but reuses the persisted key
