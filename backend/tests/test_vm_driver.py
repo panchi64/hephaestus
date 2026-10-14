@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import itertools
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,15 +57,15 @@ async def test_a_command_finds_its_tools_without_the_agents_path(tmp_path, monke
 class _BuildingGuest:
     """A provisioning guest whose log advances one scripted probe at a time."""
 
-    def __init__(self, probes: list[str], tail: str = "") -> None:
-        self._probes = probes
+    def __init__(self, probes: Iterable[str], tail: str = "") -> None:
+        self._probes = iter(probes)
         self._tail = tail
         self.commands: list[str] = []
 
     def run(self, command: str, *, timeout: int, shell: str) -> _Ran:
         self.commands.append(command)
         if "provision.exit 2>/dev/null" in command:
-            return _Ran(0, self._probes.pop(0), "")
+            return _Ran(0, next(self._probes), "")
         if command.endswith("/root/provision.log") and " tail " in f" {command} ":
             return _Ran(0, self._tail, "")
         return _Ran(0, "", "")
@@ -90,7 +92,7 @@ def test_a_failed_build_reports_the_end_of_its_log(monkeypatch):
 
 def test_a_build_that_never_finishes_times_out(monkeypatch):
     monkeypatch.setattr(smolvm_module, "_PROVISION_POLL_S", 0)
-    guest = _BuildingGuest(["\n"] * 1000)
+    guest = _BuildingGuest(itertools.repeat("\n"))
 
     with pytest.raises(VMError, match="timed out"):
         provision(guest, ["bash", "/root/provision.sh"], timeout_s=0.05, on_step=lambda _: None)

@@ -7,6 +7,7 @@ import os
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
 
 import httpx
 from pydantic_ai.models.test import TestModel
@@ -14,6 +15,12 @@ from pydantic_ai.models.test import TestModel
 from app import create_app
 from core.config import Settings
 from services.providers.base import ModelLimits
+from services.providers.openai_compat import OpenAICompatProvider
+
+if TYPE_CHECKING:
+    from pydantic_ai import Agent
+
+    from tools import RunDeps
 
 #: The window the stub provider reports. It lives on the *provider*, not on the
 #: ResolvedModel a test builds, because that is where a window comes from in
@@ -22,7 +29,7 @@ STUB_CONTEXT_WINDOW = 128_000
 _STUB_PROVIDER_ID = "test-stub"
 
 
-class _StubProvider:
+class _StubProvider(OpenAICompatProvider):
     """A provider adapter that reports a context window and no other limit.
 
     Exists so a stubbed resolution still travels the real discovery path. A test that
@@ -31,8 +38,8 @@ class _StubProvider:
     production — the provider lookup, the manual-value-wins precedence, and the
     memoization — leaving all of it unexercised by any route test.
 
-    Only the limits are implemented: resolution is stubbed before it ever builds a
-    model, so nothing here is asked to."""
+    Only the limits are overridden; the rest is the OpenAI-compatible adapter's, and
+    resolution is stubbed before it ever builds a model."""
 
     id = _STUB_PROVIDER_ID
     display_name = "Test stub"
@@ -120,7 +127,12 @@ def fold_aware_model(*, answer: str = "the answer", summary: str = "FOLDED AWAY"
     return FunctionModel(respond, stream_function=stream)
 
 
-def fold_with(summary: str, *, categories=None) -> dict:
+class FoldArgs(TypedDict):
+    agent: Agent
+    deps: RunDeps
+
+
+def fold_with(summary: str, *, categories=None) -> FoldArgs:
     """The ``agent``/``deps`` pair ``compact_conversation`` writes a summary with: a turn's
     agent on a model that answers the fold with ``summary``, and the deps a turn would run
     it with. ``categories`` defaults to none, so no tool is offered."""
@@ -252,6 +264,9 @@ def group_running(pgid: int) -> bool:
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
+        return False
+    except PermissionError:
+        # macOS answers EPERM, not ESRCH, for a group whose only members are zombies.
         return False
     proc = Path("/proc")
     if not proc.is_dir():
