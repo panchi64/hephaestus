@@ -49,12 +49,16 @@ def judged(
     )
 
 
-def cleared(command: str, **kwargs) -> bool:
-    return judged(command, **kwargs).approved
+def cleared(
+    command: str, *, root: Path | None = ROOT, reach: Reach = "workspace", fenced: bool = True
+) -> bool:
+    return judged(command, root=root, reach=reach, fenced=fenced).approved
 
 
-def reason(command: str, **kwargs) -> str:
-    return judged(command, **kwargs).reason
+def reason(
+    command: str, *, root: Path | None = ROOT, reach: Reach = "workspace", fenced: bool = True
+) -> str:
+    return judged(command, root=root, reach=reach, fenced=fenced).reason
 
 
 class TestWhatTheWalkReads:
@@ -108,7 +112,7 @@ class TestWhatTheWalkReads:
             "grep -f /etc/passwd foo",  # ...and standing on its own, as an operand
         ],
     )
-    def test_a_path_attached_to_a_flag_is_still_a_path(self, command):
+    def test_a_path_attached_to_a_flag_is_still_a_path(self, command: str):
         # The reading a flag hides behind. A walk that skipped every word starting with
         # `-` saw `--output=/Users/me/.ssh/authorized_keys` as no path at all.
         capability = shell_capability("shell_run_command", command, root=ROOT)
@@ -134,7 +138,7 @@ class TestUnknownShapesEscalate:
             "cat <<'EOF'\nx\nEOF",  # a heredoc
         ],
     )
-    def test_a_construct_with_no_rule_is_recorded_rather_than_skipped(self, command):
+    def test_a_construct_with_no_rule_is_recorded_rather_than_skipped(self, command: str):
         capability = shell_capability("shell_run_command", command, root=ROOT)
         assert not capability.bounded
         assert not cleared(command)
@@ -149,7 +153,7 @@ class TestUnknownShapesEscalate:
             "echo $((1 + 1))",
         ],
     )
-    def test_a_value_decided_at_run_time_is_never_interpolated_away(self, command):
+    def test_a_value_decided_at_run_time_is_never_interpolated_away(self, command: str):
         # The single most tempting shortcut — "it is probably a path in the workspace" —
         # and the one that turns the containment check into decoration.
         assert not shell_capability("shell_run_command", command, root=ROOT).bounded
@@ -184,7 +188,7 @@ class TestAWordTheShellWouldRewrite:
             "cat .[.]/.[.]/etc/passwd",  # a bracket class matching one literal character
         ],
     )
-    def test_a_word_the_shell_rewrites_is_not_a_path_this_file_has_read(self, command):
+    def test_a_word_the_shell_rewrites_is_not_a_path_this_file_has_read(self, command: str):
         capability = shell_capability("shell_run_command", command, root=ROOT)
         assert not capability.bounded
         assert not cleared(command)
@@ -203,7 +207,7 @@ class TestAWordTheShellWouldRewrite:
             "find . -name '*.py'",  # quoted: single quotes suppress every expansion
         ],
     )
-    def test_a_plainly_spelled_command_is_untouched(self, command):
+    def test_a_plainly_spelled_command_is_untouched(self, command: str):
         assert shell_capability("shell_run_command", command, root=ROOT).bounded
         assert cleared(command)
 
@@ -252,7 +256,7 @@ class TestAWordThatIsAWholeCommandLine:
             ("perl -e 'open F, \"/etc/passwd\"'", "/etc/passwd"),  # glued to a quote
         ],
     )
-    def test_a_path_inside_a_quoted_script_is_the_path_it_is(self, command, escape):
+    def test_a_path_inside_a_quoted_script_is_the_path_it_is(self, command: str, escape: str):
         capability = shell_capability("shell_run_command", command, root=ROOT)
         assert capability.bounded  # every word was read; one of them left the worktree
         assert escape in capability.escapes
@@ -270,7 +274,7 @@ class TestAWordThatIsAWholeCommandLine:
             "sh -c 'ls; cat /etc/passwd'",
         ],
     )
-    def test_a_script_carrying_syntax_is_not_placed_at_all(self, command):
+    def test_a_script_carrying_syntax_is_not_placed_at_all(self, command: str):
         capability = shell_capability("shell_run_command", command, root=ROOT)
         assert not capability.bounded
         assert not cleared(command)
@@ -285,7 +289,7 @@ class TestAWordThatIsAWholeCommandLine:
             "sh -c 'cat {..,}/etc/passwd'",  # and expands the brace
         ],
     )
-    def test_a_word_the_inner_shell_would_rewrite_is_refused_one_shell_deeper(self, command):
+    def test_a_word_the_inner_shell_would_rewrite_is_refused_one_shell_deeper(self, command: str):
         assert not cleared(command)
         assert reason(command) == "a word the shell would expand or unescape"
 
@@ -299,7 +303,7 @@ class TestAWordThatIsAWholeCommandLine:
             "sh -c 'rm -rf .'",  # contained, and fenced to the worktree when it runs
         ],
     )
-    def test_a_quoted_argument_whose_words_stay_inside_clears(self, command):
+    def test_a_quoted_argument_whose_words_stay_inside_clears(self, command: str):
         # The breadth this rule buys: a commit message is the most common quoted argument
         # a code thread writes, and it pays no review for having spaces in it.
         assert shell_capability("shell_run_command", command, root=ROOT).bounded
@@ -315,7 +319,7 @@ class TestAWordThatIsAWholeCommandLine:
             "uv run pytest tests/test_a.py",
         ],
     )
-    def test_a_single_word_argument_is_still_read_as_one(self, command):
+    def test_a_single_word_argument_is_still_read_as_one(self, command: str):
         # The rule is about words, not about quoting: everything here is one word per
         # argument, and none of it pays for the case above.
         assert shell_capability("shell_run_command", command, root=ROOT).bounded
@@ -341,7 +345,7 @@ class TestAPatternIsPlacedByItsDirectory:
             ("cat x.*", None),  # the dot is not leading, so this cannot match `..`
         ],
     )
-    def test_a_pattern_inside_the_worktree_clears(self, command, read):
+    def test_a_pattern_inside_the_worktree_clears(self, command: str, read: str | None):
         capability = shell_capability("shell_run_command", command, root=ROOT)
         assert capability.bounded
         assert cleared(command)
@@ -349,14 +353,14 @@ class TestAPatternIsPlacedByItsDirectory:
             assert read in capability.reads
 
     @pytest.mark.parametrize("command", ["cat /etc/*", "cat ../*", "ls ~/*.txt"])
-    def test_a_pattern_whose_directory_is_outside_escalates(self, command):
+    def test_a_pattern_whose_directory_is_outside_escalates(self, command: str):
         capability = shell_capability("shell_run_command", command, root=ROOT)
         assert capability.bounded
         assert capability.escapes
         assert not cleared(command)
 
     @pytest.mark.parametrize("command", ["cat .*/x", "ls .?/x", "cat ./.*"])
-    def test_a_segment_that_could_match_the_parent_is_not_read(self, command):
+    def test_a_segment_that_could_match_the_parent_is_not_read(self, command: str):
         # `/bin/sh` matches `.?` and `.*` against `..`, and a pattern that can climb one
         # level can climb every level above it.
         assert not cleared(command)
@@ -376,7 +380,9 @@ class TestTheWordsACommandLeadsWith:
             ("ls", (("ls",),)),
         ],
     )
-    def test_the_program_and_the_words_that_say_which_of_its_modes(self, command, prefixes):
+    def test_the_program_and_the_words_that_say_which_of_its_modes(
+        self, command: str, prefixes: tuple[tuple[str, ...], ...]
+    ):
         assert command_prefixes(command) == prefixes
 
     @pytest.mark.parametrize(
@@ -388,7 +394,9 @@ class TestTheWordsACommandLeadsWith:
             ("npm -w pkg run build", (("npm", "-w", "pkg", "run"),)),
         ],
     )
-    def test_a_flag_narrows_the_prefix_instead_of_ending_it(self, command, prefixes):
+    def test_a_flag_narrows_the_prefix_instead_of_ending_it(
+        self, command: str, prefixes: tuple[tuple[str, ...], ...]
+    ):
         # Stopping at the first `-` read every flag-led command as its bare program name,
         # and since a later command is read by this same walk, one yes to `curl -sS <url>`
         # then stood for `curl -d @.env <elsewhere>` too. A flag is part of the act, so it
@@ -411,13 +419,15 @@ class TestTheWordsACommandLeadsWith:
             ),
         ],
     )
-    def test_every_stage_answers_for_itself(self, command, prefixes):
+    def test_every_stage_answers_for_itself(
+        self, command: str, prefixes: tuple[tuple[str, ...], ...]
+    ):
         # A pipeline is not one act: reading only its head would name the harmless half
         # and leave whatever it feeds unscoped.
         assert command_prefixes(command) == prefixes
 
     @pytest.mark.parametrize("command", ["cat $TARGET", "ls |", "$TOOL --version", ""])
-    def test_a_command_that_could_not_be_read_has_no_prefix(self, command):
+    def test_a_command_that_could_not_be_read_has_no_prefix(self, command: str):
         # The word that names the act may be the one that could not be read, so there is
         # nothing here a permission could honestly be scoped to.
         assert command_prefixes(command) is None
@@ -430,7 +440,7 @@ class TestTheWordsACommandLeadsWith:
             "cat ../outside/x",
         ],
     )
-    def test_a_command_that_leaves_the_worktree_has_no_prefix(self, command):
+    def test_a_command_that_leaves_the_worktree_has_no_prefix(self, command: str):
         # The same leading words, and not the same act: what a scope is a standing yes to
         # is this command on a different *target*, and a target outside the worktree is
         # where the fence stops applying.
@@ -500,7 +510,7 @@ class TestTheStructuralStage:
             "cat a.txt # a comment",
         ],
     )
-    def test_the_ordinary_reads_of_a_code_thread_cost_nothing(self, command):
+    def test_the_ordinary_reads_of_a_code_thread_cost_nothing(self, command: str):
         assert cleared(command)
 
     @pytest.mark.parametrize(
@@ -520,7 +530,7 @@ class TestTheStructuralStage:
             "LD_PRELOAD=x ls",  # an assignment whose value is not a path at all
         ],
     )
-    def test_the_ordinary_work_of_a_code_thread_costs_nothing_either(self, command):
+    def test_the_ordinary_work_of_a_code_thread_costs_nothing_either(self, command: str):
         # Every one of these went to a model reviewer under the program allowlist — most of
         # them because no row could state their rule, and the reviewer's own rubric then
         # scored "runs a program" high enough to park. Structure clears them because the
@@ -547,7 +557,7 @@ class TestTheStructuralStage:
             "env LD_PRELOAD=/tmp/x.so ls",  # the same thing spelled as an argument
         ],
     )
-    def test_an_assignments_value_is_a_path_like_any_other(self, command):
+    def test_an_assignments_value_is_a_path_like_any_other(self, command: str):
         # The variable *name* was never the interesting half. Recording only it left the
         # escaping path out of the structural facts entirely — so not merely unchecked, but
         # invisible to the reviewer an escalation would have gone to. `env`-prefixed spells
@@ -561,7 +571,7 @@ class TestTheStructuralStage:
     @pytest.mark.parametrize(
         "command", ["~/evil.sh", "../outside/evil.sh", "/bin/ls", "/etc/../bin/ls"]
     )
-    def test_the_program_is_measured_like_every_other_path(self, command):
+    def test_the_program_is_measured_like_every_other_path(self, command: str):
         # Running a file is reading it, and reads are the half no fence bounds — so a
         # program named by path is exactly the containment question `cat` asks, one word
         # to the left. Every one of these cleared at tier `workspace` while the identical
@@ -586,7 +596,7 @@ class TestTheStructuralStage:
             ("ls |", "could not parse"),
         ],
     )
-    def test_each_refusal_names_the_fact_that_was_missing(self, command, fragment):
+    def test_each_refusal_names_the_fact_that_was_missing(self, command: str, fragment: str):
         # The reason is what an operator reads on the review row when a benign-looking
         # command escalates; "the system was arbitrary" is the reading it exists to prevent.
         assert not cleared(command)
@@ -665,7 +675,7 @@ class TestTheStructuralStage:
         assert declared_reach("shell_run_command", {"command": "ls"}) == "workspace"
 
     @pytest.mark.parametrize("value", ["everywhere", "", None, 3, "Workspace"])
-    def test_a_value_this_module_does_not_recognise_is_the_widest_one(self, value):
+    def test_a_value_this_module_does_not_recognise_is_the_widest_one(self, value: object):
         assert declared_reach("shell_run_command", {"command": "ls", "reach": value}) == "host"
 
     def test_a_host_command_declares_the_host_whatever_its_arguments_say(self):
@@ -709,7 +719,7 @@ class TestContainment:
             "ls ~",
         ],
     )
-    def test_a_read_that_leaves_the_workspace_escalates(self, command):
+    def test_a_read_that_leaves_the_workspace_escalates(self, command: str):
         assert not cleared(command)
 
     def test_home_is_refused_rather_than_resolved(self):
