@@ -91,7 +91,7 @@ def tool_search_capability(
     dormant_tool_count = sum(len(members) for members in dormant_names.values())
 
     def _search(
-        ctx: RunContext[RunDeps],
+        _ctx: RunContext[RunDeps],
         queries: Sequence[str],
         tools: Sequence[ToolDefinition],
     ) -> list[str]:

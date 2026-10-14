@@ -206,7 +206,7 @@ def build_agent_toolsets(
     names = category_names(cats)
 
     def _describe(
-        ctx: RunContext[RunDeps], tool_defs: list[ToolDefinition]
+        _ctx: RunContext[RunDeps], tool_defs: list[ToolDefinition]
     ) -> list[ToolDefinition]:
         """Restate each tool in the names and vocabulary this catalog actually offers, offer
         each one a place to say why, and stamp the owner its events are attributed to.

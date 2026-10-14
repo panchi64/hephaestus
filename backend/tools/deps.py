@@ -50,6 +50,10 @@ def default_workspace_key(conversation_id: str | None, run: Run | None) -> str:
     return conversation_id or run.id
 
 
+#: The default for a ``disabled_tools`` parameter: nothing withheld. Immutable, so safe to share.
+NO_DISABLED_TOOLS: frozenset[str] = frozenset()
+
+
 @dataclass
 class RunDeps:
     run: Run

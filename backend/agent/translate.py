@@ -18,13 +18,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
 
 from pydantic_ai import (
     Agent,
+    AgentRun,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelRequestNode,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -50,6 +51,7 @@ from runs import (
     ToolStarted,
 )
 from services.conversation_view import tool_images
+from tools import RunDeps
 from tools.emit import RunEventEmitted
 from tools.narration import strip_narration
 
@@ -78,7 +80,9 @@ def _clip(text: str | None) -> str | None:
     return folded[: SNIPPET_MAX_CHARS - 1] + "…"
 
 
-def citations_from_tool_result(content: Any, *, at: datetime | None = None) -> list[CitationAdded]:
+def citations_from_tool_result(
+    content: object, *, at: datetime | None = None
+) -> list[CitationAdded]:
     """Sources a completed tool call surfaced, in the order the result gave them.
 
     A result declares its own sources by implementing :class:`~core.citations.Citable`;
@@ -127,7 +131,7 @@ def _on_chassis_event(event: object, run: Run) -> bool:
     model/tool handlers below, which never see these.
     """
     if isinstance(event, RunEventEmitted | ChassisEvent):
-        run.emit(event.body)
+        _ = run.emit(event.body)
         return True
     if isinstance(event, OverheadMeasured):
         run.context_overhead = event.overhead
@@ -136,12 +140,12 @@ def _on_chassis_event(event: object, run: Run) -> bool:
         run.prefix_verdict = event.verdict
         return True
     if isinstance(event, NestedToolStarted):
-        run.emit(_started_frame(event.part, parent=event.parent_tool_call_id))
+        _ = run.emit(_started_frame(event.part, parent=event.parent_tool_call_id))
         return True
     if isinstance(event, NestedToolFinished):
         call_id, name = event.tool_call_id or "", event.tool_name or ""
         if event.error is not None:
-            run.emit(
+            _ = run.emit(
                 ToolFailed(
                     tool_call_id=call_id,
                     name=name,
@@ -176,8 +180,8 @@ def _emit_result(
     run: Run,
     tool_call_id: str,
     name: str,
-    content: Any,
-    user_content: Any,
+    content: object,
+    user_content: object,
     *,
     parent: str | None = None,
 ) -> None:
@@ -189,7 +193,7 @@ def _emit_result(
     result — pixels, today. It rides the frame beside the call id, so the warm render
     pairs an image to its call exactly; the cold projection has to recover the same
     pairing positionally (see ``_attach_tool_images``)."""
-    run.emit(
+    _ = run.emit(
         ToolCompleted(
             tool_call_id=tool_call_id,
             name=name,
@@ -202,7 +206,7 @@ def _emit_result(
         )
     )
     for citation in citations_from_tool_result(content):
-        run.emit(citation)
+        _ = run.emit(citation)
 
 
 def _on_model_event(event: object, run: Run, mark_first_token: Callable[[], None]) -> None:
@@ -225,16 +229,16 @@ def _on_model_event(event: object, run: Run, mark_first_token: Callable[[], None
         part = event.part
         if isinstance(part, TextPart) and part.content:
             run.answer_started = True  # pins the endpoint past this point (AE-5.3)
-            run.emit(AnswerDelta(text=part.content))
+            _ = run.emit(AnswerDelta(text=part.content))
         elif isinstance(part, ThinkingPart) and part.content:
-            run.emit(ThinkingDelta(text=part.content))
+            _ = run.emit(ThinkingDelta(text=part.content))
     elif isinstance(event, PartDeltaEvent):
         delta = event.delta
         if isinstance(delta, TextPartDelta) and delta.content_delta:
             run.answer_started = True  # pins the endpoint past this point (AE-5.3)
-            run.emit(AnswerDelta(text=delta.content_delta))
+            _ = run.emit(AnswerDelta(text=delta.content_delta))
         elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
-            run.emit(ThinkingDelta(text=delta.content_delta))
+            _ = run.emit(ThinkingDelta(text=delta.content_delta))
     # PartEndEvent / FinalResultEvent carry no domain signal we surface — tool
     # execution is reported from the CallToolsNode.
 
@@ -265,7 +269,7 @@ def _on_tool_event(
             loop_breaker.check(
                 part.tool_name, strip_narration(part.args_as_dict()), part.tool_call_id
             )
-        run.emit(_started_frame(part))
+        _ = run.emit(_started_frame(part))
     elif isinstance(event, FunctionToolResultEvent):
         part = event.part
         if loop_breaker is not None:
@@ -277,7 +281,7 @@ def _on_tool_event(
             answer = part.model_response() if isinstance(part, RetryPromptPart) else part.content
             loop_breaker.observe(part.tool_call_id, answer)
         if isinstance(part, RetryPromptPart):
-            run.emit(
+            _ = run.emit(
                 ToolFailed(
                     tool_call_id=part.tool_call_id,
                     name=part.tool_name or "",
@@ -295,13 +299,13 @@ def _on_tool_event(
 
 
 async def stream_agent_run(
-    agent_run: Any,
+    agent_run: AgentRun[RunDeps, object],
     run: Run,
     *,
     announced: set[str] | None = None,
     loop_breaker: LoopBreaker | None = None,
     on_step: Callable[[list[ModelMessage]], None] | None = None,
-    on_request_node: Callable[[Any], None] | None = None,
+    on_request_node: Callable[[ModelRequestNode[RunDeps, object]], None] | None = None,
 ) -> None:
     """Iterate the AgentRun's graph nodes, emitting our events as they happen.
 
@@ -328,13 +332,13 @@ async def stream_agent_run(
             if on_request_node is not None:
                 on_request_node(node)
             step += 1
-            run.emit(StepStarted(index=step))
+            _ = run.emit(StepStarted(index=step))
             with timer.model_request() as mark_first_token:
                 async with node.stream(agent_run.ctx) as stream:
                     async for event in stream:
                         if not _on_chassis_event(event, run):
                             _on_model_event(event, run, mark_first_token)
-            run.emit(StepCompleted(index=step))
+            _ = run.emit(StepCompleted(index=step))
             # The request's non-conversation weight (the brief + the tool schemas) and the
             # brief's named contributors both arrive as capability events at the head of
             # the stream just walked — emitted by `agent/overhead.py` and

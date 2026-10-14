@@ -44,13 +44,14 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import cast, override
 
 from pydantic_ai import (
     AbstractToolset,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
+    ToolApproved,
     ToolDefinition,
     ToolDenied,
 )
@@ -136,14 +137,14 @@ def call_directly_message(tool: str) -> str:
     )
 
 
-def clears_unasked(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
+def clears_unasked(_ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
     """Whether a script may call this tool: it is still an ordinary function after the
     approval gate marked everything this run's level does not clear, and it is not one of
     the tools that must stay direct. The selector ``CodeMode`` applies each step."""
     return tool_def.kind == "function" and tool_def.name not in NATIVE_ONLY
 
 
-def script_call_of(ctx: RunContext[Any]) -> str | None:
+def script_call_of(ctx: RunContext[RunDeps]) -> str | None:
     """The ``run_code`` call a tool hook's call was made from, or None for a direct call.
 
     The sandbox dispatches through a ``ToolManager`` of its own whose context *is* the
@@ -177,6 +178,7 @@ class _NarratedCodeModeToolset(CodeModeToolset[RunDeps]):
     """
 
     @staticmethod
+    @override
     def _build_description(
         callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool
     ) -> str:
@@ -204,6 +206,7 @@ class _NarratedCodeModeToolset(CodeModeToolset[RunDeps]):
         base = CodeModeToolset._build_description(compact, has_os=has_os, has_mount=has_mount)
         return base + _CATALOG_NOTE if compact else base
 
+    @override
     async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
         tools = await super().get_tools(ctx)
         run_code = tools.pop(RUN_CODE, None)
@@ -246,6 +249,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
     call through untouched — a top-level batch goes to ``settle_deferred`` and the park
     exactly as it did before this capability existed."""
 
+    @override
     def get_wrapper_toolset(
         self, toolset: AbstractToolset[RunDeps]
     ) -> AbstractToolset[RunDeps] | None:
@@ -262,6 +266,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
             capability=self,
         )
 
+    @override
     async def before_tool_validate(
         self,
         ctx: RunContext[RunDeps],
@@ -274,7 +279,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
         call goes through, which is the same call already announced."""
         parent = script_call_of(ctx)
         if parent is not None and not ctx.tool_call_approved:
-            await ctx.emit(
+            _ = await ctx.emit(
                 NestedToolStarted(
                     parent_tool_call_id=parent,
                     part=call,
@@ -284,6 +289,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
             )
         return args
 
+    @override
     async def on_tool_validate_error(
         self,
         ctx: RunContext[RunDeps],
@@ -298,6 +304,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
             await self._finished(ctx, parent, call, error=_error_text(error))
         raise error
 
+    @override
     async def before_tool_execute(
         self,
         ctx: RunContext[RunDeps],
@@ -326,6 +333,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
             raise ApprovalRequired()
         return args
 
+    @override
     async def wrap_tool_execute(
         self,
         ctx: RunContext[RunDeps],
@@ -334,27 +342,30 @@ class CodeModeCapability(CodeMode[RunDeps]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
-    ) -> Any:
+    ) -> object:
         """Announce how a script's call ended. A deferral is not an ending — the handler
         rules on it, and an approved call comes back through here to run."""
         parent = script_call_of(ctx)
         if parent is None:
-            return await handler(args)
+            return cast(object, await handler(args))
         try:
-            result = await handler(args)
+            result = cast(object, await handler(args))
         except ApprovalRequired, CallDeferred:
             raise
         except Exception as exc:
             await self._finished(ctx, parent, call, error=_error_text(exc))
             raise
-        if isinstance(result, ToolReturn):
+        outcome: object = result
+        if isinstance(outcome, ToolReturn):
+            returned = cast(ToolReturn[object], outcome)
             await self._finished(
-                ctx, parent, call, content=result.return_value, user_content=result.content
+                ctx, parent, call, content=returned.return_value, user_content=returned.content
             )
         else:
             await self._finished(ctx, parent, call, content=result)
         return result
 
+    @override
     async def handle_deferred_tool_calls(
         self,
         ctx: RunContext[RunDeps],
@@ -371,7 +382,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
             return None
         parent = ctx.tool_call_id or ""
         deps = ctx.deps
-        settled: dict[str, Any] = {}
+        settled: dict[str, ToolApproved | ToolDenied] = {}
         manual: list[ToolCallPart] = []
         if requests.approvals:
             settled, manual = await settle_deferred(
@@ -386,7 +397,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
                 budget=deps.review_budget,
             )
         needs_operator = {call.tool_call_id for call in manual}
-        approvals: dict[str, Any] = {}
+        approvals: dict[str, ToolApproved | ToolDenied | bool] = {}
         for call in requests.approvals:
             decision = (
                 ToolDenied(message=call_directly_message(call.tool_name))
@@ -397,7 +408,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
             if isinstance(decision, ToolDenied):
                 await self._finished(ctx, parent, call, error=decision.message)
         # A call that deferred itself for someone else to run — nobody inside a script can.
-        calls: dict[str, Any] = {}
+        calls: dict[str, ToolFailed] = {}
         for call in requests.calls:
             message = call_directly_message(call.tool_name)
             calls[call.tool_call_id] = ToolFailed(message)
@@ -410,11 +421,11 @@ class CodeModeCapability(CodeMode[RunDeps]):
         parent: str,
         call: ToolCallPart,
         *,
-        content: Any = None,
-        user_content: Any = None,
+        content: object = None,
+        user_content: object = None,
         error: str | None = None,
     ) -> None:
-        await ctx.emit(
+        _ = await ctx.emit(
             NestedToolFinished(
                 parent_tool_call_id=parent,
                 content=content,

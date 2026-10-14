@@ -39,7 +39,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal, override
 
 from pydantic_ai import InstructionPart, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -47,11 +47,12 @@ from pydantic_ai.models import ModelRequestContext
 
 from core.text import CHARS_PER_TOKEN_PROSE, truncate_on_boundary
 from runs import INJECTED_TEXT_LIMIT, ContextInjected, Run
+from tools import RunDeps
 
 from .emit import ChassisEvent, is_side_run
 
 
-def contributor_id(provider: Callable[..., Any]) -> str:
+def contributor_id(provider: Callable[..., object]) -> str:
     """The slug a provider's contribution is filed under — its own name, minus the
     suffix the convention gives it (``skill_catalog_instructions`` → ``skill_catalog``,
     ``tasks_context`` → ``tasks``).
@@ -111,11 +112,11 @@ def announce_injection(
 ) -> None:
     """Put one contribution on the run's stream directly — the pre-run path, for a
     contributor that resolves before the agent exists to emit through."""
-    run.emit(injection_body(contributor, text, placement))
+    _ = run.emit(injection_body(contributor, text, placement))
 
 
 @dataclass
-class AnnounceInjections(AbstractCapability[Any]):
+class AnnounceInjections(AbstractCapability[RunDeps]):
     """Announce the standing brief's named contributors as each request goes out.
 
     A capability rather than a wrapper around every provider for the reason
@@ -141,8 +142,9 @@ class AnnounceInjections(AbstractCapability[Any]):
     #: module docstring on why the text is part of the key, and why only its digest is.
     seen: set[tuple[str, str]] = field(default_factory=set)
 
+    @override
     async def before_model_request(
-        self, ctx: RunContext[Any], request_context: ModelRequestContext
+        self, ctx: RunContext[RunDeps], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         # A side run (the compaction summary) sends the same brief on the same agent, and
         # its stream reaches nobody — marking the parts seen there would leave the turn's
@@ -150,7 +152,7 @@ class AnnounceInjections(AbstractCapability[Any]):
         if is_side_run(ctx):
             return request_context
         for body in self.announce(request_context.model_request_parameters.instruction_parts):
-            await ctx.emit(ChassisEvent(body=body))
+            _ = await ctx.emit(ChassisEvent(body=body))
         return request_context
 
     def announce(self, parts: list[InstructionPart] | None) -> list[ContextInjected]:

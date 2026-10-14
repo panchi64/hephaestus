@@ -21,22 +21,24 @@ it in, so every bound and every frame of a turn is measured against the same val
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from typing import Any
 
 from pydantic_ai import (
+    AgentRun,
     DeferredToolRequests,
     DeferredToolResults,
     ModelMessage,
     ModelRequest,
+    ModelRequestNode,
     RunUsage,
     UsageLimitExceeded,
     UsageLimits,
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import UserContent
 from pydantic_ai.tools import DeferredToolApprovalResult
 
 from core.config import Settings
@@ -46,7 +48,7 @@ from runs import LimitNotice, Run
 from services.conversations import ConversationBinding, ConversationStore
 from services.notifications import NotificationService
 from services.permissions import ReviewBudget
-from tools import RunDeps
+from tools import NO_DISABLED_TOOLS, RunDeps
 
 from .compaction_context import CompactionContext
 from .factory import TurnAgent
@@ -92,7 +94,7 @@ def turn_deps(
     run: Run,
     *,
     caps: ServiceContainer = NO_CAPS,
-    disabled_tools: frozenset[str] = frozenset(),
+    disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
     conversation_id: str | None = None,
     binding: ConversationBinding = DEFAULT_BINDING,
     workspace_key: str = "",
@@ -144,13 +146,13 @@ async def drive_turn(
     agent: TurnAgent,
     *,
     settings: Settings,
-    prompt: str | list[Any] | None = None,
+    prompt: str | Sequence[UserContent] | None = None,
     message_history: list[ModelMessage] | None = None,
     deferred_results: DeferredToolResults | None = None,
     announced: set[str],
     caps: ServiceContainer = NO_CAPS,
     conversation_id: str | None = None,
-    disabled_tools: frozenset[str] = frozenset(),
+    disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
     binding: ConversationBinding = DEFAULT_BINDING,
     vision: bool = True,
     partial_history_ref: list[Callable[[], list[ModelMessage]]] | None = None,
@@ -219,18 +221,18 @@ async def drive_turn(
         # requested cancel can never be silently absorbed.
         if run.cancel_requested:
             raise asyncio.CancelledError()
-        run.emit(turn_metrics(run, history, settings=settings))
+        _ = run.emit(turn_metrics(run, history, settings=settings))
 
     # Rebound each loop iteration by `agent.iter()`'s `as agent_run`; stays None only
     # if a bound trips before the context manager assigns it (its `__aenter__` does
     # no request, so this hasn't been observed, but the except blocks below guard
     # it anyway rather than risk an unbound-variable crash on a stop path).
-    agent_run: Any = None
+    agent_run: AgentRun[RunDeps, DeferredToolRequests | str] | None = None
 
     def _partial_history() -> list[ModelMessage]:
         return list(agent_run.ctx.state.message_history) if agent_run is not None else []
 
-    def _inject_queued(node: Any) -> None:
+    def _inject_queued(node: ModelRequestNode[RunDeps, object]) -> None:
         # Mid-run steering: hand any operator messages queued since the last model
         # request to the model *now*, by amending the not-yet-sent request. The node
         # is yielded before it streams (its request isn't in history yet), so this
@@ -288,6 +290,7 @@ async def drive_turn(
                     on_request_node=_inject_queued,
                 )
                 result = agent_run.result
+                assert result is not None
         except UsageLimitExceeded as exc:
             # Hit a usage bound — stop and report state, don't error. The *same* sentence
             # is both the toast and the persisted stop marker: a bare "usage limit reached"
@@ -295,7 +298,7 @@ async def drive_turn(
             # one), where this names the bound that actually tripped — one of this run's
             # own local budgets.
             detail = usage_limit_message(exc)
-            run.emit(LimitNotice(limit=usage_limit_kind(exc), message=detail))
+            _ = run.emit(LimitNotice(limit=usage_limit_kind(exc), message=detail))
             run.block(detail)
             return TurnResult(
                 answer=None,
@@ -304,7 +307,7 @@ async def drive_turn(
             )
         except LoopDetected as exc:
             # No-progress guard tripped — stop and report state, don't error.
-            run.emit(LimitNotice(limit="loop", message=str(exc)))
+            _ = run.emit(LimitNotice(limit="loop", message=str(exc)))
             detail = "stopped: repeated an action without making progress"
             run.block(detail)
             return TurnResult(
@@ -349,7 +352,7 @@ async def drive_turn(
                 detail = (
                     CONTEXT_OVERFLOW_AFTER_FOLD_DETAIL if compacted else CONTEXT_OVERFLOW_DETAIL
                 )
-                run.emit(
+                _ = run.emit(
                     LimitNotice(
                         limit="context",
                         message=context_limit_message(run, compacted=compacted),
@@ -377,8 +380,7 @@ async def drive_turn(
         # Two ways a turn can end without being finished: a call awaiting permission, and
         # a call awaiting an answer (`ask_user`). Both arrive on the same object, and
         # either one alone means there is more of this turn to run.
-        deferred = isinstance(output, DeferredToolRequests) and (output.approvals or output.calls)
-        if not deferred:
+        if not (isinstance(output, DeferredToolRequests) and (output.approvals or output.calls)):
             # The model finished, but something queued while it was working: instead of
             # ending the run, continue it with the queued text as the next user
             # request(s) — same run id, same stream, same usage/loop budget (so a steady
@@ -455,7 +457,7 @@ async def drive_turn(
         notifications = caps.get_optional(NotificationService)
         if notifications is not None:
             with suppress(Exception):
-                await notifications.resolve_for_run(run.owner_id, run.id)
+                _ = await notifications.resolve_for_run(run.owner_id, run.id)
         prompt = None
         message_history = messages
         approvals: dict[str, DeferredToolApprovalResult | bool] = {**settled}

@@ -36,6 +36,7 @@ from services.egress import EgressPolicy
 from services.sandbox import (
     HostExecutionError,
     SandboxError,
+    SandboxResult,
     SandboxSessionManager,
     SandboxSpec,
     host_scratch_dir,
@@ -169,13 +170,13 @@ def _failure_hint(
     if stdout.strip():
         return (
             f"It exited with a non-zero status ({exit_code}); stderr is empty — "
-            "the error text is in stdout."
+            + "the error text is in stdout."
         )
     return f"It exited with a non-zero status ({exit_code}) and produced no output."
 
 
 def _exec_result(
-    result, settings: Settings, *, sandboxed: bool, delegated: bool = False
+    result: SandboxResult, settings: Settings, *, sandboxed: bool, delegated: bool = False
 ) -> dict[str, object]:
     """Shape an execution result for the model: an explicit success flag, stdout and
     stderr **whole**, and on failure a legible hint naming which configured cap was
@@ -185,7 +186,7 @@ def _exec_result(
     context was under any pressure, and it cost the model the middle of exactly the
     output it had just asked for; the turn's own context-overflow stop is what catches
     a genuinely pathological run."""
-    payload = {
+    payload: dict[str, object] = {
         "ok": result.ok,
         "exit_code": result.exit_code,
         "stdout": result.stdout,
@@ -224,11 +225,11 @@ def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
     )
     ask = (
         "Any other host is refused, and there is nobody here to ask: say in your report "
-        "which host you could not reach, and get on with what you can do without it."
+        + "which host you could not reach, and get on with what you can do without it."
         if delegated
         else "Any other host is refused until you ask for it: call `code_request_egress` "
-        "with the domains you need and why, and once it is approved retry the same code "
-        "unchanged."
+        + "with the domains you need and why, and once it is approved retry the same code "
+        + "unchanged."
     )
     return (
         "Run `python` (the default `language`) or a `bash` script on your own "
@@ -318,8 +319,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
             return {
                 "ok": False,
                 "error": "Your computer is unavailable right now: no runtime is "
-                "configured. Computation that would require running code cannot "
-                "be done, and will not run on the operator's host.",
+                + "configured. Computation that would require running code cannot "
+                + "be done, and will not run on the operator's host.",
             }
         spec = SandboxSpec(
             command=[*_INTERPRETERS[language], code],
@@ -338,7 +339,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
                     if sessions.vm_starting
                     else "Starting the sandbox environment…"
                 )
-                await ctx.emit(
+                _ = await ctx.emit(
                     RunEventEmitted(
                         body=ToolProgress(tool_call_id=ctx.tool_call_id, partial=partial)
                     )
@@ -392,12 +393,13 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         reaches only what their installation already allows, and nothing you ask for here
         changes that.
         """
+        del reason  # Read by the approval card from the call's arguments, not by this body.
         policy = ctx.deps.caps.get_optional(EgressPolicy)
         if policy is None:
             return {
                 "ok": False,
                 "error": "Egress cannot be widened right now: no allowlist is "
-                "configured. Work with the hosts you can already reach.",
+                + "configured. Work with the hosts you can already reach.",
             }
         try:
             allowed = await policy.allow(ctx.deps.workspace_key, domains)
@@ -413,7 +415,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         metadata={"code_arg_name": "command", "code_arg_language": "shell"},
     )
     async def run_host_command(
-        ctx: RunContext[RunDeps],
+        _ctx: RunContext[RunDeps],
         command: str,
         explanation: str,
         timeout_s: float = 120.0,
@@ -433,6 +435,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         was actually applied (``confined``), so a permission error on one of those
         paths is the fence doing its job rather than something to work around.
         """
+        del explanation  # Read by the approval card from the call's arguments, not by this body.
         # The installation-wide allowlist, not this conversation's grants: one proxy
         # serves every confined process on the host, so a grant folded in here would
         # widen the fence around every other command running at the same moment and

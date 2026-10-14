@@ -47,7 +47,7 @@ from types import MappingProxyType
 from typing import cast
 
 from pydantic import JsonValue
-from pydantic_ai import AbstractToolset, ToolDefinition
+from pydantic_ai import AbstractToolset, Tool, ToolDefinition
 
 from .deps import RunDeps
 
@@ -269,9 +269,13 @@ def category_names(
     are someone else's text and are left exactly as they arrived.
     """
     return {
-        category: frozenset(cast(Mapping[str, object], getattr(toolset, "tools", {})))
-        for category, toolset in categories.items()
+        category: frozenset(registered_tools(toolset)) for category, toolset in categories.items()
     }
+
+
+def registered_tools(toolset: AbstractToolset[RunDeps]) -> Mapping[str, Tool[RunDeps]]:
+    """The static tool registry a function toolset carries; empty for any other kind."""
+    return cast(Mapping[str, Tool[RunDeps]], getattr(toolset, "tools", {}))
 
 
 def category_of(name: str, names_by_category: Mapping[str, frozenset[str]]) -> str | None:

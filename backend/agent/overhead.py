@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import override
 
 from pydantic_ai import InstructionPart, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -35,6 +35,7 @@ from pydantic_ai.tools import ToolDefinition
 
 from runs import BriefBlock, ToolGroupOverhead, TurnOverhead
 from services.tool_sensitivity import CHASSIS_TOOLS
+from tools import RunDeps
 
 from .assembled import declared_function_tools
 from .emit import OverheadMeasured
@@ -46,7 +47,7 @@ BASE_BLOCK = "base"
 
 
 @dataclass
-class MeasureOverhead(AbstractCapability[Any]):
+class MeasureOverhead(AbstractCapability[RunDeps]):
     """Size the standing brief and the tool schemas for each request as it goes out.
 
     A capability rather than a step-end measurement because the hook is where the
@@ -62,11 +63,12 @@ class MeasureOverhead(AbstractCapability[Any]):
     #: merge, and how anything outside the run can name this one at all.
     id: str | None = "measure_overhead"
 
+    @override
     async def before_model_request(
-        self, ctx: RunContext[Any], request_context: ModelRequestContext
+        self, ctx: RunContext[RunDeps], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         params = request_context.model_request_parameters
-        await ctx.emit(
+        _ = await ctx.emit(
             OverheadMeasured(
                 overhead=measure_overhead(
                     params.instruction_parts,
@@ -123,9 +125,9 @@ def _brief_blocks(
     # `SystemPromptPart` would be a second brief, which this codebase never sends — and it
     # is not on the request for any step after the first, so the history is where it is read.
     for message in messages:
-        for part in getattr(message, "parts", ()):
+        for part in message.parts:
             if type(part).__name__ == "SystemPromptPart":
-                content = getattr(part, "content", "")
+                content: object = getattr(part, "content", "")
                 total += len(content) if isinstance(content, str) else 0
 
     named: dict[str, int] = {}

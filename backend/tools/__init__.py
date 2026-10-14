@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from .builtin import builtin_toolset
 from .deps import (
+    NO_DISABLED_TOOLS,
     InstructionProvider,
     PromptContextProvider,
     PromptContextRequest,
@@ -24,6 +25,7 @@ from .tool_search import dormant_index_instructions, tool_search_capability
 from .toolsets import CORE_GATED_TOOLS, build_agent_toolsets, core_categories
 
 __all__ = [
+    "NO_DISABLED_TOOLS",
     "InstructionProvider",
     "NarrationCapability",
     "PromptContextProvider",

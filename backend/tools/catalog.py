@@ -30,7 +30,7 @@ from services.approval_grants import ONCE_ONLY_TOOLS
 from services.external_tools import ExternalTools
 
 from .deps import RunDeps
-from .describe import category_names, describe_text
+from .describe import category_names, describe_text, registered_tools
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,9 @@ class ToolInfo:
     dormant: bool = False
 
 
+_NO_CATEGORIES: frozenset[str] = frozenset()
+
+
 def _flatten(text: str) -> str:
     """A description is a docstring, so its hard wrapping is an artifact of the source
     file rather than meaning. Collapse it to flowing text and let the surface lay it out;
@@ -63,7 +66,7 @@ def _flatten(text: str) -> str:
 
 def tool_catalog(
     categories: Mapping[str, AbstractToolset[RunDeps]],
-    dormant_categories: frozenset[str] = frozenset(),
+    dormant_categories: frozenset[str] = _NO_CATEGORIES,
 ) -> list[ToolInfo]:
     """Every registered tool, category-then-name ordered for a stable listing.
 
@@ -92,7 +95,7 @@ def tool_catalog(
         # A non-function toolset exposes no static tool registry; it contributes nothing
         # rather than breaking the listing (see the module docstring).
         for category, toolset in categories.items()
-        for tool_name, tool in sorted(getattr(toolset, "tools", {}).items())
+        for tool_name, tool in sorted(registered_tools(toolset).items(), key=lambda kv: kv[0])
     ]
     return sorted(catalog, key=lambda t: (t.category, t.name))
 
