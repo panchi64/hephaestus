@@ -38,6 +38,7 @@ from services import reasoning
 from services.endpoint_spec import EndpointSpec
 from services.gated_model import EndpointGatedModel
 from services.providers import get_provider
+from services.shapes import as_dict, as_list, parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +125,8 @@ async def discover_openai_models(
     http = client or httpx.AsyncClient(follow_redirects=True)
     try:
         response = await http.get(url, headers=headers, timeout=timeout)
-        response.raise_for_status()
-        payload = response.json()
+        _ = response.raise_for_status()
+        payload = parse_json(response.content)
     except (httpx.HTTPError, ValueError) as exc:
         raise DegradedCapabilityError(f"could not list models from {base_url!r}: {exc}") from exc
     finally:
@@ -159,8 +160,9 @@ async def probe_openai_endpoint(
     http = client or httpx.AsyncClient(follow_redirects=True)
     try:
         response = await http.get(url, headers=headers, timeout=timeout)
-        response.raise_for_status()
-        response.json()  # a recognized provider answers JSON; a non-JSON body is bad_response
+        _ = response.raise_for_status()
+        # A recognized provider answers JSON; a non-JSON body is bad_response.
+        _ = parse_json(response.content)
     finally:
         if client is None:
             await http.aclose()
@@ -209,10 +211,11 @@ def _context_from_row(row: object, keys: Sequence[str]) -> int | None:
     """A positive context length from a model listing entry, whichever of ``keys`` it
     used. Split by *kind* of key rather than read in one pass, because a loaded window
     found on the second probe still has to beat a maximum found on the first."""
-    if not isinstance(row, dict):
+    entry = as_dict(row)
+    if entry is None:
         return None
     for key in keys:
-        window = positive_int(row.get(key))
+        window = positive_int(entry.get(key))
         if window is not None:
             return window
     return None
@@ -222,17 +225,20 @@ def _find_model_row(payload: object, model: str) -> object | None:
     """The listing entry describing ``model``, across the same shapes
     :func:`_extract_model_ids` understands."""
     rows: list[object] = []
-    if isinstance(payload, dict):
+    mapping = as_dict(payload)
+    if mapping is not None:
         for key in ("data", "models"):
-            if isinstance(payload.get(key), list):
-                rows = payload[key]
+            listed = as_list(mapping.get(key))
+            if listed is not None:
+                rows = listed
                 break
-    elif isinstance(payload, list):
-        rows = payload
+    else:
+        rows = as_list(payload) or []
     for row in rows:
-        if not isinstance(row, dict):
+        entry = as_dict(row)
+        if entry is None:
             continue
-        ident = row.get("id") or row.get("name")
+        ident = entry.get("id") or entry.get("name")
         if isinstance(ident, str) and ident.removeprefix("models/") == model:
             return row
     return None
@@ -402,7 +408,7 @@ class PromptCachePosture:
     #: `utility` to a second endpoint.
     backend: str | None = None
     #: Whichever of :data:`_PROMPT_CACHE_KEYS` the server reported, and what it said.
-    cache_settings: Mapping[str, object] = field(default_factory=dict)
+    cache_settings: Mapping[str, object] = field(default_factory=dict[str, object])
 
     def summary(self) -> str:
         """One line for the diagnostic log."""
@@ -433,10 +439,13 @@ def _native_posture(row: object) -> PromptCachePosture | None:
     not say" — the backend alone is enough to tell an operator whether there is a prompt
     cache to lose.
     """
-    if not isinstance(row, dict):
+    entry = as_dict(row)
+    if entry is None:
         return None
-    backend = next((str(row[key]) for key in _BACKEND_KEYS if isinstance(row.get(key), str)), None)
-    window = _context_from_row(row, (*_LOADED_CONTEXT_KEYS, *_MAX_CONTEXT_KEYS))
+    backend = next(
+        (str(entry[key]) for key in _BACKEND_KEYS if isinstance(entry.get(key), str)), None
+    )
+    window = _context_from_row(entry, (*_LOADED_CONTEXT_KEYS, *_MAX_CONTEXT_KEYS))
     if backend is None and window is None:
         return None
     return PromptCachePosture(context_window=window, backend=backend)
@@ -461,11 +470,10 @@ async def _llama_cpp_props(
     is the wrong one on the most common setup. Both are cheap best-effort GETs that
     answer None on anything unexpected."""
     for url in _props_urls(base_url):
-        payload = await _get_json(url, api_key, client=client)
-        if not isinstance(payload, dict):
+        payload = as_dict(await _get_json(url, api_key, client=client))
+        if payload is None:
             continue
-        settings = payload.get("default_generation_settings")
-        settings = settings if isinstance(settings, dict) else {}
+        settings = as_dict(payload.get("default_generation_settings")) or {}
         window = positive_int(settings.get("n_ctx"))
         if window is None:
             continue
@@ -515,8 +523,8 @@ async def _get_json(
     http = client or httpx.AsyncClient(follow_redirects=True)
     try:
         response = await http.get(url, headers=headers, timeout=httpx.Timeout(5.0, connect=2.0))
-        response.raise_for_status()
-        return response.json()
+        _ = response.raise_for_status()
+        return parse_json(response.content)
     except httpx.HTTPError, ValueError:
         return None
     finally:
@@ -542,26 +550,33 @@ def _extract_model_ids(payload: object) -> list[str] | None:
 
 def _openai_models(payload: object) -> list[str] | None:
     """OpenAI/Anthropic and most OpenAI-compatible servers: ``{"data": [{"id"}]}``."""
-    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+    mapping = as_dict(payload)
+    rows = as_list(mapping.get("data")) if mapping is not None else None
+    if rows is None:
         return None
-    return [
-        row["id"]
-        for row in payload["data"]
-        if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]
-    ]
+    ids: list[str] = []
+    for row in rows:
+        entry = as_dict(row)
+        ident = entry.get("id") if entry is not None else None
+        if isinstance(ident, str) and ident:
+            ids.append(ident)
+    return ids
 
 
 def _named_models(payload: object) -> list[str] | None:
     """Gemini/Cohere/Ollama-native: ``{"models": [{"id" | "name"}]}``. Strips the
     ``models/`` prefix Gemini puts on names — scoped here so it can't touch an
     OpenAI-shaped id that legitimately starts with ``models/``."""
-    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+    mapping = as_dict(payload)
+    rows = as_list(mapping.get("models")) if mapping is not None else None
+    if rows is None:
         return None
     ids: list[str] = []
-    for row in payload["models"]:
-        if not isinstance(row, dict):
+    for row in rows:
+        entry = as_dict(row)
+        if entry is None:
             continue
-        ident = row.get("id") or row.get("name")
+        ident = entry.get("id") or entry.get("name")
         if isinstance(ident, str):
             stripped = ident.removeprefix("models/")
             if stripped:
@@ -571,14 +586,17 @@ def _named_models(payload: object) -> list[str] | None:
 
 def _bare_list(payload: object) -> list[str] | None:
     """Some servers return a bare list — of id strings, or of ``{"id" | "name"}``."""
-    if not isinstance(payload, list):
+    rows = as_list(payload)
+    if rows is None:
         return None
     ids: list[str] = []
-    for row in payload:
+    for row in rows:
+        entry = as_dict(row)
+        ident: object
         if isinstance(row, str):
-            ident: str | None = row
-        elif isinstance(row, dict):
-            ident = row.get("id") or row.get("name")
+            ident = row
+        elif entry is not None:
+            ident = entry.get("id") or entry.get("name")
         else:
             ident = None
         if isinstance(ident, str) and ident:
