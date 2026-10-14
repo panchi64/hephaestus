@@ -7,33 +7,40 @@ port to a worktree that had not asked for one.
 
 from __future__ import annotations
 
-import json
+from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
 from devkit import ports
 from devkit.instance import DevInstance, claimed_slots, resolve
 
+from ._json import arr, obj, parse_json
+
 
 @pytest.fixture(autouse=True)
-def _ports_are_free(monkeypatch):
+def _ports_are_free(monkeypatch: pytest.MonkeyPatch):
     """Take the host's own ports out of the picture.
 
     Without this the suite's answers depend on what happens to be listening — a real dev
     instance running on slot 0 would push every assertion here up by one, and the tests
     would fail for the developer who had actually used the thing they test.
     """
-    monkeypatch.setattr(ports, "is_free", lambda port: True)
+
+    def free(_port: int) -> bool:
+        return True
+
+    monkeypatch.setattr(ports, "is_free", free)
 
 
-def test_the_first_instance_takes_slot_zero(tmp_path):
+def test_the_first_instance_takes_slot_zero(tmp_path: Path):
     instance = resolve(root=tmp_path, name="alpha")
     assert instance.slot == 0
     assert instance.backend_port == ports.BACKEND_BASE
     assert instance.root == tmp_path / "alpha"
 
 
-def test_a_second_worktree_gets_its_own_slot(tmp_path):
+def test_a_second_worktree_gets_its_own_slot(tmp_path: Path):
     first = resolve(root=tmp_path, name="alpha")
     second = resolve(root=tmp_path, name="beta")
     assert second.slot != first.slot
@@ -42,29 +49,29 @@ def test_a_second_worktree_gets_its_own_slot(tmp_path):
         assert second.env()[key] != first.env()[key]
 
 
-def test_a_claimed_slot_is_never_handed_out_again_even_while_nothing_runs(tmp_path):
+def test_a_claimed_slot_is_never_handed_out_again_even_while_nothing_runs(tmp_path: Path):
     # The failure this guards: an instance nobody has started today owns its ports just
     # as much as a running one, and allocating by "what is listening" would give them
     # away and break the first instance the next time anyone brought it up.
-    resolve(root=tmp_path, name="alpha")
+    _ = resolve(root=tmp_path, name="alpha")
     assert claimed_slots(tmp_path) == {0}
     assert resolve(root=tmp_path, name="beta").slot == 1
 
 
-def test_an_unreadable_neighbour_does_not_block_allocation(tmp_path):
+def test_an_unreadable_neighbour_does_not_block_allocation(tmp_path: Path):
     (tmp_path / "broken").mkdir()
-    (tmp_path / "broken" / "instance.json").write_text("{ not json")
+    _ = (tmp_path / "broken" / "instance.json").write_text("{ not json")
     assert claimed_slots(tmp_path) == set()
     assert resolve(root=tmp_path, name="alpha").slot == 0
 
 
-def test_resolving_twice_returns_the_same_instance(tmp_path):
+def test_resolving_twice_returns_the_same_instance(tmp_path: Path):
     first = resolve(root=tmp_path, name="alpha")
     again = resolve(root=tmp_path, name="alpha")
     assert (again.slot, again.password) == (first.slot, first.password)
 
 
-def test_flags_are_per_run_but_the_workspace_is_not(tmp_path):
+def test_flags_are_per_run_but_the_workspace_is_not(tmp_path: Path):
     first = resolve(root=tmp_path, name="alpha")
     with_auth = resolve(root=tmp_path, name="alpha", auth=True, vm=True)
     assert (with_auth.auth, with_auth.vm) == (True, True)
@@ -72,17 +79,17 @@ def test_flags_are_per_run_but_the_workspace_is_not(tmp_path):
     assert resolve(root=tmp_path, name="alpha").auth is True  # and the choice persists
 
 
-def test_a_flag_that_sticks_can_also_be_turned_back_off(tmp_path):
+def test_a_flag_that_sticks_can_also_be_turned_back_off(tmp_path: Path):
     # The bug: the CLI mapped an absent flag to False and then to None, so `--auth` and
     # `--with-vm` could only ever be switched on otherwise. An instance that once ran with
     # the VM would boot it on every later `up`, with no way to say otherwise.
-    resolve(root=tmp_path, name="alpha", auth=True, vm=True)
+    _ = resolve(root=tmp_path, name="alpha", auth=True, vm=True)
     off = resolve(root=tmp_path, name="alpha", auth=False, vm=False)
     assert (off.auth, off.vm) == (False, False)
     assert resolve(root=tmp_path, name="alpha").vm is False
 
 
-def test_resolving_without_a_change_does_not_rewrite_the_state_file(tmp_path):
+def test_resolving_without_a_change_does_not_rewrite_the_state_file(tmp_path: Path):
     # `status`, `doctor` and `stop` all resolve in order to *read*. Rewriting on read
     # races any concurrent writer over the one record holding the slot and the vault
     # passphrase, and a torn write there leaves the workspace unopenable.
@@ -90,19 +97,19 @@ def test_resolving_without_a_change_does_not_rewrite_the_state_file(tmp_path):
     state = instance.root / "instance.json"
     before = state.stat().st_mtime_ns
 
-    resolve(root=tmp_path, name="alpha")
-    resolve(root=tmp_path, name="alpha", auth=False)  # same value as stored
+    _ = resolve(root=tmp_path, name="alpha")
+    _ = resolve(root=tmp_path, name="alpha", auth=False)  # same value as stored
     assert state.stat().st_mtime_ns == before
 
-    resolve(root=tmp_path, name="alpha", auth=True)
+    _ = resolve(root=tmp_path, name="alpha", auth=True)
     assert state.stat().st_mtime_ns != before
 
 
-def test_the_state_file_is_not_world_readable(tmp_path):
+def test_the_state_file_is_not_world_readable(tmp_path: Path):
     instance = resolve(root=tmp_path, name="alpha")
     state = instance.root / "instance.json"
     assert state.stat().st_mode & 0o077 == 0
-    assert json.loads(state.read_text())["password"] == instance.password
+    assert obj(parse_json(state.read_text()))["password"] == instance.password
 
 
 def test_the_environment_never_names_the_operators_ports():
@@ -114,7 +121,7 @@ def test_the_environment_never_names_the_operators_ports():
         assert 5173 not in (backend, frontend, stub)
 
 
-def test_the_environment_isolates_every_piece_of_state(tmp_path):
+def test_the_environment_isolates_every_piece_of_state(tmp_path: Path):
     env = resolve(root=tmp_path, name="alpha").env()
     root = str(tmp_path / "alpha")
     assert env["HEPHAESTUS_DATA_DIR"].startswith(root)
@@ -125,16 +132,18 @@ def test_the_environment_isolates_every_piece_of_state(tmp_path):
     assert env["HEPHAESTUS_OFFLINE_CHECK_ENABLED"] == "false"
 
 
-def test_the_cors_origins_are_json_the_settings_layer_can_parse(tmp_path):
+def test_the_cors_origins_are_json_the_settings_layer_can_parse(tmp_path: Path):
     # A list field, so pydantic-settings reads it as JSON. Getting this wrong blocks
     # every call the dev frontend makes, in the browser, with no server-side trace.
     instance = resolve(root=tmp_path, name="alpha")
-    origins = json.loads(instance.env()["HEPHAESTUS_CORS_ORIGINS"])
+    origins = arr(parse_json(instance.env()["HEPHAESTUS_CORS_ORIGINS"]))
     assert f"http://127.0.0.1:{instance.frontend_port}" in origins
     assert f"http://localhost:{instance.frontend_port}" in origins
 
 
-def test_the_settings_layer_accepts_the_environment_verbatim(tmp_path, monkeypatch):
+def test_the_settings_layer_accepts_the_environment_verbatim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # The end of the contract: every name above has to be one `Settings` actually reads,
     # and a typo in any of them would isolate nothing while looking like it did.
     from pydantic_settings import SettingsConfigDict
@@ -142,7 +151,7 @@ def test_the_settings_layer_accepts_the_environment_verbatim(tmp_path, monkeypat
     from core.config import Settings as BaseAppSettings
 
     class Settings(BaseAppSettings):
-        model_config = SettingsConfigDict(env_file=None)
+        model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(env_file=None)
 
     instance = resolve(root=tmp_path, name="alpha")
     for key, value in instance.env().items():
@@ -163,26 +172,30 @@ def test_the_settings_layer_accepts_the_environment_verbatim(tmp_path, monkeypat
 
 def test_allocation_reports_the_remedy_when_every_slot_is_claimed():
     with pytest.raises(ports.NoFreeSlot) as excinfo:
-        ports.allocate(set(range(ports.MAX_SLOTS)))
+        _ = ports.allocate(set(range(ports.MAX_SLOTS)))
     assert "~/.hephaestus/dev" in str(excinfo.value)
 
 
-def test_a_slot_whose_ports_are_in_use_is_skipped(monkeypatch):
+def test_a_slot_whose_ports_are_in_use_is_skipped(monkeypatch: pytest.MonkeyPatch):
     # The other half of allocation: a slot nobody has recorded but whose ports are held
     # by something on this host — another project's dev server, most likely.
     busy = set(ports.slot_ports(0))
-    monkeypatch.setattr(ports, "is_free", lambda port: port not in busy)
+
+    def free(port: int) -> bool:
+        return port not in busy
+
+    monkeypatch.setattr(ports, "is_free", free)
     assert ports.allocate(set()) == 1
 
 
-def test_seeding_is_recorded_against_a_version(tmp_path):
+def test_seeding_is_recorded_against_a_version(tmp_path: Path):
     instance = resolve(root=tmp_path, name="alpha")
     assert instance.seeded == ""
     instance.with_seeded("v7").save()
     assert resolve(root=tmp_path, name="alpha").seeded == "v7"
 
 
-def test_ports_within_a_slot_stay_a_fixed_distance_apart(tmp_path):
+def test_ports_within_a_slot_stay_a_fixed_distance_apart(tmp_path: Path):
     # One number identifies the triple. If these ever drift, a URL, a CORS origin and a
     # generated launch config start disagreeing about which instance they mean.
     instance = DevInstance(name="x", slot=3, root=tmp_path, password="p")
