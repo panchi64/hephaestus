@@ -27,11 +27,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
-from pydantic import BaseModel
-
 from core.shutdown import STOPPED, get_unless_shutdown
 
-from .events import Event, now_utc
+from .events import Event, EventBody, now_utc
 
 # Per-subscriber backlog cap before we treat the consumer as wedged and drop it.
 _SUBSCRIBER_QUEUE_MAX = 1024
@@ -62,7 +60,7 @@ class RunStream:
         ``close()`` can race that cleanup."""
         return len(self._subscribers)
 
-    def emit(self, body: BaseModel) -> Event:
+    def emit(self, body: EventBody) -> Event:
         """Stamp, buffer, and fan out an event. Synchronous and atomic."""
         if self._closed:
             raise RuntimeError("emit on a closed RunStream")

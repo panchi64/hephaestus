@@ -17,13 +17,12 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from pydantic import BaseModel
-
 from .endpoint_gate import Endpoint
 from .events import (
     DEFAULT_CONTEXT_THRESHOLDS,
     ContextThresholds,
     Event,
+    EventBody,
     FoldPoint,
     MessageEdited,
     MessageHeld,
@@ -247,7 +246,7 @@ class Run:
             await asyncio.sleep(interval)
             self.touch()
 
-    def emit(self, body: BaseModel) -> Event:
+    def emit(self, body: EventBody) -> Event:
         self.touch()
         return self.stream.emit(body)
 

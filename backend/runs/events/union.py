@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from .approvals import (
     ApprovalRequired,
@@ -105,7 +105,7 @@ class Event:
 
     seq: int
     ts: datetime
-    body: BaseModel
+    body: EventBody
 
     def envelope(self) -> dict[str, Any]:
         """Flat ``{type, seq, ts, ...payload}`` dict — the on-the-wire shape."""
