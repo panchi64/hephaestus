@@ -14,6 +14,7 @@ from pydantic_ai.models.test import TestModel
 
 from app import create_app
 from core.config import Settings
+from runs import EventBody, Run
 from services.providers.base import ModelLimits
 from services.providers.openai_compat import OpenAICompatProvider
 
@@ -279,3 +280,15 @@ def group_running(pgid: int) -> bool:
         if int(group) == pgid and state != "Z":
             return True
     return False
+
+
+def run_bodies(run: Run) -> list[EventBody]:
+    return [e.body for e in run.stream.replay()]
+
+
+def bodies_of[T](run: Run, kind: type[T]) -> list[T]:
+    return [b for b in run_bodies(run) if isinstance(b, kind)]
+
+
+def first_body[T](run: Run, kind: type[T]) -> T:
+    return next(b for b in run_bodies(run) if isinstance(b, kind))

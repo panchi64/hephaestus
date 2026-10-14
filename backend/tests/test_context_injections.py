@@ -15,8 +15,16 @@ surfaces can never name one block two ways.
 
 from __future__ import annotations
 
-from pydantic_ai import InstructionPart, ModelRequest, ModelResponse
-from pydantic_ai.messages import AgentInstructionSource, InstructionId, TextPart, UserPromptPart
+from collections.abc import Sequence
+
+from pydantic_ai import InstructionPart, ModelMessage, ModelRequest, ModelResponse
+from pydantic_ai.messages import (
+    AgentInstructionSource,
+    InstructionId,
+    TextPart,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.usage import RequestUsage
 
 from agent.injections import (
@@ -25,16 +33,18 @@ from agent.injections import (
     contributor_id,
     injected_tokens,
 )
-from runs import INJECTED_TEXT_LIMIT, Run, RunStream
+from runs import INJECTED_TEXT_LIMIT, ContextInjected, Run, RunStream
 from services.conversations import last_request_usage
+
+from ._helpers import bodies_of
 
 
 def _run() -> Run:
     return Run(id="r", kind="chat", owner_id="operator", stream=RunStream())
 
 
-def _injections(run: Run) -> list:
-    return [e.body for e in run.stream.replay() if e.body.type == "context.injected"]
+def _injections(run: Run) -> list[ContextInjected]:
+    return bodies_of(run, ContextInjected)
 
 
 def _announce(announcer: AnnounceInjections, run: Run, parts) -> None:
@@ -77,8 +87,13 @@ def test_a_provider_is_filed_under_its_own_name_minus_the_convention():
 def test_a_provider_with_nothing_left_after_the_strip_is_still_a_row():
     """A name that is all convention and no word strips to the empty string, which is not
     a slug — a row with no id is a row the client can neither label nor key."""
-    underscore = type("_", (), {"__name__": "_", "__call__": lambda self: ""})()
-    assert contributor_id(underscore) == "base"
+    class Underscore:
+        __name__ = "_"
+
+        def __call__(self) -> str:
+            return ""
+
+    assert contributor_id(Underscore()) == "base"
 
 
 # ── Announced once, and again only when it changed ───────────────────────────────
@@ -282,10 +297,18 @@ def test_a_thread_with_no_response_has_no_request_to_report():
 # footprint grows by one stale copy per turn.
 
 
-def _regenerated(texts: list[str]) -> list:
+def _tail_content(view: list[ModelMessage]) -> str | Sequence[UserContent]:
+    last = view[-1]
+    assert isinstance(last, ModelRequest)
+    part = last.parts[-1]
+    assert isinstance(part, UserPromptPart)
+    return part.content
+
+
+def _regenerated(texts: list[str]) -> list[ModelMessage]:
     from agent.history import with_tail_context
 
-    history = [
+    history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content="the first ask")]),
         ModelResponse(parts=[TextPart(content="the first answer")], usage=RequestUsage()),
         ModelRequest(parts=[UserPromptPart(content="the ask being regenerated")]),
@@ -299,11 +322,13 @@ def test_the_tail_is_the_last_content_in_the_request():
     rather than shared — which is exactly what putting volatile content in the head does,
     only further down."""
     view = _regenerated(["## Your task list\n- [ ] one"])
-    content = view[-1].parts[-1].content
+    content = _tail_content(view)
 
     assert isinstance(content, list)
     assert content[0] == "the ask being regenerated"
-    assert content[-1].startswith("## Your task list")
+    last = content[-1]
+    assert isinstance(last, str)
+    assert last.startswith("## Your task list")
 
 
 def test_the_tail_never_reaches_the_message_it_was_appended_to():
@@ -311,14 +336,14 @@ def test_the_tail_never_reaches_the_message_it_was_appended_to():
     shares these objects — so a mutation here writes the chassis's own text into the
     operator's durable transcript, where it reads as something they typed."""
     original = ModelRequest(parts=[UserPromptPart(content="the ask being regenerated")])
-    history = [original]
+    history: list[ModelMessage] = [original]
 
     from agent.history import with_tail_context
 
     view = with_tail_context(history, ["per-turn context"])
 
     assert view[-1] is not original
-    assert history[-1].parts[0].content == "the ask being regenerated"
+    assert getattr(original.parts[0], "content", None) == "the ask being regenerated"
 
 
 def test_a_regenerate_puts_the_tail_where_a_fresh_turn_does():
@@ -329,7 +354,7 @@ def test_a_regenerate_puts_the_tail_where_a_fresh_turn_does():
     chassis's after."""
     texts = ["first block", "second block"]
     view = _regenerated(texts)
-    content = view[-1].parts[-1].content
+    content = _tail_content(view)
 
     # The same list a fresh turn's `user_prompt` would carry: the typed text, then each
     # provider's block in registration order.
@@ -342,5 +367,7 @@ def test_a_history_with_no_trailing_request_is_left_alone():
     conversation under no author at all."""
     from agent.history import with_tail_context
 
-    history = [ModelResponse(parts=[TextPart(content="answer")], usage=RequestUsage())]
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content="answer")], usage=RequestUsage())
+    ]
     assert with_tail_context(history, ["context"]) == history

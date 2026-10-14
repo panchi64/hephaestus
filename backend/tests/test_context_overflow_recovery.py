@@ -21,13 +21,15 @@ from folding at all.
 
 from __future__ import annotations
 
-import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
-from pydantic_ai import DeferredToolRequests, ModelRequest, ModelResponse
+from pydantic_ai import DeferredToolRequests, ModelMessage, ModelRequest, ModelResponse
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import TextPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import RequestUsage
@@ -41,15 +43,24 @@ from agent.model_errors import (
     CONTEXT_OVERFLOW_DETAIL,
     context_limit_message,
 )
-from agent.parking import park_for_input
+from agent.parking import ParkedTurn, park_for_input
 from agent.summarize import AutoCompactPolicy, should_compact
 from agent.turn import TurnResult, turn_deps
 from agent.verify import verify_and_correct
 from core.config import get_settings
 from routes.deps import OPERATOR_ID
-from runs import Run, RunStatus, RunStream, TurnOverhead
+from runs import (
+    CompactionStarted,
+    ConversationCompacted,
+    LimitNotice,
+    Run,
+    RunStatus,
+    RunStream,
+    TurnOverhead,
+)
 
-from ._helpers import client_app, fold_aware_model, is_fold_request
+from ._agent_helpers import make_stores
+from ._helpers import bodies_of, client_app, fold_aware_model, is_fold_request
 
 #: Measured, and empty. These fixtures run against a deliberately tiny window, and an
 #: *unmeasured* overhead makes the trigger assume the shipped catalog — several thousand
@@ -98,18 +109,18 @@ class _OverflowsThenAnswers(WrapperModel):
         if self.requests <= self.failures:
             raise _ctx_error()
 
-    async def request(self, messages, *args, **kwargs):  # type: ignore[override]
+    async def request(self, messages, *args, **kwargs):
         self._check(messages)
         return await super().request(messages, *args, **kwargs)
 
     @asynccontextmanager
-    async def request_stream(self, messages, *args, **kwargs):  # type: ignore[override]
+    async def request_stream(self, messages, *args, **kwargs):
         self._check(messages)
         async with super().request_stream(messages, *args, **kwargs) as stream:
             yield stream
 
 
-def _turn(prompt: str, answer: str, input_tokens: int) -> list:
+def _turn(prompt: str, answer: str, input_tokens: int) -> list[ModelMessage]:
     """One recorded exchange whose answer reports a real prompt size, so the footprint is
     readable off it."""
     return [
@@ -121,8 +132,8 @@ def _turn(prompt: str, answer: str, input_tokens: int) -> list:
     ]
 
 
-def _texts(messages: list) -> list[str]:
-    out = []
+def _texts(messages: list[ModelMessage]) -> list[str]:
+    out: list[str] = []
     for message in messages:
         for part in message.parts:
             content = getattr(part, "content", None)
@@ -154,10 +165,6 @@ def _run_chat(app, cid: str | None, *, model, prompt="next question", **kwargs):
     return app.state.runs.submit(kind="chat", owner_id=OPERATOR_ID, orchestrator=orch)
 
 
-def _bodies(run, type_: str) -> list:
-    return [e.body for e in run.stream.replay() if e.body.type == type_]
-
-
 # --- the in-turn recovery ----------------------------------------------------
 
 
@@ -171,10 +178,10 @@ async def test_an_overflow_folds_the_thread_and_the_retried_request_answers():
         await run.wait()
 
         assert run.status is RunStatus.done
-        started = _bodies(run, "compaction.started")
+        started = bodies_of(run, CompactionStarted)
         assert [s.reason for s in started] == ["overflow"]
         assert started[0].messages > 0
-        compacted = _bodies(run, "conversation.compacted")
+        compacted = bodies_of(run, ConversationCompacted)
         assert [c.reason for c in compacted] == ["overflow"]
         assert compacted[0].summary.endswith("FOLDED AWAY")
 
@@ -223,8 +230,8 @@ async def test_a_second_overflow_blocks_with_the_detail_the_client_keys_on():
         # retry" on that one, and folding again is exactly what just failed.
         assert run.detail == CONTEXT_OVERFLOW_AFTER_FOLD_DETAIL
         assert model.requests == 2  # tried once more, and only once
-        assert len(_bodies(run, "compaction.started")) == 1
-        notice = _bodies(run, "limit.notice")[-1]
+        assert len(bodies_of(run, CompactionStarted)) == 1
+        notice = bodies_of(run, LimitNotice)[-1]
         assert notice.limit == "context"
         # The notice carries the same marker, so the toast can withhold the offer the
         # blocked turn withholds — the two must never disagree about the remedy.
@@ -247,7 +254,7 @@ async def test_the_summary_is_written_by_the_turns_own_model_on_its_recorded_tur
 
         assert run.status is RunStatus.done
         assert model.folds == 1
-        assert _bodies(run, "conversation.compacted")[0].summary.endswith("FOLDED AWAY")
+        assert bodies_of(run, ConversationCompacted)[0].summary.endswith("FOLDED AWAY")
 
 
 async def test_a_summary_request_that_overflows_too_stops_the_turn_with_the_notice():
@@ -265,7 +272,7 @@ async def test_a_summary_request_that_overflows_too_stops_the_turn_with_the_noti
         assert run.status is RunStatus.blocked
         assert run.detail == CONTEXT_OVERFLOW_DETAIL
         assert model.folds == 1
-        assert not _bodies(run, "conversation.compacted")
+        assert not bodies_of(run, ConversationCompacted)
 
 
 async def test_a_collapsed_fold_boundary_does_not_re_record_the_history():
@@ -334,8 +341,8 @@ async def test_a_stateless_turn_still_blocks_with_the_same_detail():
 
         assert run.status is RunStatus.blocked
         assert run.detail == CONTEXT_OVERFLOW_DETAIL
-        assert not _bodies(run, "compaction.started")
-        notice = _bodies(run, "limit.notice")[-1]
+        assert not bodies_of(run, CompactionStarted)
+        notice = bodies_of(run, LimitNotice)[-1]
         assert notice.detail == CONTEXT_OVERFLOW_DETAIL
         assert "Compact now" in notice.message  # a fold is still the cheapest thing to try
 
@@ -361,7 +368,7 @@ async def test_compaction_switched_off_is_not_overruled_by_an_overflow():
 
         assert run.status is RunStatus.blocked
         assert run.detail == CONTEXT_OVERFLOW_DETAIL
-        assert not _bodies(run, "compaction.started")
+        assert not bodies_of(run, CompactionStarted)
 
 
 async def test_a_thread_with_nothing_left_to_fold_blocks_rather_than_looping():
@@ -375,7 +382,7 @@ async def test_a_thread_with_nothing_left_to_fold_blocks_rather_than_looping():
 
         assert run.status is RunStatus.blocked
         assert run.detail == CONTEXT_OVERFLOW_DETAIL
-        assert not _bodies(run, "conversation.compacted")
+        assert not bodies_of(run, ConversationCompacted)
 
 
 # --- the projected trigger ---------------------------------------------------
@@ -393,7 +400,7 @@ async def test_the_incoming_turn_counts_toward_the_threshold():
         await run.wait()
 
         assert run.status is RunStatus.done
-        assert [c.reason for c in _bodies(run, "conversation.compacted")] == ["threshold"]
+        assert [c.reason for c in bodies_of(run, ConversationCompacted)] == ["threshold"]
 
 
 async def test_the_same_thread_without_the_prompt_is_left_alone():
@@ -405,7 +412,7 @@ async def test_the_same_thread_without_the_prompt_is_left_alone():
         await run.wait()
 
         assert run.status is RunStatus.done
-        assert not _bodies(run, "conversation.compacted")
+        assert not bodies_of(run, ConversationCompacted)
 
 
 async def test_the_gauge_moves_the_moment_the_fold_lands():
@@ -440,25 +447,26 @@ async def test_a_thread_that_never_measured_its_overhead_does_not_assume_zero():
     assert not should_compact(history, 14_000, 0.80, overhead=_NO_OVERHEAD)
 
 
-def test_a_parked_turn_carries_what_it_would_fold_with():
+async def test_a_parked_turn_carries_what_it_would_fold_with(tmp_path: Path):
     """An approval can sit for hours. The thread it resumes into is the one that was
     already near its ceiling, and nothing in the resume orchestrator could re-derive the
     policy, the store and the agent the summary is written on."""
     run = Run(id="p", kind="chat", owner_id=OPERATOR_ID, stream=RunStream())
+    agent = build_agent(TestModel(), categories={})
+    _agents, store = await make_stores(tmp_path)
     ctx = CompactionContext(
-        store=object(),  # type: ignore[arg-type]
+        store=store,
         conversation_id="c1",
         policy=_POLICY,
-        agent=build_agent(TestModel(), categories={}),
+        agent=agent,
         deps=turn_deps(run, conversation_id="c1"),
         settings=get_settings(),
     )
 
-    asyncio.run(
-        park_for_input(run, None, [], DeferredToolRequests(), set(), compaction=ctx)  # type: ignore[arg-type]
-    )
+    await park_for_input(run, agent, [], DeferredToolRequests(), set(), compaction=ctx)
 
     assert run.status is RunStatus.awaiting_input
+    assert isinstance(run.parked_payload, ParkedTurn)
     assert run.parked_payload.compaction is ctx
 
 
@@ -467,6 +475,11 @@ def test_a_parked_turn_carries_what_it_would_fold_with():
 
 async def _reject(_prompt: str, _answer: str) -> Verdict:
     return Verdict(ok=False, reason="incomplete")
+
+
+async def _no_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    raise AttributeError("no model to re-drive with")
+    yield ""
 
 
 async def test_the_verifier_skips_a_correction_that_cannot_fit():
@@ -482,11 +495,18 @@ async def test_the_verifier_skips_a_correction_that_cannot_fit():
     )
 
     result = await verify_and_correct(
-        run, None, "prompt", turn, set(), _reject, settings=get_settings(), context_threshold=0.80
+        run,
+        build_agent(TestModel(), categories={}),
+        "prompt",
+        turn,
+        set(),
+        _reject,
+        settings=get_settings(),
+        context_threshold=0.80,
     )
 
     assert result is turn  # the answer survives
-    notice = [e.body for e in run.stream.replay() if e.body.type == "limit.notice"][-1]
+    notice = bodies_of(run, LimitNotice)[-1]
     assert notice.limit == "verify"
     assert notice.message == "skipped: no room for a re-attempt"
 
@@ -498,11 +518,11 @@ async def test_the_verifier_still_corrects_when_there_is_room():
     turn = TurnResult(answer="an answer", messages=[])
 
     with pytest.raises(AttributeError):
-        # No agent to re-drive with — reaching that failure is the assertion: the guard
-        # let the correction through rather than skipping it.
+        # An agent whose model raises on the re-drive — reaching that failure is the
+        # assertion: the guard let the correction through rather than skipping it.
         await verify_and_correct(
             run,
-            None,
+            build_agent(FunctionModel(stream_function=_no_model), categories={}),
             "prompt",
             turn,
             set(),
@@ -510,7 +530,7 @@ async def test_the_verifier_still_corrects_when_there_is_room():
             settings=get_settings(),
             context_threshold=0.80,
         )
-    messages = [e.body.message for e in run.stream.replay() if e.body.type == "limit.notice"]
+    messages = [b.message for b in bodies_of(run, LimitNotice)]
     assert messages == ["re-attempting: incomplete"]
 
 

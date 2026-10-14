@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic_ai import Agent, BinaryContent, DeferredToolRequests
@@ -37,6 +38,7 @@ from models.upload import Upload, UploadStatus
 from runs import Run, RunRegistry, RunStatus, RunStream
 from services.conversations import ConversationStore, install_persisted_attachments
 from services.corpus.chunk_store import CorpusChunkStore
+from services.corpus.folder import FolderAdapter
 from services.corpus.index import CorpusIndex
 from services.corpus.uploads import UploadsAdapter
 from services.registry import ModelRegistry
@@ -147,7 +149,7 @@ def _workspace(sessions: _FakeSandboxSessions) -> RunWorkspace:
 KEY = "conv-1"
 
 
-def _text(parts: list) -> str:
+def _text(parts: Sequence[object]) -> str:
     return "".join(p for p in parts if isinstance(p, str))
 
 
@@ -350,6 +352,7 @@ def test_install_keeps_the_prompt_and_retains_an_image():
     )
 
     part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
     assert isinstance(part.content, list)  # an image survives → kept as a multimodal list
     assert part.content[0] == "summarize this"
     assert any(isinstance(item, BinaryContent) for item in part.content)
@@ -361,6 +364,7 @@ def test_install_collapses_to_text_when_no_binary_survives():
     install_persisted_attachments(request, ["<file>doc</file>", "[Attached file(s): d (id: up2).]"])
 
     part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
     assert isinstance(part.content, str)  # no binary → collapsed back to one string
     assert part.content.startswith("summarize this")
     assert "Attached file(s)" in part.content
@@ -474,6 +478,11 @@ async def _run_provision(uid: str, *, uploads, sessions):
     return returns, retries
 
 
+def _payload(ret: ToolReturnPart) -> dict[str, object]:
+    assert isinstance(ret.content, dict)
+    return {str(k): v for k, v in ret.content.items()}
+
+
 async def test_provision_stages_attachment_into_the_sandbox():
     engine, _v, _c, _a, uploads = await _uploads_store()
     uid = await _insert_upload(engine, uploads._vault, mime="text/csv", content=b"a,b\n1,2\n")
@@ -484,9 +493,10 @@ async def test_provision_stages_attachment_into_the_sandbox():
     assert sessions.acquired == "conv-1"  # keyed by the conversation, like code_execute
     assert sessions.session.files["attachments/dossier"] == b"a,b\n1,2\n"
     [ret] = returns
-    assert ret.content["ok"] is True
-    assert ret.content["path"] == "/work/attachments/dossier"
-    assert ret.content["size_bytes"] == len(b"a,b\n1,2\n")
+    payload = _payload(ret)
+    assert payload["ok"] is True
+    assert payload["path"] == "/work/attachments/dossier"
+    assert payload["size_bytes"] == len(b"a,b\n1,2\n")
 
 
 async def test_provision_unknown_id_retries_and_stages_nothing():
@@ -506,8 +516,11 @@ async def test_provision_degrades_without_a_sandbox():
     returns, _retries = await _run_provision(uid, uploads=uploads, sessions=None)
 
     [ret] = returns
-    assert ret.content["ok"] is False
-    assert "unavailable" in ret.content["error"].lower()
+    payload = _payload(ret)
+    assert payload["ok"] is False
+    error = payload["error"]
+    assert isinstance(error, str)
+    assert "unavailable" in error.lower()
 
 
 # --- sandbox-04: collision-safe staging --------------------------------------
@@ -527,13 +540,17 @@ async def test_provision_disambiguates_a_filename_collision():
 
     [ret1] = returns1
     [ret2] = returns2
-    assert ret1.content["path"] == "/work/attachments/dossier"
-    assert "renamed" not in ret1.content
+    payload1 = _payload(ret1)
+    payload2 = _payload(ret2)
+    assert payload1["path"] == "/work/attachments/dossier"
+    assert "renamed" not in payload1
 
     # The second attachment gets a disambiguated, distinct path — and is told so.
-    assert ret2.content["path"] == "/work/attachments/dossier-2"
-    assert ret2.content["renamed"] is True
-    assert "already used this name" in ret2.content["note"]
+    assert payload2["path"] == "/work/attachments/dossier-2"
+    assert payload2["renamed"] is True
+    note = payload2["note"]
+    assert isinstance(note, str)
+    assert "already used this name" in note
 
     # Both files survive, distinct and intact — neither clobbered the other.
     assert sessions.session.files["attachments/dossier"] == b"a,b\n1,2\n"
@@ -550,9 +567,9 @@ async def test_provision_reprovisioning_the_same_attachment_is_idempotent():
     returns1, _r1 = await _run_provision(uid, uploads=uploads, sessions=sessions)
     returns2, _r2 = await _run_provision(uid, uploads=uploads, sessions=sessions)
 
-    assert returns1[0].content["path"] == "/work/attachments/dossier"
-    assert returns2[0].content["path"] == "/work/attachments/dossier"
-    assert "renamed" not in returns2[0].content
+    assert _payload(returns1[0])["path"] == "/work/attachments/dossier"
+    assert _payload(returns2[0])["path"] == "/work/attachments/dossier"
+    assert "renamed" not in _payload(returns2[0])
     assert sessions.session.files.keys() == {"attachments/dossier"}
 
 
@@ -619,7 +636,7 @@ async def test_targeted_source_ids_read_scopes_to_one_file_and_overrides_exclude
             FakeEmbedder(),
             ModelRegistry.__new__(ModelRegistry),
             chunk_store,
-            folder=None,  # type: ignore[arg-type]
+            FolderAdapter(engine, chunk_store, vault.unlocked_event),
         )
         hits = await index.retrieve(OWNER, "otters", source_ids=["file-a"], limit=5)
         assert hits and all(h.source_id == "file-a" for h in hits)

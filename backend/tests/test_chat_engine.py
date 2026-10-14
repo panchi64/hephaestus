@@ -8,7 +8,7 @@ from pydantic_ai.models.test import TestModel
 import agent.engine as engine
 from agent import build_chat_orchestrator
 from core.config import Settings
-from runs import RunRegistry, RunStatus
+from runs import RunEnded, RunRegistry, RunStatus
 
 
 def _bodies(run):
@@ -82,7 +82,9 @@ async def test_usage_limit_blocks_the_turn(monkeypatch):
     # legibility treatment `RunTimeout` gets in `runs/registry.py`.
     assert "request_limit" not in notice.message
     assert notice.message.startswith("this run hit its step limit for a single turn")
-    assert _bodies(run)[-1].outcome == "blocked"
+    last = _bodies(run)[-1]
+    assert isinstance(last, RunEnded)
+    assert last.outcome == "blocked"
 
 
 async def test_usage_limit_stop_marker_matches_the_toast(monkeypatch):
@@ -99,6 +101,7 @@ async def test_usage_limit_stop_marker_matches_the_toast(monkeypatch):
 
     notice = next(b for b in _bodies(run) if b.type == "limit.notice")
     assert run.detail == notice.message
+    assert run.detail is not None
     assert "usage limit" not in run.detail
 
 
@@ -208,7 +211,7 @@ async def test_parallel_tool_calls_reaches_the_model_request():
     # multi-part question costs one model round-trip instead of one per part. Asserted
     # on what the *model* is handed rather than on the agent object, because the agent's
     # own settings are merged with each capability's before a request is built.
-    seen: list[dict] = []
+    seen: list[dict[str, object]] = []
 
     async def capture(messages, info: AgentInfo):
         seen.append(dict(info.model_settings or {}))

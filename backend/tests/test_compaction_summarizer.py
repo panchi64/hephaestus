@@ -21,6 +21,7 @@ from __future__ import annotations
 from pydantic_ai import (
     Agent,
     DeferredToolRequests,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RunContext,
@@ -32,10 +33,13 @@ from pydantic_ai import (
 )
 from pydantic_ai.models.function import (
     AgentInfo,
+    DeltaThinkingCalls,
     DeltaThinkingPart,
     DeltaToolCall,
+    DeltaToolCalls,
     FunctionModel,
 )
+from pydantic import BaseModel
 
 from agent.compaction_summary import (
     FOLD_SETTINGS,
@@ -62,14 +66,14 @@ from runs import PrefixLedger, Run, RunStream
 from tools import RunDeps, core_categories
 
 
-def _turn(prompt: str, answer: str) -> list:
+def _turn(prompt: str, answer: str) -> list[ModelMessage]:
     return [
         ModelRequest(parts=[UserPromptPart(content=prompt)]),
         ModelResponse(parts=[TextPart(content=answer)]),
     ]
 
 
-def _tool_turn(prompt: str, result: str, *, tool: str = "web_fetch") -> list:
+def _tool_turn(prompt: str, result: str, *, tool: str = "web_fetch") -> list[ModelMessage]:
     return [
         ModelRequest(parts=[UserPromptPart(content=prompt)]),
         ModelResponse(parts=[ToolCallPart(tool_name=tool, args={"q": "x"}, tool_call_id="1")]),
@@ -83,16 +87,21 @@ def _deps(caps: ServiceContainer | None = None) -> RunDeps:
     return turn_deps(run, caps=caps or ServiceContainer(), conversation_id="c")
 
 
-def _model(*stream: object, seen: list[AgentInfo] | None = None) -> FunctionModel:
+type _Seen = list[tuple[list[ModelMessage], AgentInfo]]
+
+
+def _model(
+    *stream: str | DeltaToolCalls | DeltaThinkingCalls, seen: _Seen | None = None
+) -> FunctionModel:
     """A model that streams ``stream`` (text deltas, thinking or tool-call deltas) and
     records every request's ``AgentInfo`` and messages into ``seen``."""
-    record = seen if seen is not None else []
+    record: _Seen = seen if seen is not None else []
 
-    async def respond(messages, info: AgentInfo) -> ModelResponse:
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         record.append((messages, info))
         return ModelResponse(parts=[TextPart(content="an answer")])
 
-    async def streamed(messages, info: AgentInfo):
+    async def streamed(messages: list[ModelMessage], info: AgentInfo):
         record.append((messages, info))
         for item in stream:
             yield item
@@ -105,12 +114,12 @@ def _agent(model: FunctionModel) -> Agent:
     return build_agent(model, categories=core_categories())
 
 
-async def _summarize(text: str, messages: list):
+async def _summarize(text: str, messages: list[ModelMessage]):
     """``summarize_history`` on a turn-shaped agent whose model answers ``text``."""
     return await summarize_history(_agent(_model(text)), _deps(), messages)
 
 
-def _texts(messages) -> list[str]:
+def _texts(messages: list[ModelMessage]) -> list[str]:
     """The user-visible text of a request list, in order, for comparing two of them."""
     out: list[str] = []
     for message in messages:
@@ -126,7 +135,7 @@ class TestTheRequestIsTheTurns:
     async def test_the_request_is_the_replay_plus_one_user_message(self):
         """What a local engine can reuse is the prefix — so the summary request is exactly
         the conversation the model was already being sent, and one more message."""
-        seen: list = []
+        seen: _Seen = []
         history = [*_tool_turn("look it up", "the page"), *_turn("thanks", "any time")]
         summary = await summarize_history(_agent(_model("the story", seen=seen)), _deps(), history)
         assert summary == "the story"
@@ -140,7 +149,7 @@ class TestTheRequestIsTheTurns:
         """The same instructions and the same tool array a turn's request carries — the
         compaction prompt rides the conversation, never the brief, so the head of the
         request does not move."""
-        seen: list = []
+        seen: _Seen = []
         model = _model("the story", seen=seen)
         agent = _agent(model)
         deps = _deps()
@@ -162,13 +171,13 @@ class TestTheRequestIsTheTurns:
         assert summary_info.function_tools  # the tools are still declared
 
     async def test_the_system_prompt_is_reasserted_as_on_a_turn(self):
-        seen: list = []
+        seen: _Seen = []
         await summarize_history(_agent(_model("s", seen=seen)), _deps(), _turn("hi", "hello"))
         [(messages, _)] = seen
         assert any(isinstance(p, SystemPromptPart) for p in messages[0].parts)
 
     async def test_tool_choice_none_is_sent_and_nothing_caps_the_answer(self):
-        seen: list = []
+        seen: _Seen = []
         await summarize_history(_agent(_model("s", seen=seen)), _deps(), _turn("hi", "hello"))
         [(_, info)] = seen
         assert info.model_settings is not None
@@ -191,7 +200,7 @@ class TestTheRequestIsTheTurns:
         # "do it" and the instructions are one request, not two in a row.
         assert isinstance(request[-1], ModelRequest)
         assert not isinstance(request[-2], ModelRequest)
-        assert [p.content for p in request[-1].parts] == ["do it", COMPACT_INSTRUCTIONS]
+        assert [getattr(p, "content", None) for p in request[-1].parts] == ["do it", COMPACT_INSTRUCTIONS]
 
 
 class TestItIsASideRun:
@@ -252,7 +261,7 @@ class TestItIsASideRun:
         agent = build_agent(model, categories=core_categories(), instruction_providers=[skills])
         deps = _deps()
         await summarize_history(agent, deps, _turn("hi", "hello"))
-        announced: list = []
+        announced: list[BaseModel] = []
         async with agent.iter("next", deps=deps) as run:
             async for node in run:
                 if Agent.is_model_request_node(node):

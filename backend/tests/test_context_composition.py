@@ -14,7 +14,7 @@ be a confident lie about the one thing this readout exists to expose.
 from __future__ import annotations
 
 import pytest
-from pydantic_ai import FunctionToolset, ModelRequest, ModelResponse
+from pydantic_ai import FunctionToolset, ModelMessage, ModelRequest, ModelResponse
 from pydantic_ai.messages import TextPart, UserPromptPart
 from pydantic_ai.usage import RequestUsage
 
@@ -22,7 +22,7 @@ from runs import TurnOverhead
 from services.context_budget import compose
 
 
-def _messages(text: str) -> list:
+def _messages(text: str) -> list[ModelMessage]:
     return [
         ModelRequest(parts=[UserPromptPart(content=text)]),
         ModelResponse(parts=[TextPart(content="ok")], usage=RequestUsage()),
@@ -105,10 +105,10 @@ async def test_the_overhead_is_measured_from_the_request_that_went_out():
         """Look something up in the corpus."""
         return "x"
 
-    seen: list = []
+    seen: list[TurnOverhead] = []
 
     @dataclass
-    class _Capture(AbstractCapability[None]):
+    class _Capture(AbstractCapability[object]):
         async def before_model_request(self, ctx, request_context):
             params = request_context.model_request_parameters
             seen.append(

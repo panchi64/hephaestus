@@ -17,7 +17,7 @@ that only holds in memory is a shape that breaks on the operator's next page loa
 
 from __future__ import annotations
 
-from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.usage import RequestUsage
 
 from agent import build_chat_orchestrator
@@ -25,11 +25,12 @@ from agent.summarize import build_auto_compact_policy
 from core.config import Settings
 from routes.deps import OPERATOR_ID
 from runs import RunStatus
+from services.conversation_view import MessageView
 
 from ._helpers import client_app, fold_aware_model
 
 
-def _turn(prompt: str, answer: str, input_tokens: int = 0) -> list:
+def _turn(prompt: str, answer: str, input_tokens: int = 0) -> list[ModelMessage]:
     """One exchange. ``input_tokens`` is what the answer *reports* the request cost, which
     is the figure the engine's threshold reads."""
     return [
@@ -41,14 +42,15 @@ def _turn(prompt: str, answer: str, input_tokens: int = 0) -> list:
     ]
 
 
-def _texts(messages: list) -> list[str]:
+def _texts(messages: list[ModelMessage]) -> list[str]:
     """Every message's flattened text, for asserting on shape without part surgery."""
-    return [
-        part.content
-        for message in messages
-        for part in message.parts
-        if isinstance(getattr(part, "content", None), str)
-    ]
+    texts: list[str] = []
+    for message in messages:
+        for part in message.parts:
+            content = getattr(part, "content", None)
+            if isinstance(content, str):
+                texts.append(content)
+    return texts
 
 
 async def _compact(store, cid: str, *, summary: str = "SUMMARY"):
@@ -70,7 +72,7 @@ async def _seed(store, cid: str, count: int = 4) -> None:
         store.record(cid, _turn(f"q{i}", f"a{i}"))
 
 
-def _assistant_views(views: list):
+def _assistant_views(views: list[MessageView]) -> list[MessageView]:
     return [v for v in views if v.role == "assistant"]
 
 

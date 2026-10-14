@@ -9,8 +9,10 @@ from agent import stream_agent_run
 from agent.injections import AnnounceInjections
 from agent.overhead import MeasureOverhead
 from agent.translate import _on_tool_event
-from runs import Run, RunStream, ViewLiveStopped
+from runs import Run, RunStream, ToolCompleted, ToolFailed, ToolStarted, ViewLiveStopped
 from tools.emit import RunEventEmitted
+
+from ._helpers import first_body
 
 
 def _run() -> Run:
@@ -19,10 +21,6 @@ def _run() -> Run:
 
 def _bodies(run: Run):
     return [e.body for e in run.stream.replay()]
-
-
-def _first(run: Run, type_name: str):
-    return next(b for b in _bodies(run) if b.type == type_name)
 
 
 async def test_translates_steps_text_and_tool_calls():
@@ -41,11 +39,11 @@ async def test_translates_steps_text_and_tool_calls():
     assert "tool.started" in types and "tool.completed" in types
     assert "answer.delta" in types
 
-    started = _first(run, "tool.started")
+    started = first_body(run, ToolStarted)
     assert started.name == "add"
     assert set(started.args) == {"a", "b"}
 
-    completed = _first(run, "tool.completed")
+    completed = first_body(run, ToolCompleted)
     assert completed.result == started.args["a"] + started.args["b"]
 
     answer = "".join(b.text for b in _bodies(run) if b.type == "answer.delta")
@@ -60,7 +58,7 @@ async def test_retry_prompt_part_becomes_tool_failed():
     )
     _on_tool_event(event, run, None, None)
 
-    failed = _first(run, "tool.failed")
+    failed = first_body(run, ToolFailed)
     assert failed.name == "lookup"
     assert failed.tool_call_id == "c9"
     assert "bad input" in failed.error
@@ -121,7 +119,7 @@ async def test_a_tool_puts_its_own_news_on_the_stream():
     async with agent.iter("say something") as agent_run:
         await stream_agent_run(agent_run, run)
 
-    stopped = _first(run, "view.live.stopped")
+    stopped = first_body(run, ViewLiveStopped)
     assert stopped.conversation_id
     # Inside its own call, not before it: the ordering the direct `run.emit` could not
     # promise, because a value written straight to the run is visible immediately while
@@ -185,6 +183,9 @@ async def test_a_scripts_calls_carry_the_script_that_made_them():
     )
 
     started, completed, failed = _bodies(run)
+    assert isinstance(started, ToolStarted)
+    assert isinstance(completed, ToolCompleted)
+    assert isinstance(failed, ToolFailed)
     assert (started.type, started.tool_call_id, started.args) == (
         "tool.started",
         "s__1",
@@ -205,5 +206,5 @@ async def test_a_direct_calls_frames_name_no_parent():
     run = _run()
     async with agent.iter("add") as agent_run:
         await stream_agent_run(agent_run, run)
-    frames = [b for b in _bodies(run) if b.type.startswith("tool.")]
+    frames = [b for b in _bodies(run) if isinstance(b, (ToolStarted, ToolCompleted, ToolFailed))]
     assert frames and all(b.parent_tool_call_id is None for b in frames)
