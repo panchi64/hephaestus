@@ -4,16 +4,20 @@ never break the park" guarantee — without driving a full model turn."""
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import override
+
 from pydantic_ai import Agent, DeferredToolRequests, ToolApproved, ToolCallPart
 from pydantic_ai.models.test import TestModel
 
-from agent.parking import ParkedTurn, park_for_input
+from agent.parking import ParkedTurn, ParkNotifier, park_for_input
 from core.db import init_db, make_engine
 from core.vault import Vault
 from runs.run import Run, RunStatus
 from runs.stream import RunStream
 from services.conversations import ConversationStore
-from services.notifications import NotificationService, NotificationView
+from services.notification_view import NotificationView
+from services.notifications import NotificationService
 
 OWNER = "operator"
 
@@ -35,7 +39,7 @@ def _requests() -> DeferredToolRequests:
     return DeferredToolRequests(approvals=list(_APPROVALS))
 
 
-async def _notification_service(tmp_path) -> NotificationService:
+async def _notification_service(tmp_path: Path) -> NotificationService:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
@@ -45,7 +49,7 @@ async def _notification_service(tmp_path) -> NotificationService:
     return service
 
 
-async def test_park_names_conversation_and_pending_tools(tmp_path):
+async def test_park_names_conversation_and_pending_tools(tmp_path: Path):
     service = await _notification_service(tmp_path)
     run = _run()
 
@@ -71,7 +75,7 @@ async def test_park_names_conversation_and_pending_tools(tmp_path):
     await service.stop()
 
 
-async def test_park_excludes_grant_covered_tool_names(tmp_path):
+async def test_park_excludes_grant_covered_tool_names(tmp_path: Path):
     service = await _notification_service(tmp_path)
     run = _run()
 
@@ -94,7 +98,7 @@ async def test_park_excludes_grant_covered_tool_names(tmp_path):
     await service.stop()
 
 
-async def test_park_skips_notifying_when_every_call_is_grant_covered(tmp_path):
+async def test_park_skips_notifying_when_every_call_is_grant_covered(tmp_path: Path):
     service = await _notification_service(tmp_path)
     run = _run()
 
@@ -126,7 +130,7 @@ async def test_park_is_a_no_op_notify_when_notifications_is_none():
     assert run.status is RunStatus.awaiting_input
 
 
-async def test_park_uses_the_conversation_title_when_one_exists(tmp_path):
+async def test_park_uses_the_conversation_title_when_one_exists(tmp_path: Path):
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile2.json")
@@ -156,7 +160,7 @@ async def test_park_uses_the_conversation_title_when_one_exists(tmp_path):
     await service.stop()
 
 
-async def test_park_falls_back_to_a_generic_label_without_a_title(tmp_path):
+async def test_park_falls_back_to_a_generic_label_without_a_title(tmp_path: Path):
     service = await _notification_service(tmp_path)
     run = _run()
 
@@ -179,7 +183,8 @@ async def test_park_falls_back_to_a_generic_label_without_a_title(tmp_path):
 
 
 async def test_a_raising_notifier_never_breaks_the_park():
-    class _RaisingNotifier:
+    class _RaisingNotifier(ParkNotifier):
+        @override
         async def notify(
             self,
             owner_id: str,

@@ -11,10 +11,17 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from collections.abc import AsyncIterator
 from pathlib import Path
 
-from pydantic_ai import Agent, DeferredToolRequests
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai import Agent, DeferredToolRequests, ModelMessage
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+    StreamFunctionDef,
+)
 
 from agent import stream_agent_run
 from core.container import ServiceContainer
@@ -46,7 +53,7 @@ async def _wired() -> tuple[ExternalTools, McpServerView]:
     return external, view
 
 
-def _agent(stream_fn) -> Agent[RunDeps, DeferredToolRequests | str]:
+def _agent(stream_fn: StreamFunctionDef) -> Agent[RunDeps, DeferredToolRequests | str]:
     """The agent a chat turn builds, narrowed to the external category — same toolset
     stack, same ``output_type``, so approval really defers instead of erroring."""
     return Agent(
@@ -59,7 +66,7 @@ def _agent(stream_fn) -> Agent[RunDeps, DeferredToolRequests | str]:
 
 async def _run(
     agent: Agent[RunDeps, DeferredToolRequests | str], external: ExternalTools | None, run_id: str
-):
+) -> tuple[DeferredToolRequests | str, Run]:
     run = Run(id=run_id, kind="chat", owner_id=OWNER, stream=RunStream())
     caps = ServiceContainer.of(external) if external is not None else ServiceContainer()
     deps = RunDeps(run=run, owner_id=OWNER, conversation_id=CONV, caps=caps)
@@ -69,17 +76,19 @@ async def _run(
         return agent_run.result.output, run
 
 
-def _call_once(tool_name: str, args: dict[str, object]):
+def _call_once(tool_name: str, args: dict[str, object]) -> StreamFunctionDef:
     """A model that calls one tool once, then answers with text once it has run."""
 
-    def _tool_ran(messages) -> bool:
+    def _tool_ran(messages: list[ModelMessage]) -> bool:
         return any(
             type(part).__name__ == "ToolReturnPart"
             for message in messages
             for part in message.parts
         )
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         if _tool_ran(messages):
             yield "done"
         else:
@@ -98,11 +107,13 @@ async def _offered_tools(external: ExternalTools | None) -> list[str]:
     itself rather than reconstructed, so it is exactly what the agent offered."""
     seen: list[str] = []
 
-    async def stream_fn(_messages, info):
+    async def stream_fn(
+        _messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         seen.extend(sorted(t.name for t in info.function_tools))
         yield "done"
 
-    await _run(_agent(stream_fn), external, "catalog")
+    _ = await _run(_agent(stream_fn), external, "catalog")
     return seen
 
 
@@ -134,7 +145,7 @@ async def test_an_untrusted_external_tool_parks_for_approval():
 
 async def test_a_trusted_external_tool_runs_without_asking():
     external, view = await _wired()
-    await external.mcp.set_tool_policy(OWNER, view.id, "echo", trusted=True)
+    _ = await external.mcp.set_tool_policy(OWNER, view.id, "echo", trusted=True)
 
     out, run = await _drive(external, f"external_{view.slug}_echo", {"text": "hi"})
 
@@ -145,7 +156,7 @@ async def test_a_trusted_external_tool_runs_without_asking():
 async def test_trust_is_per_tool_so_a_sibling_on_the_same_server_still_parks():
     """Registering or enabling a server must never blanket-trust what it exposes."""
     external, view = await _wired()
-    await external.mcp.set_tool_policy(OWNER, view.id, "echo", trusted=True)
+    _ = await external.mcp.set_tool_policy(OWNER, view.id, "echo", trusted=True)
 
     out, run = await _drive(external, f"external_{view.slug}_add", {"a": 1, "b": 2})
 
@@ -156,11 +167,11 @@ async def test_trust_is_per_tool_so_a_sibling_on_the_same_server_still_parks():
 
 async def test_revoking_trust_returns_the_tool_to_parking():
     external, view = await _wired()
-    await external.mcp.set_tool_policy(OWNER, view.id, "echo", trusted=True)
+    _ = await external.mcp.set_tool_policy(OWNER, view.id, "echo", trusted=True)
     out, _run = await _drive(external, f"external_{view.slug}_echo", {"text": "hi"})
     assert not isinstance(out, DeferredToolRequests)
 
-    await external.mcp.set_tool_policy(OWNER, view.id, "echo", trusted=False)
+    _ = await external.mcp.set_tool_policy(OWNER, view.id, "echo", trusted=False)
 
     out, run = await _drive(external, f"external_{view.slug}_echo", {"text": "hi"})
     assert isinstance(out, DeferredToolRequests)
@@ -172,7 +183,7 @@ async def test_a_disabled_tool_is_not_offered_at_all():
     """`MCP-1`/`AE-3.3` — disabled is a stronger statement than untrusted: the tool is
     never put in front of the model, so there is nothing to approve."""
     external, view = await _wired()
-    await external.mcp.set_tool_policy(OWNER, view.id, "echo", enabled=False)
+    _ = await external.mcp.set_tool_policy(OWNER, view.id, "echo", enabled=False)
 
     names = set(await _offered_tools(external))
 
@@ -210,7 +221,7 @@ async def test_a_connector_action_rides_the_same_gate():
     assert "tool.completed" not in _types(run)
 
     # Trusting one action leaves the connector's others parked.
-    await external.integrations.set_action_policy(OWNER, connector.id, "get_repo", trusted=True)
+    _ = await external.integrations.set_action_policy(OWNER, connector.id, "get_repo", trusted=True)
     out, _run = await _drive(
         external,
         f"external_{connector.slug}_list_issues",
