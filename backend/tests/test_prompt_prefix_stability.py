@@ -20,17 +20,20 @@ exactly where the expensive invalidations live.
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Callable, Collection, Mapping, Sequence
+from datetime import datetime, tzinfo
+from typing import Self, override
 
 import pytest
-from pydantic_ai import InstructionPart, RunContext
+from pydantic_ai import InstructionPart, RunContext, ToolDefinition
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 import agent.factory as factory
 from agent.factory import build_agent
 from runs import Run, RunStream
-from tools import RunDeps, core_categories
+from services.permissions import DEFAULT_PERMISSION, PermissionLevel
+from tools import InstructionProvider, RunDeps, core_categories
 
 OWNER = "operator"
 
@@ -46,12 +49,27 @@ def _capturing() -> tuple[FunctionModel, list[AgentInfo]]:
     return FunctionModel(respond), seen
 
 
-def _deps(**overrides) -> RunDeps:
+def _deps(
+    *,
+    permission: PermissionLevel = DEFAULT_PERMISSION,
+    disabled_tools: Collection[str] = (),
+) -> RunDeps:
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
-    return RunDeps(run=run, owner_id=OWNER, **overrides)
+    return RunDeps(
+        run=run,
+        owner_id=OWNER,
+        permission=permission,
+        disabled_tools=frozenset(disabled_tools),
+    )
 
 
-async def _head(*, providers=(), dormant=factory.NO_DORMANT, **deps) -> AgentInfo:
+async def _head(
+    *,
+    providers: Sequence[InstructionProvider] = (),
+    dormant: Mapping[str, str] = factory.NO_DORMANT,
+    permission: PermissionLevel = DEFAULT_PERMISSION,
+    disabled_tools: Collection[str] = (),
+) -> AgentInfo:
     """One turn's assembled request, from an agent built the way a turn builds one."""
     model, seen = _capturing()
     agent = build_agent(
@@ -60,7 +78,7 @@ async def _head(*, providers=(), dormant=factory.NO_DORMANT, **deps) -> AgentInf
         instruction_providers=providers,
         dormant=dormant,
     )
-    await agent.run("hi", deps=_deps(**deps))
+    _ = await agent.run("hi", deps=_deps(permission=permission, disabled_tools=disabled_tools))
     assert len(seen) == 1
     return seen[0]
 
@@ -84,14 +102,15 @@ def _tool_names(info: AgentInfo) -> list[str]:
 
 
 @pytest.fixture
-def frozen_clock(monkeypatch):
+def frozen_clock(monkeypatch: pytest.MonkeyPatch) -> Callable[[datetime], None]:
     """Pin the date block, so a test run that straddles midnight is not a failing test."""
 
     def freeze(moment: datetime) -> None:
         class _Clock(datetime):
+            @override
             @classmethod
-            def now(cls, tz=None):  # noqa: D102 - a stand-in for one classmethod
-                return moment if tz is None else moment.astimezone(tz)
+            def now(cls, tz: tzinfo | None = None) -> Self:
+                return cls.fromtimestamp(moment.timestamp(), tz or moment.tzinfo)
 
         monkeypatch.setattr(factory, "datetime", _Clock)
 
@@ -102,7 +121,8 @@ def frozen_clock(monkeypatch):
 # --- the head across two turns of one thread -----------------------------------------
 
 
-async def test_two_turns_of_one_thread_send_the_same_brief(frozen_clock):
+@pytest.mark.usefixtures("frozen_clock")
+async def test_two_turns_of_one_thread_send_the_same_brief():
     """The baseline, and the one that catches the widest class of regression: any provider
     that grows a timestamp, a counter, a random id or a set-ordered list will fail here
     without anyone having to think of that case in advance."""
@@ -120,12 +140,12 @@ async def test_the_tool_array_order_is_the_same_on_every_build():
     assert _tool_names(await _head()) == _tool_names(await _head())
 
 
-def _run_code(info: AgentInfo):
+def _run_code(info: AgentInfo) -> ToolDefinition:
     return next(tool for tool in info.function_tools if tool.name == "run_code")
 
 
 @pytest.mark.parametrize("level", ["manual", "edit", "auto", "yolo"])
-async def test_run_code_is_the_same_bytes_on_every_turn_at_one_level(level):
+async def test_run_code_is_the_same_bytes_on_every_turn_at_one_level(level: PermissionLevel):
     """`run_code`'s description lists the tools the thread's level clears unasked, so it is
     the one tool definition that moves when the level does — a price paid once, at the
     change. Within one level it must be byte-identical turn to turn: rendered from a set,
@@ -155,7 +175,9 @@ async def test_the_same_withheld_set_spelled_two_ways_gives_one_array():
     )
 
 
-async def test_only_the_date_block_moves_when_the_day_rolls(frozen_clock):
+async def test_only_the_date_block_moves_when_the_day_rolls(
+    frozen_clock: Callable[[datetime], None],
+):
     """Midnight is the one head change this codebase accepts, and it has to be *only* that
     block: the date is registered last precisely so the roll falls outside the prefix
     Anthropic pins, and a second block moving with it would put the change in the middle."""
@@ -169,7 +191,8 @@ async def test_only_the_date_block_moves_when_the_day_rolls(frozen_clock):
     }
 
 
-async def test_a_level_change_moves_the_level_block_and_the_tool_array(frozen_clock):
+@pytest.mark.usefixtures("frozen_clock")
+async def test_a_level_change_moves_the_level_block_and_the_tool_array():
     """One of the two mid-turn events that invalidate a whole thread — a Plan-level turn
     narrowing, or an approved plan widening it again. Worth pinning what it touches, because
     the head and the array moving *together* is what makes it expensive, and a change that
@@ -186,7 +209,8 @@ async def test_a_level_change_moves_the_level_block_and_the_tool_array(frozen_cl
 # --- the invariant Anthropic's breakpoint arithmetic depends on -----------------------
 
 
-async def test_the_static_part_is_first_and_there_is_exactly_one(frozen_clock):
+@pytest.mark.usefixtures("frozen_clock")
+async def test_the_static_part_is_first_and_there_is_exactly_one():
     """The one place block *order* pays, and the library will not tell you when it stops
     working.
 
@@ -214,7 +238,8 @@ async def test_the_static_part_is_first_and_there_is_exactly_one(frozen_clock):
     assert parts[0] is statics[0]
 
 
-async def test_a_static_part_added_after_a_dynamic_one_is_caught(frozen_clock):
+@pytest.mark.usefixtures("frozen_clock")
+async def test_a_static_part_added_after_a_dynamic_one_is_caught():
     """The negative half: the assertion above has to actually fail when the mistake is made,
     or it is a test that passes for the shape of the list rather than for its order."""
     parts = _parts(await _head())
@@ -227,12 +252,13 @@ async def test_a_static_part_added_after_a_dynamic_one_is_caught(frozen_clock):
 # --- what a feature may put in the head ----------------------------------------------
 
 
-async def test_a_feature_provider_joins_the_head_without_disturbing_the_order(frozen_clock):
+@pytest.mark.usefixtures("frozen_clock")
+async def test_a_feature_provider_joins_the_head_without_disturbing_the_order():
     """A manifest's own instructions are registered between the literal brief and the
     thread's own blocks. They must not break the static-first invariant, and the block they
     add must be stable across turns like every other."""
 
-    def catalog_like(ctx: RunContext[RunDeps]) -> str:
+    def catalog_like(_ctx: RunContext[RunDeps]) -> str:
         return "- alpha: the first one\n- beta: the second"
 
     one = await _head(providers=(catalog_like,))
@@ -244,12 +270,13 @@ async def test_a_feature_provider_joins_the_head_without_disturbing_the_order(fr
     assert "alpha" in _blocks(one)["catalog_like"]
 
 
-async def test_a_provider_that_says_nothing_adds_no_block(frozen_clock):
+@pytest.mark.usefixtures("frozen_clock")
+async def test_a_provider_that_says_nothing_adds_no_block():
     """The no-op path every provider takes when its capability is unwired. An empty block
     still joined as a separator would be a byte in the head that moves the first time the
     feature is configured — for a feature the operator never turned on."""
 
-    def silent(ctx: RunContext[RunDeps]) -> str:
+    def silent(_ctx: RunContext[RunDeps]) -> str:
         return ""
 
     assert _brief(await _head(providers=(silent,))) == _brief(await _head())
@@ -258,7 +285,8 @@ async def test_a_provider_that_says_nothing_adds_no_block(frozen_clock):
 # --- a session-scoped block is head material, and carries nothing untrusted ----------
 
 
-async def test_the_browser_brief_is_absent_until_a_session_exists(frozen_clock):
+@pytest.mark.usefixtures("frozen_clock")
+async def test_the_browser_brief_is_absent_until_a_session_exists():
     """The browse brief is head material by the seam rule — byte-stable for as long as the
     session lives — and it resolves to nothing without one. So a thread that never opens a
     page pays nothing for it, and the turn where it appears is a turn whose tool array
@@ -294,9 +322,8 @@ def test_the_browser_brief_is_a_constant_with_no_page_in_it():
 # --- the tail is where volatile content goes -----------------------------------------
 
 
-async def test_nothing_in_the_head_changes_between_two_identical_turns_of_a_long_thread(
-    frozen_clock,
-):
+@pytest.mark.usefixtures("frozen_clock")
+async def test_nothing_in_the_head_changes_between_two_identical_turns_of_a_long_thread():
     """The property stated the way an operator would: two turns in a row, nothing touched,
     and the server must see the same head. Distinct from the first test only in carrying a
     replayed history behind it, which is what a real second turn has and what a head change
@@ -305,7 +332,7 @@ async def test_nothing_in_the_head_changes_between_two_identical_turns_of_a_long
     agent = build_agent(model, categories=core_categories())
     deps = _deps()
     first = await agent.run("hi", deps=deps)
-    await agent.run("again", deps=deps, message_history=first.all_messages())
+    _ = await agent.run("again", deps=deps, message_history=first.all_messages())
 
     assert len(seen) == 2
     assert _brief(seen[0]) == _brief(seen[1])
