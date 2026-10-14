@@ -15,10 +15,11 @@ some fourteen thousand tokens; without a breakpoint every turn buys them again.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model
@@ -30,6 +31,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 import services.providers.anthropic as anthropic_provider
 import services.providers.openai_compat as openai_compat
 from services import llm
+from services.endpoint_spec import EndpointSpec
 from services.providers import get_provider
 
 CACHE_KEYS = ("anthropic_cache", "anthropic_cache_instructions", "anthropic_cache_tool_definitions")
@@ -39,13 +41,15 @@ def _openai_profile(model: Model) -> OpenAIModelProfile:
     return OpenAIModelProfile(**model.profile)
 
 
-def spec(provider: str = "anthropic", **overrides) -> llm.EndpointSpec:
-    return llm.EndpointSpec(
-        base_url=overrides.pop("base_url", "https://api.anthropic.com"),
-        model=overrides.pop("model", "claude-sonnet-4-5"),
-        provider=provider,
-        api_key="k",
-        **overrides,
+def spec(
+    provider: str = "anthropic",
+    *,
+    base_url: str = "https://api.anthropic.com",
+    model: str = "claude-sonnet-4-5",
+    thinking: bool = False,
+) -> EndpointSpec:
+    return EndpointSpec(
+        base_url=base_url, model=model, provider=provider, api_key="k", thinking=thinking
     )
 
 
@@ -56,31 +60,31 @@ class TestSettingsRideOnTheModel:
     async def test_a_models_own_settings_reach_the_request(self):
         """The mechanism the whole design rests on: settings given at construction arrive
         on every request without a single call site mentioning them."""
-        seen: list[dict[str, Any]] = []
+        seen: list[dict[str, object]] = []
 
-        def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             seen.append(dict(info.model_settings or {}))
             return ModelResponse(parts=[TextPart("ok")])
 
         model = FunctionModel(
             capture, settings=AnthropicModelSettings(anthropic_cache="1h", temperature=0.1)
         )
-        await Agent(model).run("hi")
+        _ = await Agent(model).run("hi")
         assert seen[0]["anthropic_cache"] == "1h"
 
     async def test_a_callers_setting_wins_over_the_models(self):
         """A standing default is a default, not a ceiling — otherwise the reasoning-off
         pass and the summarizer's own budgets could be silently overruled by a lab."""
-        seen: list[dict[str, Any]] = []
+        seen: list[dict[str, object]] = []
 
-        def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             seen.append(dict(info.model_settings or {}))
             return ModelResponse(parts=[TextPart("ok")])
 
         model = FunctionModel(
             capture, settings=AnthropicModelSettings(temperature=0.1, anthropic_cache="5m")
         )
-        await Agent(model).run("hi", model_settings={"temperature": 0.9})
+        _ = await Agent(model).run("hi", model_settings={"temperature": 0.9})
         assert seen[0]["temperature"] == 0.9
         # …and the setting the caller said nothing about is still there.
         assert seen[0]["anthropic_cache"] == "5m"
@@ -115,16 +119,16 @@ class TestTheAnthropicCacheBreakpoints:
         the day the library renames or re-scopes a key this fails instead of silently
         sending three settings nothing reads."""
         model = llm.build_model(spec())
-        assert model.resolve_prompt_cache_retention(None) == timedelta(minutes=5)
+        assert model.resolve_cache_retention(None) == timedelta(minutes=5)
 
-    def test_the_ttl_comes_from_the_operators_configuration(self, monkeypatch):
+    def test_the_ttl_comes_from_the_operators_configuration(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
             anthropic_provider, "get_settings", lambda: SimpleNamespace(anthropic_cache_ttl="1h")
         )
         settings = llm.build_model(spec()).settings or {}
         assert all(settings.get(key) == "1h" for key in CACHE_KEYS)
 
-    def test_off_sends_no_breakpoints_at_all(self, monkeypatch):
+    def test_off_sends_no_breakpoints_at_all(self, monkeypatch: pytest.MonkeyPatch):
         """The escape hatch for an Anthropic-compatible proxy that rejects
         ``cache_control``: the whole trio has to be *absent*, not set to a disabled-looking
         value, since anything the adapter still declares is something the proxy still
@@ -136,7 +140,7 @@ class TestTheAnthropicCacheBreakpoints:
         assert not model.settings
         # …and the library agrees there is no cache request to honor, read through its own
         # resolution rather than our dict.
-        assert model.resolve_prompt_cache_retention(None) is None
+        assert model.resolve_cache_retention(None) is None
 
     def test_the_default_ttl_is_the_messages_apis_own(self):
         """The operator's lever defaults to the tier the Messages API itself uses, so an
@@ -185,12 +189,11 @@ class TestTheProviderHook:
 # --- the OpenAI-compatible adapter's one cache field -----------------------
 
 
-def local(**overrides) -> llm.EndpointSpec:
-    overrides.setdefault("base_url", "http://localhost:8080/v1")
-    return spec("openai-compatible", model="qwen3-32b", **overrides)
+def local(*, base_url: str = "http://localhost:8080/v1") -> EndpointSpec:
+    return spec("openai-compatible", model="qwen3-32b", base_url=base_url)
 
 
-def _retention(value: str):
+def _retention(value: str) -> Callable[[], SimpleNamespace]:
     return lambda: SimpleNamespace(openai_cache_retention=value)
 
 
@@ -207,17 +210,21 @@ class TestTheOpenAICompatibleCacheField:
         of endpoints behind this adapter have never heard of the field."""
         model = llm.build_model(local())
         assert not model.settings
-        assert model.resolve_prompt_cache_retention(None) is None
+        assert model.resolve_cache_retention(None) is None
 
-    def test_retention_comes_from_the_operators_configuration(self, monkeypatch):
+    def test_retention_comes_from_the_operators_configuration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         monkeypatch.setattr(openai_compat, "get_settings", _retention("24h"))
         model = llm.build_model(local())
         assert model.settings == {"openai_prompt_cache_retention": "24h"}
         # Read through the library's own resolution rather than our dict, so this fails if
         # the field stops meaning what we think it means.
-        assert model.resolve_prompt_cache_retention(None) == timedelta(hours=24)
+        assert model.resolve_cache_retention(None) == timedelta(hours=24)
 
-    def test_off_also_strips_a_cache_setting_a_caller_supplies(self, monkeypatch):
+    def test_off_also_strips_a_cache_setting_a_caller_supplies(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """The escape hatch has to close the door, not merely stop this adapter opening it.
         An operator switches retention off because their server rejects unknown fields, and a
         per-request setting from anywhere else would reach it just the same."""
@@ -230,13 +237,15 @@ class TestTheOpenAICompatibleCacheField:
             "openai_prompt_cache_retention",
         }
 
-    def test_retention_on_declares_nothing_unsupported(self, monkeypatch):
+    def test_retention_on_declares_nothing_unsupported(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(openai_compat, "get_settings", _retention("in_memory"))
         profile = _openai_profile(llm.build_model(local()))
         assert "openai_unsupported_model_settings" in profile
         assert not profile["openai_unsupported_model_settings"]
 
-    def test_this_adapter_never_sends_a_cache_key_or_breakpoints(self, monkeypatch):
+    def test_this_adapter_never_sends_a_cache_key_or_breakpoints(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Pinned with the reason, so a contributor adding either has to argue with it.
 
         `openai_prompt_cache_key` selects a cache *shard*; it never decides whether a prefix
@@ -253,7 +262,7 @@ class TestTheOpenAICompatibleCacheField:
             assert "openai_prompt_cache_key" not in sent
             assert "openai_prompt_cache_options" not in sent
 
-    def test_the_merged_system_messages_profile_survives(self, monkeypatch):
+    def test_the_merged_system_messages_profile_survives(self, monkeypatch: pytest.MonkeyPatch):
         """Untouched by any of this, and it must be: merging the leading system messages into
         one block is both what keeps a Qwen-family chat template from refusing the request and
         good for caching."""
@@ -263,7 +272,9 @@ class TestTheOpenAICompatibleCacheField:
             assert "openai_chat_supports_multiple_system_messages" in profile
             assert profile["openai_chat_supports_multiple_system_messages"] is False
 
-    def test_a_fallback_chain_keeps_the_setting_on_every_member(self, monkeypatch):
+    def test_a_fallback_chain_keeps_the_setting_on_every_member(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """The reason it is applied at construction: a failover must not silently drop to a
         request shape the operator did not choose."""
         monkeypatch.setattr(openai_compat, "get_settings", _retention("24h"))
