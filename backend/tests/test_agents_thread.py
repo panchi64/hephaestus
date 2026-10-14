@@ -21,7 +21,7 @@ from services.agents.thread import DELEGATION_TOOLS, as_thread, resolve_thread_a
 from services.conversations import ConversationBinding
 from services.permissions import PermissionLevel
 from tools.deps import RunDeps
-from tools.plan import _retarget
+from tools.plan import retarget
 
 from ._agent_helpers import OWNER, agent_values, make_stores
 
@@ -106,11 +106,11 @@ def _ctx(permission: PermissionLevel, ceiling: PermissionLevel | None) -> RunCon
 
 def test_approving_a_plan_never_lifts_a_run_past_its_agents_ceiling():
     ctx = _ctx("plan", "edit")
-    _retarget(ctx, "auto")
+    retarget(ctx, "auto")
     assert ctx.deps.permission == "edit"
 
 
 def test_without_a_ceiling_approving_a_plan_widens_the_level():
     ctx = _ctx("plan", None)
-    _retarget(ctx, "auto")
+    retarget(ctx, "auto")
     assert ctx.deps.permission == "auto"

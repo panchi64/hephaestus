@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pydantic_ai_harness.repo_context._loader import ContextFile
 
-from tools.repo import _MAX_BRIEFS, _briefs, _run_brief
+from tools.repo import MAX_BRIEFS, briefs, run_brief
 from tools.repo_instructions import (
     INSTRUCTIONS_BYTE_BUDGET,
     repo_instruction_text,
@@ -88,11 +88,11 @@ async def test_a_runs_brief_is_read_from_disk_once_however_many_requests_it_make
     project. Worse, an agent that edited the project's own `CLAUDE.md` mid-turn would
     rewrite the prompt head under itself and invalidate the whole turn's prefix cache."""
     _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
-    first = await _run_brief("run-1", tmp_path)
+    first = await run_brief("run-1", tmp_path)
 
     _ = (tmp_path / "CLAUDE.md").write_text("Something else entirely.\n")
 
-    assert await _run_brief("run-1", tmp_path) == first
+    assert await run_brief("run-1", tmp_path) == first
     assert "uv run pytest" in first
 
 
@@ -100,18 +100,18 @@ async def test_the_next_turn_reads_the_file_again(tmp_path: Path):
     # A turn boundary is the one place the file may legitimately have changed since it
     # was read — the agent's own edit landed, or the operator's did.
     _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
-    _ = await _run_brief("run-1", tmp_path)
+    _ = await run_brief("run-1", tmp_path)
 
     _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `just test`.\n")
 
-    assert "just test" in await _run_brief("run-2", tmp_path)
+    assert "just test" in await run_brief("run-2", tmp_path)
 
 
 async def test_the_memo_does_not_grow_with_every_run_the_process_ever_serves(tmp_path: Path):
     _ = (tmp_path / "CLAUDE.md").write_text("Keep it short.\n")
-    for n in range(_MAX_BRIEFS * 3):
-        _ = await _run_brief(f"run-{n}", tmp_path)
-    assert len(_briefs) <= _MAX_BRIEFS
+    for n in range(MAX_BRIEFS * 3):
+        _ = await run_brief(f"run-{n}", tmp_path)
+    assert len(briefs) <= MAX_BRIEFS
 
 
 # --- what the brief costs, and what it points at --------------------------------------
@@ -130,7 +130,7 @@ async def test_the_brief_names_the_inventory_tool_the_way_it_is_offered(tmp_path
     model to call a tool that is not there."""
     _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
 
-    brief = await _run_brief("run-inventory", tmp_path)
+    brief = await run_brief("run-inventory", tmp_path)
 
     assert "repo_inventory_agent_context" in brief
     assert "`inventory_agent_context`" not in brief

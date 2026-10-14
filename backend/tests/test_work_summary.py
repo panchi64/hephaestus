@@ -36,7 +36,7 @@ from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from agent.work_summary import _MAX_SUMMARY_LEN, _clean, summarize_work, work_transcript
+from agent.work_summary import MAX_SUMMARY_LEN, clean_summary, summarize_work, work_transcript
 from core.config import Settings, get_settings
 from core.db import init_db, make_engine
 from core.vault import Vault
@@ -195,24 +195,27 @@ class TestTheTranscript:
 
 class TestTheOutputCap:
     def test_a_short_summary_is_stored_unchanged(self):
-        assert _clean("Fixed the import cycle in app.py.") == "Fixed the import cycle in app.py."
+        assert (
+            clean_summary("Fixed the import cycle in app.py.")
+            == "Fixed the import cycle in app.py."
+        )
 
     def test_an_over_long_summary_is_cut_at_a_word_boundary(self):
         raw = "word " * 200
-        cleaned = _clean(raw)
+        cleaned = clean_summary(raw)
         assert cleaned is not None
-        assert len(cleaned) <= _MAX_SUMMARY_LEN
+        assert len(cleaned) <= MAX_SUMMARY_LEN
         # The cut lands between words: nothing but the ellipsis follows the last full one.
         assert cleaned.endswith("word…")
 
     def test_a_leaked_think_block_never_becomes_the_summary(self):
-        assert _clean("<think>weighing it up</think>\nRan the suite; two cases still fail.") == (
-            "Ran the suite; two cases still fail."
-        )
+        assert clean_summary(
+            "<think>weighing it up</think>\nRan the suite; two cases still fail."
+        ) == ("Ran the suite; two cases still fail.")
 
     def test_an_empty_reply_is_no_summary_rather_than_an_empty_one(self):
-        assert _clean("   ") is None
-        assert _clean("<think>only reasoning</think>") is None
+        assert clean_summary("   ") is None
+        assert clean_summary("<think>only reasoning</think>") is None
 
 
 # --- the model call ---------------------------------------------------------

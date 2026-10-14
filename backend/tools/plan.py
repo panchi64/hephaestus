@@ -81,7 +81,7 @@ def _unattended(ctx: RunContext[RunDeps]) -> bool:
     return not is_attended(ctx.deps.run.kind)
 
 
-def _retarget(ctx: RunContext[RunDeps], level: str) -> None:
+def retarget(ctx: RunContext[RunDeps], level: str) -> None:
     """Point this run's deps at ``level``, so the change binds for the rest of the turn.
 
     The conversation row is the durable half and the next turn reads it; this is the half
@@ -125,7 +125,7 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
         if _unattended(ctx):
             return NO_OPERATOR
         _ = await plans.enter(conversation_id, reason=reason, run=ctx.deps.run)
-        _retarget(ctx, PLANNING_LEVEL)
+        retarget(ctx, PLANNING_LEVEL)
         return (
             "This conversation is now in plan mode: nothing you call can change anything. "
             "Investigate by reading, and ask the operator with `builtin_ask_user` wherever "
@@ -210,7 +210,7 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
                 return NO_RECORD
             raise ApprovalRequired()
         _, level = await plans.approve(owner_id, conversation_id, run=ctx.deps.run)
-        _retarget(ctx, ACTING_LEVEL)
+        retarget(ctx, ACTING_LEVEL)
         return (
             f"The operator approved this plan. The conversation is now at the {level} "
             "level and its task list holds your steps. Carry the plan out now, marking "

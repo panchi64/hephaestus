@@ -335,7 +335,7 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
     return toolset
 
 
-def _skill_catalog_block(entries: Sequence[SkillCatalogEntry]) -> str:
+def skill_catalog_block(entries: Sequence[SkillCatalogEntry]) -> str:
     """The skills line of the brief (`SKILL-2`): the platform's skills by name, then a count
     of the rest and the pinned ones. Entries arrive newest first, so a pin past the limit
     drops the oldest; both lists are sorted by name so an edit that keeps the set keeps the
@@ -375,4 +375,4 @@ def _saved_block(entries: Sequence[SkillCatalogEntry]) -> str:
 async def skill_catalog_instructions(ctx: RunContext[RunDeps]) -> str:
     """Tell the agent which skills exist and how to open them (`SKILL-2`). A dynamic
     instruction, so it is always current and lives outside history."""
-    return _skill_catalog_block(await skill_catalog(ctx))
+    return skill_catalog_block(await skill_catalog(ctx))

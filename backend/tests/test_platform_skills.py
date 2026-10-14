@@ -20,7 +20,7 @@ from services.skills.sources import platform_skills, project_skills, read_skill_
 from services.skills.store import SkillCatalogEntry
 from tools import skills as skill_tools
 from tools.deps import RunDeps
-from tools.skills import _skill_catalog_block, skill_catalog
+from tools.skills import skill_catalog, skill_catalog_block
 
 from ._helpers import client_app
 from ._json import json_list, obj, s
@@ -28,10 +28,10 @@ from .test_skills_tools import (
     OWNER,
     FakeSession,
     FakeSessions,
-    _deps,
-    _published,
-    _store,
-    _tool,
+    publish_skill,
+    skill_deps,
+    skill_store,
+    skill_tool,
 )
 
 
@@ -43,7 +43,7 @@ _PATHS = TypeAdapter(list[str])
 
 
 async def _open(deps: RunDeps, name: str) -> dict[str, object]:
-    return cast(dict[str, object], await _tool("open")(_ctx(deps), name))
+    return cast(dict[str, object], await skill_tool("open")(_ctx(deps), name))
 
 
 def _by_name(rows: list[JsonValue]) -> dict[str, dict[str, JsonValue]]:
@@ -106,7 +106,7 @@ async def test_open_reads_a_platform_skill_and_stages_its_files(tmp_path: Path):
     _ = _write_skill(tmp_path / "platform", "research").joinpath("notes.md").write_text("notes")
     platform = _platform(tmp_path, "research", written=True)
     session = FakeSession()
-    deps = _deps(sandbox_sessions=FakeSessions(session))
+    deps = skill_deps(sandbox_sessions=FakeSessions(session))
     deps.caps.add(platform)
     result = await _open(deps, "research")
     assert str(result["instructions"]).strip() == "The research steps."
@@ -117,9 +117,9 @@ async def test_open_reads_a_platform_skill_and_stages_its_files(tmp_path: Path):
 
 
 async def test_a_stored_skill_shadows_a_platform_skill_of_the_same_name(tmp_path: Path):
-    store = await _store()
-    _ = await _published(store, name="research", body="My own way.")
-    deps = _deps(store, sandbox_sessions=FakeSessions())
+    store = await skill_store()
+    _ = await publish_skill(store, name="research", body="My own way.")
+    deps = skill_deps(store, sandbox_sessions=FakeSessions())
     deps.caps.add(_platform(tmp_path, "research"))
     entries = await skill_catalog(_ctx(deps))
     assert [(e.name, e.source) for e in entries] == [("research", "authored")]
@@ -130,7 +130,7 @@ async def test_a_stored_skill_shadows_a_platform_skill_of_the_same_name(tmp_path
 async def test_a_switched_off_platform_skill_cannot_be_opened(tmp_path: Path):
     platform = _platform(tmp_path, "research")
     await platform.set_enabled(OWNER, "research", False)
-    deps = _deps()
+    deps = skill_deps()
     deps.caps.add(platform)
     assert await skill_catalog(_ctx(deps)) == []
     with pytest.raises(ModelRetry):
@@ -146,7 +146,7 @@ async def test_project_skills_rank_above_the_platforms(
         return project
 
     monkeypatch.setattr(skill_tools, "project_tree", tree)
-    deps = _deps()
+    deps = skill_deps()
     deps.run.id = "run-project-skills"
     deps.caps.add(_platform(tmp_path, "research", "delegation"))
     entries = {e.name: e.source for e in await skill_catalog(_ctx(deps))}
@@ -154,7 +154,7 @@ async def test_project_skills_rank_above_the_platforms(
 
 
 def test_the_brief_lists_platform_skills_and_counts_the_rest():
-    block = _skill_catalog_block(
+    block = skill_catalog_block(
         [
             SkillCatalogEntry("triage", "Triage a bug."),
             SkillCatalogEntry("research", "Investigate.", source="platform"),
@@ -167,7 +167,7 @@ def test_the_brief_lists_platform_skills_and_counts_the_rest():
 
 
 def test_the_brief_with_only_platform_skills_has_no_count():
-    block = _skill_catalog_block([SkillCatalogEntry("research", "R.", source="platform")])
+    block = skill_catalog_block([SkillCatalogEntry("research", "R.", source="platform")])
     assert "saved skill" not in block
     assert "skills_open" in block
 

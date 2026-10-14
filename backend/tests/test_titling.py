@@ -22,9 +22,9 @@ from pydantic_ai.settings import ModelSettings
 import agent.engine as engine
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
 from agent.title import (
-    _MAX_TITLE_LEN,
-    _clean,
+    MAX_TITLE_LEN,
     all_user_text,
+    clean_title,
     first_user_text,
     generate_title,
     title_from_history,
@@ -90,20 +90,20 @@ def _bodies(run: Run) -> list[EventBody]:
     ],
 )
 def test_clean_sanitizes_model_replies(raw: str, expected: str | None):
-    assert _clean(raw) == expected
+    assert clean_title(raw) == expected
 
 
 def test_clean_caps_length():
-    title = _clean("A " * 100)
-    assert title is not None and len(title) <= _MAX_TITLE_LEN
+    title = clean_title("A " * 100)
+    assert title is not None and len(title) <= MAX_TITLE_LEN
 
 
 def test_clean_truncates_on_a_word_boundary():
     # A model that blew the word budget gets cut at the last whole word that fits —
     # a name is read at a glance, and a half word reads as a bug.
     long = "Investigating intermittent authentication failures across staging deployments"
-    title = _clean(long)
-    assert title is not None and len(title) <= _MAX_TITLE_LEN
+    title = clean_title(long)
+    assert title is not None and len(title) <= MAX_TITLE_LEN
     assert long.startswith(title)
     assert long[len(title)] == " "  # the cut landed between words, not inside one
     assert title.split() == long.split()[: len(title.split())]
@@ -111,8 +111,8 @@ def test_clean_truncates_on_a_word_boundary():
 
 def test_clean_hard_cuts_a_single_word_longer_than_the_cap():
     # No boundary to fall back to, so the cap still holds.
-    title = _clean("x" * 200)
-    assert title == "x" * _MAX_TITLE_LEN
+    title = clean_title("x" * 200)
+    assert title == "x" * MAX_TITLE_LEN
 
 
 # --- generation -------------------------------------------------------------

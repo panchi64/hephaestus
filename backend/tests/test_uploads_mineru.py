@@ -16,7 +16,7 @@ import pytest
 from core.config import Settings
 from core.db import make_engine
 from core.vault import Vault
-from harness.manifests.uploads import _build_extractor as _build_upload_extractor
+from harness.manifests.uploads import build_extractor as build_upload_extractor
 from services.registry import ModelRegistry
 from services.upload_extraction import (
     BasicExtractor,
@@ -24,7 +24,7 @@ from services.upload_extraction import (
     FallbackExtractor,
     UploadExtractor,
 )
-from services.upload_mineru import MinerUExtractor, _clean, read_markdown
+from services.upload_mineru import MinerUExtractor, clean_markdown, read_markdown
 
 from .test_uploads_extraction import text_pdf
 
@@ -70,7 +70,7 @@ def test_is_available_reflects_path(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_clean_strips_image_lines():
-    assert _clean("a\n![](x.jpg)\nb") == "a\nb"
+    assert clean_markdown("a\n![](x.jpg)\nb") == "a\nb"
 
 
 def test_read_markdown_picks_largest():
@@ -119,7 +119,7 @@ async def test_fallback_degrades_on_primary_failure():
     assert out.text == "recovered" and out.extractor == "basic" and fallback.calls == 1
 
 
-# --- engine selection (_build_upload_extractor) ----------------------------
+# --- engine selection (build_upload_extractor) ----------------------------
 
 
 def _registry() -> ModelRegistry:
@@ -136,7 +136,7 @@ def _availability(value: bool) -> Callable[[str], bool]:
 
 def test_selection_basic_pin(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(MinerUExtractor, "is_available", staticmethod(_availability(True)))
-    extractor = _build_upload_extractor(_registry(), Settings(upload_extractor="basic"))
+    extractor = build_upload_extractor(_registry(), Settings(upload_extractor="basic"))
     assert isinstance(extractor, BasicExtractor)
 
 
@@ -146,6 +146,6 @@ def test_selection_auto_follows_availability(monkeypatch: pytest.MonkeyPatch):
 
     _avail(False)
     auto = Settings(upload_extractor="auto")
-    assert isinstance(_build_upload_extractor(_registry(), auto), BasicExtractor)
+    assert isinstance(build_upload_extractor(_registry(), auto), BasicExtractor)
     _avail(True)
-    assert isinstance(_build_upload_extractor(_registry(), auto), FallbackExtractor)
+    assert isinstance(build_upload_extractor(_registry(), auto), FallbackExtractor)

@@ -14,7 +14,7 @@ import httpx
 import pytest
 from pydantic import JsonValue
 
-from routes.conversations import _message_versions
+from routes.conversations import message_versions
 from runs import Run, RunRegistry
 from services.conversation_view import MessageView, ToolView
 from services.conversations import ConversationStore
@@ -464,7 +464,7 @@ def test_cold_read_reattaches_view_version():
         result=format_show_result(snap, "image"),
     )
     message = MessageView(role="assistant", tools=[tool])
-    refs = _message_versions(message, {snap.id: snap})
+    refs = message_versions(message, {snap.id: snap})
     assert [r.snapshot_id for r in refs] == ["a1b2c3"]
     assert refs[0].preview_kind == "image"
     assert refs[0].title == "Chart"
@@ -480,7 +480,7 @@ def test_cold_read_skips_view_without_version_id():
         result="Could not read 'x.html': no such file",
     )
     message = MessageView(role="assistant", tools=[tool])
-    assert _message_versions(message, {}) == []
+    assert message_versions(message, {}) == []
 
 
 async def test_auto_compact_override_round_trip(monkeypatch: pytest.MonkeyPatch):

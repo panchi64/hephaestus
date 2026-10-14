@@ -34,7 +34,7 @@ from ._helpers import (
     swap_tool_catalog,
 )
 from ._json import arr, json_body, obj, s
-from .test_approval_routes import _install_sensitive_tool, danger_categories
+from .test_approval_routes import danger_categories, install_sensitive_tool
 
 
 async def _wait(app: FastAPI, run_id: str) -> None:
@@ -43,7 +43,7 @@ async def _wait(app: FastAPI, run_id: str) -> None:
     await run.wait()
 
 
-def _patch_hanging_model(
+def patch_hanging_model(
     monkeypatch: pytest.MonkeyPatch, hang: asyncio.Event, started: asyncio.Event
 ) -> None:
     """Point model resolution at a model whose answer hangs until ``hang`` is set —
@@ -85,7 +85,7 @@ async def _complete_first_turn(
 
 async def test_second_chat_post_queues_into_live_run(monkeypatch: pytest.MonkeyPatch):
     hang, started = asyncio.Event(), asyncio.Event()
-    _patch_hanging_model(monkeypatch, hang, started)
+    patch_hanging_model(monkeypatch, hang, started)
 
     async with client_app() as (client, app):
         first = await client.post("/chat", json={"prompt": "hello"})
@@ -118,7 +118,7 @@ async def test_attachment_send_still_rejected_while_run_live(monkeypatch: pytest
     # Steering is text-only: a send carrying attachments can't ride an existing
     # run's request, so the busy conversation still answers 409 for it.
     hang, started = asyncio.Event(), asyncio.Event()
-    _patch_hanging_model(monkeypatch, hang, started)
+    patch_hanging_model(monkeypatch, hang, started)
 
     async with client_app() as (client, app):
         upload = await client.post(
@@ -150,7 +150,7 @@ async def test_attachment_send_still_rejected_while_run_live(monkeypatch: pytest
 
 async def test_guard_releases_once_run_reaches_terminal(monkeypatch: pytest.MonkeyPatch):
     hang, started = asyncio.Event(), asyncio.Event()
-    _patch_hanging_model(monkeypatch, hang, started)
+    patch_hanging_model(monkeypatch, hang, started)
 
     async with client_app() as (client, app):
         first = json_body(await client.post("/chat", json={"prompt": "hello"}))
@@ -180,7 +180,7 @@ async def test_regenerate_rejected_while_run_live_and_leaf_unmoved(
         conv_id, assistant = await _complete_first_turn(client)
 
         hang, started = asyncio.Event(), asyncio.Event()
-        _patch_hanging_model(monkeypatch, hang, started)
+        patch_hanging_model(monkeypatch, hang, started)
 
         regen1 = await client.post(
             "/chat/regenerate",
@@ -212,7 +212,7 @@ async def test_edit_rejected_while_run_live_and_leaf_unmoved(monkeypatch: pytest
         user_msg = next(obj(m) for m in arr(detail["messages"]) if obj(m)["role"] == "user")
 
         hang, started = asyncio.Event(), asyncio.Event()
-        _patch_hanging_model(monkeypatch, hang, started)
+        patch_hanging_model(monkeypatch, hang, started)
 
         edit1 = await client.post(
             "/chat/edit",
@@ -251,7 +251,7 @@ async def test_branch_ops_rejected_while_run_live(monkeypatch: pytest.MonkeyPatc
         assistant_id = s(assistant["id"])
 
         hang, started = asyncio.Event(), asyncio.Event()
-        _patch_hanging_model(monkeypatch, hang, started)
+        patch_hanging_model(monkeypatch, hang, started)
 
         live = await client.post("/chat", json={"prompt": "again", "conversation_id": conv_id})
         assert live.status_code == 202
@@ -288,7 +288,7 @@ def _patch_hanging_resolve(
     monkeypatch: pytest.MonkeyPatch, gate: asyncio.Event, entered: asyncio.Event
 ) -> None:
     """Model *resolution* (not the answer stream) hangs on ``gate`` until released —
-    unlike ``_patch_hanging_model`` (which hangs the streamed answer, long after a
+    unlike ``patch_hanging_model`` (which hangs the streamed answer, long after a
     regenerate/edit has already repositioned the active leaf and submitted), this hangs
     inside ``_resolve_models`` itself, the real `await` a second near-simultaneous
     regenerate/edit could otherwise slip through during. ``entered`` fires once the
@@ -400,7 +400,7 @@ async def test_concurrent_edit_and_regenerate_only_one_proceeds(monkeypatch: pyt
 async def test_delete_message_purge_claims_against_a_concurrent_chat_submission(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    # chat-04 (delete_message purgeImages half): `_image_orphans` awaits real DB round
+    # chat-04 (delete_message purgeImages half): `image_orphans` awaits real DB round
     # trips before the leaf-moving `store.delete_message` runs — a concurrent /chat
     # submission landing in that window must not be allowed to register a run that the
     # delete then proceeds to mutate the tree underneath.
@@ -411,7 +411,7 @@ async def test_delete_message_purge_claims_against_a_concurrent_chat_submission(
         import routes.conversations as conversations_route
 
         gate, entered = asyncio.Event(), asyncio.Event()
-        original = conversations_route._image_orphans
+        original = conversations_route.image_orphans
 
         async def _hanging_image_orphans(
             request: Request, conversation_id: str, *, message_id: str | None
@@ -420,7 +420,7 @@ async def test_delete_message_purge_claims_against_a_concurrent_chat_submission(
             _ = await gate.wait()
             return await original(request, conversation_id, message_id=message_id)
 
-        monkeypatch.setattr(conversations_route, "_image_orphans", _hanging_image_orphans)
+        monkeypatch.setattr(conversations_route, "image_orphans", _hanging_image_orphans)
 
         delete_task = asyncio.ensure_future(
             client.delete(
@@ -428,7 +428,7 @@ async def test_delete_message_purge_claims_against_a_concurrent_chat_submission(
                 params={"purgeImages": "true"},
             )
         )
-        _ = await entered.wait()  # the delete is now parked inside `_image_orphans`
+        _ = await entered.wait()  # the delete is now parked inside `image_orphans`
 
         concurrent_chat = await client.post(
             "/chat", json={"prompt": "again", "conversation_id": conv_id}
@@ -450,7 +450,7 @@ async def test_awaiting_input_run_queues_a_new_chat_submission(monkeypatch: pyte
     # A parked (awaiting_input) run is not terminal — `active_run_for` still reports
     # it, so a new plain-text send queues into it (injected on resume) rather than
     # starting a second run; the run itself stays parked.
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         first = json_body(await client.post("/chat", json={"prompt": "delete it"}))

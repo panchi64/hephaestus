@@ -450,8 +450,8 @@ class TestAScriptsCalls:
             assert "directly, outside `run_code`" in nested[2].error
 
         # And the route hands the parent on, which is what a client nests the row by.
-        from routes.conversations import _message
+        from routes.conversations import message_out
 
-        out = _message(project_tree([(str(i), m) for i, m in enumerate(stored)])[-1], {})
+        out = message_out(project_tree([(str(i), m) for i, m in enumerate(stored)])[-1], {})
         assert [t.parent_tool_call_id for t in out.tools] == [None, "s", "s", "s"]
         assert out.model_dump()["tools"][1]["parent_tool_call_id"] == "s"

@@ -15,7 +15,7 @@ hands both in, so this module stays free of per-lab levers. But some runtimes ig
 that lever (e.g. LM Studio drops OpenAI ``chat_template_kwargs``, and the Qwen 2507+
 line dropped the ``/no_think`` soft-switch), so a model can reason anyway. We don't
 fight that here — we *tolerate* it: the caller hands in a generous ``max_tokens`` so a
-``<think>`` block has room to clear *and* still emit the title, and :func:`_clean` runs
+``<think>`` block has room to clear *and* still emit the title, and :func:`clean_title` runs
 ``core.text.strip_think_blocks`` over the output — the same call the compaction summarizer
 makes, since both face the identical runtime. A strict endpoint with no off-switch simply
 reasons within that budget.
@@ -60,7 +60,7 @@ FULL_EXCERPT = 2400
 # backstop for a model that ignored the budget rather than the normal path — and it
 # sits at the width the sidebar can actually show, because a name that renders
 # ellipsized is a name the operator has to hover to read.
-_MAX_TITLE_LEN = 48
+MAX_TITLE_LEN = 48
 
 _USER_PARTS = frozenset({"UserPromptPart"})
 
@@ -115,7 +115,7 @@ def last_user_text(messages: list[ModelMessage]) -> str:
     return ""
 
 
-def _clean(raw: str) -> str | None:
+def clean_title(raw: str) -> str | None:
     """Sanitize the model's reply into a single-line title, or None if empty.
 
     Models tend to wrap titles in quotes, prepend ``Title:``, or add a trailing
@@ -147,12 +147,12 @@ def _clean(raw: str) -> str | None:
             break
     if not line:
         return None
-    if len(line) <= _MAX_TITLE_LEN:
+    if len(line) <= MAX_TITLE_LEN:
         return line
     # One char past the cap, so a boundary landing exactly on it still counts.
-    head = line[: _MAX_TITLE_LEN + 1]
+    head = line[: MAX_TITLE_LEN + 1]
     cut = head.rfind(" ")
-    return (head[:cut] if cut > 0 else line[:_MAX_TITLE_LEN]).strip()
+    return (head[:cut] if cut > 0 else line[:MAX_TITLE_LEN]).strip()
 
 
 async def generate_title(
@@ -190,7 +190,7 @@ async def generate_title(
     except Exception as exc:  # noqa: BLE001 — titling is best-effort, never fails a turn
         logger.warning("conversation title generation failed: %s", exc)
         return None
-    return _clean(result.output)
+    return clean_title(result.output)
 
 
 async def title_from_history(

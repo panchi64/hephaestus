@@ -176,18 +176,18 @@ class Supervisor:
     def stop_all(self) -> None:
         """Signal every child's process group, then wait, then insist."""
         for service in reversed(self._services):
-            signal_group(_group_of(service), signal.SIGTERM)
+            signal_group(group_of(service), signal.SIGTERM)
         deadline = time.monotonic() + _GRACE_S
         for service in reversed(self._services):
             with contextlib.suppress(subprocess.TimeoutExpired):
                 _ = service.process.wait(timeout=max(0.1, deadline - time.monotonic()))
         for service in reversed(self._services):
             if service.process.poll() is None:
-                signal_group(_group_of(service), signal.SIGKILL)
+                signal_group(group_of(service), signal.SIGKILL)
         self._services.clear()
 
 
-def _group_of(service: Service) -> int | None:
+def group_of(service: Service) -> int | None:
     try:
         return os.getpgid(service.process.pid)
     except ProcessLookupError, OSError:

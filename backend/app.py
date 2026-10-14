@@ -88,7 +88,7 @@ from tools.workspace_context import workspace_context
 logger = logging.getLogger(__name__)
 
 
-async def _backfill_sealed_columns(engine: Engine, vault: Vault) -> None:
+async def backfill_sealed_columns(engine: Engine, vault: Vault) -> None:
     """Once the vault is unlocked, seal the columns that were stored in the clear before
     they were sealed — the conversation title, the corpus source's host path, and the
     artifact's title and filename — and drop
@@ -285,7 +285,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # Seal the columns that predate their own encryption: the migration that added
     # the sealed column ran before unlock with no key, so the healing happens here
     # once unlocked (XC-SEC-3).
-    _ = lifecycle.track("sealing-backfill", _backfill_sealed_columns(engine, vault))
+    _ = lifecycle.track("sealing-backfill", backfill_sealed_columns(engine, vault))
     # The platform VM, where agent code, previews, headless Chromium and SearXNG run.
     # It boots in the background; until it is up (or if it never comes up) what needs
     # it reports unavailable rather than running on the host.

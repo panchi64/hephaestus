@@ -29,7 +29,7 @@ async def _unlocked_vault(tmp_path: Path, name: str = "keyfile.json") -> Vault:
     return vault
 
 
-async def _fresh_store(tmp_path: Path) -> tuple[ConversationStore, Engine]:
+async def fresh_store(tmp_path: Path) -> tuple[ConversationStore, Engine]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     return ConversationStore(engine, await _unlocked_vault(tmp_path)), engine
@@ -50,7 +50,7 @@ async def _turn(
 
 
 async def test_regenerate_adds_a_sibling_answer(tmp_path: Path):
-    store, _ = await _fresh_store(tmp_path)
+    store, _ = await fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
     conv = await store.create_conversation("operator")
@@ -76,7 +76,7 @@ async def test_regenerate_adds_a_sibling_answer(tmp_path: Path):
 
 
 async def test_switch_version_restores_an_earlier_answer(tmp_path: Path):
-    store, _ = await _fresh_store(tmp_path)
+    store, _ = await fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
     conv = await store.create_conversation("operator")
@@ -100,7 +100,7 @@ async def test_switch_version_restores_an_earlier_answer(tmp_path: Path):
 
 
 async def test_edit_forks_the_user_turn(tmp_path: Path):
-    store, _ = await _fresh_store(tmp_path)
+    store, _ = await fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
     conv = await store.create_conversation("operator")
@@ -127,7 +127,7 @@ async def test_edit_forks_the_user_turn(tmp_path: Path):
 
 
 async def test_rewind_then_send_branches(tmp_path: Path):
-    store, _ = await _fresh_store(tmp_path)
+    store, _ = await fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
     conv = await store.create_conversation("operator")
@@ -150,7 +150,7 @@ async def test_rewind_then_send_branches(tmp_path: Path):
 
 
 async def test_rewind_to_user_turn_ends_before_its_answer(tmp_path: Path):
-    store, _ = await _fresh_store(tmp_path)
+    store, _ = await fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
     conv = await store.create_conversation("operator")
@@ -168,7 +168,7 @@ async def test_rewind_to_user_turn_ends_before_its_answer(tmp_path: Path):
 
 
 async def test_delete_removes_turn_and_downstream(tmp_path: Path):
-    store, engine = await _fresh_store(tmp_path)
+    store, engine = await fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
     conv = await store.create_conversation("operator")
@@ -192,7 +192,7 @@ async def test_delete_removes_turn_and_downstream(tmp_path: Path):
 
 
 async def test_pin_is_projected_and_durable(tmp_path: Path):
-    store, engine = await _fresh_store(tmp_path)
+    store, engine = await fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
     conv = await store.create_conversation("operator")
@@ -215,7 +215,7 @@ async def test_pin_is_projected_and_durable(tmp_path: Path):
 
 async def test_navigation_survives_cold_reload(tmp_path: Path):
     """A regenerated branch and its active-leaf choice persist across a restart."""
-    store, engine = await _fresh_store(tmp_path)
+    store, engine = await fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
     conv = await store.create_conversation("operator")

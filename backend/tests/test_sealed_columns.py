@@ -13,7 +13,7 @@ from __future__ import annotations
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, col, select
 
-from app import _backfill_sealed_columns
+from app import backfill_sealed_columns
 from core.db import in_session
 from core.vault import Vault
 from models.conversation import Conversation
@@ -121,7 +121,7 @@ async def test_the_backfill_seals_a_legacy_title_and_it_still_reads():
         engine = app_state(app, "db_engine", Engine)
         cid = await _write_legacy_conversation(engine, "Old thread")
 
-        await _backfill_sealed_columns(engine, app_state(app, "vault", Vault))
+        await backfill_sealed_columns(engine, app_state(app, "vault", Vault))
 
         row = await _row(engine, Conversation, cid)
         assert row.title is None  # the plaintext is gone, not merely ignored
@@ -147,7 +147,7 @@ async def test_the_backfill_seals_a_legacy_corpus_path():
             for src in json_list(await client.get("/corpus/sources"))
         )
 
-        await _backfill_sealed_columns(engine, app_state(app, "vault", Vault))
+        await backfill_sealed_columns(engine, app_state(app, "vault", Vault))
 
         row = await _row(engine, CorpusSource, source_id)
         assert row.path is None
@@ -169,8 +169,8 @@ async def test_the_backfill_is_idempotent_and_leaves_sealed_rows_alone():
         before = (await _row(engine, Conversation, sealed_id)).title_enc
 
         legacy_id = await _write_legacy_conversation(engine, "Old thread")
-        await _backfill_sealed_columns(engine, vault)
-        await _backfill_sealed_columns(engine, vault)  # a second pass changes nothing
+        await backfill_sealed_columns(engine, vault)
+        await backfill_sealed_columns(engine, vault)  # a second pass changes nothing
 
         assert (await _row(engine, Conversation, sealed_id)).title_enc == before
         assert await store.get_summary(legacy_id, OPERATOR_ID) is not None
@@ -210,7 +210,7 @@ async def test_no_cleartext_titles_remain_after_a_boot_with_a_mixed_database():
             _ = await _write_legacy_conversation(engine, name)
         await store.set_title(await store.create_conversation(OPERATOR_ID), "four")
 
-        await _backfill_sealed_columns(engine, app_state(app, "vault", Vault))
+        await backfill_sealed_columns(engine, app_state(app, "vault", Vault))
 
         def remaining(session: Session) -> list[str | None]:
             rows = session.exec(

@@ -368,8 +368,8 @@ async def test_active_run_for_prefers_the_most_recent():
         id="newer", kind="chat", owner_id="operator", conversation_id="c1", stream=RunStream()
     )
     newer.created_at = older.created_at + timedelta(seconds=1)
-    reg._runs[older.id] = older
-    reg._runs[newer.id] = newer
+    reg.register(older)
+    reg.register(newer)
 
     assert reg.active_run_for("c1", "operator") is newer
 
@@ -648,22 +648,22 @@ async def test_shutdown_cancels_live_runs_so_their_waiters_settle():
 # --- duration formatting: exact minutes, no silent rounding --------------------------
 
 
-def test_adj_duration_reports_a_fractional_bound_exactly():
-    from runs.registry import _adj_duration
+def testadj_duration_reports_a_fractional_bound_exactly():
+    from runs.registry import adj_duration
 
-    assert _adj_duration(1800) == "30-minute"
-    assert _adj_duration(45) == "45-second"
+    assert adj_duration(1800) == "30-minute"
+    assert adj_duration(45) == "45-second"
     # Python's round() is round-half-to-even (round(2.5) == 2) — a naive round()
     # would understate a 150s/2.5-minute bound as "2-minute"; this reports the
     # operator's actual configured duration instead.
-    assert _adj_duration(150) == "2.5-minute"
-    assert _adj_duration(90) == "1.5-minute"
+    assert adj_duration(150) == "2.5-minute"
+    assert adj_duration(90) == "1.5-minute"
 
 
-def test_count_duration_reports_a_fractional_bound_exactly():
-    from runs.registry import _count_duration
+def testcount_duration_reports_a_fractional_bound_exactly():
+    from runs.registry import count_duration
 
-    assert _count_duration(120) == "2 minutes"
-    assert _count_duration(1) == "1 second"
-    assert _count_duration(150) == "2.5 minutes"
-    assert _count_duration(60) == "1 minute"
+    assert count_duration(120) == "2 minutes"
+    assert count_duration(1) == "1 second"
+    assert count_duration(150) == "2.5 minutes"
+    assert count_duration(60) == "1 minute"

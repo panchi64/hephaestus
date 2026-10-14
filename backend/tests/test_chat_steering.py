@@ -26,7 +26,7 @@ from tools import RunDeps
 
 from ._helpers import parked_turn
 from ._helpers import run_bodies as _bodies
-from .test_branching import _fresh_store
+from .test_branching import fresh_store
 
 OWNER = "operator"
 
@@ -141,7 +141,7 @@ async def test_end_of_run_queued_message_autocontinues_same_run():
 
 
 async def test_injected_message_persists_as_its_own_user_turn(tmp_path: Path):
-    store, _ = await _fresh_store(tmp_path)
+    store, _ = await fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
     conv = await store.create_conversation(OWNER)
@@ -344,7 +344,7 @@ async def test_steering_on_a_regenerate_never_mutates_the_stored_user_message(tm
     # internals the two lists are not in fact shared here, so the buggy in-place
     # append also passes. It is kept as a guard against that changing, since the cost
     # of the mutation would be silent corruption of the operator's own text.
-    store, _engine = await _fresh_store(tmp_path)
+    store, _engine = await fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation(OWNER, title="t")
 

@@ -91,7 +91,7 @@ def _fmt_minutes(minutes: float) -> str:
     return f"{minutes:.1f}"
 
 
-def _adj_duration(bound_s: float) -> str:
+def adj_duration(bound_s: float) -> str:
     """A hyphenated adjective phrase for a duration, e.g. ``30-minute``/``45-second``."""
     minutes = bound_s / 60
     if minutes >= 1:
@@ -99,7 +99,7 @@ def _adj_duration(bound_s: float) -> str:
     return f"{max(1, round(bound_s))}-second"
 
 
-def _count_duration(bound_s: float) -> str:
+def count_duration(bound_s: float) -> str:
     """A counted-noun phrase for a duration, e.g. ``2 minutes``/``1 second``."""
     minutes = bound_s / 60
     if minutes >= 1:
@@ -113,11 +113,11 @@ def _timeout_message(kind: str, bound_s: float | None) -> str:
     if kind == "wall_clock":
         if not bound_s:
             return "this run hit its overall time limit"
-        return f"this run hit the {_adj_duration(bound_s)} overall limit"
+        return f"this run hit the {adj_duration(bound_s)} overall limit"
     if kind == "inactivity":
         if not bound_s:
             return "no activity for too long"
-        return f"no activity for {_count_duration(bound_s)}"
+        return f"no activity for {count_duration(bound_s)}"
     return f"{kind} timeout exceeded"  # defensive fallback for an unrecognized kind
 
 
@@ -221,6 +221,10 @@ class RunRegistry:
         self._claims.discard((owner_id, conversation_id))
 
     # --- launch ---------------------------------------------------------------
+    def register(self, run: Run) -> None:
+        """Track an already-built run without launching a task for it."""
+        self._runs[run.id] = run
+
     def submit(
         self,
         *,
@@ -249,7 +253,7 @@ class RunRegistry:
             endpoint=endpoint,
             stream=RunStream(),
         )
-        self._runs[run.id] = run
+        self.register(run)
         self._evict_old()
         wall = self._wall_clock if wall_clock_timeout_s is UNSET else wall_clock_timeout_s
         idle = self._inactivity if inactivity_timeout_s is UNSET else inactivity_timeout_s

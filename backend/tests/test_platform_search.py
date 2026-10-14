@@ -39,7 +39,7 @@ from tools.deps import RunDeps
 from tools.platform import PlatformDocument, PlatformResults, Source, platform_toolset
 
 from ._plugin_helpers import bundle
-from .test_conversation_search import DegradedEmbedder, _record, _setup
+from .test_conversation_search import DegradedEmbedder, record_conversation, setup_search
 
 OWNER = "operator"
 
@@ -106,7 +106,7 @@ class Platform:
 
 @pytest.fixture
 async def platform() -> AsyncIterator[Platform]:
-    engine, vault, store, search = await _setup(DegradedEmbedder())
+    engine, vault, store, search = await setup_search(DegradedEmbedder())
     embedder = DegradedEmbedder()
     memory = MemoryStore(engine, vault, embedder)
     chunks = CorpusChunkStore(engine, vault, embedder)
@@ -135,7 +135,7 @@ def _refs(results: PlatformResults) -> list[str]:
 
 
 async def test_a_fact_from_another_conversation_is_found_and_read_back(platform: Platform):
-    older = await _record(
+    older = await record_conversation(
         platform.store, OWNER, ("which port does the staging proxy use", "port 8443")
     )
     results = await platform.search("staging proxy port")
@@ -149,14 +149,14 @@ async def test_a_fact_from_another_conversation_is_found_and_read_back(platform:
 
 
 async def test_the_callers_own_conversation_is_never_a_hit(platform: Platform):
-    current = await _record(platform.store, OWNER, ("the staging proxy", "uses 8443"))
+    current = await record_conversation(platform.store, OWNER, ("the staging proxy", "uses 8443"))
     results = await platform.search("staging proxy", conversation_id=current)
     assert results.hits == []
 
 
 async def test_reports_summaries_and_routine_outputs_are_searchable(platform: Platform):
     vault = platform.vault
-    conversation = await _record(platform.store, OWNER, ("hello", "hi"))
+    conversation = await record_conversation(platform.store, OWNER, ("hello", "hi"))
     now = datetime.now(UTC)
     with Session(platform.engine) as session:
         convo = session.get(Conversation, conversation)
@@ -221,7 +221,7 @@ async def test_since_drops_older_material(platform: Platform):
 
 async def test_sources_narrow_the_search(platform: Platform):
     _ = await platform.memory.remember(OWNER, "the boiler code is 4471")
-    _ = await _record(platform.store, OWNER, ("the boiler", "is in the cellar"))
+    _ = await record_conversation(platform.store, OWNER, ("the boiler", "is in the cellar"))
     results = await platform.search("boiler", sources=["memory"])
     assert {hit.source for hit in results.hits} == {"memory"}
 

@@ -150,8 +150,8 @@ class ParkedTurn:
 #: room to spare, and the line they make fits inside 400. What does not fit is the one
 #: shape that made this cap necessary: ``plan_submit`` carries an entire markdown plan in a
 #: single argument, and a tool that hands over a file's new contents carries the file.
-_VALUE_MAX_CHARS = 200
-_SUMMARY_MAX_CHARS = 400
+VALUE_MAX_CHARS = 200
+SUMMARY_MAX_CHARS = 400
 
 
 def summarize_call(name: str, args: Mapping[str, object]) -> str:
@@ -171,8 +171,8 @@ def summarize_call(name: str, args: Mapping[str, object]) -> str:
     that says what this call does. The whole-line cap is the backstop for the other shape —
     a call with many small arguments, each innocent by itself.
     """
-    rendered = ", ".join(f"{k}={_clip(repr(v), _VALUE_MAX_CHARS)}" for k, v in args.items())
-    return _clip(f"{name}({rendered})", _SUMMARY_MAX_CHARS)
+    rendered = ", ".join(f"{k}={_clip(repr(v), VALUE_MAX_CHARS)}" for k, v in args.items())
+    return _clip(f"{name}({rendered})", SUMMARY_MAX_CHARS)
 
 
 def _clip(value: str, limit: int) -> str:

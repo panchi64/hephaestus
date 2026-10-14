@@ -19,7 +19,7 @@ from services.sandbox import SandboxError, SandboxSessionManager
 from services.skills import SkillStore
 from services.skills.store import SkillCatalogEntry
 from tools.deps import RunDeps
-from tools.skills import _skill_catalog_block, skills_toolset
+from tools.skills import skill_catalog_block, skills_toolset
 
 from ._helpers import client_app
 from ._json import json_list, obj, s
@@ -64,7 +64,7 @@ class FakeRun:
     id: str = "run-1"
 
 
-async def _store() -> SkillStore:
+async def skill_store() -> SkillStore:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
@@ -72,20 +72,20 @@ async def _store() -> SkillStore:
     return SkillStore(engine, vault)
 
 
-def _tool(name: str):
+def skill_tool(name: str):
     toolset = skills_toolset()
     return toolset.tools[name].function
 
 
 async def _invoke(name: str, ctx: RunContext[RunDeps], *args: str) -> dict[str, JsonValue]:
-    return _RESULT.validate_python(await _tool(name)(ctx, *args))
+    return _RESULT.validate_python(await skill_tool(name)(ctx, *args))
 
 
 def _ctx(deps: RunDeps) -> RunContext[RunDeps]:
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
-def _deps(skills: SkillStore | None = None, sandbox_sessions: object = None) -> RunDeps:
+def skill_deps(skills: SkillStore | None = None, sandbox_sessions: object = None) -> RunDeps:
     # The bag keys by concrete type; fakes register under the class the tools resolve.
     caps = ServiceContainer()
     if skills is not None:
@@ -96,7 +96,7 @@ def _deps(skills: SkillStore | None = None, sandbox_sessions: object = None) -> 
     return RunDeps(run=run, owner_id=OWNER, conversation_id="conv-1", caps=caps)
 
 
-async def _published(
+async def publish_skill(
     store: SkillStore,
     *,
     name: str = "release-notes",
@@ -111,7 +111,7 @@ async def _published(
 
 
 async def test_open_returns_the_instructions_and_stages_the_bundle():
-    store = await _store()
+    store = await skill_store()
     imported, _ = await store.import_bundle(
         OWNER,
         zip_entries(
@@ -126,7 +126,7 @@ async def test_open_returns_the_instructions_and_stages_the_bundle():
     sessions = FakeSessions()
 
     result = await _invoke(
-        "open", _ctx(_deps(skills=store, sandbox_sessions=sessions)), "pdf-processing"
+        "open", _ctx(skill_deps(skills=store, sandbox_sessions=sessions)), "pdf-processing"
     )
 
     assert result["ok"] is True
@@ -142,10 +142,10 @@ async def test_open_returns_the_instructions_and_stages_the_bundle():
 
 
 async def test_reopening_a_skill_does_not_rewrite_identical_files():
-    store = await _store()
-    _ = await _published(store)
+    store = await skill_store()
+    _ = await publish_skill(store)
     sessions = FakeSessions()
-    deps = _deps(skills=store, sandbox_sessions=sessions)
+    deps = skill_deps(skills=store, sandbox_sessions=sessions)
 
     _ = await _invoke("open", _ctx(deps), "release-notes")
     after_first = sessions.session.writes
@@ -157,20 +157,20 @@ async def test_reopening_a_skill_does_not_rewrite_identical_files():
 async def test_open_refuses_a_draft_the_same_way_as_an_unknown_name():
     """A draft must be indistinguishable from nonexistent — the operator hasn't
     published it, so the agent should not learn it exists."""
-    store = await _store()
+    store = await skill_store()
     _ = await store.create(OWNER, name="secret-draft", description="Not ready.", body="x")
-    _ = await _published(store)
+    _ = await publish_skill(store)
 
     with pytest.raises(ModelRetry) as caught:
-        _ = await _invoke("open", _ctx(_deps(skills=store)), "secret-draft")
+        _ = await _invoke("open", _ctx(skill_deps(skills=store)), "secret-draft")
     assert "secret-draft" not in str(caught.value).split("Available skills:")[1]
     assert "release-notes" in str(caught.value)
 
 
 async def test_open_without_a_sandbox_still_returns_instructions():
-    store = await _store()
-    _ = await _published(store)
-    result = await _invoke("open", _ctx(_deps(skills=store)), "release-notes")
+    store = await skill_store()
+    _ = await publish_skill(store)
+    result = await _invoke("open", _ctx(skill_deps(skills=store)), "release-notes")
     assert result["ok"] is True
     assert result["files"] == []
     assert "unavailable" in s(result["note"])
@@ -181,10 +181,10 @@ async def test_open_survives_a_sandbox_failure():
         async def acquire(self, _key: str, **_kwargs: object) -> FakeSession:
             raise SandboxError("no runtime")
 
-    store = await _store()
-    _ = await _published(store)
+    store = await skill_store()
+    _ = await publish_skill(store)
     result = await _invoke(
-        "open", _ctx(_deps(skills=store, sandbox_sessions=FailingSessions())), "release-notes"
+        "open", _ctx(skill_deps(skills=store, sandbox_sessions=FailingSessions())), "release-notes"
     )
     assert result["ok"] is True
     # A fail-closed sandbox is now indistinguishable from having no runtime at all —
@@ -195,12 +195,12 @@ async def test_open_survives_a_sandbox_failure():
 
 async def test_tools_degrade_when_the_capability_is_absent():
     with pytest.raises(ModelRetry):
-        _ = await _invoke("open", _ctx(_deps()), "anything")
+        _ = await _invoke("open", _ctx(skill_deps()), "anything")
     for name, args in [
         ("create", ("a-skill", "desc", "body")),
         ("edit", ("a-skill", "old", "new", "why")),
     ]:
-        result = await _invoke(name, _ctx(_deps()), *args)
+        result = await _invoke(name, _ctx(skill_deps()), *args)
         assert result["ok"] is False
         assert "unavailable" in s(result["error"])
 
@@ -209,9 +209,13 @@ async def test_tools_degrade_when_the_capability_is_absent():
 
 
 async def test_create_only_ever_writes_a_draft():
-    store = await _store()
+    store = await skill_store()
     result = await _invoke(
-        "create", _ctx(_deps(skills=store)), "deploy-checks", "Check a deploy is safe.", "1. Look."
+        "create",
+        _ctx(skill_deps(skills=store)),
+        "deploy-checks",
+        "Check a deploy is safe.",
+        "1. Look.",
     )
     assert result["ok"] is True
     assert result["status"] == "draft"
@@ -223,17 +227,17 @@ async def test_create_only_ever_writes_a_draft():
 
 
 async def test_create_asks_the_model_to_retry_on_an_invalid_name():
-    store = await _store()
+    store = await skill_store()
     with pytest.raises(ModelRetry, match="name"):
-        _ = await _invoke("create", _ctx(_deps(skills=store)), "Not A Slug", "desc", "body")
+        _ = await _invoke("create", _ctx(skill_deps(skills=store)), "Not A Slug", "desc", "body")
 
 
 async def test_edit_replaces_one_span():
-    store = await _store()
-    _ = await _published(store)
+    store = await skill_store()
+    _ = await publish_skill(store)
     result = await _invoke(
         "edit",
-        _ctx(_deps(skills=store)),
+        _ctx(skill_deps(skills=store)),
         "release-notes",
         "Collect the merged PRs.",
         "Collect the tags.",
@@ -251,10 +255,10 @@ async def test_edit_replaces_one_span():
     ],
 )
 async def test_edit_retries_with_a_precise_reason(body: str, old: str, expected: str):
-    store = await _store()
-    _ = await _published(store, body=body)
+    store = await skill_store()
+    _ = await publish_skill(store, body=body)
     with pytest.raises(ModelRetry, match=expected):
-        _ = await _invoke("edit", _ctx(_deps(skills=store)), "release-notes", old, "x", "why")
+        _ = await _invoke("edit", _ctx(skill_deps(skills=store)), "release-notes", old, "x", "why")
 
 
 async def test_rewriting_a_published_skill_is_the_one_gated_skill_tool():
@@ -266,7 +270,9 @@ async def test_rewriting_a_published_skill_is_the_one_gated_skill_tool():
     # A real RunContext here, not the module's duck-typed one: `get_tools` is the path
     # that stamps the approval kind onto each tool def, and it reads more of the context
     # than a direct function call does.
-    ctx = RunContext(deps=_deps(skills=await _store()), model=TestModel(), usage=RunUsage())
+    ctx = RunContext(
+        deps=skill_deps(skills=await skill_store()), model=TestModel(), usage=RunUsage()
+    )
     tools = await skills_toolset().get_tools(ctx)
     gated = {name for name, tool in tools.items() if tool.tool_def.kind == "unapproved"}
     assert gated == {"edit"}
@@ -288,11 +294,11 @@ async def test_the_edit_gate_reaches_the_approval_scope_vocabulary():
 
 
 def test_catalog_block_is_empty_with_no_published_skills():
-    assert _skill_catalog_block([]) == ""
+    assert skill_catalog_block([]) == ""
 
 
 def test_catalog_block_counts_the_skills_and_lists_only_the_pinned():
-    block = _skill_catalog_block(
+    block = skill_catalog_block(
         [
             SkillCatalogEntry(
                 name="release-notes", description="Draft release notes.", pinned=True
@@ -308,7 +314,7 @@ def test_catalog_block_counts_the_skills_and_lists_only_the_pinned():
 
 def test_catalog_block_stays_one_line_however_many_skills_there_are():
     entries = [SkillCatalogEntry(name=f"skill-{i}", description="d" * 200) for i in range(100)]
-    block = _skill_catalog_block(entries)
+    block = skill_catalog_block(entries)
     assert "100 saved skills" in block
     assert "skill-" not in block
     assert len(block) < 400
@@ -321,32 +327,32 @@ def test_the_block_reads_the_same_however_recently_each_skill_was_touched():
         SkillCatalogEntry(name="release-notes", description="Draft release notes.", pinned=True),
         SkillCatalogEntry(name="triage-bugs", description="Triage a bug report.", pinned=True),
     ]
-    assert _skill_catalog_block(entries) == _skill_catalog_block(list(reversed(entries)))
+    assert skill_catalog_block(entries) == skill_catalog_block(list(reversed(entries)))
 
 
 def test_past_the_pin_limit_the_most_recently_touched_pins_stay():
     entries = [
         SkillCatalogEntry(name=f"skill-{i:02d}", description="d", pinned=True) for i in range(10)
     ]
-    block = _skill_catalog_block(list(reversed(entries)))
+    block = skill_catalog_block(list(reversed(entries)))
     assert "skill-09" in block
     assert "skill-00" not in block
 
 
 async def test_catalog_reaches_the_block_with_published_skills_only():
-    store = await _store()
+    store = await skill_store()
     _ = await store.create(OWNER, name="a-draft", description="Draft.", body="x")
-    _ = await _published(store)
+    _ = await publish_skill(store)
     entries = await store.catalog(OWNER)
     assert [entry.name for entry in entries] == ["release-notes"]
-    assert "1 saved skill," in _skill_catalog_block(entries)
+    assert "1 saved skill," in skill_catalog_block(entries)
 
 
 async def test_a_pinned_skill_is_named_in_the_block():
-    store = await _store()
-    skill = await _published(store)
+    store = await skill_store()
+    skill = await publish_skill(store)
     _ = await store.set_pinned(OWNER, skill.id, True)
-    assert "- release-notes:" in _skill_catalog_block(await store.catalog(OWNER))
+    assert "- release-notes:" in skill_catalog_block(await store.catalog(OWNER))
 
 
 # ── Regressions ──────────────────────────────────────────────────────────────────────────
@@ -355,15 +361,15 @@ async def test_a_pinned_skill_is_named_in_the_block():
 async def test_edit_refuses_a_draft_the_same_way_open_does():
     """A draft is the operator's unreviewed work: the agent must neither rewrite one nor
     learn it exists from a differing error."""
-    store = await _store()
+    store = await skill_store()
     draft = await store.create(
         OWNER, name="secret-draft", description="Not ready.", body="do the private thing"
     )
-    _ = await _published(store)
+    _ = await publish_skill(store)
 
     with pytest.raises(ModelRetry) as caught:
         _ = await _invoke(
-            "edit", _ctx(_deps(skills=store)), "secret-draft", "private", "public", "why"
+            "edit", _ctx(skill_deps(skills=store)), "secret-draft", "private", "public", "why"
         )
     message = str(caught.value)
     assert "No published skill named" in message

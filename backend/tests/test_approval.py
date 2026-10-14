@@ -303,18 +303,18 @@ class TestTheOneLineSummary:
         assert summary == "shell_run(command='rm -rf build/', timeout=30)"
 
     def test_one_enormous_argument_is_elided_rather_than_carried(self):
-        from agent.parking import _SUMMARY_MAX_CHARS, _VALUE_MAX_CHARS, summarize_call
+        from agent.parking import SUMMARY_MAX_CHARS, VALUE_MAX_CHARS, summarize_call
 
         summary = summarize_call("plan_submit", {"body": "# Plan\n" + "step. " * 2000})
 
-        assert len(summary) <= _SUMMARY_MAX_CHARS
+        assert len(summary) <= SUMMARY_MAX_CHARS
         # Elided, not merely cut: a summary that stopped silently reads as a call with a
         # shorter argument than the one actually being approved. And the value is cut
         # *inside* the call rather than the line being chopped after it, so the rendering
         # still reads as a call.
         assert summary.endswith("…)")
         assert summary.startswith("plan_submit(body='# Plan")
-        assert len(summary) > _VALUE_MAX_CHARS // 2
+        assert len(summary) > VALUE_MAX_CHARS // 2
 
     def test_a_later_argument_survives_an_earlier_enormous_one(self):
         from agent.parking import summarize_call
@@ -327,11 +327,11 @@ class TestTheOneLineSummary:
         assert "path='notes.md'" in summary
 
     def test_many_small_arguments_are_capped_by_the_line(self):
-        from agent.parking import _SUMMARY_MAX_CHARS, summarize_call
+        from agent.parking import SUMMARY_MAX_CHARS, summarize_call
 
         summary = summarize_call("noisy", {f"k{n}": f"v{n}" for n in range(200)})
 
         # The other shape: nothing here is individually long, and the line is still a
         # notification body.
-        assert len(summary) <= _SUMMARY_MAX_CHARS
+        assert len(summary) <= SUMMARY_MAX_CHARS
         assert summary.endswith("…")

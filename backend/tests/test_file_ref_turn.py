@@ -17,7 +17,7 @@ from pydantic import JsonValue
 from services.conversations import ConversationStore
 from tests._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
 from tests._json import arr, json_body, obj, s
-from tests.test_code_mode import _project
+from tests.test_code_mode import create_project
 
 
 def _injections(events: list[dict[str, JsonValue]], contributor: str) -> list[dict[str, JsonValue]]:
@@ -51,7 +51,7 @@ class TestWhatReachesTheModel:
     ):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
-            project = await _project(client, tmp_path)
+            project = await create_project(client, tmp_path)
             events = await _project_turn(client, project["id"], ["hello.txt"])
         rows = _injections(events, "file_refs")
         assert len(rows) == 1
@@ -68,7 +68,7 @@ class TestWhatReachesTheModel:
     ):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
-            project = await _project(client, tmp_path)
+            project = await create_project(client, tmp_path)
             events = await _project_turn(
                 client, project["id"], ["../../../etc/passwd", "hello.txt"]
             )
@@ -82,7 +82,7 @@ class TestWhatReachesTheModel:
     ):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
-            project = await _project(client, tmp_path)
+            project = await create_project(client, tmp_path)
             events = await _project_turn(client, project["id"], ["does/not/exist.ts"])
         # The operator still has their typed message; refusing the turn over a file they
         # can simply mention again is the worse trade.
@@ -94,7 +94,7 @@ class TestWhatReachesTheModel:
     ):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
-            project = await _project(client, tmp_path)
+            project = await create_project(client, tmp_path)
             events = await _project_turn(client, project["id"], [])
         assert _injections(events, "file_refs") == []
 
@@ -113,7 +113,7 @@ class TestWhatIsWrittenDown:
     async def _turn_with_refs(
         self, client: httpx.AsyncClient, tmp_path: Path
     ) -> tuple[str, dict[str, JsonValue]]:
-        project = await _project(client, tmp_path)
+        project = await create_project(client, tmp_path)
         resp = await client.post(
             "/chat",
             json={

@@ -254,10 +254,10 @@ async def test_the_catalog_lists_the_same_names_the_model_is_offered(tasks: Conv
     """The operator's settings list is derived from the toolset's static `tools` registry,
     and the enabled gate matches on the offered name. If the two spelled the category
     differently, switching a tool off in settings would withhold nothing."""
-    from tools.tasks import _ConversationTaskToolset, tasks_toolset
+    from tools.tasks import ConversationTaskToolset, tasks_toolset
 
     toolset = tasks_toolset()
-    assert isinstance(toolset, _ConversationTaskToolset)
+    assert isinstance(toolset, ConversationTaskToolset)
     _, ctx = await _toolset_ctx(tasks, "conv-catalog")
     offered = await toolset.get_tools(ctx)
     assert set(toolset.tools) == set(offered)
@@ -268,8 +268,8 @@ def test_the_rename_map_is_a_bijection_over_the_allowlist():
     tool offered without one would fall back to the harness's wording — so the sets are
     asserted equal rather than each being checked alone. The inverse map is checked too:
     a duplicate value there would make one of our names undispatchable."""
-    from tools.tasks import _DESCRIPTIONS, _LOCAL, _UPSTREAM
+    from tools.tasks import DESCRIPTIONS, LOCAL, UPSTREAM
 
-    assert set(_DESCRIPTIONS) == set(_UPSTREAM.values())
-    assert len(_LOCAL) == len(_UPSTREAM)
-    assert {_LOCAL[upstream] for upstream in _UPSTREAM.values()} == set(_UPSTREAM)
+    assert set(DESCRIPTIONS) == set(UPSTREAM.values())
+    assert len(LOCAL) == len(UPSTREAM)
+    assert {LOCAL[upstream] for upstream in UPSTREAM.values()} == set(UPSTREAM)

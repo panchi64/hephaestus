@@ -121,6 +121,14 @@ class SubagentWake:
             root = self._roots.get(run.conversation_id, run.conversation_id)
             _ = self._chain.pop(root, None)
 
+    def unattended_turns(self, root: str) -> int:
+        """Consecutive unattended turns this tree has taken."""
+        return self._chain.get(root, 0)
+
+    def spend_budget(self, root: str) -> None:
+        """Mark the tree's whole unattended-turn budget as used."""
+        self._chain[root] = WAKE_CHAIN_LIMIT
+
     async def settled(self, run: Run, _watched: bool) -> None:
         """The async half: a run reached terminal. If it was a spawned agent's turn, report
         it back; either way, rescue anything still queued for it."""
@@ -148,7 +156,7 @@ class SubagentWake:
         try:
             await self._records.settle(
                 row.id,
-                status=_status_of(run),
+                status=status_of(run),
                 summary=None if summary is None else _joined(summary, merged),
                 error=error,
                 context_used=(getattr(run.metrics, "context_used", None) if run.metrics else None),
@@ -167,7 +175,7 @@ class SubagentWake:
         _ = await self.deliver(
             row.owner_id,
             row.parent_conversation_id,
-            _report_text(row.handle or row.spec_name, row.spec_name, summary, error, merged),
+            report_text(row.handle or row.spec_name, row.spec_name, summary, error, merged),
         )
 
     async def _outcome(self, run: Run, conversation_id: str) -> tuple[str | None, str | None]:
@@ -407,7 +415,7 @@ def _framed(text: str, source: MessageSource, sender: str | None) -> str:
     return report_envelope(text)
 
 
-def _status_of(run: Run) -> str:
+def status_of(run: Run) -> str:
     if run.status is RunStatus.done:
         return "done"
     return "cancelled" if run.status is RunStatus.cancelled else "failed"
@@ -417,7 +425,7 @@ def _joined(summary: str, merged: str | None) -> str:
     return summary if merged is None else f"{summary}\n\n{merged}"
 
 
-def _report_text(
+def report_text(
     handle: str,
     spec_name: str,
     summary: str | None,

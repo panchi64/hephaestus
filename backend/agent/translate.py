@@ -121,7 +121,7 @@ def citations_from_tool_result(
     ]
 
 
-def _on_chassis_event(event: object, run: Run) -> bool:
+def on_chassis_event(event: object, run: Run) -> bool:
     """Land an event a tool or a capability emitted, and say whether it was ours.
 
     Both node streams call this first, because either can carry one: a tool emits while
@@ -242,7 +242,7 @@ def _on_model_event(event: object, run: Run, mark_first_token: Callable[[], None
     # execution is reported from the CallToolsNode.
 
 
-def _on_tool_event(
+def on_tool_event(
     event: object, run: Run, announced: set[str] | None, loop_breaker: LoopBreaker | None
 ) -> None:
     if isinstance(event, FunctionToolCallEvent):
@@ -335,14 +335,14 @@ async def stream_agent_run[DepsT](
             with timer.model_request() as mark_first_token:
                 async with node.stream(agent_run.ctx) as stream:
                     async for event in stream:
-                        if not _on_chassis_event(event, run):
+                        if not on_chassis_event(event, run):
                             _on_model_event(event, run, mark_first_token)
             _ = run.emit(StepCompleted(index=step))
             # The request's non-conversation weight (the brief + the tool schemas) and the
             # brief's named contributors both arrive as capability events at the head of
             # the stream just walked — emitted by `agent/overhead.py` and
             # `agent/injections.py` from the library's own `before_model_request` hook,
-            # where the assembled request still exists as parts. `_on_chassis_event` has
+            # where the assembled request still exists as parts. `on_chassis_event` has
             # already landed them by the time this line runs.
             if on_step is not None:
                 on_step(agent_run.ctx.state.message_history)
@@ -352,6 +352,6 @@ async def stream_agent_run[DepsT](
             with timer.tool_calls():
                 async with node.stream(agent_run.ctx) as stream:
                     async for event in stream:
-                        if not _on_chassis_event(event, run):
-                            _on_tool_event(event, run, announced, loop_breaker)
+                        if not on_chassis_event(event, run):
+                            on_tool_event(event, run, announced, loop_breaker)
         # UserPromptNode / End nodes have nothing to stream.

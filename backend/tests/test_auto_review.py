@@ -1499,13 +1499,13 @@ class TestTheSettledVocabulary:
         assert "permission level" in permissions.blocked_message("plan", "shell_run_command")
 
     def test_the_decisions_a_review_can_produce_are_the_three_on_the_wire(self):
-        from agent.gating import _WIRE_DECISION
+        from agent.gating import WIRE_DECISION
 
         # `block` outlives the review that produced it: the word is already in the stored
         # events of every thread reviewed before an unrecoverable act started parking, and
         # a client replaying those still has to render them.
-        assert set(_WIRE_DECISION) == {Decision.ALLOW, Decision.ASK, Decision.BLOCK}
-        assert Decision.REVIEW not in _WIRE_DECISION
+        assert set(WIRE_DECISION) == {Decision.ALLOW, Decision.ASK, Decision.BLOCK}
+        assert Decision.REVIEW not in WIRE_DECISION
 
 
 OWNER = "operator"

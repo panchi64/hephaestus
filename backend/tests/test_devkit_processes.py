@@ -121,7 +121,7 @@ def test_stop_recorded_kills_the_whole_group_and_clears_the_file(tmp_path: Path)
         env={"PATH": "/usr/bin:/bin"},
         log_dir=tmp_path / "logs",
     )
-    group = processes._group_of(supervisor.services[0])
+    group = processes.group_of(supervisor.services[0])
     assert group is not None
     _ = supervisor.record(tmp_path)
 

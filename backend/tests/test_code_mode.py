@@ -53,7 +53,9 @@ async def _settled(app: FastAPI, run_id: str) -> None:
     raise AssertionError(f"run {run_id} never settled")
 
 
-async def _project(client: httpx.AsyncClient, tmp_path: Path, name: str = "work") -> dict[str, str]:
+async def create_project(
+    client: httpx.AsyncClient, tmp_path: Path, name: str = "work"
+) -> dict[str, str]:
     """The created project's text fields (`id`, `rootPath`, `baseRef`, …)."""
     root = await _repo(tmp_path / name)
     resp = await client.post("/projects", json={"name": name, "rootPath": str(root)})
@@ -75,7 +77,7 @@ class TestTheBinding:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         async with client_app() as (client, app):
-            project = await _project(client, tmp_path)
+            project = await create_project(client, tmp_path)
             patch_model_resolution(monkeypatch)
             created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
             assert created.status_code == 202, created.text
@@ -89,7 +91,7 @@ class TestTheBinding:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         async with client_app() as (client, app):
-            project = await _project(client, tmp_path)
+            project = await create_project(client, tmp_path)
             patch_model_resolution(monkeypatch)
             created = await client.post(
                 "/chat",
@@ -99,11 +101,11 @@ class TestTheBinding:
             binding = await _conversations(app).binding(s(json_body(created)["conversation_id"]))
             assert binding.workspace_kind == "sandbox"
 
-    async def test_a_plain_thread_files_itself_under_the_active_project(
+    async def test_a_plain_thread_files_itself_under_the_activecreate_project(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         async with client_app() as (client, app):
-            project = await _project(client, tmp_path)
+            project = await create_project(client, tmp_path)
             _ = await client.post(f"/projects/{project['id']}/activate")
             patch_model_resolution(monkeypatch)
             created = await client.post("/chat", json={"prompt": "hi"})
@@ -137,7 +139,7 @@ class TestTheBranchSurface:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         async with client_app() as (client, _app):
-            project = await _project(client, tmp_path)
+            project = await create_project(client, tmp_path)
             patch_model_resolution(monkeypatch)
             created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
             conversation_id = s(json_body(created)["conversation_id"])
@@ -148,7 +150,7 @@ class TestTheBranchSurface:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         async with client_app() as (client, app):
-            project = await _project(client, tmp_path)
+            project = await create_project(client, tmp_path)
             patch_model_resolution(monkeypatch)
             created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
             conversation_id = s(json_body(created)["conversation_id"])
@@ -170,7 +172,7 @@ class TestDeletingAThread:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> tuple[dict[str, str], str]:
-        project = await _project(client, tmp_path)
+        project = await create_project(client, tmp_path)
         patch_model_resolution(monkeypatch)
         created = json_body(
             await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})

@@ -49,9 +49,9 @@ INVENTORY_TOOL = "inventory_agent_context"
 #: executing *concurrently* rather than for history — the host ceiling is eight lanes'
 #: worth — with room to spare, since an entry costs at most the instruction budget and is
 #: evicted long before a long-lived process has accumulated one per thread ever opened.
-_MAX_BRIEFS = 32
+MAX_BRIEFS = 32
 
-_briefs: OrderedDict[tuple[str, str], str] = OrderedDict()
+briefs: OrderedDict[tuple[str, str], str] = OrderedDict()
 
 
 _CAPABILITY = RepoContext[RunDeps](
@@ -81,22 +81,22 @@ async def repo_instructions(ctx: RunContext[RunDeps]) -> str:
         return ""
     if workspace is None or workspace.kind != "worktree":
         return ""
-    return await _run_brief(ctx.deps.run.id, workspace.root)
+    return await run_brief(ctx.deps.run.id, workspace.root)
 
 
-async def _run_brief(run_id: str, root: Path) -> str:
+async def run_brief(run_id: str, root: Path) -> str:
     """This run's brief for this worktree, built once and reused for every later request
     the run makes. Keyed by the run rather than by the root so a later turn — the one
     place a project's instruction file may legitimately have changed since it was read —
     still re-reads it, and so a resumed approval keeps the head its earlier requests were
     cached against. An empty brief is a cached answer like any other."""
     key = (run_id, str(root))
-    brief = _briefs.pop(key, None)
+    brief = briefs.pop(key, None)
     if brief is None:
         brief = await _brief(root)
-        if len(_briefs) >= _MAX_BRIEFS:
-            _ = _briefs.popitem(last=False)
-    _briefs[key] = brief
+        if len(briefs) >= MAX_BRIEFS:
+            _ = briefs.popitem(last=False)
+    briefs[key] = brief
     return brief
 
 

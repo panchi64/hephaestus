@@ -217,7 +217,7 @@ def strip_schema_leaks(name: str, schema: Mapping[str, JsonValue]) -> dict[str, 
     harness upgrade that spreads it fails a test rather than reaching the model.
     """
     out = copy.deepcopy(dict(schema))
-    if name in _SUBTASKS_LEAKED:
+    if name in SUBTASKS_LEAKED:
         _strip_subtasks(out)
     return out
 
@@ -295,7 +295,7 @@ def category_of(name: str, names_by_category: Mapping[str, frozenset[str]]) -> s
 #: The task-list tools whose schema carries the harness's subtasks vocabulary. Their names
 #: are ours rather than the harness's — ``tools/tasks.py`` renames them before they reach
 #: any gate, and this one runs last of all.
-_SUBTASKS_LEAKED = frozenset({"tasks_write", "tasks_update_statuses"})
+SUBTASKS_LEAKED = frozenset({"tasks_write", "tasks_update_statuses"})
 
 
 def _strip_subtasks(schema: dict[str, JsonValue]) -> None:

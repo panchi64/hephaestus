@@ -31,9 +31,9 @@ from services.workspace_kind import is_project_folder
 from .deps import RunDeps
 
 #: How many runs' catalogs are held at once, sized for the runs executing concurrently.
-_MAX_CATALOGS = 32
+MAX_CATALOGS = 32
 
-_catalogs: OrderedDict[str, dict[str, AgentDefinition]] = OrderedDict()
+catalogs: OrderedDict[str, dict[str, AgentDefinition]] = OrderedDict()
 
 
 async def run_roster(ctx: RunContext[RunDeps]) -> dict[str, AgentDefinition]:
@@ -44,12 +44,12 @@ async def run_roster(ctx: RunContext[RunDeps]) -> dict[str, AgentDefinition]:
 async def run_catalog(ctx: RunContext[RunDeps]) -> dict[str, AgentDefinition]:
     """Every published agent this run can see, by name."""
     run_id = ctx.deps.run.id
-    cached = _catalogs.pop(run_id, None)
+    cached = catalogs.pop(run_id, None)
     if cached is None:
         cached = await _resolve(ctx)
-        if len(_catalogs) >= _MAX_CATALOGS:
-            _ = _catalogs.popitem(last=False)
-    _catalogs[run_id] = cached
+        if len(catalogs) >= MAX_CATALOGS:
+            _ = catalogs.popitem(last=False)
+    catalogs[run_id] = cached
     return cached
 
 

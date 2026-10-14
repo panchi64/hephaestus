@@ -68,7 +68,7 @@ from ._helpers import (
     patch_model_resolution,
 )
 from ._json import json_body, parse_json, s
-from .test_chat_concurrency_guards import _patch_hanging_model
+from .test_chat_concurrency_guards import patch_hanging_model
 
 OWNER = "operator"
 
@@ -493,7 +493,7 @@ class TestTheLiveControl:
         which keeps running at the level it started at — so moving the stored one would
         leave the control reading a level nothing is running at."""
         hang, started = asyncio.Event(), asyncio.Event()
-        _patch_hanging_model(monkeypatch, hang, started)
+        patch_hanging_model(monkeypatch, hang, started)
         async with client_app() as (client, app):
             first = await client.post("/chat", json={"prompt": "hi", "permission_level": "manual"})
             conversation_id = s(json_body(first)["conversation_id"])
@@ -520,7 +520,7 @@ class TestTheLiveControl:
         """The other way a send gets no turn of its own: a busy thread answers 409 to a
         send carrying attachments, because steering is text-only."""
         hang, started = asyncio.Event(), asyncio.Event()
-        _patch_hanging_model(monkeypatch, hang, started)
+        patch_hanging_model(monkeypatch, hang, started)
         async with client_app() as (client, app):
             upload = await client.post(
                 "/uploads", files={"file": ("note.txt", b"look at this", "text/plain")}

@@ -72,7 +72,7 @@ class MinerUExtractor(UploadExtractor):
         if ext is None:
             raise _Unsupported(f"MinerU does not handle {mime!r}")
         markdown = await self._run(raw, ext)
-        text = _clean(markdown)
+        text = clean_markdown(markdown)
         # MinerU OCRs internally; a cheap text-layer probe tells us whether this doc
         # *needed* vision, which is what the upload's `vision` flag means.
         vision = ext != ".pdf" or not pdf_has_text_layer(raw)
@@ -144,7 +144,7 @@ def read_markdown(out_dir: Path) -> str:
     return candidates[0].read_text(encoding="utf-8", errors="replace")
 
 
-def _clean(markdown: str) -> str:
+def clean_markdown(markdown: str) -> str:
     """Drop standalone image-embed lines (noise in retrievable text) and trim."""
     kept = [line for line in markdown.splitlines() if not _IMAGE_LINE.match(line)]
     return "\n".join(kept).strip()

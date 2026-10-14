@@ -8,7 +8,7 @@ from pydantic_ai.models.test import TestModel
 from agent import stream_agent_run
 from agent.injections import AnnounceInjections
 from agent.overhead import MeasureOverhead
-from agent.translate import _on_tool_event
+from agent.translate import on_tool_event
 from runs import Run, RunStream, ToolCompleted, ToolFailed, ToolStarted, ViewLiveStopped
 from tools.emit import RunEventEmitted
 
@@ -58,7 +58,7 @@ async def test_retry_prompt_part_becomes_tool_failed():
     event = FunctionToolResultEvent(
         part=RetryPromptPart(content="bad input", tool_name="lookup", tool_call_id="c9")
     )
-    _on_tool_event(event, run, None, None)
+    on_tool_event(event, run, None, None)
 
     failed = first_body(run, ToolFailed)
     assert failed.name == "lookup"
@@ -163,12 +163,12 @@ async def test_a_scripts_calls_carry_the_script_that_made_them():
     from pydantic_ai.messages import ToolCallPart
 
     from agent.emit import NestedToolFinished, NestedToolStarted
-    from agent.translate import _on_chassis_event
+    from agent.translate import on_chassis_event
 
     run = _run()
     part = ToolCallPart(tool_name="web_search", args={"query": "q"}, tool_call_id="s__1")
-    assert _on_chassis_event(NestedToolStarted(parent_tool_call_id="s", part=part), run)
-    assert _on_chassis_event(
+    assert on_chassis_event(NestedToolStarted(parent_tool_call_id="s", part=part), run)
+    assert on_chassis_event(
         NestedToolFinished(
             parent_tool_call_id="s",
             content={"hits": 1},
@@ -177,7 +177,7 @@ async def test_a_scripts_calls_carry_the_script_that_made_them():
         ),
         run,
     )
-    assert _on_chassis_event(
+    assert on_chassis_event(
         NestedToolFinished(
             parent_tool_call_id="s", error="nope", tool_call_id="s__2", tool_name="files_read_file"
         ),

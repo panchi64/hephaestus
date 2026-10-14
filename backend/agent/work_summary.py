@@ -75,7 +75,7 @@ _EXCERPT = 12000
 # The hard ceiling on a stored summary. The prompt asks for two or three sentences, so this
 # is the backstop for a model that ignored the budget rather than the normal path — and it
 # sits at about what a re-entry band can show without becoming something to read.
-_MAX_SUMMARY_LEN = 400
+MAX_SUMMARY_LEN = 400
 
 
 def _call_line(part: ToolCallPart) -> str:
@@ -158,7 +158,7 @@ def work_transcript(history: list[ModelMessage], *, excerpt: int = _EXCERPT) -> 
     return f"{preamble}\n\n" + "\n\n".join(blocks[len(blocks) - kept :])
 
 
-def _clean(raw: str) -> str | None:
+def clean_summary(raw: str) -> str | None:
     """The model's reply as a storable summary, or None when it said nothing.
 
     A leaked ``<think>`` block goes first, for the reason the titler strips one: the
@@ -172,9 +172,9 @@ def _clean(raw: str) -> str | None:
     text = " ".join(strip_think_blocks(raw).split()).strip()
     if not text:
         return None
-    if len(text) <= _MAX_SUMMARY_LEN:
+    if len(text) <= MAX_SUMMARY_LEN:
         return text
-    return truncate_on_boundary(text, _MAX_SUMMARY_LEN - 1) + "…"
+    return truncate_on_boundary(text, MAX_SUMMARY_LEN - 1) + "…"
 
 
 async def summarize_work(
@@ -213,4 +213,4 @@ async def summarize_work(
     except Exception as exc:  # noqa: BLE001 — the summary is best-effort, never fails a sweep
         logger.warning("work summary generation failed: %s", exc)
         return None
-    return _clean(result.output)
+    return clean_summary(result.output)

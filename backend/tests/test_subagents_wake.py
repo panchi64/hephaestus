@@ -30,7 +30,7 @@ from pydantic_ai import ModelRequest, UserPromptPart
 
 from agent import turn as turn_module
 from agent.injected import injected_text
-from harness.manifests._subagent_wake import WAKE_CHAIN_LIMIT, SubagentWake
+from harness.manifests._subagent_wake import SubagentWake
 from routes.chat import compose_turn
 from runs import QueuedMessage, Run, RunRegistry, RunStatus, RunStream
 from runs.events import MessageSource
@@ -328,7 +328,7 @@ class TestTheRunawayRail:
             if first.task is not None:
                 await first.task
             wake = _wake(app)
-            wake._chain[s(body["conversation_id"])] = WAKE_CHAIN_LIMIT  # noqa: SLF001
+            wake.spend_budget(s(body["conversation_id"]))
             composed = _woken(monkeypatch)
 
             _ = await wake.deliver("operator", s(body["conversation_id"]), "another report")
@@ -345,13 +345,13 @@ class TestTheRunawayRail:
             body = json_body(created)
             run = _run_of(app, s(body["run_id"]))
             wake = _wake(app)
-            wake._chain[s(body["conversation_id"])] = WAKE_CHAIN_LIMIT  # noqa: SLF001
+            wake.spend_budget(s(body["conversation_id"]))
 
             wake.observed(run)
 
             # The rail exists to stop an unattended loop. A human sending a message is
             # exactly the evidence that this is no longer one.
-            assert s(body["conversation_id"]) not in wake._chain  # noqa: SLF001
+            assert wake.unattended_turns(s(body["conversation_id"])) == 0
             if run.task is not None:
                 await run.task
 
@@ -367,10 +367,10 @@ class TestStatus:
         ],
     )
     def test_how_a_subagent_ended_is_what_the_card_shows(self, status: RunStatus, expected: str):
-        from harness.manifests._subagent_wake import _status_of
+        from harness.manifests._subagent_wake import status_of
 
         run = Run(id="r", kind="linked", owner_id="operator", stream=RunStream())
         run.status = status
         # A sub-agent stopped at a bound did not do its job, and a card calling that
         # "done" is a card the operator would be wrong to trust.
-        assert _status_of(run) == expected
+        assert status_of(run) == expected

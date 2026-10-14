@@ -26,10 +26,10 @@ from services.workspace_kind import WORKSPACE_TOOLS
 from tools import RunDeps, build_agent_toolsets
 from tools.catalog import tool_catalog
 from tools.describe import (
-    _SUBTASKS_LEAKED,
     NARRATION_ARG,
     NARRATION_PROPERTY,
     NARRATION_TEXT,
+    SUBTASKS_LEAKED,
     add_property,
     category_names,
     category_of,
@@ -176,7 +176,7 @@ async def test_every_tool_named_as_leaking_is_one_the_catalog_offers():
     the tool, not the harness's, so the rename in ``tools/tasks.py`` has to have reached
     here too."""
     offered = await _offered()
-    assert _SUBTASKS_LEAKED <= set(offered)
+    assert SUBTASKS_LEAKED <= set(offered)
 
 
 async def test_the_plan_schema_says_each_thing_once():

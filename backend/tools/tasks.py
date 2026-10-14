@@ -23,7 +23,7 @@ for the same prompt-cache reason the harness places it there.
 a JSON schema on every request to buy the model a second way to do something it could
 already do — and a second way is a decision it has to make.
 
-**The three are renamed on the way out** (:data:`_UPSTREAM`). The harness registers them by
+**The three are renamed on the way out** (:data:`UPSTREAM`). The harness registers them by
 hardcoded string — ``write_plan``, ``update_task_statuses``, ``read_plan`` — and validates
 any allowlist against those, so the names cannot be chosen upstream. Prefixed by the
 category they would reach the model as ``tasks_write_plan``: the exact collision this split
@@ -66,16 +66,16 @@ _MAX_BOUND = 64
 #: names it will answer to. The harness validates both the allowlist and the description
 #: keys against the tools it registers, so a rename upstream fails loudly here instead of
 #: silently offering more than we intended.
-_UPSTREAM = {
+UPSTREAM = {
     "write": "write_plan",
     "update_statuses": "update_task_statuses",
     "read": "read_plan",
 }
 
 #: The inverse, for mapping a call back to the name the harness knows.
-_LOCAL = {upstream: local for local, upstream in _UPSTREAM.items()}
+LOCAL = {upstream: local for local, upstream in UPSTREAM.items()}
 
-_DESCRIPTIONS = {
+DESCRIPTIONS = {
     "write_plan": (
         "Create or replace the whole task list. Pass every step each time, including the "
         "unchanged and the finished, and keep exactly one in_progress. Call it first for "
@@ -99,8 +99,8 @@ def _planning(store: TaskStoreProtocol) -> Planning[RunDeps]:
     """A ``Planning`` over ``store``, narrowed to the three tools we offer."""
     return Planning[RunDeps](
         store_resolver=lambda _ctx: store,
-        tools=tuple(_UPSTREAM.values()),
-        descriptions=_DESCRIPTIONS,
+        tools=tuple(UPSTREAM.values()),
+        descriptions=DESCRIPTIONS,
     )
 
 
@@ -121,7 +121,7 @@ def _store_for(ctx: RunContext[RunDeps]) -> TaskStoreProtocol:
     )
 
 
-class _ConversationTaskToolset(AbstractToolset[RunDeps]):
+class ConversationTaskToolset(AbstractToolset[RunDeps]):
     """The ``tasks`` category, rebound to whichever conversation is asking.
 
     **The rebinding is the whole point.** ``Planning.resolve_store`` memoises its store on
@@ -137,7 +137,7 @@ class _ConversationTaskToolset(AbstractToolset[RunDeps]):
     the operator catalog and the enabled gate identical for every thread.
 
     It is also where the harness's names become ours (see the module note): every path out
-    of here speaks :data:`_UPSTREAM`'s keys, and every path back in speaks its values.
+    of here speaks :data:`UPSTREAM`'s keys, and every path back in speaks its values.
     """
 
     def __init__(self, template: AbstractToolset[RunDeps]) -> None:
@@ -160,7 +160,7 @@ class _ConversationTaskToolset(AbstractToolset[RunDeps]):
         would not be the tool withheld from the agent.
         """
         registry = registered_tools(self._template)
-        return {_LOCAL[name]: tool for name, tool in registry.items() if name in _LOCAL}
+        return {LOCAL[name]: tool for name, tool in registry.items() if name in LOCAL}
 
     @override
     async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
@@ -168,7 +168,7 @@ class _ConversationTaskToolset(AbstractToolset[RunDeps]):
         return {
             local: replace(tool, tool_def=replace(tool.tool_def, name=local))
             for upstream, tool in tools.items()
-            if (local := _LOCAL.get(upstream)) is not None
+            if (local := LOCAL.get(upstream)) is not None
         }
 
     @override
@@ -187,7 +187,7 @@ class _ConversationTaskToolset(AbstractToolset[RunDeps]):
         # Back to the harness's own name, and re-resolve against the bound toolset: the
         # tool handed in carries the template's function, which is wired to the template's
         # (unbound) store.
-        upstream = _UPSTREAM[name]
+        upstream = UPSTREAM[name]
         # Named as the catalog names it, so the planning tools' own capability events can be
         # attributed — a prefixed toolset otherwise hands the harness an unprefixed
         # `tool_name` the library cannot look up (`tools/harness_events.py`).
@@ -217,7 +217,7 @@ def tasks_toolset() -> AbstractToolset[RunDeps]:
     """The ``tasks`` category — the model's read/write access to its own task list."""
     # The template's store is never read or written: only `call_tool` acts, and it always
     # rebinds first. It exists to carry the tool definitions.
-    return _ConversationTaskToolset(_planning_toolset(InMemoryPlanStore()))
+    return ConversationTaskToolset(_planning_toolset(InMemoryPlanStore()))
 
 
 async def tasks_context(req: PromptContextRequest) -> str:

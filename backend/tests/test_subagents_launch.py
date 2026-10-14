@@ -49,13 +49,13 @@ EXPLORER = builtin_roster()["explorer"]
 WORKER = builtin_roster()["worker"]
 
 
-def _launcher(app: FastAPI) -> SubagentLauncher:
+def launcher_of(app: FastAPI) -> SubagentLauncher:
     launcher = app_state(app, "capabilities", ServiceContainer).get_optional(SubagentLauncher)
     assert launcher is not None, "the subagents manifest did not export its implementation"
     return launcher
 
 
-def _records(app: FastAPI) -> SubagentStore:
+def records_of(app: FastAPI) -> SubagentStore:
     return app_state(app, "subagent_records", SubagentStore)
 
 
@@ -63,7 +63,7 @@ def _terminal_tasks(app: FastAPI) -> list[asyncio.Task[None]]:
     return list(cast(set[asyncio.Task[None]], app_state(app, "run_terminal_tasks", set)))
 
 
-async def _settle(app: FastAPI, run_id: str) -> None:
+async def settle_run(app: FastAPI, run_id: str) -> None:
     """Let the submitted run finish, *and* let the hooks that react to it finish too.
 
     A run's terminal hooks are background tasks, so awaiting the run alone leaves the wake
@@ -92,22 +92,22 @@ class TestLaunching:
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="what I found")
 
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator", EXPLORER, "find the parser", handle="parser-finder"
             )
 
             # THE assertion. A tool that awaited this would spend its whole turn here,
             # which is exactly what the blocking delegation did.
             assert app_state(app, "runs", RunRegistry).get(started.run_id) is not None
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
     async def test_the_task_is_what_names_the_thread(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator", EXPLORER, "find the parser", handle="parser-finder"
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
             summary = await app_state(app, "conversations", ConversationStore).get_summary(
                 started.conversation_id, "operator"
@@ -120,10 +120,10 @@ class TestLaunching:
     async def test_the_thread_is_hidden_but_readable(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator", EXPLORER, "read the config", handle="config-reader"
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
             listed = await app_state(app, "conversations", ConversationStore).list_conversations(
                 "operator"
@@ -140,7 +140,9 @@ class TestLaunching:
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch)
             with pytest.raises(SubagentUnavailableError):
-                _ = await _launcher(app).launch("operator", EXPLORER, "   ", handle="nothing-doer")
+                _ = await launcher_of(app).launch(
+                    "operator", EXPLORER, "   ", handle="nothing-doer"
+                )
 
 
 class TestWhatItMayDo:
@@ -148,14 +150,14 @@ class TestWhatItMayDo:
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             # A worker's own ceiling is the mode's default; the parent is down at Manual.
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator",
                 WORKER,
                 "rename the thing",
                 handle="renamer",
                 parent=SubagentParent(permission="manual"),
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
             binding = await app_state(app, "conversations", ConversationStore).binding(
                 started.conversation_id
@@ -170,10 +172,10 @@ class TestWhatItMayDo:
             patch_model_resolution(monkeypatch, output_text="done")
             composed = _capture_composition(monkeypatch)
 
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator", EXPLORER, "look around", handle="looker"
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
             assert not EXPLORER.can_delegate
             assert "agents_spawn" in TypeAdapter(frozenset[str]).validate_python(
@@ -187,10 +189,10 @@ class TestWhatItMayDo:
             patch_model_resolution(monkeypatch, output_text="done")
             composed = _capture_composition(monkeypatch)
 
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator", EXPLORER, "look around", handle="looker"
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
             # Not the interactive lane: a burst of sub-agents must never hold up the turn
             # the operator is sitting in front of (`runs/lanes.py`).
@@ -213,7 +215,7 @@ class TestWhatItMayDo:
             # It may not delegate, so `agents_spawn` is withheld from it — and an agent that
             # ran anyway would answer from model memory as though it had done the work.
             with pytest.raises(SubagentUnavailableError, match="agents_spawn"):
-                _ = await _launcher(app).launch(
+                _ = await launcher_of(app).launch(
                     "operator", impossible, "go", handle="the-impossible"
                 )
 
@@ -233,10 +235,10 @@ class TestItsHandle:
     ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator", EXPLORER, "find it", handle="Helper Function Finder"
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
             # One rule, shared with `.claude/agents/*.md`'s own `name:`, because the two are
             # read in the same places by the same eyes. A model writing the words rather
@@ -247,15 +249,17 @@ class TestItsHandle:
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch)
             with pytest.raises(SubagentUnavailableError, match="not a usable agent name"):
-                _ = await _launcher(app).launch("operator", EXPLORER, "find it", handle="find it!!")
+                _ = await launcher_of(app).launch(
+                    "operator", EXPLORER, "find it", handle="find it!!"
+                )
 
     async def test_a_launch_naming_nothing_takes_its_specs_name(
         self, monkeypatch: pytest.MonkeyPatch
     ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            started = await _launcher(app).launch("operator", EXPLORER, "find it", handle="")
-            await _settle(app, started.run_id)
+            started = await launcher_of(app).launch("operator", EXPLORER, "find it", handle="")
+            await settle_run(app, started.run_id)
 
             # The same fallback the migration backfilled every pre-handle row to, so there
             # is one answer to "what is this sub-agent called" rather than two.
@@ -267,13 +271,13 @@ class TestItsHandle:
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             parent = SubagentParent(conversation_id="parent-handles")
-            first = await _launcher(app).launch(
+            first = await launcher_of(app).launch(
                 "operator", EXPLORER, "look here", handle="looker", parent=parent
             )
-            second = await _launcher(app).launch(
+            second = await launcher_of(app).launch(
                 "operator", EXPLORER, "look there", handle="looker", parent=parent
             )
-            third = await _launcher(app).launch(
+            third = await launcher_of(app).launch(
                 "operator", EXPLORER, "look everywhere", handle="looker", parent=parent
             )
 
@@ -286,7 +290,7 @@ class TestItsHandle:
                 "looker-3",
             ]
             for one in (first, second, third):
-                await _settle(app, one.run_id)
+                await settle_run(app, one.run_id)
 
     async def test_a_handle_taken_by_a_finished_sub_agent_is_still_taken(
         self, monkeypatch: pytest.MonkeyPatch
@@ -294,15 +298,15 @@ class TestItsHandle:
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             parent = SubagentParent(conversation_id="parent-handles-2")
-            first = await _launcher(app).launch(
+            first = await launcher_of(app).launch(
                 "operator", EXPLORER, "look here", handle="looker", parent=parent
             )
-            await _settle(app, first.run_id)
+            await settle_run(app, first.run_id)
 
-            second = await _launcher(app).launch(
+            second = await launcher_of(app).launch(
                 "operator", EXPLORER, "look there", handle="looker", parent=parent
             )
-            await _settle(app, second.run_id)
+            await settle_run(app, second.run_id)
 
             # Unique for the life of the *thread*, not of the run: a parent can read a
             # settled sub-agent's report back by name long afterwards, and re-using the
@@ -324,7 +328,7 @@ class TestItsHandle:
             parent = SubagentParent(conversation_id="parent-handles-3")
             started = await asyncio.gather(
                 *(
-                    _launcher(app).launch(
+                    launcher_of(app).launch(
                         "operator",
                         EXPLORER,
                         f"look at {n}",
@@ -341,19 +345,19 @@ class TestItsHandle:
                 "looker-3",
             ]
             for one in started:
-                await _settle(app, one.run_id)
+                await settle_run(app, one.run_id)
 
     async def test_two_threads_may_each_have_a_looker(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            mine = await _launcher(app).launch(
+            mine = await launcher_of(app).launch(
                 "operator",
                 EXPLORER,
                 "look here",
                 handle="looker",
                 parent=SubagentParent(conversation_id="thread-a"),
             )
-            theirs = await _launcher(app).launch(
+            theirs = await launcher_of(app).launch(
                 "operator",
                 EXPLORER,
                 "look there",
@@ -366,15 +370,15 @@ class TestItsHandle:
             # thread's sub-agent by guessing a plausible name.
             assert mine.handle == theirs.handle == "looker"
             for one in (mine, theirs):
-                await _settle(app, one.run_id)
+                await settle_run(app, one.run_id)
 
     async def test_the_handle_is_what_names_the_thread(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator", EXPLORER, "find the parser", handle="parser-finder"
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
             summary = await app_state(app, "conversations", ConversationStore).get_summary(
                 started.conversation_id, "operator"
@@ -391,16 +395,16 @@ class TestTheRegister:
     ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="what I found")
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator",
                 EXPLORER,
                 "find the parser",
                 handle="parser-finder",
                 parent=SubagentParent(conversation_id="parent-1"),
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
-            rows = await _records(app).descendants("parent-1", "operator")
+            rows = await records_of(app).descendants("parent-1", "operator")
             assert [row.child_conversation_id for row in rows] == [started.conversation_id]
             # The link is what a restart would otherwise lose, leaving the operator with a
             # transcript nothing can name.
@@ -408,7 +412,7 @@ class TestTheRegister:
 
     async def test_a_stranded_row_is_reconciled_rather_than_left_running(self):
         async with client_app() as (_client, app):
-            records = _records(app)
+            records = records_of(app)
             # Written directly rather than by launching one: what a restart leaves behind
             # is a row with no run, which is exactly this and nothing else. Going through
             # a real launch would mean racing the very hook that settles it.
@@ -451,7 +455,7 @@ class TestTheCap:
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = [
-                await _launcher(app).launch(
+                await launcher_of(app).launch(
                     "operator", EXPLORER, f"look at {n}", handle=f"looker-at-{n}"
                 )
                 for n in range(4)
@@ -461,7 +465,7 @@ class TestTheCap:
             # advance, before anyone knows what the work splits into, would mostly be wrong.
             assert len({s.subagent_id for s in started}) == 4
             for one in started:
-                await _settle(app, one.run_id)
+                await settle_run(app, one.run_id)
 
     async def test_a_launch_over_the_cap_is_refused_with_something_to_do_instead(
         self, monkeypatch: pytest.MonkeyPatch
@@ -471,19 +475,19 @@ class TestTheCap:
             _ = await set_subagent_limit(
                 app_state(app, "settings_store", SettingsStore), "operator", 1
             )
-            first = await _launcher(app).launch(
+            first = await launcher_of(app).launch(
                 "operator", EXPLORER, "look here", handle="here-looker"
             )
 
             with pytest.raises(SubagentUnavailableError) as refused:
-                _ = await _launcher(app).launch(
+                _ = await launcher_of(app).launch(
                     "operator", EXPLORER, "look there", handle="there-looker"
                 )
 
             # A model told only "no" retries immediately and spends the turn doing it. This
             # says what it is waiting for and that the wait ends by itself.
             assert "finishes" in str(refused.value)
-            await _settle(app, first.run_id)
+            await settle_run(app, first.run_id)
 
     async def test_a_finished_subagent_gives_its_slot_back(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
@@ -491,17 +495,17 @@ class TestTheCap:
             _ = await set_subagent_limit(
                 app_state(app, "settings_store", SettingsStore), "operator", 1
             )
-            first = await _launcher(app).launch(
+            first = await launcher_of(app).launch(
                 "operator", EXPLORER, "look here", handle="here-looker"
             )
-            await _settle(app, first.run_id)
+            await settle_run(app, first.run_id)
 
             # Otherwise the cap is a lifetime budget rather than a concurrency one, and a
             # long session would stop being able to launch anything at all.
-            second = await _launcher(app).launch(
+            second = await launcher_of(app).launch(
                 "operator", EXPLORER, "look there", handle="there-looker"
             )
-            await _settle(app, second.run_id)
+            await settle_run(app, second.run_id)
 
     async def test_nothing_is_created_for_a_launch_that_is_refused(
         self, monkeypatch: pytest.MonkeyPatch
@@ -511,7 +515,7 @@ class TestTheCap:
             _ = await set_subagent_limit(
                 app_state(app, "settings_store", SettingsStore), "operator", 1
             )
-            first = await _launcher(app).launch(
+            first = await launcher_of(app).launch(
                 "operator",
                 EXPLORER,
                 "look here",
@@ -520,7 +524,7 @@ class TestTheCap:
             )
 
             with pytest.raises(SubagentUnavailableError):
-                _ = await _launcher(app).launch(
+                _ = await launcher_of(app).launch(
                     "operator",
                     EXPLORER,
                     "look there",
@@ -530,9 +534,9 @@ class TestTheCap:
 
             # Checked before anything exists, so a refusal leaves no hidden conversation,
             # no row and no forked workspace behind for the operator to wonder about.
-            rows = await _records(app).descendants("parent-cap", "operator")
+            rows = await records_of(app).descendants("parent-cap", "operator")
             assert len(rows) == 1
-            await _settle(app, first.run_id)
+            await settle_run(app, first.run_id)
 
 
 class TestIsolation:
@@ -541,16 +545,16 @@ class TestIsolation:
     ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator",
                 EXPLORER,
                 "read it",
                 handle="reader",
                 parent=SubagentParent(conversation_id="parent-1", workspace_key="parent-1"),
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
-            row = await _records(app).get(started.subagent_id, "operator")
+            row = await records_of(app).get(started.subagent_id, "operator")
             assert row is not None
             # The default: it sees the work in progress, and what it does is simply there.
             assert row.workspace_key == "parent-1"
@@ -561,7 +565,7 @@ class TestIsolation:
     ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator",
                 WORKER,
                 "rewrite it",
@@ -569,9 +573,9 @@ class TestIsolation:
                 parent=SubagentParent(conversation_id="parent-1", workspace_key="parent-1"),
                 isolate=True,
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
-            row = await _records(app).get(started.subagent_id, "operator")
+            row = await records_of(app).get(started.subagent_id, "operator")
             assert row is not None
             # A delegated key — `<parent>/<delegation>` — which is what routes it to its
             # own copy in both workspace kinds (`services/workspace.py`).
@@ -588,7 +592,7 @@ class TestIsolation:
                 instructions="do it elsewhere",
                 workspace="isolated",
             )
-            started = await _launcher(app).launch(
+            started = await launcher_of(app).launch(
                 "operator",
                 apart,
                 "go",
@@ -596,9 +600,9 @@ class TestIsolation:
                 parent=SubagentParent(conversation_id="parent-1", workspace_key="parent-1"),
                 isolate=False,
             )
-            await _settle(app, started.run_id)
+            await settle_run(app, started.run_id)
 
-            row = await _records(app).get(started.subagent_id, "operator")
+            row = await records_of(app).get(started.subagent_id, "operator")
             assert row is not None
             # Omitting `isolate` must not pull a sub-agent written to stay out of the way
             # back into the operator's own files.

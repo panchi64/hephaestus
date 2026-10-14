@@ -62,10 +62,10 @@ _PREAMBLE_PARTIAL = (
 # `node_modules` the walk already prunes, or a checkout, and neither is worth a token.
 # Chosen to stay a few hundred tokens at the tail rather than to be a real ceiling on
 # what the agent may keep.
-_MAX_ENTRIES = 200
+MAX_ENTRIES = 200
 
 # How many entries the walk *visits* before it gives up counting. Separate from the cap
-# above and much larger, because the two bound different costs: `_MAX_ENTRIES` bounds
+# above and much larger, because the two bound different costs: `MAX_ENTRIES` bounds
 # the tokens, this bounds the syscalls. Without it a workspace holding a downloaded
 # dataset would be stat'ed in full, every turn, to render two hundred lines —
 # `collect_text_files` bounds the same walk at 2,000 for the same reason.
@@ -121,7 +121,7 @@ def _listing(root: Path, excludes: tuple[str, ...]) -> tuple[str, bool]:
 
     total = len(entries)
     entries.sort(key=lambda e: e[0], reverse=True)
-    kept = entries[:_MAX_ENTRIES]
+    kept = entries[:MAX_ENTRIES]
     lines = [
         f"{SANDBOX_MOUNT}/{rel}  {_human(size)}"
         for _mtime, rel, size in sorted(kept, key=lambda e: e[1])
@@ -130,7 +130,7 @@ def _listing(root: Path, excludes: tuple[str, ...]) -> tuple[str, bool]:
         # Naming the directories rather than only the count: "and 4,812 more" tells the
         # model nothing it can act on, while the directories tell it where to look.
         elided = sorted(
-            {rel.split("/", 1)[0] for _m, rel, _s in entries[_MAX_ENTRIES:] if "/" in rel}
+            {rel.split("/", 1)[0] for _m, rel, _s in entries[MAX_ENTRIES:] if "/" in rel}
         )
         where = f" (mostly under {', '.join(elided[:6])})" if elided else ""
         # "at least", because past the scan cap the count is a floor rather than a total.

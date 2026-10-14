@@ -378,7 +378,7 @@ def _summary(
     )
 
 
-def _message_versions(view: MessageView, by_id: dict[str, SnapshotView]) -> list[ViewVersionRefOut]:
+def message_versions(view: MessageView, by_id: dict[str, SnapshotView]) -> list[ViewVersionRefOut]:
     """The View versions this turn minted, recovered from its ``view`` tool results
     (each ``show(file=…)`` embeds the version id). Only a static-preview version folds an
     inline chip — a live/auto version is already marked by its LIVE chip, matching the
@@ -401,7 +401,7 @@ def _message_versions(view: MessageView, by_id: dict[str, SnapshotView]) -> list
     return refs
 
 
-def _message(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut:
+def message_out(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut:
     return MessageOut(
         id=view.id,
         role=view.role,
@@ -424,7 +424,7 @@ def _message(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut:
             )
             for t in view.tools
         ],
-        versions=_message_versions(view, by_id),
+        versions=message_versions(view, by_id),
         created_at=view.timestamp,
         model=view.model,
         version_index=view.version_index,
@@ -511,7 +511,7 @@ async def _detail(
     return ConversationDetail.model_validate(
         {
             **base,
-            "messages": [_message(m, by_id) for m in messages],
+            "messages": [message_out(m, by_id) for m in messages],
             "snapshots": [
                 ViewSnapshotRefOut(
                     snapshot_id=s.id,
@@ -654,7 +654,7 @@ async def _require_owned(request: Request, conversation_id: str) -> Conversation
     return summary
 
 
-async def _image_orphans(
+async def image_orphans(
     request: Request, conversation_id: str, *, message_id: str | None
 ) -> list[str]:
     """The image uploads that the proposed delete would orphan — computed before the delete
@@ -744,7 +744,7 @@ async def orphan_image_attachments(
     message (``message_id``) or the whole conversation (omit it) were deleted. The frontend
     asks this first and only prompts keep-or-delete when the list is non-empty."""
     _ = await _require_owned(request, conversation_id)
-    upload_ids = await _image_orphans(request, conversation_id, message_id=message_id)
+    upload_ids = await image_orphans(request, conversation_id, message_id=message_id)
     return OrphanImageAttachments(upload_ids=upload_ids)
 
 
@@ -812,7 +812,7 @@ async def delete_conversation(
             raise HTTPException(status_code=404, detail="conversation not found")
         await _settle_code_branch(request, conversation_id, discard=discard_branch)
         orphans = (
-            await _image_orphans(request, conversation_id, message_id=None) if purge_images else []
+            await image_orphans(request, conversation_id, message_id=None) if purge_images else []
         )
         await store.delete_conversation(conversation_id)
         await _purge_uploads(request, orphans)
@@ -882,7 +882,7 @@ async def delete_message(
     deps.claim_conversation(request, conversation_id)
     try:
         orphans = (
-            await _image_orphans(request, conversation_id, message_id=message_id)
+            await image_orphans(request, conversation_id, message_id=message_id)
             if purge_images
             else []
         )

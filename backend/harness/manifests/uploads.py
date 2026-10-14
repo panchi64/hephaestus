@@ -28,7 +28,7 @@ from tools.attachments import attachments_toolset
 logger = logging.getLogger(__name__)
 
 
-def _build_extractor(registry: ModelRegistry, settings: Settings) -> UploadExtractor:
+def build_extractor(registry: ModelRegistry, settings: Settings) -> UploadExtractor:
     """Pick the extraction engine. The built-in (pypdfium2 text + vision OCR) is
     always available; when MinerU is pinned or detected on the host it goes in
     front, with the built-in as the fallback so a missing/broken/out-of-resources
@@ -55,7 +55,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         ctx.engine,
         ctx.vault,
         adapter,
-        _build_extractor(ctx.services.get(ModelRegistry), ctx.settings),
+        build_extractor(ctx.services.get(ModelRegistry), ctx.settings),
     )
     ctx.services.get(CorpusIndex).register(adapter)
     await ctx.lifecycle.start("corpus-uploads", start=adapter.start, stop=adapter.stop)

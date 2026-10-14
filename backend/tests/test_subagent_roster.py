@@ -307,13 +307,13 @@ class TestReadingItOncePerRun:
     async def test_the_memo_does_not_grow_with_every_run_the_process_serves(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        from tools.project_agents import _MAX_CATALOGS, _catalogs, run_catalog
+        from tools.project_agents import MAX_CATALOGS, catalogs, run_catalog
 
         self._tree(monkeypatch, tmp_path)
-        for n in range(_MAX_CATALOGS + 10):
+        for n in range(MAX_CATALOGS + 10):
             _ = await run_catalog(self._ctx(f"bounded-{n}"))
 
-        assert len(_catalogs) <= _MAX_CATALOGS
+        assert len(catalogs) <= MAX_CATALOGS
 
 
 class TestWhatTheModelActuallySees:
@@ -400,24 +400,24 @@ class TestWhichLaunchesAreTheOperatorsToAllow:
         assert tools["spawn"].tool_def.kind != "unapproved"
 
     def test_a_sub_agent_that_only_reads_is_launched_without_asking(self):
-        from tools.delegation import _can_write
+        from tools.delegation import can_write
 
         roster = builtin_roster()
-        assert not _can_write(roster["explorer"])
-        assert not _can_write(roster["reviewer"])
+        assert not can_write(roster["explorer"])
+        assert not can_write(roster["reviewer"])
 
     def test_a_sub_agent_that_can_change_things_asks_first(self):
-        from tools.delegation import _can_write
+        from tools.delegation import can_write
 
         roster = builtin_roster()
         # The test runner is here on purpose: it is withheld from *editing*, which is
         # about its job, and still runs commands — so the level, not the withheld list,
         # is what says whether the operator should rule on it.
-        assert _can_write(roster["worker"])
-        assert _can_write(roster["test_runner"])
+        assert can_write(roster["worker"])
+        assert can_write(roster["test_runner"])
 
     def test_a_project_agent_is_gated_by_what_it_can_do_rather_than_by_its_name(self):
-        from tools.delegation import _can_write
+        from tools.delegation import can_write
 
         reads = parse_agent_file(
             "---\nname: auditor\ndescription: Reads.\npermission: plan\n---\n\nRead it.",
@@ -427,8 +427,8 @@ class TestWhichLaunchesAreTheOperatorsToAllow:
             "---\nname: fixer\ndescription: Fixes.\npermission: edit\n---\n\nFix it.",
             name="fixer",
         )
-        assert not _can_write(reads)
-        assert _can_write(edits)
+        assert not can_write(reads)
+        assert can_write(edits)
 
 
 async def _launch_tools(

@@ -143,9 +143,9 @@ async def test_moving_the_level_leaves_the_other_withholding_reasons_alone(wired
 
     # ...and still gone after a plan is approved, which is where the old code handed it
     # back: the level widened, but the operator never said this tool could return.
-    from tools.plan import _retarget
+    from tools.plan import retarget
 
-    _retarget(ctx, "auto")
+    retarget(ctx, "auto")
     assert "files_write_file" not in await _offered(ctx)
 
 

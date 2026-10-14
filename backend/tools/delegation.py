@@ -88,7 +88,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
             )
         # Before a workspace is forked for it: a launch that ends in edits is the
         # operator's to allow.
-        if _can_write(agent) and not ctx.tool_call_approved:
+        if can_write(agent) and not ctx.tool_call_approved:
             raise ApprovalRequired()
         try:
             started = await launcher.launch(
@@ -136,7 +136,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
             # spawning one does: a read-only agent's message can carry what it read.
             if not recipient.upward and not ctx.tool_call_approved:
                 agent = (await run_catalog(ctx)).get(recipient.agent_name or "")
-                if agent is None or _can_write(agent):
+                if agent is None or can_write(agent):
                     raise ApprovalRequired()
             label = await launcher.message(ctx.deps.owner_id, conversation_id, to, text)
         except SubagentUnavailableError as exc:
@@ -243,7 +243,7 @@ def _read_out(view: SubagentView) -> dict[str, object]:
     }
 
 
-def _can_write(agent: AgentDefinition) -> bool:
+def can_write(agent: AgentDefinition) -> bool:
     """Whether spawning this agent is the operator's to rule on, read off its ceiling."""
     return agent.permission_ceiling != STRICTEST_PERMISSION
 

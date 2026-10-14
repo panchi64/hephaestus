@@ -54,7 +54,7 @@ def egress_categories() -> dict[str, FunctionToolset[RunDeps]]:
     return {"code": toolset}
 
 
-def _install_sensitive_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+def install_sensitive_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the model at a TestModel; pair with ``swap_tool_catalog(app,
     danger_categories())`` after boot so the catalog is exactly the one
     approval-required tool."""
@@ -78,7 +78,7 @@ async def _grants(client: httpx.AsyncClient, conv_id: str | None) -> list[JsonVa
 
 
 async def test_approve_flow_resumes_and_completes(monkeypatch: pytest.MonkeyPatch):
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
@@ -106,7 +106,7 @@ async def test_approve_resumes_under_the_operators_bounds(monkeypatch: pytest.Mo
     # The continuation is a turn like any other, so it must run under the operator's own
     # bounds rather than the registry defaults — a wall clock that applied to send but not
     # to the resumed half of an approval-gated turn would be a setting that lies.
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         _ = await client.put(
@@ -155,7 +155,7 @@ async def test_approve_rejects_unknown_and_unparked():
 
 
 async def test_approve_with_conversation_scope_records_grant(monkeypatch: pytest.MonkeyPatch):
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
@@ -208,7 +208,7 @@ async def test_a_conversation_grant_on_a_command_names_the_command(
 ):
     # The scope is derived here, from the parked call, and never sent by the client: what
     # the operator said yes to is the act the agent actually asked for.
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, command_categories())
         run_id = await _chat(client, "run it")
@@ -262,7 +262,7 @@ async def test_the_wider_width_grants_the_whole_tool_and_says_so(
     # The operator's deliberate second option: this tool, everything it runs. It derives
     # nothing from the command, so there is nothing that could fail to derive — and it is
     # recorded as decisive, which is what the reviewing level reads as their answer.
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, command_categories())
         run_id = await _chat(client, "run it")
@@ -299,7 +299,7 @@ async def test_the_wider_width_is_still_refused_for_a_once_only_tool(
     # A grant auto-approves a tool name and nothing narrower, so a standing yes to the
     # egress request would mean every domain the agent goes on to name. Widening the width
     # the operator may ask for does not widen the set of tools it may be asked about.
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, egress_categories())
         run_id = await _chat(client, "reach out")
@@ -333,7 +333,7 @@ async def test_a_grant_names_the_command_the_operator_edited_it_to(
     # one. Deriving the standing yes from the arguments the model wrote would record a
     # grant for a command nobody is going to run — and, worse, for the one the operator
     # rejected by editing it away.
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, command_categories())
         run_id = await _chat(client, "run it")
@@ -367,7 +367,7 @@ async def test_a_command_no_scope_could_stand_for_records_nothing_and_says_so(
     # `grant_scopes` refuses a command the grammar cannot read, which is the right call —
     # but the operator ticked a box that promised a standing yes, so the refusal is
     # reported rather than left to be noticed as a missing chip.
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, command_categories())
         run_id = await _chat(client, "run it")
@@ -403,7 +403,7 @@ async def test_egress_request_never_records_a_conversation_grant(
     # A conversation grant auto-approves a tool *name*, so one on the egress request would
     # not mean "this domain again" — it would mean every domain the agent goes on to name.
     # The call is approved; the scope is dropped.
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, egress_categories())
         run_id = await _chat(client, "reach pypi")
@@ -442,7 +442,7 @@ async def test_egress_request_never_records_a_conversation_grant(
 async def test_failed_resume_rolls_back_the_recorded_grant(monkeypatch: pytest.MonkeyPatch):
     # The grant is written *before* resume (so the resumed turn's inline check sees it),
     # but a resume that can't be accepted must leave no standing auto-approval behind.
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
@@ -485,7 +485,7 @@ async def test_a_failed_resume_leaves_a_grant_that_was_already_there(
     # row rather than creating one. Revoking it because a run the operator was never told
     # about failed to resume would take away something they granted earlier and never
     # withdrew.
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
@@ -521,7 +521,7 @@ async def test_a_failed_resume_leaves_a_grant_that_was_already_there(
 
 
 async def test_approve_rejects_decision_mismatch(monkeypatch: pytest.MonkeyPatch):
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
@@ -556,7 +556,7 @@ async def _drain_terminal_notify_tasks(app: FastAPI) -> None:
 async def test_park_creates_approval_needed_and_approve_resolves_it(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
@@ -579,7 +579,7 @@ async def test_park_creates_approval_needed_and_approve_resolves_it(
 
 
 async def test_deny_resolves_the_approval_needed_notification(monkeypatch: pytest.MonkeyPatch):
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
@@ -599,7 +599,7 @@ async def test_deny_resolves_the_approval_needed_notification(monkeypatch: pytes
 async def test_cancel_while_parked_resolves_the_approval_needed_notification(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")

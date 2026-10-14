@@ -31,7 +31,7 @@ from services.sandbox.base import safe_key
 from services.sandbox.walk import walk_files
 from services.workspace_kind import WorkspaceKind
 from tools.deps import PromptContextRequest
-from tools.workspace_context import _MAX_ENTRIES, workspace_context
+from tools.workspace_context import MAX_ENTRIES, workspace_context
 
 from .conftest import egress_policy
 from .vm_fakes import FakeVM
@@ -260,12 +260,12 @@ async def test_past_the_cap_it_counts_and_points_instead_of_listing(tmp_path: Pa
     _ = _populate(
         manager,
         "conv-a",
-        {f"generated/f{i:04d}.txt": "x" for i in range(_MAX_ENTRIES + 25)},
+        {f"generated/f{i:04d}.txt": "x" for i in range(MAX_ENTRIES + 25)},
     )
 
     block = await workspace_context(_request(caps))
 
-    assert len([ln for ln in block.splitlines() if ln.startswith("/work/")]) == _MAX_ENTRIES
+    assert len([ln for ln in block.splitlines() if ln.startswith("/work/")]) == MAX_ENTRIES
     assert "… and 25 more (mostly under generated)" in block
 
 
@@ -285,7 +285,7 @@ async def test_a_capped_listing_is_not_described_as_whole(tmp_path: Path):
     concludes it was never written and writes it again — the redo this exists to stop."""
     caps, manager = await _caps(tmp_path)
     _ = _populate(
-        manager, "conv-a", {f"generated/f{i:04d}.txt": "x" for i in range(_MAX_ENTRIES + 5)}
+        manager, "conv-a", {f"generated/f{i:04d}.txt": "x" for i in range(MAX_ENTRIES + 5)}
     )
 
     block = await workspace_context(_request(caps))
@@ -310,7 +310,7 @@ async def test_pruned_directories_also_make_it_a_sample(tmp_path: Path):
 async def test_the_walk_stops_counting_rather_than_stat_ing_everything(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """`_MAX_ENTRIES` bounds the tokens; `_MAX_SCAN` bounds the syscalls. Without the
+    """`MAX_ENTRIES` bounds the tokens; `_MAX_SCAN` bounds the syscalls. Without the
     second, a workspace holding a downloaded dataset is stat'ed in full, every turn, to
     render two hundred lines."""
     monkeypatch.setattr(wc, "_MAX_SCAN", 10)
@@ -338,7 +338,7 @@ async def test_the_cap_keeps_what_was_touched_most_recently(tmp_path: Path):
     # If something has to go, the file the agent was last working in is the one it is
     # most likely to reach for next.
     caps, manager = await _caps(tmp_path)
-    root = _populate(manager, "conv-a", {f"old/f{i:04d}.txt": "x" for i in range(_MAX_ENTRIES + 5)})
+    root = _populate(manager, "conv-a", {f"old/f{i:04d}.txt": "x" for i in range(MAX_ENTRIES + 5)})
     fresh = root / "the-one-i-just-wrote.py"
     _ = fresh.write_text("y")
     os.utime(fresh, (2_000_000_000, 2_000_000_000))

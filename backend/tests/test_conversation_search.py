@@ -85,7 +85,7 @@ def _turn(prompt: str, answer: str) -> list[ModelMessage]:
     ]
 
 
-async def _setup(embedder: Embedder):
+async def setup_search(embedder: Embedder):
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
@@ -96,7 +96,7 @@ async def _setup(embedder: Embedder):
     return engine, vault, store, search
 
 
-async def _record(
+async def record_conversation(
     store: ConversationStore, owner: str, *turns: tuple[str, str], ephemeral: bool = False
 ) -> str:
     cid = await store.create_conversation(owner, ephemeral=ephemeral)
@@ -110,9 +110,9 @@ async def _record(
 
 
 async def test_semantic_search_matches_paraphrase():
-    _engine, _vault, store, search = await _setup(FakeEmbedder())
-    cat = await _record(store, OWNER, ("tell me about my cat", "your cat is fluffy"))
-    _ = await _record(store, OWNER, ("my commute", "you drive a car"))
+    _engine, _vault, store, search = await setup_search(FakeEmbedder())
+    cat = await record_conversation(store, OWNER, ("tell me about my cat", "your cat is fluffy"))
+    _ = await record_conversation(store, OWNER, ("my commute", "you drive a car"))
 
     # "feline" shares no tokens with "cat" — only the dense path can match it.
     hits = await search.search(OWNER, "feline", limit=5)
@@ -126,8 +126,8 @@ async def test_search_hit_title_is_none_for_an_untitled_conversation():
     # A conversation the background titler hasn't named yet surfaces title=None from
     # the service — the corpus adapter fills a fallback so the model is never handed a
     # null (see services/corpus/wrappers.py).
-    _engine, _vault, store, search = await _setup(FakeEmbedder())
-    cid = await _record(store, OWNER, ("about a cat", "a fluffy cat"))
+    _engine, _vault, store, search = await setup_search(FakeEmbedder())
+    cid = await record_conversation(store, OWNER, ("about a cat", "a fluffy cat"))
 
     hits = await search.search(OWNER, "feline", limit=5)
     assert hits and hits[0].conversation_id == cid
@@ -136,8 +136,8 @@ async def test_search_hit_title_is_none_for_an_untitled_conversation():
 
 
 async def test_keyword_search_matches_exact_token():
-    _engine, _vault, store, search = await _setup(FakeEmbedder())
-    cid = await _record(store, OWNER, ("note", "the gate code is 998877"))
+    _engine, _vault, store, search = await setup_search(FakeEmbedder())
+    cid = await record_conversation(store, OWNER, ("note", "the gate code is 998877"))
 
     # A rare token embeddings would miss — the lexical path catches it.
     hits = await search.search(OWNER, "998877", limit=5)
@@ -148,9 +148,9 @@ async def test_keyword_search_matches_exact_token():
 
 
 async def test_search_excludes_the_current_conversation():
-    _engine, _vault, store, search = await _setup(FakeEmbedder())
-    current = await _record(store, OWNER, ("about cats", "a cat is here"))
-    other = await _record(store, OWNER, ("also cats", "another cat"))
+    _engine, _vault, store, search = await setup_search(FakeEmbedder())
+    current = await record_conversation(store, OWNER, ("about cats", "a cat is here"))
+    other = await record_conversation(store, OWNER, ("also cats", "another cat"))
 
     hits = await search.search(OWNER, "feline", exclude_conversation_id=current)
     ids = {h.conversation_id for h in hits}
@@ -159,8 +159,8 @@ async def test_search_excludes_the_current_conversation():
 
 
 async def test_search_degrades_to_keyword_without_embeddings():
-    _engine, _vault, store, search = await _setup(DegradedEmbedder())
-    cid = await _record(store, OWNER, ("note", "the wifi password is hunter2"))
+    _engine, _vault, store, search = await setup_search(DegradedEmbedder())
+    cid = await record_conversation(store, OWNER, ("note", "the wifi password is hunter2"))
 
     hits = await search.search(OWNER, "wifi password", limit=5)
     assert hits and hits[0].conversation_id == cid
@@ -169,10 +169,10 @@ async def test_search_degrades_to_keyword_without_embeddings():
 
 
 async def test_search_excludes_ephemeral_and_other_owners():
-    _engine, _vault, store, search = await _setup(FakeEmbedder())
-    scratch = await _record(store, OWNER, ("compare", "a cat"), ephemeral=True)
-    foreign = await _record(store, "intruder", ("theirs", "a cat"))
-    mine = await _record(store, OWNER, ("mine", "a cat"))
+    _engine, _vault, store, search = await setup_search(FakeEmbedder())
+    scratch = await record_conversation(store, OWNER, ("compare", "a cat"), ephemeral=True)
+    foreign = await record_conversation(store, "intruder", ("theirs", "a cat"))
+    mine = await record_conversation(store, OWNER, ("mine", "a cat"))
 
     ids = {h.conversation_id for h in await search.search(OWNER, "feline", limit=10)}
     assert mine in ids
@@ -181,7 +181,7 @@ async def test_search_excludes_ephemeral_and_other_owners():
 
 
 async def test_search_empty_corpus_returns_empty():
-    _engine, _vault, store, search = await _setup(FakeEmbedder())
+    _engine, _vault, store, search = await setup_search(FakeEmbedder())
     assert await search.search(OWNER, "anything") == []
     await store.stop()
 
@@ -190,8 +190,8 @@ async def test_search_empty_corpus_returns_empty():
 
 
 async def test_read_returns_transcript_for_owner():
-    _engine, _vault, store, search = await _setup(FakeEmbedder())
-    cid = await _record(store, OWNER, ("what is 2+2", "it is 4"))
+    _engine, _vault, store, search = await setup_search(FakeEmbedder())
+    cid = await record_conversation(store, OWNER, ("what is 2+2", "it is 4"))
 
     transcript = await search.read(OWNER, cid)
     assert transcript is not None
@@ -201,8 +201,8 @@ async def test_read_returns_transcript_for_owner():
 
 
 async def test_read_foreign_owner_returns_none():
-    _engine, _vault, store, search = await _setup(FakeEmbedder())
-    cid = await _record(store, "intruder", ("secret", "hidden"))
+    _engine, _vault, store, search = await setup_search(FakeEmbedder())
+    cid = await record_conversation(store, "intruder", ("secret", "hidden"))
     assert await search.read(OWNER, cid) is None
     await store.stop()
 
@@ -211,7 +211,7 @@ async def test_read_foreign_owner_returns_none():
 
 
 async def test_persisted_text_is_embedded_and_encrypted():
-    engine, _vault, store, _search = await _setup(FakeEmbedder())
+    engine, _vault, store, _search = await setup_search(FakeEmbedder())
     # A content-bearing request + an empty-text response (e.g. a tool-only turn).
     cid = await store.create_conversation(OWNER)
     _ = store.record(
@@ -235,8 +235,8 @@ async def test_persisted_text_is_embedded_and_encrypted():
 
 
 async def test_degraded_embedder_still_persists_messages():
-    engine, _vault, store, search = await _setup(DegradedEmbedder())
-    cid = await _record(store, OWNER, ("hello", "world"))
+    engine, _vault, store, search = await setup_search(DegradedEmbedder())
+    cid = await record_conversation(store, OWNER, ("hello", "world"))
 
     with Session(engine) as session:
         rows = session.exec(select(Message).where(Message.conversation_id == cid)).all()
@@ -249,8 +249,8 @@ async def test_degraded_embedder_still_persists_messages():
 async def test_embedder_error_never_loses_the_message():
     # A non-degradation embedder failure (timeout, 5xx) must NOT crash the drainer
     # or drop the persist job — the turn is written, just without a vector.
-    engine, _vault, store, search = await _setup(BrokenEmbedder())
-    cid = await _record(store, OWNER, ("hello there", "general kenobi"))
+    engine, _vault, store, search = await setup_search(BrokenEmbedder())
+    cid = await record_conversation(store, OWNER, ("hello there", "general kenobi"))
 
     with Session(engine) as session:
         rows = session.exec(select(Message).where(Message.conversation_id == cid)).all()
@@ -263,8 +263,8 @@ async def test_embedder_error_never_loses_the_message():
 
 async def test_backfill_embeds_pending_messages():
     # Persisted while the embedder was down (no vectors), then an endpoint appears.
-    _engine, _vault, store, _search = await _setup(DegradedEmbedder())
-    cid = await _record(store, OWNER, ("about a cat", "a fluffy cat"))
+    _engine, _vault, store, _search = await setup_search(DegradedEmbedder())
+    cid = await record_conversation(store, OWNER, ("about a cat", "a fluffy cat"))
 
     store.embedder = FakeEmbedder()  # operator configured an embedding endpoint
     embedded = await store.backfill_embeddings(OWNER)
@@ -281,8 +281,8 @@ async def test_backfill_embeds_pending_messages():
 async def test_reindex_heals_a_model_change():
     # After the operator switches embedding models, reindex re-embeds the stale
     # vectors into the new space so cross-chat meaning-search works again.
-    _engine, _vault, store, search = await _setup(FakeEmbedder(model="model-a"))
-    cid = await _record(store, OWNER, ("about pets", "I have a cat"))
+    _engine, _vault, store, search = await setup_search(FakeEmbedder(model="model-a"))
+    cid = await record_conversation(store, OWNER, ("about pets", "I have a cat"))
 
     store.embedder = FakeEmbedder(model="model-b")  # operator changed the model
     search.embedder = FakeEmbedder(model="model-b")

@@ -26,7 +26,7 @@ from ._helpers import app_state, client_app
 from ._json import arr, json_body, obj
 from ._plugin_helpers import OWNER, make_store
 from ._plugin_helpers import make_stores as make_plugin_stores
-from .test_skills_tools import FakeSessions, _tool
+from .test_skills_tools import FakeSessions, skill_tool
 
 _PATHS = TypeAdapter(list[str])
 
@@ -135,7 +135,7 @@ async def test_a_plugin_skill_opens_and_stages_its_files(tmp_path: Path):
 
     result = cast(
         dict[str, object],
-        await _tool("open")(_ctx(_deps(plugins, skills, sessions)), "release-checklist"),
+        await skill_tool("open")(_ctx(_deps(plugins, skills, sessions)), "release-checklist"),
     )
 
     assert result["ok"] is True

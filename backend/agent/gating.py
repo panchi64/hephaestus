@@ -448,7 +448,7 @@ async def review_call(
             # `review` never returns REVIEW — it is what resolves one — so the cast to the
             # wire's three-value vocabulary is total. Spelled as a lookup rather than a
             # str() so a fourth Decision member would fail here rather than on a client.
-            decision=_WIRE_DECISION[outcome.decision],
+            decision=WIRE_DECISION[outcome.decision],
             stage=outcome.stage,
             reason=outcome.reason,
             tier=outcome.tier,
@@ -467,7 +467,7 @@ async def review_call(
 #: since an unrecoverable act parks instead — and it stays because the word is already in
 #: the stored events of every thread that was reviewed before that changed, and a client
 #: still has to render those.
-_WIRE_DECISION: dict[Decision, Literal["allow", "ask", "block"]] = {
+WIRE_DECISION: dict[Decision, Literal["allow", "ask", "block"]] = {
     Decision.ALLOW: "allow",
     Decision.ASK: "ask",
     Decision.BLOCK: "block",
