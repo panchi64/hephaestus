@@ -125,8 +125,8 @@ class CalendarService:
         *,
         nl: CalendarNaturalLanguage | None = None,
     ) -> None:
-        self._engine = engine
-        self._vault = vault
+        self._engine: Engine = engine
+        self._vault: Vault = vault
         # Natural-language event entry (`CAL-3`). It hangs off the service rather than
         # standing beside it because the calendar reaches its callers as ONE capability
         # handle — a tool that has the calendar has everything the calendar can do. The
@@ -209,7 +209,7 @@ class CalendarService:
         """Apply a partial update. A ``caldav_*`` value of ``""`` clears that field —
         the only way to unbind a calendar from its server through a partial patch, where
         ``None`` already means "leave alone"."""
-        await self._require_calendar(owner_id, calendar_id)
+        _ = await self._require_calendar(owner_id, calendar_id)
 
         def work(session: Session) -> CalendarView:
             calendar = session.get(Calendar, calendar_id)
@@ -237,7 +237,7 @@ class CalendarService:
 
     async def delete_calendar(self, owner_id: str, calendar_id: str) -> None:
         """Delete a calendar and every event on it (the FK cascades)."""
-        await self._require_calendar(owner_id, calendar_id)
+        _ = await self._require_calendar(owner_id, calendar_id)
 
         def work(session: Session) -> None:
             for event in session.exec(
@@ -296,7 +296,7 @@ class CalendarService:
         remote_href: str | None = None,
         remote_etag: str | None = None,
     ) -> EventView:
-        await self._require_calendar(owner_id, calendar_id)
+        _ = await self._require_calendar(owner_id, calendar_id)
         start, end, zone_name = _normalize_span(starts_at, ends_at, timezone, all_day)
         rule = _validated_rrule(rrule, start, end, zone_name, all_day)
         if not title.strip():
@@ -352,7 +352,7 @@ class CalendarService:
         """
         existing = await self._require_event(owner_id, event_id)
         if calendar_id is not None:
-            await self._require_calendar(owner_id, calendar_id)
+            _ = await self._require_calendar(owner_id, calendar_id)
         if title is not None and not title.strip():
             raise ValueError("event title must not be empty")
 
@@ -400,7 +400,7 @@ class CalendarService:
 
     async def delete_event(self, owner_id: str, event_id: str) -> None:
         """Delete the event outright — the whole series when it recurs."""
-        await self._require_event(owner_id, event_id)
+        _ = await self._require_event(owner_id, event_id)
 
         def work(session: Session) -> None:
             event = session.get(CalendarEvent, event_id)
@@ -623,7 +623,7 @@ def _normalize_span(
     rather than an error — the operator meant an event, not a paradox.
     """
     zone_name = UTC_TIMEZONE if all_day else (timezone or DEFAULT_TIMEZONE)
-    parse_zone(zone_name)  # validate — raises ValueError on an unknown IANA name
+    _ = parse_zone(zone_name)  # validate — raises ValueError on an unknown IANA name
     start = as_utc(starts_at)
     end = as_utc(ends_at) if ends_at is not None else None
 
@@ -657,7 +657,7 @@ def _validated_rrule(
         return None
     rule = canonical_rrule(rrule)
     # Expanding over a zero-width window exercises the parser without walking the series.
-    expand(
+    _ = expand(
         starts_at=start,
         ends_at=end,
         timezone=timezone,

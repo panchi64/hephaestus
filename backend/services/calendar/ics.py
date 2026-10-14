@@ -27,12 +27,13 @@ from datetime import UTC, date, datetime, time, timedelta
 
 from icalendar import Calendar as ICalendar
 from icalendar import Event as IEvent
-from icalendar.prop import vRecur
+from icalendar.prop import vDDDLists, vDDDTypes, vRecur, vText
 
 from core.serde import as_utc
 from models.calendar import DEFAULT_TIMEZONE, UTC_TIMEZONE
 from services.calendar.recurrence import parse_zone
 from services.calendar.service import CalendarService, EventView
+from services.shapes import as_list
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ async def import_into(
     """
     # Checked up front rather than discovered per event: an import into a calendar that
     # doesn't exist is a bad request, not an empty result.
-    await service.get_calendar(owner_id, calendar_id)
+    _ = await service.get_calendar(owner_id, calendar_id)
 
     created = updated = skipped = 0
     for entry in parse_ics(data):
@@ -132,7 +133,7 @@ async def import_into(
                 await service.find_by_uid(owner_id, calendar_id, entry.uid) if entry.uid else None
             )
             if existing is None:
-                await service.create_event(
+                _ = await service.create_event(
                     owner_id,
                     calendar_id,
                     title=entry.title,
@@ -147,7 +148,7 @@ async def import_into(
                 )
                 created += 1
             else:
-                await service.update_event(
+                _ = await service.update_event(
                     owner_id,
                     existing.id,
                     title=entry.title,
@@ -191,7 +192,7 @@ async def _restore_exdates(
         return
     for stamp in entry.exdates:
         try:
-            await service.cancel_occurrence(owner_id, stored.id, datetime.fromisoformat(stamp))
+            _ = await service.cancel_occurrence(owner_id, stored.id, datetime.fromisoformat(stamp))
         except ValueError:
             continue
 
@@ -234,18 +235,27 @@ def _to_component(event: EventView) -> IEvent:
 # --- import ---------------------------------------------------------------
 
 
+def _moment(prop: object) -> date | datetime:
+    """The date or date-time a ``DTSTART``/``DTEND``/``EXDATE`` value carries."""
+    if not isinstance(prop, vDDDTypes) or isinstance(prop.dt, timedelta):
+        raise TypeError("expected a date or date-time property")
+    return prop.dt
+
+
 def _from_component(component: IEvent) -> ParsedEvent:
     start_prop = component.get("dtstart")
     if start_prop is None:
         raise ValueError("VEVENT has no DTSTART")
-    raw_start = start_prop.dt
-    all_day = isinstance(raw_start, date) and not isinstance(raw_start, datetime)
+    raw_start = _moment(start_prop)
+    all_day = not isinstance(raw_start, datetime)
 
     zone_name = _zone_name(start_prop, raw_start, all_day)
     start = _instant(raw_start, all_day)
     end = _end_instant(component, start, all_day)
 
     rrule = component.get("rrule")
+    if rrule is not None and not isinstance(rrule, vRecur | vText):
+        raise TypeError("unsupported RRULE")
     return ParsedEvent(
         uid=str(component.get("uid")) if component.get("uid") else None,
         title=str(component.get("summary") or "(untitled)"),
@@ -260,24 +270,24 @@ def _from_component(component: IEvent) -> ParsedEvent:
     )
 
 
-def _zone_name(start_prop, raw_start: date | datetime, all_day: bool) -> str:
+def _zone_name(start_prop: object, raw_start: date | datetime, all_day: bool) -> str:
     """The event's IANA zone. The ``TZID`` parameter is preferred over the parsed
     ``tzinfo`` — it is the name the file's author *wrote*, and it is the thing a recurrence
     has to be expanded in. All-day events are date-based and are always stored in UTC."""
     if all_day:
         return UTC_TIMEZONE
-    tzid = start_prop.params.get("TZID")
+    tzid = start_prop.params.get("TZID") if isinstance(start_prop, vDDDTypes) else None
     if tzid:
         try:
-            parse_zone(str(tzid))
+            _ = parse_zone(str(tzid))
         except ValueError:
             # An unknown/proprietary TZID (some exporters emit their own names) is not
             # worth losing the event over — keep the instant, fall back to UTC.
             logger.warning("calendar: unknown TZID %r on import; falling back to UTC", tzid)
             return UTC_TIMEZONE
         return str(tzid)
-    tzinfo = getattr(raw_start, "tzinfo", None)
-    key = getattr(tzinfo, "key", None)
+    tzinfo = raw_start.tzinfo if isinstance(raw_start, datetime) else None
+    key: object = getattr(tzinfo, "key", None)
     return str(key) if key else UTC_TIMEZONE
 
 
@@ -297,9 +307,9 @@ def _end_instant(component: IEvent, start: datetime, all_day: bool) -> datetime:
     then widens to an hour)."""
     end_prop = component.get("dtend")
     if end_prop is not None:
-        return _instant(end_prop.dt, all_day)
+        return _instant(_moment(end_prop), all_day)
     duration = component.get("duration")
-    if duration is not None and isinstance(duration.dt, timedelta):
+    if isinstance(duration, vDDDTypes) and isinstance(duration.dt, timedelta):
         return start + duration.dt
     return start + timedelta(days=1) if all_day else start
 
@@ -310,11 +320,15 @@ def _exdates(component: IEvent, all_day: bool) -> list[str]:
     raw = component.get("exdate")
     if raw is None:
         return []
-    groups = raw if isinstance(raw, list) else [raw]
+    groups = as_list(raw)
+    if groups is None:
+        groups = [raw]
     stamps: list[str] = []
     for group in groups:
-        for value in getattr(group, "dts", []):
-            stamps.append(_instant(value.dt, all_day).isoformat())
+        if not isinstance(group, vDDDLists):
+            continue
+        for value in group.dts:
+            stamps.append(_instant(_moment(value), all_day).isoformat())
     return stamps
 
 

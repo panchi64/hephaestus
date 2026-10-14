@@ -86,8 +86,8 @@ class CalendarNaturalLanguage:
         resolve_model: ResolveModel,
         timeout_s: float = DEFAULT_TIMEOUT_S,
     ) -> None:
-        self._resolve_model = resolve_model
-        self._timeout_s = timeout_s
+        self._resolve_model: ResolveModel = resolve_model
+        self._timeout_s: float = timeout_s
 
     async def parse(
         self,
@@ -187,7 +187,7 @@ def _safe_rrule(
         return None
     canonical = canonical_rrule(rule)
     try:
-        expand(
+        _ = expand(
             starts_at=start,
             ends_at=end,
             timezone=timezone,

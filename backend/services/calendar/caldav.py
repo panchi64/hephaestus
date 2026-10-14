@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Protocol
 
 import anyio.to_thread
 
@@ -107,8 +107,7 @@ def connect(url: str, username: str | None, password: str | None) -> RemoteCalen
     from caldav.davclient import DAVClient
 
     client = DAVClient(url=url, username=username, password=password)
-    # caldav types its sync/async dual API as a union, which the sync-only protocol rejects.
-    return cast(RemoteCalendar, cast(object, client.calendar(url=url)))
+    return client.calendar(url=url)
 
 
 class CalDavSync:
@@ -119,8 +118,8 @@ class CalDavSync:
     """
 
     def __init__(self, calendars: CalendarService, *, connector: Connector = connect) -> None:
-        self._calendars = calendars
-        self._connector = connector
+        self._calendars: CalendarService = calendars
+        self._connector: Connector = connector
 
     async def sync(self, owner_id: str, calendar_id: str) -> SyncResult:
         """Pull the remote collection into the local calendar, then push anything local
@@ -156,8 +155,8 @@ class CalDavSync:
                 truncated = True
                 logger.warning(
                     "calendar: remote collection exceeds %d objects; truncating the sync "
-                    "(events past the cap are not synced, and nothing is removed locally "
-                    "this pass)",
+                    + "(events past the cap are not synced, and nothing is removed locally "
+                    + "this pass)",
                     MAX_REMOTE_OBJECTS,
                 )
                 break
@@ -214,7 +213,7 @@ class CalDavSync:
                     continue
                 try:
                     if existing is None:
-                        await self._calendars.create_event(
+                        _ = await self._calendars.create_event(
                             owner_id,
                             calendar_id,
                             title=entry.title,
@@ -231,7 +230,7 @@ class CalDavSync:
                         )
                         created += 1
                     else:
-                        await self._calendars.update_event(
+                        _ = await self._calendars.update_event(
                             owner_id,
                             existing.id,
                             title=entry.title,
@@ -262,8 +261,8 @@ class CalDavSync:
             # the local calendar this listing can safely speak for.
             logger.warning(
                 "calendar: the remote listing stopped at the %d-object cap, so no local "
-                "event was removed this sync — a partial listing can't tell a deleted "
-                "event from one it never reached",
+                + "event was removed this sync — a partial listing can't tell a deleted "
+                + "event from one it never reached",
                 MAX_REMOTE_OBJECTS,
             )
             removed = 0
@@ -313,7 +312,7 @@ class CalDavSync:
         for event_id, href, etag in stamped:
             if href is None and etag is None:
                 continue  # nothing to record — `None` already means "leave it alone"
-            await self._calendars.update_event(
+            _ = await self._calendars.update_event(
                 owner_id, event_id, remote_href=href, remote_etag=etag
             )
         return SyncResult(
@@ -331,7 +330,7 @@ def _data(obj: RemoteObject) -> str:
 
 
 def _href(obj: RemoteObject) -> str | None:
-    url = getattr(obj, "url", None)
+    url: object = getattr(obj, "url", None)
     return str(url) if url else None
 
 
