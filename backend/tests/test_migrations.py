@@ -38,7 +38,11 @@ def test_init_db_stamps_the_head_revision():
     init_db(engine)
 
     with Session(engine) as session:
-        stamped = session.connection().execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        stamped = (
+            session.connection()
+            .execute(text("SELECT version_num FROM alembic_version"))
+            .scalar_one()
+        )
     assert stamped == _head_revision()
 
 

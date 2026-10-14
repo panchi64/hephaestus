@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from runs import RunStream
+from runs import Event, RunStream
 from runs.events import AnswerDelta
 
 
@@ -41,7 +41,7 @@ async def test_resume_filters_by_after_seq():
 
 async def test_live_subscriber_receives_emitted():
     stream = RunStream()
-    received: list = []
+    received: list[Event] = []
 
     async def consume():
         async for event in stream.subscribe():
@@ -60,7 +60,7 @@ async def test_live_subscriber_receives_emitted():
 async def test_backlog_then_live_no_gap_no_duplicate():
     stream = RunStream()
     stream.emit(AnswerDelta(text="a"))  # buffered before subscribe
-    received: list = []
+    received: list[Event] = []
 
     async def consume():
         async for event in stream.subscribe():
@@ -119,10 +119,10 @@ async def test_subscriber_count_tracks_live_registration_and_departure():
 
 async def test_fanout_to_multiple_subscribers():
     stream = RunStream()
-    out_a: list = []
-    out_b: list = []
+    out_a: list[Event] = []
+    out_b: list[Event] = []
 
-    async def consume(sink):
+    async def consume(sink: list[Event]):
         async for event in stream.subscribe():
             sink.append(event)
 

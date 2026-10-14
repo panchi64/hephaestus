@@ -237,9 +237,7 @@ def _frames(run: Run) -> list[ToolStarted | ToolCompleted | ToolFailed]:
 
 
 def _script_result(run: Run) -> ToolCompleted:
-    return next(
-        f for f in _frames(run) if isinstance(f, ToolCompleted) and f.tool_call_id == "s"
-    )
+    return next(f for f in _frames(run) if isinstance(f, ToolCompleted) and f.tool_call_id == "s")
 
 
 class TestAScriptsCalls:

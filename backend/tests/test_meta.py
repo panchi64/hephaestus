@@ -16,7 +16,9 @@ from runs import RunRegistry, RunStatus
 
 
 # --- LoopBreaker (unit) ------------------------------------------------------
-def _ask(breaker: LoopBreaker, name: str, args: dict[str, Any], answer: object, call_id: str) -> None:
+def _ask(
+    breaker: LoopBreaker, name: str, args: dict[str, Any], answer: object, call_id: str
+) -> None:
     """One whole tool call: the guard's pre-check, then the answer it came back with."""
     breaker.check(name, args, call_id)
     breaker.observe(call_id, answer)

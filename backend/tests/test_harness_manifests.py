@@ -139,9 +139,7 @@ class _WatchedStream(RunStream):
 
 
 def _run(subscribers: int = 0) -> Run:
-    return Run(
-        id="run-1", kind="chat", owner_id="o", stream=_WatchedStream(subscribers)
-    )
+    return Run(id="run-1", kind="chat", owner_id="o", stream=_WatchedStream(subscribers))
 
 
 async def test_dispatcher_runs_sync_inline_then_async_as_tracked_tasks():

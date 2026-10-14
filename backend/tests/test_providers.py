@@ -224,8 +224,9 @@ def test_migration_backfills_local_prefix_endpoints():
     columns = "provider, enabled"
     with Session(engine) as session:
         connection = session.connection()
-        local = connection.execute(text(f"SELECT {columns} FROM model_endpoints WHERE id='e1'")).one()
-        cloud = connection.execute(text(f"SELECT {columns} FROM model_endpoints WHERE id='e2'")).one()
+        select = f"SELECT {columns} FROM model_endpoints WHERE id="
+        local = connection.execute(text(f"{select}'e1'")).one()
+        cloud = connection.execute(text(f"{select}'e2'")).one()
     # The row that was off only because it wasn't running: `enabled` handed back on, and
     # the retired `local` provider folded into the OpenAI-compatible one it always was.
     assert tuple(local) == ("openai-compatible", 1)

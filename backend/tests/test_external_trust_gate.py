@@ -57,7 +57,9 @@ def _agent(stream_fn) -> Agent[RunDeps, DeferredToolRequests | str]:
     )
 
 
-async def _run(agent: Agent[RunDeps, DeferredToolRequests | str], external: ExternalTools | None, run_id: str):
+async def _run(
+    agent: Agent[RunDeps, DeferredToolRequests | str], external: ExternalTools | None, run_id: str
+):
     run = Run(id=run_id, kind="chat", owner_id=OWNER, stream=RunStream())
     caps = ServiceContainer.of(external) if external is not None else ServiceContainer()
     deps = RunDeps(run=run, owner_id=OWNER, conversation_id=CONV, caps=caps)

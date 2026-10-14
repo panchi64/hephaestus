@@ -32,7 +32,9 @@ def _db_args():
 
 
 class _Registry(ModelRegistry):
-    def __init__(self, *, spec: llm.EndpointSpec | None = None, exc: Exception | None = None) -> None:
+    def __init__(
+        self, *, spec: llm.EndpointSpec | None = None, exc: Exception | None = None
+    ) -> None:
         super().__init__(*_db_args())
         self._spec = spec
         self._exc = exc
@@ -95,7 +97,8 @@ class _Chunks(CorpusChunkStore):
 
 async def test_reindex_reports_counts_and_passes_current_model():
     mem, conv, chunks = _Memory(3), _Convos(5), _Chunks(7)
-    reindexer = EmbeddingReindexer(_Registry(spec=llm.EndpointSpec(base_url="http://x/v1", model="embed-m")), mem, conv, chunks)
+    spec = llm.EndpointSpec(base_url="http://x/v1", model="embed-m")
+    reindexer = EmbeddingReindexer(_Registry(spec=spec), mem, conv, chunks)
     await reindexer._run(OWNER)
 
     status = reindexer.status()
