@@ -109,8 +109,6 @@ async def test_the_per_conversation_override_still_wins_on_enablement():
 async def test_a_put_touching_only_the_threshold_leaves_the_group_alone():
     async with client_app() as (client, _app):
         _ = await client.put("/chat/settings", json={"auto_compact_enabled": False})
-        body = json_body(
-            await client.put("/chat/settings", json={"auto_compact_threshold": 0.5})
-        )
+        body = json_body(await client.put("/chat/settings", json={"auto_compact_threshold": 0.5}))
         assert n(body["auto_compact_threshold"]) == pytest.approx(0.5)
         assert body["auto_compact_enabled"] is False

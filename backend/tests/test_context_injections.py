@@ -48,9 +48,7 @@ def _injections(run: Run) -> list[ContextInjected]:
     return bodies_of(run, ContextInjected)
 
 
-def _announce(
-    announcer: AnnounceInjections, run: Run, parts: list[InstructionPart] | None
-) -> None:
+def _announce(announcer: AnnounceInjections, run: Run, parts: list[InstructionPart] | None) -> None:
     """Announce one request's brief onto ``run``, doing what the translator does.
 
     The capability now hands its bodies to the library's event stream and

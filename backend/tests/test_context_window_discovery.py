@@ -571,7 +571,7 @@ async def test_a_llama_cpp_servers_slot_count_becomes_its_endpoints_run_capacity
         )
 
     assert limits == ModelLimits(context_window=8192, parallel_slots=1)
-    spec = llm.EndpointSpec(
+    spec = EndpointSpec(
         base_url="http://s/v1", model="m", endpoint_id="ep", name="local", parallel_slots=1
     )
     assert spec.gate_endpoint() == Endpoint(id="ep", name="local", capacity=1)

@@ -178,9 +178,7 @@ async def _seed(store: ConversationStore, *, tail_tokens: int, turns: int = 4) -
     return cid
 
 
-def _run_chat(
-    app: FastAPI, cid: str | None, *, model: Model, prompt: str = "next question"
-) -> Run:
+def _run_chat(app: FastAPI, cid: str | None, *, model: Model, prompt: str = "next question") -> Run:
     orch = build_chat_orchestrator(
         prompt,
         model=model,
