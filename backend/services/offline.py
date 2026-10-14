@@ -90,31 +90,33 @@ class OfflineModeService:
         recover_threshold: int,
         auto_default: bool = True,
         probe: Callable[[], Awaitable[bool]] | None = None,
-        network_tools: frozenset[str] = frozenset(),
+        network_tools: frozenset[str] | None = None,
     ) -> None:
-        self._searxng = searxng
-        self._browser = browser
-        self._network_tools = network_tools
-        self._settings = settings_store
-        self._owner = owner_id
-        self._interval_s = interval_s
-        self._fail_threshold = max(1, fail_threshold)
-        self._recover_threshold = max(1, recover_threshold)
-        self._auto_default = auto_default
-        self._probe = probe or (lambda: check_online(anchors, timeout_s))
+        self._searxng: _GatedService = searxng
+        self._browser: _GatedService = browser
+        self._network_tools: frozenset[str] = network_tools or frozenset()
+        self._settings: SettingsStore = settings_store
+        self._owner: str = owner_id
+        self._interval_s: float = interval_s
+        self._fail_threshold: int = max(1, fail_threshold)
+        self._recover_threshold: int = max(1, recover_threshold)
+        self._auto_default: bool = auto_default
+        self._probe: Callable[[], Awaitable[bool]] = probe or (
+            lambda: check_online(anchors, timeout_s)
+        )
 
-        self._manual = False
-        self._auto = auto_default
-        self._online = True  # set for real by the boot probe in start()
+        self._manual: bool = False
+        self._auto: bool = auto_default
+        self._online: bool = True  # set for real by the boot probe in start()
         # None until the first apply, so the boot apply always acts (the services
         # are not running yet — there is no prior effective state to compare against).
         self._effective_offline: bool | None = None
-        self._fail = 0
-        self._ok = 0
+        self._fail: int = 0
+        self._ok: int = 0
         self._task: asyncio.Task[None] | None = None
         # Serializes service start/stop so a manual toggle can't race a monitor
         # transition into a double bring-up or a torn-down-then-half-started state.
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     # --- lifecycle --------------------------------------------------------
 

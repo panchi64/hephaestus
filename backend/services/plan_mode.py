@@ -34,6 +34,7 @@ from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from core.db import in_session
+from core.serde import parse_json
 from core.vault import Vault, VaultError, VaultLocked
 from models._fields import new_id, utcnow
 from models.plan import ConversationPlan
@@ -96,10 +97,10 @@ class PlanMode:
         conversations: ConversationStore,
         tasks: ConversationTasks,
     ) -> None:
-        self._db = db_engine
-        self._vault = vault
-        self._conversations = conversations
-        self._tasks = tasks
+        self._db: Engine = db_engine
+        self._vault: Vault = vault
+        self._conversations: ConversationStore = conversations
+        self._tasks: ConversationTasks = tasks
 
     # ── the document ────────────────────────────────────────────────────────────────
 
@@ -123,14 +124,17 @@ class PlanMode:
             return None
         sealed, status, revision = stored
         try:
-            document = json.loads(self._vault.decrypt_str(sealed))
+            document = parse_json(self._vault.decrypt_str(sealed))
         except VaultLocked, VaultError:
             logger.debug("plan unreadable for %s: vault locked", conversation_id)
             return None
+        if not isinstance(document, dict):
+            raise ValueError("a stored plan is not an object")
+        steps = document.get("steps", [])
         return Plan(
-            title=document.get("title", ""),
-            body=document.get("body", ""),
-            steps=list(document.get("steps", ())),
+            title=str(document.get("title", "")),
+            body=str(document.get("body", "")),
+            steps=[str(step) for step in steps] if isinstance(steps, list) else [],
             status=status,
             revision=revision,
         )
@@ -227,7 +231,7 @@ class PlanMode:
         """
         stored = await self._conversations.set_permission_level(conversation_id, PLANNING_LEVEL)
         if run is not None:
-            run.emit(PermissionChanged(level=stored, reason=reason))
+            _ = run.emit(PermissionChanged(level=stored, reason=reason))
         return stored
 
     async def approve(
@@ -257,17 +261,17 @@ class PlanMode:
             )
             self._announce(plan, run)
             if plan.steps:
-                await self._tasks.seed(owner_id, conversation_id, plan.steps, run=run)
+                _ = await self._tasks.seed(owner_id, conversation_id, plan.steps, run=run)
         level = await self._conversations.set_permission_level(conversation_id, ACTING_LEVEL)
         if run is not None:
-            run.emit(PermissionChanged(level=level, reason="plan approved"))
+            _ = run.emit(PermissionChanged(level=level, reason="plan approved"))
         return plan, level
 
     # ── internals ───────────────────────────────────────────────────────────────────
 
     def _announce(self, plan: Plan, run: Run | None) -> None:
         if run is not None:
-            run.emit(PlanUpdated(**plan.payload()))
+            _ = run.emit(PlanUpdated(**plan.payload()))
 
     async def _set_status(self, owner_id: str, conversation_id: str, status: str) -> None:
         def work(session: Session) -> None:

@@ -32,7 +32,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from typing import override
 
+from pydantic import TypeAdapter
 from pydantic_ai_harness.planning import PlanItem as TaskItem
 from pydantic_ai_harness.planning import PlanStore as TaskStoreProtocol
 from pydantic_ai_harness.planning import TaskStatus, render_plan
@@ -58,8 +60,11 @@ def _dump(items: list[TaskItem]) -> str:
     return json.dumps([item.model_dump(mode="json") for item in items])
 
 
+_ITEMS = TypeAdapter(list[TaskItem])
+
+
 def _load(raw: str) -> list[TaskItem]:
-    return [TaskItem.model_validate(row) for row in json.loads(raw)]
+    return _ITEMS.validate_json(raw)
 
 
 def tasks_payload(items: list[TaskItem]) -> list[TaskPayload]:
@@ -69,9 +74,7 @@ def tasks_payload(items: list[TaskItem]) -> list[TaskPayload]:
         {
             "id": item.id,
             "content": item.content,
-            "status": (
-                item.status.value if isinstance(item.status, TaskStatus) else str(item.status)
-            ),
+            "status": item.status.value,
             "active_form": item.active_form,
         }
         for item in items
@@ -83,8 +86,8 @@ class ConversationTasks:
     vault-sealed."""
 
     def __init__(self, db_engine: Engine, vault: Vault) -> None:
-        self._db = db_engine
-        self._vault = vault
+        self._db: Engine = db_engine
+        self._vault: Vault = vault
         self._locks: dict[str, asyncio.Lock] = {}
 
     def lock_for(self, conversation_id: str) -> asyncio.Lock:
@@ -137,7 +140,7 @@ class ConversationTasks:
                 session.delete(row)
 
         await in_session(self._db, work)
-        self._locks.pop(conversation_id, None)
+        _ = self._locks.pop(conversation_id, None)
 
     async def replace(self, owner_id: str, conversation_id: str, items: list[TaskItem]) -> bool:
         """Store ``items``; ``False`` when the vault was locked and nothing was written.
@@ -193,7 +196,7 @@ class ConversationTasks:
         async with self.lock_for(conversation_id):
             stored = await self.replace(owner_id, conversation_id, items)
         if stored and run is not None:
-            run.emit(TasksUpdated(items=tasks_payload(items)))
+            _ = run.emit(TasksUpdated(items=tasks_payload(items)))
         return items if stored else []
 
 
@@ -213,14 +216,14 @@ class ConversationTaskStore(TaskStoreProtocol):
         conversation_id: str,
         run: Run | None = None,
     ) -> None:
-        self._tasks = tasks
-        self._owner_id = owner_id
-        self._conversation_id = conversation_id
-        self._run = run
+        self._tasks: ConversationTasks = tasks
+        self._owner_id: str = owner_id
+        self._conversation_id: str = conversation_id
+        self._run: Run | None = run
         # Held across each read-modify-write below. It lives on the shared `tasks` handle,
         # not here, because a fresh store object is built per run — a lock owned by this
         # object would be a different lock for every caller and guard nothing.
-        self._lock = tasks.lock_for(conversation_id)
+        self._lock: asyncio.Lock = tasks.lock_for(conversation_id)
 
     def bind_run(self, run: Run | None) -> None:
         """Point emissions at the run currently working this conversation.
@@ -232,18 +235,22 @@ class ConversationTaskStore(TaskStoreProtocol):
         """
         self._run = run
 
+    @override
     async def get_items(self) -> list[TaskItem]:
         return await self._tasks.items(self._owner_id, self._conversation_id)
 
+    @override
     async def set_items(self, items: list[TaskItem]) -> None:
         # A wholesale replace reads nothing first, so it needs no lock of its own — but it
         # still takes one so it can't land in the middle of another call's read-modify-write.
         async with self._lock:
             await self._commit(list(items))
 
+    @override
     async def get_item(self, item_id: str) -> TaskItem | None:
         return next((i for i in await self.get_items() if i.id == item_id), None)
 
+    @override
     async def add_item(self, item: TaskItem) -> TaskItem:
         async with self._lock:
             items = await self.get_items()
@@ -255,6 +262,7 @@ class ConversationTaskStore(TaskStoreProtocol):
             await self._commit(items)
         return item
 
+    @override
     async def update_item(
         self,
         item_id: str,
@@ -291,6 +299,7 @@ class ConversationTaskStore(TaskStoreProtocol):
             await self._commit(items)
         return updated
 
+    @override
     async def remove_item(self, item_id: str) -> bool:
         async with self._lock:
             items = await self.get_items()
@@ -305,4 +314,4 @@ class ConversationTaskStore(TaskStoreProtocol):
         # Only announce what actually landed. A locked vault drops the write silently, and
         # emitting anyway would draw a panel that a reload contradicts.
         if stored and self._run is not None:
-            self._run.emit(TasksUpdated(items=tasks_payload(items)))
+            _ = self._run.emit(TasksUpdated(items=tasks_payload(items)))

@@ -32,6 +32,7 @@ from core.vault import Vault
 from models.registry import ModelEndpoint, ModelRole
 from runs import Endpoint, EndpointGate
 from services import embeddings, llm
+from services.endpoint_spec import EndpointSpec
 from services.providers import DEFAULT_PROVIDER_ID, get_provider
 from services.providers.base import ModelLimits
 
@@ -94,13 +95,13 @@ class ModelRegistry:
         http_client: httpx.AsyncClient | None = None,
         gate: EndpointGate | None = None,
     ) -> None:
-        self._engine = engine
-        self._vault = vault
+        self._engine: Engine = engine
+        self._vault: Vault = vault
         # The per-endpoint run gate the resolved models' requests wait in; None ⇒ ungated.
-        self._gate = gate
+        self._gate: EndpointGate | None = gate
         # Pooled client for provider model discovery; None ⇒ a transient client
         # per call (the path tests take, where discovery is monkeypatched out).
-        self._http_client = http_client
+        self._http_client: httpx.AsyncClient | None = http_client
         # Discovered model limits, keyed (base_url, model) — see `_discover_limits`.
         # Process-local and rebuildable, so it is a cache and not state: losing it
         # costs one provider round-trip, never correctness.
@@ -217,7 +218,7 @@ class ModelRegistry:
         return await in_session(self._engine, work)
 
     async def delete_endpoint(self, owner_id: str, endpoint_id: str) -> None:
-        await self.get_endpoint(owner_id, endpoint_id)  # ownership check
+        _ = await self.get_endpoint(owner_id, endpoint_id)  # ownership check
 
         def work(session: Session) -> None:
             endpoint = session.get(ModelEndpoint, endpoint_id)
@@ -352,7 +353,7 @@ class ModelRegistry:
             return
         spec = self._to_spec(endpoints[0], "embedding", model_override=model)
         try:
-            await embeddings.probe_embedding(spec)
+            _ = await embeddings.probe_embedding(spec)
         except DegradedCapabilityError as exc:
             raise ValueError(str(exc)) from exc
 
@@ -365,7 +366,7 @@ class ModelRegistry:
         owner_id: str,
         override_endpoint_id: str | None = None,
         override_model: str | None = None,
-    ) -> list[llm.EndpointSpec]:
+    ) -> list[EndpointSpec]:
         """The ordered, decrypted endpoint specs ``role`` resolves to: a
         per-conversation ``main`` override → the role's own chain. Shared by every
         resolution entry point — :meth:`resolve_detailed`, :meth:`resolve_background`,
@@ -468,7 +469,7 @@ class ModelRegistry:
         self._implicit_main[owner_id] = answer
         return answer
 
-    async def _with_model_limits(self, specs: list[llm.EndpointSpec]) -> list[llm.EndpointSpec]:
+    async def _with_model_limits(self, specs: list[EndpointSpec]) -> list[EndpointSpec]:
         """Fill in each spec's context window and output ceiling from its provider.
 
         Here, at the single point every resolution path funnels through, so the model a
@@ -481,7 +482,7 @@ class ModelRegistry:
         replacing a deliberate one would make the field appear not to work. The
         provider is still asked when the operator set one, because the output ceiling
         has no operator field to take its place."""
-        resolved = []
+        resolved: list[EndpointSpec] = []
         for spec in specs:
             limits = await self._discover_limits(spec)
             resolved.append(
@@ -498,7 +499,7 @@ class ModelRegistry:
             )
         return resolved
 
-    async def _discover_limits(self, spec: llm.EndpointSpec) -> ModelLimits:
+    async def _discover_limits(self, spec: EndpointSpec) -> ModelLimits:
         """The provider's answer for this model, memoized per (base_url, model).
 
         Cached because this sits on the path of *every* turn and the answer changes
@@ -675,7 +676,7 @@ class ModelRegistry:
             return None
         return specs[0].context_window if specs else None
 
-    async def resolve_embedding_spec(self, owner_id: str) -> llm.EndpointSpec:
+    async def resolve_embedding_spec(self, owner_id: str) -> EndpointSpec:
         """The embedding endpoint as a raw spec — embeddings hit the provider's
         ``/embeddings`` API directly, not a Pydantic AI chat model, so the
         embedding service needs the base_url/model/key, not a built model.
@@ -780,7 +781,7 @@ class ModelRegistry:
                 return (
                     "server_error",
                     f"The provider returned a server error ({code}) — it may be down "
-                    "or overloaded; try again shortly.",
+                    + "or overloaded; try again shortly.",
                 )
             return "bad_response", f"The provider returned an unexpected status ({code})."
         except httpx.ConnectTimeout:
@@ -797,11 +798,11 @@ class ModelRegistry:
 
     def _to_spec(
         self, endpoint: ModelEndpoint, role: str, *, model_override: str | None = None
-    ) -> llm.EndpointSpec:
+    ) -> EndpointSpec:
         if role in llm.TOOL_CALLING_ROLES and not endpoint.native_tools:
             raise DegradedCapabilityError(
                 f"role {role!r} requires native tool-calling, but endpoint "
-                f"{endpoint.name!r} does not support it"
+                + f"{endpoint.name!r} does not support it"
             )
         model = model_override or endpoint.model
         if not model:
@@ -809,7 +810,7 @@ class ModelRegistry:
                 f"endpoint {endpoint.name!r} has no model configured and none was selected"
             )
         api_key = self._vault.decrypt_str(endpoint.api_key_enc) if endpoint.api_key_enc else None
-        return llm.EndpointSpec(
+        return EndpointSpec(
             base_url=endpoint.base_url,
             model=model,
             provider=endpoint.provider,
