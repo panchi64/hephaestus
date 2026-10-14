@@ -5,9 +5,12 @@ persisted before it is handed out** — never left unsealed or only in memory.""
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import NoReturn
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from core.db import in_session, init_db, make_engine
@@ -18,6 +21,7 @@ from services.mail.errors import MailAuthError, MailUnavailableError
 from services.mail.oauth import (
     PROVIDERS,
     MailSecrets,
+    OAuthProvider,
     TokenBundle,
     authorization_url,
 )
@@ -28,18 +32,21 @@ EXPIRED = 1_000_000_000.0  # long past
 LIVE = 4_000_000_000.0  # far future
 
 
+type _Wired = tuple[Engine, Vault, MailSecrets]
+
+
 @pytest.fixture
-async def wired(tmp_path):
+async def wired(tmp_path: Path) -> _Wired:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
     credentials = CredentialStore(engine, vault)
-    await credentials.set_key("operator", "google_oauth", "client-secret")
+    _ = await credentials.set_key("operator", "google_oauth", "client-secret")
     return engine, vault, MailSecrets(engine, vault, credentials)
 
 
-async def _account(engine, vault, **overrides) -> MailAccount:
+async def _account(engine: Engine, vault: Vault, **overrides: str | None) -> MailAccount:
     account = MailAccount(
         owner_id="operator",
         name="Personal",
@@ -93,7 +100,7 @@ def test_expiry_is_judged_with_a_margin():
     assert TokenBundle(access_token="at").expiring(now=NOW) is False  # no expiry known
 
 
-async def test_a_password_account_opens_to_its_password(wired):
+async def test_a_password_account_opens_to_its_password(wired: _Wired):
     engine, vault, secrets = wired
     account = await _account(
         engine,
@@ -105,25 +112,31 @@ async def test_a_password_account_opens_to_its_password(wired):
     assert await secrets.open_access(account) == ("hunter2", None)
 
 
-async def test_a_live_token_is_returned_without_contacting_the_provider(wired, monkeypatch):
+async def test_a_live_token_is_returned_without_contacting_the_provider(
+    wired: _Wired, monkeypatch: pytest.MonkeyPatch
+):
     engine, vault, secrets = wired
     bundle = TokenBundle(access_token="live", refresh_token="rt", expires_at=LIVE)
     account = await _account(engine, vault, secret_enc=secrets.seal_bundle(bundle))
 
-    async def _never(*_args, **_kwargs):
+    async def _never(*_args: object, **_kwargs: object) -> NoReturn:
         raise AssertionError("a live token must not trigger a refresh")
 
     monkeypatch.setattr("services.mail.oauth.refresh_tokens", _never)
     assert await secrets.open_access(account) == (None, "live")
 
 
-async def test_an_expiring_token_refreshes_and_is_resealed(wired, monkeypatch):
+async def test_an_expiring_token_refreshes_and_is_resealed(
+    wired: _Wired, monkeypatch: pytest.MonkeyPatch
+):
     engine, vault, secrets = wired
     stale = TokenBundle(access_token="stale", refresh_token="rt-1", expires_at=EXPIRED)
     account = await _account(engine, vault, secret_enc=secrets.seal_bundle(stale))
     seen: dict[str, object] = {}
 
-    async def _refresh(provider, *, client_id, client_secret, refresh_token):
+    async def _refresh(
+        provider: OAuthProvider, *, client_id: str, client_secret: str, refresh_token: str
+    ) -> TokenBundle:
         seen.update(
             provider=provider.id,
             client_id=client_id,
@@ -155,7 +168,7 @@ async def test_an_expiring_token_refreshes_and_is_resealed(wired, monkeypatch):
     assert json.loads(vault.decrypt_str(stored))["refresh_token"] == "rt-2"
 
 
-async def test_a_dead_refresh_token_asks_the_operator_to_reconnect(wired):
+async def test_a_dead_refresh_token_asks_the_operator_to_reconnect(wired: _Wired):
     engine, vault, secrets = wired
     account = await _account(
         engine,
@@ -163,10 +176,10 @@ async def test_a_dead_refresh_token_asks_the_operator_to_reconnect(wired):
         secret_enc=secrets.seal_bundle(TokenBundle(access_token="x", expires_at=EXPIRED)),
     )
     with pytest.raises(MailAuthError):
-        await secrets.open_access(account)
+        _ = await secrets.open_access(account)
 
 
-async def test_a_missing_oauth_client_is_reported_as_setup_not_failure(tmp_path):
+async def test_a_missing_oauth_client_is_reported_as_setup_not_failure(tmp_path: Path):
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "bare.json")
@@ -181,14 +194,14 @@ async def test_a_missing_oauth_client_is_reported_as_setup_not_failure(tmp_path)
         ),
     )
     with pytest.raises(MailAuthError, match="API Tokens"):
-        await secrets.open_access(account)
+        _ = await secrets.open_access(account)
 
 
-async def test_a_locked_vault_parks_rather_than_failing_hard(wired):
+async def test_a_locked_vault_parks_rather_than_failing_hard(wired: _Wired):
     engine, vault, secrets = wired
     account = await _account(
         engine, vault, secret_enc=secrets.seal_bundle(TokenBundle(access_token="x"))
     )
     vault.lock()
     with pytest.raises(MailUnavailableError):
-        await secrets.open_access(account)
+        _ = await secrets.open_access(account)
