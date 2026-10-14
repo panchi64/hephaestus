@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import override
+from typing import cast, override
 
 import pytest
 
@@ -28,9 +28,9 @@ def test_order_respects_after_edges_and_breaks_ties_by_name():
 
 def test_order_rejects_duplicates_and_unknown_edges():
     with pytest.raises(ValueError, match="duplicate"):
-        order_manifests([FeatureManifest(name="a"), FeatureManifest(name="a")])
+        _ = order_manifests([FeatureManifest(name="a"), FeatureManifest(name="a")])
     with pytest.raises(ValueError, match="unknown"):
-        order_manifests([FeatureManifest(name="a", after=("ghost",))])
+        _ = order_manifests([FeatureManifest(name="a", after=("ghost",))])
 
 
 def test_discovered_manifests_are_valid_and_ordered():
@@ -97,7 +97,7 @@ def test_every_instruction_provider_in_tools_is_registered_or_listed():
     found: set[str] = set()
     for info in pkgutil.iter_modules(tools.__path__, prefix="tools."):
         module = importlib.import_module(info.name)
-        for name, value in vars(module).items():
+        for name, value in cast(dict[str, object], vars(module)).items():
             if name.endswith("_instructions") and callable(value):
                 # Skip re-exports: attribute the function to the module that defines it.
                 if getattr(value, "__module__", None) == info.name:
@@ -118,7 +118,7 @@ class _Memory:
 def test_container_get_is_loud_and_optional_is_quiet():
     container = ServiceContainer()
     with pytest.raises(LookupError, match="_Memory"):
-        container.get(_Memory)
+        _ = container.get(_Memory)
     assert container.get_optional(_Memory) is None
     instance = _Memory()
     container.add(instance)
@@ -130,7 +130,7 @@ def test_container_get_is_loud_and_optional_is_quiet():
 class _WatchedStream(RunStream):
     def __init__(self, subscribers: int) -> None:
         super().__init__()
-        self._watchers = subscribers
+        self._watchers: int = subscribers
 
     @property
     @override
@@ -147,7 +147,7 @@ async def test_dispatcher_runs_sync_inline_then_async_as_tracked_tasks():
     log: list[str] = []
     dispatcher.add_sync(lambda run: log.append(f"sync:{run.id}"))
 
-    async def notice(run, watched):
+    async def notice(run: Run, watched: bool) -> None:
         log.append(f"async:{run.id}:watched={watched}")
 
     dispatcher.add(notice)
@@ -155,7 +155,7 @@ async def test_dispatcher_runs_sync_inline_then_async_as_tracked_tasks():
     dispatcher(run)
     assert log == ["sync:run-1"]  # sync ran inline; async is scheduled, not run
     assert len(dispatcher.tasks) == 1
-    await asyncio.gather(*dispatcher.tasks)
+    _ = await asyncio.gather(*dispatcher.tasks)
     assert log == ["sync:run-1", "async:run-1:watched=True"]
 
 
@@ -163,20 +163,20 @@ async def test_dispatcher_isolates_hook_failures():
     dispatcher = RunTerminalDispatcher()
     log: list[str] = []
 
-    def bad_sync(run):
+    def bad_sync(_run: Run) -> None:
         raise RuntimeError("sync boom")
 
-    async def bad_async(run, watched):
+    async def bad_async(_run: Run, _watched: bool) -> None:
         raise RuntimeError("async boom")
 
-    async def good(run, watched):
+    async def good(_run: Run, _watched: bool) -> None:
         log.append("good")
 
     dispatcher.add_sync(bad_sync)
     dispatcher.add(bad_async)
     dispatcher.add(good)
     dispatcher(_run())
-    await asyncio.gather(*dispatcher.tasks)
+    _ = await asyncio.gather(*dispatcher.tasks)
     assert log == ["good"]
 
 
@@ -184,12 +184,12 @@ async def test_dispatcher_drain_cancels_pending_tasks():
     dispatcher = RunTerminalDispatcher()
     parked = asyncio.Event()
 
-    async def forever(run, watched):
+    async def forever(_run: Run, _watched: bool) -> None:
         parked.set()
-        await asyncio.Event().wait()
+        _ = await asyncio.Event().wait()
 
     dispatcher.add(forever)
     dispatcher(_run())
-    await parked.wait()
+    _ = await parked.wait()
     await dispatcher.drain()
     assert not dispatcher.tasks
