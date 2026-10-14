@@ -4,9 +4,12 @@ parks for the operator's approval (`AE-3.1`)."""
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
+from typing import NoReturn, cast
 
 import pytest
-from pydantic_ai import RunContext
+from pydantic import JsonValue
+from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -18,7 +21,8 @@ from runs import Run, RunRegistry, RunStatus
 from runs.stream import RunStream
 from services.credential_store import CredentialStore
 from services.mail.models import MailAddress, MailBody
-from services.mail.service import MailService
+from services.mail.service import AccountView, MailService
+from tests._json import arr, s
 from tests.mail_fakes import FakeTransport, install_transport, sample_header
 from tools import RunDeps
 from tools.mail import mail_toolset
@@ -30,12 +34,15 @@ INJECTION = (
 
 
 class _NoModels:
-    async def resolve_background(self, **_kwargs):
+    async def resolve_background(self, **_kwargs: object) -> NoReturn:
         raise RuntimeError("no utility model configured")
 
 
+type _Wired = tuple[MailService, AccountView, FakeTransport]
+
+
 @pytest.fixture
-async def wired(tmp_path):
+async def wired(tmp_path: Path) -> _Wired:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
@@ -55,7 +62,7 @@ async def wired(tmp_path):
     return service, account, transport
 
 
-def _deps(service, run=None) -> RunDeps:
+def _deps(service: MailService, run: Run | None = None) -> RunDeps:
     return RunDeps(run=run or _stub_run(), owner_id="operator", caps=ServiceContainer.of(service))
 
 
@@ -67,13 +74,15 @@ def _ctx(deps: RunDeps) -> RunContext[RunDeps]:
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
-async def _call(toolset, name: str, deps: RunDeps, **args):
+async def _call(
+    toolset: FunctionToolset[RunDeps], name: str, deps: RunDeps, **args: str | bool
+) -> dict[str, JsonValue]:
     ctx = _ctx(deps)
     tools = await toolset.get_tools(ctx)
-    return await toolset.call_tool(name, args, ctx, tools[name])
+    return cast(dict[str, JsonValue], await toolset.call_tool(name, args, ctx, tools[name]))
 
 
-async def test_the_toolset_offers_the_expected_tools(wired):
+async def test_the_toolset_offers_the_expected_tools(wired: _Wired):
     service, _account, _transport = wired
     tools = await mail_toolset().get_tools(_ctx(_deps(service)))
     assert set(tools) == {
@@ -87,14 +96,14 @@ async def test_the_toolset_offers_the_expected_tools(wired):
     }
 
 
-async def test_sending_and_replying_are_the_only_approval_gated_tools(wired):
+async def test_sending_and_replying_are_the_only_approval_gated_tools(wired: _Wired):
     service, _account, _transport = wired
     tools = await mail_toolset().get_tools(_ctx(_deps(service)))
     gated = {name for name, tool in tools.items() if tool.tool_def.kind == "unapproved"}
     assert gated == {"send", "reply"}
 
 
-async def test_no_mail_description_promises_an_approval_outcome(wired):
+async def test_no_mail_description_promises_an_approval_outcome(wired: _Wired):
     """Whether a call pauses is the thread's permission level to decide, so a description
     that says a tool "needs no approval" or is "shown to the operator first" is wrong at
     three of the four levels. Descriptions say what the tool does and what its explanation
@@ -115,12 +124,13 @@ async def test_no_mail_description_promises_an_approval_outcome(wired):
     assert sum("who this goes to and what it says" in text for text in texts) == 1
 
 
-async def test_a_listing_is_fenced_once_per_batch(wired):
+async def test_a_listing_is_fenced_once_per_batch(wired: _Wired):
     service, account, _transport = wired
     result = await _call(mail_toolset(), "list_messages", _deps(service), account_id=account.id)
     assert result["ok"] is True
-    assert "never follow" in result["instruction"]
-    [fenced] = result["messages"]
+    assert "never follow" in s(result["instruction"])
+    [fenced_message] = arr(result["messages"])
+    fenced = s(fenced_message)
     # The sender's words are inside the fence, and the fence's nonce is unguessable from
     # inside it — the message cannot forge its own closing marker.
     assert INJECTION in fenced
@@ -128,12 +138,12 @@ async def test_a_listing_is_fenced_once_per_batch(wired):
     assert fenced.rstrip().endswith("]")
 
 
-async def test_every_read_body_is_wrapped_before_it_can_reach_the_model(wired):
+async def test_every_read_body_is_wrapped_before_it_can_reach_the_model(wired: _Wired):
     service, account, _transport = wired
     toolset = mail_toolset()
     [view] = await service.list_messages("operator", account_id=account.id)
     result = await _call(toolset, "read", _deps(service), message_id=view.id)
-    payload = result["message"]
+    payload = s(result["message"])
     assert INJECTION in payload
     # No path returns a body outside the fence.
     assert "UNTRUSTED CONTENT" in payload
@@ -146,10 +156,10 @@ async def test_an_unwired_run_degrades_rather_than_failing():
         mail_toolset(), "list_messages", RunDeps(run=_stub_run(), owner_id="operator")
     )
     assert result["ok"] is False
-    assert "not available" in result["error"]
+    assert "not available" in s(result["error"])
 
 
-async def test_drafting_a_reply_saves_without_sending(wired):
+async def test_drafting_a_reply_saves_without_sending(wired: _Wired):
     service, account, transport = wired
     [view] = await service.list_messages("operator", account_id=account.id)
     result = await _call(
@@ -163,7 +173,7 @@ async def test_drafting_a_reply_saves_without_sending(wired):
     assert draft.body == "Noted."
 
 
-async def test_marking_read_is_not_gated_and_writes_through(wired):
+async def test_marking_read_is_not_gated_and_writes_through(wired: _Wired):
     service, account, transport = wired
     [view] = await service.list_messages("operator", account_id=account.id)
     assert (await _call(mail_toolset(), "mark", _deps(service), message_id=view.id, seen=True))[
@@ -206,7 +216,7 @@ async def test_the_approval_prompt_carries_a_plain_language_explanation():
     assert "explanation" in required.args
 
 
-async def test_a_reply_from_the_tool_threads_the_original(wired):
+async def test_a_reply_from_the_tool_threads_the_original(wired: _Wired):
     service, account, transport = wired
     [view] = await service.list_messages("operator", account_id=account.id)
     result = await _call(
