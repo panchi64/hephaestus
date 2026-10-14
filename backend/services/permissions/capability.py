@@ -48,7 +48,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal, cast
 
 from services.permissions.projections import describe
 from services.permissions.shell_ast import (
@@ -237,7 +237,7 @@ def measured_against_root(tool: str) -> bool:
 _SANDBOXED_TOOLS = frozenset({"code_execute"})
 
 
-def declared_reach(tool: str, args: dict[str, Any]) -> Reach | None:
+def declared_reach(tool: str, args: dict[str, object]) -> Reach | None:
     """How far this call says it needs to reach, or None when it said nothing.
 
     Four readings, and each is the conservative one for its case. A **host command**
@@ -258,7 +258,7 @@ def declared_reach(tool: str, args: dict[str, Any]) -> Reach | None:
     if "reach" not in args:
         return DEFAULT_REACH if tool in _REACH_ARG_TOOLS else None
     value = args["reach"]
-    return value if value in REACHES else "host"
+    return cast("Reach", value) if value in REACHES else "host"
 
 
 def shell_capability(
@@ -308,7 +308,7 @@ def shell_capability(
     )
 
 
-def capability_of(tool: str, args: dict[str, Any], *, root: Path | None = None) -> Capability:
+def capability_of(tool: str, args: dict[str, object], *, root: Path | None = None) -> Capability:
     """The worst case of one deferred call to ``tool`` with ``args``.
 
     Total: every tool resolves to *something*, because a call that has arrived has to be
@@ -384,7 +384,7 @@ def capability_of(tool: str, args: dict[str, Any], *, root: Path | None = None) 
 
 
 def _command_capability(
-    tool: str, args: dict[str, Any], command_arg: str, root: Path | None
+    tool: str, args: dict[str, object], command_arg: str, root: Path | None
 ) -> Capability:
     command = _text_arg(args, command_arg)
     if command is None:
@@ -421,7 +421,7 @@ def _command_capability(
 
 
 def _file_capability(
-    tool: str, args: dict[str, Any], path_arg: str, root: Path | None
+    tool: str, args: dict[str, object], path_arg: str, root: Path | None
 ) -> Capability:
     path = _text_arg(args, path_arg)
     if path is None:
@@ -440,20 +440,21 @@ def _file_capability(
     )
 
 
-def _text_arg(args: dict[str, Any], name: str) -> str | None:
+def _text_arg(args: dict[str, object], name: str) -> str | None:
     value = args.get(name)
     return value if isinstance(value, str) else None
 
 
-def _domain_shape(args: dict[str, Any]) -> str:
+def _domain_shape(args: dict[str, object]) -> str:
     """The hosts an egress request names, in the order it named them. The exception to
     :func:`_arg_shape`'s rule, argued for at :data:`_EGRESS_TOOL`."""
     value = args.get("domains")
-    names = [str(d) for d in value if str(d).strip()] if isinstance(value, list) else []
+    entries = cast("list[object]", value) if isinstance(value, list) else []
+    names = [str(d) for d in entries if str(d).strip()]
     return ", ".join(names) if names else "no host it named"
 
 
-def _arg_shape(args: dict[str, Any]) -> str:
+def _arg_shape(args: dict[str, object]) -> str:
     """An argument set named by its keys, never by its values.
 
     The shape goes to a model and onto an event; the values may be a password, a mail

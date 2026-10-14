@@ -207,7 +207,7 @@ def escapes_workspace(root: Path | None, raw: str) -> bool:
     if root is None:
         return path.is_absolute() or ".." in path.parts
     try:
-        contained_path(root, raw, what="path")
+        _ = contained_path(root, raw, what="path")
     except SandboxError:
         return True
     return False
@@ -402,14 +402,14 @@ class _Walk:
     """
 
     def __init__(self, root: Path | None) -> None:
-        self._root = root
+        self._root: Path | None = root
         self.commands: list[ShellCommand] = []
         self.reads: list[str] = []
         self.writes: list[str] = []
         self.env_writes: list[str] = []
         self.escapes: list[str] = []
         self.unbounded: list[str] = []
-        self.network = False
+        self.network: bool = False
 
     def visit(self, node: Node) -> None:
         if node.is_error or node.type == "ERROR":

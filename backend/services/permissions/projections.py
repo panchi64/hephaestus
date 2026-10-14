@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import cast
 
 #: How much of one *identity* value a summary quotes. A subject line, an address list or a
 #: selector fits; a pasted document does not, and the summary is a line the operator reads
@@ -66,7 +66,7 @@ class Projection:
     #: to know a form was filled in.
     measured: tuple[str, ...] = ()
 
-    def describe(self, args: dict[str, Any]) -> tuple[str, str | None]:
+    def describe(self, args: dict[str, object]) -> tuple[str, str | None]:
         """This call as (summary, detail).
 
         A key the call did not pass contributes nothing: most of these tools have optional
@@ -105,7 +105,7 @@ class Projection:
         return summary, content or None
 
 
-def _quoted(value: Any, limit: int) -> str:
+def _quoted(value: object, limit: int) -> str:
     """One identity value on a single line, however it was written.
 
     JSON-encoded rather than interpolated: a value with a newline in it would otherwise
@@ -118,11 +118,11 @@ def _quoted(value: Any, limit: int) -> str:
     a `to` list cut mid-JSON hides both the recipient and the fact that there was one.
     """
     if isinstance(value, list):
-        return _quoted_list(value, limit)
+        return _quoted_list(cast("list[object]", value), limit)
     return _shortened(json.dumps(value, default=str), limit)
 
 
-def _quoted_list(values: list[Any], limit: int) -> str:
+def _quoted_list(values: list[object], limit: int) -> str:
     """A list as its first entries, prefixed by how many there are in all when it is cut.
 
     At least one entry is always rendered, however long it is — a summary that dropped the
@@ -152,7 +152,7 @@ def _shortened(text: str, limit: int) -> str:
     return text if len(text) <= limit else f"{text[:limit]}… ({len(text)} characters in all)"
 
 
-def _content(key: str, value: Any, limit: int) -> str:
+def _content(key: str, value: object, limit: int) -> str:
     """One content key for the detail block, labelled and — where it is cut — measured."""
     text = str(value)
     if len(text) <= limit:
@@ -267,7 +267,7 @@ PROJECTIONS: dict[str, Projection] = {
 }
 
 
-def describe(tool: str, args: dict[str, Any], *, fallback: str) -> tuple[str, str | None]:
+def describe(tool: str, args: dict[str, object], *, fallback: str) -> tuple[str, str | None]:
     """This call's summary and detail — projected where the tool is one of ours.
 
     ``fallback`` is what an unprojected tool says about itself, and it is the caller's

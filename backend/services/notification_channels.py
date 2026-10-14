@@ -138,8 +138,8 @@ class EmailChannel:
     when set, and disabling the channel is honored either way.
     """
 
-    key = CHANNEL_EMAIL
-    label = "EMAIL ALERTS"
+    key: str = CHANNEL_EMAIL
+    label: str = "EMAIL ALERTS"
 
     def __init__(
         self,
@@ -147,9 +147,9 @@ class EmailChannel:
         settings: SettingsStore,
         vault: Vault,
     ) -> None:
-        self._mail = mail
-        self._settings = settings
-        self._vault = vault
+        self._mail: Callable[[], MailSender | None] = mail
+        self._settings: SettingsStore = settings
+        self._vault: Vault = vault
 
     async def health(self, owner_id: str) -> ChannelHealth:
         service = self._mail()
@@ -179,7 +179,7 @@ class EmailChannel:
         if target is None:
             return
         account_id, address = target
-        await service.send(
+        _ = await service.send(
             view.owner_id,
             account_id,
             to=[address],
@@ -234,8 +234,8 @@ class PushChannel:
     than pretending the operator was reached.
     """
 
-    key = CHANNEL_PUSH
-    label = "PUSH ALERTS"
+    key: str = CHANNEL_PUSH
+    label: str = "PUSH ALERTS"
 
     def __init__(
         self,
@@ -244,10 +244,10 @@ class PushChannel:
         *,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._settings = settings
-        self._vault = vault
-        self._client = client
-        self._owns_client = client is None
+        self._settings: SettingsStore = settings
+        self._vault: Vault = vault
+        self._client: httpx.AsyncClient | None = client
+        self._owns_client: bool = client is None
 
     async def health(self, owner_id: str) -> ChannelHealth:
         try:

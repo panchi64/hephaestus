@@ -83,7 +83,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, TextPart, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
@@ -261,7 +261,7 @@ def _prose(messages: Sequence[ModelMessage], chars: int) -> tuple[TranscriptEntr
             ).strip()
             if text:
                 entries.append(TranscriptEntry("operator", text[:chars]))
-        elif isinstance(message, ModelResponse):
+        else:
             text = "\n".join(
                 part.content for part in message.parts if isinstance(part, TextPart)
             ).strip()

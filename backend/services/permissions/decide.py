@@ -390,7 +390,7 @@ def _verdict_decision(
     parks exactly as it always has, which is what keeps a tool nobody granted — and every
     installation where the operator never ticks the wider box — on the old rule.
     """
-    match verdict.risk:
+    match str(verdict.risk):
         case "too_destructive":
             return Decision.ALLOW if granted == "tool" else Decision.ASK
         case "low":

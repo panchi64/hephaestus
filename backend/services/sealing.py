@@ -26,9 +26,10 @@ is only for the columns that predate their own encryption.
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, SQLModel, col, select
 
 from core.db import in_session
 from core.vault import Vault
@@ -52,7 +53,7 @@ async def seal_legacy_column(
     *,
     engine: Engine,
     vault: Vault,
-    model_cls: type,
+    model_cls: type[SQLModel],
     legacy_attr: str,
     sealed_attr: str,
     batch_size: int = 200,
@@ -69,12 +70,12 @@ async def seal_legacy_column(
     while True:
 
         def work(session: Session) -> int:
-            legacy_col = getattr(model_cls, legacy_attr)
+            legacy_col = col(cast("str | None", getattr(model_cls, legacy_attr)))
             rows = session.exec(
                 select(model_cls).where(legacy_col.is_not(None)).limit(batch_size)
             ).all()
             for row in rows:
-                plaintext = getattr(row, legacy_attr)
+                plaintext = cast("str", getattr(row, legacy_attr))
                 # Seal only what the sealed column doesn't already hold: a row written by
                 # the new code path is already sealed and just needs its legacy value
                 # dropped (belt-and-braces — that path clears it at write time).
