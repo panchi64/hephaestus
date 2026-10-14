@@ -11,8 +11,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pydantic import BaseModel, JsonValue
+
 from devkit import repo
 from devkit.instance import DevInstance
+
+
+class _LaunchFile(BaseModel):
+    configurations: list[JsonValue] = []
+
 
 #: The committed recipe these are generated from.
 SOURCE = repo.ROOT / "docs" / "dev-instance.md"
@@ -92,17 +99,17 @@ def write_launch_json(instance: DevInstance, config_name: str, root: Path) -> Pa
     configurations: list[object] = [launch_entry(instance, config_name)]
     if path.is_file():
         try:
-            existing = json.loads(path.read_text())
+            existing = _LaunchFile.model_validate_json(path.read_text())
         except OSError, ValueError:
-            existing = {}
+            existing = _LaunchFile()
         # Anything the operator added stays. Only the entry carrying our name is ours to
         # rewrite, and it has to be rewritten because it holds a port that can move.
         configurations += [
             entry
-            for entry in existing.get("configurations", [])
+            for entry in existing.configurations
             if isinstance(entry, dict) and entry.get("name") != config_name
         ]
-    path.write_text(
+    _ = path.write_text(
         json.dumps({"version": "0.0.1", "configurations": configurations}, indent=2) + "\n"
     )
     return path
@@ -114,7 +121,7 @@ def write_skill(instance: DevInstance, config_name: str, root: Path) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "SKILL.md"
     body = _substitute(_recipe(), instance, config_name)
-    path.write_text(_SKILL_FRONTMATTER.format(skill=SKILL_NAME) + body)
+    _ = path.write_text(_SKILL_FRONTMATTER.format(skill=SKILL_NAME) + body)
     return path
 
 

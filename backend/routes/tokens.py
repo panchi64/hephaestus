@@ -84,7 +84,17 @@ async def issue_token(body: TokenCreate, request: Request) -> IssuedTokenView:
         issued = await deps.api_tokens(request).issue(OPERATOR_ID, body.label, body.scopes)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    return IssuedTokenView(**_view(issued.info).model_dump(), token=issued.token)
+    view = _view(issued.info)
+    return IssuedTokenView(
+        id=view.id,
+        label=view.label,
+        prefix=view.prefix,
+        scopes=view.scopes,
+        created_at=view.created_at,
+        last_used_at=view.last_used_at,
+        revoked_at=view.revoked_at,
+        token=issued.token,
+    )
 
 
 @router.delete("/{token_id}", response_model=TokenView)

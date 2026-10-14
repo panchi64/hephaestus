@@ -12,7 +12,7 @@ that instead — same seam, same registry row, so nothing downstream knows the d
 from __future__ import annotations
 
 from devkit import live
-from devkit.seed.registry import SeedContext, fixture
+from devkit.seed.registry import SeedContext, fixture, json_object, rows
 from devkit.stub.app import MODEL_ID
 
 #: The registry rows this fixture owns. Named rather than generated so re-seeding an
@@ -61,18 +61,18 @@ async def _endpoint_id(ctx: SeedContext) -> str:
     # the collision as the signal: the constraint surfaces as a server error, and an
     # error is a bad thing to build control flow on even when it is reliable.
     listed = await ctx.client.get("/models/endpoints")
-    listed.raise_for_status()
-    for endpoint in listed.json():
+    _ = listed.raise_for_status()
+    for endpoint in rows(listed):
         if endpoint["name"] == ENDPOINT_NAME:
             # Updated rather than left alone, so a workspace seeded by an older pack
             # picks up a field that pack did not set.
             updated = await ctx.client.patch(f"/models/endpoints/{endpoint['id']}", json=full)
-            updated.raise_for_status()
-            return endpoint["id"]
+            _ = updated.raise_for_status()
+            return str(endpoint["id"])
 
     created = await ctx.client.post("/models/endpoints", json=full)
-    created.raise_for_status()
-    return created.json()["id"]
+    _ = created.raise_for_status()
+    return str(json_object(created)["id"])
 
 
 @fixture("model", order=0)
@@ -83,6 +83,6 @@ async def seed_model(ctx: SeedContext) -> str:
         bound = await ctx.client.put(
             f"/models/roles/{role}", json={"endpoint_ids": [endpoint_id], "model": model}
         )
-        bound.raise_for_status()
+        _ = bound.raise_for_status()
     where = "a real endpoint (HEPH_DEV_CHAT_*)" if live.configured() else "the stub"
     return f"{model} on {where}, bound to {', '.join(ROLES)}"

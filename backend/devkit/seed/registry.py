@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 if TYPE_CHECKING:
     from devkit.instance import DevInstance
@@ -64,6 +64,14 @@ class _Wrapped(BaseModel):
 
 
 _LISTING = TypeAdapter[list[dict[str, object]] | _Wrapped](list[dict[str, object]] | _Wrapped)
+
+
+_OBJECT = TypeAdapter(dict[str, JsonValue])
+
+
+def json_object(response: httpx.Response) -> dict[str, JsonValue]:
+    """The response body as a JSON object."""
+    return _OBJECT.validate_json(response.content)
 
 
 def rows(response: httpx.Response) -> list[dict[str, object]]:

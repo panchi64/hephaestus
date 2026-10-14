@@ -22,7 +22,7 @@ turn built once, so every reading of the thread's size in one turn is against on
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Sequence
 
 from pydantic_ai import (
     ModelMessage,
@@ -30,6 +30,7 @@ from pydantic_ai import (
     ModelResponse,
     UserPromptPart,
 )
+from pydantic_ai.messages import UserContent
 
 from runs import (
     CompactionDelta,
@@ -61,7 +62,9 @@ from .summarize import (
 logger = logging.getLogger(__name__)
 
 
-def incoming_request(user_prompt: str | list[Any] | None, extra: list[str]) -> ModelRequest | None:
+def incoming_request(
+    user_prompt: str | Sequence[UserContent] | None, extra: list[str]
+) -> ModelRequest | None:
     """This turn's own new content as one request, for measuring it — the operator's
     message with its attachment markers, plus any per-turn context that isn't already
     inside it (a regenerate has no fresh prompt, so its context is the only new part).
@@ -69,9 +72,9 @@ def incoming_request(user_prompt: str | list[Any] | None, extra: list[str]) -> M
     ``None`` when the turn adds nothing measurable, which is a plain regenerate with no
     context providers wired. Binary parts ride along untouched; the estimator ignores
     them by design."""
-    parts: list[Any] = []
+    parts: list[UserContent] = []
     if user_prompt is not None:
-        parts.extend(user_prompt if isinstance(user_prompt, list) else [user_prompt])
+        parts.extend([user_prompt] if isinstance(user_prompt, str) else user_prompt)
     parts.extend(extra)
     return ModelRequest(parts=[UserPromptPart(content=parts)]) if parts else None
 
@@ -107,7 +110,7 @@ async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) ->
         # first token, and a model thinking before it writes streams no event at all (its
         # reasoning is not part of the summary) and looks idle while it works.
         def announce_plan(plan: CompactionPlan) -> None:
-            run.emit(
+            _ = run.emit(
                 CompactionStarted(
                     conversation_id=ctx.conversation_id,
                     reason=reason,
@@ -117,7 +120,7 @@ async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) ->
             )
 
         def announce_delta(text: str) -> None:
-            run.emit(CompactionDelta(conversation_id=ctx.conversation_id, text=text))
+            _ = run.emit(CompactionDelta(conversation_id=ctx.conversation_id, text=text))
 
         async with run.keepalive():
             result = await compact_conversation(
@@ -136,7 +139,7 @@ async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) ->
     if isinstance(result, FoldFailed):
         return _failed(run, ctx, reason, result)
     if isinstance(result, CompactionOutcome):
-        run.emit(
+        _ = run.emit(
             ConversationCompacted(
                 conversation_id=ctx.conversation_id,
                 reason=reason,
@@ -159,7 +162,7 @@ def _failed(
     The frame is what ends the client's live "compacting" section: the backend recorded no
     checkpoint, so without it that section would sit with its streamed text until the run
     ended and vanish on a reload, showing a compaction the backend never had."""
-    run.emit(
+    _ = run.emit(
         CompactionFailed(
             conversation_id=ctx.conversation_id, reason=reason, message=failure.message
         )
@@ -308,5 +311,5 @@ async def compact_and_retry(
     # And it goes out *now*, not when the retry answers. A fold that frees half the thread
     # and then overruns again would otherwise leave the gauge pinned at its pre-fold figure
     # for good — the operator watching a compaction that visibly changed nothing.
-    run.emit(post_fold_metrics(run, rebuilt, settings=ctx.settings))
+    _ = run.emit(post_fold_metrics(run, rebuilt, settings=ctx.settings))
     return rebuilt

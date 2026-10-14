@@ -67,7 +67,15 @@ async def list_providers(request: Request) -> list[ProviderView]:
 
 @router.post("/providers", status_code=201, response_model=ProviderView)
 async def create_provider(body: ProviderCreate, request: Request) -> ProviderView:
-    provider = await deps.search(request).create_provider(OPERATOR_ID, **body.model_dump())
+    provider = await deps.search(request).create_provider(
+        OPERATOR_ID,
+        name=body.name,
+        base_url=body.base_url,
+        enabled=body.enabled,
+        engines=body.engines,
+        params=body.params,
+        api_key=body.api_key,
+    )
     return _view(provider)
 
 
@@ -82,7 +90,7 @@ async def get_provider(provider_id: str, request: Request) -> ProviderView:
 
 @router.patch("/providers/{provider_id}", response_model=ProviderView)
 async def update_provider(provider_id: str, body: ProviderUpdate, request: Request) -> ProviderView:
-    changes = body.model_dump(exclude_unset=True)
+    changes: dict[str, object] = body.model_dump(exclude_unset=True)
     try:
         provider = await deps.search(request).update_provider(OPERATOR_ID, provider_id, **changes)
     except NotFoundError:

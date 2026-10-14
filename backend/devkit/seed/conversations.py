@@ -14,13 +14,15 @@ registry, engine, provider adapter, run substrate, event stream, persistence —
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import TypedDict
 
 import httpx
+from pydantic import JsonValue, TypeAdapter
 
 from devkit import live
-from devkit.seed.registry import SeedContext, fixture, rows
+from devkit.seed.registry import SeedContext, fixture, json_object, rows
+
+_EVENT = TypeAdapter(dict[str, JsonValue])
 
 #: How long one seeded turn may take before seeding gives up on it. Generous for a real
 #: endpoint behind `HEPH_DEV_CHAT_*`, and far beyond anything the stub needs.
@@ -88,7 +90,7 @@ async def _push_script(ctx: SeedContext, script: list[dict[str, object]]) -> Non
     # connection and then never answers fails this fixture rather than the whole run.
     base_url = f"http://127.0.0.1:{ctx.instance.stub_port}"
     async with httpx.AsyncClient(base_url=base_url, timeout=_SCRIPT_TIMEOUT_S) as stub:
-        await stub.post("/_stub/script", json=script)
+        _ = await stub.post("/_stub/script", json=script)
 
 
 async def _drain(ctx: SeedContext, run_id: str) -> bool:
@@ -106,7 +108,7 @@ async def _drain(ctx: SeedContext, run_id: str) -> bool:
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
-                    event = json.loads(line[len("data:") :].strip())
+                    event = _EVENT.validate_json(line[len("data:") :].strip())
                     # `run.ended` and `run.error` are the same terminal position in the
                     # protocol, not a frame plus an extra — so either ends the stream,
                     # and only the first means the turn actually produced an answer.
@@ -114,7 +116,7 @@ async def _drain(ctx: SeedContext, run_id: str) -> bool:
                         return False
                     if event.get("type") == "run.ended":
                         return event.get("outcome") == "done"
-    except TimeoutError, json.JSONDecodeError:
+    except TimeoutError, ValueError:
         return False
     return False
 
@@ -131,6 +133,6 @@ async def seed_conversations(ctx: SeedContext) -> str:
         started = await ctx.client.post("/chat", json={"prompt": thread["prompt"]})
         if started.status_code not in (200, 202):
             continue
-        if await _drain(ctx, started.json()["run_id"]):
+        if await _drain(ctx, str(json_object(started)["run_id"])):
             made += 1
     return f"{made} of {len(_THREADS)} threads" if made else "none — the engine did not answer"

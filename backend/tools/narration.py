@@ -31,8 +31,9 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import override
 
+from pydantic import JsonValue, TypeAdapter
 from pydantic_ai import RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, RawToolArgs
 from pydantic_ai.messages import ToolCallPart
@@ -40,8 +41,10 @@ from pydantic_ai.messages import ToolCallPart
 from .deps import RunDeps
 from .describe import NARRATION_ARG, NARRATION_PROPERTY
 
+_JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
-def strip_narration(args: Mapping[str, Any]) -> dict[str, Any]:
+
+def strip_narration(args: Mapping[str, object]) -> dict[str, object]:
     """``args`` without the narration — a plain dict either way.
 
     Exported because the capability is not the only reader that wants the call's *question*
@@ -62,6 +65,7 @@ class NarrationCapability(AbstractCapability[RunDeps]):
     there will ever be — a list here would be the same list twice, rotting separately.
     """
 
+    @override
     async def before_tool_validate(
         self,
         ctx: RunContext[RunDeps],
@@ -87,8 +91,9 @@ def _declares_its_own(tool_def: ToolDefinition) -> bool:
     the model sent to a tool whose schema has no such property at all is still stripped:
     that is the retry loop this capability exists to prevent.
     """
-    properties = tool_def.parameters_json_schema.get("properties") or {}
-    own = properties.get(NARRATION_ARG)
+    schema: dict[str, JsonValue] = tool_def.parameters_json_schema
+    properties = schema.get("properties")
+    own = properties.get(NARRATION_ARG) if isinstance(properties, dict) else None
     return own is not None and own != NARRATION_PROPERTY
 
 
@@ -101,9 +106,9 @@ def _strip_from_json(payload: str) -> str:
     a resumed call a true no-op rather than a reformat.
     """
     try:
-        parsed = json.loads(payload)
+        parsed = _JSON_OBJECT.validate_json(payload)
     except TypeError, ValueError:
         return payload
-    if not isinstance(parsed, dict) or NARRATION_ARG not in parsed:
+    if NARRATION_ARG not in parsed:
         return payload
     return json.dumps(strip_narration(parsed))

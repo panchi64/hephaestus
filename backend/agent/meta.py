@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
-from typing import Any, overload
+from collections.abc import Awaitable, Callable, Mapping
+from typing import overload
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -51,7 +51,7 @@ class LoopDetected(Exception):
 
     def __init__(self, tool_name: str) -> None:
         super().__init__(f"repeated the same call to {tool_name!r} without progress")
-        self.tool_name = tool_name
+        self.tool_name: str = tool_name
 
 
 class LoopBreaker:
@@ -85,9 +85,9 @@ class LoopBreaker:
         self._answers: dict[tuple[str, str], str] = {}
         #: tool call id → the signature awaiting its result.
         self._pending: dict[str, tuple[str, str]] = {}
-        self._threshold = repeat_threshold
+        self._threshold: int = repeat_threshold
 
-    def check(self, name: str, args: dict[str, Any], tool_call_id: str = "") -> None:
+    def check(self, name: str, args: Mapping[str, object], tool_call_id: str = "") -> None:
         """Record a tool call about to run; raise :class:`LoopDetected` if it is the one
         that would repeat a settled, unchanging answer once too often.
 

@@ -26,6 +26,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
 from starlette.responses import StreamingResponse
 from starlette.websockets import WebSocketDisconnect
+from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake
 
@@ -170,7 +171,7 @@ async def proxy_ws(websocket: WebSocket, token: str, path: str) -> None:
         await upstream.close()
 
 
-async def _bridge(client_ws: WebSocket, upstream) -> None:
+async def _bridge(client_ws: WebSocket, upstream: ClientConnection) -> None:
     """Pump frames both ways until either side closes."""
 
     async def client_to_upstream() -> None:
@@ -179,9 +180,11 @@ async def _bridge(client_ws: WebSocket, upstream) -> None:
                 message = await client_ws.receive()
                 if message["type"] == "websocket.disconnect":
                     return
-                if (text := message.get("text")) is not None:
+                text: object = message.get("text")
+                data: object = message.get("bytes")
+                if isinstance(text, str):
                     await upstream.send(text)
-                elif (data := message.get("bytes")) is not None:
+                elif isinstance(data, bytes):
                     await upstream.send(data)
         except WebSocketDisconnect, ConnectionClosed:
             return
@@ -204,6 +207,6 @@ async def _bridge(client_ws: WebSocket, upstream) -> None:
     ]
     _done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
-        task.cancel()
+        _ = task.cancel()
     # Await the cancelled side so its teardown finishes and no exception is orphaned.
-    await asyncio.gather(*pending, return_exceptions=True)
+    _ = await asyncio.gather(*pending, return_exceptions=True)
