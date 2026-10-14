@@ -35,6 +35,11 @@ def as_int(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def as_number(value: object) -> float | None:
+    """``value`` when it is an int or a float (a boolean is neither), else None."""
+    return value if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
 def as_str(value: object) -> str | None:
     """``value`` when it is a string, else None."""
     return value if isinstance(value, str) else None

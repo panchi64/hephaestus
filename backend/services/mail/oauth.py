@@ -29,10 +29,9 @@ from __future__ import annotations
 
 import json
 import logging
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import timedelta
-from typing import cast
 
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from sqlalchemy import Engine
@@ -42,6 +41,8 @@ from core.db import in_session
 from core.vault import Vault, VaultLocked
 from models._fields import utcnow
 from models.mail import AUTH_OAUTH, MailAccount
+from services.credential_store import CredentialStore
+from services.shapes import as_dict, as_number, as_str, parse_json
 
 from .errors import MailAuthError, MailUnavailableError
 
@@ -118,12 +119,16 @@ class TokenBundle:
 
     @classmethod
     def from_json(cls, raw: str) -> TokenBundle:
-        data = json.loads(raw)
+        return cls.from_fields(as_dict(parse_json(raw)) or {})
+
+    @classmethod
+    def from_fields(cls, data: Mapping[str, object]) -> TokenBundle:
+        """A bundle from a token response or a sealed record."""
         return cls(
             access_token=str(data.get("access_token") or ""),
-            refresh_token=data.get("refresh_token"),
-            expires_at=data.get("expires_at"),
-            scope=data.get("scope"),
+            refresh_token=as_str(data.get("refresh_token")),
+            expires_at=as_number(data.get("expires_at")),
+            scope=as_str(data.get("scope")),
         )
 
 
@@ -192,8 +197,7 @@ async def _token_request(
         client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri
     )
     try:
-        # authlib's client subclasses a runtime-selected httpx, which the checker can't see.
-        async with cast(AbstractAsyncContextManager[AsyncOAuth2Client], cast(object, client)):
+        async with client:
             token = await client.fetch_token(provider.token_url, grant_type=grant, **params)
     except Exception as exc:  # noqa: BLE001 — authlib raises a wide family of errors
         # A refused grant and an unreachable identity provider are different problems for
@@ -204,12 +208,7 @@ async def _token_request(
                 "the provider rejected this account's authorization — reconnect it"
             ) from exc
         raise MailUnavailableError(f"could not reach the identity provider: {exc}") from exc
-    return TokenBundle(
-        access_token=str(token.get("access_token") or ""),
-        refresh_token=token.get("refresh_token"),
-        expires_at=token.get("expires_at"),
-        scope=token.get("scope"),
-    )
+    return TokenBundle.from_fields(token)
 
 
 class MailSecrets:
@@ -221,10 +220,10 @@ class MailSecrets:
     that encryption exists.
     """
 
-    def __init__(self, engine: Engine, vault: Vault, credentials) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._credentials = credentials
+    def __init__(self, engine: Engine, vault: Vault, credentials: CredentialStore) -> None:
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._credentials: CredentialStore = credentials
 
     def seal_password(self, password: str) -> str:
         return self._vault.encrypt_str(json.dumps({"password": password}))
@@ -248,7 +247,7 @@ class MailSecrets:
                 "the vault is locked, so this account's credentials cannot be opened"
             ) from exc
         if account.auth_kind != AUTH_OAUTH:
-            return json.loads(raw).get("password"), None
+            return as_str((as_dict(parse_json(raw)) or {}).get("password")), None
 
         bundle = TokenBundle.from_json(raw)
         if not bundle.expiring(now=utcnow().timestamp()):
@@ -264,10 +263,11 @@ class MailSecrets:
             account.owner_id, provider.credential_service
         )
         if not client_id or not client_secret:
-            raise MailAuthError(
+            message = (
                 f"no {provider.label} OAuth client is configured — add one on the API "
                 "Tokens page before this account can refresh its access"
             )
+            raise MailAuthError(message)
         refreshed = await refresh_tokens(
             provider,
             client_id=client_id,
