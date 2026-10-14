@@ -20,11 +20,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import suppress
 from dataclasses import replace
-from re import Pattern
-from typing import cast
+from typing import override
 
 import aioimaplib
 import aiosmtplib
@@ -47,6 +46,7 @@ from .models import (
     TransportCapabilities,
 )
 from .parse import build_outgoing, parse_message
+from .transport import MailTransport, WatchableTransport
 
 logger = logging.getLogger(__name__)
 
@@ -84,37 +84,38 @@ _NAME_ROLES = {
 _LIST_LINE = re.compile(r'^\((?P<flags>[^)]*)\)\s+("?(?P<sep>[^"]*)"?|NIL)\s+(?P<name>.+)$')
 
 
-class ImapTransport:
+class ImapTransport(MailTransport, WatchableTransport):
     """A :class:`~services.mail.transport.MailTransport` over IMAP (read) + SMTP (send)."""
 
     def __init__(self, spec: AccountSpec) -> None:
-        self._spec = spec
+        self._spec: AccountSpec = spec
         self._client: aioimaplib.IMAP4_SSL | None = None
         self._selected: str | None = None
         # One command at a time: an IMAP connection is a single command stream, and the
         # sync loop, the routes and the agent's tools all share this one transport.
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     # --- seam ---------------------------------------------------------------
 
+    @override
     def capabilities(self) -> TransportCapabilities:
         return TransportCapabilities(idle=True, search=True, move=True, flags=True, threads=False)
 
+    @override
     async def probe(self) -> None:
         async with self._lock:
-            await self._connect()
+            _ = await self._connect()
 
+    @override
     async def list_folders(self) -> list[MailFolder]:
         async with self._lock:
             client = await self._connect()
-            # aioimaplib annotates the pattern as `Pattern` but sends it verbatim as a string.
-            status, lines = await self._command(
-                client.list('""', cast(Pattern[str], cast(object, "*")))
-            )
+            status, lines = await self._command(client.list('""', "*"))
             if status != "OK":
                 raise MailError("the server refused to list this account's folders")
             return [folder for folder in map(_parse_list_line, lines) if folder is not None]
 
+    @override
     async def list_messages(
         self, folder: str, *, limit: int = 50, since_uid: str | None = None
     ) -> list[MailHeader]:
@@ -136,6 +137,7 @@ class ImapTransport:
             wanted = uids[-limit:][::-1]
             return [await self._fetch_header(client, uid) for uid in wanted]
 
+    @override
     async def fetch(self, folder: str, uid: str) -> MailBody:
         async with self._lock:
             client = await self._connect()
@@ -146,15 +148,16 @@ class ImapTransport:
                 raise MailError("that message is no longer on the server")
             return parse_message(raw, uid=uid)
 
+    @override
     async def send(self, message: OutgoingMail) -> str:
         sender = _self_address(self._spec)
         composed = build_outgoing(sender, message)
         config = self._spec.config
         try:
-            await aiosmtplib.send(
+            _ = await aiosmtplib.send(
                 composed,
                 hostname=str(config.get("smtp_host") or config.get("imap_host") or ""),
-                port=int(config.get("smtp_port") or 587),
+                port=_int_setting(config.get("smtp_port"), 587),
                 username=self._username(),
                 password=self._spec.password,
                 use_tls=bool(config.get("smtp_ssl", False)),
@@ -165,8 +168,9 @@ class ImapTransport:
             raise MailAuthError("the mail server rejected this account's credentials") from exc
         except (aiosmtplib.SMTPException, OSError) as exc:
             raise MailUnavailableError(f"the message could not be sent: {exc}") from exc
-        return str(composed["Message-ID"])
+        return str(composed.get("Message-ID"))
 
+    @override
     async def flag(
         self, folder: str, uid: str, *, seen: bool | None = None, flagged: bool | None = None
     ) -> None:
@@ -178,8 +182,9 @@ class ImapTransport:
                 if wanted is None:
                     continue
                 verb = "+FLAGS" if wanted else "-FLAGS"
-                await self._command(client.uid("store", uid, verb, f"({flag})"))
+                _ = await self._command(client.uid("store", uid, verb, f"({flag})"))
 
+    @override
     async def move(self, folder: str, uid: str, destination: str) -> None:
         async with self._lock:
             client = await self._connect()
@@ -187,23 +192,25 @@ class ImapTransport:
             if await self._moved(client, uid, destination):
                 return
             # Pre-RFC 6851 servers have no MOVE: copy, then flag the original deleted.
-            await self._command(client.uid("copy", uid, destination))
-            await self._command(client.uid("store", uid, "+FLAGS", "(\\Deleted)"))
+            _ = await self._command(client.uid("copy", uid, destination))
+            _ = await self._command(client.uid("store", uid, "+FLAGS", "(\\Deleted)"))
             await self._expunge(client, uid)
 
+    @override
     async def delete(self, folder: str, uid: str) -> None:
         async with self._lock:
             client = await self._connect()
             await self._select(client, folder)
-            await self._command(client.uid("store", uid, "+FLAGS", "(\\Deleted)"))
+            _ = await self._command(client.uid("store", uid, "+FLAGS", "(\\Deleted)"))
             await self._expunge(client, uid)
 
+    @override
     async def close(self) -> None:
         client, self._client, self._selected = self._client, None, None
         if client is None:
             return
         with suppress(Exception):
-            await asyncio.wait_for(client.logout(), timeout=5.0)
+            _ = await asyncio.wait_for(client.logout(), timeout=5.0)
         # LOGOUT is a courtesy to the server, not a release of anything on this side —
         # aioimaplib leaves the transport open either way, and a logout that timed out or
         # failed leaves it open with nothing coming.
@@ -211,6 +218,7 @@ class ImapTransport:
 
     # --- push (IMAP IDLE) ------------------------------------------------------
 
+    @override
     async def watch(self, folder: str) -> AsyncIterator[None]:
         """Yield once per server-side change in ``folder`` (RFC 2177 IDLE), renewing the
         idle well inside the protocol's 29-minute ceiling. The caller stops by breaking
@@ -221,11 +229,11 @@ class ImapTransport:
                 await self._select(client, folder)
                 idle = await client.idle_start(timeout=_IDLE_RENEW_S)
                 try:
-                    await client.wait_server_push()
+                    _ = await client.wait_server_push()
                 finally:
                     client.idle_done()
                     with suppress(asyncio.TimeoutError):
-                        await asyncio.wait_for(idle, timeout=5.0)
+                        _ = await asyncio.wait_for(idle, timeout=5.0)
             yield None
 
     # --- internals -------------------------------------------------------------
@@ -241,16 +249,13 @@ class ImapTransport:
         if not host:
             raise MailError("this account has no IMAP server configured")
         client = aioimaplib.IMAP4_SSL(
-            host=host, port=int(config.get("imap_port") or 993), timeout=_CONNECT_TIMEOUT_S
+            host=host, port=_int_setting(config.get("imap_port"), 993), timeout=_CONNECT_TIMEOUT_S
         )
         try:
             await client.wait_hello_from_server()
             if self._spec.access_token:
                 status, _lines = await self._command(
-                    # aioimaplib annotates the token as `bytes` but formats it as a string.
-                    client.xoauth2(
-                        self._username(), cast(bytes, cast(object, self._spec.access_token))
-                    )
+                    client.xoauth2(self._username(), self._spec.access_token)
                 )
             else:
                 status, _lines = await self._command(
@@ -310,9 +315,9 @@ class ImapTransport:
         if not client.has_capability("UIDPLUS"):
             logger.debug("no UIDPLUS: leaving uid %s flagged \\Deleted rather than expunging", uid)
             return
-        await self._command(client.uid("expunge", uid))
+        _ = await self._command(client.uid("expunge", uid))
 
-    async def _command(self, awaitable) -> tuple[str, list[object]]:
+    async def _command(self, awaitable: Awaitable[aioimaplib.Response]) -> tuple[str, list[object]]:
         """Await one IMAP command, turning connection-level failures into domain errors
         and dropping the cached connection so the next call reconnects."""
         try:
@@ -394,7 +399,12 @@ def _search_uids(lines: list[object]) -> list[str]:
     return []
 
 
-def _parse_list_line(line) -> MailFolder | None:
+def _int_setting(value: object, default: int) -> int:
+    """A port-like account setting, falling back to ``default`` when it is unset or empty."""
+    return int(value) if value and isinstance(value, str | int | float) else default
+
+
+def _parse_list_line(line: object) -> MailFolder | None:
     text = line.decode("utf-8", "replace") if isinstance(line, bytes | bytearray) else str(line)
     match = _LIST_LINE.match(text.strip())
     if match is None:

@@ -28,7 +28,6 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
@@ -48,6 +47,7 @@ from models.mail import (
     PROVIDER_JMAP,
     MailAccount,
 )
+from services.credential_store import CredentialStore
 
 from .cache import MailCache, MessageDetail, MessageView
 from .drafts import KIND_SUGGESTED, DraftStore, DraftView, StyleProfileStore
@@ -58,6 +58,7 @@ from .imap import ImapTransport
 from .jmap import JmapTransport
 from .models import ROLE_INBOX, ROLE_SENT, AccountSpec, MailAddress, MailFolder, OutgoingMail
 from .oauth import MailSecrets, TokenBundle
+from .ports import BackgroundModelSource, Notifier
 from .quoting import split_body
 from .style import SAMPLE_LIMIT, MailStyle
 from .transport import MailTransport
@@ -125,23 +126,23 @@ class MailService:
         self,
         engine: Engine,
         vault: Vault,
-        credentials,
-        registry,
+        credentials: CredentialStore,
+        registry: BackgroundModelSource,
         *,
-        notifications=None,
+        notifications: Notifier | None = None,
         cache_ttl_s: float = CACHE_TTL_S,
         sync_interval_s: float = SYNC_INTERVAL_S,
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._secrets = MailSecrets(engine, vault, credentials)
-        self.cache = MailCache(engine, vault)
-        self.drafts = DraftStore(engine, vault)
-        self.profiles = StyleProfileStore(engine, vault)
-        self.triage = MailTriage(registry, notifications)
-        self.style = MailStyle(registry)
-        self._cache_ttl_s = cache_ttl_s
-        self._sync_interval_s = sync_interval_s
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._secrets: MailSecrets = MailSecrets(engine, vault, credentials)
+        self.cache: MailCache = MailCache(engine, vault)
+        self.drafts: DraftStore = DraftStore(engine, vault)
+        self.profiles: StyleProfileStore = StyleProfileStore(engine, vault)
+        self.triage: MailTriage = MailTriage(registry, notifications)
+        self.style: MailStyle = MailStyle(registry)
+        self._cache_ttl_s: float = cache_ttl_s
+        self._sync_interval_s: float = sync_interval_s
         self._transports: dict[str, LiveTransport] = {}
         self._transport_locks: dict[str, asyncio.Lock] = {}
         self._refreshed: dict[tuple[str, str], float] = {}
@@ -193,7 +194,7 @@ class MailService:
         name: str,
         address: str,
         provider: str = PROVIDER_IMAP,
-        config: dict[str, Any] | None = None,
+        config: dict[str, object] | None = None,
         password: str | None = None,
         tokens: TokenBundle | None = None,
     ) -> AccountView:
@@ -228,13 +229,13 @@ class MailService:
         account_id: str,
         *,
         name: str | None = None,
-        config: dict[str, Any] | None = None,
+        config: dict[str, object] | None = None,
         password: str | None = None,
         tokens: TokenBundle | None = None,
         enabled: bool | None = None,
     ) -> AccountView:
         row = await self._row(owner_id, account_id)
-        updates: dict[str, Any] = {"updated_at": utcnow()}
+        updates: dict[str, object] = {"updated_at": utcnow()}
         if name is not None:
             updates["name"] = name
         if config is not None:
@@ -438,7 +439,7 @@ class MailService:
         profile = await self.style.learn(owner_id, samples)
         if profile is None:
             return stored.profile if stored is not None else None
-        await self.profiles.set(owner_id, profile, sample_count=len(samples), edited=False)
+        _ = await self.profiles.set(owner_id, profile, sample_count=len(samples), edited=False)
         return profile
 
     async def suggest_replies(
@@ -526,7 +527,7 @@ class MailService:
             return
         since = None if full else await self.cache.newest_uid(account_id, target)
         headers = await transport.list_messages(target, since_uid=since)
-        await self.cache.upsert_headers(owner_id, account_id, target, headers)
+        _ = await self.cache.upsert_headers(owner_id, account_id, target, headers)
         # Keyed by the *requested* folder (``None`` for "the account's default"), so the
         # window a listing checks and the window a pull stamps are always the same key.
         self._refreshed[(account_id, folder or "")] = time.monotonic()
