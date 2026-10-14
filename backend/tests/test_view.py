@@ -12,16 +12,19 @@ without an event.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
+from pathlib import Path
 
 from pydantic_ai import Agent, DeferredToolRequests
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 from agent import stream_agent_run
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import Run, RunStream
+from runs import EventBody, Run, RunStream
 from services.artifacts import ArtifactStore
 from services.sandbox import PreviewHandle, SandboxError, SandboxSessionManager
 from services.workspace_history import (
@@ -39,16 +42,14 @@ class FakeSession:
     hands the same bytes back as the captured workspace tree."""
 
     def __init__(self, files: dict[str, bytes]) -> None:
-        self._files = files
+        self._files: dict[str, bytes] = files
 
     def read_file(self, path: str) -> bytes:
         if path not in self._files:
             raise SandboxError(f"no such file: {path!r}")
         return self._files[path]
 
-    def collect_text_files(
-        self, *, max_file_bytes: int = 262_144, max_files: int = 2000
-    ) -> dict[str, bytes]:
+    def collect_text_files(self) -> dict[str, bytes]:
         return dict(self._files)
 
 
@@ -56,12 +57,12 @@ class FakeManager:
     """Stands in for the sandbox session manager — files + a live-head launcher."""
 
     def __init__(self, files: dict[str, bytes] | None = None, *, fail: bool = False) -> None:
-        self._session = FakeSession(files or {})
-        self.fail = fail
+        self._session: FakeSession = FakeSession(files or {})
+        self.fail: bool = fail
         self.started: list[tuple[str, tuple[str, ...], int]] = []
         self.stopped: list[str] = []
 
-    async def acquire(self, key: str, *, holder: object = None) -> FakeSession:
+    async def acquire(self, _key: str, **_kwargs: object) -> FakeSession:
         return self._session
 
     async def start_preview(self, key: str, command: list[str], port: int) -> PreviewHandle:
@@ -79,7 +80,7 @@ class FakeManager:
         self.stopped.append(key)
 
 
-async def _stores(tmp_path) -> tuple[ArtifactStore, WorkspaceHistoryStore]:
+async def _stores(tmp_path: Path) -> tuple[ArtifactStore, WorkspaceHistoryStore]:
     """An artifact store (preview bytes) and a workspace-history store (versions)
     over one in-memory engine + vault, wired into the run like the real engine does."""
     engine = make_engine("sqlite:///:memory:")
@@ -89,19 +90,24 @@ async def _stores(tmp_path) -> tuple[ArtifactStore, WorkspaceHistoryStore]:
     return ArtifactStore(engine, vault), WorkspaceHistoryStore(engine, vault)
 
 
-def _call_then_finish(args: dict[str, object]):
+type _StreamFn = Callable[[list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls]]
+
+
+def _call_then_finish(args: dict[str, object]) -> _StreamFn:
     """A model that calls ``view_show`` once with ``args``, then answers with text.
     Ends the loop on either a tool return or a validation retry, so a rejected call
     doesn't spin forever."""
 
-    def _settled(messages) -> bool:
+    def _settled(messages: list[ModelMessage]) -> bool:
         return any(
             type(part).__name__ in ("ToolReturnPart", "RetryPromptPart")
             for message in messages
             for part in message.parts
         )
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         if _settled(messages):
             yield "done"
         else:
@@ -110,15 +116,17 @@ def _call_then_finish(args: dict[str, object]):
     return stream_fn
 
 
-def _close_then_finish():
-    def _settled(messages) -> bool:
+def _close_then_finish() -> _StreamFn:
+    def _settled(messages: list[ModelMessage]) -> bool:
         return any(
             type(part).__name__ == "ToolReturnPart"
             for message in messages
             for part in message.parts
         )
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         if _settled(messages):
             yield "done"
         else:
@@ -127,7 +135,14 @@ def _close_then_finish():
     return stream_fn
 
 
-def _run(stream_fn, *, manager, store=None, history=None, conversation_id="conv-1"):
+def _run(
+    stream_fn: _StreamFn,
+    *,
+    manager: FakeManager | None,
+    store: ArtifactStore | None = None,
+    history: WorkspaceHistoryStore | BrokenHistory | None = None,
+    conversation_id: str = "conv-1",
+) -> tuple[Agent[RunDeps, str | DeferredToolRequests], Run, RunDeps]:
     agent = Agent(
         FunctionModel(stream_function=stream_fn),
         deps_type=RunDeps,
@@ -152,17 +167,19 @@ def _run(stream_fn, *, manager, store=None, history=None, conversation_id="conv-
     return agent, run, deps
 
 
-def _bodies(run: Run):
+def _bodies(run: Run) -> list[EventBody]:
     return [e.body for e in run.stream.replay()]
 
 
-async def _drive(agent, run, deps, prompt="go"):
+async def _drive(
+    agent: Agent[RunDeps, str | DeferredToolRequests], run: Run, deps: RunDeps, prompt: str = "go"
+) -> None:
     async with agent.iter(prompt, deps=deps) as agent_run:
         await stream_agent_run(agent_run, run)
 
 
 # --- static versions (file=) -------------------------------------------------
-async def test_show_file_captures_and_emits_snapshot(tmp_path):
+async def test_show_file_captures_and_emits_snapshot(tmp_path: Path):
     store, history = await _stores(tmp_path)
     manager = FakeManager({"chart.png": b"\x89PNG\r\n"})
     agent, run, deps = _run(
@@ -184,7 +201,7 @@ async def test_show_file_captures_and_emits_snapshot(tmp_path):
     assert [s.id for s in listed] == [snap.snapshot_id]
 
 
-async def test_show_missing_file_reports_and_stores_nothing(tmp_path):
+async def test_show_missing_file_reports_and_stores_nothing(tmp_path: Path):
     store, history = await _stores(tmp_path)
     manager = FakeManager({})
     agent, run, deps = _run(
@@ -208,7 +225,7 @@ async def test_show_file_unavailable_without_store():
 
 
 # --- live head (serve=) ------------------------------------------------------
-async def test_show_live_emits_live_with_entry_path(tmp_path):
+async def test_show_live_emits_live_with_entry_path(tmp_path: Path):
     _store, history = await _stores(tmp_path)
     manager = FakeManager()
     agent, run, deps = _run(
@@ -263,7 +280,7 @@ async def test_show_live_failure_feeds_back_without_event():
 class BrokenHistory:
     """A version store whose capture always fails — to prove history is best-effort."""
 
-    async def capture(self, *args, **kwargs):
+    async def capture(self, *_args: object, **_kwargs: object) -> SnapshotView:
         raise RuntimeError("vault locked")
 
 
@@ -282,7 +299,7 @@ async def test_show_live_emits_head_even_when_version_capture_fails():
     assert "view.snapshot" not in types
 
 
-async def test_show_file_degrades_when_version_capture_fails(tmp_path):
+async def test_show_file_degrades_when_version_capture_fails(tmp_path: Path):
     # The artifact bytes are published, but a capture failure degrades to a message
     # instead of breaking the turn — and emits no half-formed version event.
     store, _ = await _stores(tmp_path)
@@ -312,7 +329,7 @@ async def test_close_emits_live_stopped():
     assert manager.stopped == ["conv-1"]
 
 
-async def test_show_both_modes_retries_without_showing_anything(tmp_path):
+async def test_show_both_modes_retries_without_showing_anything(tmp_path: Path):
     # file AND serve is ambiguous → ModelRetry, no view event either way.
     store, history = await _stores(tmp_path)
     manager = FakeManager({"x.html": b"<p>x</p>"})
