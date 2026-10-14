@@ -7,11 +7,11 @@ from collections.abc import Callable
 
 import pytest
 
-from runs import ConversationBusyError, LaneLimits, Run, RunRegistry, RunStatus
+from runs import ConversationBusyError, LaneLimits, Orchestrator, Run, RunRegistry, RunStatus
 from runs.events import AnswerDelta, RunEnded, RunMetrics
 
 
-def _types(run):
+def _types(run: Run) -> list[str]:
     return [e.body.type for e in run.stream.replay()]
 
 
@@ -23,7 +23,7 @@ def _ended(run: Run) -> RunEnded:
 
 def _count_subscribers(seen: dict[str, int]) -> Callable[[Run], None]:
     def hook(run: Run) -> None:
-        seen.setdefault("count", run.stream.subscriber_count)
+        _ = seen.setdefault("count", run.stream.subscriber_count)
 
     return hook
 
@@ -31,8 +31,8 @@ def _count_subscribers(seen: dict[str, int]) -> Callable[[Run], None]:
 async def test_run_completes_done():
     reg = RunRegistry()
 
-    async def orch(run):
-        run.emit(AnswerDelta(text="hi"))
+    async def orch(run: Run) -> None:
+        _ = run.emit(AnswerDelta(text="hi"))
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
@@ -48,22 +48,22 @@ async def test_metrics_the_run_measured_precede_the_closing_frame_on_every_path(
     # A stopped or failed turn still spent the tokens it spent.
     reg = RunRegistry()
 
-    async def done(run):
+    async def done(run: Run) -> None:
         run.set_metrics(RunMetrics(steps=2))
 
-    async def failed(run):
+    async def failed(run: Run) -> None:
         run.set_metrics(RunMetrics(steps=2))
         raise ValueError("boom")
 
-    async def stopped(run):
+    async def stopped(run: Run) -> None:
         run.set_metrics(RunMetrics(steps=2))
-        await asyncio.Event().wait()
+        _ = await asyncio.Event().wait()
 
     for orch, closing in ((done, "run.ended"), (failed, "run.error"), (stopped, "run.ended")):
         run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
         await asyncio.sleep(0)
         if orch is stopped:
-            await reg.cancel(run.id)
+            _ = await reg.cancel(run.id)
         await run.wait()
         types = _types(run)
         assert types[-2:] == ["run.metrics", closing]
@@ -74,16 +74,16 @@ async def test_metrics_the_run_measured_precede_the_closing_frame_on_every_path(
 async def test_a_cancelled_or_errored_run_with_no_metrics_emits_no_metrics_frame():
     reg = RunRegistry()
 
-    async def failed(run):
+    async def failed(_run: Run) -> None:
         raise ValueError("boom")
 
-    async def stopped(run):
-        await asyncio.Event().wait()
+    async def stopped(_run: Run) -> None:
+        _ = await asyncio.Event().wait()
 
     errored = reg.submit(kind="chat", owner_id="operator", orchestrator=failed)
     cancelled = reg.submit(kind="chat", owner_id="operator", orchestrator=stopped)
     await asyncio.sleep(0)
-    await reg.cancel(cancelled.id)
+    _ = await reg.cancel(cancelled.id)
     await errored.wait()
     await cancelled.wait()
 
@@ -96,7 +96,7 @@ async def test_a_cancelled_or_errored_run_with_no_metrics_emits_no_metrics_frame
 async def test_run_error_is_terminal_not_fatal():
     reg = RunRegistry()
 
-    async def orch(run):
+    async def orch(_run: Run) -> None:
         raise ValueError("boom")
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
@@ -113,7 +113,7 @@ async def test_run_error_is_terminal_not_fatal():
 async def test_run_blocked_outcome():
     reg = RunRegistry()
 
-    async def orch(run):
+    async def orch(run: Run) -> None:
         run.block("need more info")
 
     run = reg.submit(kind="agent", owner_id="operator", orchestrator=orch)
@@ -129,9 +129,9 @@ async def test_run_blocked_outcome():
 async def test_cancel_running_run():
     reg = RunRegistry()
 
-    async def orch(run):
-        run.emit(AnswerDelta(text="working"))
-        await asyncio.Event().wait()  # never completes on its own
+    async def orch(run: Run) -> None:
+        _ = run.emit(AnswerDelta(text="working"))
+        _ = await asyncio.Event().wait()  # never completes on its own
 
     run = reg.submit(kind="agent", owner_id="operator", orchestrator=orch)
     await asyncio.sleep(0)  # let it start
@@ -147,8 +147,8 @@ async def test_cancel_running_run():
 async def test_wall_clock_timeout():
     reg = RunRegistry(wall_clock_timeout_s=0.05, inactivity_timeout_s=None)
 
-    async def orch(run):
-        run.emit(AnswerDelta(text="start"))
+    async def orch(run: Run) -> None:
+        _ = run.emit(AnswerDelta(text="start"))
         await asyncio.sleep(5)
 
     run = reg.submit(kind="research", owner_id="operator", orchestrator=orch)
@@ -165,8 +165,8 @@ async def test_wall_clock_timeout():
 async def test_inactivity_timeout():
     reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.05)
 
-    async def orch(run):
-        run.emit(AnswerDelta(text="start"))
+    async def orch(run: Run) -> None:
+        _ = run.emit(AnswerDelta(text="start"))
         await asyncio.sleep(5)  # no further events → inactivity fires
 
     run = reg.submit(kind="research", owner_id="operator", orchestrator=orch)
@@ -186,8 +186,8 @@ async def test_keepalive_holds_a_long_silent_call_open_past_the_inactivity_bound
     # progress, and every feature with a slow call would hand-roll its own heartbeat.
     reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.1)
 
-    async def orch(run):
-        run.emit(AnswerDelta(text="start"))
+    async def orch(run: Run) -> None:
+        _ = run.emit(AnswerDelta(text="start"))
         async with run.keepalive():
             await asyncio.sleep(0.5)  # five times the bound, silent throughout
 
@@ -203,7 +203,7 @@ async def test_the_bound_applies_again_the_moment_the_call_returns():
     # leave the watchdog disarmed.
     reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.1)
 
-    async def orch(run):
+    async def orch(run: Run) -> None:
         async with run.keepalive():
             await asyncio.sleep(0.3)
         await asyncio.sleep(5)  # unprotected again → inactivity fires
@@ -221,7 +221,7 @@ async def test_keepalive_beats_inside_a_bound_shorter_than_its_default_interval(
     # gets a proportionally faster heartbeat, so a shortened timeout can't outrun it.
     reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=0.06)
 
-    async def orch(run):
+    async def orch(run: Run) -> None:
         async with run.keepalive():
             await asyncio.sleep(0.4)
 
@@ -234,7 +234,7 @@ async def test_keepalive_beats_inside_a_bound_shorter_than_its_default_interval(
 async def test_keepalive_does_not_hide_a_failure_raised_inside_it():
     reg = RunRegistry(wall_clock_timeout_s=5.0, inactivity_timeout_s=1.0)
 
-    async def orch(run):
+    async def orch(run: Run) -> None:
         async with run.keepalive():
             raise RuntimeError("the model refused")
 
@@ -251,23 +251,23 @@ async def test_concurrency_limit_queues_bursts():
     started1, release1 = asyncio.Event(), asyncio.Event()
     started2, release2 = asyncio.Event(), asyncio.Event()
 
-    async def orch(started, release):
-        async def _run(run):
+    def orch(started: asyncio.Event, release: asyncio.Event) -> Orchestrator:
+        async def _run(_run: Run) -> None:
             started.set()
-            await release.wait()
+            _ = await release.wait()
 
         return _run
 
-    run1 = reg.submit(kind="t", owner_id="operator", orchestrator=await orch(started1, release1))
-    run2 = reg.submit(kind="t", owner_id="operator", orchestrator=await orch(started2, release2))
+    run1 = reg.submit(kind="t", owner_id="operator", orchestrator=orch(started1, release1))
+    run2 = reg.submit(kind="t", owner_id="operator", orchestrator=orch(started2, release2))
 
-    await started1.wait()
+    _ = await started1.wait()
     assert run1.status is RunStatus.running
     assert run2.status is RunStatus.queued  # blocked at the concurrency gate
 
     release1.set()
     await run1.wait()
-    await started2.wait()
+    _ = await started2.wait()
     assert run2.status is RunStatus.running
 
     release2.set()
@@ -279,12 +279,12 @@ async def test_concurrency_limit_queues_bursts():
 async def test_list_filters_by_owner():
     reg = RunRegistry()
 
-    async def orch(run):
+    async def orch(_run: Run) -> None:
         return None
 
     a = reg.submit(kind="t", owner_id="alice", orchestrator=orch)
     b = reg.submit(kind="t", owner_id="bob", orchestrator=orch)
-    await asyncio.gather(a.wait(), b.wait())
+    _ = await asyncio.gather(a.wait(), b.wait())
 
     assert {r.id for r in reg.list(owner_id="alice")} == {a.id}
     assert {r.id for r in reg.list()} == {a.id, b.id}
@@ -294,12 +294,12 @@ async def test_active_run_for_finds_in_flight_run():
     reg = RunRegistry()
     started, release = asyncio.Event(), asyncio.Event()
 
-    async def orch(run):
+    async def orch(_run: Run) -> None:
         started.set()
-        await release.wait()
+        _ = await release.wait()
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch, conversation_id="c1")
-    await started.wait()
+    _ = await started.wait()
 
     assert reg.active_run_for("c1", "operator") is run
     # A different conversation, a different owner, or an unknown id → no match.
@@ -321,15 +321,15 @@ async def test_submit_rejects_a_second_run_for_the_same_conversation():
     reg = RunRegistry()
     started, release = asyncio.Event(), asyncio.Event()
 
-    async def orch(run):
+    async def orch(_run: Run) -> None:
         started.set()
-        await release.wait()
+        _ = await release.wait()
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch, conversation_id="c1")
-    await started.wait()
+    _ = await started.wait()
 
     with pytest.raises(ConversationBusyError):
-        reg.submit(kind="chat", owner_id="operator", orchestrator=orch, conversation_id="c1")
+        _ = reg.submit(kind="chat", owner_id="operator", orchestrator=orch, conversation_id="c1")
 
     # A different conversation or a different owner on the same id is unaffected.
     other_conv = reg.submit(
@@ -340,7 +340,7 @@ async def test_submit_rejects_a_second_run_for_the_same_conversation():
     )
 
     release.set()
-    await asyncio.gather(run.wait(), other_conv.wait(), other_owner.wait())
+    _ = await asyncio.gather(run.wait(), other_conv.wait(), other_owner.wait())
 
     # Once the live run reaches terminal, the conversation is free again.
     run2 = reg.submit(kind="chat", owner_id="operator", orchestrator=orch, conversation_id="c1")
@@ -404,12 +404,12 @@ async def test_claim_rejects_when_a_run_is_already_live():
     reg = RunRegistry()
     started, release = asyncio.Event(), asyncio.Event()
 
-    async def orch(run):
+    async def orch(_run: Run) -> None:
         started.set()
-        await release.wait()
+        _ = await release.wait()
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch, conversation_id="c1")
-    await started.wait()
+    _ = await started.wait()
 
     with pytest.raises(ConversationBusyError):
         reg.claim("c1", "operator")
@@ -431,11 +431,11 @@ def test_release_is_idempotent_without_a_prior_claim():
 
 
 async def test_on_terminal_fires_once_on_normal_completion():
-    calls = []
+    calls: list[Run] = []
     reg = RunRegistry(on_terminal=calls.append)
 
-    async def orch(run):
-        run.emit(AnswerDelta(text="hi"))
+    async def orch(run: Run) -> None:
+        _ = run.emit(AnswerDelta(text="hi"))
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
@@ -444,10 +444,10 @@ async def test_on_terminal_fires_once_on_normal_completion():
 
 
 async def test_on_terminal_fires_once_on_error():
-    calls = []
+    calls: list[Run] = []
     reg = RunRegistry(on_terminal=calls.append)
 
-    async def orch(run):
+    async def orch(_run: Run) -> None:
         raise ValueError("boom")
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
@@ -457,10 +457,10 @@ async def test_on_terminal_fires_once_on_error():
 
 
 async def test_on_terminal_fires_once_on_blocked():
-    calls = []
+    calls: list[Run] = []
     reg = RunRegistry(on_terminal=calls.append)
 
-    async def orch(run):
+    async def orch(run: Run) -> None:
         run.block("need more info")
 
     run = reg.submit(kind="agent", owner_id="operator", orchestrator=orch)
@@ -470,11 +470,11 @@ async def test_on_terminal_fires_once_on_blocked():
 
 
 async def test_on_terminal_fires_once_on_cancel_while_running():
-    calls = []
+    calls: list[Run] = []
     reg = RunRegistry(on_terminal=calls.append)
 
-    async def orch(run):
-        await asyncio.Event().wait()  # never completes on its own
+    async def orch(_run: Run) -> None:
+        _ = await asyncio.Event().wait()  # never completes on its own
 
     run = reg.submit(kind="agent", owner_id="operator", orchestrator=orch)
     await asyncio.sleep(0)
@@ -488,10 +488,10 @@ async def test_on_terminal_not_fired_on_park_but_fires_on_cancel_while_parked():
     # Parking isn't a terminal transition — the hook must stay silent until the run
     # is actually decided (approved/denied/resumed to completion) or, here, cancelled
     # out of band while still parked (the only close() path that bypasses `_execute`).
-    calls = []
+    calls: list[Run] = []
     reg = RunRegistry(on_terminal=calls.append)
 
-    async def orch(run):
+    async def orch(run: Run) -> None:
         run.park(None)
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
@@ -505,14 +505,16 @@ async def test_on_terminal_not_fired_on_park_but_fires_on_cancel_while_parked():
     assert run.status is RunStatus.cancelled
 
 
-async def test_on_terminal_hook_failure_is_swallowed_and_logged(caplog):
-    def boom(run):
+async def test_on_terminal_hook_failure_is_swallowed_and_logged(
+    caplog: pytest.LogCaptureFixture,
+):
+    def boom(_run: Run) -> None:
         raise RuntimeError("notifier exploded")
 
     reg = RunRegistry(on_terminal=boom)
 
-    async def orch(run):
-        run.emit(AnswerDelta(text="hi"))
+    async def orch(run: Run) -> None:
+        _ = run.emit(AnswerDelta(text="hi"))
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()  # must not raise, and must not affect the run's own outcome
@@ -530,13 +532,13 @@ async def test_on_terminal_reads_the_live_subscriber_count_before_close():
 
     ready, proceed = asyncio.Event(), asyncio.Event()
 
-    async def orch(run):
-        run.emit(AnswerDelta(text="hi"))
+    async def orch(run: Run) -> None:
+        _ = run.emit(AnswerDelta(text="hi"))
         ready.set()
-        await proceed.wait()
+        _ = await proceed.wait()
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await ready.wait()
+    _ = await ready.wait()
 
     async def consume():
         async for _ in run.stream.subscribe():
@@ -555,8 +557,8 @@ async def test_on_terminal_sees_zero_subscribers_when_nobody_is_watching():
     seen: dict[str, int] = {}
     reg = RunRegistry(on_terminal=_count_subscribers(seen))
 
-    async def orch(run):
-        run.emit(AnswerDelta(text="hi"))
+    async def orch(run: Run) -> None:
+        _ = run.emit(AnswerDelta(text="hi"))
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
@@ -570,23 +572,23 @@ async def test_cancel_while_parked_survives_an_orchestrator_still_unwinding():
     # that window closes the stream; the orchestrator then returns into `_execute`, which
     # must not emit onto the closed stream — doing so flipped the recorded `cancelled`
     # outcome to `error` and fired the terminal hook a second time.
-    calls = []
+    calls: list[Run] = []
     reg = RunRegistry(on_terminal=calls.append)
     parked = asyncio.Event()
     release = asyncio.Event()
 
-    async def orch(run):
+    async def orch(run: Run) -> None:
         run.park(None)
         parked.set()
-        await release.wait()  # still running, but the run already reads as parked
+        _ = await release.wait()  # still running, but the run already reads as parked
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await parked.wait()
+    _ = await parked.wait()
 
     assert await reg.cancel(run.id) is True
     release.set()
     assert run.task is not None
-    await asyncio.gather(run.task, return_exceptions=True)
+    _ = await asyncio.gather(run.task, return_exceptions=True)
 
     assert run.status is RunStatus.cancelled
     assert calls == [run]  # exactly once
@@ -598,14 +600,14 @@ async def test_a_bound_tripping_just_after_a_park_still_flushes_the_parked_turn(
     # `on_timeout` is disarmed at the park, so a bound tripping before the orchestrator
     # has finished unwinding would otherwise block the run with the parked turn never
     # persisted — the operator's own prompt included.
-    flushed = []
+    flushed: list[str] = []
     reg = RunRegistry(inactivity_timeout_s=0.05)
 
-    async def orch(run):
+    async def orch(run: Run) -> None:
         run.park(None)
         run.on_timeout = None  # what the engine does once a turn has parked
         run.on_park_cancel = lambda: flushed.append(run.id)
-        await asyncio.Event().wait()  # never returns; the bound trips here
+        _ = await asyncio.Event().wait()  # never returns; the bound trips here
 
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
@@ -623,16 +625,16 @@ async def test_shutdown_cancels_live_runs_so_their_waiters_settle():
     reg = RunRegistry()
     started = asyncio.Event()
 
-    async def running(run):
+    async def running(_run: Run) -> None:
         started.set()
-        await asyncio.Event().wait()
+        _ = await asyncio.Event().wait()
 
-    async def parking(run):
+    async def parking(run: Run) -> None:
         run.park(None)
 
     live = reg.submit(kind="chat", owner_id="operator", orchestrator=running)
     idle = reg.submit(kind="chat", owner_id="operator", orchestrator=parking)
-    await started.wait()
+    _ = await started.wait()
     await idle.wait()
     assert idle.status is RunStatus.awaiting_input
 
