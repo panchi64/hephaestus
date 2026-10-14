@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import cast
+
 import pytest
+from pydantic import TypeAdapter
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -18,10 +22,13 @@ from tools.deps import RunDeps
 from tools.skills import skill_catalog
 
 from ._agent_helpers import make_stores
-from ._helpers import client_app
+from ._helpers import app_state, client_app
+from ._json import arr, json_body, obj
 from ._plugin_helpers import OWNER, make_store
 from ._plugin_helpers import make_stores as make_plugin_stores
 from .test_skills_tools import FakeSessions, _tool
+
+_PATHS = TypeAdapter(list[str])
 
 MANIFEST = "name: helpers\ndescription: Helpers for release work.\n"
 
@@ -54,7 +61,7 @@ def _files(**extra: bytes) -> dict[str, bytes]:
 
 async def _published(store: PluginStore, files: dict[str, bytes]) -> None:
     view = await store.write_draft(OWNER, "helpers", files, source="agent")
-    await store.publish(OWNER, view.id)
+    _ = await store.publish(OWNER, view.id)
 
 
 def test_a_plugin_may_contribute_only_agents_and_skills():
@@ -69,31 +76,31 @@ def test_a_plugin_may_contribute_only_agents_and_skills():
 
 def test_a_plugin_contributing_nothing_is_refused():
     with pytest.raises(PluginValidationError):
-        validate_files({"plugin.yaml": MANIFEST.encode()})
+        _ = validate_files({"plugin.yaml": MANIFEST.encode()})
 
 
 def test_a_broken_agent_file_names_its_path():
     with pytest.raises(PluginValidationError) as raised:
-        validate_files(_files(**{"agents/bad.md": b"---\nname: [\n---\n"}))
+        _ = validate_files(_files(**{"agents/bad.md": b"---\nname: [\n---\n"}))
     assert raised.value.field == "agents"
 
 
-async def test_only_a_published_plugins_agents_join_the_catalog(tmp_path):
+async def test_only_a_published_plugins_agents_join_the_catalog(tmp_path: Path):
     plugins = await make_store(tmp_path / "plugins")
     agents, _conversations = await make_stores(tmp_path / "agents")
     catalog = AgentCatalog(agents)
     catalog.contribute(plugins.agents)
 
-    await plugins.write_draft(OWNER, "helpers", _files(), source="agent")
+    _ = await plugins.write_draft(OWNER, "helpers", _files(), source="agent")
     assert "changelog-writer" not in await catalog.agents(OWNER)
 
     view = await plugins.get_by_name(OWNER, "helpers")
     assert view is not None
-    await plugins.publish(OWNER, view.id)
+    _ = await plugins.publish(OWNER, view.id)
     assert (await catalog.agents(OWNER))["changelog-writer"].source == "plugin"
 
 
-async def test_a_plugin_agent_never_shadows_a_built_in(tmp_path):
+async def test_a_plugin_agent_never_shadows_a_built_in(tmp_path: Path):
     plugins = await make_store(tmp_path / "plugins")
     agents, _conversations = await make_stores(tmp_path / "agents")
     catalog = AgentCatalog(agents)
@@ -104,7 +111,9 @@ async def test_a_plugin_agent_never_shadows_a_built_in(tmp_path):
     assert (await catalog.agents(OWNER))["researcher"].source == "builtin"
 
 
-def _deps(plugins: PluginStore, skills: SkillStore | None = None, sessions=None) -> RunDeps:
+def _deps(
+    plugins: PluginStore, skills: SkillStore | None = None, sessions: FakeSessions | None = None
+) -> RunDeps:
     caps = ServiceContainer()
     caps.add(plugins)
     if skills is not None:
@@ -119,25 +128,30 @@ def _ctx(deps: RunDeps) -> RunContext[RunDeps]:
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
-async def test_a_plugin_skill_opens_and_stages_its_files(tmp_path):
+async def test_a_plugin_skill_opens_and_stages_its_files(tmp_path: Path):
     plugins, skills = await make_plugin_stores(tmp_path)
     await _published(plugins, _files())
     sessions = FakeSessions()
 
-    result = await _tool("open")(_ctx(_deps(plugins, skills, sessions)), "release-checklist")
+    result = cast(
+        dict[str, object],
+        await _tool("open")(_ctx(_deps(plugins, skills, sessions)), "release-checklist"),
+    )
 
     assert result["ok"] is True
-    assert "Run the tests" in result["instructions"]
-    assert result["files"][-1] == "/work/skills/release-checklist/scripts/check.sh"
+    assert "Run the tests" in str(result["instructions"])
+    assert _PATHS.validate_python(result["files"])[-1] == (
+        "/work/skills/release-checklist/scripts/check.sh"
+    )
 
 
-async def test_a_stored_skill_shadows_a_plugin_skill_of_the_same_name(tmp_path):
+async def test_a_stored_skill_shadows_a_plugin_skill_of_the_same_name(tmp_path: Path):
     plugins, skills = await make_plugin_stores(tmp_path)
     await _published(plugins, _files())
     stored = await skills.create(
         OWNER, name="release-checklist", description="Mine.", body="My steps."
     )
-    await skills.set_published(OWNER, stored.id, True)
+    _ = await skills.set_published(OWNER, stored.id, True)
 
     entries = await skill_catalog(_ctx(_deps(plugins, skills)))
     assert [(entry.name, entry.description) for entry in entries] == [
@@ -176,18 +190,21 @@ def test_a_plugin_offers_routine_templates():
         ROUTINE.split("---\n\n")[0] + "---\n",
     ],
 )
-def test_a_broken_routine_template_names_its_path(broken):
+def test_a_broken_routine_template_names_its_path(broken: str):
     with pytest.raises(PluginValidationError) as raised:
-        validate_files({"plugin.yaml": MANIFEST.encode(), "routines/weekly.md": broken.encode()})
+        _ = validate_files(
+            {"plugin.yaml": MANIFEST.encode(), "routines/weekly.md": broken.encode()}
+        )
     assert raised.value.field == "routines"
     assert "routines/weekly.md" in str(raised.value)
 
 
 async def test_a_published_plugins_templates_are_listed_for_the_operator():
     async with client_app() as (client, app):
-        plugins = app.state.plugins
+        plugins = app_state(app, "plugins", PluginStore)
         await _published(plugins, _files(**{"routines/weekly.md": ROUTINE.encode()}))
-        [template] = (await client.get("/tasks/templates")).json()["items"]
+        [item] = arr(json_body(await client.get("/tasks/templates"))["items"])
+        template = obj(item)
         assert (template["plugin"], template["title"]) == ("helpers", "Weekly release check")
-        assert template["schedule"]["cron"] == "0 9 * * 1"
+        assert obj(template["schedule"])["cron"] == "0 9 * * 1"
         assert template["agentName"] == "changelog-writer"

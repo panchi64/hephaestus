@@ -12,29 +12,32 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import httpx
 import pytest
 
 from services.projects.listing import list_files
 from services.projects.tree import worktree_root
+from services.projects.worktree import WorktreeManager
 from services.sandbox.base import contained_file
 
-from ._helpers import client_app
+from ._helpers import app_state, client_app
+from ._json import arr, json_body, obj, s
 
 
 def _git(cwd: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+    _ = subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     root = tmp_path / "project"
     (root / "src").mkdir(parents=True)
-    (root / "src" / "app.tsx").write_text("x")
-    (root / "src" / "helper.ts").write_text("x")
-    (root / "README.md").write_text("x")
+    _ = (root / "src" / "app.tsx").write_text("x")
+    _ = (root / "src" / "helper.ts").write_text("x")
+    _ = (root / "README.md").write_text("x")
     (root / "node_modules" / "junk").mkdir(parents=True)
-    (root / "node_modules" / "junk" / "a.js").write_text("x")
-    (root / ".gitignore").write_text("node_modules/\n")
+    _ = (root / "node_modules" / "junk" / "a.js").write_text("x")
+    _ = (root / ".gitignore").write_text("node_modules/\n")
     _git(root, "init", "-q")
     return root
 
@@ -56,9 +59,9 @@ class TestListing:
     async def test_a_directory_that_is_not_a_repository_still_lists(self, tmp_path: Path):
         plain = tmp_path / "plain"
         (plain / "deep").mkdir(parents=True)
-        (plain / "deep" / "note.md").write_text("x")
+        _ = (plain / "deep" / "note.md").write_text("x")
         (plain / "node_modules").mkdir()
-        (plain / "node_modules" / "x.js").write_text("x")
+        _ = (plain / "node_modules" / "x.js").write_text("x")
         listing = await list_files(plain)
         assert {e.path for e in listing.entries} == {"deep/note.md"}
 
@@ -68,12 +71,12 @@ class TestListing:
         # with the ranking — `apps/...` sorts before `src/...` — and only the buckets
         # give the right answer.
         (repo / "apps").mkdir()
-        (repo / "apps" / "zebra.ts").write_text("x")
+        _ = (repo / "apps" / "zebra.ts").write_text("x")
         paths = [e.path for e in (await list_files(repo, query="app")).entries]
         assert paths.index("src/app.tsx") < paths.index("apps/zebra.ts")
 
     async def test_a_name_prefix_outranks_a_name_substring(self, repo: Path):
-        (repo / "myapp.ts").write_text("x")
+        _ = (repo / "myapp.ts").write_text("x")
         paths = [e.path for e in (await list_files(repo, query="app")).entries]
         assert paths.index("src/app.tsx") < paths.index("myapp.ts")
 
@@ -84,7 +87,7 @@ class TestListing:
 
 
 class TestRootResolution:
-    async def test_a_missing_worktree_falls_back_to_the_project(self, repo: Path, tmp_path):
+    async def test_a_missing_worktree_falls_back_to_the_project(self, repo: Path, tmp_path: Path):
         root, is_worktree = await worktree_root(tmp_path / "nope", "c1", repo)
         assert (root, is_worktree) == (repo, False)
 
@@ -125,7 +128,7 @@ class TestContainment:
 
     def test_a_symlink_pointing_out_does_not(self, repo: Path, tmp_path: Path):
         secret = tmp_path / "secret.txt"
-        secret.write_text("x")
+        _ = secret.write_text("x")
         # Resolved on both sides, so a link out is caught rather than merely a `..`
         # spelled in the string.
         (repo / "link.txt").symlink_to(secret)
@@ -139,25 +142,26 @@ class TestRoute:
     async def test_it_answers_camel_case_and_names_its_root(self, repo: Path):
         async with client_app() as (client, _app):
             created = await client.post("/projects/ensure", json={"rootPath": str(repo)})
-            pid = created.json()["id"]
-            body = (await client.get(f"/projects/{pid}/files?query=app")).json()
+            pid = json_body(created)["id"]
+            body = json_body(await client.get(f"/projects/{pid}/files?query=app"))
         assert body["root"] == "project"
-        assert body["entries"][0]["path"] == "src/app.tsx"
+        assert obj(arr(body["entries"])[0])["path"] == "src/app.tsx"
         assert body["truncated"] is False
 
     async def test_an_unknown_project_is_a_404(self):
         async with client_app() as (client, _app):
             assert (await client.get("/projects/nope/files")).status_code == 404
 
-    async def test_listing_never_creates_a_worktree(self, repo: Path, tmp_path: Path):
+    async def test_listing_never_creates_a_worktree(self, repo: Path):
         async with client_app() as (client, app):
             created = await client.post("/projects/ensure", json={"rootPath": str(repo)})
-            pid = created.json()["id"]
-            await client.get(f"/projects/{pid}/files?conversation_id=c1")
+            pid = s(json_body(created)["id"])
+            _ = await client.get(f"/projects/{pid}/files?conversation_id=c1")
             # Acquiring the project's single checkout as a side effect of typing a
             # character would take it from whatever else holds it.
-            assert app.state.worktrees.holder(pid) is None
-            assert not app.state.worktrees.path_for(pid).exists()
+            worktrees = app_state(app, "worktrees", WorktreeManager)
+            assert worktrees.holder(pid) is None
+            assert not worktrees.path_for(pid).exists()
 
 
 class TestReadRoute:
@@ -168,12 +172,12 @@ class TestReadRoute:
     are the interesting half.
     """
 
-    async def _project(self, client, repo: Path) -> str:
+    async def _project(self, client: httpx.AsyncClient, repo: Path) -> str:
         created = await client.post("/projects/ensure", json={"rootPath": str(repo)})
-        return created.json()["id"]
+        return s(json_body(created)["id"])
 
     async def test_it_serves_a_files_bytes(self, repo: Path):
-        (repo / "src" / "app.tsx").write_text("export const x = 1;\n")
+        _ = (repo / "src" / "app.tsx").write_text("export const x = 1;\n")
         async with client_app() as (client, _app):
             pid = await self._project(client, repo)
             res = await client.get(f"/projects/{pid}/file?path=src/app.tsx")
@@ -200,18 +204,20 @@ class TestReadRoute:
 
     async def test_a_symlink_out_of_the_tree_is_refused(self, repo: Path, tmp_path: Path):
         secret = tmp_path / "secret.txt"
-        secret.write_text("the operator's own business")
+        _ = secret.write_text("the operator's own business")
         (repo / "link.txt").symlink_to(secret)
         async with client_app() as (client, _app):
             pid = await self._project(client, repo)
             res = await client.get(f"/projects/{pid}/file?path=link.txt")
         assert res.status_code == 404
 
-    async def test_an_oversized_file_is_cut_and_says_so(self, repo: Path, monkeypatch):
+    async def test_an_oversized_file_is_cut_and_says_so(
+        self, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         # The ceiling has to be *detectable*, not inferred from a length that happens to
         # equal it — hence the header rather than the client comparing sizes.
         monkeypatch.setattr("routes.projects._FILE_MAX_BYTES", 8)
-        (repo / "big.txt").write_text("0123456789")
+        _ = (repo / "big.txt").write_text("0123456789")
         async with client_app() as (client, _app):
             pid = await self._project(client, repo)
             res = await client.get(f"/projects/{pid}/file?path=big.txt")
@@ -220,10 +226,10 @@ class TestReadRoute:
         assert res.headers["x-content-truncated"] == "true"
 
     async def test_a_file_exactly_at_the_ceiling_is_not_called_truncated(
-        self, repo: Path, monkeypatch
+        self, repo: Path, monkeypatch: pytest.MonkeyPatch
     ):
         monkeypatch.setattr("routes.projects._FILE_MAX_BYTES", 10)
-        (repo / "exact.txt").write_text("0123456789")
+        _ = (repo / "exact.txt").write_text("0123456789")
         async with client_app() as (client, _app):
             pid = await self._project(client, repo)
             res = await client.get(f"/projects/{pid}/file?path=exact.txt")
@@ -233,12 +239,13 @@ class TestReadRoute:
     async def test_reading_never_creates_a_worktree(self, repo: Path):
         async with client_app() as (client, app):
             pid = await self._project(client, repo)
-            await client.get(f"/projects/{pid}/file?path=README.md&conversation_id=c1")
+            _ = await client.get(f"/projects/{pid}/file?path=README.md&conversation_id=c1")
             # Same rule the listing keeps, and for the same reason: opening a file must
             # not take the project's single checkout from whatever holds it.
-            assert app.state.worktrees.holder(pid) is None
-            assert not app.state.worktrees.path_for(pid).exists()
+            worktrees = app_state(app, "worktrees", WorktreeManager)
+            assert worktrees.holder(pid) is None
+            assert not worktrees.path_for(pid).exists()
 
-    async def test_an_unknown_project_is_a_404(self, repo: Path):
+    async def test_an_unknown_project_is_a_404(self):
         async with client_app() as (client, _app):
             assert (await client.get("/projects/nope/file?path=README.md")).status_code == 404

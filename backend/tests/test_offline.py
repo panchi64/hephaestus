@@ -11,6 +11,7 @@ from core.db import init_db, make_engine
 from services.offline import OfflineModeService
 from services.settings_store import OFFLINE_AUTO_KEY, OFFLINE_MANUAL_KEY, SettingsStore
 from tests._helpers import client_app
+from tests._json import arr, json_body, obj, s
 
 OWNER = "operator"
 WEB_TOOLS = frozenset({"web_search", "web_fetch"})
@@ -22,9 +23,9 @@ class _StubContainer:
     container is harmless."""
 
     def __init__(self) -> None:
-        self.starts = 0
-        self.stops = 0
-        self.running = False
+        self.starts: int = 0
+        self.stops: int = 0
+        self.running: bool = False
 
     async def start(self) -> None:
         self.starts += 1
@@ -152,17 +153,17 @@ async def test_fail_threshold_suspends_then_recovery_resumes():
 
 
 async def test_manual_offline_survives_a_connectivity_recovery():
-    svc, searxng, browser = await _make(online=True)
+    svc, searxng, _browser = await _make(online=True)
     await svc.start()
     try:
-        await svc.set_manual(True)
+        _ = await svc.set_manual(True)
         assert not searxng.running and svc.state().effective_offline is True
         # Connectivity is fine throughout; successes must not undo a manual offline.
         await svc._observe(True)
         await svc._observe(True)
         assert not searxng.running and svc.state().effective_offline is True
         # Clearing the manual switch comes back online (connectivity is up).
-        await svc.set_manual(False)
+        _ = await svc.set_manual(False)
         assert searxng.running and svc.state().effective_offline is False
     finally:
         await svc.stop()
@@ -200,9 +201,9 @@ async def test_auto_off_ignores_connectivity_loss():
 
 
 async def test_routes_read_and_toggle_manual_offline():
-    async with client_app() as (client, app):
+    async with client_app() as (client, _app):
         # Boot assumes online in tests (no probing), so nothing is paused.
-        body = (await client.get("/offline")).json()
+        body = json_body(await client.get("/offline"))
         assert body == {
             "manual_offline": False,
             "auto_detect": True,
@@ -211,19 +212,19 @@ async def test_routes_read_and_toggle_manual_offline():
         }
 
         # Force offline → effective flips and the overview web rows reflect it.
-        put = (await client.put("/offline", json={"manual_offline": True})).json()
+        put = json_body(await client.put("/offline", json={"manual_offline": True}))
         assert put["manual_offline"] is True and put["effective_offline"] is True
 
-        overview = (await client.get("/overview")).json()
-        rows = {c["key"]: c for c in overview["capabilities"]}
+        overview = json_body(await client.get("/overview"))
+        rows = {s(obj(c)["key"]): obj(c) for c in arr(overview["capabilities"])}
         assert rows["web_search"]["detail"] == "offline mode — paused"
         assert rows["web_fetch"]["detail"] == "offline mode — paused"
         assert rows["web_search"]["status"] == "warn"
 
         # Clear it and turn auto-detect off in one place; state reads back.
-        cleared = (
+        cleared = json_body(
             await client.put("/offline", json={"manual_offline": False, "auto_detect": False})
-        ).json()
+        )
         assert cleared["effective_offline"] is False
         assert cleared["auto_detect"] is False
 

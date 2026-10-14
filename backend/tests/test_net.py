@@ -10,24 +10,30 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from asyncio.trsock import TransportSocket
+from typing import cast
 
 import pytest
 
 from core.net import await_http_ready
 
 
-async def _serving(responses: list[bytes]):
+def _port(sock: socket.socket | TransportSocket) -> int:
+    return cast(tuple[str, int], sock.getsockname())[1]
+
+
+async def _serving(responses: list[bytes]) -> tuple[asyncio.Server, int]:
     """A loopback server that answers each connection with the next canned response."""
     remaining = list(responses)
 
-    async def handle(reader, writer):
-        await reader.read(4096)
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        _ = await reader.read(4096)
         writer.write(remaining.pop(0) if remaining else responses[-1])
         await writer.drain()
         writer.close()
 
     server = await asyncio.start_server(handle, "127.0.0.1", 0)
-    return server, server.sockets[0].getsockname()[1]
+    return server, _port(server.sockets[0])
 
 
 _OK = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
@@ -60,7 +66,7 @@ async def test_running_out_of_budget_returns_false_rather_than_raising():
     # worth opening anyway — so the probe reports rather than decides.
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
+    port = _port(sock)
     sock.close()
 
     result = await asyncio.wait_for(
@@ -72,11 +78,11 @@ async def test_running_out_of_budget_returns_false_rather_than_raising():
 async def test_a_process_that_already_exited_fails_fast_instead_of_waiting_out_the_budget():
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
+    port = _port(sock)
     sock.close()
 
     loop = asyncio.get_running_loop()
     started = loop.time()
     with pytest.raises(ConnectionError):
-        await await_http_ready(f"http://127.0.0.1:{port}/", 30.0, is_alive=lambda: False)
+        _ = await await_http_ready(f"http://127.0.0.1:{port}/", 30.0, is_alive=lambda: False)
     assert loop.time() - started < 5.0  # nowhere near the 30s budget

@@ -9,11 +9,17 @@ keeps its own detail.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any, override
 
+from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 
 from agent import build_chat_orchestrator
 from agent.model_errors import model_load_hint
@@ -43,14 +49,32 @@ class _LoadFailingModel(WrapperModel):
 
     def __init__(self) -> None:
         super().__init__(TestModel())
+        self.failure: Exception | None = _abort_error()
 
-    async def request(self, *args, **kwargs):  # type: ignore[override]
+    @override
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         raise _abort_error()
 
+    @override
     @asynccontextmanager
-    async def request_stream(self, *args, **kwargs):  # type: ignore[override]
-        raise _abort_error()
-        yield  # unreachable — keeps this a generator so the decorator is happy
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        if self.failure is not None:
+            raise self.failure
+        async with self.wrapped.request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as stream:
+            yield stream
 
 
 async def test_load_failure_ends_the_run_with_the_hint():

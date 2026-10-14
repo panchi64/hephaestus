@@ -21,11 +21,11 @@ def _git(cwd: Path, *args: str) -> str:
 async def test_old_branches_are_renamed_and_their_worktrees_follow(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    _git(repo, "init", "-q")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "init")
-    _git(repo, "worktree", "add", "-q", "-b", "ody/conv-a", str(tmp_path / "tree"))
-    _git(repo, "branch", "ody/conv-a-child")
-    _git(repo, "branch", "feature")
+    _ = _git(repo, "init", "-q")
+    _ = _git(repo, "commit", "-q", "--allow-empty", "-m", "init")
+    _ = _git(repo, "worktree", "add", "-q", "-b", "ody/conv-a", str(tmp_path / "tree"))
+    _ = _git(repo, "branch", "ody/conv-a-child")
+    _ = _git(repo, "branch", "feature")
 
     renamed = await rename_legacy_branches(repo)
 

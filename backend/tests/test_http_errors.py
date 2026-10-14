@@ -120,4 +120,4 @@ async def test_an_unmapped_error_is_not_quietly_given_a_status():
     async with client_app() as (client, app):
         app.include_router(_router)
         with pytest.raises(HephaestusError):
-            await client.get("/_errors/unmapped")
+            _ = await client.get("/_errors/unmapped")

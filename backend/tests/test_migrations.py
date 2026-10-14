@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -38,10 +40,11 @@ def test_init_db_stamps_the_head_revision():
     init_db(engine)
 
     with Session(engine) as session:
-        stamped = (
+        stamped = cast(
+            str,
             session.connection()
             .execute(text("SELECT version_num FROM alembic_version"))
-            .scalar_one()
+            .scalar_one(),
         )
     assert stamped == _head_revision()
 
@@ -61,7 +64,7 @@ def test_init_db_reports_orphaned_revision():
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     with Session(engine) as session:
-        session.connection().execute(
+        _ = session.connection().execute(
             text("UPDATE alembic_version SET version_num = 'deadbeef0000'")
         )
         session.commit()
@@ -79,7 +82,7 @@ def test_init_db_reports_schema_drift():
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     with Session(engine) as session:
-        session.connection().execute(text("ALTER TABLE uploads DROP COLUMN note"))
+        _ = session.connection().execute(text("ALTER TABLE uploads DROP COLUMN note"))
         session.commit()
 
     with pytest.raises(SchemaMigrationError) as exc_info:

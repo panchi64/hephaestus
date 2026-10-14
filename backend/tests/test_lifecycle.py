@@ -33,9 +33,9 @@ async def test_starts_run_immediately_and_stops_reverse_order():
 async def test_sync_stop_callables_are_supported():
     """A unit whose teardown is synchronous (cancel in-flight work, close a handle)
     registers the plain callable — no async wrapper boilerplate at the call site."""
-    stopped = []
+    stopped: list[str] = []
     registry = LifecycleRegistry()
-    registry.on_stop("sync", lambda: stopped.append("sync"))
+    registry.on_stop("sync",lambda: stopped.append("sync"))
     await registry.stop_all()
     assert stopped == ["sync"]
 
@@ -43,7 +43,7 @@ async def test_sync_stop_callables_are_supported():
 async def test_one_failing_stop_never_blocks_the_rest():
     """Teardown is best-effort per unit: a stop that raises is logged and the
     remaining units still stop — shutdown must never wedge on one bad capability."""
-    stopped = []
+    stopped: list[str] = []
     registry = LifecycleRegistry()
     registry.on_stop("innermost", lambda: stopped.append("innermost"))
 
@@ -59,7 +59,7 @@ async def test_one_failing_stop_never_blocks_the_rest():
 async def test_start_failure_propagates_and_registers_no_stop():
     """A capability that can't come up fails the boot loudly; its stop is never
     recorded, so the unwind only covers what actually started."""
-    stopped = []
+    stopped: list[str] = []
     registry = LifecycleRegistry()
     registry.on_stop("prior", lambda: stopped.append("prior"))
 
@@ -81,14 +81,14 @@ async def test_tracked_task_is_cancelled_and_awaited_at_stop():
     async def forever() -> None:
         parked.set()
         try:
-            await asyncio.Event().wait()
+            _ = await asyncio.Event().wait()
         except asyncio.CancelledError:
             cancelled.set()
             raise
 
     registry = LifecycleRegistry()
     task = registry.track("parked", forever())
-    await parked.wait()
+    _ = await parked.wait()
     await registry.stop_all()
     assert cancelled.is_set()
     assert task.cancelled()
@@ -106,7 +106,7 @@ async def test_tracked_task_already_done_is_a_noop_at_stop():
 
 
 async def test_stop_all_is_idempotent():
-    stopped = []
+    stopped: list[str] = []
     registry = LifecycleRegistry()
     registry.on_stop("once", lambda: stopped.append("once"))
     await registry.stop_all()

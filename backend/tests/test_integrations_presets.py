@@ -19,6 +19,7 @@ from services.integrations.presets import action
 from services.integrations.service import STATUS_UNTESTED, _assert_within, _fill_path
 
 from ._helpers import client_app
+from ._json import arr, json_body, json_list, obj, s
 
 OWNER = "operator"
 
@@ -75,7 +76,7 @@ async def test_configure_rejects_an_unknown_preset():
     _engine, _vault, service = await _service()
 
     with pytest.raises(NotFoundError):
-        await service.configure(OWNER, "not-a-service")
+        _ = await service.configure(OWNER, "not-a-service")
 
 
 async def test_an_operator_base_url_overrides_the_preset_and_resets_the_test():
@@ -98,7 +99,7 @@ async def test_action_policy_is_per_action_and_rejects_an_unknown_one():
     _engine, _vault, service = await _service()
     view = await service.configure(OWNER, "github", credentials={"token": "t"})
 
-    await service.set_action_policy(OWNER, view.id, "get_repo", trusted=True)
+    _ = await service.set_action_policy(OWNER, view.id, "get_repo", trusted=True)
 
     after = {a.name: a for a in (await service.get(OWNER, view.id)).actions}
     assert after["get_repo"].trusted is True
@@ -107,14 +108,14 @@ async def test_action_policy_is_per_action_and_rejects_an_unknown_one():
     assert after["list_issues"].trusted is False
 
     with pytest.raises(NotFoundError):
-        await service.set_action_policy(OWNER, view.id, "delete_everything", trusted=True)
+        _ = await service.set_action_policy(OWNER, view.id, "delete_everything", trusted=True)
 
 
 async def test_remove_drops_the_connector_and_its_decisions():
     engine, _vault, service = await _service()
     policy = ExternalPolicyStore(engine)
     view = await service.configure(OWNER, "github", credentials={"token": "t"})
-    await service.set_action_policy(OWNER, view.id, "get_repo", trusted=True)
+    _ = await service.set_action_policy(OWNER, view.id, "get_repo", trusted=True)
 
     await service.remove(OWNER, view.id)
 
@@ -136,7 +137,7 @@ async def test_only_usable_connectors_are_offered_to_the_agent():
     assert unconfigured.id not in live
     assert {configured.id, optional.id} <= live
 
-    await service.update(OWNER, configured.id, enabled=False)
+    _ = await service.update(OWNER, configured.id, enabled=False)
     assert configured.id not in {v.id for v in await service.live_connectors(OWNER)}
 
 
@@ -153,7 +154,7 @@ def test_path_parameters_fill_the_action_and_the_rest_become_query():
     assert escaped == "/repos/a%2F..%2Fb/r"
 
     with pytest.raises(InvalidInputError):
-        _fill_path(get_repo, {"owner": "acme"})
+        _ = _fill_path(get_repo, {"owner": "acme"})
 
 
 def test_a_resolved_url_must_stay_inside_the_configured_connector():
@@ -170,15 +171,15 @@ def test_a_resolved_url_must_stay_inside_the_configured_connector():
 
 async def test_the_rest_surface_lists_presets_configures_and_gates_an_action():
     async with client_app() as (client, _app):
-        presets = (await client.get("/integrations/presets")).json()
-        assert {p["id"] for p in presets} >= {"github", "slack"}
+        presets = json_list(await client.get("/integrations/presets"))
+        assert {s(obj(p)["id"]) for p in presets} >= {"github", "slack"}
 
         created = await client.post(
             "/integrations",
             json={"preset": "github", "name": "Work GitHub", "credentials": {"token": "t"}},
         )
         assert created.status_code == 201, created.text
-        connector = created.json()
+        connector = json_body(created)
         assert connector["name"] == "Work GitHub"
         assert connector["configured"] is True
         assert connector["status"] == "untested"
@@ -192,10 +193,10 @@ async def test_the_rest_surface_lists_presets_configures_and_gates_an_action():
         gated = await client.patch(
             f"/integrations/{connector['id']}/actions/create_issue", json={"trusted": True}
         )
-        assert gated.json()["trusted"] is True
+        assert json_body(gated)["trusted"] is True
 
-        listed = (await client.get("/integrations")).json()
-        by_name = {a["name"]: a for a in listed[0]["actions"]}
+        listed = json_list(await client.get("/integrations"))
+        by_name = {s(obj(a)["name"]): obj(a) for a in arr(obj(listed[0])["actions"])}
         assert by_name["create_issue"]["trusted"] is True
         assert by_name["get_repo"]["trusted"] is False
 

@@ -20,13 +20,15 @@ from services.mail.models import (
 from services.mail.transport import MailTransport
 from tests.mail_fakes import FakeTransport
 
+type _Adapter = type[ImapTransport | JmapTransport | GmailTransport | GraphTransport]
+
 
 def test_fake_transport_satisfies_the_protocol():
     assert isinstance(FakeTransport(), MailTransport)
 
 
 @pytest.mark.parametrize("adapter", [ImapTransport, JmapTransport, GmailTransport, GraphTransport])
-def test_every_adapter_satisfies_the_protocol(adapter):
+def test_every_adapter_satisfies_the_protocol(adapter: _Adapter):
     spec = AccountSpec(
         account_id="a1",
         address="operator@example.com",
@@ -39,7 +41,7 @@ def test_every_adapter_satisfies_the_protocol(adapter):
 
 
 @pytest.mark.parametrize("adapter", [ImapTransport, JmapTransport, GmailTransport, GraphTransport])
-def test_capabilities_are_declared_not_discovered(adapter):
+def test_capabilities_are_declared_not_discovered(adapter: _Adapter):
     spec = AccountSpec(
         account_id="a1", address="op@example.com", provider="imap", auth_kind="password"
     )
@@ -61,7 +63,7 @@ async def test_folders_carry_normalized_roles():
 
 async def test_unknown_folder_raises_a_domain_error():
     with pytest.raises(MailError):
-        await FakeTransport().list_messages("Nope")
+        _ = await FakeTransport().list_messages("Nope")
 
 
 async def test_send_returns_a_message_id():

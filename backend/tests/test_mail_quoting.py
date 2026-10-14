@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from services.mail.models import MailAddress, OutgoingMail
 from services.mail.parse import build_outgoing, html_to_text, parse_message, snippet_of
 from services.mail.quoting import split_body
@@ -115,4 +117,4 @@ def test_build_outgoing_threads_a_reply():
     assert composed["In-Reply-To"] == "<parent@example.org>"
     assert composed["References"] == "<root@example.org> <parent@example.org>"
     assert composed["Message-ID"]
-    assert composed.get_content().strip() == "Agreed."
+    assert cast(str, composed.get_content()).strip() == "Agreed."

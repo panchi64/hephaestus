@@ -9,6 +9,7 @@ that a failed test is recorded rather than raised — without touching the netwo
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -23,8 +24,10 @@ from services.integrations.service import MAX_BODY_CHARS, STATUS_ERROR, STATUS_O
 
 OWNER = "operator"
 
+type _Handler = Callable[[httpx.Request], httpx.Response]
 
-def _recorder(handler):
+
+def _recorder(handler: _Handler) -> tuple[httpx.AsyncClient, list[httpx.Request]]:
     """An httpx client over a mock transport, plus the list of requests it saw."""
     seen: list[httpx.Request] = []
 
@@ -35,7 +38,9 @@ def _recorder(handler):
     return httpx.AsyncClient(transport=httpx.MockTransport(_handle)), seen
 
 
-async def _service(handler, monkeypatch):
+async def _service(
+    handler: _Handler, monkeypatch: pytest.MonkeyPatch
+) -> tuple[IntegrationService, list[httpx.Request]]:
     """A service whose outbound calls hit ``handler``. The SSRF guard is neutralized for
     the happy paths (it would resolve DNS for a host these tests never reach); the guard
     itself is exercised by its own case below, against a literal loopback address."""
@@ -54,7 +59,7 @@ async def _service(handler, monkeypatch):
 
 
 async def test_a_passing_test_records_ok_and_sends_the_credential_as_the_preset_says(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     service, seen = await _service(
         lambda _r: httpx.Response(200, json={"login": "operator"}), monkeypatch
@@ -72,28 +77,28 @@ async def test_a_passing_test_records_ok_and_sends_the_credential_as_the_preset_
     assert seen[0].headers["accept"] == "application/vnd.github+json"
 
 
-async def test_a_header_auth_preset_puts_the_token_in_its_own_header(monkeypatch):
+async def test_a_header_auth_preset_puts_the_token_in_its_own_header(monkeypatch: pytest.MonkeyPatch):
     service, seen = await _service(lambda _r: httpx.Response(200), monkeypatch)
     view = await service.configure(OWNER, "gitlab", credentials={"token": "glpat-x"})
 
-    await service.test(OWNER, view.id)
+    _ = await service.test(OWNER, view.id)
 
     assert seen[0].headers["private-token"] == "glpat-x"
     assert "authorization" not in seen[0].headers
 
 
-async def test_a_basic_auth_preset_encodes_the_pair(monkeypatch):
+async def test_a_basic_auth_preset_encodes_the_pair(monkeypatch: pytest.MonkeyPatch):
     service, seen = await _service(lambda _r: httpx.Response(200), monkeypatch)
     view = await service.configure(
         OWNER, "jira", credentials={"username": "u@example.com", "password": "p"}
     )
 
-    await service.test(OWNER, view.id)
+    _ = await service.test(OWNER, view.id)
 
     assert seen[0].headers["authorization"].startswith("Basic ")
 
 
-async def test_a_rejected_credential_is_recorded_not_raised(monkeypatch):
+async def test_a_rejected_credential_is_recorded_not_raised(monkeypatch: pytest.MonkeyPatch):
     service, _seen = await _service(
         lambda _r: httpx.Response(401, text="Bad credentials"), monkeypatch
     )
@@ -108,7 +113,7 @@ async def test_a_rejected_credential_is_recorded_not_raised(monkeypatch):
     assert "Bad credentials" in (tested.last_error or "")
 
 
-async def test_an_unreachable_service_is_recorded_too(monkeypatch):
+async def test_an_unreachable_service_is_recorded_too(monkeypatch: pytest.MonkeyPatch):
     def _boom(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
 
@@ -121,7 +126,7 @@ async def test_an_unreachable_service_is_recorded_too(monkeypatch):
     assert tested.last_error
 
 
-async def test_calling_an_action_fills_its_path_and_caps_the_response(monkeypatch):
+async def test_calling_an_action_fills_its_path_and_caps_the_response(monkeypatch: pytest.MonkeyPatch):
     body = "x" * (MAX_BODY_CHARS + 500)
     service, seen = await _service(lambda _r: httpx.Response(200, text=body), monkeypatch)
     view = await service.configure(OWNER, "github", credentials={"token": "t"})
@@ -140,25 +145,25 @@ async def test_calling_an_action_fills_its_path_and_caps_the_response(monkeypatc
     assert str(seen[0].url) == "https://api.github.com/repos/acme/widgets/issues?state=open"
 
 
-async def test_a_disabled_connector_or_action_refuses_the_call(monkeypatch):
+async def test_a_disabled_connector_or_action_refuses_the_call(monkeypatch: pytest.MonkeyPatch):
     service, _seen = await _service(lambda _r: httpx.Response(200), monkeypatch)
     view = await service.configure(OWNER, "github", credentials={"token": "t"})
 
-    await service.set_action_policy(OWNER, view.id, "get_repo", enabled=False)
+    _ = await service.set_action_policy(OWNER, view.id, "get_repo", enabled=False)
     with pytest.raises(DegradedCapabilityError):
-        await service.call(OWNER, view.id, "get_repo", params={"owner": "a", "repo": "b"})
+        _ = await service.call(OWNER, view.id, "get_repo", params={"owner": "a", "repo": "b"})
 
-    await service.update(OWNER, view.id, enabled=False)
+    _ = await service.update(OWNER, view.id, enabled=False)
     with pytest.raises(DegradedCapabilityError):
-        await service.call(OWNER, view.id, "list_issues", params={"owner": "a", "repo": "b"})
+        _ = await service.call(OWNER, view.id, "list_issues", params={"owner": "a", "repo": "b"})
 
 
-async def test_a_body_is_refused_on_an_action_that_does_not_take_one(monkeypatch):
+async def test_a_body_is_refused_on_an_action_that_does_not_take_one(monkeypatch: pytest.MonkeyPatch):
     service, _seen = await _service(lambda _r: httpx.Response(200), monkeypatch)
     view = await service.configure(OWNER, "github", credentials={"token": "t"})
 
     with pytest.raises(InvalidInputError):
-        await service.call(
+        _ = await service.call(
             OWNER,
             view.id,
             "get_repo",
@@ -167,7 +172,7 @@ async def test_a_body_is_refused_on_an_action_that_does_not_take_one(monkeypatch
         )
 
 
-async def test_a_redirect_is_reported_rather_than_followed(monkeypatch):
+async def test_a_redirect_is_reported_rather_than_followed(monkeypatch: pytest.MonkeyPatch):
     """Following one would carry the operator's credential to wherever it points."""
     service, seen = await _service(
         lambda _r: httpx.Response(302, headers={"Location": "https://evil.example/"}),
@@ -195,5 +200,5 @@ async def test_the_ssrf_guard_refuses_a_connector_pointed_at_the_host():
     )
 
     with pytest.raises(SSRFError):
-        await service.call(OWNER, view.id, "get_repo", params={"owner": "a", "repo": "b"})
+        _ = await service.call(OWNER, view.id, "get_repo", params={"owner": "a", "repo": "b"})
     assert seen == []

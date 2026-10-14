@@ -25,6 +25,7 @@ from core.exceptions import DegradedCapabilityError
 from core.vault import Vault
 from services.registry import ModelRegistry
 from tests._helpers import client_app
+from tests._json import json_body, obj
 
 OWNER = "op"
 
@@ -55,7 +56,7 @@ async def test_nothing_usable_is_still_degraded():
     reg = await _registry()
     assert await reg.implicit_main_binding(OWNER) is None
     try:
-        await reg.resolve_detailed("main", owner_id=OWNER)
+        _ = await reg.resolve_detailed("main", owner_id=OWNER)
     except DegradedCapabilityError:
         pass
     else:
@@ -64,7 +65,7 @@ async def test_nothing_usable_is_still_degraded():
 
 async def test_a_disabled_endpoint_is_never_the_default():
     reg = await _registry()
-    await reg.create_endpoint(
+    _ = await reg.create_endpoint(
         OWNER, name="aaa benched", base_url="http://x/v1", model="qwen", enabled=False
     )
     live = await reg.create_endpoint(OWNER, name="zzz live", base_url="http://y/v1", model="llama")
@@ -78,7 +79,7 @@ async def test_the_default_follows_the_catalog_rather_than_insertion_order():
     # Endpoints are scanned in `list_endpoints` order (by name), so the same catalog
     # always yields the same default regardless of the sequence it was built in.
     reg = await _registry()
-    await reg.create_endpoint(OWNER, name="zulu", base_url="http://z/v1", model="z-model")
+    _ = await reg.create_endpoint(OWNER, name="zulu", base_url="http://z/v1", model="z-model")
     alpha = await reg.create_endpoint(OWNER, name="alpha", base_url="http://a/v1", model="a-model")
 
     assert await reg.implicit_main_binding(OWNER) == ([alpha.id], "a-model")
@@ -111,13 +112,13 @@ async def test_benching_the_default_moves_it_on():
     second = await reg.create_endpoint(OWNER, name="bbb", base_url="http://b/v1", model="b-model")
     assert await reg.implicit_main_binding(OWNER) == ([first.id], "a-model")
 
-    await reg.update_endpoint(OWNER, first.id, enabled=False)
+    _ = await reg.update_endpoint(OWNER, first.id, enabled=False)
     assert await reg.implicit_main_binding(OWNER) == ([second.id], "b-model")
 
 
 async def test_an_explicit_binding_wins_over_the_default():
     reg = await _registry()
-    await reg.create_endpoint(OWNER, name="aaa default", base_url="http://a/v1", model="a-model")
+    _ = await reg.create_endpoint(OWNER, name="aaa default", base_url="http://a/v1", model="a-model")
     chosen = await reg.create_endpoint(OWNER, name="zzz chosen", base_url="http://z/v1", model="z")
     await reg.set_role(OWNER, "main", [chosen.id], model="z")
 
@@ -132,9 +133,9 @@ async def test_the_default_is_never_written_down():
     # adding a better endpoint later would leave `main` fastened to whichever happened
     # to exist first — and the operator would never have chosen it.
     reg = await _registry()
-    await reg.create_endpoint(OWNER, name="local", base_url="http://x/v1", model="qwen")
+    _ = await reg.create_endpoint(OWNER, name="local", base_url="http://x/v1", model="qwen")
 
-    await reg.resolve_detailed("main", owner_id=OWNER)
+    _ = await reg.resolve_detailed("main", owner_id=OWNER)
 
     assert await reg.get_role_binding(OWNER, "main") == ([], None)
     assert await reg.list_roles(OWNER) == {}
@@ -153,15 +154,16 @@ async def test_roles_listing_reports_the_implicit_main_and_flags_it():
             json={"name": "local", "base_url": "http://x/v1", "model": "qwen"},
         )
         assert created.status_code in (200, 201), created.text
-        endpoint_id = created.json()["id"]
+        endpoint_id = json_body(created)["id"]
 
-        roles = (await client.get("/models/roles")).json()
+        roles = json_body(await client.get("/models/roles"))
         assert "main" in roles, "an unbound main with a usable model must still be reported"
-        assert roles["main"]["endpoint_ids"] == [endpoint_id]
-        assert roles["main"]["model"] == "qwen"
+        main = obj(roles["main"])
+        assert main["endpoint_ids"] == [endpoint_id]
+        assert main["model"] == "qwen"
         # The flag is the whole reason this is safe to show: a surface can say
         # "defaulting to this" instead of claiming the operator chose it.
-        assert roles["main"]["implicit"] is True
+        assert main["implicit"] is True
 
 
 async def test_an_explicit_pick_stops_being_implicit():
@@ -170,21 +172,21 @@ async def test_an_explicit_pick_stops_being_implicit():
             "/models/endpoints",
             json={"name": "local", "base_url": "http://x/v1", "model": "qwen"},
         )
-        endpoint_id = created.json()["id"]
+        endpoint_id = json_body(created)["id"]
 
         put = await client.put(
             "/models/roles/main", json={"endpoint_ids": [endpoint_id], "model": "qwen"}
         )
         assert put.status_code == 204, put.text
 
-        roles = (await client.get("/models/roles")).json()
-        assert roles["main"]["endpoint_ids"] == [endpoint_id]
-        assert roles["main"]["implicit"] is False
+        main = obj(json_body(await client.get("/models/roles"))["main"])
+        assert main["endpoint_ids"] == [endpoint_id]
+        assert main["implicit"] is False
 
 
 async def test_an_empty_workspace_reports_no_main_at_all():
     # Nothing to default to, so nothing is claimed — the composer's gate stays on, and
     # the surfacing that actually helps ("add an endpoint") is not talked over.
     async with client_app() as (client, _app):
-        roles = (await client.get("/models/roles")).json()
+        roles = json_body(await client.get("/models/roles"))
         assert "main" not in roles

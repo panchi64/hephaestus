@@ -15,11 +15,12 @@ parts cannot assert that; only a turn can.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic_ai import ModelRequest, ToolDefinition, UserPromptPart
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai.messages import BinaryContent, ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
 from agent import stream_agent_run
@@ -271,7 +272,7 @@ def test_the_ledger_forgets_the_least_recently_used_conversation():
     ledger.remember("a", _digest(instructions="a"))
     ledger.remember("b", _digest(instructions="b"))
     # Touching `a` makes `b` the oldest, so the third arrival evicts `b` and not `a`.
-    ledger.recall("a")
+    _ = ledger.recall("a")
     ledger.remember("c", _digest(instructions="c"))
 
     assert ledger.recall("a") is not None
@@ -290,7 +291,7 @@ def _deps(*, conversation_id: str | None = None, ledger: PrefixLedger | None = N
     return RunDeps(run=run, owner_id=OWNER, conversation_id=conversation_id, caps=caps)
 
 
-async def _drive(model: FunctionModel, deps: RunDeps, *, dormant=NO_DORMANT) -> Run:
+async def _drive(model: FunctionModel, deps: RunDeps, *, dormant: Mapping[str, str] = NO_DORMANT) -> Run:
     """One real turn on the agent the engine actually builds. ``dormant`` defaults to
     nothing withheld, so a test that is not about deferral gets the whole catalog on step 1
     and the reveal test is the only one paying for a second tool array."""
@@ -308,7 +309,9 @@ def _calls_then_answers(seen: list[AgentInfo], tool: str, args: str = "{}") -> F
     with only a non-streaming half asserts rather than answering.
     """
 
-    async def stream_fn(_messages, info: AgentInfo):
+    async def stream_fn(
+        _messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         seen.append(info)
         if len(seen) == 1:
             yield {0: DeltaToolCall(name=tool, json_args=args)}
@@ -389,7 +392,7 @@ async def test_without_a_ledger_each_turn_starts_cold_and_still_watches_within_i
     assert verdict.divergence_kind == "append"
 
 
-async def test_the_watch_is_on_by_default_and_switching_it_off_silences_it(monkeypatch):
+async def test_the_watch_is_on_by_default_and_switching_it_off_silences_it(monkeypatch: pytest.MonkeyPatch):
     """On by default, because a diagnostic nobody switched on is a diagnostic that is not
     there the one time it was needed. The escape hatch is asserted through a real turn
     rather than by inspecting the capability list — an instrument that is registered but
@@ -404,7 +407,7 @@ async def test_the_watch_is_on_by_default_and_switching_it_off_silences_it(monke
 
 
 @pytest.mark.parametrize("value", ["0", "false", "OFF", "no"])
-def test_every_spelling_of_off_is_honoured(monkeypatch, value: str):
+def test_every_spelling_of_off_is_honoured(monkeypatch: pytest.MonkeyPatch, value: str):
     monkeypatch.setenv("HEPHAESTUS_PREFIX_WATCH", value)
     assert not watch_prefix_enabled()
 
@@ -423,6 +426,6 @@ async def test_the_providers_own_cache_verdict_stays_silent_on_a_local_endpoint(
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        await _drive(_calls_then_answers([], "tasks_read"), _deps())
+        _ = await _drive(_calls_then_answers([], "tasks_read"), _deps())
 
     assert not [w for w in caught if issubclass(w.category, CacheBustWarning)]

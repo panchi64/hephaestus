@@ -7,11 +7,10 @@ different (Gmail's labels-as-folders, Graph's structured body)."""
 from __future__ import annotations
 
 import base64
-import json
-from typing import Any
 
 import httpx
 import pytest
+from pydantic import JsonValue
 
 from services.mail.errors import MailAuthError
 from services.mail.gmail import GmailTransport
@@ -25,6 +24,8 @@ from services.mail.models import (
     MailAddress,
     OutgoingMail,
 )
+
+from ._json import arr, obj, parse_json, s
 
 RAW = (
     b"From: Ada Lovelace <ada@example.org>\r\n"
@@ -50,13 +51,13 @@ def _spec(provider: str) -> AccountSpec:
 class _Recorder:
     """Records every request and replies from a path → payload table."""
 
-    def __init__(self, routes: dict[str, dict[str, Any]], *, status: int = 200) -> None:
-        self.routes = routes
-        self.status = status
-        self.calls: list[tuple[str, str, dict[str, Any] | None]] = []
+    def __init__(self, routes: dict[str, JsonValue], *, status: int = 200) -> None:
+        self.routes: dict[str, JsonValue] = routes
+        self.status: int = status
+        self.calls: list[tuple[str, str, JsonValue]] = []
 
     def handle(self, request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content) if request.content else None
+        body = parse_json(request.content) if request.content else None
         self.calls.append((request.method, request.url.path, body))
         if self.status != 200:
             return httpx.Response(self.status, json={})
@@ -72,7 +73,7 @@ def _client(recorder: _Recorder) -> httpx.AsyncClient:
 
 # --- Gmail --------------------------------------------------------------------
 
-GMAIL_ROUTES = {
+GMAIL_ROUTES: dict[str, JsonValue] = {
     "/labels": {
         "labels": [
             {"id": "INBOX", "name": "INBOX", "messagesTotal": 4, "messagesUnread": 2},
@@ -163,7 +164,7 @@ async def test_gmail_send_posts_a_base64url_rfc5322_message():
     _method, path, body = recorder.calls[-1]
     assert path.endswith("/messages/send")
     assert body is not None
-    raw = base64.urlsafe_b64decode(body["raw"])
+    raw = base64.urlsafe_b64decode(s(obj(body)["raw"]))
     assert b"In-Reply-To: <n1@example.org>" in raw
     assert message_id.startswith("<")
 
@@ -175,7 +176,7 @@ async def test_a_rejected_token_is_an_auth_error():
 
 # --- Microsoft Graph -----------------------------------------------------------
 
-GRAPH_MESSAGE = {
+GRAPH_MESSAGE: dict[str, JsonValue] = {
     "id": "g1",
     "conversationId": "c1",
     "internetMessageId": "<g1@example.org>",
@@ -191,11 +192,11 @@ GRAPH_MESSAGE = {
     "body": {
         "contentType": "html",
         "content": "<article><p>Please review the numbers "
-        "before Thursday, and let me know if anything looks wrong.</p></article>",
+        + "before Thursday, and let me know if anything looks wrong.</p></article>",
     },
 }
 
-GRAPH_ROUTES = {
+GRAPH_ROUTES: dict[str, JsonValue] = {
     "/mailFolders": {
         "value": [
             {"id": "f1", "displayName": "Inbox", "totalItemCount": 5, "unreadItemCount": 1},
@@ -256,7 +257,7 @@ async def test_graph_flag_patches_only_what_was_asked():
 
 async def test_graph_send_threads_with_internet_message_headers():
     recorder = _Recorder(GRAPH_ROUTES)
-    await GraphTransport(_spec("graph"), client=_client(recorder)).send(
+    _ = await GraphTransport(_spec("graph"), client=_client(recorder)).send(
         OutgoingMail(
             to=(MailAddress(address="ada@example.org"),),
             subject="Re: Quarterly review",
@@ -268,6 +269,9 @@ async def test_graph_send_threads_with_internet_message_headers():
     _method, path, body = recorder.calls[-1]
     assert path.endswith("/sendMail")
     assert body is not None
-    headers = {h["name"]: h["value"] for h in body["message"]["internetMessageHeaders"]}
+    message = obj(obj(body)["message"])
+    headers = {
+        s(obj(h)["name"]): s(obj(h)["value"]) for h in arr(message["internetMessageHeaders"])
+    }
     assert headers["In-Reply-To"] == "<g1@example.org>"
     assert headers["References"] == "<root@example.org> <g1@example.org>"

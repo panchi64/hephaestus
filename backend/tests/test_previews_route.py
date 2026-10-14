@@ -9,11 +9,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
+from collections.abc import Generator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, override
+from pathlib import Path
+from typing import override
 
 from starlette.testclient import TestClient
-from websockets.asyncio.server import serve
+from websockets.asyncio.server import ServerConnection, serve
 
 from app import create_app
 from core.config import Settings
@@ -26,14 +28,14 @@ class _FakeManager:
     """Resolves exactly one token to a handle aimed at a real upstream port."""
 
     def __init__(self, token: str, host_port: int) -> None:
-        self._token = token
-        self._handle = PreviewHandle(
+        self._token: str = token
+        self._handle: PreviewHandle = PreviewHandle(
             token=token,
             host_port=host_port,
             server_port=8000,
             command=("srv",),
         )
-        self.touches = 0
+        self.touches: int = 0
 
     def resolve_preview(self, token: str) -> PreviewHandle | None:
         if token != self._token:
@@ -43,7 +45,9 @@ class _FakeManager:
 
 
 @contextlib.contextmanager
-def _http_upstream(record: dict[str, str | None], extra_headers: dict[str, str] | None = None):
+def _http_upstream(
+    record: dict[str, str | None], extra_headers: dict[str, str] | None = None
+) -> Generator[int]:
     """A loopback HTTP server that echoes method+path, sets a cookie, and records
     what it received — to prove the proxy strips credentials and cookies.
 
@@ -63,10 +67,10 @@ def _http_upstream(record: dict[str, str | None], extra_headers: dict[str, str] 
                 self.send_header(name, value)
             self.send_header("content-length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            _ = self.wfile.write(body)
 
         @override
-        def log_message(self, format: str, *args: Any) -> None:  # silence the server
+        def log_message(self, format: str, *args: object) -> None:  # silence the server
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -78,14 +82,14 @@ def _http_upstream(record: dict[str, str | None], extra_headers: dict[str, str] 
 
 
 @contextlib.contextmanager
-def _ws_upstream():
+def _ws_upstream() -> Generator[int]:
     """A loopback WebSocket echo server (its own thread + loop)."""
     port_box: dict[str, int] = {}
     started = threading.Event()
 
     def run() -> None:
         async def main() -> None:
-            async def echo(ws) -> None:
+            async def echo(ws: ServerConnection) -> None:
                 async for message in ws:
                     await ws.send(message)
 
@@ -116,7 +120,7 @@ async def test_http_proxy_forwards_and_strips_credentials():
             assert resp.status_code == 200
             assert resp.text == "GET /hello?x=1"  # method, path, and query forwarded
             assert resp.headers["x-content-type-options"] == "nosniff"
-            assert "set-cookie" not in {k.lower() for k in resp.headers}  # not planted on us
+            assert "set-cookie" not in {k.lower() for k in resp.headers.keys()}  # not planted on us
     # The operator's credentials never reached the model's server.
     assert record["cookie"] is None
     assert record["authorization"] is None
@@ -176,7 +180,7 @@ async def test_previews_subtree_is_public():
 # --- WebSocket leg -----------------------------------------------------------
 
 
-def test_ws_proxy_round_trips_text_and_bytes(tmp_path):
+def test_ws_proxy_round_trips_text_and_bytes(tmp_path: Path):
     with _ws_upstream() as port:
         settings = Settings(
             db_url="sqlite:///:memory:",
@@ -194,7 +198,7 @@ def test_ws_proxy_round_trips_text_and_bytes(tmp_path):
                 assert ws.receive_bytes() == b"\x01\x02\x03"
 
 
-def test_ws_unknown_token_is_rejected(tmp_path):
+def test_ws_unknown_token_is_rejected(tmp_path: Path):
     from starlette.websockets import WebSocketDisconnect
 
     settings = Settings(

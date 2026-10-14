@@ -49,7 +49,7 @@ def test_scan_dirs_contain_source_files() -> None:
     )
 
 
-@pytest.mark.parametrize("path", _source_files(), ids=lambda p: str(p))
+@pytest.mark.parametrize("path", _source_files(), ids=str)
 def test_agent_reachable_code_never_references_the_picker(path: Path) -> None:
     text = path.read_text()
     for needle in _FORBIDDEN:

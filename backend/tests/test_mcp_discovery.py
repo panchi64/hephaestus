@@ -18,6 +18,7 @@ from services.mcp import McpRegistry
 from services.mcp.registry import STATUS_CONNECTED
 
 from ._helpers import client_app
+from ._json import arr, json_body, json_list, obj, s
 
 OWNER = "operator"
 SAMPLE_SERVER = str(Path(__file__).with_name("mcp_sample_server.py"))
@@ -47,7 +48,7 @@ async def test_registering_a_stdio_server_discovers_its_tools():
     assert all(t.enabled and not t.trusted for t in view.tools)
 
 
-async def test_reconnect_recovers_a_server_that_was_down(monkeypatch):
+async def test_reconnect_recovers_a_server_that_was_down():
     """`MCP-3` — a server registered while broken reconnects without re-registration."""
     registry = await _registry()
     view = await registry.register(
@@ -102,34 +103,34 @@ async def test_the_rest_surface_registers_lists_and_gates_a_tool():
             },
         )
         assert created.status_code == 201, created.text
-        server = created.json()
+        server = json_body(created)
         assert server["status"] == "connected", server["lastError"]
-        assert sorted(t["name"] for t in server["tools"]) == ["add", "echo"]
+        assert sorted(s(obj(t)["name"]) for t in arr(server["tools"])) == ["add", "echo"]
         # The surface speaks camelCase, like every other wired seam — pinned here so a
         # field can't quietly revert to snake_case and strand the screen reading it.
         assert server["authRequired"] is False
         assert server["hasCredentials"] is False
 
         listed = await client.get("/mcp/servers")
-        assert [s["id"] for s in listed.json()] == [server["id"]]
+        assert [obj(row)["id"] for row in json_list(listed)] == [server["id"]]
 
         # `MCP-1` — individual tools can be disabled; `AE-3.6` — and individually trusted.
         disabled = await client.patch(
             f"/mcp/servers/{server['id']}/tools/echo", json={"enabled": False}
         )
-        assert disabled.json() == {
+        assert json_body(disabled) == {
             "name": "echo",
-            "description": disabled.json()["description"],
+            "description": json_body(disabled)["description"],
             "enabled": False,
             "trusted": False,
         }
         trusted = await client.patch(
             f"/mcp/servers/{server['id']}/tools/add", json={"trusted": True}
         )
-        assert trusted.json()["trusted"] is True
+        assert json_body(trusted)["trusted"] is True
 
-        after = (await client.get("/mcp/servers")).json()[0]
-        by_name = {t["name"]: t for t in after["tools"]}
+        after = obj(json_list(await client.get("/mcp/servers"))[0])
+        by_name = {s(obj(t)["name"]): obj(t) for t in arr(after["tools"])}
         # Trusting `add` left `echo` exactly as it was — trust is per tool, not per server.
         assert by_name["add"]["trusted"] is True
         assert by_name["echo"]["trusted"] is False

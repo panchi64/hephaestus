@@ -3,9 +3,13 @@ each call confined, read-only to its own code, and fenced to its declared hosts.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Mapping, Sequence
+from pathlib import Path
+
 import pytest
 
-from services.plugins import PluginRuntime, validate_files
+from services.plugins import CallResult, PluginManifest, PluginRuntime, validate_files
+from services.vm import ExecResult, PlatformVM
 
 from .vm_local import can_confine, local_vm
 
@@ -49,18 +53,23 @@ def boom():
 
 
 @pytest.fixture
-async def runtime(tmp_path):
-    platform, _driver = await local_vm(tmp_path)
-    yield PluginRuntime(platform, tmp_path / "egress")
-    await platform.stop()
+async def platform(tmp_path: Path) -> AsyncIterator[PlatformVM]:
+    vm, _driver = await local_vm(tmp_path)
+    yield vm
+    await vm.stop()
 
 
-def _plugin():
+@pytest.fixture
+def runtime(platform: PlatformVM, tmp_path: Path) -> PluginRuntime:
+    return PluginRuntime(platform, tmp_path / "egress")
+
+
+def _plugin() -> tuple[PluginManifest, dict[str, bytes]]:
     files = {"plugin.yaml": MANIFEST.encode(), "probe.py": CODE.encode()}
     return validate_files(files), files
 
 
-async def _call(runtime: PluginRuntime, tool: str, **args):
+async def _call(runtime: PluginRuntime, tool: str, **args: str) -> CallResult:
     manifest, files = _plugin()
     plugin_tool = manifest.tool(tool)
     assert plugin_tool is not None
@@ -75,43 +84,63 @@ async def _call(runtime: PluginRuntime, tool: str, **args):
     )
 
 
-async def test_a_tool_returns_its_value_and_its_prints_go_to_the_log(runtime):
+async def test_a_tool_returns_its_value_and_its_prints_go_to_the_log(runtime: PluginRuntime):
     result = await _call(runtime, "echo", text="hi")
     assert result.ok, result.log
     assert result.output == '{"echo": "hi"}'
     assert "noise on stdout" in result.log
 
 
-async def test_a_tool_cannot_change_its_own_code(runtime):
+async def test_a_tool_cannot_change_its_own_code(runtime: PluginRuntime):
     result = await _call(runtime, "scribble")
     assert result.ok, result.log
     assert result.output in ('"PermissionError"', '"OSError"')
 
 
-async def test_a_tool_reaches_only_its_declared_hosts(runtime):
+async def test_a_tool_reaches_only_its_declared_hosts(runtime: PluginRuntime):
     result = await _call(runtime, "fetch", url="http://undeclared.example.org/")
     assert result.ok, result.log
     assert "hephaestus-egress: denied undeclared.example.org" in result.output
 
 
-async def test_a_failing_tool_reports_its_error_and_traceback(runtime):
+async def test_a_failing_tool_reports_its_error_and_traceback(runtime: PluginRuntime):
     result = await _call(runtime, "boom")
     assert not result.ok
     assert result.output == "ValueError: no luck"
     assert "Traceback" in result.log
 
 
-async def test_a_version_installs_once_per_boot(runtime, monkeypatch):
-    await _call(runtime, "echo", text="one")
-    platform = runtime._vm
-    installs = []
+async def test_a_version_installs_once_per_boot(
+    runtime: PluginRuntime, platform: PlatformVM, monkeypatch: pytest.MonkeyPatch
+):
+    _ = await _call(runtime, "echo", text="one")
+    installs: list[str] = []
     original = platform.run
 
-    async def counting(key, argv, **kwargs):
-        if kwargs.get("plugin_writable"):
+    async def counting(
+        key: str,
+        argv: Sequence[str],
+        *,
+        env: Mapping[str, str],
+        timeout_s: float,
+        stdin: str | None = None,
+        workdir: str = "",
+        plugin: str = "",
+        plugin_writable: bool = False,
+    ) -> ExecResult:
+        if plugin_writable:
             installs.append(key)
-        return await original(key, argv, **kwargs)
+        return await original(
+            key,
+            argv,
+            env=env,
+            timeout_s=timeout_s,
+            stdin=stdin,
+            workdir=workdir,
+            plugin=plugin,
+            plugin_writable=plugin_writable,
+        )
 
     monkeypatch.setattr(platform, "run", counting)
-    await _call(runtime, "echo", text="two")
+    _ = await _call(runtime, "echo", text="two")
     assert installs == []
