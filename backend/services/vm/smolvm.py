@@ -33,10 +33,12 @@ from contextlib import suppress
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import Literal, Protocol
 
 from smolvm import GuestOS, InternetSettings, SmolVM, SmolVMError, VMConfig
 from smolvm.utils import ensure_ssh_key
+
+from core.serde import parse_json
 
 from .driver import ExecResult, VMError
 
@@ -90,14 +92,14 @@ class SmolvmDriver:
         image: Path | None = None,
         ca_bundle: Path | None = None,
     ) -> None:
-        self._state = state_dir
-        self._cpus = cpus
-        self._memory_mb = memory_mb
-        self._disk_mb = disk_gb * 1024
-        self._boot_timeout_s = boot_timeout_s
-        self._provision_timeout_s = provision_timeout_s
-        self._image_override = image
-        self._ca_bundle = ca_bundle
+        self._state: Path = state_dir
+        self._cpus: int = cpus
+        self._memory_mb: int = memory_mb
+        self._disk_mb: int = disk_gb * 1024
+        self._boot_timeout_s: float = boot_timeout_s
+        self._provision_timeout_s: float = provision_timeout_s
+        self._image_override: Path | None = image
+        self._ca_bundle: Path | None = ca_bundle
         self._vm: SmolVM | None = None
         #: What a boot in progress is doing: "building" the image, or "booting".
         self.phase: str | None = None
@@ -140,14 +142,14 @@ class SmolvmDriver:
     async def put_file(self, local: Path, guest: str) -> None:
         vm = self._require()
         try:
-            await asyncio.to_thread(vm.upload_file, local, guest)
+            _ = await asyncio.to_thread(vm.upload_file, local, guest)
         except (SmolVMError, OSError) as exc:
             raise VMError(f"could not copy a file into the platform VM: {exc}") from exc
 
     async def get_file(self, guest: str, local: Path, *, max_bytes: int) -> None:
         vm = self._require()
         try:
-            await asyncio.to_thread(vm.download_file, guest, local, max_bytes=max_bytes)
+            _ = await asyncio.to_thread(vm.download_file, guest, local, max_bytes=max_bytes)
         except (SmolVMError, OSError) as exc:
             raise VMError(f"could not copy a file out of the platform VM: {exc}") from exc
 
@@ -182,11 +184,11 @@ class SmolvmDriver:
         vm_id = f"hephaestus-{secrets.token_hex(4)}"
         config = self._config(vm_id, image, internet=False)
         self._current.parent.mkdir(parents=True, exist_ok=True)
-        self._current.write_text(vm_id)
+        _ = self._current.write_text(vm_id)
         try:
             vm = SmolVM(config=config, data_dir=self._smolvm_dir, ssh_key_path=str(private))
-            vm.start(boot_timeout=self._boot_timeout_s)
-            vm.wait_for_ready(timeout=self._boot_timeout_s)
+            _ = vm.start(boot_timeout=self._boot_timeout_s)
+            _ = vm.wait_for_ready(timeout=self._boot_timeout_s)
         except SmolVMError as exc:
             raise VMError(f"the platform VM did not boot: {exc}") from exc
         self._vm = vm
@@ -219,7 +221,7 @@ class SmolvmDriver:
         if vm is None:
             return
         with suppress(SmolVMError, OSError):
-            vm.stop()
+            _ = vm.stop()
         with suppress(SmolVMError, OSError):
             vm.delete()
         self._current.unlink(missing_ok=True)
@@ -278,11 +280,11 @@ class SmolvmDriver:
         except SmolVMError as exc:
             raise VMError(f"could not create the provisioning VM: {exc}") from exc
         try:
-            vm.start(boot_timeout=self._boot_timeout_s)
-            vm.wait_for_ready(timeout=self._boot_timeout_s)
-            vm.upload_file(PROVISION_SCRIPT, "/root/provision.sh")
+            _ = vm.start(boot_timeout=self._boot_timeout_s)
+            _ = vm.wait_for_ready(timeout=self._boot_timeout_s)
+            _ = vm.upload_file(PROVISION_SCRIPT, "/root/provision.sh")
             if self._ca_bundle is not None:
-                vm.upload_file(self._ca_bundle, "/root/extra-ca.crt")
+                _ = vm.upload_file(self._ca_bundle, "/root/extra-ca.crt")
             argv = ["bash", "/root/provision.sh"]
             if self._ca_bundle is not None:
                 argv.append("/root/extra-ca.crt")
@@ -292,7 +294,7 @@ class SmolvmDriver:
                 self._keep_partial(vm)
                 raise
             config = vm.info.config
-            vm.stop()
+            _ = vm.stop()
             _save_image(config, building)
         except SmolVMError as exc:
             raise VMError(f"building the platform VM image failed: {exc}") from exc
@@ -300,7 +302,7 @@ class SmolvmDriver:
             with suppress(SmolVMError, OSError):
                 vm.delete()
         shutil.rmtree(target, ignore_errors=True)
-        building.rename(target)
+        _ = building.rename(target)
         shutil.rmtree(self._partial_dir, ignore_errors=True)
 
     @property
@@ -310,10 +312,10 @@ class SmolvmDriver:
     def _partial_image(self) -> CleanImage | None:
         """The disk a failed build left, if it was made by this smolvm release."""
         try:
-            meta = json.loads((self._partial_dir / "image.json").read_text())
+            meta = parse_json((self._partial_dir / "image.json").read_text())
         except OSError, ValueError:
             return None
-        if meta.get("smolvm") != version("smolvm"):
+        if not isinstance(meta, dict) or meta.get("smolvm") != version("smolvm"):
             shutil.rmtree(self._partial_dir, ignore_errors=True)
             return None
         return _read_image(self._partial_dir)
@@ -324,31 +326,42 @@ class SmolvmDriver:
         saving = self._partial_dir.with_name(".partial.saving")
         try:
             config = vm.info.config
-            vm.stop()
+            _ = vm.stop()
             shutil.rmtree(saving, ignore_errors=True)
             saving.mkdir(parents=True)
             _save_image(config, saving)
             shutil.rmtree(self._partial_dir, ignore_errors=True)
-            saving.rename(self._partial_dir)
+            _ = saving.rename(self._partial_dir)
         except SmolVMError, OSError, subprocess.CalledProcessError:
             logger.warning("platform VM: could not keep the partial image", exc_info=True)
             shutil.rmtree(saving, ignore_errors=True)
 
 
+class _Output(Protocol):
+    @property
+    def stdout(self) -> str: ...
+
+
+class _Guest(Protocol):
+    def run(
+        self, command: str, timeout: int = 30, shell: Literal["login", "raw"] = "login"
+    ) -> _Output: ...
+
+
 def provision(
-    vm: Any, argv: list[str], *, timeout_s: float, on_step: Callable[[str], None]
+    vm: _Guest, argv: list[str], *, timeout_s: float, on_step: Callable[[str], None]
 ) -> None:
     """Run the provision script detached in the guest and follow its log, so a build that
     takes many minutes reports each step it reaches."""
     script = shlex.join(argv)
-    vm.run(
+    _ = vm.run(
         _guest_command(
             [
                 "sh",
                 "-c",
                 f"rm -f {_PROVISION_LOG} {_PROVISION_EXIT}; "
-                f"setsid sh -c '{script} > {_PROVISION_LOG} 2>&1; "
-                f"echo $? > {_PROVISION_EXIT}' > /dev/null 2>&1 < /dev/null &",
+                + f"setsid sh -c '{script} > {_PROVISION_LOG} 2>&1; "
+                + f"echo $? > {_PROVISION_EXIT}' > /dev/null 2>&1 < /dev/null &",
             ]
         ),
         timeout=60,
@@ -364,7 +377,7 @@ def provision(
                     "sh",
                     "-c",
                     f"cat {_PROVISION_EXIT} 2>/dev/null; echo; "
-                    f"grep '^+ ' {_PROVISION_LOG} | tail -n 1",
+                    + f"grep '^+ ' {_PROVISION_LOG} | tail -n 1",
                 ]
             ),
             timeout=60,
@@ -390,14 +403,16 @@ def provision(
 def _save_image(config: VMConfig, directory: Path) -> None:
     assert config.rootfs_path is not None
     _flatten(Path(config.rootfs_path), directory / "disk.qcow2")
-    shutil.copyfile(Path(str(config.kernel_path)), directory / "vmlinux")
-    (directory / "image.json").write_text(
+    _ = shutil.copyfile(Path(str(config.kernel_path)), directory / "vmlinux")
+    _ = (directory / "image.json").write_text(
         json.dumps({"boot_args": config.boot_args, "smolvm": version("smolvm")})
     )
 
 
 def _read_image(directory: Path) -> CleanImage:
-    meta = json.loads((directory / "image.json").read_text())
+    meta = parse_json((directory / "image.json").read_text())
+    if not isinstance(meta, dict) or not isinstance(meta["boot_args"], str):
+        raise ValueError(f"unreadable image metadata in {directory}")
     return CleanImage(
         disk=directory / "disk.qcow2",
         kernel=directory / "vmlinux",
@@ -408,7 +423,7 @@ def _read_image(directory: Path) -> CleanImage:
 def _flatten(source: Path, target: Path) -> None:
     """Write ``source`` and its backing chain out as one standalone qcow2."""
     try:
-        subprocess.run(
+        _ = subprocess.run(
             ["qemu-img", "convert", "-O", "qcow2", str(source), str(target)],
             check=True,
             capture_output=True,

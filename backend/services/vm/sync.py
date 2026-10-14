@@ -18,7 +18,9 @@ import stat
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import IO, Any
+from typing import IO
+
+from pydantic import JsonValue
 
 from .driver import VMError
 
@@ -70,9 +72,16 @@ def scan_names(root: Path, names: set[str]) -> Manifest:
     return entries
 
 
-def parse_manifest(raw: dict[str, Any]) -> Manifest:
+def as_int(value: JsonValue) -> int:
+    """``int(value)``; raises ``TypeError`` for null, arrays and objects."""
+    if isinstance(value, bool | int | float | str):
+        return int(value)
+    raise TypeError(f"not a number: {value!r}")
+
+
+def parse_manifest(raw: dict[str, JsonValue]) -> Manifest:
     return {
-        str(name): (str(entry[0]), int(entry[1]), int(entry[2]))
+        str(name): (str(entry[0]), as_int(entry[1]), as_int(entry[2]))
         for name, entry in raw.items()
         if isinstance(entry, list) and len(entry) == 3
     }

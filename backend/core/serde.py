@@ -14,6 +14,15 @@ from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import Any, overload
 
+from pydantic import JsonValue, TypeAdapter
+
+_JSON = TypeAdapter(JsonValue)
+
+
+def parse_json(text: str | bytes) -> JsonValue:
+    """The JSON document in ``text``; malformed input raises ``ValueError``."""
+    return _JSON.validate_json(text)
+
 
 @overload
 def as_utc(value: datetime) -> datetime: ...

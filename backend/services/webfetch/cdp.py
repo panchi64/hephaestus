@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import urllib.parse
+from typing import cast
 
 import httpx
 
@@ -33,7 +34,7 @@ async def discover_cdp_ws(host_port: int, timeout_s: float) -> str | None:
             try:
                 resp = await client.get(f"http://127.0.0.1:{host_port}/json/version", timeout=2.0)
                 if resp.status_code == 200:
-                    raw = json.loads(resp.text)["webSocketDebuggerUrl"]
+                    raw = cast("dict[str, str]", json.loads(resp.text))["webSocketDebuggerUrl"]
                     parts = urllib.parse.urlsplit(raw)
                     return urllib.parse.urlunsplit(
                         (parts.scheme, f"127.0.0.1:{host_port}", parts.path, "", "")

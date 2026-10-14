@@ -22,6 +22,7 @@ import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -49,12 +50,12 @@ def _verified() -> ssl.SSLContext:
 
 class Interceptor:
     def __init__(self, upstream_tls: Callable[[], ssl.SSLContext] = _verified) -> None:
-        self._upstream_tls = upstream_tls
+        self._upstream_tls: Callable[[], ssl.SSLContext] = upstream_tls
         self._dir: Path | None = None
         self._ca: tuple[ec.EllipticCurvePrivateKey, x509.Certificate] | None = None
         self._contexts: dict[str, ssl.SSLContext] = {}
         self._server: asyncio.Server | None = None
-        self._port = 0
+        self._port: int = 0
         self._jobs: dict[int, _Job] = {}
         self._expected: dict[str, int] = {}
 
@@ -76,7 +77,7 @@ class Interceptor:
         host = host.strip().rstrip(".").lower()
         await self._listen()
         local_r, local_w = await asyncio.open_connection("127.0.0.1", self._port)
-        key = local_w.get_extra_info("sockname")[1]
+        key = cast("tuple[str, int]", local_w.get_extra_info("sockname"))[1]
         self._jobs[key] = _Job(host, port, tuple(secrets))
         self._expected[host] = self._expected.get(host, 0) + 1
         try:
@@ -84,12 +85,12 @@ class Interceptor:
             await writer.drain()
             await egress.splice(reader, writer, local_r, local_w)
         finally:
-            self._jobs.pop(key, None)
+            _ = self._jobs.pop(key, None)
             remaining = self._expected.get(host, 1) - 1
             if remaining:
                 self._expected[host] = remaining
             else:
-                self._expected.pop(host, None)
+                _ = self._expected.pop(host, None)
 
     async def close(self) -> None:
         if self._server is not None:
@@ -109,7 +110,7 @@ class Interceptor:
         context.set_alpn_protocols(["http/1.1"])
         context.sni_callback = self._choose
         self._server = await asyncio.start_server(self._serve, "127.0.0.1", 0, ssl=context)
-        self._port = self._server.sockets[0].getsockname()[1]
+        self._port = cast("tuple[str, int]", self._server.sockets[0].getsockname())[1]
 
     def _choose(self, connection: ssl.SSLObject, name: str | None, _base: ssl.SSLContext):
         if not name or name not in self._expected:
@@ -118,7 +119,8 @@ class Interceptor:
         return None
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        job = self._jobs.pop(writer.get_extra_info("peername")[1], None)
+        peer = cast("tuple[str, int]", writer.get_extra_info("peername"))
+        job = self._jobs.pop(peer[1], None)
         try:
             if job is None:
                 return
@@ -211,7 +213,7 @@ class Interceptor:
         if self._dir is None:
             self._dir = Path(tempfile.mkdtemp(prefix="hephaestus-egress-"))
         pem = self._dir / f"{len(self._contexts)}.pem"
-        pem.write_bytes(
+        _ = pem.write_bytes(
             cert.public_bytes(serialization.Encoding.PEM)
             + key.private_bytes(
                 serialization.Encoding.PEM,

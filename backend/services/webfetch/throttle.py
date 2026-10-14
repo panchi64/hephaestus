@@ -15,20 +15,22 @@ from __future__ import annotations
 import asyncio
 import time
 import urllib.parse
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import ClassVar, final
 
 _MAX_TRACKED = 4096  # bound the per-host bookkeeping in a long-running process
 
 
+@final
 class _Slot:
     """One host's politeness state: its serialization lock and the last-finish time."""
 
-    __slots__ = ("lock", "last")
+    __slots__: ClassVar[tuple[str, ...]] = ("lock", "last")
 
     def __init__(self) -> None:
-        self.lock = asyncio.Lock()
-        self.last = 0.0
+        self.lock: asyncio.Lock = asyncio.Lock()
+        self.last: float = 0.0
 
 
 class DomainThrottle:
@@ -38,11 +40,11 @@ class DomainThrottle:
     same-host fetches from running in parallel; other hosts are unaffected."""
 
     def __init__(self, *, min_interval_s: float) -> None:
-        self._min_interval_s = min_interval_s
+        self._min_interval_s: float = min_interval_s
         self._slots: dict[str, _Slot] = {}  # host -> its lock + last-finish time
 
     @asynccontextmanager
-    async def slot(self, url: str) -> AsyncIterator[None]:
+    async def slot(self, url: str) -> AsyncGenerator[None]:
         """Acquire this host's politeness slot: serialize with other same-host fetches and
         wait out any remaining gap since the last one finished, then run."""
         if self._min_interval_s <= 0:

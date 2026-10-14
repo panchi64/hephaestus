@@ -37,9 +37,9 @@ def init(root: str, bundle: str, source: str, branch: str, uid: str) -> int:
     repository with no commits yet), its index matching the branch and its working tree
     left to the files the host sends."""
     os.makedirs(root, exist_ok=True)
-    _git(root, "init", "-q", "-b", branch)
-    _git(root, "config", "user.name", "Hephaestus agent")
-    _git(root, "config", "user.email", "agent@hephaestus.invalid")
+    _ = _git(root, "init", "-q", "-b", branch)
+    _ = _git(root, "config", "user.name", "Hephaestus agent")
+    _ = _git(root, "config", "user.email", "agent@hephaestus.invalid")
     if bundle == "-":
         _chown(root, int(uid))
         return 0
@@ -50,9 +50,9 @@ def update(root: str, bundle: str, source: str, branch: str, uid: str) -> int:
     """Point ``branch`` at the bundle's ``source`` ref and reset the index to match,
     leaving the working tree alone."""
     ref = _BRANCH_REF.format(branch)
-    _git(root, "fetch", "-q", "--update-head-ok", bundle, f"+{source}:{ref}")
-    _git(root, "symbolic-ref", "HEAD", ref)
-    _git(root, "reset", "-q", "--mixed")
+    _ = _git(root, "fetch", "-q", "--update-head-ok", bundle, f"+{source}:{ref}")
+    _ = _git(root, "symbolic-ref", "HEAD", ref)
+    _ = _git(root, "reset", "-q", "--mixed")
     _chown(root, int(uid))
     return 0
 
@@ -61,7 +61,7 @@ def files(root: str) -> int:
     """What git counts as the project: tracked files, and untracked ones it does not
     ignore, NUL-separated."""
     result = _git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-    sys.stdout.buffer.write(result.stdout)
+    _ = sys.stdout.buffer.write(result.stdout)
     return 0
 
 
@@ -78,7 +78,7 @@ def pack(root: str, base: str, branch: str, out: str) -> int:
     ref = _BRANCH_REF.format(branch)
     if _git(root, "merge-base", "--is-ancestor", base, ref, check=False).returncode != 0:
         return 3
-    _git(root, "bundle", "create", "-q", out, f"{base}..{ref}")
+    _ = _git(root, "bundle", "create", "-q", out, f"{base}..{ref}")
     return 0
 
 

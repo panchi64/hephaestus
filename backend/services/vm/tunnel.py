@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
+from typing import cast
 
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 
@@ -38,9 +39,9 @@ class EgressTunnel:
     def __init__(
         self, gateway: EgressGateway, connect: Connect, *, idle: int = IDLE_CONNECTIONS
     ) -> None:
-        self._gateway = gateway
-        self._connect = connect
-        self._idle = idle
+        self._gateway: EgressGateway = gateway
+        self._connect: Connect = connect
+        self._idle: int = idle
         self._workers: list[asyncio.Task[None]] = []
         self._serving: set[asyncio.Task[None]] = set()
 
@@ -81,15 +82,15 @@ class PreviewPort:
     """A host loopback port reaching one workspace's preview through the relay mux."""
 
     def __init__(self, key: str, connect_mux: Connect) -> None:
-        self._key = key
-        self._connect_mux = connect_mux
+        self._key: str = key
+        self._connect_mux: Connect = connect_mux
         self._server: asyncio.Server | None = None
 
     @property
     def port(self) -> int:
         if self._server is None:
             raise RuntimeError("the preview port is not open")
-        return self._server.sockets[0].getsockname()[1]
+        return cast("tuple[str, int]", self._server.sockets[0].getsockname())[1]
 
     async def open(self) -> int:
         self._server = await asyncio.start_server(self._serve, "127.0.0.1", 0)

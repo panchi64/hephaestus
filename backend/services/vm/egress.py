@@ -28,7 +28,7 @@ import ssl
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, override
 
 from core.ssrf import is_blocked
 
@@ -74,7 +74,8 @@ class Policy(Protocol):
     def permits(self, host: str) -> bool: ...
 
 
-class PublicPolicy:
+class PublicPolicy(Policy):
+    @override
     def permits(self, host: str) -> bool:
         return True
 
@@ -84,7 +85,7 @@ class Allowlist:
     allows nothing."""
 
     def __init__(self, directory: Path) -> None:
-        self._path = directory / ALLOW_FILE
+        self._path: Path = directory / ALLOW_FILE
         self._stamp: int | None = None
         self._domains: tuple[str, ...] = ()
 
@@ -152,8 +153,8 @@ class EgressGateway:
     def __init__(self, interceptor: SecretInterceptor | None = None) -> None:
         self._grants: dict[str, Grant] = {}
         self._standing: dict[Path, str] = {}
-        self._public = Grant(PublicPolicy())
-        self.interceptor = interceptor
+        self._public: Grant = Grant(PublicPolicy())
+        self.interceptor: SecretInterceptor | None = interceptor
 
     def grant(self, allow_dir: Path, secrets_: Sequence[Secret] = ()) -> str:
         """Proxy credentials (``user:password``) that reach what ``allow_dir`` allows,
@@ -171,7 +172,7 @@ class EgressGateway:
         return credentials
 
     def revoke(self, credentials: str) -> None:
-        self._grants.pop(credentials.partition(":")[2], None)
+        _ = self._grants.pop(credentials.partition(":")[2], None)
 
     async def serve(
         self, channel: bytes, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -234,8 +235,8 @@ class EgressGateway:
 
 class _Request:
     def __init__(self, line: bytes, headers: list[bytes]) -> None:
-        self.line = line
-        self.headers = headers
+        self.line: bytes = line
+        self.headers: list[bytes] = headers
 
     def header(self, name: bytes) -> bytes | None:
         prefix = name + b":"
@@ -382,8 +383,13 @@ async def _pump(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
         _close(writer)
 
 
-async def splice(a_r, a_w, b_r, b_w) -> None:
-    await asyncio.gather(_pump(a_r, b_w), _pump(b_r, a_w), return_exceptions=True)
+async def splice(
+    a_r: asyncio.StreamReader,
+    a_w: asyncio.StreamWriter,
+    b_r: asyncio.StreamReader,
+    b_w: asyncio.StreamWriter,
+) -> None:
+    _ = await asyncio.gather(_pump(a_r, b_w), _pump(b_r, a_w), return_exceptions=True)
 
 
 def _close(writer: asyncio.StreamWriter) -> None:

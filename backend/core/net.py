@@ -18,6 +18,12 @@ from contextlib import suppress
 import httpx
 
 
+def header(headers: httpx.Headers, name: str) -> str | None:
+    """The header's value, repeated occurrences joined with commas, or ``None`` when absent."""
+    values = headers.get_list(name)
+    return ", ".join(values) if values else None
+
+
 async def await_listening(
     port: int,
     timeout_s: float,

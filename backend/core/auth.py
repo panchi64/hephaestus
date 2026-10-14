@@ -23,8 +23,10 @@ from __future__ import annotations
 import json
 import secrets
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol, cast
 
+from starlette.applications import Starlette
+from starlette.datastructures import State
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.api_scopes import ScopeTable
@@ -81,7 +83,40 @@ class ApiTokenAuthenticator(Protocol):
     async def touch(self, token_id: str) -> None: ...
 
 
-def api_token_store(state: Any) -> ApiTokenAuthenticator | None:
+class _GateSettings(Protocol):
+    @property
+    def auth_enabled(self) -> bool: ...
+
+
+class _GateVault(Protocol):
+    @property
+    def is_unlocked(self) -> bool: ...
+
+
+class _GateState(Protocol):
+    """The slice of ``app.state`` the gate reads."""
+
+    @property
+    def settings(self) -> _GateSettings: ...
+
+    @property
+    def auth_manager(self) -> AuthManager: ...
+
+    @property
+    def vault(self) -> _GateVault: ...
+
+
+class _GateApp(Protocol):
+    @property
+    def state(self) -> _GateState: ...
+
+
+def _scope_str(scope: Scope, key: str) -> str:
+    value = cast("object", scope.get(key))
+    return value if isinstance(value, str) else ""
+
+
+def api_token_store(state: State) -> ApiTokenAuthenticator | None:
     """The shared token store the app wired at startup, or ``None`` when there is none.
 
     `core` must not import `services`, so the gate never *builds* the store — it only
@@ -89,12 +124,13 @@ def api_token_store(state: Any) -> ApiTokenAuthenticator | None:
     (a test app assembled without the lifespan) simply means there is no second
     authentication method and only the operator session is accepted.
     """
-    return getattr(state, "api_tokens", None)
+    store: ApiTokenAuthenticator | None = getattr(state, "api_tokens", None)
+    return store
 
 
-def auth_attempt_limiter(state: Any) -> RateLimiter:
+def auth_attempt_limiter(state: State) -> RateLimiter:
     """The shared login/token attempt throttle, built on first use."""
-    limiter = getattr(state, "auth_attempt_limiter", None)
+    limiter: RateLimiter | None = getattr(state, "auth_attempt_limiter", None)
     if limiter is None:
         limiter = RateLimiter(
             rate_per_second=_AUTH_ATTEMPT_RATE_PER_MINUTE / 60.0,
@@ -153,9 +189,8 @@ def _token_from_scope(scope: Scope) -> str | None:
     # HTTP header bytes are latin-1 on the wire, not UTF-8: decoding them as UTF-8 would
     # raise on any high byte a client happens to send (a legacy user-agent, a filename in
     # a custom header) and 500 the request from inside the middleware, before any handler.
-    headers = {
-        k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])
-    }
+    raw_headers = cast("list[tuple[bytes, bytes]]", scope.get("headers", []))
+    headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in raw_headers}
     cookie_token = None
     for part in headers.get("cookie", "").split(";"):
         name, _, value = part.strip().partition("=")
@@ -191,7 +226,7 @@ _UNAUTHENTICATED: _Rejection = (401, "authentication required", [])
 
 
 async def _authenticate_api_token(
-    state: Any, scope: Scope, presented: str | None, scope_table: ScopeTable
+    state: State, scope: Scope, presented: str | None, scope_table: ScopeTable
 ) -> _Rejection | None:
     """Try the presented credential as a scoped API token. ``None`` = authenticated.
 
@@ -215,7 +250,7 @@ async def _authenticate_api_token(
         if identity is None:
             return _UNAUTHENTICATED
 
-    required = scope_table.scope_for_path(scope["path"], scope["method"])
+    required = scope_table.scope_for_path(_scope_str(scope, "path"), _scope_str(scope, "method"))
     if required is None or required not in identity.scopes:
         # Deny-by-default: an unclaimed path (`/tokens`, `/vault`, `/shell`) is out of
         # reach for every token, whatever it carries.
@@ -233,32 +268,34 @@ class AuthMiddleware:
         scope_table: ScopeTable,
         extra_public_prefixes: tuple[str, ...] = (),
     ) -> None:
-        self.app = app
-        self._scope_table = scope_table
-        self._extra_public_prefixes = extra_public_prefixes
+        self.app: ASGIApp = app
+        self._scope_table: ScopeTable = scope_table
+        self._extra_public_prefixes: tuple[str, ...] = extra_public_prefixes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = _scope_str(scope, "path")
         if (
             scope["type"] != "http"
-            or scope["method"] == "OPTIONS"
-            or _is_core_public(scope["path"])
+            or _scope_str(scope, "method") == "OPTIONS"
+            or _is_core_public(path)
         ):
             return await self.app(scope, receive, send)
 
-        state = scope["app"].state
+        app_state = cast("Starlette", scope["app"]).state
+        state = cast("_GateApp", scope["app"]).state
         # A feature's declared exemption waives the *session*, not the lock: the preview
         # proxy and the task webhook authenticate by unguessable path token, but both
         # reach operator data, so locking must take them offline with everything else.
         # Without this they kept serving the agent's live workspace after `/auth/lock`.
         if state.settings.auth_enabled and not _is_feature_public(
-            scope["path"], self._extra_public_prefixes
+            path, self._extra_public_prefixes
         ):
             presented = _token_from_scope(scope)
             # The operator session comes first: an in-memory set membership test, so the
             # browser's every request stays free of the token path entirely.
             if not state.auth_manager.verify(presented):
                 rejection = await _authenticate_api_token(
-                    state, scope, presented, self._scope_table
+                    app_state, scope, presented, self._scope_table
                 )
                 if rejection is not None:
                     return await _reject(send, *rejection)

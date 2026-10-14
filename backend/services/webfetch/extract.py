@@ -99,4 +99,4 @@ def _title(tree: HtmlElement | None) -> str | None:
         meta = trafilatura.extract_metadata(tree)
     except Exception:
         return None
-    return meta.title if meta is not None else None
+    return meta.title

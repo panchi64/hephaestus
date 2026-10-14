@@ -45,25 +45,25 @@ class WebDistiller:
         max_windows: int,
         timeout_s: float,
     ) -> None:
-        self._resolve_model = resolve_model
-        self._instructions = instructions
-        self._window_tokens = window_tokens
-        self._max_windows = max_windows
-        self._timeout_s = timeout_s
+        self._resolve_model: ResolveModel = resolve_model
+        self._instructions: str = instructions
+        self._window_tokens: int = window_tokens
+        self._max_windows: int = max_windows
+        self._timeout_s: float = timeout_s
 
     async def distill(self, body: str, *, goal: str, url: str) -> str | None:
         """Return the goal-relevant distillation of ``body``, or ``None`` to signal the
         caller to fall back to truncation. Never raises — a timeout, model error, or
         all-irrelevant result is a ``None``, logged once at warning."""
         try:
-            return await asyncio.wait_for(self._distill(body, goal=goal, url=url), self._timeout_s)
+            return await asyncio.wait_for(self._distill(body, goal=goal), self._timeout_s)
         except Exception as exc:  # noqa: BLE001 — timeout/model error ⇒ degrade, never raise
             logger.warning(
                 "web distillation failed for %r; falling back to truncation: %s", url, exc
             )
             return None
 
-    async def _distill(self, body: str, *, goal: str, url: str) -> str | None:
+    async def _distill(self, body: str, *, goal: str) -> str | None:
         model, settings = await self._resolve_model()
         agent = Agent(model, output_type=str, instructions=self._instructions)
         windows, covered = self._windows(body)

@@ -15,6 +15,7 @@ import shutil
 import stat
 import sys
 import tarfile
+from typing import cast
 
 
 def _entry(path: str) -> list[object] | None:
@@ -42,7 +43,7 @@ def manifest(root: str) -> int:
 
 def pack(root: str, listing: str, out: str) -> int:
     with open(listing, encoding="utf-8") as handle:
-        names = json.load(handle)
+        names = cast("list[str]", json.load(handle))
     with tarfile.open(out, "w", format=tarfile.PAX_FORMAT) as archive:
         for name in names:
             full = os.path.join(root, name)
@@ -60,7 +61,7 @@ def _remove(path: str) -> None:
 
 def unpack(root: str, archive_path: str, listing: str, uid: str) -> int:
     with open(listing, encoding="utf-8") as handle:
-        gone = json.load(handle)
+        gone = cast("list[str]", json.load(handle))
     for name in sorted(gone, key=len, reverse=True):
         _remove(os.path.join(root, name))
     owner = int(uid)

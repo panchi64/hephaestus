@@ -48,8 +48,8 @@ class DomainCookieJar:
     long-running process — nothing here is persisted."""
 
     def __init__(self, *, ttl_s: float, max_entries: int) -> None:
-        self._ttl_s = ttl_s
-        self._max = max(1, max_entries)
+        self._ttl_s: float = ttl_s
+        self._max: int = max(1, max_entries)
         # _key -> (cookie_dict, stored_monotonic). Insertion order = eviction order.
         self._entries: dict[
             tuple[str | None, str | None, str | None], tuple[SetCookieParam, float]
@@ -78,7 +78,7 @@ class DomainCookieJar:
         for raw in cookies:
             cookie: SetCookieParam = {**raw}
             key = _key(cookie)
-            self._entries.pop(key, None)  # re-insert so eviction order tracks recency
+            _ = self._entries.pop(key, None)  # re-insert so eviction order tracks recency
             self._entries[key] = (cookie, now_mono)
         self._evict()
 
@@ -92,4 +92,4 @@ class DomainCookieJar:
             if expired or now_mono - stored > self._ttl_s:
                 del self._entries[key]
         while len(self._entries) > self._max:
-            self._entries.pop(next(iter(self._entries)))
+            _ = self._entries.pop(next(iter(self._entries)))

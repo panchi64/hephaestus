@@ -33,6 +33,7 @@ from dataclasses import dataclass
 import httpx
 
 from core.exceptions import HephaestusError
+from core.net import header
 from core.ssrf import assert_public_url
 
 # Formats worth rendering inline, each with the magic-byte prefix that proves it.
@@ -113,14 +114,16 @@ async def fetch_image(
                 headers={"Accept": "image/*"},
             ) as resp:
                 if resp.is_redirect:
-                    location = resp.headers.get("location")
+                    location = header(resp.headers, "location")
                     if not location:
                         raise ImageFetchError("redirect without a destination")
                     seen = str(httpx.URL(seen).join(location))
                     continue
                 if resp.status_code >= 400:
                     raise ImageFetchError(f"remote returned HTTP {resp.status_code}")
-                declared = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+                declared = (
+                    (header(resp.headers, "content-type") or "").split(";")[0].strip().lower()
+                )
                 if declared and not declared.startswith("image/"):
                     raise ImageFetchError(f"remote served {declared!r}, not an image")
                 # Read to the cap +1 so an over-size body is *detected* rather than

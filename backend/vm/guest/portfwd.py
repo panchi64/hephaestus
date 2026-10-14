@@ -33,7 +33,7 @@ async def main(listen: int, target: int) -> None:
         except OSError:
             writer.close()
             return
-        await asyncio.gather(_pump(reader, up_w), _pump(up_r, writer), return_exceptions=True)
+        _ = await asyncio.gather(_pump(reader, up_w), _pump(up_r, writer), return_exceptions=True)
 
     server = await asyncio.start_server(relay, "0.0.0.0", listen)
     await server.serve_forever()

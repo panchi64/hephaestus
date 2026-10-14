@@ -172,26 +172,26 @@ class BrowserFetcher:
         settle_min_chars: int = 1000,
         distiller: WebDistiller | None = None,
     ) -> None:
-        self._browser = browser
-        self._timeout_ms = int(timeout_s * 1000)
+        self._browser: RenderBrowser = browser
+        self._timeout_ms: int = int(timeout_s * 1000)
         self._wait_until: WaitUntil = wait_until
-        self._render_wait_ms = render_wait_ms
-        self._max_bytes = max_bytes
-        self._min_chars = min_chars
-        self._throttle = DomainThrottle(min_interval_s=min_interval_s)
-        self._challenge_waits = challenge_waits
-        self._challenge_wait_ms = challenge_wait_ms
-        self._output_max_tokens = output_max_tokens
-        self._pdf_max_bytes = pdf_max_bytes
-        self._pdf_max_pages = pdf_max_pages
-        self._http_client = http_client
-        self._settle_checks = settle_checks
-        self._settle_wait_ms = settle_wait_ms
-        self._settle_min_chars = settle_min_chars
-        self._distiller = distiller
+        self._render_wait_ms: int = render_wait_ms
+        self._max_bytes: int = max_bytes
+        self._min_chars: int = min_chars
+        self._throttle: DomainThrottle = DomainThrottle(min_interval_s=min_interval_s)
+        self._challenge_waits: int = challenge_waits
+        self._challenge_wait_ms: int = challenge_wait_ms
+        self._output_max_tokens: int = output_max_tokens
+        self._pdf_max_bytes: int = pdf_max_bytes
+        self._pdf_max_pages: int = pdf_max_pages
+        self._http_client: httpx.AsyncClient | None = http_client
+        self._settle_checks: int = settle_checks
+        self._settle_wait_ms: int = settle_wait_ms
+        self._settle_min_chars: int = settle_min_chars
+        self._distiller: WebDistiller | None = distiller
 
     async def fetch(
-        self, owner_id: str, url: str, *, offset: int = 0, goal: str | None = None
+        self, _owner_id: str, url: str, *, offset: int = 0, goal: str | None = None
     ) -> FetchedPage:
         """Render ``url`` and return its main content as Markdown, capped to the output
         token budget (a longer page pages via ``offset``). With a ``goal`` (and no explicit

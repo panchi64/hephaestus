@@ -19,9 +19,9 @@ from .sync import Manifest, diff, scan
 
 class GuestWorkspace:
     def __init__(self, vm: WorkspaceHost, key: str, root: Path) -> None:
-        self._vm = vm
-        self.key = key
-        self.root = root
+        self._vm: WorkspaceHost = vm
+        self.key: str = key
+        self.root: Path = root
         self._host: Manifest = {}
         self._guest: Manifest = {}
         self._generation: int | None = None

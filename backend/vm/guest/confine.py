@@ -35,6 +35,33 @@ _TIMEOUT_EXIT = 124
 _KILL_GRACE_S = 5.0
 
 
+class _Args(argparse.Namespace):
+    action: str = ""
+    root: str = "/"
+    key: str = ""
+    name: str = ""
+    uid: int = 1100
+    workdir: str = ""
+    timeout: float = 0
+    stdin: str = ""
+    publish: int = 0
+    memory: str = ""
+    cpus: str = ""
+    pids: int = 0
+    cgroup_root: str = "/sys/fs/cgroup"
+    out_offset: int = 0
+    err_offset: int = 0
+    limit: int = 1 << 20
+    cwd_file: str = ""
+    plugin: str = ""
+    plugin_writable: bool = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.env: list[str] = []
+        self.argv: list[str] = []
+
+
 def _layout(root: str) -> dict[str, str]:
     run = os.path.join(root, "run/hephaestus")
     return {
@@ -47,7 +74,7 @@ def _layout(root: str) -> dict[str, str]:
     }
 
 
-def _bwrap(args: argparse.Namespace, paths: dict[str, str]) -> list[str]:
+def _bwrap(args: _Args, paths: dict[str, str]) -> list[str]:
     workspace = os.path.join(paths["work"], args.key)
     workdir = os.path.normpath(os.path.join("/work", args.workdir or "."))
     if workdir != "/work" and not workdir.startswith("/work/"):
@@ -157,14 +184,14 @@ def _drop(uid: int) -> list[str]:
     ]
 
 
-def _plugin_dir(args: argparse.Namespace, paths: dict[str, str]) -> str:
+def _plugin_dir(args: _Args, paths: dict[str, str]) -> str:
     """A plugin version's directory: its files and its virtualenv, bound at ``/plugin``."""
     if not _PLUGIN.match(args.plugin):
         raise SystemExit("not a plugin version")
     return os.path.join(paths["plugins"], args.plugin)
 
 
-def _prepare(args: argparse.Namespace, paths: dict[str, str]) -> None:
+def _prepare(args: _Args, paths: dict[str, str]) -> None:
     workspace = os.path.join(paths["work"], args.key)
     os.makedirs(workspace, exist_ok=True)
     os.chown(workspace, args.uid, args.uid)
@@ -197,7 +224,7 @@ def _bytes(value: str) -> int:
     return int(value)
 
 
-def _cgroup(args: argparse.Namespace) -> str | None:
+def _cgroup(args: _Args) -> str | None:
     """The workspace's cgroup with whatever caps the guest's controllers allow, or
     ``None`` where the guest has no cgroup v2. A cap whose controller is missing is
     skipped rather than taking the others with it."""
@@ -224,7 +251,7 @@ def _cgroup(args: argparse.Namespace) -> str | None:
         for directory in (root, parent):
             try:
                 with open(os.path.join(directory, "cgroup.subtree_control"), "w") as handle:
-                    handle.write(f"+{name}")
+                    _ = handle.write(f"+{name}")
             except OSError:
                 break
     for name, (limit, value) in wanted.items():
@@ -232,7 +259,7 @@ def _cgroup(args: argparse.Namespace) -> str | None:
             continue
         try:
             with open(os.path.join(group, limit), "w") as handle:
-                handle.write(value)
+                _ = handle.write(value)
         except OSError:
             continue
     return group
@@ -244,7 +271,7 @@ def _enter(group: str | None):
     def join() -> None:
         if group is not None:
             with open(os.path.join(group, "cgroup.procs"), "w") as handle:
-                handle.write(str(os.getpid()))
+                _ = handle.write(str(os.getpid()))
 
     return join
 
@@ -260,7 +287,7 @@ def _job(paths: dict[str, str], name: str, suffix: str) -> str:
     return os.path.join(paths["jobs"], f"{name}.{suffix}")
 
 
-def run(args: argparse.Namespace, paths: dict[str, str]) -> int:
+def run(args: _Args, paths: dict[str, str]) -> int:
     """Run and wait. Under ``--name`` the output, the process and the exit status go to
     that job's files, which is how a background job is run."""
     _prepare(args, paths)
@@ -285,10 +312,10 @@ def run(args: argparse.Namespace, paths: dict[str, str]) -> int:
         except subprocess.TimeoutExpired:
             _kill(proc.pid, signal.SIGTERM)
             try:
-                proc.wait(timeout=_KILL_GRACE_S)
+                _ = proc.wait(timeout=_KILL_GRACE_S)
             except subprocess.TimeoutExpired:
                 _kill(proc.pid, signal.SIGKILL)
-                proc.wait()
+                _ = proc.wait()
             code = _TIMEOUT_EXIT
         code = 128 - code if code < 0 else code
         if args.name:
@@ -298,20 +325,20 @@ def run(args: argparse.Namespace, paths: dict[str, str]) -> int:
 
 def _write(path: str, text: str) -> None:
     with open(path, "w") as handle:
-        handle.write(text)
+        _ = handle.write(text)
 
 
-def start(args: argparse.Namespace, paths: dict[str, str]) -> int:
+def start(args: _Args, paths: dict[str, str]) -> int:
     """Run the command as a detached job and return at once."""
     os.makedirs(paths["jobs"], exist_ok=True)
-    stop(args, paths)
+    _ = stop(args, paths)
     for suffix in ("out", "err", "exit", "pid"):
         with contextlib.suppress(FileNotFoundError):
             os.unlink(_job(paths, args.name, suffix))
     # Present before the job is, so `alive` never reads a job just started as gone.
     _write(_job(paths, args.name, "out"), "")
     argv = [sys.executable, os.path.abspath(__file__), "run", *sys.argv[2:]]
-    subprocess.Popen(
+    _ = subprocess.Popen(
         argv,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -321,7 +348,7 @@ def start(args: argparse.Namespace, paths: dict[str, str]) -> int:
     return 0
 
 
-def _pid(args: argparse.Namespace, paths: dict[str, str]) -> int | None:
+def _pid(args: _Args, paths: dict[str, str]) -> int | None:
     try:
         with open(_job(paths, args.name, "pid")) as handle:
             return int(handle.read().strip())
@@ -329,14 +356,14 @@ def _pid(args: argparse.Namespace, paths: dict[str, str]) -> int | None:
         return None
 
 
-def stop(args: argparse.Namespace, paths: dict[str, str]) -> int:
+def stop(args: _Args, paths: dict[str, str]) -> int:
     pid = _pid(args, paths)
     if pid is not None and not os.path.exists(_job(paths, args.name, "exit")):
         _kill(pid, signal.SIGKILL)
     return 0
 
 
-def alive(args: argparse.Namespace, paths: dict[str, str]) -> int:
+def alive(args: _Args, paths: dict[str, str]) -> int:
     """0 while the job is starting or running, 1 once it has an exit status or never
     existed."""
     if os.path.exists(_job(paths, args.name, "exit")):
@@ -360,14 +387,14 @@ def _text(data: bytes) -> tuple[str, int]:
 def _read_from(path: str, offset: int, limit: int) -> tuple[str, int]:
     try:
         with open(path, "rb") as handle:
-            handle.seek(offset)
+            _ = handle.seek(offset)
             text, used = _text(handle.read(limit))
     except OSError:
         return "", offset
     return text, offset + used
 
 
-def output(args: argparse.Namespace, paths: dict[str, str]) -> int:
+def output(args: _Args, paths: dict[str, str]) -> int:
     """A job's state and its output after the given offsets, as JSON."""
     try:
         with open(_job(paths, args.name, "exit")) as handle:
@@ -399,29 +426,29 @@ def _split(argv: list[str]) -> tuple[list[str], list[str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("run", "start", "stop", "alive", "output"))
-    parser.add_argument("--root", default="/")
-    parser.add_argument("--key", default="")
-    parser.add_argument("--name", default="")
-    parser.add_argument("--uid", type=int, default=1100)
-    parser.add_argument("--workdir", default="")
-    parser.add_argument("--timeout", type=float, default=0)
-    parser.add_argument("--stdin", default="")
-    parser.add_argument("--env", action="append", default=[])
-    parser.add_argument("--publish", type=int, default=0)
-    parser.add_argument("--memory", default="")
-    parser.add_argument("--cpus", default="")
-    parser.add_argument("--pids", type=int, default=0)
-    parser.add_argument("--cgroup-root", default="/sys/fs/cgroup")
-    parser.add_argument("--out-offset", type=int, default=0)
-    parser.add_argument("--err-offset", type=int, default=0)
-    parser.add_argument("--limit", type=int, default=1 << 20)
+    _ = parser.add_argument("action", choices=("run", "start", "stop", "alive", "output"))
+    _ = parser.add_argument("--root", default="/")
+    _ = parser.add_argument("--key", default="")
+    _ = parser.add_argument("--name", default="")
+    _ = parser.add_argument("--uid", type=int, default=1100)
+    _ = parser.add_argument("--workdir", default="")
+    _ = parser.add_argument("--timeout", type=float, default=0)
+    _ = parser.add_argument("--stdin", default="")
+    _ = parser.add_argument("--env", action="append", default=[])
+    _ = parser.add_argument("--publish", type=int, default=0)
+    _ = parser.add_argument("--memory", default="")
+    _ = parser.add_argument("--cpus", default="")
+    _ = parser.add_argument("--pids", type=int, default=0)
+    _ = parser.add_argument("--cgroup-root", default="/sys/fs/cgroup")
+    _ = parser.add_argument("--out-offset", type=int, default=0)
+    _ = parser.add_argument("--err-offset", type=int, default=0)
+    _ = parser.add_argument("--limit", type=int, default=1 << 20)
     # A file the command may write its final working directory to, as /run/cwd.
-    parser.add_argument("--cwd-file", default="")
-    parser.add_argument("--plugin", default="")
-    parser.add_argument("--plugin-writable", action="store_true")
+    _ = parser.add_argument("--cwd-file", default="")
+    _ = parser.add_argument("--plugin", default="")
+    _ = parser.add_argument("--plugin-writable", action="store_true")
     own, command = _split(sys.argv[1:])
-    args = parser.parse_args(own)
+    args = parser.parse_args(own, namespace=_Args())
     args.argv = command
     if args.action in ("run", "start") and (not _KEY.match(args.key) or not args.argv):
         parser.error("run and start need a valid --key and a command")

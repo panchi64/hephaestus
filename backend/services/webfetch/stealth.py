@@ -25,7 +25,7 @@ walls (Cloudflare/DataDome class) — that needs a proxy network we don't run.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TypedDict
 
 # Runs before any page script in every context, masking the standard automation tells.
 # The UA string, client hints and navigator.platform are handled natively by the CDP
@@ -173,7 +173,21 @@ def user_agent_override(
     }
 
 
-def context_options(*, user_agent: str, locale: str, timezone_id: str) -> dict[str, Any]:
+class _Viewport(TypedDict):
+    width: int
+    height: int
+
+
+class ContextOptions(TypedDict):
+    user_agent: str
+    locale: str
+    timezone_id: str
+    viewport: _Viewport
+    device_scale_factor: int
+    extra_http_headers: dict[str, str]
+
+
+def context_options(*, user_agent: str, locale: str, timezone_id: str) -> ContextOptions:
     """Stealth-friendly ``new_context`` kwargs: a realistic UA, locale/timezone, a normal
     desktop viewport, and an Accept-Language header consistent with the locale. The client
     hints + ``navigator.userAgentData`` are brought into agreement separately, per page,

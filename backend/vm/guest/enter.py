@@ -14,6 +14,7 @@ import asyncio
 import os
 import signal
 import sys
+from collections.abc import Awaitable, Callable
 
 PROXY_PORT = 3128
 EGRESS_SOCK = "/run/egress.sock"
@@ -34,19 +35,30 @@ async def _pump(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
             pass
 
 
-def _bridge(connect):
+class _Args(argparse.Namespace):
+    publish: int = 0
+    argv: list[str]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.argv = []
+
+
+def _bridge(
+    connect: Callable[[], Awaitable[tuple[asyncio.StreamReader, asyncio.StreamWriter]]],
+):
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             up_r, up_w = await connect()
         except OSError:
             writer.close()
             return
-        await asyncio.gather(_pump(reader, up_w), _pump(up_r, writer), return_exceptions=True)
+        _ = await asyncio.gather(_pump(reader, up_w), _pump(up_r, writer), return_exceptions=True)
 
     return handle
 
 
-async def main(args: argparse.Namespace) -> int:
+async def main(args: _Args) -> int:
     servers = [
         await asyncio.start_server(
             _bridge(lambda: asyncio.open_unix_connection(EGRESS_SOCK)), "127.0.0.1", PROXY_PORT
@@ -71,12 +83,12 @@ async def main(args: argparse.Namespace) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--publish", type=int, default=0)
+    _ = parser.add_argument("--publish", type=int, default=0)
     argv = sys.argv[1:]
     at = argv.index("--") if "--" in argv else len(argv)
-    parsed = parser.parse_args(argv[:at])
+    parsed = parser.parse_args(argv[:at], namespace=_Args())
     parsed.argv = argv[at + 1 :]
     if not parsed.argv:
         sys.exit(2)
-    os.umask(0o022)
+    _ = os.umask(0o022)
     sys.exit(asyncio.run(main(parsed)))

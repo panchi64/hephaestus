@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import os
 import secrets
@@ -27,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.periodic import PeriodicTask
+from core.serde import parse_json
 from services.sandbox.gitenv import git_config_pins
 
 from .driver import VMError
@@ -53,9 +53,9 @@ class BringOut:
 
 class ProjectWorkspace:
     def __init__(self, vm: ProjectHost, key: str, root: Path) -> None:
-        self._vm = vm
-        self.key = key
-        self.root = root
+        self._vm: ProjectHost = vm
+        self.key: str = key
+        self.root: Path = root
         self._host: Manifest = {}
         self._guest: Manifest = {}
         self._generation: int | None = None
@@ -63,7 +63,7 @@ class ProjectWorkspace:
         #: The commit the guest's branch was last known to match the host's at.
         self._synced_sha: str | None = None
         #: Whether the folder is the top of a git repository; a plain folder crosses whole.
-        self._git = False
+        self._git: bool = False
 
     @property
     def is_in(self) -> bool:
@@ -144,12 +144,12 @@ class ProjectWorkspace:
         if sha:
             bundle = self._vm.scratch_path(".bundle")
             try:
-                await self._host_git("bundle", "create", "-q", str(bundle), source)
+                _ = await self._host_git("bundle", "create", "-q", str(bundle), source)
                 guest_bundle = await self._vm.put_path(bundle)
             finally:
                 bundle.unlink(missing_ok=True)
         if sha or fresh:
-            await self._vm.call_checked(
+            _ = await self._vm.call_checked(
                 [
                     "python3",
                     self._gitsync,
@@ -169,9 +169,11 @@ class ProjectWorkspace:
             ["python3", self._gitsync, "head", self.guest_root], what="read the project's HEAD"
         )
         try:
-            guest = json.loads(raw)
+            guest = parse_json(raw)
         except ValueError as exc:
             raise VMError("the platform VM returned an unreadable HEAD") from exc
+        if not isinstance(guest, dict):
+            raise VMError("the platform VM returned an unreadable HEAD")
         branch = self._branch
         expected_ref = f"refs/heads/{branch or _DETACHED}"
         if guest.get("sha") == self._synced_sha:
@@ -179,13 +181,13 @@ class ProjectWorkspace:
         if guest.get("ref") != expected_ref:
             report.notes.append(
                 f"HEAD in the VM is on {guest.get('ref') or 'a detached commit'}, not "
-                f"{expected_ref}; commits there were not brought back to the project."
+                + f"{expected_ref}; commits there were not brought back to the project."
             )
             return
         if branch is None or not self._synced_sha:
             report.notes.append(
                 "The project has no branch checked out, so the commits made in the VM were "
-                "not brought back."
+                + "not brought back."
             )
             return
         guest_out = f"{self._vm.layout.xfer}/{secrets.token_hex(8)}.bundle"
@@ -195,25 +197,26 @@ class ProjectWorkspace:
         if result.exit_code == 3:
             report.notes.append(
                 f"{branch} was rewritten in the VM rather than added to, so its commits "
-                "were not brought back. Only new commits on top of the branch return."
+                + "were not brought back. Only new commits on top of the branch return."
             )
             return
         if result.exit_code != 0:
             raise VMError(f"could not pack the new commits: {result.stderr.strip()[-300:]}")
+        guest_sha = str(guest["sha"])
         local = self._vm.scratch_path(".bundle")
         try:
             await self._vm.fetch_file(guest_out, local, max_bytes=_MAX_BUNDLE_BYTES)
-            await self._land(local, branch, guest["sha"])
+            await self._land(local, branch, guest_sha)
         finally:
             local.unlink(missing_ok=True)
-        self._synced_sha = guest["sha"]
+        self._synced_sha = guest_sha
         report.commits_landed = True
 
     async def _land(self, bundle: Path, branch: str, sha: str) -> None:
         """Fetch the agent's commits, check they fast-forward the branch, and move it."""
         incoming = f"refs/hephaestus/incoming-{secrets.token_hex(4)}"
         ref = f"refs/heads/{branch}"
-        await self._host_git(
+        _ = await self._host_git(
             "-c", "fetch.fsckObjects=true", "fetch", "-q", str(bundle), f"{ref}:{incoming}"
         )
         try:
@@ -223,11 +226,11 @@ class ProjectWorkspace:
             current = (await self._host_git("rev-parse", ref)).strip()
             if current != self._synced_sha:
                 raise VMError(f"{branch} moved on the host while the VM was working")
-            await self._host_git("update-ref", ref, fetched, current)
+            _ = await self._host_git("update-ref", ref, fetched, current)
             # The working tree already holds the committed files; bring the index along.
-            await self._host_git("reset", "-q", "--mixed")
+            _ = await self._host_git("reset", "-q", "--mixed")
         finally:
-            await self._host_git("update-ref", "-d", incoming, check=False)
+            _ = await self._host_git("update-ref", "-d", incoming, check=False)
 
     # --- host git ---------------------------------------------------------------------
 
@@ -304,10 +307,10 @@ class ProjectCopies:
     """The project folders in the VM right now, by folder, each wiped once idle."""
 
     def __init__(self, vm: ProjectHost, *, idle_ttl_s: float, reap_interval_s: float) -> None:
-        self._vm = vm
-        self._idle_ttl_s = idle_ttl_s
+        self._vm: ProjectHost = vm
+        self._idle_ttl_s: float = idle_ttl_s
         self._copies: dict[str, ProjectCopy] = {}
-        self._reaper = PeriodicTask(
+        self._reaper: PeriodicTask = PeriodicTask(
             "project-copy-reaper", interval_s=reap_interval_s, work=self._sweep, logger=logger
         )
 
@@ -345,7 +348,7 @@ class ProjectCopies:
             return
         async with copy.lock:
             try:
-                await copy.workspace.evict()
+                _ = await copy.workspace.evict()
             except VMError:
                 logger.warning("project copy %s: could not bring the work out", key)
                 copy.workspace.forget()

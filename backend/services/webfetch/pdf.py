@@ -19,6 +19,7 @@ import asyncio
 import httpx
 
 from core.exceptions import WebFetchError
+from core.net import header
 from core.ssrf import assert_public_url
 from services.upload_extraction import scan_pdf
 
@@ -47,7 +48,7 @@ async def fetch_pdf_text(
         if owns:
             await client.aclose()
 
-    is_pdf = content[:5] == b"%PDF-" or "pdf" in headers.get("content-type", "").lower()
+    is_pdf = content[:5] == b"%PDF-" or "pdf" in (header(headers, "content-type") or "").lower()
     if not is_pdf:
         raise WebFetchError(
             f"{url!r} served a download that is not a PDF; only PDF downloads can be read"
@@ -57,7 +58,7 @@ async def fetch_pdf_text(
     if not text:
         raise WebFetchError(
             f"the PDF at {url!r} has no extractable text layer (it appears to be "
-            "scanned); try another source"
+            + "scanned); try another source"
         )
     return text
 
@@ -80,14 +81,14 @@ async def _download(
                 "GET", current, timeout=timeout_s, follow_redirects=False
             ) as resp:
                 if resp.is_redirect:
-                    location = resp.headers.get("location")
+                    location = header(resp.headers, "location")
                     if not location:
                         raise WebFetchError(f"{current!r} returned a redirect with no location")
                     current = str(httpx.URL(current).join(location))
                     continue
                 if resp.status_code >= 400:
                     raise WebFetchError(f"{url!r} returned HTTP {resp.status_code}")
-                declared = resp.headers.get("content-length")
+                declared = header(resp.headers, "content-length")
                 if declared is not None and declared.isdigit() and int(declared) > max_bytes:
                     raise WebFetchError(
                         f"the file at {url!r} exceeds the {max_bytes}-byte fetch limit"

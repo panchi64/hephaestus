@@ -41,8 +41,13 @@ async def _pump(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
             pass
 
 
-async def _splice(a_r, a_w, b_r, b_w) -> None:
-    await asyncio.gather(_pump(a_r, b_w), _pump(b_r, a_w), return_exceptions=True)
+async def _splice(
+    a_r: asyncio.StreamReader,
+    a_w: asyncio.StreamWriter,
+    b_r: asyncio.StreamReader,
+    b_w: asyncio.StreamWriter,
+) -> None:
+    _ = await asyncio.gather(_pump(a_r, b_w), _pump(b_r, a_w), return_exceptions=True)
 
 
 class Pool:
@@ -101,7 +106,15 @@ def _mux(previews: str):
     return handle
 
 
-async def main(args: argparse.Namespace) -> None:
+class _Args(argparse.Namespace):
+    root: str = "/"
+    listen: str = "0.0.0.0"
+    pool_port: int = 7101
+    mux_port: int = 7102
+    proxy_port: int = 3128
+
+
+async def main(args: _Args) -> None:
     pool = Pool()
     run = os.path.join(args.root, "run/hephaestus")
     sock = os.path.join(run, "egress.sock")
@@ -116,14 +129,14 @@ async def main(args: argparse.Namespace) -> None:
     ]
     os.chmod(sock, 0o666)
     print("RELAY-READY", flush=True)
-    await asyncio.gather(*(server.serve_forever() for server in servers))
+    _ = await asyncio.gather(*(server.serve_forever() for server in servers))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", default="/")
-    parser.add_argument("--listen", default="0.0.0.0")
-    parser.add_argument("--pool-port", type=int, default=7101)
-    parser.add_argument("--mux-port", type=int, default=7102)
-    parser.add_argument("--proxy-port", type=int, default=3128)
-    asyncio.run(main(parser.parse_args()))
+    _ = parser.add_argument("--root", default="/")
+    _ = parser.add_argument("--listen", default="0.0.0.0")
+    _ = parser.add_argument("--pool-port", type=int, default=7101)
+    _ = parser.add_argument("--mux-port", type=int, default=7102)
+    _ = parser.add_argument("--proxy-port", type=int, default=3128)
+    asyncio.run(main(parser.parse_args(namespace=_Args())))

@@ -35,12 +35,13 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
+from core.serde import parse_json
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 
 from .driver import ExecResult, VMDriver, VMError
 from .egress import EgressGateway
 from .intercept import Interceptor
-from .sync import Changes, Manifest, pack, parse_manifest, unpack
+from .sync import Changes, Manifest, as_int, pack, parse_manifest, unpack
 from .tunnel import EgressTunnel, PreviewPort
 
 logger = logging.getLogger(__name__)
@@ -138,24 +139,24 @@ class PlatformVM:
         enabled: bool = True,
         transfer_max_bytes: int = 4 * 1024**3,
     ) -> None:
-        self._driver = driver
-        self._scratch = scratch
-        self.layout = layout or GuestLayout()
-        self.limits = limits or WorkspaceLimits()
-        self._enabled = enabled
-        self._transfer_max_bytes = transfer_max_bytes
-        self.gateway = EgressGateway(Interceptor())
+        self._driver: VMDriver = driver
+        self._scratch: Path = scratch
+        self.layout: GuestLayout = layout or GuestLayout()
+        self.limits: WorkspaceLimits = limits or WorkspaceLimits()
+        self._enabled: bool = enabled
+        self._transfer_max_bytes: int = transfer_max_bytes
+        self.gateway: EgressGateway = EgressGateway(Interceptor())
         self._tunnel: EgressTunnel | None = None
         self._pool_port: int | None = None
         self._mux_port: int | None = None
-        self._ready = asyncio.Event()
+        self._ready: asyncio.Event = asyncio.Event()
         self._failure: str | None = None
         self._bring_up_task: asyncio.Task[None] | None = None
-        self._lock = asyncio.Lock()
-        self._slots = asyncio.Semaphore(_CONCURRENCY)
+        self._lock: asyncio.Lock = asyncio.Lock()
+        self._slots: asyncio.Semaphore = asyncio.Semaphore(_CONCURRENCY)
         #: Bumped on every boot. A guest copy of a workspace belongs to one generation;
         #: a reset or a restart means it is gone and has to be piped in again.
-        self.generation = 0
+        self.generation: int = 0
         self._ready_hooks: list[Callable[[], Coroutine[object, object, None]]] = []
         self._hook_tasks: set[asyncio.Task[None]] = set()
 
@@ -200,7 +201,7 @@ class PlatformVM:
 
     async def wait_ready(self, timeout_s: float) -> bool:
         try:
-            await asyncio.wait_for(self._ready.wait(), timeout_s)
+            _ = await asyncio.wait_for(self._ready.wait(), timeout_s)
         except TimeoutError:
             return False
         return True
@@ -231,14 +232,18 @@ class PlatformVM:
                 await self._install_scripts()
                 await self._mount_cgroups()
                 lay = self.layout
-                await self._admin(
+                _ = await self._admin(
                     [
                         "sh",
                         "-c",
-                        f"mkdir -p {lay.xfer} && nohup python3 {lay.opt}/relay.py "
-                        f"--root {lay.root} --pool-port {lay.pool_port} "
-                        f"--mux-port {lay.mux_port} --proxy-port {lay.proxy_port} "
-                        f"> {lay.run_dir}/relay.log 2>&1 &",
+                        "".join(
+                            (
+                                f"mkdir -p {lay.xfer} && nohup python3 {lay.opt}/relay.py ",
+                                f"--root {lay.root} --pool-port {lay.pool_port} ",
+                                f"--mux-port {lay.mux_port} --proxy-port {lay.proxy_port} ",
+                                f"> {lay.run_dir}/relay.log 2>&1 &",
+                            )
+                        ),
                     ]
                 )
                 await self._wait_for_relay()
@@ -289,12 +294,12 @@ class PlatformVM:
 
     async def _install_scripts(self) -> None:
         lay = self.layout
-        await self._admin(
+        _ = await self._admin(
             ["mkdir", "-p", lay.opt, lay.path("run/hephaestus/previews"), lay.path("work")]
         )
         for script in sorted(GUEST_SCRIPTS.glob("*.py")):
             await self._driver.put_file(script, f"{lay.opt}/{script.name}")
-        await self._admin(["chmod", "-R", "a+rX", lay.opt])
+        _ = await self._admin(["chmod", "-R", "a+rX", lay.opt])
 
     async def _mount_cgroups(self) -> None:
         """Mount cgroup v2 where the guest's init did not, so each workspace's caps hold.
@@ -304,7 +309,7 @@ class PlatformVM:
                 "sh",
                 "-c",
                 "grep -q ' /sys/fs/cgroup cgroup2 ' /proc/mounts"
-                " || mount -t cgroup2 none /sys/fs/cgroup",
+                + " || mount -t cgroup2 none /sys/fs/cgroup",
             ],
             timeout_s=_ADMIN_TIMEOUT_S,
         )
@@ -348,7 +353,7 @@ class PlatformVM:
         if result.exit_code != 0:
             raise VMError(
                 f"`{shlex.join(argv)[:200]}` failed in the platform VM: "
-                f"{(result.stderr or result.stdout).strip()[-500:]}"
+                + f"{(result.stderr or result.stdout).strip()[-500:]}"
             )
         return result.stdout
 
@@ -399,7 +404,7 @@ class PlatformVM:
             )
         finally:
             if stdin_path:
-                await self._call(["rm", "-f", stdin_path], timeout_s=_ADMIN_TIMEOUT_S)
+                _ = await self._call(["rm", "-f", stdin_path], timeout_s=_ADMIN_TIMEOUT_S)
 
     async def start_job(
         self,
@@ -416,7 +421,7 @@ class PlatformVM:
         """Start the agent's command as a named background job confined to workspace
         ``key``; read it with :meth:`job` and end it with :meth:`stop_job`."""
         self._require()
-        await self._admin(
+        _ = await self._admin(
             [
                 "python3",
                 self._confine,
@@ -443,7 +448,7 @@ class PlatformVM:
     async def stop_job(self, name: str) -> None:
         if not self.available:
             return
-        await self._admin(
+        _ = await self._admin(
             ["python3", self._confine, "stop", "--root", self.layout.root, "--name", name]
         )
 
@@ -466,14 +471,17 @@ class PlatformVM:
             timeout_s=_ADMIN_TIMEOUT_S,
         )
         try:
-            raw = json.loads(result.stdout)
+            raw = parse_json(result.stdout)
+            if not isinstance(raw, dict):
+                raise TypeError("a job's state is not an object")
+            exit_code = raw["exit"]
             return JobState(
                 running=bool(raw["running"]),
-                exit_code=raw["exit"] if isinstance(raw["exit"], int) else None,
+                exit_code=exit_code if isinstance(exit_code, int) else None,
                 stdout=str(raw["out"]),
                 stderr=str(raw["err"]),
-                out_end=int(raw["out_end"]),
-                err_end=int(raw["err_end"]),
+                out_end=as_int(raw["out_end"]),
+                err_end=as_int(raw["err_end"]),
             )
         except (ValueError, KeyError, TypeError) as exc:
             raise VMError(f"could not read job {name!r} in the platform VM") from exc
@@ -487,7 +495,7 @@ class PlatformVM:
         """A host loopback port reaching the server ``key``'s preview publishes."""
         self._require()
         port = PreviewPort(key, self._connect_mux)
-        await port.open()
+        _ = await port.open()
         return port
 
     # --- platform services --------------------------------------------------------
@@ -535,12 +543,12 @@ class PlatformVM:
             ]
         )
         run = self.layout.run_dir
-        await self._admin(
+        _ = await self._admin(
             [
                 "sh",
                 "-c",
                 f"mkdir -p {run}/logs && nohup setsid {command} "
-                f"> {run}/logs/{name}.log 2>&1 & echo $! > {run}/{name}.pid",
+                + f"> {run}/logs/{name}.log 2>&1 & echo $! > {run}/{name}.pid",
             ]
         )
 
@@ -548,12 +556,14 @@ class PlatformVM:
         if not self.available:
             return
         pid = f"{self.layout.run_dir}/{name}.pid"
-        await self._admin(["sh", "-c", f"[ -f {pid} ] && kill -- -$(cat {pid}); rm -f {pid}; true"])
+        _ = await self._admin(
+            ["sh", "-c", f"[ -f {pid} ] && kill -- -$(cat {pid}); rm -f {pid}; true"]
+        )
 
     async def put_text(self, guest: str, text: str, *, mode: str = "0644") -> None:
         staged = await self._put_bytes(text.encode())
-        await self._admin(["install", "-D", "-m", mode, staged, guest])
-        await self._admin(["rm", "-f", staged])
+        _ = await self._admin(["install", "-D", "-m", mode, staged, guest])
+        _ = await self._admin(["rm", "-f", staged])
 
     async def forward(self, guest_port: int) -> int:
         self._require()
@@ -569,7 +579,10 @@ class PlatformVM:
         if result.exit_code != 0:
             raise VMError(f"could not list a workspace in the platform VM: {result.stderr}")
         try:
-            return parse_manifest(json.loads(result.stdout or "{}"))
+            listing = parse_json(result.stdout or "{}")
+            if not isinstance(listing, dict):
+                raise TypeError("a workspace listing is not an object")
+            return parse_manifest(listing)
         except (ValueError, TypeError) as exc:
             raise VMError("the platform VM returned an unreadable workspace listing") from exc
 
@@ -581,7 +594,7 @@ class PlatformVM:
             await asyncio.to_thread(pack, root, changes.changed, local)
             archive = await self._put_path(local)
             listing = await self._put_bytes(json.dumps(changes.gone).encode())
-            await self._admin(
+            _ = await self._admin(
                 [
                     "python3",
                     self._files,
@@ -593,7 +606,7 @@ class PlatformVM:
                 ],
                 timeout_s=_ADMIN_TIMEOUT_S * 5,
             )
-            await self._admin(["rm", "-f", archive, listing])
+            _ = await self._admin(["rm", "-f", archive, listing])
         finally:
             local.unlink(missing_ok=True)
 
@@ -605,7 +618,7 @@ class PlatformVM:
         archive = f"{self.layout.xfer}/{secrets.token_hex(8)}.tar"
         local = self._local_xfer()
         try:
-            await self._admin(
+            _ = await self._admin(
                 ["python3", self._files, "pack", self.layout.work(key), listing, archive],
                 timeout_s=_ADMIN_TIMEOUT_S * 5,
             )
@@ -623,12 +636,12 @@ class PlatformVM:
         finally:
             local.unlink(missing_ok=True)
             if self.available:
-                await self._call(["rm", "-f", archive, listing], timeout_s=_ADMIN_TIMEOUT_S)
+                _ = await self._call(["rm", "-f", archive, listing], timeout_s=_ADMIN_TIMEOUT_S)
 
     async def wipe(self, key: str) -> None:
         if not self.available:
             return
-        await self._admin(["python3", self._files, "wipe", self.layout.work(key)])
+        _ = await self._admin(["python3", self._files, "wipe", self.layout.work(key)])
 
     def _local_xfer(self) -> Path:
         return self.scratch_path(".tar")
@@ -662,7 +675,7 @@ class PlatformVM:
     async def _put_bytes(self, data: bytes) -> str:
         local = self._scratch / secrets.token_hex(8)
         self._scratch.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(local.write_bytes, data)
+        _ = await asyncio.to_thread(local.write_bytes, data)
         try:
             return await self._put_path(local)
         finally:

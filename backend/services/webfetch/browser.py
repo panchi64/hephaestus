@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Protocol, cast
 
-from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
+from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from services.vm import PlatformVM, VMError
@@ -53,6 +54,12 @@ _CDP_PORT = 9222
 _CDP_EXPOSED = 9223
 
 
+class _CdpSession(Protocol):
+    async def send(
+        self, method: str, params: dict[str, object] | None = None
+    ) -> dict[str, object]: ...
+
+
 class ManagedBrowser:
     """Owns the lifecycle of the headless Chromium that runs in the platform VM.
 
@@ -74,24 +81,24 @@ class ManagedBrowser:
         cookie_ttl_s: float = 0.0,
         cookie_max: int = 2000,
     ) -> None:
-        self._enabled = enabled
-        self._vm = vm
-        self._startup_timeout_s = startup_timeout_s
-        self._sem = asyncio.Semaphore(max(1, concurrency))
-        self._user_agent_override = user_agent
-        self._locale = locale
-        self._timezone_id = timezone_id
+        self._enabled: bool = enabled
+        self._vm: PlatformVM | None = vm
+        self._startup_timeout_s: float = startup_timeout_s
+        self._sem: asyncio.Semaphore = asyncio.Semaphore(max(1, concurrency))
+        self._user_agent_override: str = user_agent
+        self._locale: str = locale
+        self._timezone_id: str = timezone_id
         # Shared across fetches so a solved challenge's clearance cookie carries forward;
         # None disables (fresh, cookieless context every fetch — the prior behaviour).
-        self._jar = (
+        self._jar: DomainCookieJar | None = (
             DomainCookieJar(ttl_s=cookie_ttl_s, max_entries=cookie_max)
             if (cookie_ttl_s > 0)
             else None
         )
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
-        self._user_agent = ""  # resolved from the override or the engine version in _bring_up
-        self._browser_version = ""  # the engine version, for matching the client-hint brands
+        self._user_agent: str = ""  # resolved from the override or the engine version in _bring_up
+        self._browser_version: str = ""  # the engine version, for matching the client-hint brands
         self._ws_url: str | None = None
         self._task: asyncio.Task[None] | None = None
         if vm is not None:
@@ -110,7 +117,7 @@ class ManagedBrowser:
         """Wait up to ``timeout_s`` for a bring-up in progress to finish."""
         task = self._task
         if task is not None and not self.available:
-            await asyncio.wait({task}, timeout=timeout_s)
+            _ = await asyncio.wait({task}, timeout=timeout_s)
         return self.available
 
     async def start(self) -> None:
@@ -143,7 +150,7 @@ class ManagedBrowser:
             logger.info("web fetch: could not stop the browser", exc_info=True)
 
     @asynccontextmanager
-    async def context(self, url: str | None = None) -> AsyncIterator[BrowserContext]:
+    async def context(self, url: str | None = None) -> AsyncGenerator[BrowserContext]:
         """A fresh, isolated, stealthed browser context for one fetch — concurrency-bounded
         and always closed. When a cookie jar is enabled and ``url`` is given, the site's
         cached cookies are seeded in (so a prior challenge's clearance carries forward) and
@@ -163,7 +170,7 @@ class ManagedBrowser:
                 ),
             )
             try:
-                await ctx.add_init_script(INIT_SCRIPT)
+                _ = await ctx.add_init_script(INIT_SCRIPT)
                 if self._jar is not None and url:
                     seed = self._jar.seed_for(url)
                     if seed:
@@ -190,15 +197,15 @@ class ManagedBrowser:
                 except Exception:
                     pass
 
-    async def apply_stealth(self, page) -> None:
+    async def apply_stealth(self, page: Page) -> None:
         """Bring a page's client hints + ``navigator.userAgentData`` into agreement with
         the spoofed UA (and strip the headless shell's ``HeadlessChrome`` brand) via a CDP
         user-agent override. Must run before the page's first navigation. Best-effort: a
         CDP hiccup degrades to UA-string-only stealth rather than failing an otherwise-fine
         fetch — the JS-surface evasions (init script) are unaffected either way."""
         try:
-            cdp = await page.context.new_cdp_session(page)
-            await cdp.send(
+            cdp = cast("_CdpSession", await page.context.new_cdp_session(page))
+            _ = await cdp.send(
                 "Emulation.setUserAgentOverride",
                 user_agent_override(
                     user_agent=self._user_agent,
@@ -221,7 +228,7 @@ class ManagedBrowser:
         if vm is None:
             logger.info("web fetch: no platform VM — web fetch unavailable")
             return
-        await vm.wait_ready(float("inf"))
+        _ = await vm.wait_ready(float("inf"))
         try:
             await self._stop_services()
             await vm.start_service(
