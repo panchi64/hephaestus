@@ -28,8 +28,11 @@ deliberately.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Mapping
+
 from pydantic_ai import RunContext
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -221,7 +224,7 @@ async def test_only_plan_narrows_the_catalog():
 # --- and that a real request performs the subtraction these figures assume -------------
 
 
-async def _measured_tools(*, dormant, reveal: bool) -> int:
+async def _measured_tools(*, dormant: Mapping[str, str], reveal: bool) -> int:
     """The schema cost a **real turn** records on its Run, in characters.
 
     Everything above computes the subtraction itself, from `defer_loading`, and then measures
@@ -235,7 +238,9 @@ async def _measured_tools(*, dormant, reveal: bool) -> int:
     """
     steps: list[object] = []
 
-    async def stream_fn(_messages, info):
+    async def stream_fn(
+        _messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         steps.append(info)
         if reveal and len(steps) == 1:
             yield {0: DeltaToolCall(name="search_tools", json_args='{"queries": ["tasks"]}')}

@@ -6,15 +6,20 @@ the HTTP surface end to end."""
 
 from __future__ import annotations
 
-from core.ratelimit import RateLimiter
+from fastapi import FastAPI
 
-from ._helpers import client_app
+from core.ratelimit import RateLimiter
+from services.corpus.uploads import UploadsAdapter
+from services.uploads import UploadStore
+
+from ._helpers import app_state, client_app
+from ._json import json_body, json_list, obj, s
 from .test_uploads_extraction import text_pdf
 
 
-async def _await_extraction(app):
-    await app.state.uploads._worker.join()
-    await app.state.corpus_uploads._worker.join()
+async def _await_extraction(app: FastAPI) -> None:
+    await app_state(app, "uploads", UploadStore)._worker.join()
+    await app_state(app, "corpus_uploads", UploadsAdapter)._worker.join()
 
 
 async def test_upload_extract_list_download_correct_delete():
@@ -23,26 +28,27 @@ async def test_upload_extract_list_download_correct_delete():
             "/uploads", files={"file": ("notes.txt", b"zebra knowledge here", "text/plain")}
         )
         assert created.status_code == 201
-        up = created.json()
-        uid = up["id"]
+        up = json_body(created)
+        uid = s(up["id"])
         assert up["filename"] == "notes.txt" and up["sizeBytes"] == 20  # camelCase out
 
         await _await_extraction(app)
 
-        detail = (await client.get(f"/uploads/{uid}")).json()
+        detail = json_body(await client.get(f"/uploads/{uid}"))
         assert detail["status"] == "done"
         assert detail["extractedText"] == "zebra knowledge here"
         assert detail["extractor"] == "basic"
 
-        listed = (await client.get("/uploads")).json()
-        assert [u["id"] for u in listed] == [uid] and listed[0]["hasText"] is True
+        listed = json_list(await client.get("/uploads"))
+        assert [obj(u)["id"] for u in listed] == [uid] and obj(listed[0])["hasText"] is True
 
         content = await client.get(f"/uploads/{uid}/content")
         assert content.content == b"zebra knowledge here"
         assert "attachment" in content.headers["content-disposition"]
 
         corrected = await client.patch(f"/uploads/{uid}", json={"text": "fixed text"})
-        assert corrected.status_code == 200 and corrected.json()["extractedText"] == "fixed text"
+        assert corrected.status_code == 200
+        assert json_body(corrected)["extractedText"] == "fixed text"
 
         assert (await client.delete(f"/uploads/{uid}")).status_code == 204
         assert (await client.get(f"/uploads/{uid}")).status_code == 404
@@ -53,9 +59,10 @@ async def test_pdf_text_extracted_via_route():
         created = await client.post(
             "/uploads", files={"file": ("doc.pdf", text_pdf("route pdf marker"), "application/pdf")}
         )
-        uid = created.json()["id"]
+        uid = s(json_body(created)["id"])
         await _await_extraction(app)
-        assert "route pdf marker" in (await client.get(f"/uploads/{uid}")).json()["extractedText"]
+        text = s(json_body(await client.get(f"/uploads/{uid}"))["extractedText"])
+        assert "route pdf marker" in text
 
 
 async def test_duplicate_returns_200():
@@ -63,7 +70,7 @@ async def test_duplicate_returns_200():
         first = await client.post("/uploads", files={"file": ("a.txt", b"same", "text/plain")})
         second = await client.post("/uploads", files={"file": ("a.txt", b"same", "text/plain")})
         assert first.status_code == 201 and second.status_code == 200
-        assert first.json()["id"] == second.json()["id"]
+        assert json_body(first)["id"] == json_body(second)["id"]
 
 
 async def test_empty_file_rejected():
@@ -84,8 +91,8 @@ async def test_rate_limited_returns_429():
 
 async def test_uploads_surface_is_real_not_a_stub():
     async with client_app() as (client, _app):
-        sources = (await client.get("/corpus/sources")).json()
-        row = next(s for s in sources if s["id"] == "surf-uploads")
+        sources = json_list(await client.get("/corpus/sources"))
+        row = next(obj(src) for src in sources if obj(src)["id"] == "surf-uploads")
         assert row["kind"] == "surface"
         assert row["status"] == "indexed"
         assert row["href"] == "/uploads"

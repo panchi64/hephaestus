@@ -10,7 +10,7 @@ from ._helpers import client_app
 
 class _FakeSessions:
     def __init__(self, status: str) -> None:
-        self._status = status
+        self._status: str = status
         self.checked: list[str] = []
 
     def preview_status(self, token: str) -> str:

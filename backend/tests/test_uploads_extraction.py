@@ -7,12 +7,13 @@ tests so they aren't redefined."""
 from __future__ import annotations
 
 import io
+from typing import final, override
 
 from fpdf import FPDF
 from PIL import Image
 
 from core.exceptions import DegradedCapabilityError
-from services.upload_extraction import BasicExtractor
+from services.upload_extraction import BasicExtractor, PreparedVisionOCR, VisionOCR
 
 OWNER = "operator"
 
@@ -20,40 +21,48 @@ OWNER = "operator"
 # --- shared fakes (the VisionOCR seam) ------------------------------------
 
 
-class _Prepared:
+@final
+class _Prepared(PreparedVisionOCR):
     def __init__(self, text: str) -> None:
-        self._text = text
+        self._text: str = text
 
+    @override
     async def transcribe(self, image: bytes) -> str:
         return self._text
 
 
-class FakeVisionOCR:
+@final
+class FakeVisionOCR(VisionOCR):
     """A vision model that always transcribes a page to the same canned text."""
 
     def __init__(self, text: str = "OCR-TEXT") -> None:
-        self._text = text
-        self.prepared = 0
+        self._text: str = text
+        self.prepared: int = 0
 
+    @override
     async def prepare(self, owner_id: str) -> _Prepared:
         self.prepared += 1
         return _Prepared(self._text)
 
 
-class NoVisionOCR:
+@final
+class NoVisionOCR(VisionOCR):
     """Stands in for an operator with no vision endpoint configured."""
 
+    @override
     async def prepare(self, owner_id: str) -> _Prepared:
         raise DegradedCapabilityError("no vision-capable model endpoint configured")
 
 
-class FlakyVisionOCR:
+@final
+class FlakyVisionOCR(VisionOCR):
     """No vision until ``enabled`` is flipped — for the retry-after-config path."""
 
     def __init__(self) -> None:
-        self.enabled = False
-        self._inner = FakeVisionOCR("OCR-TEXT")
+        self.enabled: bool = False
+        self._inner: FakeVisionOCR = FakeVisionOCR("OCR-TEXT")
 
+    @override
     async def prepare(self, owner_id: str) -> _Prepared:
         if not self.enabled:
             raise DegradedCapabilityError("no vision-capable model endpoint configured")
@@ -67,7 +76,7 @@ def text_pdf(text: str) -> bytes:
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", size=14)
-    pdf.cell(0, 10, text)
+    _ = pdf.cell(0, 10, text)
     return bytes(pdf.output())
 
 
@@ -76,7 +85,7 @@ def multipage_text_pdf(*pages: str) -> bytes:
     pdf.set_font("Helvetica", size=14)
     for text in pages:
         pdf.add_page()
-        pdf.cell(0, 10, text)
+        _ = pdf.cell(0, 10, text)
     return bytes(pdf.output())
 
 

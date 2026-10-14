@@ -14,15 +14,23 @@ function alone would pass while any of those three came apart.
 
 from __future__ import annotations
 
+from typing import cast
+
+import pytest
+from fastapi import FastAPI
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 
 from core.container import ServiceContainer
+from core.vault import Vault
 from runs import Run, RunStream
 from services.calendar import CalendarService
 from services.mail import MailService
+from services.offline import OfflineModeService
 from services.secret_vault import SecretVaultService
+from services.settings_store import SettingsStore
 from services.tool_policy import (
     CategoryAvailability,
     effective_disabled_tools,
@@ -33,7 +41,7 @@ from tools.catalog import tool_catalog
 from tools.describe import category_names
 from tools.tool_search import dormant_index_instructions
 
-from ._helpers import client_app, full_tool_categories
+from ._helpers import app_state, client_app, full_tool_categories
 
 OWNER = "operator"
 
@@ -49,26 +57,36 @@ def _ctx(disabled: frozenset[str]) -> RunContext[RunDeps]:
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
-def _tools(app, category: str) -> frozenset[str]:
-    """The namespaced names the assembly resolved for one checked category."""
-    (entry,) = [e for e in app.state.category_availability if e.category == category]
-    return entry.tools
-
-
-async def _withheld(app) -> frozenset[str]:
-    """What the app's own disabled set holds for a turn with nothing else against it —
-    every other axis at its permissive default, so what is left is this one."""
-    return await effective_disabled_tools(
-        app.state.settings_store,
-        app.state.offline,
-        OWNER,
-        availability=app.state.category_availability,
-        caps=app.state.capabilities,
+def _availability(app: FastAPI) -> tuple[CategoryAvailability, ...]:
+    return cast(
+        tuple[CategoryAvailability, ...], app_state(app, "category_availability", tuple)
     )
 
 
-async def _connect_mailbox(app) -> None:
-    await app.state.capabilities.get(MailService).create_account(
+def _tools(app: FastAPI, category: str) -> frozenset[str]:
+    """The namespaced names the assembly resolved for one checked category."""
+    (entry,) = [e for e in _availability(app) if e.category == category]
+    return entry.tools
+
+
+def _caps(app: FastAPI) -> ServiceContainer:
+    return app_state(app, "capabilities", ServiceContainer)
+
+
+async def _withheld(app: FastAPI) -> frozenset[str]:
+    """What the app's own disabled set holds for a turn with nothing else against it —
+    every other axis at its permissive default, so what is left is this one."""
+    return await effective_disabled_tools(
+        app_state(app, "settings_store", SettingsStore),
+        app_state(app, "offline", OfflineModeService),
+        OWNER,
+        availability=_availability(app),
+        caps=_caps(app),
+    )
+
+
+async def _connect_mailbox(app: FastAPI) -> None:
+    _ = await _caps(app).get(MailService).create_account(
         OWNER, name="Personal", address="operator@example.com", password="secret"
     )
 
@@ -78,15 +96,18 @@ async def _connect_mailbox(app) -> None:
 
 async def test_the_checked_categories_are_the_ones_with_a_service_to_configure():
     async with client_app() as (_, app):
-        assert {e.category for e in app.state.category_availability} == CHECKED
+        assert {e.category for e in _availability(app)} == CHECKED
 
 
 async def test_each_check_resolves_to_the_real_tools_of_its_category():
     """A check whose name set were empty would pass every other assertion here while
     withholding nothing at all, so the resolution is pinned against the live catalog."""
     async with client_app() as (_, app):
-        catalog = tool_catalog(app.state.tool_categories)
-        for entry in app.state.category_availability:
+        categories = cast(
+            dict[str, AbstractToolset[RunDeps]], app_state(app, "tool_categories", dict)
+        )
+        catalog = tool_catalog(categories)
+        for entry in _availability(app):
             registered = {i.name for i in catalog if i.category == entry.category}
             assert entry.tools == registered
             assert entry.tools
@@ -114,7 +135,7 @@ async def test_connecting_a_mailbox_offers_the_mail_tools():
 
 async def test_adding_a_calendar_offers_the_calendar_tools():
     async with client_app() as (_, app):
-        await app.state.capabilities.get(CalendarService).create_calendar(OWNER, "Work")
+        _ = await _caps(app).get(CalendarService).create_calendar(OWNER, "Work")
         withheld = await _withheld(app)
         assert not (_tools(app, "calendar") & withheld)
         assert _tools(app, "mail") <= withheld
@@ -122,7 +143,7 @@ async def test_adding_a_calendar_offers_the_calendar_tools():
 
 async def test_configuring_the_vault_offers_the_vault_tools():
     async with client_app() as (_, app):
-        await app.state.capabilities.get(SecretVaultService).configure(OWNER, "a-passphrase")
+        await _caps(app).get(SecretVaultService).configure(OWNER, "a-passphrase")
         assert not (_tools(app, "vault") & await _withheld(app))
 
 
@@ -131,7 +152,7 @@ async def test_a_locked_vault_is_still_a_configured_one():
     opens it, the work continues. Withholding on a lock would take the tools away exactly
     when the model was about to ask for them back, so the check reads ``configured``."""
     async with client_app() as (_, app):
-        secrets = app.state.capabilities.get(SecretVaultService)
+        secrets = _caps(app).get(SecretVaultService)
         await secrets.configure(OWNER, "a-passphrase")
         secrets.logout()
         assert not (await secrets.status(OWNER)).unlocked
@@ -145,8 +166,8 @@ async def test_a_locked_vault_still_answers_for_mail_and_calendar():
     which fails closed and takes both categories away exactly when nothing is wrong."""
     async with client_app() as (_, app):
         await _connect_mailbox(app)
-        await app.state.capabilities.get(CalendarService).create_calendar(OWNER, "Work")
-        app.state.vault.lock()
+        _ = await _caps(app).get(CalendarService).create_calendar(OWNER, "Work")
+        app_state(app, "vault", Vault).lock()
         withheld = await _withheld(app)
         assert not (_tools(app, "mail") & withheld)
         assert not (_tools(app, "calendar") & withheld)
@@ -156,15 +177,11 @@ async def test_this_axis_reaches_no_further_than_the_categories_that_declared_it
     """Asked on its own rather than through the union, because the union is where a
     reach past the declaring categories would hide behind mode's own withholdings."""
     async with client_app() as (_, app):
-        checked = {name for e in app.state.category_availability for name in e.tools}
-        withheld = await unavailable_tools(
-            app.state.category_availability, app.state.capabilities, OWNER
-        )
+        checked = {name for e in _availability(app) for name in e.tools}
+        withheld = await unavailable_tools(_availability(app), _caps(app), OWNER)
         assert withheld == checked
         await _connect_mailbox(app)
-        withheld = await unavailable_tools(
-            app.state.category_availability, app.state.capabilities, OWNER
-        )
+        withheld = await unavailable_tools(_availability(app), _caps(app), OWNER)
         assert withheld == checked - _tools(app, "mail")
 
 
@@ -179,7 +196,9 @@ async def _yes(_caps: ServiceContainer, _owner: str) -> bool:
     return True
 
 
-async def test_a_check_that_raises_withholds_only_its_own_category(caplog):
+async def test_a_check_that_raises_withholds_only_its_own_category(
+    caplog: pytest.LogCaptureFixture,
+):
     broken = CategoryAvailability("mail", frozenset({"mail_send"}), _raises)
     fine = CategoryAvailability("calendar", frozenset({"calendar_agenda"}), _yes)
     with caplog.at_level("WARNING"):

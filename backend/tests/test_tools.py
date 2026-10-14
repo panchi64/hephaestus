@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset, RunContext
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
 
 from agent import stream_agent_run
 from runs import Run, RunStream
@@ -14,7 +17,11 @@ def _run() -> Run:
     return Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
 
 
-async def _run_agent(*, disabled=frozenset(), categories=None) -> Run:
+async def _run_agent(
+    *,
+    disabled: frozenset[str] | None = None,
+    categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
+) -> Run:
     agent = Agent(
         TestModel(custom_output_text="ok"),
         deps_type=RunDeps,
@@ -28,7 +35,7 @@ async def _run_agent(*, disabled=frozenset(), categories=None) -> Run:
         capabilities=[harness_events_capability()],
     )
     run = _run()
-    deps = RunDeps(run=run, owner_id="operator", disabled_tools=disabled)
+    deps = RunDeps(run=run, owner_id="operator", disabled_tools=disabled or frozenset())
     async with agent.iter("go", deps=deps) as agent_run:
         await stream_agent_run(agent_run, run)
     return run
@@ -58,5 +65,5 @@ async def test_deps_reach_tools():
         seen["owner"] = ctx.deps.owner_id
         return ctx.deps.owner_id
 
-    await _run_agent(categories={"id": toolset})
+    _ = await _run_agent(categories={"id": toolset})
     assert seen.get("owner") == "operator"

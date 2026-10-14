@@ -17,11 +17,18 @@ second pass an approval resume performs over arguments this capability has alrea
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
 from pydantic_ai import FunctionToolset, RunContext, ToolApproved, ToolDefinition
-from pydantic_ai.messages import ToolCallPart
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.capabilities.abstract import RawToolArgs
+from pydantic_ai.messages import ModelMessage, ToolCallPart
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -69,7 +76,9 @@ def _narrating_model() -> FunctionModel:
     """
     calls: list[AgentInfo] = []
 
-    async def stream_fn(_messages, info: AgentInfo):
+    async def stream_fn(
+        _messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         calls.append(info)
         if len(calls) == 1:
             yield {
@@ -95,7 +104,7 @@ async def _context() -> RunContext[RunDeps]:
     )
 
 
-async def _stripped(args):
+async def _stripped(args: RawToolArgs) -> RawToolArgs:
     ctx = await _context()
     return await NarrationCapability().before_tool_validate(
         ctx,
@@ -262,7 +271,7 @@ async def test_a_narrated_call_survives_being_parked_and_approved():
     approval = _events(run, ApprovalRequired)[0]
     assert approval.args.get(NARRATION_ARG) == WHY
 
-    await reg.resume(run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}))
+    _ = await reg.resume(run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}))
     await run.wait()
 
     assert seen == [{"name": "widget"}]

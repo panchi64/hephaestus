@@ -11,21 +11,29 @@ correctly can still ship it.
 
 from __future__ import annotations
 
-from pydantic_ai import Agent, ModelRequest, RunContext
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+import json
+from collections.abc import Mapping
+from typing import cast
+
+from fastapi import FastAPI
+from pydantic_ai import Agent, AgentRunResult, DeferredToolRequests, ModelRequest, RunContext
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 
 from agent.factory import build_agent
+from harness.manifest import DormantCategory
 from runs import Run, RunStream
 from tools import RunDeps, build_agent_toolsets
 from tools.catalog import tool_catalog
 from tools.describe import category_names
 from tools.tool_search import dormant_index_instructions, tool_search_capability
 
-from ._helpers import client_app, full_tool_categories
+from ._helpers import app_state, client_app, full_tool_categories
+from ._json import json_list, obj, parse_json, s
 
 OWNER = "operator"
 
@@ -44,12 +52,29 @@ DORMANT = {
 }
 
 
-def _deps(disabled: frozenset[str] = frozenset()) -> RunDeps:
+def _deps(disabled: frozenset[str] | None = None) -> RunDeps:
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
-    return RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled)
+    return RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled or frozenset())
 
 
-def _agent(categories, *, model: FunctionModel) -> Agent[RunDeps, str]:
+def _dormant(app: FastAPI) -> tuple[DormantCategory, ...]:
+    return cast(tuple[DormantCategory, ...], app_state(app, "dormant_categories", tuple))
+
+
+def _registered(app: FastAPI) -> dict[str, AbstractToolset[RunDeps]]:
+    return cast(dict[str, AbstractToolset[RunDeps]], app_state(app, "tool_categories", dict))
+
+
+def _tool_names_of(toolset: object) -> frozenset[str]:
+    tools: object = getattr(toolset, "tools", None)
+    if not isinstance(tools, dict):
+        return frozenset()
+    return frozenset(cast(dict[str, object], tools))
+
+
+def _agent(
+    categories: Mapping[str, AbstractToolset[RunDeps]], *, model: FunctionModel
+) -> Agent[RunDeps, str]:
     """The stack a real turn composes, minus everything that has nothing to do with
     deferral — the same toolsets and the same capability the engine is wired with."""
     return Agent(
@@ -60,21 +85,21 @@ def _agent(categories, *, model: FunctionModel) -> Agent[RunDeps, str]:
     )
 
 
-def _text_model(steps: list[set[str]]):
+def _text_model(steps: list[set[str]]) -> FunctionModel:
     """A model that answers on the first step, so the run records the tool list and the
     brief it was handed and nothing else."""
 
-    def respond(_messages, info: AgentInfo) -> ModelResponse:
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         steps.append({t.name for t in info.function_tools})
         return ModelResponse(parts=[TextPart("done")])
 
     return FunctionModel(respond)
 
 
-def _reveal_browse(steps: list[set[str]]):
+def _reveal_browse(steps: list[set[str]]) -> FunctionModel:
     """A model that asks for the browser on its first step and then stops."""
 
-    def respond(_messages, info: AgentInfo) -> ModelResponse:
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         steps.append({t.name for t in info.function_tools})
         if len(steps) == 1:
             return ModelResponse(parts=[ToolCallPart("search_tools", {"queries": ["browse"]})])
@@ -88,10 +113,10 @@ def _reveal_browse(steps: list[set[str]]):
 
 async def test_the_declared_dormant_set_is_what_the_app_assembles():
     async with client_app() as (_, app):
-        assert {entry.category for entry in app.state.dormant_categories} == set(DORMANT)
+        assert {entry.category for entry in _dormant(app)} == set(DORMANT)
         # Every one of them is a registered category, so the index can never advertise a
         # group whose reveal comes back empty.
-        assert set(DORMANT) <= set(app.state.tool_categories)
+        assert set(DORMANT) <= set(_registered(app))
 
 
 async def test_dormant_tools_are_deferred_and_the_rest_are_not():
@@ -109,7 +134,7 @@ async def test_dormant_tools_are_deferred_and_the_rest_are_not():
 
 async def test_a_fresh_request_carries_no_dormant_schema():
     steps: list[set[str]] = []
-    await _agent(full_tool_categories(), model=_reveal_browse(steps)).run("hi", deps=_deps())
+    _ = await _agent(full_tool_categories(), model=_reveal_browse(steps)).run("hi", deps=_deps())
     first = steps[0]
     assert not [name for name in first if name.startswith("browse_")]
     assert not [name for name in first if name.startswith("mail_")]
@@ -121,7 +146,7 @@ async def test_a_fresh_request_carries_no_dormant_schema():
 async def test_naming_a_group_reveals_the_whole_group_on_the_next_step():
     categories = full_tool_categories()
     steps: list[set[str]] = []
-    await _agent(categories, model=_reveal_browse(steps)).run("hi", deps=_deps())
+    _ = await _agent(categories, model=_reveal_browse(steps)).run("hi", deps=_deps())
     revealed = {name for name in steps[1] if name.startswith("browse_")}
     assert "browse_click" in revealed
     assert revealed == {f"browse_{name}" for name in category_names(categories)["browse"]}
@@ -136,14 +161,14 @@ async def test_a_revealed_tool_still_arrives_needing_approval():
     steps: list[set[str]] = []
     kinds: dict[str, str] = {}
 
-    def respond(_messages, info: AgentInfo) -> ModelResponse:
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         steps.append({t.name for t in info.function_tools})
         kinds.update({t.name: t.kind for t in info.function_tools})
         if len(steps) == 1:
             return ModelResponse(parts=[ToolCallPart("search_tools", {"queries": ["mail"]})])
         return ModelResponse(parts=[TextPart("done")])
 
-    await _agent(categories, model=FunctionModel(respond)).run("hi", deps=_deps())
+    _ = await _agent(categories, model=FunctionModel(respond)).run("hi", deps=_deps())
     assert kinds["mail_send"] == "unapproved"
     assert kinds["mail_list_messages"] == "function"
 
@@ -153,7 +178,7 @@ async def test_a_disabled_tool_never_enters_the_search_corpus():
     something a search can talk its way past."""
     categories = full_tool_categories()
     steps: list[set[str]] = []
-    await _agent(categories, model=_reveal_browse(steps)).run(
+    _ = await _agent(categories, model=_reveal_browse(steps)).run(
         "hi", deps=_deps(frozenset({"browse_click"}))
     )
     assert "browse_click" not in steps[1]
@@ -166,7 +191,7 @@ async def test_a_description_matching_the_work_finds_the_group_without_its_name(
     categories = full_tool_categories()
     steps: list[set[str]] = []
 
-    def respond(_messages, info: AgentInfo) -> ModelResponse:
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         steps.append({t.name for t in info.function_tools})
         if len(steps) == 1:
             return ModelResponse(
@@ -174,14 +199,14 @@ async def test_a_description_matching_the_work_finds_the_group_without_its_name(
             )
         return ModelResponse(parts=[TextPart("done")])
 
-    await _agent(categories, model=FunctionModel(respond)).run("hi", deps=_deps())
+    _ = await _agent(categories, model=FunctionModel(respond)).run("hi", deps=_deps())
     assert [name for name in steps[1] if name.startswith("mail_")]
 
 
 # --- the index that makes any of this reachable --------------------------------------
 
 
-async def _index(disabled: frozenset[str] = frozenset()) -> str:
+async def _index(disabled: frozenset[str] | None = None) -> str:
     provider = dormant_index_instructions(DORMANT, category_names(full_tool_categories()))
     ctx = RunContext(deps=_deps(disabled), model=TestModel(), usage=RunUsage())
     return await provider(ctx)
@@ -210,7 +235,7 @@ async def test_the_index_is_empty_when_every_group_is_off():
     everything = frozenset(
         f"{category}_{name}"
         for category in DORMANT
-        for name in getattr(categories[category], "tools", {})
+        for name in _tool_names_of(categories[category])
     )
     assert await _index(everything) == ""
 
@@ -233,7 +258,7 @@ async def test_the_catalog_marks_the_dormant_rows():
 
 async def test_the_tools_route_reports_dormancy():
     async with client_app() as (client, _):
-        rows = {row["name"]: row for row in (await client.get("/tools")).json()}
+        rows = {s(obj(row)["name"]): obj(row) for row in json_list(await client.get("/tools"))}
         assert rows["browse_click"]["dormant"] is True
         # Dormant is not disabled: the operator's own switch is still on.
         assert rows["browse_click"]["enabled"] is True
@@ -243,7 +268,7 @@ async def test_the_tools_route_reports_dormancy():
 # --- the engine composes the real thing this way -------------------------------------
 
 
-def _brief(result) -> str:
+def _brief(result: AgentRunResult[DeferredToolRequests | str]) -> str:
     """The instructions every request in a finished run shipped with."""
     return "\n".join(
         m.instructions or "" for m in result.all_messages() if isinstance(m, ModelRequest)
@@ -256,7 +281,7 @@ async def test_the_engine_defers_and_reveals_exactly_as_this_stack_does():
     capability would leave the model looking at a hole where the browser used to be."""
     categories = full_tool_categories()
     steps: list[set[str]] = []
-    await build_agent(_reveal_browse(steps), categories=categories, dormant=DORMANT).run(
+    _ = await build_agent(_reveal_browse(steps), categories=categories, dormant=DORMANT).run(
         "hi", deps=_deps()
     )
     assert not [name for name in steps[0] if name.startswith("browse_")]
@@ -266,20 +291,22 @@ async def test_the_engine_defers_and_reveals_exactly_as_this_stack_does():
     assert revealed == {f"browse_{name}" for name in category_names(categories)["browse"]}
 
 
-def _defs_model(defs: list[list[ToolDefinition]]):
+def _defs_model(defs: list[list[ToolDefinition]]) -> FunctionModel:
     """A model that answers immediately and keeps the tool *definitions* it was handed,
     for the assertions that are about schema text rather than about which names arrived."""
 
-    def respond(_messages, info: AgentInfo) -> ModelResponse:
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         defs.append(list(info.function_tools))
         return ModelResponse(parts=[TextPart("done")])
 
     return FunctionModel(respond)
 
 
-async def _search_tools_def(model=None):
+async def _search_tools_def(model: FunctionModel | None = None) -> ToolDefinition:
     defs: list[list[ToolDefinition]] = []
-    await _agent(full_tool_categories(), model=model or _defs_model(defs)).run("hi", deps=_deps())
+    _ = await _agent(full_tool_categories(), model=model or _defs_model(defs)).run(
+        "hi", deps=_deps()
+    )
     return next(d for d in defs[0] if d.name == "search_tools")
 
 
@@ -289,9 +316,10 @@ async def test_the_queries_parameter_describes_what_actually_resolves():
     them is the whole point. It steers the model onto the keyword fallback and away from
     the group name the strategy resolves on."""
     search = await _search_tools_def()
-    queries = search.parameters_json_schema["properties"]["queries"]
-    assert "tool names" not in queries["description"]
-    assert "group's name" in queries["description"]
+    schema = obj(parse_json(json.dumps(search.parameters_json_schema)))
+    queries = obj(obj(schema["properties"])["queries"])
+    assert "tool names" not in s(queries["description"])
+    assert "group's name" in s(queries["description"])
 
 
 async def test_the_search_tools_description_does_not_restate_the_index():

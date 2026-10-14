@@ -31,7 +31,7 @@ from services.tool_sensitivity import (
 from tools.catalog import tool_catalog
 
 from ._helpers import full_tool_categories
-from .test_tool_policy import _agent_visible, _store, stub_offline
+from .test_tool_policy import agent_visible, make_store, stub_offline
 
 OWNER = "operator"
 
@@ -202,7 +202,7 @@ class TestWhatAPlanTurnActuallySees:
     async def test_the_agent_is_offered_reads_and_both_planning_surfaces(self):
         # Through the composed toolset stack a real run resolves, not a re-derivation of
         # the rule: a withheld tool is one the model can neither see nor invoke.
-        visible = await _agent_visible(permission_disabled_tools("plan"))
+        visible = await agent_visible(permission_disabled_tools("plan"))
         assert {"files_read_file", "web_search", "corpus_retrieve"} <= visible
         # Its own scratchpad, and the way out of the level. `plan_submit` above all: a
         # Plan turn that could not reach it would have no ending at all.
@@ -218,16 +218,16 @@ class TestWhatAPlanTurnActuallySees:
     async def test_a_plan_turn_carries_fewer_schemas_than_a_full_one(self):
         # The cost half of the argument: the tools a Plan turn cannot use are schemas it
         # does not pay for either. Every tool it loses is one that would change something.
-        full = await _agent_visible(frozenset())
-        planning = await _agent_visible(permission_disabled_tools("plan"))
+        full = await agent_visible(frozenset())
+        planning = await agent_visible(permission_disabled_tools("plan"))
         assert planning < full
         assert full - planning == permission_disabled_tools("plan") & full
 
 
 class TestTheUnion:
     async def test_the_sources_compose(self):
-        store = _store()
-        await set_tool_enabled(store, OWNER, "builtin_now", False)
+        store = make_store()
+        _ = await set_tool_enabled(store, OWNER, "builtin_now", False)
         offline = stub_offline(frozenset({"web_search"}))
         disabled = await effective_disabled_tools(store, offline, OWNER)
         assert "builtin_now" in disabled  # the operator's
@@ -243,13 +243,13 @@ class TestTheUnion:
         correctly removed — and taking the Plan set back out would lift the operator's own
         hold on any name they had also switched off. Pinned as an absence because that is
         the property a future "just add it to the union" would quietly break."""
-        store = _store()
-        await set_tool_enabled(store, OWNER, "files_write_file", False)
+        store = make_store()
+        _ = await set_tool_enabled(store, OWNER, "files_write_file", False)
         disabled = await effective_disabled_tools(store, stub_offline(frozenset()), OWNER)
         assert "files_write_file" in disabled  # the operator's, and *only* theirs
         assert permission_disabled_tools("plan") - disabled
 
     async def test_a_caller_with_no_level_is_unaffected(self):
-        store = _store()
+        store = make_store()
         offline = stub_offline(frozenset())
         assert await effective_disabled_tools(store, offline, OWNER) == frozenset()

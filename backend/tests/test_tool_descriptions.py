@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import json
 import re
+from typing import cast
 
-from pydantic_ai import RunContext, ToolDefinition
+from pydantic import JsonValue
+from pydantic_ai import RunContext, Tool, ToolDefinition
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -40,6 +42,7 @@ from tools.describe import (
 )
 
 from ._helpers import full_tool_categories
+from ._json import arr, obj, parse_json, s
 
 OWNER = "operator"
 
@@ -63,6 +66,24 @@ async def _offered() -> dict[str, ToolDefinition]:
 
 def _flatten(text: str) -> str:
     return " ".join(text.split())
+
+
+def _schema(tool_def: ToolDefinition) -> dict[str, JsonValue]:
+    return obj(parse_json(json.dumps(tool_def.parameters_json_schema)))
+
+
+def _at(value: JsonValue, *path: str) -> JsonValue:
+    for key in path:
+        value = obj(value)[key]
+    return value
+
+
+def _raw_tools(toolset: object) -> dict[str, Tool[RunDeps]]:
+    """The tools a toolset carries on a ``tools`` attribute, if it has one."""
+    tools: object = getattr(toolset, "tools", None)
+    if not isinstance(tools, dict):
+        return {}
+    return cast(dict[str, Tool[RunDeps]], tools)
 
 
 # --- the assembled catalog ----------------------------------------------------------
@@ -106,13 +127,14 @@ async def test_no_schema_leaks_the_harnesss_subtasks_mode():
 
 
 async def test_the_plan_schema_offers_only_what_the_store_accepts():
-    write_plan = (await _offered())["tasks_write"].parameters_json_schema
-    item = write_plan["$defs"]["PlanItem"]["properties"]
+    write_plan = _schema((await _offered())["tasks_write"])
+    item = obj(_at(write_plan, "$defs", "PlanItem", "properties"))
     assert "parent_id" not in item
     assert "depends_on" not in item
-    assert "blocked" not in write_plan["$defs"]["TaskStatus"]["enum"]
+    statuses = arr(_at(write_plan, "$defs", "TaskStatus", "enum"))
+    assert "blocked" not in statuses
     # The statuses the store does accept are all still there.
-    assert set(write_plan["$defs"]["TaskStatus"]["enum"]) == {
+    assert set(statuses) == {
         "pending",
         "in_progress",
         "completed",
@@ -138,12 +160,13 @@ async def test_every_tool_is_offered_somewhere_to_say_why():
     offered = await _offered()
     assert offered, "the catalog is empty; this test is no longer measuring anything"
     for name in offered:
-        properties = offered[name].parameters_json_schema["properties"]
+        schema = _schema(offered[name])
+        properties = obj(schema["properties"])
         assert NARRATION_ARG in properties, f"{name} cannot say why"
-        assert properties[NARRATION_ARG]["description"] == NARRATION_TEXT, name
+        assert obj(properties[NARRATION_ARG])["description"] == NARRATION_TEXT, name
         # Optional by construction: a model that leaves it out gets a call that runs with
         # no narration, not a retry prompt about a property nothing declares.
-        assert NARRATION_ARG not in offered[name].parameters_json_schema.get("required", []), name
+        assert NARRATION_ARG not in arr(schema.get("required", [])), name
 
 
 async def test_every_tool_named_as_leaking_is_one_the_catalog_offers():
@@ -159,10 +182,9 @@ async def test_every_tool_named_as_leaking_is_one_the_catalog_offers():
 async def test_the_plan_schema_says_each_thing_once():
     """Every byte here ships on every request while the plan tools are loaded, and the
     def sits directly above the property it would be repeating."""
-    write_plan = (await _offered())["tasks_write"].parameters_json_schema
-    item = write_plan["$defs"]["PlanItem"]
-    assert "auto" not in item["description"].lower()
-    assert "Auto-generated" in item["properties"]["id"]["description"]
+    item = obj(_at(_schema((await _offered())["tasks_write"]), "$defs", "PlanItem"))
+    assert "auto" not in s(item["description"]).lower()
+    assert "Auto-generated" in s(_at(item, "properties", "id", "description"))
 
 
 async def test_the_operator_reads_the_description_the_model_reads():
@@ -180,7 +202,7 @@ async def test_describing_preserves_everything_that_carries_policy():
     raw = {
         f"{category}_{tool_name}": tool
         for category, toolset in full_tool_categories().items()
-        for tool_name, tool in getattr(toolset, "tools", {}).items()
+        for tool_name, tool in _raw_tools(toolset).items()
     }
     for name, tool_def in offered.items():
         assert tool_def.metadata == raw[name].metadata, name
@@ -195,17 +217,17 @@ async def test_the_raw_toolsets_are_left_as_the_library_built_them():
     before = {
         name: (tool.description, json.dumps(tool.function_schema.json_schema, sort_keys=True))
         for toolset in categories.values()
-        for name, tool in getattr(toolset, "tools", {}).items()
+        for name, tool in _raw_tools(toolset).items()
     }
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
     deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=frozenset())
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
-    await build_agent_toolsets(categories)[0].get_tools(ctx)
-    tool_catalog(categories)
+    _ = await build_agent_toolsets(categories)[0].get_tools(ctx)
+    _ = tool_catalog(categories)
     after = {
         name: (tool.description, json.dumps(tool.function_schema.json_schema, sort_keys=True))
         for toolset in categories.values()
-        for name, tool in getattr(toolset, "tools", {}).items()
+        for name, tool in _raw_tools(toolset).items()
     }
     assert before == after
 
@@ -229,7 +251,7 @@ def test_strip_docstring_xml_keeps_the_summary_and_drops_the_returns_block():
     assert (
         strip_docstring_xml(
             "<summary>Click an element.\n\nMore.</summary>\n"
-            "<returns>\n<description>The text after.</description>\n</returns>"
+            + "<returns>\n<description>The text after.</description>\n</returns>"
         )
         == "Click an element.\n\nMore."
     )

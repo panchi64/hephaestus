@@ -14,6 +14,7 @@ import signal
 import socket
 import tempfile
 from pathlib import Path
+from typing import cast
 
 from services.vm.driver import ExecResult, VMError
 from services.vm.platform import GuestLayout, PlatformVM
@@ -26,7 +27,7 @@ def can_confine() -> bool:
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+        return cast(tuple[str, int], sock.getsockname())[1]
 
 
 def local_layout() -> GuestLayout:
@@ -42,8 +43,8 @@ class LocalDriver:
     def __init__(self) -> None:
         self.phase: str | None = None
         self.step: str | None = None
-        self.running = False
-        self.boots = 0
+        self.running: bool = False
+        self.boots: int = 0
         self._sessions: set[int] = set()
 
     async def boot(self) -> None:
@@ -82,12 +83,12 @@ class LocalDriver:
 
     async def put_file(self, local: Path, guest: str) -> None:
         Path(guest).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(local, guest)
+        _ = shutil.copyfile(local, guest)
 
     async def get_file(self, guest: str, local: Path, *, max_bytes: int) -> None:
         if Path(guest).stat().st_size > max_bytes:
             raise VMError("too large")
-        shutil.copyfile(guest, local)
+        _ = shutil.copyfile(guest, local)
 
     async def forward(self, guest_port: int) -> int:
         return guest_port
