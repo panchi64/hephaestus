@@ -14,7 +14,7 @@ from runs.run import Run
 from runs.stream import RunStream
 
 
-def _frames(run: Run) -> AsyncGenerator[Any, None]:
+def _frames(run: Run) -> AsyncGenerator[Any]:
     body = transport.sse_response(run, after_seq=0).body_iterator
     assert isinstance(body, AsyncGenerator)
     return body

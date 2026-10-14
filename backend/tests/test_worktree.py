@@ -344,10 +344,10 @@ class TestFork:
         # behind is a tree and a branch nothing can ever reach again. It runs after a
         # clean merge has already retired the same child, so it must also be idempotent.
         root, manager, _parent, child = await self._forked(tmp_path)
-        where = {"project_id": "p", "root": root, "conversation_id": "c1"}
-
-        await manager.discard_child(**where, delegation_id="d1")
-        await manager.discard_child(**where, delegation_id="d1")
+        for _ in range(2):
+            await manager.discard_child(
+                project_id="p", root=root, conversation_id="c1", delegation_id="d1"
+            )
 
         assert not child.path.exists()
         code, _, _ = await run_git(root, "rev-parse", "--verify", child.branch)

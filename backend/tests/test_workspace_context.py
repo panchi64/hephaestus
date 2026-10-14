@@ -12,28 +12,20 @@ there is nothing to say.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 
 import pytest
 
 import tools.workspace_context as wc
 from core.container import ServiceContainer
+from runs.events import ContextInjected
 from services.sandbox import SandboxSessionManager
+from services.workspace_kind import WorkspaceKind
 from tools.deps import PromptContextRequest
 from tools.workspace_context import _MAX_ENTRIES, workspace_context
 
 from .conftest import egress_policy
-
-
-class _NoRuntime:
-    """Enough of a backend for a manager that will never start a container. These tests
-    are about a directory listing; a real daemon has nothing to do with it."""
-
-    runtime = None
-    image = "python:3.12-slim"
-    memory = "1g"
-    cpus = "1.0"
-    pids_limit = 256
-    workdir = "/work"
+from .vm_fakes import FakeVM, as_platform
 
 
 async def _vault(tmp_path):
@@ -44,25 +36,26 @@ async def _vault(tmp_path):
     return vault
 
 
-async def _caps(tmp_path, **overrides) -> tuple[ServiceContainer, SandboxSessionManager]:
+async def _caps(
+    tmp_path, *, excludes: Iterable[str] | None = None
+) -> tuple[ServiceContainer, SandboxSessionManager]:
     from core.config import Settings  # noqa: PLC0415 — after the suite's patches
 
-    opts = {"excludes": Settings().sandbox_walk_excludes, **overrides}
     manager = SandboxSessionManager(
-        _NoRuntime(),  # type: ignore[arg-type]
+        as_platform(FakeVM(tmp_path / "sandbox" / "work")),
         await _vault(tmp_path),
         egress=egress_policy(tmp_path),
         data_dir=tmp_path,
         idle_ttl_s=1800.0,
         reap_interval_s=60.0,
-        **opts,
+        excludes=Settings().sandbox_walk_excludes if excludes is None else excludes,
     )
     caps = ServiceContainer()
     caps.add(manager, as_type=SandboxSessionManager)
     return caps, manager
 
 
-def _request(caps: ServiceContainer, *, kind: str = "sandbox", key: str = "conv-a"):
+def _request(caps: ServiceContainer, *, kind: WorkspaceKind = "sandbox", key: str = "conv-a"):
     return PromptContextRequest(
         caps=caps,
         owner_id="operator",
@@ -387,8 +380,12 @@ async def test_a_live_turn_carries_the_block_at_the_tail(tmp_path):
     assert run.status is RunStatus.done
 
     events = run.stream.replay()
-    injected = [e for e in events if e.body.type == "context.injected"]
-    block = next(e.body for e in injected if e.body.contributor == "workspace")
+    injected = [e for e in events if isinstance(e.body, ContextInjected)]
+    block = next(
+        e.body
+        for e in injected
+        if isinstance(e.body, ContextInjected) and e.body.contributor == "workspace"
+    )
     assert block.placement == "prompt"  # the tail, never the cacheable head
     assert "/work/analysis.py" in block.text
     first_answer = next(e.seq for e in events if e.body.type == "answer.delta")

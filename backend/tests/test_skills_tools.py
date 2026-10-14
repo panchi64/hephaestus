@@ -57,6 +57,10 @@ class FakeSessions:
         return self.session
 
 
+class FakeRun:
+    id = "run-1"
+
+
 async def _store() -> SkillStore:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
@@ -85,13 +89,14 @@ def _deps(skills: SkillStore | None = None, sandbox_sessions: object = None) -> 
     return RunDeps(run=run, owner_id=OWNER, conversation_id="conv-1", caps=caps)
 
 
-async def _published(store: SkillStore, *, body: str = "# Release notes\n\nCollect the merged PRs."):
-    view = await store.create(
-        OWNER,
-        name="release-notes",
-        description="Draft release notes from a changelog.",
-        body=body,
-    )
+async def _published(
+    store: SkillStore,
+    *,
+    name: str = "release-notes",
+    description: str = "Draft release notes from a changelog.",
+    body: str = "# Release notes\n\nCollect the merged PRs.",
+):
+    view = await store.create(OWNER, name=name, description=description, body=body)
     return await store.set_published(OWNER, view.id, True)
 
 

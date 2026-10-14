@@ -604,7 +604,9 @@ async def test_the_cap_never_displaces_a_conversation_serving_a_live_preview(tmp
 
 
 # --- an evicted session's teardown belongs to the manager, not to whoever triggered it ---
-async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown(tmp_path):
+async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown(
+    tmp_path, monkeypatch
+):
     """Stop is the operator's most-used control, and at the cap the acquiring run is
     tearing down somebody *else's* conversation. Cancelled partway, its guest copy would
     be left out of every map — no sweep can find them and no purge names them."""
@@ -624,7 +626,7 @@ async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown
         await resume.wait()
         await real_shutdown()
 
-    displaced.shutdown = slow_shutdown  # type: ignore[method-assign]
+    monkeypatch.setattr(displaced, "shutdown", slow_shutdown)
 
     acquiring = asyncio.create_task(manager.acquire("conv-b"))
     await asyncio.wait_for(tearing.wait(), timeout=2.0)
@@ -644,7 +646,7 @@ async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown
     assert set(manager._sessions) == {safe_key("conv-b")}
 
 
-async def test_a_failed_teardown_leaves_the_session_live_for_the_sweeper(tmp_path):
+async def test_a_failed_teardown_leaves_the_session_live_for_the_sweeper(tmp_path, monkeypatch):
     # A session dropped from the map on a failed teardown is a guest copy nothing will
     # ever reap. Put it back and let the idle
     # sweep try again.
@@ -655,7 +657,7 @@ async def test_a_failed_teardown_leaves_the_session_live_for_the_sweeper(tmp_pat
     async def failing_shutdown() -> None:
         raise RuntimeError("the guest copy could not be brought out")
 
-    displaced.shutdown = failing_shutdown  # type: ignore[method-assign]
+    monkeypatch.setattr(displaced, "shutdown", failing_shutdown)
 
     await manager.acquire("conv-b")
 

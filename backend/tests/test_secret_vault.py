@@ -107,11 +107,7 @@ async def test_unlocked_state_is_never_persisted(tmp_path):
     # Nothing in the schema records "open": no column of either vault table names it.
     from models.secret import SecretVaultConfig
 
-    columns = {
-        c.name
-        for table in (SecretEntry, SecretVaultConfig)
-        for c in inspect(table).columns
-    }
+    columns = {c.name for table in (SecretEntry, SecretVaultConfig) for c in inspect(table).columns}
     assert not {c for c in columns if "unlock" in c or "locked" in c or "session" in c}
 
     # And a second service over the very same DB + login vault — the process-restart

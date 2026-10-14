@@ -15,10 +15,11 @@ from pydantic_ai.usage import RunUsage
 from runs import Run, RunStream
 from services.workspace_kind import (
     WORKSPACE_TOOLS,
+    WorkspaceKind,
     workspace_disabled_tools,
     workspace_kind,
 )
-from tools.catalog import tool_catalog
+from tools.catalog import ToolInfo, tool_catalog
 from tools.deps import RunDeps
 from tools.toolsets import build_agent_toolsets
 
@@ -26,10 +27,10 @@ from ._helpers import full_tool_categories
 
 OWNER = "operator"
 
-_CATEGORIES = {"sandbox": {"code"}, "worktree": {"shell", "repo"}}
+_CATEGORIES: dict[WorkspaceKind, set[str]] = {"sandbox": {"code"}, "worktree": {"shell", "repo"}}
 
 
-def _catalog() -> list:
+def _catalog() -> list[ToolInfo]:
     return tool_catalog(full_tool_categories())
 
 

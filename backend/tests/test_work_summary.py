@@ -20,9 +20,17 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
-from pydantic_ai import ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -33,6 +41,7 @@ from core.vault import Vault
 from runs import RunRegistry
 from services import work_summaries as work_summaries_module
 from services.conversations import ConversationStore
+from services.registry import ModelRegistry
 from services.settings_store import (
     WORK_SUMMARY_IDLE_MINUTES_KEY,
     WORK_SUMMARY_IDLE_MINUTES_MAX,
@@ -50,15 +59,15 @@ OWNER = "op"
 # --- fixtures ---------------------------------------------------------------
 
 
-def _turn(prompt: str, answer: str) -> list:
+def _turn(prompt: str, answer: str) -> list[ModelMessage]:
     return [
         ModelRequest(parts=[UserPromptPart(content=prompt)]),
         ModelResponse(parts=[TextPart(content=answer)]),
     ]
 
 
-def _tool_turn(prompt: str, *, narration: str | None, result: str) -> list:
-    args: dict = {"path": "notes.txt"}
+def _tool_turn(prompt: str, *, narration: str | None, result: str) -> list[ModelMessage]:
+    args: dict[str, str] = {"path": "notes.txt"}
     if narration is not None:
         args["narration"] = narration
     return [
@@ -169,7 +178,7 @@ class TestTheTranscript:
     def test_the_excerpt_budget_drops_the_oldest_blocks(self):
         """Over budget, the opening of a thread goes and the end stays — where the work
         landed is the half a returning operator cannot reconstruct from the title."""
-        history: list = []
+        history: list[ModelMessage] = []
         for index in range(40):
             history.extend(_turn(f"request number {index} " + "x" * 200, f"answer {index}"))
         rendered = work_transcript(history, excerpt=2000)
@@ -256,7 +265,7 @@ async def _seeded(store: ConversationStore, *, messages: int, age_minutes: float
     The write-behind drainer is joined before the clock is set back, because the candidate
     query counts *rows* and the persist itself bumps ``updated_at``."""
     conversation_id = await store.create_conversation(OWNER)
-    history: list = []
+    history: list[ModelMessage] = []
     for index in range(messages // 2 + messages % 2):
         history.extend(_turn(f"ask {index}", f"answer {index}"))
     store.record(conversation_id, history[:messages])
@@ -296,7 +305,7 @@ def _service(store: ConversationStore, model, runs: RunRegistry | None = None):
     return WorkSummaryService(
         store=store,
         settings_store=SettingsStore(settings_engine),
-        models=_Registry(model),
+        models=cast(ModelRegistry, cast(object, _Registry(model))),
         runs=runs or RunRegistry(),
         vault=store._vault,
         settings=Settings(),
@@ -605,6 +614,10 @@ class TestTheReadPath:
         write that bumped it would rewrite the two facts it is measured against."""
         store = await _store(tmp_path)
         conversation_id = await _seeded(store, messages=4, age_minutes=60)
-        before = (await store.get_summary(conversation_id, OWNER)).updated_at
+        summary = await store.get_summary(conversation_id, OWNER)
+        assert summary is not None
+        before = summary.updated_at
         await store.set_work_summary(conversation_id, "an account")
-        assert (await store.get_summary(conversation_id, OWNER)).updated_at == before
+        after = await store.get_summary(conversation_id, OWNER)
+        assert after is not None
+        assert after.updated_at == before

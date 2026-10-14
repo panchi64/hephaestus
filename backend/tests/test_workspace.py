@@ -36,8 +36,9 @@ from services.workspace import (
     RunWorkspace,
     resolve_workspace,
 )
+from services.workspace_kind import WorkspaceKind
 from tools.deps import RunDeps
-from tools.shell import shell_toolset
+from tools.shell import BoundShell, shell_toolset
 from tools.workspace import run_workspace
 
 from .shell_support import Shell, checkout_ctx, local_copies, make_repo
@@ -179,7 +180,7 @@ class TestSandbox:
         ctx = _ctx(caps, conversation_id="conv-a")
         await run_workspace(ctx)
         sessions = caps.get_optional(SandboxSessionManager)
-        assert sessions is not None
+        assert isinstance(sessions, _FakeSessions)
         assert sessions.holders["conv-a"] is ctx.deps.run
 
 
@@ -269,7 +270,7 @@ class TestShellIsProjectFolderOnly:
         # sandbox thread — so the toolset checks too. Calling it directly is exactly the
         # scenario a filter regression would produce.
         ctx = _ctx(_caps(tmp_path), conversation_id="conv-a")
-        result = await shell_toolset().call_tool("run_command", {"command": "echo hi"}, ctx, None)
+        result = await Shell(shell_toolset(), ctx).call("run_command", command="echo hi")
         assert "only available in a conversation filed under a project" in str(result)
 
 
@@ -297,7 +298,15 @@ class TestShellRunsInTheVm:
         async with local_copies(tmp_path / "vm") as live:
             yield live
 
-    def _shell(self, tmp_path, copies, *, kind="checkout", shells=None, project="proj-1"):
+    def _shell(
+        self,
+        tmp_path,
+        copies,
+        *,
+        kind: WorkspaceKind = "checkout",
+        shells: list[BoundShell] | None = None,
+        project="proj-1",
+    ):
         root = tmp_path / project
         if not root.exists():
             make_repo(root)
@@ -305,7 +314,9 @@ class TestShellRunsInTheVm:
         return root, Shell(shell_toolset(shells=shells), ctx)
 
     @pytest.mark.parametrize("kind", ["checkout", "worktree"])
-    async def test_a_refused_command_is_a_retry_not_a_dead_run(self, tmp_path, copies, kind):
+    async def test_a_refused_command_is_a_retry_not_a_dead_run(
+        self, tmp_path, copies, kind: WorkspaceKind
+    ):
         """What the model can act on — a refused command — comes back as `ModelRetry`, so
         the turn continues and the agent tries something else."""
         root = await _repo(tmp_path / "project")
@@ -358,7 +369,7 @@ class TestShellRunsInTheVm:
         # What a command ends in is what the shell persists, so it adopts it only while it
         # is still under the project root — otherwise a `cd` out would leave every later
         # relative path judged against a directory the command is no longer in.
-        shells: list = []
+        shells: list[BoundShell] = []
         root, shell = self._shell(tmp_path, copies, shells=shells)
         await shell.call("run_command", command="mkdir -p sub && cd sub")
         bound = shells[-1]  # shells[0] is the root-independent template
@@ -369,7 +380,7 @@ class TestShellRunsInTheVm:
     async def test_two_project_roots_do_not_share_a_shell(self, tmp_path, copies):
         # Rooting, not isolation: each shell is compared to the folder it should be bound
         # to, because two shells both rooted at the template would also "not share" state.
-        shells: list = []
+        shells: list[BoundShell] = []
         toolset = shell_toolset(shells=shells)
         root_a, root_b = make_repo(tmp_path / "a"), make_repo(tmp_path / "b")
         a = Shell(toolset, checkout_ctx(root_a, copies=copies, project_id="a"))
@@ -380,7 +391,7 @@ class TestShellRunsInTheVm:
         assert {shell.project.cwd for shell in shells[1:]} == {root_a / "sub", root_b}
 
     async def test_a_shell_handed_back_by_a_finished_run_is_reaped(self, tmp_path, copies):
-        shells: list = []
+        shells: list[BoundShell] = []
         _root, shell = self._shell(tmp_path, copies, shells=shells)
         vm_job = (await shell.call("start_command", command="sleep 60"))["command_id"]
         host_job = (await shell.call("start_command", command="sleep 60", reach="host"))[

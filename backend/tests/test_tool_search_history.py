@@ -22,20 +22,26 @@ because nothing in the code says so.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from pydantic_ai import (
     FunctionToolset,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
+    RunContext,
     ToolApproved,
     ToolAvailabilityDeltaPart,
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import TextPart, ToolSearchCallPart, ToolSearchReturnPart
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
@@ -154,14 +160,27 @@ class _OverflowsThenAnswers(WrapperModel):
             self.refused = True
             raise _ctx_error()
 
-    async def request(self, messages, *args, **kwargs):  # type: ignore[override]
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         self._check(messages)
-        return await super().request(messages, *args, **kwargs)
+        return await super().request(messages, model_settings, model_request_parameters)
 
     @asynccontextmanager
-    async def request_stream(self, messages, *args, **kwargs):  # type: ignore[override]
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncIterator[StreamedResponse]:
         self._check(messages)
-        async with super().request_stream(messages, *args, **kwargs) as stream:
+        async with super().request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as stream:
             yield stream
 
 
