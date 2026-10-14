@@ -12,21 +12,25 @@ stub so the test is about the client and nothing else.
 
 from __future__ import annotations
 
+from typing import override
+
 import httpx2
 import pytest
 from openai import APIConnectionError
 
 from core.exceptions import DegradedCapabilityError
-from services import embeddings, llm
+from services import embeddings
+from services.endpoint_spec import EndpointSpec
 
 OWNER = "operator"
-SPEC = llm.EndpointSpec(base_url="http://127.0.0.1:9/v1", model="embed-model", api_key=None)
+SPEC = EndpointSpec(base_url="http://127.0.0.1:9/v1", model="embed-model", api_key=None)
 
 
-class _StubRegistry:
+class _StubRegistry(embeddings.EmbeddingSpecSource):
     """Resolves straight to `SPEC` — the registry's own resolution is tested elsewhere."""
 
-    async def resolve_embedding_spec(self, owner_id: str) -> llm.EndpointSpec:
+    @override
+    async def resolve_embedding_spec(self, owner_id: str) -> EndpointSpec:
         return SPEC
 
 
@@ -38,12 +42,12 @@ class _RecordingClient:
     """
 
     def __init__(self, *, base_url: str, api_key: str, fail: Exception | None) -> None:
-        self.base_url = base_url
-        self.api_key = api_key
-        self.closed = False
+        self.base_url: str = base_url
+        self.api_key: str = api_key
+        self.closed: bool = False
         self.calls: list[tuple[str, list[str]]] = []
-        self._fail = fail
-        self.embeddings = _RecordingEmbeddings(self)
+        self.fail: Exception | None = fail
+        self.embeddings: _RecordingEmbeddings = _RecordingEmbeddings(self)
 
     async def __aenter__(self) -> _RecordingClient:
         return self
@@ -54,26 +58,30 @@ class _RecordingClient:
 
 class _RecordingEmbeddings:
     def __init__(self, client: _RecordingClient) -> None:
-        self._client = client
+        self._client: _RecordingClient = client
 
-    async def create(self, *, model: str, input: list[str]):  # noqa: A002 — the SDK's name
+    async def create(  # noqa: A002 — the SDK's name
+        self, *, model: str, input: list[str]
+    ) -> _FakeResponse:
         self._client.calls.append((model, list(input)))
-        if self._client._fail is not None:
-            raise self._client._fail
+        if self._client.fail is not None:
+            raise self._client.fail
         return _FakeResponse([[0.1, 0.2, 0.3] for _ in input])
 
 
 class _FakeVector:
     def __init__(self, embedding: list[float]) -> None:
-        self.embedding = embedding
+        self.embedding: list[float] = embedding
 
 
 class _FakeResponse:
     def __init__(self, vectors: list[list[float]]) -> None:
-        self.data = [_FakeVector(vector) for vector in vectors]
+        self.data: list[_FakeVector] = [_FakeVector(vector) for vector in vectors]
 
 
-def _install_client(monkeypatch, *, fail: Exception | None = None) -> list[_RecordingClient]:
+def _install_client(
+    monkeypatch: pytest.MonkeyPatch, *, fail: Exception | None = None
+) -> list[_RecordingClient]:
     """Swap the module's `AsyncOpenAI` for the recorder, returning the list every
     constructed client lands in."""
     made: list[_RecordingClient] = []
@@ -87,7 +95,7 @@ def _install_client(monkeypatch, *, fail: Exception | None = None) -> list[_Reco
     return made
 
 
-async def test_the_client_is_closed_after_a_successful_embed(monkeypatch):
+async def test_the_client_is_closed_after_a_successful_embed(monkeypatch: pytest.MonkeyPatch):
     made = _install_client(monkeypatch)
     embedder = embeddings.RegistryEmbedder(_StubRegistry())
 
@@ -100,7 +108,9 @@ async def test_the_client_is_closed_after_a_successful_embed(monkeypatch):
     assert made[0].api_key == "unused"
 
 
-async def test_the_client_is_closed_when_the_endpoint_is_unreachable(monkeypatch):
+async def test_the_client_is_closed_when_the_endpoint_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """The path that actually leaked: a local model server that isn't running is the
     ordinary case, and it repeats on every persisted turn. Leaking a connection pool per
     turn is how a workspace runs out of sockets while nothing appears to be happening."""
@@ -109,24 +119,24 @@ async def test_the_client_is_closed_when_the_endpoint_is_unreachable(monkeypatch
     embedder = embeddings.RegistryEmbedder(_StubRegistry())
 
     with pytest.raises(DegradedCapabilityError, match="127.0.0.1:9"):
-        await embedder.embed(OWNER, ["hello"])
+        _ = await embedder.embed(OWNER, ["hello"])
 
     assert [client.closed for client in made] == [True]
 
 
-async def test_the_client_is_closed_when_the_server_errors(monkeypatch):
+async def test_the_client_is_closed_when_the_server_errors(monkeypatch: pytest.MonkeyPatch):
     """A 5xx/timeout isn't caught here — it propagates to the caller, who degrades. The
     client still has to be closed on the way out."""
     made = _install_client(monkeypatch, fail=RuntimeError("the server fell over"))
     embedder = embeddings.RegistryEmbedder(_StubRegistry())
 
     with pytest.raises(RuntimeError):
-        await embedder.embed(OWNER, ["hello"])
+        _ = await embedder.embed(OWNER, ["hello"])
 
     assert [client.closed for client in made] == [True]
 
 
-async def test_every_call_closes_its_own_client(monkeypatch):
+async def test_every_call_closes_its_own_client(monkeypatch: pytest.MonkeyPatch):
     """The client is per-call by design — the spec is re-resolved each time and can change
     the moment the operator rebinds the embedding role. What must not vary is that each
     one is closed, so repeated embedding leaves nothing behind."""
@@ -134,7 +144,7 @@ async def test_every_call_closes_its_own_client(monkeypatch):
     embedder = embeddings.RegistryEmbedder(_StubRegistry())
 
     for _ in range(3):
-        await embedder.embed(OWNER, ["hello"])
+        _ = await embedder.embed(OWNER, ["hello"])
 
     assert len(made) == 3
     assert all(client.closed for client in made)
