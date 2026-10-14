@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import override
 
 from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from sqlmodel import Session, select
@@ -14,7 +15,7 @@ from core.vault import Vault
 from models.conversation import Message
 from services.conversation_search import ConversationSearch
 from services.conversations import ConversationStore
-from services.embeddings import EmbeddingBatch
+from services.embeddings import Embedder, EmbeddingBatch
 
 OWNER = "operator"
 
@@ -33,16 +34,18 @@ _CONCEPTS = {
 }
 
 
-class FakeEmbedder:
+class FakeEmbedder(Embedder):
     def __init__(self, model: str = "fake-embed", dim: int = 4) -> None:
-        self._model = model
-        self._dim = dim
+        self._model: str = model
+        self._dim: int = dim
 
+    @override
     async def is_available(self, owner_id: str) -> bool:
         return True
 
+    @override
     async def embed(self, owner_id: str, texts: list[str]) -> EmbeddingBatch:
-        vectors = []
+        vectors: list[list[float]] = []
         for text in texts:
             vec = [0.0] * self._dim
             for raw in text.lower().split():
@@ -53,20 +56,24 @@ class FakeEmbedder:
         return EmbeddingBatch(vectors=vectors, model=self._model, dim=self._dim)
 
 
-class DegradedEmbedder:
+class DegradedEmbedder(Embedder):
+    @override
     async def is_available(self, owner_id: str) -> bool:
         return False
 
+    @override
     async def embed(self, owner_id: str, texts: list[str]) -> EmbeddingBatch:
         raise DegradedCapabilityError("no embedding endpoint configured")
 
 
-class BrokenEmbedder:
+class BrokenEmbedder(Embedder):
     """Fails with a non-degradation error — e.g. a network timeout or a 5xx."""
 
+    @override
     async def is_available(self, owner_id: str) -> bool:
         return True
 
+    @override
     async def embed(self, owner_id: str, texts: list[str]) -> EmbeddingBatch:
         raise RuntimeError("embedding endpoint exploded")
 
@@ -78,7 +85,7 @@ def _turn(prompt: str, answer: str) -> list[ModelMessage]:
     ]
 
 
-async def _setup(embedder):
+async def _setup(embedder: Embedder):
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
@@ -89,10 +96,12 @@ async def _setup(embedder):
     return engine, vault, store, search
 
 
-async def _record(store, owner: str, *turns, ephemeral: bool = False) -> str:
+async def _record(
+    store: ConversationStore, owner: str, *turns: tuple[str, str], ephemeral: bool = False
+) -> str:
     cid = await store.create_conversation(owner, ephemeral=ephemeral)
     for prompt, answer in turns:
-        store.record(cid, _turn(prompt, answer))
+        _ = store.record(cid, _turn(prompt, answer))
     await store._worker.join()  # flush the drainer so the rows (and vectors) land
     return cid
 
@@ -103,7 +112,7 @@ async def _record(store, owner: str, *turns, ephemeral: bool = False) -> str:
 async def test_semantic_search_matches_paraphrase():
     _engine, _vault, store, search = await _setup(FakeEmbedder())
     cat = await _record(store, OWNER, ("tell me about my cat", "your cat is fluffy"))
-    await _record(store, OWNER, ("my commute", "you drive a car"))
+    _ = await _record(store, OWNER, ("my commute", "you drive a car"))
 
     # "feline" shares no tokens with "cat" — only the dense path can match it.
     hits = await search.search(OWNER, "feline", limit=5)
@@ -205,7 +214,7 @@ async def test_persisted_text_is_embedded_and_encrypted():
     engine, _vault, store, _search = await _setup(FakeEmbedder())
     # A content-bearing request + an empty-text response (e.g. a tool-only turn).
     cid = await store.create_conversation(OWNER)
-    store.record(
+    _ = store.record(
         cid,
         [
             ModelRequest(parts=[UserPromptPart(content="about a cat")]),

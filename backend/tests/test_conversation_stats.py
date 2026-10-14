@@ -145,7 +145,7 @@ class _Clock:
     """A hand-cranked monotonic clock, so durations are asserted rather than slept."""
 
     def __init__(self) -> None:
-        self.now = 0.0
+        self.now: float = 0.0
 
     def __call__(self) -> float:
         return self.now

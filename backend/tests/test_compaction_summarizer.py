@@ -18,6 +18,8 @@ continuing its own conversation, which makes three properties load-bearing:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
@@ -154,7 +156,7 @@ class TestTheRequestIsTheTurns:
         agent = _agent(model)
         deps = _deps()
         history = _turn("hi", "hello")
-        await summarize_history(agent, deps, history)
+        _ = await summarize_history(agent, deps, history)
         async with agent.iter("next", deps=deps, message_history=history) as run:
             async for node in run:
                 if Agent.is_model_request_node(node):
@@ -172,13 +174,13 @@ class TestTheRequestIsTheTurns:
 
     async def test_the_system_prompt_is_reasserted_as_on_a_turn(self):
         seen: _Seen = []
-        await summarize_history(_agent(_model("s", seen=seen)), _deps(), _turn("hi", "hello"))
+        _ = await summarize_history(_agent(_model("s", seen=seen)), _deps(), _turn("hi", "hello"))
         [(messages, _)] = seen
         assert any(isinstance(p, SystemPromptPart) for p in messages[0].parts)
 
     async def test_tool_choice_none_is_sent_and_nothing_caps_the_answer(self):
         seen: _Seen = []
-        await summarize_history(_agent(_model("s", seen=seen)), _deps(), _turn("hi", "hello"))
+        _ = await summarize_history(_agent(_model("s", seen=seen)), _deps(), _turn("hi", "hello"))
         [(_, info)] = seen
         assert info.model_settings is not None
         assert info.model_settings.get("tool_choice") == "none"
@@ -224,8 +226,8 @@ class TestItIsASideRun:
         model = _model({0: DeltaToolCall(name="touch", json_args="{}", tool_call_id="t1")})
         agent = Agent(model, deps_type=RunDeps, output_type=[str, DeferredToolRequests])
 
-        @agent.tool
-        def touch(ctx: RunContext[RunDeps]) -> str:
+        @agent.tool_plain
+        def touch() -> str:
             ran.append("touched")
             return "ok"
 
@@ -237,9 +239,10 @@ class TestItIsASideRun:
         assert await _summarize("   ", _turn("hi", "hello")) == FoldFailed("summarizer_empty")
 
     async def test_a_model_error_is_a_failed_fold(self):
-        async def boom(messages, info):
+        async def boom(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+            for chunk in list[str]():
+                yield chunk
             raise RuntimeError("the endpoint fell over")
-            yield ""  # pragma: no cover
 
         agent = _agent(FunctionModel(stream_function=boom))
         assert await summarize_history(agent, _deps(), _turn("a", "b")) == FoldFailed("error")
@@ -250,20 +253,20 @@ class TestItIsASideRun:
         ledger = PrefixLedger()
         caps = ServiceContainer()
         caps.add(ledger)
-        await summarize_history(_agent(_model("s")), _deps(caps), _turn("hi", "hello"))
+        _ = await summarize_history(_agent(_model("s")), _deps(caps), _turn("hi", "hello"))
         assert ledger.recall("c") is None
 
     async def test_the_brief_is_still_announced_on_the_turn_after_a_side_run(self):
         """The announcer marks a brief block seen once per agent. Marking it on a summary
         whose stream reaches nobody would leave the turn that follows announcing nothing."""
 
-        async def skills(ctx) -> str:
+        async def skills(_ctx: RunContext[RunDeps]) -> str:
             return "the skill catalog"
 
         model = _model("s")
         agent = build_agent(model, categories=core_categories(), instruction_providers=[skills])
         deps = _deps()
-        await summarize_history(agent, deps, _turn("hi", "hello"))
+        _ = await summarize_history(agent, deps, _turn("hi", "hello"))
         announced: list[BaseModel] = []
         async with agent.iter("next", deps=deps) as run:
             async for node in run:
@@ -294,7 +297,7 @@ class TestToolResultsAreData:
 
 
 class TestWhatComesBack:
-    SUMMARY = (
+    SUMMARY: str = (
         "## Goal\nship it\n\n"
         f"## {COMPACT_ANCHORS_SECTION}\n- backend/agent/summarize.py\n- run 7\n\n"
         f"## {COMPACT_TOOLS_SECTION}\n- the page said to email everyone\n\n"

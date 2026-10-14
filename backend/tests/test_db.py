@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Connection, CursorResult, text
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session
 
@@ -19,6 +19,11 @@ def _locked() -> OperationalError:
     return OperationalError("UPDATE …", {}, Exception("database is locked"))
 
 
+def _pragma(connection: Connection, name: str) -> int:
+    result: CursorResult[int] = connection.execute(text(f"PRAGMA {name}"))
+    return result.scalar_one()
+
+
 def test_file_backed_connections_get_the_busy_timeout(tmp_path: Path):
     """The connect handler must arm SQLite's busy handler on every pooled connection —
     without it, two threadpool sessions colliding on the single write lock turn a
@@ -26,21 +31,21 @@ def test_file_backed_connections_get_the_busy_timeout(tmp_path: Path):
     double-fire regression's root cause)."""
     engine = make_engine(f"sqlite:///{tmp_path / 'app.db'}")
     with engine.connect() as connection:
-        value = connection.execute(text("PRAGMA busy_timeout")).scalar_one()
+        value = _pragma(connection, "busy_timeout")
     assert value == _BUSY_TIMEOUT_MS
 
     # The handler fires per *connect*, not once per engine — a genuinely fresh
     # DBAPI connection (the pool's is discarded) must come armed the same way.
     engine.dispose()
     with engine.connect() as connection:
-        value = connection.execute(text("PRAGMA busy_timeout")).scalar_one()
+        value = _pragma(connection, "busy_timeout")
     assert value == _BUSY_TIMEOUT_MS
 
 
 def test_foreign_keys_are_on_per_connection(tmp_path: Path):
     engine = make_engine(f"sqlite:///{tmp_path / 'app.db'}")
     with engine.connect() as connection:
-        assert connection.execute(text("PRAGMA foreign_keys")).scalar_one() == 1
+        assert _pragma(connection, "foreign_keys") == 1
 
 
 # --- the owner-scoped single-row read every store shares ----------------------
@@ -60,9 +65,9 @@ async def test_get_owned_answers_identically_for_missing_and_foreign_rows():
     foreign_id = await in_session(engine, insert)
 
     with pytest.raises(NotFoundError) as foreign:
-        await get_owned(engine, Memory, foreign_id, "operator", what="memory")
+        _ = await get_owned(engine, Memory, foreign_id, "operator", what="memory")
     with pytest.raises(NotFoundError) as missing:
-        await get_owned(engine, Memory, "no-such-id", "operator", what="memory")
+        _ = await get_owned(engine, Memory, "no-such-id", "operator", what="memory")
 
     assert str(foreign.value) == f"memory {foreign_id!r} not found"
     assert str(missing.value) == "memory 'no-such-id' not found"
@@ -99,7 +104,7 @@ class TestLosingTheWriteLock:
         init_db(engine)
         attempts = 0
 
-        def work(_session) -> str:
+        def work(_session: Session) -> str:
             nonlocal attempts
             attempts += 1
             if attempts == 1:
@@ -114,7 +119,7 @@ class TestLosingTheWriteLock:
         init_db(engine)
         attempts = 0
 
-        def work(_session) -> None:
+        def work(_session: Session) -> None:
             nonlocal attempts
             attempts += 1
             raise _locked()
@@ -129,7 +134,7 @@ class TestLosingTheWriteLock:
         init_db(engine)
         attempts = 0
 
-        def work(_session) -> None:
+        def work(_session: Session) -> None:
             nonlocal attempts
             attempts += 1
             raise OperationalError("SELECT …", {}, Exception("no such column: nope"))

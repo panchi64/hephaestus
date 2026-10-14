@@ -21,11 +21,11 @@ async def test_fan_out_never_exceeds_the_cap_but_shrinks_to_workload():
         await asyncio.sleep(0)
         running -= 1
 
-    await gather_bounded([worker() for _ in range(10)], 3)
+    _ = await gather_bounded([worker() for _ in range(10)], 3)
     assert peak == 3  # capped
 
     running = peak = 0
-    await gather_bounded([worker() for _ in range(2)], 5)
+    _ = await gather_bounded([worker() for _ in range(2)], 5)
     assert peak == 2  # only as many workers as workload, not the cap
 
 
@@ -56,4 +56,4 @@ async def test_one_failure_propagates_rather_than_being_swallowed():
         raise RuntimeError("upstream said no")
 
     with pytest.raises(RuntimeError, match="upstream said no"):
-        await gather_bounded([ok(), boom(), ok()], 2)
+        _ = await gather_bounded([ok(), boom(), ok()], 2)

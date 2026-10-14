@@ -4,18 +4,23 @@ on-load conversation detail."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import override
 
 import pytest
 from pydantic_ai import (
     FunctionToolset,
     ModelRequest,
     ModelResponse,
+    RunContext,
 )
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import TextPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from agent import build_chat_orchestrator
@@ -23,6 +28,8 @@ from agent.model_errors import context_limit_message, is_context_overflow
 from runs import ContextWindow, FoldPoint, Run, RunRegistry, RunStatus, RunStream
 from runs.events import RunMetrics
 from services.conversations import context_footprint
+
+from ._json import obj, parse_json
 
 
 def _response(input_tokens: int, output_tokens: int) -> ModelResponse:
@@ -159,7 +166,7 @@ def test_a_thread_with_folding_off_still_says_where_the_fold_would_be():
         context_window=200_000,
         context_fold=FoldPoint(fraction=0.8, active=False),
     )
-    fold = metrics.model_dump(mode="json")["context"]["fold"]
+    fold = obj(obj(parse_json(metrics.model_dump_json()))["context"])["fold"]
     assert fold == {"fraction": 0.8, "active": False}
 
 
@@ -278,13 +285,29 @@ class _ContextOverflowModel(WrapperModel):
     def __init__(self) -> None:
         super().__init__(TestModel())
 
-    async def request(self, *args, **kwargs):
+    @override
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         raise _ctx_error()
 
+    @override
     @asynccontextmanager
-    async def request_stream(self, *args, **kwargs):
-        raise _ctx_error()
-        yield  # unreachable — keeps this a generator
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[object] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        _ = await self.request(messages, model_settings, model_request_parameters)
+        async with self.wrapped.request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as stream:
+            yield stream
 
 
 async def test_context_overflow_stops_the_run_naming_the_limit():

@@ -27,6 +27,7 @@ from services.settings_store import (
 )
 
 from ._helpers import client_app
+from ._json import json_body
 
 
 def _store() -> SettingsStore:
@@ -42,9 +43,9 @@ def test_warn_must_sit_below_alert():
     # Equal boundaries make the amber band unreachable and inverted ones walk the gauge
     # backwards through severity as it fills; neither is a preference worth honouring.
     with pytest.raises(ValidationError):
-        ContextThresholds(warn=0.9, alert=0.9)
+        _ = ContextThresholds(warn=0.9, alert=0.9)
     with pytest.raises(ValidationError):
-        ContextThresholds(warn=0.95, alert=0.5)
+        _ = ContextThresholds(warn=0.95, alert=0.5)
 
 
 @pytest.mark.parametrize(("warn", "alert"), [(0, 0.9), (0.75, 0), (0.75, 1.5), (1.0, 1.0)])
@@ -52,7 +53,7 @@ def test_a_boundary_outside_the_window_is_refused(warn: float, alert: float):
     # A fraction is 0-1 by construction: outside it the boundary names a fullness the
     # gauge can never reach, so the band it opens can never be entered.
     with pytest.raises(ValidationError):
-        ContextThresholds(warn=warn, alert=alert)
+        _ = ContextThresholds(warn=warn, alert=alert)
 
 
 def test_alert_may_sit_at_a_full_window():
@@ -113,7 +114,7 @@ def test_the_pair_stays_off_the_wire():
 
 async def test_a_stored_pair_round_trips():
     store = _store()
-    await set_context_thresholds(store, "operator", ContextThresholds(warn=0.5, alert=0.8))
+    _ = await set_context_thresholds(store, "operator", ContextThresholds(warn=0.5, alert=0.8))
     assert await get_context_thresholds(store, "operator") == ContextThresholds(warn=0.5, alert=0.8)
 
 
@@ -150,7 +151,7 @@ async def test_a_half_written_pair_falls_back_whole():
 
 async def test_get_reports_the_effective_pair():
     async with client_app() as (client, _):
-        body = (await client.get("/chat/settings")).json()
+        body = json_body(await client.get("/chat/settings"))
         assert body["context_warn_threshold"] == DEFAULT_CONTEXT_THRESHOLDS.warn
         assert body["context_alert_threshold"] == DEFAULT_CONTEXT_THRESHOLDS.alert
 
@@ -162,14 +163,14 @@ async def test_put_persists_and_echoes():
             json={"context_warn_threshold": 0.6, "context_alert_threshold": 0.85},
         )
         assert resp.status_code == 200
-        assert resp.json()["context_warn_threshold"] == 0.6
-        assert (await client.get("/chat/settings")).json()["context_alert_threshold"] == 0.85
+        assert json_body(resp)["context_warn_threshold"] == 0.6
+        assert json_body(await client.get("/chat/settings"))["context_alert_threshold"] == 0.85
 
 
 async def test_one_field_moves_alone():
     async with client_app() as (client, _):
-        await client.put("/chat/settings", json={"context_warn_threshold": 0.5})
-        body = (await client.get("/chat/settings")).json()
+        _ = await client.put("/chat/settings", json={"context_warn_threshold": 0.5})
+        body = json_body(await client.get("/chat/settings"))
         assert body["context_warn_threshold"] == 0.5
         assert body["context_alert_threshold"] == DEFAULT_CONTEXT_THRESHOLDS.alert
 
@@ -180,17 +181,17 @@ async def test_a_single_field_that_inverts_the_pair_is_refused():
     async with client_app() as (client, _):
         resp = await client.put("/chat/settings", json={"context_warn_threshold": 0.95})
         assert resp.status_code == 422
-        assert "below the alert threshold" in str(resp.json())
+        assert "below the alert threshold" in str(json_body(resp))
         # And nothing was written — a refused PUT leaves the gauge as it was.
-        body = (await client.get("/chat/settings")).json()
+        body = json_body(await client.get("/chat/settings"))
         assert body["context_warn_threshold"] == DEFAULT_CONTEXT_THRESHOLDS.warn
 
 
 async def test_tuning_the_gauge_leaves_the_other_preferences_alone():
     async with client_app() as (client, _):
-        before = (await client.get("/chat/settings")).json()
-        await client.put("/chat/settings", json={"context_warn_threshold": 0.55})
-        after = (await client.get("/chat/settings")).json()
+        before = json_body(await client.get("/chat/settings"))
+        _ = await client.put("/chat/settings", json={"context_warn_threshold": 0.55})
+        after = json_body(await client.get("/chat/settings"))
         for key in ("auto_compact_enabled", "auto_compact_threshold", "agent_request_limit"):
             assert after[key] == before[key]
 

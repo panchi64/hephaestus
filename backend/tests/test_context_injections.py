@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic_ai import InstructionPart, ModelMessage, ModelRequest, ModelResponse
+from pydantic_ai import InstructionPart, ModelMessage, ModelRequest, ModelResponse, RunContext
 from pydantic_ai.messages import (
     AgentInstructionSource,
     InstructionId,
@@ -35,6 +35,7 @@ from agent.injections import (
 )
 from runs import INJECTED_TEXT_LIMIT, ContextInjected, Run, RunStream
 from services.conversations import last_request_usage
+from tools import PromptContextRequest, RunDeps
 
 from ._helpers import bodies_of
 
@@ -47,7 +48,9 @@ def _injections(run: Run) -> list[ContextInjected]:
     return bodies_of(run, ContextInjected)
 
 
-def _announce(announcer: AnnounceInjections, run: Run, parts) -> None:
+def _announce(
+    announcer: AnnounceInjections, run: Run, parts: list[InstructionPart] | None
+) -> None:
     """Announce one request's brief onto ``run``, doing what the translator does.
 
     The capability now hands its bodies to the library's event stream and
@@ -56,7 +59,7 @@ def _announce(announcer: AnnounceInjections, run: Run, parts) -> None:
     which it has already announced this turn — rather than about the envelope.
     """
     for body in announcer.announce(parts):
-        run.emit(body)
+        _ = run.emit(body)
 
 
 def _part(name: str | None, content: str) -> InstructionPart:
@@ -89,7 +92,7 @@ def test_a_provider_with_nothing_left_after_the_strip_is_still_a_row():
     a slug — a row with no id is a row the client can neither label nor key."""
 
     class Underscore:
-        __name__ = "_"
+        __name__: str = "_"
 
         def __call__(self) -> str:
             return ""
@@ -212,10 +215,10 @@ async def test_a_live_turn_announces_both_seams_before_it_answers():
     from agent import build_chat_orchestrator
     from runs import RunRegistry, RunStatus
 
-    async def skill_catalog_instructions(_ctx) -> str:
+    async def skill_catalog_instructions(_ctx: RunContext[RunDeps]) -> str:
         return "Skills available: writing, research."
 
-    async def plan_context(_req) -> str:
+    async def plan_context(_req: PromptContextRequest) -> str:
         return "Your current plan: 1. answer the question."
 
     orch = build_chat_orchestrator(
@@ -247,12 +250,18 @@ async def test_a_live_turn_announces_both_seams_before_it_answers():
 # ── The request beside the split ─────────────────────────────────────────────────
 
 
-def _response(**usage) -> ModelResponse:
+def _response(
+    input_tokens: int = 0, output_tokens: int = 0, cache_read_tokens: int = 0
+) -> ModelResponse:
     return ModelResponse(
         parts=[TextPart(content="ok")],
         model_name="qwen3-32b",
         provider_name="lmstudio",
-        usage=RequestUsage(**usage),
+        usage=RequestUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+        ),
     )
 
 

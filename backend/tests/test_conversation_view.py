@@ -10,6 +10,8 @@ things at once, all asserted below.
 
 from __future__ import annotations
 
+from typing import cast
+
 from pydantic_ai import (
     BinaryContent,
     ModelRequest,
@@ -78,7 +80,7 @@ def test_the_tool_result_is_still_stitched():
     # The user-turn branch returned early, skipping the stitching below it — so the call
     # that produced the image was the one call left reading "running" forever.
     assert tool.status == "ok"
-    assert tool.result == "Took a screenshot."
+    assert cast(object, tool.result) == "Took a screenshot."
 
 
 def test_the_image_lands_on_the_call_that_produced_it():
