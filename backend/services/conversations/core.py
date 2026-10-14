@@ -21,10 +21,10 @@ from services.sealing import open_sealed
 from services.workspace_kind import DEFAULT_WORKSPACE_KIND
 from services.workspace_kind import workspace_kind as normalise_workspace_kind
 
-from .projection import _MESSAGE
+from .projection import MESSAGE
 from .records import ConversationBinding, ConversationSummaryView
-from .rows import _defer_fk, _HydratedRow, _PersistJob
-from .tree import _Node, _Tree
+from .rows import HydratedRow, PersistJob, defer_fk
+from .tree import Node, Tree
 
 # How many conversation trees stay decrypted in memory. Sized for one operator: the
 # working set is the handful of threads actually being read or written, and a miss
@@ -37,16 +37,16 @@ _DEFAULT_MAX_CACHED_CONVERSATIONS = 64
 _OWNER_MEMO_MULTIPLE = 8
 
 
-class _StoreCore:
+class StoreCore:
     if TYPE_CHECKING:
         # Implemented by sibling mixins; declared here so mixins can call across.
-        async def _persist(self, job: _PersistJob) -> None: ...
-        def _on_drop(self, job: _PersistJob, exc: Exception) -> None: ...
-        def _open_work_summary(self, conversation: Conversation) -> str | None: ...
+        async def _persist(self, _job: PersistJob, /) -> None: ...
+        def _on_drop(self, _job: PersistJob, _exc: Exception, /) -> None: ...
+        def _open_work_summary(self, _conversation: Conversation, /) -> str | None: ...
         async def get_summary(
-            self, conversation_id: str, owner_id: str
+            self, _conversation_id: str, _owner_id: str, /
         ) -> ConversationSummaryView | None: ...
-        async def binding(self, conversation_id: str) -> ConversationBinding: ...
+        async def binding(self, _conversation_id: str, /) -> ConversationBinding: ...
 
     def __init__(
         self,
@@ -56,19 +56,19 @@ class _StoreCore:
         *,
         max_cached_conversations: int = _DEFAULT_MAX_CACHED_CONVERSATIONS,
     ) -> None:
-        self._engine = engine
-        self._vault = vault
+        self._engine: Engine = engine
+        self._vault: Vault = vault
         # Embeds each persisted turn's text for cross-chat semantic search. Optional
         # (and best-effort): with no embedder, or when it degrades, messages persist
         # without a vector and recall over them falls back to keyword (EMB-2).
-        self._embedder = embedder
+        self._embedder: Embedder | None = embedder
         # Least-recently-used first. Every entry holds a fully *decrypted* tree —
         # including any inline image bytes a turn carried — so an unbounded dict grows
         # to the size of every conversation the process has ever touched and never
         # gives it back. It is a pure cache (`_tree` rehydrates on a miss), so evicting
         # costs one reload and nothing else.
-        self._cache: OrderedDict[str, _Tree] = OrderedDict()
-        self._max_cached = max_cached_conversations
+        self._cache: OrderedDict[str, Tree] = OrderedDict()
+        self._max_cached: int = max_cached_conversations
         # Conversations with durable work still queued. `record()` extends the cached
         # tree in place and hands the drainer a *slice*, so evicting between the two
         # would leave `setdefault` rebuilding an empty tree and the turn appending to
@@ -82,9 +82,9 @@ class _StoreCore:
         # so its cap is a multiple of the tree cap rather than the same number: the point
         # is a ceiling, and evicting a row that a later turn re-reads costs one query.
         self._owners: OrderedDict[str, str] = OrderedDict()
-        self._max_memoized_owners = max_cached_conversations * _OWNER_MEMO_MULTIPLE
+        self._max_memoized_owners: int = max_cached_conversations * _OWNER_MEMO_MULTIPLE
         self._locks: dict[str, asyncio.Lock] = {}
-        self._worker: WriteBehindWorker[_PersistJob] = WriteBehindWorker(
+        self._worker: WriteBehindWorker[PersistJob] = WriteBehindWorker(
             self._persist,
             name="persistence-drainer",
             unlocked=vault.unlocked_event,
@@ -98,14 +98,14 @@ class _StoreCore:
         await self._worker.stop()
 
     # --- cache residency -----------------------------------------------------------
-    def _cache_put(self, conversation_id: str, tree: _Tree) -> _Tree:
+    def _cache_put(self, conversation_id: str, tree: Tree) -> Tree:
         """Install a tree as the most-recently-used entry and trim back to the cap."""
         self._cache[conversation_id] = tree
         self._cache.move_to_end(conversation_id)
         self._trim_cache()
         return tree
 
-    def _cache_get(self, conversation_id: str) -> _Tree | None:
+    def _cache_get(self, conversation_id: str) -> Tree | None:
         """The cached tree, counting the read as a use so it isn't evicted next.
 
         Only genuine reads go through here. The listing summary and the compaction
@@ -141,7 +141,7 @@ class _StoreCore:
             if lock is not None and lock.locked():
                 continue
             del self._cache[conversation_id]
-            self._locks.pop(conversation_id, None)
+            _ = self._locks.pop(conversation_id, None)
 
     async def create_conversation(
         self,
@@ -184,7 +184,7 @@ class _StoreCore:
             return conversation.id
 
         conversation_id = await in_session(self._engine, work)
-        self._cache_put(conversation_id, _Tree())
+        _ = self._cache_put(conversation_id, Tree())
         self._remember_owner(conversation_id, owner_id)
         return conversation_id
 
@@ -197,7 +197,7 @@ class _StoreCore:
 
         return await in_session(self._engine, work)
 
-    async def _tree(self, conversation_id: str) -> _Tree:
+    async def _tree(self, conversation_id: str) -> Tree:
         """The conversation's tree — from the cache, or rehydrated once from the DB."""
         cached = self._cache_get(conversation_id)
         if cached is not None:
@@ -210,7 +210,7 @@ class _StoreCore:
             if cached is not None:
                 return cached
 
-            def work(session: Session) -> tuple[list[_HydratedRow], str | None]:
+            def work(session: Session) -> tuple[list[HydratedRow], str | None]:
                 rows = session.exec(
                     select(Message)
                     .where(Message.conversation_id == conversation_id)
@@ -219,7 +219,7 @@ class _StoreCore:
                 conversation = session.get(Conversation, conversation_id)
                 active = conversation.active_leaf_id if conversation is not None else None
                 return [
-                    _HydratedRow(
+                    HydratedRow(
                         id=r.id,
                         parent_id=r.parent_id,
                         seq=r.seq,
@@ -237,11 +237,11 @@ class _StoreCore:
                 ], active
 
             rows, active = await in_session(self._engine, work)
-            tree = _Tree()
+            tree = Tree()
             for row in rows:  # pre-sorted by seq
-                message = _MESSAGE.validate_json(self._vault.decrypt_str(row.blob))
+                message = MESSAGE.validate_json(self._vault.decrypt_str(row.blob))
                 tree.add(
-                    _Node(
+                    Node(
                         id=row.id,
                         parent_id=row.parent_id,
                         seq=row.seq,
@@ -278,15 +278,15 @@ class _StoreCore:
             conversation = session.get(Conversation, conversation_id)
             # Defer FK checks so the whole message set drops in one statement,
             # without ordering children before parents for the self-referential FK.
-            _defer_fk(session)
-            session.execute(delete(Message).where(col(Message.conversation_id) == conversation_id))
+            defer_fk(session)
+            _ = session.exec(delete(Message).where(col(Message.conversation_id) == conversation_id))
             if conversation is not None:
                 session.delete(conversation)
 
         await in_session(self._engine, work)
-        self._cache.pop(conversation_id, None)
-        self._locks.pop(conversation_id, None)
-        self._owners.pop(conversation_id, None)
+        _ = self._cache.pop(conversation_id, None)
+        _ = self._locks.pop(conversation_id, None)
+        _ = self._owners.pop(conversation_id, None)
 
     async def _owner_of(self, conversation_id: str) -> str | None:
         """The conversation's owner, memoized. A conversation never changes hands, and
@@ -312,9 +312,9 @@ class _StoreCore:
         self._owners[conversation_id] = owner_id
         self._owners.move_to_end(conversation_id)
         while len(self._owners) > self._max_memoized_owners:
-            self._owners.popitem(last=False)
+            _ = self._owners.popitem(last=False)
 
-    def _submit(self, job: _PersistJob) -> None:
+    def _submit(self, job: PersistJob) -> None:
         """Queue durable work and pin its conversation in the cache until it lands.
 
         The pin is what makes eviction safe: between this call and the write, the
@@ -323,7 +323,7 @@ class _StoreCore:
         self._pending[job.conversation_id] += 1
         self._worker.submit(job)
 
-    def _release(self, job: _PersistJob) -> None:
+    def _release(self, job: PersistJob) -> None:
         """Drop this job's pin once it has reached a terminal disposition."""
         conversation_id = job.conversation_id
         if self._pending[conversation_id] <= 1:

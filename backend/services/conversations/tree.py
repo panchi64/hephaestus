@@ -10,7 +10,7 @@ from models._fields import new_id
 
 
 @dataclass
-class _Node:
+class Node:
     """One message in the tree: a serialized-on-write ``ModelMessage`` plus the
     structural metadata that orders and links it."""
 
@@ -41,18 +41,18 @@ class _Node:
     compacted_through: str | None = None
 
 
-class _Tree:
+class Tree:
     """A conversation's message tree, held in memory while warm. Children lists are
     kept in ``seq`` (creation) order, which is the version order siblings render in."""
 
     def __init__(self) -> None:
-        self.nodes: dict[str, _Node] = {}
+        self.nodes: dict[str, Node] = {}
         # parent_id -> child ids, seq-ascending. Roots sit under the None key.
         self.children: dict[str | None, list[str]] = {}
         self.active_leaf_id: str | None = None
         self.next_seq: int = 0
 
-    def add(self, node: _Node) -> None:
+    def add(self, node: Node) -> None:
         """Attach a node. Callers add in ascending ``seq`` (append assigns the next
         seq; rehydration feeds rows pre-sorted), so child lists stay seq-ordered."""
         self.nodes[node.id] = node
@@ -66,9 +66,9 @@ class _Tree:
             return None
         return max(self.nodes.values(), key=lambda n: n.seq).id
 
-    def active_path(self) -> list[_Node]:
+    def active_path(self) -> list[Node]:
         """The nodes from root to the active leaf, in order."""
-        path: list[_Node] = []
+        path: list[Node] = []
         cur = self.active_leaf_id
         seen: set[str] = set()
         while cur is not None and cur not in seen:
@@ -81,14 +81,14 @@ class _Tree:
         path.reverse()
         return path
 
-    def append_chain(self, messages: list[ModelMessage]) -> list[_Node]:
+    def append_chain(self, messages: list[ModelMessage]) -> list[Node]:
         """Add ``messages`` as a chain hanging off the current active leaf, and
         advance the leaf to the chain's tip. New nodes branch automatically when
         the leaf already has children (a regenerate/edit having moved it back)."""
-        added: list[_Node] = []
+        added: list[Node] = []
         parent = self.active_leaf_id
         for message in messages:
-            node = _Node(id=new_id(), parent_id=parent, seq=self.next_seq, message=message)
+            node = Node(id=new_id(), parent_id=parent, seq=self.next_seq, message=message)
             self.add(node)
             parent = node.id
             added.append(node)
@@ -207,9 +207,9 @@ class _Tree:
                 self.children[node.parent_id] = [
                     c for c in self.children[node.parent_id] if c != node_id
                 ]
-            self.nodes.pop(node_id, None)
-            self.children.pop(node_id, None)
+            _ = self.nodes.pop(node_id, None)
+            _ = self.children.pop(node_id, None)
         # Tidy any now-empty child buckets we left behind.
         for parent_id in list(self.children):
             if parent_id in doomed:
-                self.children.pop(parent_id, None)
+                _ = self.children.pop(parent_id, None)

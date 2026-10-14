@@ -28,7 +28,7 @@ from core.db import init_db, make_engine
 from core.vault import Vault
 from runs import Run, RunEnded, RunRegistry, RunStatus
 from services.conversations import ConversationStore
-from services.conversations.projection import _project
+from services.conversations.projection import project
 from tools import RunDeps
 
 from ._helpers import (
@@ -743,7 +743,7 @@ async def test_verifier_correction_persists_clean_history(tmp_path, monkeypatch)
 
     history = await store.history(conv)
     assert [m.kind for m in history] == ["request", "response"]  # not the 4-msg transcript
-    texts = [_project(m)[1] for m in history]
+    texts = [project(m)[1] for m in history]
     assert not any("did not fully satisfy" in t for t in texts)  # nudge didn't leak
     await store.stop()
 
@@ -814,7 +814,7 @@ async def test_verify_park_persists_once_on_resume(tmp_path, monkeypatch):
     # Parked by the correction — persistence context wired, and only the operator's
     # prompt (written down as the turn began) on record.
     assert run.status is RunStatus.awaiting_input
-    assert [_project(m)[1] for m in await store.history(conv)] == ["do the thing"]
+    assert [project(m)[1] for m in await store.history(conv)] == ["do the thing"]
     parked = run.parked_payload
     assert isinstance(parked, ParkedTurn)
     assert parked.conversation_id == conv
@@ -831,7 +831,7 @@ async def test_verify_park_persists_once_on_resume(tmp_path, monkeypatch):
     # Persisted exactly once on resume — and cleaned: the rejected "first answer"
     # and the synthetic nudge are dropped, the approved final answer is kept.
     history = await store.history(conv)
-    texts = [_project(m)[1] for m in history]
+    texts = [project(m)[1] for m in history]
     assert any("all done" in t for t in texts)
     assert not any("first answer" in t for t in texts)
     assert not any("did not fully satisfy" in t for t in texts)

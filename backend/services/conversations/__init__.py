@@ -10,7 +10,7 @@ speed.
 The tree is what makes regenerate / edit / rewind work. Every node points at its
 predecessor (``parent_id``); **siblings sharing a parent are versions** — with
 compaction checkpoints **transparent**, so a version set reads through one rather
-than stopping at it (``_Tree.siblings``). The
+than stopping at it (``Tree.siblings``). The
 conversation's *active leaf* is the tip of the path the operator is viewing —
 walking it to the root yields the active history (the flat list the agent runs
 against). Navigation never invents history: regenerate/edit/rewind all just move

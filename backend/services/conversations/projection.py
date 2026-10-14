@@ -1,4 +1,4 @@
-"""Message projection: the (kind, text) a row is searched by, the serialized form (`_MESSAGE`), and
+"""Message projection: the (kind, text) a row is searched by, the serialized form (`MESSAGE`), and
 the capped attachment content a request persists.
 """
 
@@ -10,7 +10,9 @@ from pydantic import TypeAdapter
 from pydantic_ai import BinaryContent, ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.messages import UserContent
 
-_MESSAGE = TypeAdapter(ModelMessage)
+from services.shapes import as_list
+
+MESSAGE = TypeAdapter(ModelMessage)
 _TEXT_PARTS = {"TextPart", "UserPromptPart", "SystemPromptPart"}
 
 
@@ -20,16 +22,17 @@ def _part_text(content: object) -> str:
     content is ``[prompt, BinaryContent | str, …]``), ignoring binary parts."""
     if isinstance(content, str):
         return content
-    if isinstance(content, list):
-        return " ".join(item for item in content if isinstance(item, str))
+    items = as_list(content)
+    if items is not None and not isinstance(content, tuple):
+        return " ".join(item for item in items if isinstance(item, str))
     return ""
 
 
-def _project(message: ModelMessage) -> tuple[str, str]:
+def project(message: ModelMessage) -> tuple[str, str]:
     """Derive (kind, text) for listing/search from a ModelMessage. Flattens a
     retained-attachment user prompt (list content) so its text still feeds the
     listing preview and the per-message embedding — a string-only check would drop it."""
-    kind = getattr(message, "kind", "")
+    kind = message.kind
     pieces = (
         _part_text(getattr(part, "content", None))
         for part in message.parts
@@ -41,7 +44,7 @@ def _project(message: ModelMessage) -> tuple[str, str]:
 def _prompt_text(content: object) -> str:
     """The operator's typed text from a user-prompt content value. The engine builds an
     attachment turn's content as ``[prompt, *attachment_parts]``, so the leading string is
-    the prompt; a bare string is already it. Deliberately *not* a join (unlike ``_project``
+    the prompt; a bare string is already it. Deliberately *not* a join (unlike ``project``
     / ``conversation_view.flatten_content``) — a join would also slurp the injected file text
     this strip exists to drop."""
     if isinstance(content, str):

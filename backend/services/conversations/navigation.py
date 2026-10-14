@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from models._fields import new_id
 
-from .core import _StoreCore
-from .paths import _active_path_model, _is_user_prompt, _opens_turn
-from .projection import _MESSAGE, _project
-from .rows import _PersistJob, _Row
-from .tree import _Node, _Tree
+from .core import StoreCore
+from .paths import active_path_model, is_user_prompt, opens_turn
+from .projection import MESSAGE, project
+from .rows import PersistJob, Row
+from .tree import Node, Tree
 
 #: How long a forked thread's title may run before it is cut. The source's title is
 #: already a short summary, so this only bites on a hand-typed rename.
@@ -26,7 +26,7 @@ def _forked_title(source: str | None) -> str | None:
     return f"Fork of {trimmed}"
 
 
-class _NavigationMixin(_StoreCore):
+class NavigationMixin(StoreCore):
     # ── Tree navigation (regenerate / edit / rewind / version switch / delete) ──
     #
     # Each moves the active leaf in memory (immediately authoritative) and queues
@@ -38,9 +38,9 @@ class _NavigationMixin(_StoreCore):
         new active path can run on a different model than before (switching to an
         older version), so the denormalized model rides along with the pointer."""
         tree = self._cache.get(conversation_id)
-        model = _active_path_model(tree.active_path()) if tree is not None else None
+        model = active_path_model(tree.active_path()) if tree is not None else None
         self._submit(
-            _PersistJob(
+            PersistJob(
                 kind="active_leaf",
                 conversation_id=conversation_id,
                 active_leaf_id=leaf_id,
@@ -60,7 +60,7 @@ class _NavigationMixin(_StoreCore):
         under the checkpoint is what carries the fold into the new version — reseating
         above it would replay the whole unfolded thread, and after a compaction that is
         the one history certain not to fit. The version set is unaffected either way,
-        because :meth:`_Tree.siblings` looks through checkpoints."""
+        because :meth:`Tree.siblings` looks through checkpoints."""
         tree = await self._tree(conversation_id)
         node = tree.nodes.get(message_id)
         if node is None or (require_parent and node.parent_id is None):
@@ -131,8 +131,8 @@ class _NavigationMixin(_StoreCore):
         idx = ids.index(message_id)
         # The same "tail of this turn" rule `rewind` uses, so forking from an assistant
         # turn carries its tool exchanges rather than cutting the turn in half.
-        if not _is_user_prompt(path[idx].message):
-            while idx + 1 < len(path) and not _is_user_prompt(path[idx + 1].message):
+        if not is_user_prompt(path[idx].message):
+            while idx + 1 < len(path) and not is_user_prompt(path[idx + 1].message):
                 idx += 1
         copied = path[: idx + 1]
 
@@ -149,15 +149,15 @@ class _NavigationMixin(_StoreCore):
             agent_name=binding.agent_name,
         )
 
-        forked = self._cache_get(new_id_) or self._cache_put(new_id_, _Tree())
-        rows: list[_Row] = []
+        forked = self._cache_get(new_id_) or self._cache_put(new_id_, Tree())
+        rows: list[Row] = []
         parent: str | None = None
         for seq, node in enumerate(copied):
             # `compacted` rides along but `compacted_through` deliberately does not: it
             # names a node id in the *source* tree, so carrying it would leave a dangling
             # reference for `model_history` to walk into. The checkpoint keeps its summary
             # (real history) and reads as covering everything before it, which is true.
-            fresh = _Node(
+            fresh = Node(
                 id=new_id(),
                 parent_id=parent,
                 seq=seq,
@@ -168,15 +168,15 @@ class _NavigationMixin(_StoreCore):
                 compacted=node.compacted,
             )
             forked.add(fresh)
-            kind, text = _project(fresh.message)
+            kind, text = project(fresh.message)
             rows.append(
-                _Row(
+                Row(
                     id=fresh.id,
                     parent_id=fresh.parent_id,
                     seq=fresh.seq,
                     kind=kind,
                     text=text,
-                    blob=_MESSAGE.dump_json(fresh.message).decode(),
+                    blob=MESSAGE.dump_json(fresh.message).decode(),
                     attachment_ids=fresh.attachment_ids,
                     blocked_reason=fresh.blocked_reason,
                     compacted=fresh.compacted,
@@ -185,12 +185,12 @@ class _NavigationMixin(_StoreCore):
             parent = fresh.id
         forked.active_leaf_id = parent
         self._submit(
-            _PersistJob(
+            PersistJob(
                 kind="messages",
                 conversation_id=new_id_,
                 active_leaf_id=parent,
                 rows=rows,
-                model=_active_path_model(forked.active_path()),
+                model=active_path_model(forked.active_path()),
             )
         )
         return new_id_
@@ -214,8 +214,8 @@ class _NavigationMixin(_StoreCore):
         # the path and silently restore the full replay a rewind to the *last* turn
         # never asked for.
         target = path[idx]
-        if not target.compacted and not _is_user_prompt(target.message):
-            while idx + 1 < len(path) and not _opens_turn(path[idx + 1]):
+        if not target.compacted and not is_user_prompt(target.message):
+            while idx + 1 < len(path) and not opens_turn(path[idx + 1]):
                 idx += 1
         tree.active_leaf_id = path[idx].id
         self._move_leaf(conversation_id, tree.active_leaf_id)
@@ -247,12 +247,12 @@ class _NavigationMixin(_StoreCore):
         keep = new_leaf is None or new_leaf in tree.nodes
         tree.active_leaf_id = new_leaf if keep else tree.fallback_leaf()
         self._submit(
-            _PersistJob(
+            PersistJob(
                 kind="delete",
                 conversation_id=conversation_id,
                 active_leaf_id=tree.active_leaf_id,
                 deleted_ids=doomed,
-                model=_active_path_model(tree.active_path()),
+                model=active_path_model(tree.active_path()),
             )
         )
         return True

@@ -12,7 +12,7 @@ from runs.events import LastRequestUsage
 from runs.overhead import TurnOverhead
 from services.conversation_view import estimate_footprint
 
-from .paths import _is_user_prompt
+from .paths import is_user_prompt
 
 
 def context_footprint(messages: list[ModelMessage]) -> int | None:
@@ -105,7 +105,7 @@ class ConversationTotals:
     from a real zero, so an unmeasured thread reports absent rather than free.
     """
 
-    #: Completed operator exchanges (see ``_is_user_prompt``/turn-start semantics).
+    #: Completed operator exchanges (see ``is_user_prompt``/turn-start semantics).
     turns: int = 0
     #: Model round-trips those turns took between them.
     steps: int = 0
@@ -143,7 +143,7 @@ def conversation_totals(messages: list[ModelMessage]) -> ConversationTotals:
             if usage.cache_read_tokens:
                 saw_cache = True
                 cache_read += usage.cache_read_tokens
-        elif _is_user_prompt(message) and (previous is None or isinstance(previous, ModelResponse)):
+        elif is_user_prompt(message) and (previous is None or isinstance(previous, ModelResponse)):
             turns += 1
         previous = message
 

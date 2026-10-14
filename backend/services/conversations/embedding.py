@@ -9,10 +9,10 @@ from core.db import in_session
 from models.conversation import Conversation, Message
 from services.embeddings import embed_and_seal_rows
 
-from .core import _StoreCore
+from .core import StoreCore
 
 
-class _EmbeddingMixin(_StoreCore):
+class EmbeddingMixin(StoreCore):
     async def backfill_embeddings(self, owner_id: str, *, batch_size: int = 64) -> int:
         """Lift messages with *no* vector into the index — the startup backlog case
         (persisted before an embedding endpoint existed). The NULL-only slice of

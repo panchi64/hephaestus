@@ -7,10 +7,10 @@ from sqlmodel import Session, col, select
 from core.db import in_session
 from models.conversation import Conversation, Message
 
-from .core import _StoreCore
+from .core import StoreCore
 
 
-class _AttachmentsMixin(_StoreCore):
+class AttachmentsMixin(StoreCore):
     # ── Attachment provenance & the delete-choice safety check ──────────────────
     #
     # ``attachment_ids`` is a clear JSON column, so both read it directly — no decrypt.
@@ -28,7 +28,7 @@ class _AttachmentsMixin(_StoreCore):
 
         def work(session: Session) -> set[str]:
             stmt = (
-                select(Message.attachment_ids)
+                select(col(Message.attachment_ids))
                 .join(Conversation, col(Message.conversation_id) == Conversation.id)
                 .where(Conversation.owner_id == owner_id)
             )

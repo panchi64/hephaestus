@@ -2,31 +2,31 @@
 
 from __future__ import annotations
 
-from .attachments import _AttachmentsMixin
-from .compaction import _CompactionMixin
-from .core import _StoreCore
-from .drainer import _DrainerMixin
-from .embedding import _EmbeddingMixin
-from .history import _HistoryMixin
-from .listing import _ListingMixin
-from .metadata import _MetadataMixin
-from .navigation import _NavigationMixin
-from .recording import _RecordingMixin
+from .attachments import AttachmentsMixin
+from .compaction import CompactionMixin
+from .core import StoreCore
+from .drainer import DrainerMixin
+from .embedding import EmbeddingMixin
+from .history import HistoryMixin
+from .listing import ListingMixin
+from .metadata import MetadataMixin
+from .navigation import NavigationMixin
+from .recording import RecordingMixin
 
 
 class ConversationStore(
-    _HistoryMixin,
-    _RecordingMixin,
-    _NavigationMixin,
-    _CompactionMixin,
-    _ListingMixin,
-    _MetadataMixin,
-    _AttachmentsMixin,
-    _EmbeddingMixin,
-    _DrainerMixin,
-    _StoreCore,
+    HistoryMixin,
+    RecordingMixin,
+    NavigationMixin,
+    CompactionMixin,
+    ListingMixin,
+    MetadataMixin,
+    AttachmentsMixin,
+    EmbeddingMixin,
+    DrainerMixin,
+    StoreCore,
 ):
     """A conversation's working tree in memory, written behind to the database.
 
     The behaviour is split by concern across the mixins; the state they share (the tree
-    cache, the write-behind queue, the owner memo) lives on :class:`_StoreCore`."""
+    cache, the write-behind queue, the owner memo) lives on :class:`StoreCore`."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import override
 
 from sqlalchemy import func, or_
 from sqlmodel import Session, col, select
@@ -12,9 +13,9 @@ from models.conversation import Conversation, Message
 from services.projects import project_clause
 from services.workspace_kind import workspace_kind
 
-from .core import _StoreCore
-from .paths import _active_path_model
-from .projection import _project
+from .core import StoreCore
+from .paths import active_path_model
+from .projection import project
 from .records import ConversationSummaryView
 
 
@@ -57,7 +58,7 @@ def _db_stats(session: Session, conversation_ids: list[str]) -> dict[str, tuple[
     return {cid: (counts.get(cid, 0), last_text.get(cid)) for cid in conversation_ids}
 
 
-class _ListingMixin(_StoreCore):
+class ListingMixin(StoreCore):
     def _summarize(
         self, conversation: Conversation, db_count: int, last_text_enc: str | None
     ) -> ConversationSummaryView:
@@ -75,9 +76,9 @@ class _ListingMixin(_StoreCore):
             path = [node for node in cached.active_path() if not node.compacted]
             count = len(path)
             preview = next(
-                (text for text in (_project(n.message)[1] for n in reversed(path)) if text), None
+                (text for text in (project(n.message)[1] for n in reversed(path)) if text), None
             )
-            model = _active_path_model(path)
+            model = active_path_model(path)
         else:
             count = db_count
             decrypted = self._vault.decrypt_str(last_text_enc).strip() if last_text_enc else ""
@@ -139,6 +140,7 @@ class _ListingMixin(_StoreCore):
 
         return await in_session(self._engine, work)
 
+    @override
     async def get_summary(
         self, conversation_id: str, owner_id: str
     ) -> ConversationSummaryView | None:

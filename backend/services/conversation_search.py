@@ -15,8 +15,9 @@ from __future__ import annotations
 from collections.abc import Hashable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import override
 
-from sqlalchemy import Engine, func
+from sqlalchemy import ColumnElement, Engine, func
 from sqlmodel import Session, col, select
 
 from core.db import in_session
@@ -37,32 +38,40 @@ class MessageCollection(Collection[str]):
     """Searchable messages; ``meta`` is the conversation id. A compaction checkpoint is a
     summary of turns still in the table, so it is never indexed."""
 
-    name = "messages"
+    name: str = "messages"
 
     @staticmethod
-    def _owned(stmt, owner_id: str):
+    def _owned(owner_id: str) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
         return (
-            stmt.join(Conversation, col(Message.conversation_id) == col(Conversation.id))
-            .where(Conversation.owner_id == owner_id)
-            .where(col(Message.compacted).is_(False))
+            col(Conversation.owner_id) == owner_id,
+            col(Message.compacted).is_(False),
         )
 
+    @override
     def signature(self, session: Session, owner_id: str) -> Hashable:
-        stmt = self._owned(
-            select(Message.embedding_model, func.count(), func.max(Message.created_at)),
-            owner_id,
-        ).group_by(col(Message.embedding_model))
+        stmt = (
+            select(Message.embedding_model, func.count(), func.max(Message.created_at))
+            .join(Conversation, col(Message.conversation_id) == col(Conversation.id))
+            .where(*self._owned(owner_id))
+            .group_by(col(Message.embedding_model))
+        )
         return frozenset(session.exec(stmt).all())
 
+    @override
     def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
-        stmt = self._owned(select(Message.id, Message.embedding_model), owner_id)
+        stmt = (
+            select(Message.id, Message.embedding_model)
+            .join(Conversation, col(Message.conversation_id) == col(Conversation.id))
+            .where(*self._owned(owner_id))
+        )
         return {mid: model for mid, model in session.exec(stmt).all()}
 
+    @override
     def load(
         self, session: Session, vault: Vault, owner_id: str, ids: list[str]
     ) -> list[Loaded[str]]:
         rows = session.exec(select(Message).where(col(Message.id).in_(ids))).all()
-        loaded = []
+        loaded: list[Loaded[str]] = []
         for row in rows:
             text = vault.decrypt_str(row.text)
             if not text.strip():
@@ -106,12 +115,12 @@ class ConversationSearch:
     def __init__(
         self, engine: Engine, vault: Vault, embedder: Embedder, store: ConversationStore
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._embedder = embedder
-        self._store = store
-        self._index = RecallIndex(engine, vault)
-        self._collection = MessageCollection()
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._embedder: Embedder = embedder
+        self._store: ConversationStore = store
+        self._index: RecallIndex = RecallIndex(engine, vault)
+        self._collection: MessageCollection = MessageCollection()
 
     async def search(
         self,
@@ -144,7 +153,7 @@ class ConversationSearch:
         chosen = list(best.items())[:limit]
 
         def work(session: Session) -> list[ChatSearchHit]:
-            hits = []
+            hits: list[ChatSearchHit] = []
             for conversation_id, (message_id, score, matched_by) in chosen:
                 message = session.get(Message, message_id)
                 conversation = session.get(Conversation, conversation_id)
@@ -191,7 +200,7 @@ class ConversationSearch:
         if summary is None:
             return None
         views = await self._store.messages_view(conversation_id)
-        lines = []
+        lines: list[str] = []
         for view in views:
             # A compaction checkpoint is chassis bookkeeping, not something either party
             # said — reading it back as "Assistant" would put words in the model's mouth.

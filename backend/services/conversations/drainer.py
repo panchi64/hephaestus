@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import override
 
 from sqlalchemy import delete
 from sqlmodel import Session, col
@@ -13,14 +14,15 @@ from core.exceptions import DegradedCapabilityError
 from models.conversation import Conversation, Message
 from services.embeddings import encode_vector
 
-from .core import _StoreCore
-from .rows import _defer_fk, _PersistJob
+from .core import StoreCore
+from .rows import PersistJob, defer_fk
 
 logger = logging.getLogger(__name__)
 
 
-class _DrainerMixin(_StoreCore):
-    async def _persist(self, job: _PersistJob) -> None:
+class DrainerMixin(StoreCore):
+    @override
+    async def _persist(self, job: PersistJob) -> None:
         if job.kind == "messages":
             await self._persist_messages(job)
         elif job.kind == "active_leaf":
@@ -38,7 +40,7 @@ class _DrainerMixin(_StoreCore):
         # its retries releases through `_on_drop` instead.
         self._release(job)
 
-    async def _persist_messages(self, job: _PersistJob) -> None:
+    async def _persist_messages(self, job: PersistJob) -> None:
         # Embed off the DB thread, before the write — vectors travel into work() as
         # encrypted blobs keyed by row id. Best-effort: a missing/degraded embedder
         # yields no vectors, and those messages persist for keyword-only recall.
@@ -80,7 +82,7 @@ class _DrainerMixin(_StoreCore):
         await in_session(self._engine, work)
 
     async def _embed_rows(
-        self, job: _PersistJob
+        self, job: PersistJob
     ) -> dict[str, tuple[str | None, int | None, str | None]]:
         """Embed each row's searchable text for cross-chat recall, returning
         ``row_id -> (model, dim, encrypted_vector)``. Empty when there's nothing to
@@ -114,7 +116,7 @@ class _DrainerMixin(_StoreCore):
             for (row_id, _text), vector in zip(texts, batch.vectors, strict=False)
         }
 
-    async def _persist_active_leaf(self, job: _PersistJob) -> None:
+    async def _persist_active_leaf(self, job: PersistJob) -> None:
         def work(session: Session) -> None:
             conversation = session.get(Conversation, job.conversation_id)
             if conversation is not None:
@@ -124,21 +126,21 @@ class _DrainerMixin(_StoreCore):
 
         await in_session(self._engine, work)
 
-    async def _persist_delete(self, job: _PersistJob) -> None:
+    async def _persist_delete(self, job: PersistJob) -> None:
         def work(session: Session) -> None:
             conversation = session.get(Conversation, job.conversation_id)
             if conversation is None:
                 return
             if job.deleted_ids:
-                _defer_fk(session)  # remove the subtree in one statement, FK-safe
-                session.execute(delete(Message).where(col(Message.id).in_(job.deleted_ids)))
+                defer_fk(session)  # remove the subtree in one statement, FK-safe
+                _ = session.exec(delete(Message).where(col(Message.id).in_(job.deleted_ids)))
             conversation.active_leaf_id = job.active_leaf_id
             conversation.model = job.model
             conversation.updated_at = datetime.now(UTC)
 
         await in_session(self._engine, work)
 
-    async def _persist_pin(self, job: _PersistJob) -> None:
+    async def _persist_pin(self, job: PersistJob) -> None:
         def work(session: Session) -> None:
             # Deliberately does not bump updated_at: pinning is a bookmark, not
             # activity, and must not float the conversation in the newest-first list.
@@ -148,7 +150,7 @@ class _DrainerMixin(_StoreCore):
 
         await in_session(self._engine, work)
 
-    async def _persist_unblock(self, job: _PersistJob) -> None:
+    async def _persist_unblock(self, job: PersistJob) -> None:
         def work(session: Session) -> None:
             # Like the pin write, deliberately does not bump updated_at: retiring a
             # stop marker is bookkeeping on an old turn, and the turn that actually
@@ -159,7 +161,7 @@ class _DrainerMixin(_StoreCore):
 
         await in_session(self._engine, work)
 
-    async def _persist_block(self, job: _PersistJob) -> None:
+    async def _persist_block(self, job: PersistJob) -> None:
         def work(session: Session) -> None:
             # Queued behind the prompt's own insert (the drainer is FIFO), so the row is
             # there; like an unblock it is bookkeeping on a turn already written, and the
@@ -170,7 +172,8 @@ class _DrainerMixin(_StoreCore):
 
         await in_session(self._engine, work)
 
-    def _on_drop(self, job: _PersistJob, exc: Exception) -> None:
+    @override
+    def _on_drop(self, job: PersistJob, exc: Exception) -> None:
         logger.error(
             "permanently failed to persist %s for conversation %s (%d rows, %d deletes): %s",
             job.kind,

@@ -5,7 +5,7 @@ compaction override and context overhead.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import override
 
 from sqlmodel import Session
 
@@ -17,11 +17,11 @@ from services.permissions import PermissionLevel, permission_level
 from services.sealing import open_sealed
 from services.workspace_kind import workspace_kind
 
-from .core import _StoreCore
+from .core import StoreCore
 from .records import ConversationBinding
 
 
-class _MetadataMixin(_StoreCore):
+class MetadataMixin(StoreCore):
     async def set_title(self, conversation_id: str, title: str | None) -> None:
         """Rename a conversation (and bump its updated_at)."""
         title_enc = self._seal_title(title)
@@ -59,6 +59,7 @@ class _MetadataMixin(_StoreCore):
 
         return await in_session(self._engine, work)
 
+    @override
     def _open_work_summary(self, conversation: Conversation) -> str | None:
         """The thread's work summary on its way out.
 
@@ -97,6 +98,7 @@ class _MetadataMixin(_StoreCore):
 
         await in_session(self._engine, work)
 
+    @override
     async def binding(self, conversation_id: str) -> ConversationBinding:
         """This thread's binding — the facts a run needs to know where it works and how far
         it may go, read together so no path can pick up one and default the others.
@@ -233,7 +235,7 @@ class _MetadataMixin(_StoreCore):
         this. ``None`` for a thread that has not run a turn since this was recorded, and
         the breakdown is then absent rather than guessed."""
 
-        def work(session: Session) -> Any:
+        def work(session: Session) -> dict[str, object] | None:
             conversation = session.get(Conversation, conversation_id)
             return conversation.context_overhead if conversation is not None else None
 

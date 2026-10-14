@@ -9,10 +9,10 @@ from typing import NamedTuple
 
 from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 
-from .tree import _Node
+from .tree import Node
 
 
-def _is_user_prompt(message: ModelMessage) -> bool:
+def is_user_prompt(message: ModelMessage) -> bool:
     """A request that carries an operator prompt — the boundary that starts a new
     turn (tool-return requests don't)."""
     return isinstance(message, ModelRequest) and any(
@@ -20,22 +20,22 @@ def _is_user_prompt(message: ModelMessage) -> bool:
     )
 
 
-def _opens_turn(node: _Node) -> bool:
+def opens_turn(node: Node) -> bool:
     """Whether this node *could* open an operator turn: it carries a user prompt and is
     not a compaction checkpoint. A checkpoint is a ``ModelRequest`` with a user part —
     that is how the model reads a summary — so every walk that counts turns or extends
     one to its tail has to tell the two apart by the flag, never by the shape."""
-    return _is_user_prompt(node.message) and not node.compacted
+    return is_user_prompt(node.message) and not node.compacted
 
 
-def _awaiting_answer(path: list[_Node]) -> bool:
+def awaiting_answer(path: list[Node]) -> bool:
     """Whether the path ends on an operator prompt nothing has answered yet — a turn that
     has begun, or one that stopped before its first token. A compaction checkpoint is a
     request too, and ends a path after every fold, so the flag is what tells them apart."""
-    return bool(path) and _opens_turn(path[-1])
+    return bool(path) and opens_turn(path[-1])
 
 
-def _is_turn_start(path: list[_Node], index: int) -> bool:
+def _is_turn_start(path: list[Node], index: int) -> bool:
     """Whether ``path[index]`` opens a fresh operator turn — a user-prompt request that is
     the conversation's root, directly follows an assistant response, or directly follows a
     compaction checkpoint.
@@ -48,7 +48,7 @@ def _is_turn_start(path: list[_Node], index: int) -> bool:
     A checkpoint counts as a predecessor because the first turn after a fold is a real
     turn: reading only "follows a response" would skip it, and a later fold that ends in
     that turn would anchor its divider on the turn before the checkpoint."""
-    if not _opens_turn(path[index]):
+    if not opens_turn(path[index]):
         return False
     if index == 0:
         return True
@@ -56,7 +56,7 @@ def _is_turn_start(path: list[_Node], index: int) -> bool:
     return isinstance(previous.message, ModelResponse) or previous.compacted
 
 
-def _checkpoint_split(path: list[_Node]) -> tuple[int, int]:
+def checkpoint_split(path: list[Node]) -> tuple[int, int]:
     """``(checkpoint, through)`` — the path index of the newest compaction checkpoint and
     the index of the last node its summary covers. ``(-1, -1)`` when the path holds no
     checkpoint. A checkpoint whose covered node is no longer on the path degrades to
@@ -69,7 +69,7 @@ def _checkpoint_split(path: list[_Node]) -> tuple[int, int]:
     return checkpoint, through
 
 
-def _replay_nodes(path: list[_Node], stop: int | None = None) -> list[_Node]:
+def replay_nodes(path: list[Node], stop: int | None = None) -> list[Node]:
     """The nodes the **model** replays: the newest checkpoint's summary **hoisted to the
     front**, then every node after the one it covers. ``stop`` truncates at a path index,
     which is how a fresh compaction collects exactly what it is about to fold.
@@ -80,15 +80,15 @@ def _replay_nodes(path: list[_Node], stop: int | None = None) -> list[_Node]:
     shape: with the leaf reseated onto a user request, the replay still *ends* on that
     request even though the checkpoint was appended after it."""
     end = len(path) if stop is None else stop
-    checkpoint, through = _checkpoint_split(path)
+    checkpoint, through = checkpoint_split(path)
     if checkpoint < 0:
         return path[:end]
     head = [path[checkpoint]] if checkpoint < end else []
     return head + [path[i] for i in range(through + 1, end) if i != checkpoint]
 
 
-def _replay_boundary(path: list[_Node]) -> int:
-    """How many nodes at the head of :func:`_replay_nodes` predate the newest checkpoint —
+def replay_boundary(path: list[Node]) -> int:
+    """How many nodes at the head of :func:`replay_nodes` predate the newest checkpoint —
     the stored counterpart of ``Run.fold_boundary``.
 
     The checkpoint itself and every verbatim node recorded before it are counted: they were
@@ -96,7 +96,7 @@ def _replay_boundary(path: list[_Node]) -> int:
     prompt that no longer exists. Only what was recorded *after* the checkpoint — the first
     request that actually saw the folded thread — may be believed. ``0`` for a thread that
     never folded."""
-    checkpoint, through = _checkpoint_split(path)
+    checkpoint, through = checkpoint_split(path)
     if checkpoint < 0:
         return 0
     return 1 + max(0, checkpoint - through - 1)
@@ -114,23 +114,23 @@ class ReplayHistory(NamedTuple):
     boundary: int
 
 
-def _view_nodes(path: list[_Node]) -> list[_Node]:
+def view_nodes(path: list[Node]) -> list[Node]:
     """The nodes the **operator** sees, in transcript order: each compaction checkpoint
     moved back to sit immediately after the node its summary covers.
 
-    The opposite reordering to :func:`_replay_nodes`, and deliberately so. The model wants
+    The opposite reordering to :func:`replay_nodes`, and deliberately so. The model wants
     the summary first, as a preamble; the operator wants it where it happened, so the
     divider reads "everything above this line is what got folded" rather than trailing the
     recent turns it did *not* fold. A checkpoint whose covered node has left the path stays
     where it is rather than disappearing."""
-    followers: dict[str, list[_Node]] = {}
+    followers: dict[str, list[Node]] = {}
     for node in path:
         if node.compacted and node.compacted_through:
             followers.setdefault(node.compacted_through, []).append(node)
     if not followers:
         return path
     on_path = {node.id for node in path}
-    out: list[_Node] = []
+    out: list[Node] = []
     for node in path:
         if node.compacted and node.compacted_through in on_path:
             continue  # emitted after its anchor below
@@ -139,7 +139,7 @@ def _view_nodes(path: list[_Node]) -> list[_Node]:
     return out
 
 
-def _turn_anchor_id(path: list[_Node], node_id: str) -> str | None:
+def turn_anchor_id(path: list[Node], node_id: str) -> str | None:
     """The id of the **rendered turn** ``node_id`` belongs to — a turn's branch node, the
     same one ``project_tree`` keys a view by: the user request for an operator turn, the
     first response for an assistant one.
@@ -151,7 +151,7 @@ def _turn_anchor_id(path: list[_Node], node_id: str) -> str | None:
     index = next((i for i, node in enumerate(path) if node.id == node_id), None)
     if index is None:
         return None
-    if _is_user_prompt(path[index].message):
+    if is_user_prompt(path[index].message):
         return path[index].id
     start = max((j for j in range(index + 1) if _is_turn_start(path, j)), default=None)
     if start is None:
@@ -168,7 +168,7 @@ def _model_of(message: ModelMessage) -> str | None:
     return getattr(message, "model_name", None) if isinstance(message, ModelResponse) else None
 
 
-def _active_path_model(path: list[_Node]) -> str | None:
+def active_path_model(path: list[Node]) -> str | None:
     """The model the active path last ran on — its most recent response's
     ``model_name``. None for a path with no answer yet."""
     return next((m for m in (_model_of(n.message) for n in reversed(path)) if m), None)

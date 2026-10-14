@@ -9,12 +9,12 @@ from pydantic_ai import ModelMessage, ModelRequest
 from runs.timings import TimingTotals
 from services.conversation_view import MessageView, project_tree, stamped_command, stamped_file_refs
 
-from .core import _StoreCore
-from .paths import ReplayHistory, _replay_boundary, _replay_nodes, _view_nodes
+from .core import StoreCore
+from .paths import ReplayHistory, replay_boundary, replay_nodes, view_nodes
 from .records import TurnStamps
 
 
-class _HistoryMixin(_StoreCore):
+class HistoryMixin(StoreCore):
     async def history(self, conversation_id: str) -> list[ModelMessage]:
         """The active path's messages — the full transcript, compaction and all.
 
@@ -37,7 +37,7 @@ class _HistoryMixin(_StoreCore):
         over the whole replay when none has landed yet."""
         tree = await self._tree(conversation_id)
         path = tree.active_path()
-        return ReplayHistory([node.message for node in _replay_nodes(path)], _replay_boundary(path))
+        return ReplayHistory([node.message for node in replay_nodes(path)], replay_boundary(path))
 
     async def timings(self, conversation_id: str) -> TimingTotals:
         """The active path's wall-clock, summed — the one figure in the readout that
@@ -64,7 +64,7 @@ class _HistoryMixin(_StoreCore):
         turns it doesn't cover. Nothing is lost — the folded turns stay in the tree and in
         the transcript; only what is re-sent each turn shrinks."""
         tree = await self._tree(conversation_id)
-        return [node.message for node in _replay_nodes(tree.active_path())]
+        return [node.message for node in replay_nodes(tree.active_path())]
 
     async def turn_stamps(self, conversation_id: str, message_id: str | None = None) -> TurnStamps:
         """What a turn was sent with besides its text — the slash command, the `@` paths.
@@ -109,7 +109,7 @@ class _HistoryMixin(_StoreCore):
         split out, tool calls stitched to results), each carrying its branch node id
         and version index/count so the operator can regenerate, edit, or cycle it."""
         tree = await self._tree(conversation_id)
-        nodes = _view_nodes(tree.active_path())
+        nodes = view_nodes(tree.active_path())
         compacted_ids = frozenset(n.id for n in nodes if n.compacted)
         views = project_tree([(n.id, n.message) for n in nodes], compacted_ids=compacted_ids)
         for view in views:

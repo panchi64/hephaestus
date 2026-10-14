@@ -13,14 +13,14 @@ from runs.timings import ResponseTiming
 from services.commands.spec import Invocation
 from services.conversation_view import COMMAND_KEY, FILE_REFS_KEY
 
-from .core import _StoreCore
-from .paths import _active_path_model
-from .projection import _MESSAGE, _project, install_persisted_attachments
-from .rows import _PersistJob, _Row
-from .tree import _Tree
+from .core import StoreCore
+from .paths import active_path_model
+from .projection import MESSAGE, install_persisted_attachments, project
+from .rows import PersistJob, Row
+from .tree import Tree
 
 
-class _RecordingMixin(_StoreCore):
+class RecordingMixin(StoreCore):
     def record(
         self,
         conversation_id: str,
@@ -69,7 +69,7 @@ class _RecordingMixin(_StoreCore):
             # longer exists — a delete that landed while this turn was still running.
             # An empty tree is right for the first case and a resurrected ghost in the
             # second, so `_persist_messages` re-checks the row before writing.
-            tree = self._cache_put(conversation_id, _Tree())
+            tree = self._cache_put(conversation_id, Tree())
         added = tree.append_chain(new_messages)
         # A turn blocked before it produced a response (a time/cancel bound tripping in
         # the pre-model setup window) has no response node to carry the marker — so the
@@ -82,7 +82,7 @@ class _RecordingMixin(_StoreCore):
             self._block_node(conversation_id, prompt_id, blocked_reason or "")
             blocked_on_request = False
             blocked_reason = None
-        rows: list[_Row] = []
+        rows: list[Row] = []
         # A turn whose request is already recorded has no request left to stamp.
         stamped = prompt_id is not None
         blocked_stamped = False
@@ -143,10 +143,10 @@ class _RecordingMixin(_StoreCore):
                     node.llm_ms = timing.llm_ms
                     node.ttft_ms = timing.ttft_ms
                     node.tool_ms = timing.tool_ms
-            kind, text = _project(node.message)
-            blob = _MESSAGE.dump_json(node.message).decode()
+            kind, text = project(node.message)
+            blob = MESSAGE.dump_json(node.message).decode()
             rows.append(
-                _Row(
+                Row(
                     id=node.id,
                     parent_id=node.parent_id,
                     seq=node.seq,
@@ -161,12 +161,12 @@ class _RecordingMixin(_StoreCore):
                 )
             )
         self._submit(
-            _PersistJob(
+            PersistJob(
                 kind="messages",
                 conversation_id=conversation_id,
                 active_leaf_id=tree.active_leaf_id,
                 rows=rows,
-                model=_active_path_model(tree.active_path()),
+                model=active_path_model(tree.active_path()),
             )
         )
         return [node.id for node in added]
@@ -215,7 +215,7 @@ class _RecordingMixin(_StoreCore):
             return
         node.blocked_reason = reason
         self._submit(
-            _PersistJob(
+            PersistJob(
                 kind="block",
                 conversation_id=conversation_id,
                 message_id=node.id,
@@ -232,7 +232,7 @@ class _RecordingMixin(_StoreCore):
             return False
         node.pinned = pinned
         self._submit(
-            _PersistJob(
+            PersistJob(
                 kind="pin", conversation_id=conversation_id, message_id=message_id, pinned=pinned
             )
         )
@@ -267,6 +267,6 @@ class _RecordingMixin(_StoreCore):
             return False
         node.blocked_reason = None
         self._submit(
-            _PersistJob(kind="unblock", conversation_id=conversation_id, message_id=node.id)
+            PersistJob(kind="unblock", conversation_id=conversation_id, message_id=node.id)
         )
         return True

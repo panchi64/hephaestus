@@ -3,27 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 from pydantic_ai import ModelRequest, ToolAvailabilityDeltaPart, UserPromptPart
+from pydantic_ai.messages import ModelRequestPart
 
 from runs.events import CompactionReason
 from services.conversation_view import COMPACTION_REASON_KEY
 
-from .core import _StoreCore
+from .core import StoreCore
 from .paths import (
-    _active_path_model,
-    _awaiting_answer,
-    _checkpoint_split,
-    _replay_nodes,
-    _turn_anchor_id,
+    active_path_model,
+    awaiting_answer,
+    checkpoint_split,
+    replay_nodes,
+    turn_anchor_id,
 )
-from .projection import _MESSAGE
+from .projection import MESSAGE
 from .records import CompactionPlan
-from .rows import _PersistJob, _Row
+from .rows import PersistJob, Row
 
 
-class _CompactionMixin(_StoreCore):
+class CompactionMixin(StoreCore):
     async def compaction_plan(self, conversation_id: str) -> CompactionPlan | None:
         """What compacting this conversation right now would fold, or ``None`` when it
         would fold nothing.
@@ -45,7 +45,7 @@ class _CompactionMixin(_StoreCore):
         reseated the leaf and its run hasn't recorded yet — and it folds like any other.
         The checkpoint lands under the reseated leaf and the incoming answer hangs off the
         checkpoint, which is exactly where a version set that looks *through* checkpoints
-        expects it (:meth:`_Tree.siblings`). Refusing here instead is what used to make
+        expects it (:meth:`Tree.siblings`). Refusing here instead is what used to make
         the one moment compaction is most needed — a regenerate against a nearly full
         window — the one moment it could not happen.
 
@@ -67,17 +67,17 @@ class _CompactionMixin(_StoreCore):
         if leaf is None:
             return None
         path = tree.active_path()
-        checkpoint, _ = _checkpoint_split(path)
-        boundary = len(path) - 1 if tree.children.get(leaf) or _awaiting_answer(path) else len(path)
+        checkpoint, _ = checkpoint_split(path)
+        boundary = len(path) - 1 if tree.children.get(leaf) or awaiting_answer(path) else len(path)
         if boundary <= checkpoint + 1:
             return None
-        folded = _replay_nodes(path, stop=boundary)
+        folded = replay_nodes(path, stop=boundary)
         through_id = path[boundary - 1].id
         return CompactionPlan(
             messages=[node.message for node in folded],
             through_id=through_id,
             expected_leaf_id=leaf,
-            anchor_id=_turn_anchor_id(path, through_id),
+            anchor_id=turn_anchor_id(path, through_id),
         )
 
     def record_compaction(
@@ -124,7 +124,7 @@ class _CompactionMixin(_StoreCore):
         # The delta leads, so the summary stays the message's *last* part: a checkpoint
         # hoisted in front of a turn is merged into it, and the boundary the engine records
         # there counts the turn's own parts from the end.
-        parts: list[Any] = []
+        parts: list[ModelRequestPart] = []
         if revealed_tools:
             parts.append(ToolAvailabilityDeltaPart(tools_added=list(revealed_tools)))
         parts.append(UserPromptPart(content=summary))
@@ -133,12 +133,12 @@ class _CompactionMixin(_StoreCore):
         node.compacted = True
         node.compacted_through = through_id
         self._submit(
-            _PersistJob(
+            PersistJob(
                 kind="messages",
                 conversation_id=conversation_id,
                 active_leaf_id=tree.active_leaf_id,
                 rows=[
-                    _Row(
+                    Row(
                         id=node.id,
                         parent_id=node.parent_id,
                         seq=node.seq,
@@ -149,14 +149,14 @@ class _CompactionMixin(_StoreCore):
                         # as if it were the operator's own words is worse than not
                         # surfacing at all. The text lives only in the sealed blob.
                         text="",
-                        blob=_MESSAGE.dump_json(message).decode(),
+                        blob=MESSAGE.dump_json(message).decode(),
                         attachment_ids=[],
                         blocked_reason=None,
                         compacted=True,
                         compacted_through=through_id,
                     )
                 ],
-                model=_active_path_model(tree.active_path()),
+                model=active_path_model(tree.active_path()),
             )
         )
         return node.id

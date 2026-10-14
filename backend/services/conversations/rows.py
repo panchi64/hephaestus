@@ -11,7 +11,7 @@ from sqlalchemy import text as sa_text
 from sqlmodel import Session
 
 
-class _Row(NamedTuple):
+class Row(NamedTuple):
     """A persistence-ready message row, still plaintext. The drainer encrypts ``text`` +
     ``blob`` just before the write (lock-aware side of the queue), so a vault lock
     mid-turn parks the write rather than losing it."""
@@ -34,7 +34,7 @@ class _Row(NamedTuple):
     tool_ms: int | None = None
 
 
-class _HydratedRow(NamedTuple):
+class HydratedRow(NamedTuple):
     """One message row read back for rehydration, projected out of the ORM object so
     nothing is held across the session boundary.
 
@@ -57,7 +57,7 @@ class _HydratedRow(NamedTuple):
 
 
 @dataclass
-class _PersistJob:
+class PersistJob:
     """A unit of durable work, drained in FIFO order so an active-leaf move or a
     delete always lands after the message writes it follows.
 
@@ -70,7 +70,7 @@ class _PersistJob:
     kind: str  # "messages" | "active_leaf" | "delete" | "pin" | "unblock" | "block"
     conversation_id: str
     active_leaf_id: str | None = None
-    rows: list[_Row] = field(default_factory=list)
+    rows: list[Row] = field(default_factory=list)
     deleted_ids: list[str] = field(default_factory=list)
     # For "pin": the message to (un)pin and the value to set. "unblock" reuses
     # ``message_id`` — the turn whose stop marker the operator resolved — and "block"
@@ -85,11 +85,11 @@ class _PersistJob:
     model: str | None = None
 
 
-def _defer_fk(session: Session) -> None:
+def defer_fk(session: Session) -> None:
     """Defer foreign-key enforcement to commit for this transaction, so a set of
     rows linked by the self-referential ``parent_id`` FK can be deleted in one
     statement regardless of order. SQLite checks FKs per-statement otherwise; this
     is its mechanism (a no-op guard keeps a non-SQLite backend from erroring on the
     pragma — such a backend would use deferrable constraints instead)."""
     if session.bind is not None and session.bind.dialect.name == "sqlite":
-        session.execute(sa_text("PRAGMA defer_foreign_keys=ON"))
+        _ = session.connection().execute(sa_text("PRAGMA defer_foreign_keys=ON"))
