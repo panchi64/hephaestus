@@ -4,19 +4,21 @@ from __future__ import annotations
 
 import io
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from core.exceptions import PluginValidationError
-from services.plugins import parse_manifest, validate_files
+from services.plugins import PluginStore, parse_manifest, validate_files
 from services.revisions import restore
 
 from ._helpers import client_app
+from ._json import arr, json_body, json_list, obj, s
 from ._plugin_helpers import CODE, MANIFEST, OWNER, bundle, make_store
 
 
 @pytest.fixture
-async def store(tmp_path):
+async def store(tmp_path: Path) -> PluginStore:
     return await make_store(tmp_path)
 
 
@@ -50,43 +52,43 @@ def test_a_tool_is_an_external_effect_unless_it_says_otherwise():
         (("description: Forecasts.\n", "description: Forecasts.\nextra: 1\n"), "plugin.yaml"),
     ],
 )
-def test_a_bad_manifest_names_the_part_to_fix(change, field):
+def test_a_bad_manifest_names_the_part_to_fix(change: tuple[str, str], field: str):
     with pytest.raises(PluginValidationError) as raised:
-        validate_files(bundle(MANIFEST.replace(*change)))
+        _ = validate_files(bundle(MANIFEST.replace(*change)))
     assert raised.value.field == field
 
 
 @pytest.mark.parametrize("path", ["../escape.py", "/abs.py", "a//b.py", "a/./b.py"])
-def test_a_path_outside_the_plugin_is_refused(path):
+def test_a_path_outside_the_plugin_is_refused(path: str):
     with pytest.raises(PluginValidationError):
-        validate_files({**bundle(), path: b""})
+        _ = validate_files({**bundle(), path: b""})
 
 
 def test_a_tool_name_too_long_for_a_provider_is_refused():
     long_tool = MANIFEST.replace("- name: forecast", "- name: " + "f" * 40)
     with pytest.raises(PluginValidationError):
-        validate_files(bundle(long_tool.replace("name: weather", "name: " + "w" * 20)))
+        _ = validate_files(bundle(long_tool.replace("name: weather", "name: " + "w" * 20)))
 
 
 # --- drafts, publishing and history --------------------------------------------
 
 
-async def test_an_agents_plugin_is_a_draft_until_published(store):
+async def test_an_agents_plugin_is_a_draft_until_published(store: PluginStore):
     view = await store.write_draft(OWNER, "weather", bundle(), source="agent")
     assert (view.source, view.published, view.active) == ("agent", False, None)
     assert await store.published(OWNER) == []
 
     view = await store.publish(OWNER, view.id)
     assert view.published and view.draft is None
-    [(published, files)] = await store.published(OWNER)
+    [(_published, files)] = await store.published(OWNER)
     assert files["weather.py"] == CODE.encode()
 
 
-async def test_editing_a_published_plugin_drafts_beside_what_runs(store):
+async def test_editing_a_published_plugin_drafts_beside_what_runs(store: PluginStore):
     view = await store.write_draft(OWNER, "weather", bundle(), source="agent")
-    await store.publish(OWNER, view.id)
+    _ = await store.publish(OWNER, view.id)
 
-    await store.write_draft(
+    _ = await store.write_draft(
         OWNER, "weather", {"weather.py": b"def forecast(city): return 1\n"}, source="agent"
     )
 
@@ -94,33 +96,36 @@ async def test_editing_a_published_plugin_drafts_beside_what_runs(store):
     assert (await store.files(OWNER, view.id, "draft"))["plugin.yaml"] == MANIFEST.encode()
 
 
-async def test_a_draft_must_keep_its_own_name(store):
-    await store.write_draft(OWNER, "weather", bundle(), source="agent")
+async def test_a_draft_must_keep_its_own_name(store: PluginStore):
+    _ = await store.write_draft(OWNER, "weather", bundle(), source="agent")
     renamed = MANIFEST.replace("name: weather", "name: climate")
     with pytest.raises(PluginValidationError):
-        await store.write_draft(OWNER, "weather", {"plugin.yaml": renamed.encode()}, source="agent")
+        _ = await store.write_draft(
+            OWNER, "weather", {"plugin.yaml": renamed.encode()}, source="agent"
+        )
 
 
-async def test_discarding_a_never_published_draft_deletes_the_plugin(store):
+async def test_discarding_a_never_published_draft_deletes_the_plugin(store: PluginStore):
     view = await store.write_draft(OWNER, "weather", bundle(), source="agent")
     assert await store.discard_draft(OWNER, view.id) is None
     assert await store.list(OWNER) == []
 
 
-async def test_rolling_back_publishes_an_earlier_version_and_keeps_the_draft(store):
+async def test_rolling_back_publishes_an_earlier_version_and_keeps_the_draft(store: PluginStore):
     view = await store.write_draft(OWNER, "weather", bundle(), source="agent")
-    await store.publish(OWNER, view.id)
+    _ = await store.publish(OWNER, view.id)
     newer = {"weather.py": b"def forecast(city): return 2\n"}
-    await store.write_draft(OWNER, "weather", newer, source="agent")
-    await store.publish(OWNER, view.id)
-    await store.write_draft(
+    _ = await store.write_draft(OWNER, "weather", newer, source="agent")
+    _ = await store.publish(OWNER, view.id)
+    _ = await store.write_draft(
         OWNER, "weather", {"weather.py": b"def forecast(city): return 3\n"}, source="agent"
     )
 
-    await restore(store, OWNER, view.id, 1)
+    _ = await restore(store, OWNER, view.id, 1)
 
     assert (await store.files(OWNER, view.id, "active"))["weather.py"] == CODE.encode()
     assert b"return 3" in (await store.files(OWNER, view.id, "draft"))["weather.py"]
+    assert store.revisions is not None
     history = await store.revisions.history(OWNER, "plugin", view.id)
     assert [entry.note for entry in history] == ["restored version 1", "published", "published"]
 
@@ -128,7 +133,7 @@ async def test_rolling_back_publishes_an_earlier_version_and_keeps_the_draft(sto
 # --- secrets ----------------------------------------------------------------------
 
 
-async def test_a_secret_is_set_for_its_declared_host_and_never_listed(store):
+async def test_a_secret_is_set_for_its_declared_host_and_never_listed(store: PluginStore):
     view = await store.write_draft(OWNER, "weather", bundle(), source="agent")
     [status] = await store.secrets(OWNER, view.id)
     assert (status.name, status.domain, status.is_set) == ("API_KEY", "api.example.com", False)
@@ -141,7 +146,7 @@ async def test_a_secret_is_set_for_its_declared_host_and_never_listed(store):
     assert (await store.secret_values(OWNER, view.id))["API_KEY"].value == "s3cret"
 
 
-async def test_only_declared_secrets_can_be_set(store):
+async def test_only_declared_secrets_can_be_set(store: PluginStore):
     view = await store.write_draft(OWNER, "weather", bundle(), source="agent")
     with pytest.raises(PluginValidationError):
         await store.set_secret(OWNER, view.id, "OTHER", "x")
@@ -166,26 +171,27 @@ async def test_an_imported_plugin_is_reviewed_published_and_rolled_back():
             "/plugins/import", files={"file": ("weather.zip", _zip(bundle()), "application/zip")}
         )
         assert imported.status_code == 201, imported.text
-        plugin = imported.json()
-        assert plugin["draft"]["tools"][0]["name"] == "forecast"
+        plugin = json_body(imported)
+        draft = obj(plugin["draft"])
+        assert obj(arr(draft["tools"])[0])["name"] == "forecast"
         assert plugin["active"] is None
 
-        changes = (await client.get(f"/plugins/{plugin['id']}/revisions/changes")).json()
-        assert {c["path"] for c in changes} == {"plugin.yaml", "weather.py"}
+        changes = json_list(await client.get(f"/plugins/{plugin['id']}/revisions/changes"))
+        assert {s(obj(c)["path"]) for c in changes} == {"plugin.yaml", "weather.py"}
 
-        published = (await client.post(f"/plugins/{plugin['id']}/publish")).json()
+        published = json_body(await client.post(f"/plugins/{plugin['id']}/publish"))
         assert published["published"] and published["draft"] is None
 
-        files = (await client.get(f"/plugins/{plugin['id']}/files?version=active")).json()
-        assert [f["path"] for f in files] == ["plugin.yaml", "weather.py"]
+        files = json_list(await client.get(f"/plugins/{plugin['id']}/files?version=active"))
+        assert [obj(f)["path"] for f in files] == ["plugin.yaml", "weather.py"]
 
         put = await client.put(f"/plugins/{plugin['id']}/secrets/API_KEY", json={"value": "s3cret"})
         assert put.status_code == 204
-        secrets = (await client.get(f"/plugins/{plugin['id']}/secrets")).json()
+        secrets = json_list(await client.get(f"/plugins/{plugin['id']}/secrets"))
         assert secrets == [{"name": "API_KEY", "domain": "api.example.com", "is_set": True}]
 
-        history = (await client.get(f"/plugins/{plugin['id']}/revisions")).json()
-        assert [v["note"] for v in history] == ["published"]
+        history = json_list(await client.get(f"/plugins/{plugin['id']}/revisions"))
+        assert [obj(v)["note"] for v in history] == ["published"]
 
 
 async def test_an_invalid_import_is_a_422_naming_the_field():
