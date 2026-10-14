@@ -36,19 +36,16 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import replace
-from typing import Any
+from typing import cast, override
 
-from pydantic_ai import AbstractToolset, RunContext, ToolsetTool
+from pydantic_ai import AbstractToolset, RunContext, Tool, ToolsetTool
 from pydantic_ai_harness.planning import InMemoryPlanStore, Planning
+from pydantic_ai_harness.planning import PlanStore as TaskStoreProtocol
 
-from services.task_list import (
-    ConversationTasks,
-    ConversationTaskStore,
-    TaskStoreProtocol,
-    render_tasks,
-)
+from services.task_list import ConversationTasks, ConversationTaskStore, render_tasks
 
 from .deps import PromptContextRequest, RunDeps
+from .describe import registered_tools
 from .harness_events import attributable
 
 # Rendered above the list at the tail of the turn. Short and fixed: the block's *content*
@@ -144,26 +141,28 @@ class _ConversationTaskToolset(AbstractToolset[RunDeps]):
     """
 
     def __init__(self, template: AbstractToolset[RunDeps]) -> None:
-        self._template = template
+        self._template: AbstractToolset[RunDeps] = template
         self._bound: OrderedDict[str, tuple[AbstractToolset[RunDeps], TaskStoreProtocol]] = (
             OrderedDict()
         )
 
     @property
+    @override
     def id(self) -> str:
         return "tasks"
 
     @property
-    def tools(self) -> dict[str, Any]:
+    def tools(self) -> dict[str, Tool[RunDeps]]:
         """The static registry ``tools/catalog.py`` enumerates for the settings surface.
 
         Re-keyed like everything else here: the operator's tool list and the names the
         model is offered have to be the same words, or a tool switched off in settings
         would not be the tool withheld from the agent.
         """
-        registry: dict[str, Any] = getattr(self._template, "tools", {})
+        registry = registered_tools(self._template)
         return {_LOCAL[name]: tool for name, tool in registry.items() if name in _LOCAL}
 
+    @override
     async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
         tools = await self._template.get_tools(ctx)
         return {
@@ -172,13 +171,14 @@ class _ConversationTaskToolset(AbstractToolset[RunDeps]):
             if (local := _LOCAL.get(upstream)) is not None
         }
 
+    @override
     async def call_tool(
         self,
         name: str,
-        tool_args: dict[str, Any],
+        tool_args: dict[str, object],
         ctx: RunContext[RunDeps],
         tool: ToolsetTool[RunDeps],
-    ) -> Any:
+    ) -> object:
         bound, store = self._for(ctx)
         # The store is cached with the toolset, but the run it emits on is per turn — point
         # it at the live one, or the second turn's updates stream onto a dead run.
@@ -192,8 +192,11 @@ class _ConversationTaskToolset(AbstractToolset[RunDeps]):
         # attributed — a prefixed toolset otherwise hands the harness an unprefixed
         # `tool_name` the library cannot look up (`tools/harness_events.py`).
         inward = attributable(ctx, f"{self.id}_{name}")
-        return await bound.call_tool(
-            upstream, tool_args, inward, (await bound.get_tools(ctx))[upstream]
+        return cast(
+            object,
+            await bound.call_tool(
+                upstream, tool_args, inward, (await bound.get_tools(ctx))[upstream]
+            ),
         )
 
     def _for(self, ctx: RunContext[RunDeps]) -> tuple[AbstractToolset[RunDeps], TaskStoreProtocol]:
@@ -205,7 +208,7 @@ class _ConversationTaskToolset(AbstractToolset[RunDeps]):
             store = _store_for(ctx)
             entry = (_planning_toolset(store), store)
             if len(self._bound) >= _MAX_BOUND:
-                self._bound.popitem(last=False)
+                _ = self._bound.popitem(last=False)
         self._bound[key] = entry
         return entry
 

@@ -8,9 +8,10 @@ sub-agent's wake) drives an ordinary turn through the same path a route does.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, NamedTuple
+from typing import NamedTuple, TypedDict
 
 from fastapi import HTTPException
+from pydantic_ai import AbstractToolset
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
@@ -29,12 +30,12 @@ from runs import (
     Endpoint,
     RunRegistry,
 )
-from runs.registry import _UNSET, _Unset
+from runs.registry import UNSET, Unset
 from services.commands import Invocation
 from services.conversations import ConversationBinding, ConversationStore
 from services.registry import ModelRegistry
 from services.uploads import UploadStore
-from tools import InstructionProvider, PromptContextProvider
+from tools import NO_DISABLED_TOOLS, InstructionProvider, PromptContextProvider, RunDeps
 
 
 class TurnModels(NamedTuple):
@@ -47,6 +48,13 @@ class TurnModels(NamedTuple):
     vision: bool
     #: The main model's primary endpoint, which the turn's run leases.
     endpoint: Endpoint | None = None
+
+
+class WallClockOverride(TypedDict, total=False):
+    """``compose_turn`` keyword arguments for a caller that sets the wall clock only
+    sometimes: absent means the registry default, which ``None`` would not."""
+
+    wall_clock_timeout_s: float | None
 
 
 async def resolve_turn_models(
@@ -133,11 +141,11 @@ def compose_turn(
     registry: RunRegistry,
     store: ConversationStore,
     uploads: UploadStore,
-    categories: Mapping[str, Any] | None = None,
+    categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
     dormant: Mapping[str, str] | None = None,
     instruction_providers: Sequence[InstructionProvider] = (),
     prompt_context_providers: Sequence[PromptContextProvider] = (),
-    disabled_tools: frozenset[str] = frozenset(),
+    disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
     binding: ConversationBinding | None = None,
     owner_id: str = OPERATOR_ID,
     attachment_ids: list[str] | None = None,
@@ -153,8 +161,8 @@ def compose_turn(
     auto_compact: AutoCompactPolicy | None = None,
     request_limit: int | None = None,
     context_thresholds: ContextThresholds = DEFAULT_CONTEXT_THRESHOLDS,
-    inactivity_timeout_s: float | None | _Unset = _UNSET,
-    wall_clock_timeout_s: float | None | _Unset = _UNSET,
+    inactivity_timeout_s: float | None | Unset = UNSET,
+    wall_clock_timeout_s: float | None | Unset = UNSET,
     kind: str = "chat",
     workspace_key: str = "",
 ) -> ChatCreated:
@@ -228,9 +236,9 @@ def compose_turn(
             conversation_id=conversation_id,
             endpoint=endpoint,
             # The operator's inactivity bound, resolved by the interactive caller; the
-            # unattended task path omits it (_UNSET) and the registry default applies.
+            # unattended task path omits it (UNSET) and the registry default applies.
             inactivity_timeout_s=inactivity_timeout_s,
-            # Same shape for the wall clock — resolved by the interactive caller, _UNSET
+            # Same shape for the wall clock — resolved by the interactive caller, UNSET
             # elsewhere. Both defaults are off, so an unattended turn is unbounded in
             # wall-clock terms unless the deploy set `run_wall_clock_timeout_s`.
             wall_clock_timeout_s=wall_clock_timeout_s,

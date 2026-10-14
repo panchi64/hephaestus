@@ -27,11 +27,11 @@ from .stream import RunStream
 logger = logging.getLogger(__name__)
 
 
-class _Unset(Enum):
+class Unset(Enum):
     UNSET = object()
 
 
-_UNSET = _Unset.UNSET
+UNSET = Unset.UNSET
 
 
 def _ended(run: Run) -> RunEnded:
@@ -230,8 +230,8 @@ class RunRegistry:
         run_id: str | None = None,
         conversation_id: str | None = None,
         endpoint: Endpoint | None = None,
-        wall_clock_timeout_s: float | None | _Unset = _UNSET,
-        inactivity_timeout_s: float | None | _Unset = _UNSET,
+        wall_clock_timeout_s: float | None | Unset = UNSET,
+        inactivity_timeout_s: float | None | Unset = UNSET,
     ) -> Run:
         # Atomic check-and-claim: reads ``self._runs`` and registers the new run with no
         # ``await`` in between, so this closes the race a caller's own pre-submit guard
@@ -251,8 +251,8 @@ class RunRegistry:
         )
         self._runs[run.id] = run
         self._evict_old()
-        wall = self._wall_clock if wall_clock_timeout_s is _UNSET else wall_clock_timeout_s
-        idle = self._inactivity if inactivity_timeout_s is _UNSET else inactivity_timeout_s
+        wall = self._wall_clock if wall_clock_timeout_s is UNSET else wall_clock_timeout_s
+        idle = self._inactivity if inactivity_timeout_s is UNSET else inactivity_timeout_s
         run.task = asyncio.create_task(
             self._execute(run, orchestrator, wall, idle),
             name=f"run:{run.id}",
@@ -335,8 +335,8 @@ class RunRegistry:
         run_id: str,
         orchestrator: Orchestrator,
         *,
-        wall_clock_timeout_s: float | None | _Unset = _UNSET,
-        inactivity_timeout_s: float | None | _Unset = _UNSET,
+        wall_clock_timeout_s: float | None | Unset = UNSET,
+        inactivity_timeout_s: float | None | Unset = UNSET,
     ) -> Run | None:
         """Continue a parked run with a fresh orchestrator (approval resume).
 
@@ -354,8 +354,8 @@ class RunRegistry:
         if run.status is not RunStatus.awaiting_input:
             return None  # cancelled (or already resumed) while we waited
         run.status = RunStatus.queued
-        wall = self._wall_clock if wall_clock_timeout_s is _UNSET else wall_clock_timeout_s
-        idle = self._inactivity if inactivity_timeout_s is _UNSET else inactivity_timeout_s
+        wall = self._wall_clock if wall_clock_timeout_s is UNSET else wall_clock_timeout_s
+        idle = self._inactivity if inactivity_timeout_s is UNSET else inactivity_timeout_s
         run.task = asyncio.create_task(
             self._execute(run, orchestrator, wall, idle, resuming=True),
             name=f"run:{run.id}:resume",

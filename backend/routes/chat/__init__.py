@@ -19,7 +19,7 @@ from fastapi import APIRouter
 
 from routes.chat import send, settings
 from routes.chat.submit import TurnScope, thread_models, turn_scope
-from routes.chat.turn import TurnModels, compose_turn, resolve_turn_models
+from routes.chat.turn import TurnModels, WallClockOverride, compose_turn, resolve_turn_models
 from runs import ConversationBusyError
 
 router = APIRouter()
@@ -30,6 +30,7 @@ __all__ = [
     "ConversationBusyError",
     "TurnModels",
     "TurnScope",
+    "WallClockOverride",
     "compose_turn",
     "resolve_turn_models",
     "router",

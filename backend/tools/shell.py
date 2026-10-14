@@ -51,7 +51,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic_ai import AbstractToolset, FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
@@ -238,7 +238,7 @@ def _progress_hook(ctx: RunContext[RunDeps]) -> ProgressHook | None:
         return None
 
     async def hook(chunk: str, elapsed_s: float) -> None:
-        await ctx.emit(
+        _ = await ctx.emit(
             RunEventEmitted(
                 body=ToolProgress(tool_call_id=tool_call_id, elapsed_s=elapsed_s, partial=chunk)
             )
@@ -249,14 +249,14 @@ def _progress_hook(ctx: RunContext[RunDeps]) -> ProgressHook | None:
 
 def _run_payload(
     result: ShellResult, boundary: _Boundary, timeout_s: float, notes: tuple[str, ...] = ()
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """One finished command, as the model and the operator's terminal both read it.
 
     The optional keys are **absent rather than null** when they say nothing, the same way
     `code_execute`'s result omits its failure hint on success: a key whose presence is the
     fact is easier to read than a null a reader has to know the meaning of.
     """
-    payload: dict[str, Any] = {
+    payload: dict[str, object] = {
         "ok": result.ok,
         "exit_code": result.exit_code,
         "stdout": result.stdout,
@@ -280,16 +280,16 @@ def _run_payload(
     return payload
 
 
-def _boundary_fields(boundary: _Boundary) -> dict[str, Any]:
+def _boundary_fields(boundary: _Boundary) -> dict[str, object]:
     """The declaration and the fence's verdict, as the two keys every executing tool
     carries — at every permission level, which is the whole point of them being here."""
-    fields: dict[str, Any] = {"reach": boundary.reach, "fenced": boundary.fenced}
+    fields: dict[str, object] = {"reach": boundary.reach, "fenced": boundary.fenced}
     if boundary.reason is not None:
         fields["unfenced_reason"] = boundary.reason
     return fields
 
 
-def _background_payload(status: BackgroundStatus) -> dict[str, Any]:
+def _background_payload(status: BackgroundStatus) -> dict[str, object]:
     """A background command as it stands. ``ok`` reads the same way it does everywhere
     else here — nothing went wrong — so a process still running is fine, and one that has
     exited non-zero is not."""
@@ -303,7 +303,7 @@ def _background_payload(status: BackgroundStatus) -> dict[str, Any]:
     }
 
 
-def _unknown_command(command_id: str) -> dict[str, Any]:
+def _unknown_command(command_id: str) -> dict[str, object]:
     return {
         "ok": False,
         "command_id": command_id,
@@ -338,7 +338,7 @@ def _tools_for(project: ProjectShell, host: HostShell) -> FunctionToolset[RunDep
         command: str,
         reach: Reach = "workspace",
         timeout_seconds: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """Execute a shell command in the project's folder and return its output.
 
         Args:
@@ -378,7 +378,7 @@ def _tools_for(project: ProjectShell, host: HostShell) -> FunctionToolset[RunDep
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
     async def start_command(
         ctx: RunContext[RunDeps], command: str, reach: Reach = "workspace"
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """Start a long-running command in the background (e.g. a server or watcher).
 
         Callers MUST call `stop_command(command_id)` when done to terminate the
@@ -408,7 +408,7 @@ def _tools_for(project: ProjectShell, host: HostShell) -> FunctionToolset[RunDep
         }
 
     @toolset.tool
-    async def check_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, Any]:
+    async def check_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object]:
         """Check the status and recent output of a background command.
 
         Args:
@@ -422,7 +422,7 @@ def _tools_for(project: ProjectShell, host: HostShell) -> FunctionToolset[RunDep
         return _unknown_command(command_id) if status is None else _background_payload(status)
 
     @toolset.tool
-    async def stop_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, Any]:
+    async def stop_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object]:
         """Stop a background command and return its final output.
 
         Args:

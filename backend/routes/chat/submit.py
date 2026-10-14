@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 from fastapi import Request
+from pydantic_ai import AbstractToolset
 
 from agent.summarize import AutoCompactPolicy, resolve_auto_compact_policy
 from core.container import ServiceContainer
@@ -26,7 +26,7 @@ from services.settings_store import (
     get_inactivity_timeout,
     get_wall_clock_timeout,
 )
-from tools import InstructionProvider
+from tools import InstructionProvider, RunDeps
 
 
 async def resolve_models(
@@ -117,7 +117,7 @@ class TurnScope:
     agent: AgentDefinition
     disabled_tools: frozenset[str]
     capabilities: ServiceContainer
-    categories: Mapping[str, Any]
+    categories: Mapping[str, AbstractToolset[RunDeps]]
     dormant: Mapping[str, str]
     instruction_providers: Sequence[InstructionProvider]
 

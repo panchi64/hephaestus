@@ -19,9 +19,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from types import MappingProxyType
-from typing import Any
 
 from pydantic_ai import (
+    AbstractToolset,
     Agent,
     DeferredToolRequests,
     RunContext,
@@ -69,7 +69,7 @@ _WORKSPACE_POSTURE = {"checkout": CHECKOUT_WORKSPACE, "worktree": WORKTREE_WORKS
 def build_agent(
     model: Model,
     *,
-    categories: Any = None,
+    categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
     instruction_providers: Sequence[InstructionProvider] = (),
     dormant: Mapping[str, str] = NO_DORMANT,
     code_mode: CodeModeLimits | None = None,
@@ -182,7 +182,7 @@ def build_agent(
     # the assembled request instead of measuring providers as they run — and
     # `agent/injections.py` reads the same name to announce what the block said.
     for provider in instruction_providers:
-        agent.instructions(name=contributor_id(provider))(provider)
+        _ = agent.instructions(name=contributor_id(provider))(provider)
 
     # The standing index of the withheld groups — a name and a line each, no schemas.
     # Registered here rather than arriving with the providers above because it is not a
@@ -192,7 +192,7 @@ def build_agent(
     # `search_tools` call away. Resolves to "" when nothing is dormant (or when the
     # operator has switched a group off entirely), which is why it is unconditional.
     dormant_index = dormant_index_instructions(dormant, names_by_category)
-    agent.instructions(name=contributor_id(dormant_index))(dormant_index)
+    _ = agent.instructions(name=contributor_id(dormant_index))(dormant_index)
 
     @agent.instructions(name="workspace_posture")
     def _workspace_posture(ctx: RunContext[RunDeps]) -> str:

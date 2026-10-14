@@ -47,12 +47,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
 
 from pydantic_ai import (
+    AbstractToolset,
     DeferredToolResults,
     ModelMessage,
     ModelRequest,
+    ToolApproved,
+    ToolDenied,
     UserPromptPart,
 )
 from pydantic_ai.models import Model
@@ -76,8 +78,10 @@ from services.conversations import (
 from services.tool_policy import vision_disabled_tools
 from services.uploads import UploadStore
 from tools import (
+    NO_DISABLED_TOOLS,
     InstructionProvider,
     PromptContextProvider,
+    RunDeps,
 )
 
 from .code_mode import code_mode_limits
@@ -114,7 +118,7 @@ logger = logging.getLogger(__name__)
 def turn_agent(
     model: Model,
     *,
-    categories: Any = None,
+    categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
     dormant: Mapping[str, str] = NO_DORMANT,
     instruction_providers: Sequence[InstructionProvider] = (),
     settings: Settings,
@@ -140,11 +144,11 @@ async def fold_now(
     model: Model,
     store: ConversationStore,
     conversation_id: str,
-    categories: Any = None,
+    categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
     dormant: Mapping[str, str] = NO_DORMANT,
     instruction_providers: Sequence[InstructionProvider] = (),
     capabilities: ServiceContainer = NO_CAPS,
-    disabled_tools: frozenset[str] = frozenset(),
+    disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
     binding: ConversationBinding = DEFAULT_BINDING,
     workspace_key: str = "",
     context_window: int | None = None,
@@ -205,7 +209,7 @@ def build_chat_orchestrator(
     prompt: str | None,
     *,
     model: Model,
-    categories: Any = None,
+    categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
     dormant: Mapping[str, str] = NO_DORMANT,
     instruction_providers: Sequence[InstructionProvider] = (),
     prompt_context_providers: Sequence[PromptContextProvider] = (),
@@ -226,7 +230,7 @@ def build_chat_orchestrator(
     command: Invocation | None = None,
     vision: bool = False,
     auto_compact: AutoCompactPolicy | None = None,
-    disabled_tools: frozenset[str] = frozenset(),
+    disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
     binding: ConversationBinding = DEFAULT_BINDING,
     request_limit: int | None = None,
     workspace_key: str = "",
@@ -629,12 +633,12 @@ def build_chat_orchestrator(
 
 def build_resume_orchestrator(
     parked: ParkedTurn,
-    decisions: dict[str, Any],
+    decisions: Mapping[str, ToolApproved | ToolDenied | bool],
     *,
     answers: dict[str, str] | None = None,
     capabilities: ServiceContainer = NO_CAPS,
     store: ConversationStore | None = None,
-    disabled_tools: frozenset[str] = frozenset(),
+    disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
 ) -> Orchestrator:
     """Resume a parked turn with the operator's approve/deny decisions and answers.
 
@@ -648,7 +652,7 @@ def build_resume_orchestrator(
         # `calls` carries values rather than verdicts — Pydantic AI wraps each one in a
         # `ToolReturn`, so the operator's answer lands in history as that call's own
         # result and the model reads it exactly as it would any other tool's.
-        results = DeferredToolResults(approvals=decisions, calls=answers or {})
+        results = DeferredToolResults(approvals=dict(decisions), calls=answers or {})
 
         # Same reasoning as the chat orchestrator's `_on_timeout`: a resumed turn is
         # bound by fresh wall-clock/inactivity timeouts too (see `RunRegistry.resume`),

@@ -24,13 +24,17 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
-from typing import TypedDict
 
 from agent.summarize import resolve_auto_compact_policy
 from core.exceptions import NotFoundError
 from harness.manifest import DormantCategory, HarnessContext
 from models.subagent import SubagentRecord
-from routes.chat import ConversationBusyError, compose_turn, resolve_turn_models
+from routes.chat import (
+    ConversationBusyError,
+    WallClockOverride,
+    compose_turn,
+    resolve_turn_models,
+)
 from runs import Run, RunRegistry, RunStatus
 from runs.events import MessageSource
 from runs.lanes import CHAT_TURN_KINDS
@@ -65,10 +69,6 @@ WAKE_CHAIN_LIMIT = 25
 
 #: How many thread→root mappings are remembered for clearing the budget synchronously.
 _ROOTS_CACHED = 512
-
-
-class _Timeouts(TypedDict, total=False):
-    wall_clock_timeout_s: float | None
 
 
 class SubagentWake:
@@ -306,7 +306,7 @@ class SubagentWake:
         if not may_delegate(applied.agent, depth, self._ctx.settings.agent_max_depth):
             disabled |= DELEGATION_TOOLS
         # A spawned agent's turn gets the wall clock its first one had: nobody is watching.
-        timeouts: _Timeouts = {}
+        timeouts: WallClockOverride = {}
         if row is not None:
             timeouts["wall_clock_timeout_s"] = lower_of(
                 applied.agent.wall_clock_timeout_s,

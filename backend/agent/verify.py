@@ -18,7 +18,6 @@ the persist will find it, and getting one of them wrong persists an answer nobod
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 
 from pydantic_ai import ModelMessage
 
@@ -27,6 +26,7 @@ from core.container import ServiceContainer
 from prompts.agent import VERIFIER_NUDGE
 from runs import LimitNotice, Run, RunStatus
 from services.conversations import ConversationBinding, ConversationStore
+from tools import NO_DISABLED_TOOLS
 
 from .factory import TurnAgent
 from .history import TurnStart
@@ -36,7 +36,7 @@ from .parking import DEFAULT_BINDING, ParkedTurn
 from .turn import NO_CAPS, TurnResult, drive_turn
 
 
-def should_verify(settings: Any, run: Run) -> bool:
+def should_verify(settings: Settings, run: Run) -> bool:
     """The verifier's heuristic trigger: judge only turns that produced a
     checkable artifact (made a tool call). Off ⇒ judge every answer."""
     if not settings.verify_heuristic:
@@ -55,7 +55,7 @@ async def verify_and_correct(
     settings: Settings,
     caps: ServiceContainer = NO_CAPS,
     conversation_id: str | None = None,
-    disabled_tools: frozenset[str] = frozenset(),
+    disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
     partial_history_ref: list[Callable[[], list[ModelMessage]]] | None = None,
     store: ConversationStore | None = None,
     request_limit: int | None = None,
@@ -94,9 +94,9 @@ async def verify_and_correct(
     # window that has no room left buys a context stop in place of an answer that, however
     # the judge scored it, is a real answer. Keep the answer and say what was skipped.
     if no_room_for(run, turn.messages, nudge, threshold=context_threshold, settings=settings):
-        run.emit(LimitNotice(limit="verify", message="skipped: no room for a re-attempt"))
+        _ = run.emit(LimitNotice(limit="verify", message="skipped: no room for a re-attempt"))
         return turn
-    run.emit(LimitNotice(limit="verify", message=f"re-attempting: {verdict.reason}"))
+    _ = run.emit(LimitNotice(limit="verify", message=f"re-attempting: {verdict.reason}"))
     # The range to drop on persist: the rejected ModelResponse (last message of
     # the original attempt) through the injected nudge ModelRequest (the first
     # new message of the correction) — two adjacent messages.

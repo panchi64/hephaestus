@@ -3,6 +3,8 @@ reply, and the operator's chat preferences."""
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.commands import Invocation
@@ -124,7 +126,7 @@ class ChatSettings(BaseModel):
     # `extra="forbid"` so a mistyped/unknown field is a 422, not a silent no-op: with every
     # field optional (omitted ⇒ unchanged), a typo'd key would otherwise be dropped and the PUT
     # would return 200 having changed nothing.
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     # All fields are optional on a PUT (an omitted one is left unchanged) and always
     # populated on a GET; the bounds still reject a nonsensical value when one is provided.

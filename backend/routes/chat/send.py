@@ -88,7 +88,7 @@ async def _retire_stop_marker(
     loses, never a turn: the resume they asked for still runs either way."""
     if body.continues_message_id is None:
         return
-    await store.clear_blocked_reason(conversation_id, body.continues_message_id)
+    _ = await store.clear_blocked_reason(conversation_id, body.continues_message_id)
 
 
 async def _validate_new_thread_binding(request: Request, body: ChatCreate) -> None:
@@ -98,7 +98,7 @@ async def _validate_new_thread_binding(request: Request, body: ChatCreate) -> No
     if body.project_id is None:
         return
     try:
-        await deps.projects(request).get(OPERATOR_ID, body.project_id)
+        _ = await deps.projects(request).get(OPERATOR_ID, body.project_id)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="project not found") from None
 
@@ -184,7 +184,7 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated:
         # stored one anyway would leave the operator's control reading a level nothing is
         # actually running at.
         if body.conversation_id is not None and body.permission_level is not None:
-            await store.set_permission_level(conversation_id, body.permission_level)
+            _ = await store.set_permission_level(conversation_id, body.permission_level)
         if body.conversation_id is not None and body.agent is not None:
             await store.set_agent_name(conversation_id, agent_name)
         created = await submit_turn(

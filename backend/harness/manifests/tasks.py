@@ -25,7 +25,7 @@ from harness.manifest import (
 )
 from models.task import TaskOutcome, TaskOutput
 from routes import tasks as tasks_routes
-from routes.chat import compose_turn, resolve_turn_models
+from routes.chat import WallClockOverride, compose_turn, resolve_turn_models
 from routes.deps import OPERATOR_ID
 from runs import Run, RunRegistry, RunStatus
 from services.agents import AgentCatalog, lower_of
@@ -121,7 +121,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             # A once-only tool is once-only here too: a standing grant on a per-call gate
             # does its damage exactly where nobody is reading what it covers.
             if tool_name not in ONCE_ONLY_TOOLS:
-                await grants.grant(view.owner_id, conversation_id, tool_name)
+                _ = await grants.grant(view.owner_id, conversation_id, tool_name)
         await routines.attach_thread(view.id, conversation_id)
         return conversation_id
 
@@ -175,7 +175,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             await get_agent_request_limit_override(settings_store, view.owner_id),
         )
         thresholds = await get_context_thresholds(settings_store, view.owner_id)
-        timeouts = {}
+        timeouts: WallClockOverride = {}
         if applied.agent.wall_clock_timeout_s is not None:
             timeouts["wall_clock_timeout_s"] = applied.agent.wall_clock_timeout_s
         auto_compact = await resolve_auto_compact_policy(settings_store, view.owner_id)
@@ -212,7 +212,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         outcome = _TASK_OUTCOME_BY_RUN_STATUS.get(run.status, TaskOutcome.ERROR.value)
         summary = await _task_run_summary(run, conversation_id)
         if view.output == TaskOutput.NOTIFICATION.value:
-            await notifications.notify(
+            _ = await notifications.notify(
                 view.owner_id,
                 "task_outcome",
                 view.title,
@@ -230,7 +230,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     async def _task_notify(view: ScheduledTaskView) -> None:
         """A reminder task's fire — its prompt delivered verbatim as the notification
         body (no AI phrasing in v1); title = the task's own title."""
-        await notifications.notify(
+        _ = await notifications.notify(
             view.owner_id,
             "reminder",
             view.title,
@@ -293,7 +293,7 @@ MANIFEST = FeatureManifest(
         DormantCategory(
             "routines",
             "schedule work to run later or on repeat — drafting routines, listing them, "
-            "running one now",
+            + "running one now",
         ),
     ),
     gated_tools=ROUTINES_GATED,
