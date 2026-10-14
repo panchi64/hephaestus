@@ -6,7 +6,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pydantic_ai import ModelRetry
+from pydantic_ai import ModelRetry, RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
 from core.db import init_db, make_engine
 from core.exceptions import NotFoundError
@@ -15,6 +17,7 @@ from services.skills.platform import PlatformSkills
 from services.skills.sources import platform_skills, project_skills, read_skill_dir
 from services.skills.store import SkillCatalogEntry
 from tools import skills as skill_tools
+from tools.deps import RunDeps
 from tools.skills import _skill_catalog_block, skill_catalog
 
 from ._helpers import client_app
@@ -22,12 +25,15 @@ from .test_skills_tools import (
     OWNER,
     FakeSession,
     FakeSessions,
-    _ctx,
     _deps,
     _published,
     _store,
     _tool,
 )
+
+
+def _ctx(deps: RunDeps) -> RunContext[RunDeps]:
+    return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
 def _write_skill(root: Path, name: str, description: str = "Does a thing.") -> Path:

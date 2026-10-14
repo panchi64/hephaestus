@@ -23,12 +23,13 @@ from prompts.agent import SYSTEM_PROMPT
 from prompts.levels import AUTO_LEVEL, MANUAL_LEVEL, PLAN_LEVEL
 from prompts.workspace import CHECKOUT_WORKSPACE, WORKTREE_WORKSPACE
 from runs import Run, RunStream
+from services.permissions import PermissionLevel
 from services.workspace_kind import WorkspaceKind
 from tools.builtin import builtin_toolset
 from tools.deps import RunDeps
 
 
-async def _brief(*, kind: WorkspaceKind = "sandbox", permission: str = "edit") -> str:
+async def _brief(*, kind: WorkspaceKind = "sandbox", permission: PermissionLevel = "edit") -> str:
     """The instructions a turn in this thread would actually ship with.
 
     Driven through a real agent rather than read off the registries, because the thing
@@ -41,7 +42,7 @@ async def _brief(*, kind: WorkspaceKind = "sandbox", permission: str = "edit") -
         caps=ServiceContainer(),
         conversation_id="conv-1",
         workspace_kind=kind,
-        permission=permission,  # type: ignore[arg-type]
+        permission=permission,
     )
     agent = build_agent(TestModel(), categories={})
     result = await agent.run("hello", deps=deps)
@@ -66,11 +67,12 @@ class TestTheLevelPart:
     async def test_no_levels_fragment_reaches_another_level(self):
         """The failure this file exists for: a fragment in a thread it does not describe
         is a false premise the model has no way to check."""
-        for level, own in (
+        levels: tuple[tuple[PermissionLevel, str], ...] = (
             ("plan", PLAN_LEVEL),
             ("manual", MANUAL_LEVEL),
             ("auto", AUTO_LEVEL),
-        ):
+        )
+        for level, own in levels:
             brief = await _brief(permission=level)
             for fragment in (PLAN_LEVEL, MANUAL_LEVEL, AUTO_LEVEL):
                 assert (fragment in brief) is (fragment is own)
@@ -142,7 +144,7 @@ class TestTheDateLine:
 
 class TestTheClock:
     def test_now_reports_the_operators_own_time_with_its_offset(self):
-        stamp = builtin_toolset().tools["now"].function()
+        stamp = builtin_toolset().tools["now"].function_schema.function()
         parsed = datetime.fromisoformat(stamp)
         assert parsed.utcoffset() is not None
         assert parsed.utcoffset() == datetime.now().astimezone().utcoffset()

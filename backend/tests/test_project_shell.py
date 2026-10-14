@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai import RunContext
 
+from runs import Event, ToolProgress
 from services.egress import EgressPolicy
 from services.vm.project import ProjectCopies
 from tools.shell import shell_toolset
@@ -153,11 +154,12 @@ async def test_a_finished_background_command_reports_its_exit_and_brings_its_wor
 ):
     shell = _shell(repo, copies)
     started = await shell.call("start_command", command="echo made > from-bg.txt; exit 3")
+    checked = await shell.call("check_command", command_id=started["command_id"])
     for _ in range(50):
-        checked = await shell.call("check_command", command_id=started["command_id"])
         if checked["status"] == "finished":
             break
         await asyncio.sleep(0.1)
+        checked = await shell.call("check_command", command_id=started["command_id"])
     assert checked["status"] == "finished" and checked["exit_code"] == 3
     assert checked["ok"] is False
     assert (repo / "from-bg.txt").read_text() == "made\n"
@@ -174,7 +176,7 @@ async def test_a_command_past_its_timeout_is_timed_out_with_no_exit_code(repo, c
 
 
 async def test_a_running_commands_output_reaches_the_operators_stream(repo, copies, monkeypatch):
-    frames: list = []
+    frames: list[Event] = []
 
     async def emit(_self, event):
         frames.append(event)
@@ -185,12 +187,14 @@ async def test_a_running_commands_output_reaches_the_operators_stream(repo, copi
     shell.ctx.tool_call_id = "call-1"
     result = await shell.call("run_command", command="echo streaming; sleep 2; echo more")
 
-    bodies = [frame.body for frame in frames]
+    bodies = [frame.body for frame in frames if isinstance(frame.body, ToolProgress)]
+    assert len(bodies) == len(frames)
     assert len(bodies) >= 2 and all(body.tool_call_id == "call-1" for body in bodies)
     assert all(body.elapsed_s is not None for body in bodies)
     streamed = "".join(body.partial or "" for body in bodies)
     assert streamed.count("streaming") == 1 and "more" in streamed
-    assert "streaming" in bodies[0].partial and "more" not in bodies[0].partial
+    first = bodies[0].partial or ""
+    assert "streaming" in first and "more" not in first
     assert "streaming" in result["stdout"] and "more" in result["stdout"]
 
 

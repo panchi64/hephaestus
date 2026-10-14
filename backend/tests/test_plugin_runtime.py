@@ -62,10 +62,12 @@ def _plugin():
 
 async def _call(runtime: PluginRuntime, tool: str, **args):
     manifest, files = _plugin()
+    plugin_tool = manifest.tool(tool)
+    assert plugin_tool is not None
     return await runtime.call(
         manifest,
         files,
-        manifest.tool(tool),
+        plugin_tool,
         args,
         hosts=manifest.egress,
         secret_values={},

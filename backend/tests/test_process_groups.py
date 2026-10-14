@@ -12,7 +12,7 @@ import asyncio
 import os
 import signal
 import sys
-from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -30,8 +30,9 @@ def _clean_groups():
     process._groups.clear()
 
 
-def _leader(returncode: int | None):
-    return SimpleNamespace(returncode=returncode)
+def _leader(returncode: int | None) -> asyncio.subprocess.Process:
+    # A real Process needs a live transport; the code under test reads only `returncode`.
+    return MagicMock(spec=asyncio.subprocess.Process, returncode=returncode)
 
 
 @pytest.fixture

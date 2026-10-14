@@ -6,7 +6,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from pydantic_ai import ModelRetry
+from pydantic_ai import ModelRetry, RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from sqlmodel import Session
 
 from core.container import ServiceContainer
@@ -36,12 +38,6 @@ from .test_conversation_search import DegradedEmbedder, _record, _setup
 OWNER = "operator"
 
 
-class _Ctx:
-    def __init__(self, deps: RunDeps) -> None:
-        self.deps = deps
-        self.tool_call_approved = True
-
-
 class Platform:
     def __init__(self, engine, vault, store, index, memory, skills, plugins) -> None:
         self.engine = engine
@@ -53,16 +49,15 @@ class Platform:
         self.plugins = plugins
         self.tools = platform_toolset().tools
 
-    def ctx(self, conversation_id: str | None = "current") -> _Ctx:
+    def ctx(self, conversation_id: str | None = "current") -> RunContext[RunDeps]:
         run = Run(id="r1", kind="chat", owner_id=OWNER, stream=RunStream())
-        return _Ctx(
-            RunDeps(
-                run=run,
-                owner_id=OWNER,
-                conversation_id=conversation_id,
-                caps=ServiceContainer.of(self.index, self.skills, self.plugins),
-            )
+        deps = RunDeps(
+            run=run,
+            owner_id=OWNER,
+            conversation_id=conversation_id,
+            caps=ServiceContainer.of(self.index, self.skills, self.plugins),
         )
+        return RunContext(deps=deps, model=TestModel(), usage=RunUsage(), tool_call_approved=True)
 
     async def search(self, query: str, **kwargs):
         return await self.tools["search"].function(self.ctx(), query, **kwargs)
@@ -121,6 +116,7 @@ async def test_reports_summaries_and_routine_outputs_are_searchable(platform):
     now = datetime.now(UTC)
     with Session(platform.engine) as session:
         convo = session.get(Conversation, conversation)
+        assert convo is not None
         convo.work_summary_enc = vault.encrypt_str("Migrated the billing service to Postgres.")
         convo.work_summary_at = now
         session.add(convo)
@@ -145,6 +141,7 @@ async def test_reports_summaries_and_routine_outputs_are_searchable(platform):
             prompt_enc=vault.encrypt_str("audit"),
             schedule_type="once",
             output="chat",
+            pre_authorized=[],
         )
         session.add(task)
         session.flush()

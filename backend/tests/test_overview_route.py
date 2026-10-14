@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ._helpers import client_app
 
 
-def _capabilities(body) -> dict[str, dict]:
+def _capabilities(body) -> dict[str, dict[str, Any]]:
     return {c["key"]: c for c in body["capabilities"]}
 
 

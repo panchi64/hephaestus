@@ -44,9 +44,22 @@ def _tool(name: str, description: str = "does a thing") -> ToolDefinition:
     )
 
 
-def _digest(**kwargs) -> PrefixDigest:
+def _digest(
+    *,
+    instructions: str = "brief",
+    blocks: tuple[tuple[str, str], ...] = (),
+    tools: str = "",
+    tool_names: tuple[str, ...] = (),
+    messages: tuple[str, ...] = (),
+) -> PrefixDigest:
     """A fingerprint with everything defaulted except what a given test varies."""
-    return PrefixDigest(**{"instructions": "brief", **kwargs})
+    return PrefixDigest(
+        instructions=instructions,
+        blocks=blocks,
+        tools=tools,
+        tool_names=tool_names,
+        messages=messages,
+    )
 
 
 # --- the fingerprint itself ----------------------------------------------------------
@@ -244,8 +257,9 @@ def test_the_ledger_hands_back_what_a_conversation_last_sent():
     ledger.remember("conv-1", _digest(instructions="one"))
     ledger.remember("conv-2", _digest(instructions="two"))
 
-    assert ledger.recall("conv-1").instructions == "one"
-    assert ledger.recall("conv-2").instructions == "two"
+    first, second = ledger.recall("conv-1"), ledger.recall("conv-2")
+    assert first is not None and first.instructions == "one"
+    assert second is not None and second.instructions == "two"
     assert ledger.recall("conv-3") is None
     # A turn with no conversation (a stateless eval) neither records nor recalls.
     ledger.remember(None, _digest(instructions="orphan"))

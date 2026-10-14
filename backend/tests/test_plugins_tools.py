@@ -60,7 +60,7 @@ def _ctx(store, runtime: _Runtime | None = None, *, approved: bool = False) -> R
     )
 
 
-async def _call(ctx: RunContext[RunDeps], name: str, args: dict):
+async def _call(ctx: RunContext[RunDeps], name: str, args: dict[str, Any]):
     toolset = plugins_toolset()
     tools = await toolset.get_tools(ctx)
     return await toolset.call_tool(name, args, ctx, tools[name])

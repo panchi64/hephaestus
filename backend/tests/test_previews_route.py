@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, override
 
 from starlette.testclient import TestClient
 from websockets.asyncio.server import serve
@@ -42,7 +43,7 @@ class _FakeManager:
 
 
 @contextlib.contextmanager
-def _http_upstream(record: dict, extra_headers: dict[str, str] | None = None):
+def _http_upstream(record: dict[str, str | None], extra_headers: dict[str, str] | None = None):
     """A loopback HTTP server that echoes method+path, sets a cookie, and records
     what it received — to prove the proxy strips credentials and cookies.
 
@@ -64,7 +65,8 @@ def _http_upstream(record: dict, extra_headers: dict[str, str] | None = None):
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, *args) -> None:  # silence the server
+        @override
+        def log_message(self, format: str, *args: Any) -> None:  # silence the server
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -78,7 +80,7 @@ def _http_upstream(record: dict, extra_headers: dict[str, str] | None = None):
 @contextlib.contextmanager
 def _ws_upstream():
     """A loopback WebSocket echo server (its own thread + loop)."""
-    port_box: dict = {}
+    port_box: dict[str, int] = {}
     started = threading.Event()
 
     def run() -> None:
@@ -103,7 +105,7 @@ def _ws_upstream():
 
 
 async def test_http_proxy_forwards_and_strips_credentials():
-    record: dict = {}
+    record: dict[str, str | None] = {}
     with _http_upstream(record) as port:
         async with client_app() as (client, app):
             app.state.sandbox = _FakeManager("tok", port)
@@ -126,7 +128,7 @@ async def test_proxied_html_is_sandboxed_by_csp_not_by_the_client():
     # top-level, a page that fetches /conversations would be same-origin with the API
     # and the session cookie is samesite=lax — so isolation cannot be left to the
     # frontend choosing a sandboxed iframe. The backend is the enforcement point.
-    record: dict = {}
+    record: dict[str, str | None] = {}
     with _http_upstream(record) as port:
         async with client_app() as (client, app):
             app.state.sandbox = _FakeManager("tok", port)
@@ -142,7 +144,7 @@ async def test_proxied_html_is_sandboxed_by_csp_not_by_the_client():
 async def test_upstream_cannot_weaken_the_preview_sandbox():
     # A dev server that sets its own permissive CSP must not be able to relax ours:
     # the upstream header is stripped, never merged.
-    record: dict = {}
+    record: dict[str, str | None] = {}
     with _http_upstream(record, extra_headers={"content-security-policy": "default-src *"}) as port:
         async with client_app() as (client, app):
             app.state.sandbox = _FakeManager("tok", port)

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import pytest
+from pydantic_ai import RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
 from core.container import ServiceContainer
 from core.exceptions import PluginValidationError
+from runs import Run, RunStream
 from services.agents import AgentCatalog
 from services.plugins import PluginStore, validate_files
 from services.sandbox import SandboxSessionManager
@@ -17,7 +21,7 @@ from ._agent_helpers import make_stores
 from ._helpers import client_app
 from ._plugin_helpers import OWNER, make_store
 from ._plugin_helpers import make_stores as make_plugin_stores
-from .test_skills_tools import FakeRun, FakeSessions, _ctx, _tool
+from .test_skills_tools import FakeSessions, _tool
 
 MANIFEST = "name: helpers\ndescription: Helpers for release work.\n"
 
@@ -84,6 +88,7 @@ async def test_only_a_published_plugins_agents_join_the_catalog(tmp_path):
     assert "changelog-writer" not in await catalog.agents(OWNER)
 
     view = await plugins.get_by_name(OWNER, "helpers")
+    assert view is not None
     await plugins.publish(OWNER, view.id)
     assert (await catalog.agents(OWNER))["changelog-writer"].source == "plugin"
 
@@ -106,7 +111,12 @@ def _deps(plugins: PluginStore, skills: SkillStore | None = None, sessions=None)
         caps.add(skills)
     if sessions is not None:
         caps.add(sessions, as_type=SandboxSessionManager)
-    return RunDeps(run=FakeRun(), owner_id=OWNER, conversation_id="conv-1", caps=caps)
+    run = Run(id="run-1", kind="chat", owner_id=OWNER, stream=RunStream())
+    return RunDeps(run=run, owner_id=OWNER, conversation_id="conv-1", caps=caps)
+
+
+def _ctx(deps: RunDeps) -> RunContext[RunDeps]:
+    return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
 async def test_a_plugin_skill_opens_and_stages_its_files(tmp_path):

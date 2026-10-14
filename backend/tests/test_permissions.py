@@ -36,6 +36,7 @@ from services.permissions import (
     PERMISSION_LEVELS,
     PERMISSIONS,
     PLANNING_TOOLS,
+    PermissionLevel,
     STRICTEST_PERMISSION,
     ApprovalPolicy,
     Decision,
@@ -304,7 +305,7 @@ class TestTheDecisionMatrix:
         assert HOST_EXEC in message
 
 
-async def _resolved_kinds(permission: str) -> dict[str, str]:
+async def _resolved_kinds(permission: PermissionLevel) -> dict[str, str]:
     """How a real run's composed toolset stack ends up defining every tool it offers —
     the ground truth for the elevation, resolved through the same stack the engine hands
     the Agent rather than through a re-reading of the rule."""
@@ -568,7 +569,7 @@ def _write_categories(calls: list[str]):
     return {"files": toolset}
 
 
-async def _run_at(level: str, calls: list[str]) -> Run:
+async def _run_at(level: PermissionLevel, calls: list[str]) -> Run:
     registry = RunRegistry()
     orchestrator = build_chat_orchestrator(
         "write the file",

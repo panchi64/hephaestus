@@ -11,6 +11,8 @@ has agreed to something it cannot act on.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ApprovalRequired
@@ -20,8 +22,9 @@ from pydantic_ai.usage import RunUsage
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import PermissionChanged, PlanUpdated, Run, RunStream, TasksUpdated
+from runs import EventBody, PermissionChanged, PlanUpdated, Run, RunStream, TasksUpdated
 from services.conversations import ConversationStore
+from services.permissions import PermissionLevel
 from services.plan_mode import PlanMode
 from services.task_list import ConversationTasks
 from tools import RunDeps, build_agent_toolsets, core_categories
@@ -47,8 +50,8 @@ async def wired(tmp_path):
 def _ctx(
     plans: PlanMode,
     tasks: ConversationTasks,
-    conversation_id: str,
-    permission: str,
+    conversation_id: str | None,
+    permission: PermissionLevel,
     kind: str = "chat",
 ):
     run = Run(id="r-plan", kind=kind, owner_id=OWNER, stream=RunStream())
@@ -71,7 +74,7 @@ def _ctx(
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage()), run
 
 
-async def _call(name: str, args: dict, ctx: RunContext[RunDeps]):
+async def _call(name: str, args: dict[str, Any], ctx: RunContext[RunDeps]):
     toolset = build_agent_toolsets({"plan": plan_toolset()})[0]
     tools = await toolset.get_tools(ctx)
     return await toolset.call_tool(name, args, ctx, tools[name])
@@ -87,7 +90,7 @@ async def _offered(ctx: RunContext[RunDeps]) -> set[str]:
     return set(await stack.get_tools(ctx))
 
 
-def _bodies(run: Run) -> list:
+def _bodies(run: Run) -> list[EventBody]:
     return [e.body for e in run.stream.replay()]
 
 
