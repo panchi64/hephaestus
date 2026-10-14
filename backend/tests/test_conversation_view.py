@@ -10,10 +10,9 @@ things at once, all asserted below.
 
 from __future__ import annotations
 
-from typing import cast
-
 from pydantic_ai import (
     BinaryContent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -28,7 +27,7 @@ from services.conversation_view import MAX_TOOL_IMAGE_BYTES, project_tree, tool_
 PNG = BinaryContent(data=b"\x89PNG-pretend", media_type="image/png")
 
 
-def _screenshot_turn() -> list[tuple[str, object]]:
+def _screenshot_turn() -> list[tuple[str, ModelMessage]]:
     """One turn: the operator asks, the agent screenshots, then answers."""
     return [
         ("n0", ModelRequest(parts=[UserPromptPart(content="look at the page")])),
@@ -80,7 +79,7 @@ def test_the_tool_result_is_still_stitched():
     # The user-turn branch returned early, skipping the stitching below it — so the call
     # that produced the image was the one call left reading "running" forever.
     assert tool.status == "ok"
-    assert cast(object, tool.result) == "Took a screenshot."
+    assert tool.result == "Took a screenshot."
 
 
 def test_the_image_lands_on_the_call_that_produced_it():

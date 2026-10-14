@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
 
 from pydantic_ai import ToolApproved, ToolDenied
 from pydantic_ai.models.test import TestModel
@@ -72,11 +71,7 @@ def _types(run: Run) -> list[str]:
 
 
 def _results(run: Run) -> list[str]:
-    return [
-        str(cast(object, e.body.result))
-        for e in run.stream.replay()
-        if isinstance(e.body, ToolCompleted)
-    ]
+    return [str(e.body.result) for e in run.stream.replay() if isinstance(e.body, ToolCompleted)]
 
 
 async def test_every_vault_tool_is_statically_approval_gated():

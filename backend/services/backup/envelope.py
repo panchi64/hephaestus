@@ -31,6 +31,8 @@ import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
+from pydantic import JsonValue
+
 from core import crypto
 from core.exceptions import HephaestusError
 from services.shapes import as_dict
@@ -62,14 +64,16 @@ def _aad(header: Mapping[str, object]) -> bytes:
     return json.dumps(header, sort_keys=True, separators=(",", ":")).encode()
 
 
-def seal(secret: str, payload: bytes, *, created_at: datetime | None = None) -> dict[str, object]:
+def seal(
+    secret: str, payload: bytes, *, created_at: datetime | None = None
+) -> dict[str, JsonValue]:
     """Wrap ``payload`` into a self-describing, encrypted envelope. CPU-heavy (Argon2id) —
     call it off the event loop."""
     if not secret:
         raise ValueError("a backup secret is required")
     salt = crypto.generate_salt()
     key = crypto.derive_kek(secret, salt)
-    header: dict[str, object] = {
+    header: dict[str, JsonValue] = {
         "format": FORMAT,
         "version": VERSION,
         "created_at": (created_at or datetime.now(UTC)).isoformat(),

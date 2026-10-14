@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import Any, cast, override
+from typing import cast, override
 
 from fastapi import FastAPI
 from pydantic_ai import (
@@ -192,7 +192,7 @@ class _OverflowsThenAnswers(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[Any] | None = None,
+        run_context: RunContext[object] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         self._check(messages)
         async with super().request_stream(
@@ -395,7 +395,7 @@ async def test_the_work_log_renders_the_search_as_a_tool_row():
         view = await store.messages_view(cid)
         tools = view[1].tools
         assert [(t.name, t.status) for t in tools] == [("search_tools", "ok")]
-        assert _discovered(cast(object, tools[0].result)) == REVEALED
+        assert _discovered(tools[0].result) == REVEALED
         # The answer is still the answer — the search is a row, not the bubble.
         assert view[1].content == "done"
 
@@ -431,7 +431,7 @@ async def test_the_search_streams_as_a_tool_call():
         assert [b.name for b in started] == ["search_tools"]
         assert started[0].args == {"queries": ["browse"]}
         assert [b.name for b in completed] == ["search_tools"]
-        assert _discovered(cast(object, completed[0].result)) == REVEALED
+        assert _discovered(completed[0].result) == REVEALED
 
 
 # --- 4. branching ---------------------------------------------------------------------

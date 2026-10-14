@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 from core.exceptions import SkillSpanError, SkillValidationError
 from routes import deps
@@ -48,7 +48,7 @@ class SkillUpdate(BaseModel):
     body: str | None = None
     license: str | None = None
     compatibility: str | None = None
-    metadata: dict[str, object] | None = None
+    metadata: dict[str, JsonValue] | None = None
     allowed_tools: list[str] | None = None
 
 
@@ -92,11 +92,11 @@ class SkillOut(CamelModel):
     updated_at: datetime
     license: str | None = None
     compatibility: str | None = None
-    metadata: dict[str, object] | None = None
+    metadata: dict[str, JsonValue] | None = None
     #: Advisory: recorded and displayed, never enforced (the tool policy enforces).
     allowed_tools: list[str] | None = None
     #: Non-standard frontmatter preserved from the bundle, so an export is lossless.
-    extras: dict[str, object] | None = None
+    extras: dict[str, JsonValue] | None = None
     files: list[SkillFileOut] = []
 
 

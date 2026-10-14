@@ -39,7 +39,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from sqlalchemy import Column, Engine, func
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Session, col, select
@@ -182,7 +182,7 @@ class BackupService:
 
     async def export(
         self, owner_id: str, secret: str, *, include: Sequence[str] | None = None
-    ) -> tuple[dict[str, object], BackupManifest]:
+    ) -> tuple[dict[str, JsonValue], BackupManifest]:
         """Build the encrypted envelope plus the manifest describing what went into it.
 
         ``include`` names the groups to take (None ⇒ everything). A named group with no

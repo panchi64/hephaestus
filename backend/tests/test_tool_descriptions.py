@@ -282,7 +282,7 @@ def test_strip_docstring_xml_is_idempotent():
 
 
 def test_drop_properties_takes_the_requirement_with_the_property():
-    schema = {
+    schema: dict[str, JsonValue] = {
         "type": "object",
         "properties": {"url": {"type": "string"}, "timeout_ms": {"type": "integer"}},
         "required": ["url", "timeout_ms"],
@@ -291,7 +291,7 @@ def test_drop_properties_takes_the_requirement_with_the_property():
     assert dropped["properties"] == {"url": {"type": "string"}}
     assert dropped["required"] == ["url"]
     # The caller's schema is untouched — it belongs to a toolset other code reads.
-    assert "timeout_ms" in schema["properties"]
+    assert "timeout_ms" in obj(schema["properties"])
 
 
 def test_drop_properties_removes_an_emptied_required_list():
@@ -303,16 +303,16 @@ def test_drop_properties_removes_an_emptied_required_list():
 
 
 def test_add_property_offers_the_property_without_requiring_it():
-    schema = {
+    schema: dict[str, JsonValue] = {
         "type": "object",
         "properties": {"path": {"type": "string"}},
         "required": ["path"],
     }
     added = add_property(schema, NARRATION_ARG, NARRATION_PROPERTY)
-    assert added["properties"][NARRATION_ARG]["description"] == NARRATION_TEXT
+    assert obj(obj(added["properties"])[NARRATION_ARG])["description"] == NARRATION_TEXT
     assert added["required"] == ["path"]
     # The caller's schema is untouched — it belongs to a toolset other code reads.
-    assert NARRATION_ARG not in schema["properties"]
+    assert NARRATION_ARG not in obj(schema["properties"])
 
 
 def test_add_property_gives_a_no_argument_tool_somewhere_to_put_it():
@@ -377,14 +377,17 @@ def test_category_of_reads_the_namespaced_name():
 
 
 def test_strip_schema_leaks_only_touches_the_tools_it_names():
-    schema = {"$defs": {"TaskStatus": {"enum": ["pending", "blocked"], "title": "TaskStatus"}}}
-    assert strip_schema_leaks("tasks_update_statuses", schema)["$defs"]["TaskStatus"] == {
+    schema: dict[str, JsonValue] = {
+        "$defs": {"TaskStatus": {"enum": ["pending", "blocked"], "title": "TaskStatus"}}
+    }
+    stripped = strip_schema_leaks("tasks_update_statuses", schema)
+    assert obj(stripped["$defs"])["TaskStatus"] == {
         "enum": ["pending"],
         "description": "Lifecycle status of a task.",
     }
     assert strip_schema_leaks("browse_click", schema) == schema
     # The caller's schema is copied, never edited.
-    assert schema["$defs"]["TaskStatus"]["enum"] == ["pending", "blocked"]
+    assert obj(obj(schema["$defs"])["TaskStatus"])["enum"] == ["pending", "blocked"]
 
 
 def test_describe_is_idempotent():

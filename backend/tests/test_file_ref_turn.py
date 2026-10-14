@@ -51,8 +51,8 @@ class TestWhatReachesTheModel:
     ):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
-            project = obj(await _project(client, tmp_path))
-            events = await _project_turn(client, s(project["id"]), ["hello.txt"])
+            project = await _project(client, tmp_path)
+            events = await _project_turn(client, project["id"], ["hello.txt"])
         rows = _injections(events, "file_refs")
         assert len(rows) == 1
         assert rows[0]["placement"] == "prompt"
@@ -68,9 +68,9 @@ class TestWhatReachesTheModel:
     ):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
-            project = obj(await _project(client, tmp_path))
+            project = await _project(client, tmp_path)
             events = await _project_turn(
-                client, s(project["id"]), ["../../../etc/passwd", "hello.txt"]
+                client, project["id"], ["../../../etc/passwd", "hello.txt"]
             )
         rows = _injections(events, "file_refs")
         text = s(rows[0]["text"])
@@ -82,8 +82,8 @@ class TestWhatReachesTheModel:
     ):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
-            project = obj(await _project(client, tmp_path))
-            events = await _project_turn(client, s(project["id"]), ["does/not/exist.ts"])
+            project = await _project(client, tmp_path)
+            events = await _project_turn(client, project["id"], ["does/not/exist.ts"])
         # The operator still has their typed message; refusing the turn over a file they
         # can simply mention again is the worse trade.
         assert events[-1]["type"] == "run.ended"
@@ -94,8 +94,8 @@ class TestWhatReachesTheModel:
     ):
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, _app):
-            project = obj(await _project(client, tmp_path))
-            events = await _project_turn(client, s(project["id"]), [])
+            project = await _project(client, tmp_path)
+            events = await _project_turn(client, project["id"], [])
         assert _injections(events, "file_refs") == []
 
 
@@ -113,7 +113,7 @@ class TestWhatIsWrittenDown:
     async def _turn_with_refs(
         self, client: httpx.AsyncClient, tmp_path: Path
     ) -> tuple[str, dict[str, JsonValue]]:
-        project = obj(await _project(client, tmp_path))
+        project = await _project(client, tmp_path)
         resp = await client.post(
             "/chat",
             json={
