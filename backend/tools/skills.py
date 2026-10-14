@@ -172,7 +172,7 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool
-    async def open(ctx: RunContext[RunDeps], name: str) -> dict:
+    async def open(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
         """Open one of the skills listed in your instructions and follow it.
 
         The listing only says a skill exists; this returns the procedure, so call it
@@ -192,7 +192,7 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
             raise ModelRetry(f"No skill named {name!r}. Available skills: {available}.")
         skill = resolved.skill
 
-        result: dict = {
+        result: dict[str, object] = {
             "ok": True,
             "name": skill.name,
             "description": skill.description,
@@ -238,7 +238,9 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
     # review already stands where an approval prompt would. Gating this would ask them the
     # same question twice.
     @toolset.tool
-    async def create(ctx: RunContext[RunDeps], name: str, description: str, body: str) -> dict:
+    async def create(
+        ctx: RunContext[RunDeps], name: str, description: str, body: str
+    ) -> dict[str, object]:
         """Write down a reusable procedure you worked out, so it is available in future
         conversations.
 
@@ -291,7 +293,7 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
         old_text: str,
         new_text: str,
         explanation: str,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Make a small, targeted change to a skill's instructions — refine a step, fix a
         detail, add a pitfall you just hit — without rewriting the whole thing.
 

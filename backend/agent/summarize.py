@@ -46,7 +46,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai import ModelMessage, ModelRequest, UserPromptPart
 
 from core.config import Settings, get_settings
 from prompts.compaction import COMPACT_PREAMBLE
@@ -69,6 +69,7 @@ from .compaction_summary import (
     merge_anchors,
     write_summary,
 )
+from .factory import TurnAgent
 from .history import revealed_tools
 
 logger = logging.getLogger(__name__)
@@ -235,7 +236,7 @@ async def compact_conversation(
     store: ConversationStore,
     conversation_id: str,
     *,
-    agent: Agent,
+    agent: TurnAgent,
     deps: RunDeps,
     reason: CompactionReason,
     on_plan: Callable[[CompactionPlan], None] | None = None,
@@ -319,7 +320,7 @@ async def compact_conversation(
 
 
 async def summarize_history(
-    agent: Agent,
+    agent: TurnAgent,
     deps: RunDeps,
     messages: list[ModelMessage],
     *,

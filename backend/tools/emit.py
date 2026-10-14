@@ -29,8 +29,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic import BaseModel
 from pydantic_ai import CustomEvent
+
+from runs import EventBody
 
 
 @dataclass(kw_only=True)
@@ -42,4 +43,4 @@ class RunEventEmitted(CustomEvent):
     would only give the translator the same set to unwrap again.
     """
 
-    body: BaseModel
+    body: EventBody

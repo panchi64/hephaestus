@@ -41,6 +41,7 @@ from runs import (
     TurnOverhead,
 )
 from services.conversation_view import estimate_tokens
+from services.conversations import CompactionPlan
 
 from .compaction_context import CompactionContext
 from .history import (
@@ -105,6 +106,19 @@ async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) ->
         # in for one: a local model prefilling a long thread can go minutes before its
         # first token, and a model thinking before it writes streams no event at all (its
         # reasoning is not part of the summary) and looks idle while it works.
+        def announce_plan(plan: CompactionPlan) -> None:
+            run.emit(
+                CompactionStarted(
+                    conversation_id=ctx.conversation_id,
+                    reason=reason,
+                    messages=len(plan.messages),
+                    tokens_estimate=estimate_tokens(plan.messages),
+                )
+            )
+
+        def announce_delta(text: str) -> None:
+            run.emit(CompactionDelta(conversation_id=ctx.conversation_id, text=text))
+
         async with run.keepalive():
             result = await compact_conversation(
                 ctx.store,
@@ -112,18 +126,9 @@ async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) ->
                 agent=ctx.agent,
                 deps=ctx.deps,
                 reason=reason,
-                on_plan=lambda plan: run.emit(
-                    CompactionStarted(
-                        conversation_id=ctx.conversation_id,
-                        reason=reason,
-                        messages=len(plan.messages),
-                        tokens_estimate=estimate_tokens(plan.messages),
-                    )
-                ),
+                on_plan=announce_plan,
                 # The summary as it is written, so the operator watches it arrive.
-                on_delta=lambda text: run.emit(
-                    CompactionDelta(conversation_id=ctx.conversation_id, text=text)
-                ),
+                on_delta=announce_delta,
             )
     except Exception:  # noqa: BLE001 — a fold must never take its caller down with it
         logger.warning("compaction failed for %s", ctx.conversation_id, exc_info=True)

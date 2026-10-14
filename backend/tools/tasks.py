@@ -92,6 +92,12 @@ _DESCRIPTIONS = {
 }
 
 
+def _planning_toolset(store: TaskStoreProtocol) -> AbstractToolset[RunDeps]:
+    toolset = _planning(store).get_toolset()
+    assert isinstance(toolset, AbstractToolset)
+    return toolset
+
+
 def _planning(store: TaskStoreProtocol) -> Planning[RunDeps]:
     """A ``Planning`` over ``store``, narrowed to the three tools we offer."""
     return Planning[RunDeps](
@@ -197,7 +203,7 @@ class _ConversationTaskToolset(AbstractToolset[RunDeps]):
         entry = self._bound.pop(key, None)
         if entry is None:
             store = _store_for(ctx)
-            entry = (_planning(store).get_toolset(), store)
+            entry = (_planning_toolset(store), store)
             if len(self._bound) >= _MAX_BOUND:
                 self._bound.popitem(last=False)
         self._bound[key] = entry
@@ -208,7 +214,7 @@ def tasks_toolset() -> AbstractToolset[RunDeps]:
     """The ``tasks`` category — the model's read/write access to its own task list."""
     # The template's store is never read or written: only `call_tool` acts, and it always
     # rebinds first. It exists to carry the tool definitions.
-    return _ConversationTaskToolset(_planning(InMemoryPlanStore()).get_toolset())
+    return _ConversationTaskToolset(_planning_toolset(InMemoryPlanStore()))
 
 
 async def tasks_context(req: PromptContextRequest) -> str:

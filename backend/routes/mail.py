@@ -122,13 +122,13 @@ class AccountCreate(BaseModel):
     name: str = ""
     address: str
     provider: str = "imap"
-    config: dict | None = None
+    config: dict[str, object] | None = None
     password: str | None = None
 
 
 class AccountUpdate(BaseModel):
     name: str | None = None
-    config: dict | None = None
+    config: dict[str, object] | None = None
     password: str | None = None
     enabled: bool | None = None
 

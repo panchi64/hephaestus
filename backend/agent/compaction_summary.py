@@ -84,6 +84,7 @@ from services.conversation_view import flatten_content
 from tools import RunDeps
 
 from .emit import SIDE_RUN
+from .factory import TurnAgent
 from .history import drop_dangling_tool_calls, merge_consecutive_requests
 
 #: Where a fold's summary text goes while it is being written. Synchronous and
@@ -123,7 +124,7 @@ def summary_request(messages: list[ModelMessage]) -> list[ModelMessage]:
 
 
 async def write_summary(
-    agent: Agent,
+    agent: TurnAgent,
     deps: RunDeps,
     messages: list[ModelMessage],
     *,

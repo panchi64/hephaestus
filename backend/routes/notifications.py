@@ -78,7 +78,7 @@ def _out(view: NotificationView) -> NotificationOut:
 
 def _envelope(event: NotificationEvent) -> NotificationStreamEnvelope:
     return NotificationStreamEnvelope(
-        type=f"notification.{event.kind}",  # "created" | "updated" -> the wire type
+        type="notification.created" if event.kind == "created" else "notification.updated",
         seq=event.seq,
         ts=event.ts,
         notification=_out(event.notification),

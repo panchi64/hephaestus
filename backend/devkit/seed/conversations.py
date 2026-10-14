@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import TypedDict
 
 import httpx
 
@@ -28,10 +29,16 @@ _TURN_TIMEOUT_S = 120.0
 #: Pushing a script is a local POST that either answers at once or is broken.
 _SCRIPT_TIMEOUT_S = 10.0
 
+
+class _Thread(TypedDict):
+    prompt: str
+    script: list[dict[str, object]]
+
+
 #: The scripted exchanges. The second is the one worth having: an assistant turn that
 #: calls a tool and then answers from its result is the shape most of the chat UI exists
 #: to render, and an instance seeded only with plain replies leaves all of that untested.
-_THREADS = [
+_THREADS: list[_Thread] = [
     {
         "prompt": "Give me a one-line summary of what this workspace is for.",
         "script": [
@@ -71,7 +78,7 @@ _THREADS = [
 ]
 
 
-async def _push_script(ctx: SeedContext, script: list[dict]) -> None:
+async def _push_script(ctx: SeedContext, script: list[dict[str, object]]) -> None:
     """Tell the stub what to say for this thread. A no-op against a real endpoint —
     there is nothing to script, and the reply will simply be whatever it says."""
     if live.configured():

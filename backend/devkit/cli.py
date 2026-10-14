@@ -19,7 +19,7 @@ import json
 import sys
 from typing import Any
 
-from devkit import doctor, launch, ports, processes
+from devkit import doctor, launch, ports, processes, surfaces
 from devkit.instance import DevInstance, resolve
 from devkit.processes import Supervisor
 from services.workspace_reset import reset_workspace
@@ -106,7 +106,7 @@ def _print_ready(payload: dict[str, Any], outcomes: dict[str, str], *, detached:
         print(f"  password  {payload['password']}")
     else:
         print("  login     none — auth is off, the app opens straight up")
-    print(f"\nnext: preview_start '{launch.LAUNCH_CONFIG}'")
+    print(f"\nnext: preview_start '{surfaces.LAUNCH_CONFIG}'")
     print(f"      or open {payload['urls']['frontend']}")
     print("      ports differ per worktree — read them from `dev_instance.py status --json`")
     print(

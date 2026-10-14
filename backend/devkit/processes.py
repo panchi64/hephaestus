@@ -44,7 +44,7 @@ class Service:
     """One launched process and where its output went."""
 
     name: str
-    process: subprocess.Popen
+    process: subprocess.Popen[bytes]
     log: Path
 
 

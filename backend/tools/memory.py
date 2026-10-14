@@ -31,7 +31,9 @@ def memory_toolset() -> FunctionToolset[RunDeps]:
         return f"Remembered (id {view.id})."
 
     @toolset.tool
-    async def recall(ctx: RunContext[RunDeps], query: str, limit: int = 5) -> list[dict]:
+    async def recall(
+        ctx: RunContext[RunDeps], query: str, limit: int = 5
+    ) -> list[dict[str, object]]:
         """Recall relevant memories by meaning (with keyword fallback)."""
         store = ctx.deps.caps.get_optional(MemoryStore)
         if store is None:

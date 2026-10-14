@@ -45,7 +45,7 @@ def agents_toolset() -> AbstractToolset[RunDeps]:
         permission_ceiling: PermissionLevel | None = None,
         workspace: Workspace = "shared",
         can_delegate: bool = False,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Draft an agent with its own standing brief for recurring work, or rewrite one.
 
         `description` says what it does and when to pick it. `tools` limits it to those
@@ -91,7 +91,7 @@ def agents_toolset() -> AbstractToolset[RunDeps]:
         }
 
     @toolset.tool(requires_approval=True)
-    async def publish(ctx: RunContext[RunDeps], name: str) -> dict:
+    async def publish(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
         """Ask the operator to publish an agent you drafted so it can run."""
         store = ctx.deps.caps.get_optional(AgentStore)
         if store is None:

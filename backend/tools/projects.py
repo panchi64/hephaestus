@@ -30,7 +30,7 @@ def project_toolset() -> FunctionToolset[RunDeps]:
     # sees is `project_list`, and shadowing the `list` builtin to get there would be a
     # poor trade for a name the decorator can simply be told.
     @toolset.tool(name="list")
-    async def list_projects(ctx: RunContext[RunDeps]) -> dict:
+    async def list_projects(ctx: RunContext[RunDeps]) -> dict[str, object]:
         """List the operator's projects — the directories they work in.
 
         Returns each project's name and absolute path on the operator's machine, and
@@ -56,7 +56,7 @@ def project_toolset() -> FunctionToolset[RunDeps]:
         }
 
     @toolset.tool(name="active")
-    async def active_project(ctx: RunContext[RunDeps]) -> dict:
+    async def active_project(ctx: RunContext[RunDeps]) -> dict[str, object]:
         """The project this conversation is working in, if any.
 
         In a worktree this is the project whose git worktree your file and shell tools

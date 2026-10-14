@@ -38,7 +38,7 @@ from services.agents.definition import WorkspacePolicy
 from services.agents.thread import DELEGATION_TOOLS, may_delegate, resolve_thread_agent
 from services.conversations import ConversationBinding, ConversationStore
 from services.offline import OfflineModeService
-from services.permissions import DEFAULT_PERMISSION, stricter_permission
+from services.permissions import DEFAULT_PERMISSION, permission_level, stricter_permission
 from services.projects import ProjectStore, WorktreeManager
 from services.registry import ModelRegistry
 from services.settings_store import (
@@ -173,7 +173,7 @@ class ConversationSubagents(SubagentLauncher):
 
         # What the definition asks for, capped by what the spawning thread may do: one
         # approved launch must not buy a level the operator never chose.
-        permission = agent.permission_ceiling or DEFAULT_PERMISSION
+        permission = permission_level(agent.permission_ceiling or DEFAULT_PERMISSION)
         if parent.permission is not None:
             permission = stricter_permission(parent.permission, permission)
 

@@ -29,7 +29,7 @@ class ToolOut(BaseModel):
     name: str
     description: str
     sensitivity: str
-    parameters: dict
+    parameters: dict[str, object]
 
 
 class ManifestOut(BaseModel):

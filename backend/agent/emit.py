@@ -28,11 +28,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel
 from pydantic_ai import CapabilityEvent, RunContext
 from pydantic_ai.messages import ToolCallPart
 
-from runs import PrefixVerdict, TurnOverhead
+from runs import EventBody, PrefixVerdict, TurnOverhead
 
 #: Namespace for every capability event this codebase defines. The library requires one
 #: and uses it to prefix the event's kind (``hephaestus.chassis_event``), which is what
@@ -48,7 +47,7 @@ class ChassisEvent(CapabilityEvent, namespace=NAMESPACE):
     ``tools/emit.py``'s twin gives: ``runs/events/`` already *is* the wire contract.
     """
 
-    body: BaseModel
+    body: EventBody
 
 
 @dataclass(kw_only=True)

@@ -63,7 +63,10 @@ async def _unlocked_vault() -> Vault:
 # --- per-consumer runs --------------------------------------------------------
 
 
-async def _memory_run(embedder: EnvEmbedder, chat) -> tuple[dict, ConsumerScores]:
+type Ablation = dict[str, dict[str, dict[str, float]]]
+
+
+async def _memory_run(embedder: EnvEmbedder, chat) -> tuple[Ablation, ConsumerScores]:
     corpus = memory_corpus()
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
@@ -86,7 +89,7 @@ async def _memory_run(embedder: EnvEmbedder, chat) -> tuple[dict, ConsumerScores
     return ablation, scores
 
 
-async def _conversation_run(embedder: EnvEmbedder, chat) -> tuple[dict, ConsumerScores]:
+async def _conversation_run(embedder: EnvEmbedder, chat) -> tuple[Ablation, ConsumerScores]:
     corpus = conversation_corpus()
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
@@ -123,7 +126,7 @@ async def _conversation_run(embedder: EnvEmbedder, chat) -> tuple[dict, Consumer
 # --- rendering ----------------------------------------------------------------
 
 
-def _ablation_table(ablation: dict) -> list[str]:
+def _ablation_table(ablation: Ablation) -> list[str]:
     lines = ["| variant | slice | recall@1 | recall@5 | MRR | n |", "|---|---|---|---|---|---|"]
     for variant in ("hybrid", "dense", "sparse"):
         for slice_name, m in sorted(ablation[variant].items()):
@@ -144,7 +147,7 @@ def _trigger_verdict(s: ConsumerScores) -> str:
     return "WEAK — triggering works but is not crisp; see the precision/recall numbers."
 
 
-def _retrieval_verdict(ablation: dict) -> str:
+def _retrieval_verdict(ablation: Ablation) -> str:
     para_dense = ablation["dense"].get("paraphrase", {}).get("recall@5", 0.0)
     para_sparse = ablation["sparse"].get("paraphrase", {}).get("recall@5", 0.0)
     rare_hybrid = ablation["hybrid"].get("rare_token", {}).get("recall@5", 0.0)
@@ -186,7 +189,7 @@ def _grounding_verdict(s: ConsumerScores) -> str:
     )
 
 
-def _consumer_section(name: str, ablation: dict, scores: ConsumerScores) -> list[str]:
+def _consumer_section(name: str, ablation: Ablation, scores: ConsumerScores) -> list[str]:
     lines = [f"## {name}", ""]
     lines.append("### Retrieval ablation (recall@k / MRR)")
     lines += _ablation_table(ablation)
@@ -212,7 +215,7 @@ def _consumer_section(name: str, ablation: dict, scores: ConsumerScores) -> list
     return lines
 
 
-def _render(results: dict[str, tuple[dict, ConsumerScores]]) -> str:
+def _render(results: dict[str, tuple[Ablation, ConsumerScores]]) -> str:
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
         "# Embeddings eval findings",

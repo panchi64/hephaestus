@@ -46,6 +46,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Literal
 
 from pydantic_ai import ToolApproved, ToolDenied
 from pydantic_ai.messages import ModelMessage, ToolCallPart
@@ -400,7 +401,7 @@ async def review_call(
     *,
     tool_call_id: str,
     tool: str,
-    args: dict,
+    args: dict[str, Any],
     root: Path | None,
     transcript: Sequence[TranscriptEntry],
     reviewer: Reviewer | None,
@@ -466,7 +467,7 @@ async def review_call(
 #: since an unrecoverable act parks instead — and it stays because the word is already in
 #: the stored events of every thread that was reviewed before that changed, and a client
 #: still has to render those.
-_WIRE_DECISION: dict[Decision, str] = {
+_WIRE_DECISION: dict[Decision, Literal["allow", "ask", "block"]] = {
     Decision.ALLOW: "allow",
     Decision.ASK: "ask",
     Decision.BLOCK: "block",

@@ -37,7 +37,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_ai import (
-    Agent,
     DeferredToolRequests,
     ModelMessage,
     ToolApproved,
@@ -50,6 +49,7 @@ from services.conversations import ConversationBinding, ConversationStore
 from services.notifications import NotificationService
 
 from .compaction_context import CompactionContext
+from .factory import TurnAgent
 from .naming import TitleContext, approval_conversation_title
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class ParkedTurn:
     """The continuation of a run parked awaiting approval. Opaque to the
     substrate; held on ``run.parked_payload`` and consumed by the approve route."""
 
-    agent: Agent
+    agent: TurnAgent
     message_history: list[ModelMessage]
     requests: DeferredToolRequests
     announced: set[str] = field(default_factory=set)
@@ -169,7 +169,7 @@ def _clip(value: str, limit: int) -> str:
 
 async def park_for_input(
     run: Run,
-    agent: Agent,
+    agent: TurnAgent,
     messages: list[ModelMessage],
     requests: DeferredToolRequests,
     announced: set[str],

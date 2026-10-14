@@ -70,7 +70,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         agent_name: str,
         task: str,
         isolate: bool = False,
-    ) -> dict:
+    ) -> dict[str, object]:
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"spawned": False, "detail": _UNAVAILABLE}
@@ -118,7 +118,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
     toolset.add_function(spawn, name=SPAWN_TOOL)
 
     @toolset.tool(name="message")
-    async def message(ctx: RunContext[RunDeps], to: str, text: str) -> dict:
+    async def message(ctx: RunContext[RunDeps], to: str, text: str) -> dict[str, object]:
         """Send a message to another agent of your delegation tree: a handle from
         `agents_list`, `parent` for the agent that spawned you, or `main` for the thread at
         the top. It reaches a running agent at its next step and wakes an idle one; you are
@@ -143,7 +143,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         return {"sent": True, "to": label}
 
     @toolset.tool(name="list")
-    async def list_agents(ctx: RunContext[RunDeps]) -> dict:
+    async def list_agents(ctx: RunContext[RunDeps]) -> dict[str, object]:
         """Every agent of your delegation tree, with who spawned it and whether it is still
         working. Check it before concluding while agents you spawned are still out."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
@@ -168,7 +168,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         }
 
     @toolset.tool(name="read")
-    async def read(ctx: RunContext[RunDeps], name: str) -> dict:
+    async def read(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
         """An agent of your tree: its status, and its report, or its latest answer while it
         works. You do not need this to receive a report."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
@@ -181,7 +181,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         return _read_out(view)
 
     @toolset.tool(name="stop")
-    async def stop(ctx: RunContext[RunDeps], name: str) -> dict:
+    async def stop(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
         """Stop an agent you spawned, or one below it, along with everything it spawned.
         Each stopped agent reports what it got through."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
@@ -229,7 +229,7 @@ class ProjectRoster(WrapperToolset[RunDeps]):
         }
 
 
-def _read_out(view: SubagentView) -> dict:
+def _read_out(view: SubagentView) -> dict[str, object]:
     return {
         "available": True,
         "name": view.handle,

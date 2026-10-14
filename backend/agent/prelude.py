@@ -27,7 +27,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import UserContent
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
@@ -46,6 +47,7 @@ from tools import PromptContextProvider, PromptContextRequest, default_workspace
 
 from .attachments import resolve_attachments
 from .compaction_context import CompactionContext, build_compaction_context
+from .factory import TurnAgent
 from .file_refs import resolve_file_refs
 from .folding import incoming_request, maybe_compact
 from .history import (
@@ -73,7 +75,7 @@ class TurnSetup:
     # read by the flush hooks from the moment they are armed — defaults are the
     # correct record for a turn that stopped before it began
     turn_start: TurnStart = field(default_factory=TurnStart)
-    persisted: list | None = None
+    persisted: list[UserContent] | None = None
     stamp_ids: list[str] = field(default_factory=list)
     #: The `@` references that resolved, stamped on the turn's user request so the
     #: operator's chips come back on a reload. The marker naming them persists with the
@@ -139,7 +141,7 @@ def record_prompt(
 async def prepare_turn(
     setup: TurnSetup,
     run: Run,
-    agent: Agent,
+    agent: TurnAgent,
     *,
     prompt: str | None,
     store: ConversationStore | None,

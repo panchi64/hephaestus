@@ -57,7 +57,7 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         name: str,
         files: dict[str, str],
         remove: list[str] | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Draft a plugin (tools written in Python that run in the platform VM) or
         revise its draft. `files` maps paths to their full new text; `remove` deletes.
 
@@ -112,7 +112,7 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
     @toolset.tool
     async def read(
         ctx: RunContext[RunDeps], name: str, version: Literal["current", "published"] = "current"
-    ) -> dict:
+    ) -> dict[str, object]:
         """A plugin's files: its draft when it has one (`current`), or the version its
         tools run (`published`)."""
         store = ctx.deps.caps.get_optional(PluginStore)
@@ -140,7 +140,7 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
     @toolset.tool
     async def test(
         ctx: RunContext[RunDeps], name: str, tool: str, args: dict[str, Any] | None = None
-    ) -> dict:
+    ) -> dict[str, object]:
         """Run one of a plugin's tools with `args`: its draft when it has one, else the
         published version. It reaches only the hosts it declares that this conversation
         may also reach."""
@@ -276,7 +276,7 @@ async def _run(
     args: dict[str, Any],
     hosts: Iterable[str],
     secrets: Mapping[str, SecretValue],
-) -> dict:
+) -> dict[str, object]:
     if not runtime.available:
         return {"ok": False, "error": _NO_VM}
     try:

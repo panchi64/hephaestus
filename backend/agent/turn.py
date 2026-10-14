@@ -27,7 +27,6 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pydantic_ai import (
-    Agent,
     DeferredToolRequests,
     DeferredToolResults,
     ModelMessage,
@@ -38,6 +37,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.tools import DeferredToolApprovalResult
 
 from core.config import Settings
 from core.container import ServiceContainer
@@ -49,6 +49,7 @@ from services.permissions import ReviewBudget
 from tools import RunDeps
 
 from .compaction_context import CompactionContext
+from .factory import TurnAgent
 from .folding import compact_and_retry
 from .gating import settle_deferred
 from .history import TurnStart
@@ -140,7 +141,7 @@ def turn_deps(
 
 async def drive_turn(
     run: Run,
-    agent: Agent,
+    agent: TurnAgent,
     *,
     settings: Settings,
     prompt: str | list[Any] | None = None,
@@ -457,4 +458,5 @@ async def drive_turn(
                 await notifications.resolve_for_run(run.owner_id, run.id)
         prompt = None
         message_history = messages
-        deferred_results = DeferredToolResults(approvals=settled)
+        approvals: dict[str, DeferredToolApprovalResult | bool] = {**settled}
+        deferred_results = DeferredToolResults(approvals=approvals)

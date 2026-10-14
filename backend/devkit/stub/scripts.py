@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
 
 from devkit.stub.wire import Reply, ToolCall
 
@@ -79,7 +80,7 @@ class ScriptBook:
         #: whole replayed transcript plus every tool schema, and an afternoon's chatting
         #: against an unbounded log would grow without limit and eventually make
         #: ``GET /_stub/requests`` too large to read.
-        self.requests: deque[dict] = deque(maxlen=REQUEST_LOG_LIMIT)
+        self.requests: deque[dict[str, Any]] = deque(maxlen=REQUEST_LOG_LIMIT)
 
     def push(self, scenarios: list[Scenario]) -> None:
         self._scenarios.extend(scenarios)
@@ -119,7 +120,7 @@ class ScriptBook:
         return Scenario(text=DEFAULT_TEXT.format(prompt=prompt or "(nothing)"))
 
 
-def last_user_prompt(messages: list[dict]) -> str:
+def last_user_prompt(messages: list[dict[str, Any]]) -> str:
     """The text of the last user message, flattened.
 
     Content arrives either as a plain string or as the list-of-parts form a multimodal

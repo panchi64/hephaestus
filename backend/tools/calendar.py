@@ -40,7 +40,7 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
     @toolset.tool
     async def agenda(
         ctx: RunContext[RunDeps], start: str | None = None, end: str | None = None
-    ) -> list[dict]:
+    ) -> list[dict[str, object]]:
         """List calendar events between two moments, with recurring events expanded.
 
         `start` and `end` are ISO-8601 timestamps (UTC unless they carry an offset).
@@ -61,7 +61,7 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
         return [_occurrence(occurrence) for occurrence in found]
 
     @toolset.tool
-    async def list_calendars(ctx: RunContext[RunDeps]) -> list[dict]:
+    async def list_calendars(ctx: RunContext[RunDeps]) -> list[dict[str, object]]:
         """List the operator's calendars — `calendar_create_event` needs one to write to."""
         service = ctx.deps.caps.get_optional(CalendarService)
         if service is None:
@@ -83,7 +83,7 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
         location: str | None = None,
         description: str | None = None,
         rrule: str | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Add an event to a calendar.
 
         `start`/`end` are ISO-8601 timestamps and `timezone` is the IANA zone the event
@@ -128,7 +128,7 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
         location: str | None = None,
         description: str | None = None,
         rrule: str | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Change an existing event, by an `event_id` from `calendar_agenda`. Only the
         fields you pass are altered; for a recurring event this changes the whole
         series."""
@@ -202,7 +202,7 @@ def _moment(raw: str) -> datetime:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
-def _occurrence(view: OccurrenceView) -> dict:
+def _occurrence(view: OccurrenceView) -> dict[str, object]:
     return {
         "event_id": view.event_id,
         "occurrence_start": view.starts_at.isoformat(),
@@ -215,7 +215,7 @@ def _occurrence(view: OccurrenceView) -> dict:
     }
 
 
-def _event(view: EventView) -> dict:
+def _event(view: EventView) -> dict[str, object]:
     return {
         "event_id": view.id,
         "calendar_id": view.calendar_id,

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 
-from pydantic_ai import BinaryContent
+from pydantic_ai import Agent, BinaryContent
 
 from agent.meta import make_utility_agent
 from prompts.utility import OCR_INSTRUCTIONS
@@ -30,15 +30,13 @@ _OCR_PROMPT = "Transcribe all readable text from this document page."
 class _PreparedTranscriber:
     """A vision agent bound to one document's owner, ready to read its page images."""
 
-    def __init__(self, agent: object, timeout_s: float) -> None:
+    def __init__(self, agent: Agent[None, str], timeout_s: float) -> None:
         self._agent = agent
         self._timeout_s = timeout_s
 
     async def transcribe(self, image: bytes) -> str:
         result = await asyncio.wait_for(
-            self._agent.run(  # type: ignore[attr-defined]
-                [_OCR_PROMPT, BinaryContent(data=image, media_type="image/jpeg")]
-            ),
+            self._agent.run([_OCR_PROMPT, BinaryContent(data=image, media_type="image/jpeg")]),
             timeout=self._timeout_s,
         )
         return str(result.output).strip()

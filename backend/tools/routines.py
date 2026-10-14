@@ -68,7 +68,7 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
         notify: bool = False,
         enabled: bool = True,
         routine_id: str | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Draft a routine, or rewrite `routine_id`: `prompt` goes to `agent` on `schedule`,
         each time in a new thread.
 
@@ -104,7 +104,7 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
         return {"ok": True, **_summary(routine)}
 
     @toolset.tool(name="list")
-    async def list_routines(ctx: RunContext[RunDeps]) -> dict:
+    async def list_routines(ctx: RunContext[RunDeps]) -> dict[str, object]:
         """Every routine, with its id, agent, schedule, status and next fire times."""
         store = ctx.deps.caps.get_optional(RoutineStore)
         if store is None:
@@ -112,7 +112,7 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
         return {"ok": True, "routines": [_summary(r) for r in await store.list(ctx.deps.owner_id)]}
 
     @toolset.tool
-    async def delete(ctx: RunContext[RunDeps], routine_id: str) -> dict:
+    async def delete(ctx: RunContext[RunDeps], routine_id: str) -> dict[str, object]:
         """Delete a routine. Its threads stay."""
         store = ctx.deps.caps.get_optional(RoutineStore)
         if store is None:
@@ -124,7 +124,7 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
         return {"ok": True, "deleted": routine.title}
 
     @toolset.tool
-    async def run_now(ctx: RunContext[RunDeps], routine_id: str) -> dict:
+    async def run_now(ctx: RunContext[RunDeps], routine_id: str) -> dict[str, object]:
         """Fire an approved routine once now, in a new thread, without waiting."""
         store = ctx.deps.caps.get_optional(RoutineStore)
         scheduler = ctx.deps.caps.get_optional(SchedulerService)

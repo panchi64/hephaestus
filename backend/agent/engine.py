@@ -50,7 +50,6 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from pydantic_ai import (
-    Agent,
     DeferredToolResults,
     ModelMessage,
     ModelRequest,
@@ -83,7 +82,7 @@ from tools import (
 
 from .code_mode import code_mode_limits
 from .compaction_context import build_compaction_context
-from .factory import NO_DORMANT, build_agent
+from .factory import NO_DORMANT, TurnAgent, build_agent
 from .finalize import (
     finalize,
     flush_recorder,
@@ -119,7 +118,7 @@ def turn_agent(
     dormant: Mapping[str, str] = NO_DORMANT,
     instruction_providers: Sequence[InstructionProvider] = (),
     settings: Settings,
-) -> Agent:
+) -> TurnAgent:
     """The agent a chat turn runs on — and the one its compaction summary is written on.
 
     One function for both because the summary's whole value is that its request matches
@@ -508,6 +507,7 @@ def build_chat_orchestrator(
                     verify_prompt = (
                         prompt if prompt is not None else last_user_text(setup.history or [])
                     )
+                    assert setup.policy is not None
                     turn = await verify_and_correct(
                         run,
                         agent,

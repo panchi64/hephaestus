@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from devkit.stub import embeddings
+from devkit.stub.embeddings import embed as embed_text
 from devkit.stub.scripts import Scenario, ScriptBook, last_user_prompt
 from devkit.stub.wire import Reply, ToolCall, completion, stream
 
@@ -116,7 +116,7 @@ def create_stub() -> FastAPI:
             "object": "list",
             "model": body.get("model") or MODEL_ID,
             "data": [
-                {"object": "embedding", "index": index, "embedding": embeddings.embed(item)}
+                {"object": "embedding", "index": index, "embedding": embed_text(item)}
                 for index, item in enumerate(texts)
             ],
             "usage": {"prompt_tokens": len(texts), "total_tokens": len(texts)},

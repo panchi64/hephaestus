@@ -16,22 +16,33 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, overload
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
+from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 
 from prompts.utility import JUDGE_INSTRUCTIONS
 
 
-def make_utility_agent(model: Model, *, output_type: Any = str, instructions: str) -> Agent:
+@overload
+def make_utility_agent(model: Model, *, instructions: str) -> Agent[None, str]: ...
+@overload
+def make_utility_agent[OutputT](
+    model: Model, *, output_type: OutputSpec[OutputT], instructions: str
+) -> Agent[None, OutputT]: ...
+def make_utility_agent[OutputT](
+    model: Model, *, output_type: OutputSpec[OutputT] | None = None, instructions: str
+) -> Agent[None, OutputT] | Agent[None, str]:
     """Build a one-shot agent on the cheap utility model for background work — a
     judge, a namer, a summarizer. Centralizes the bare ``Agent`` construction so
     every utility caller picks up the same shape (and any future default:
     instrumentation tag, retries) from one place. Per-call knobs like reasoning-off
     ``model_settings`` are passed to ``agent.run(...)``, not baked in here."""
+    if output_type is None:
+        return Agent(model, output_type=str, instructions=instructions)
     return Agent(model, output_type=output_type, instructions=instructions)
 
 

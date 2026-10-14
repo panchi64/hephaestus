@@ -110,6 +110,7 @@ def _card(view: SubagentView, tasks: list[TaskOut], opened: bool) -> Subagent:
     # prose and which is structure is a fact about the format, and a frontend deriving it
     # would be a frontend deciding. `report_structure` never raises, so an unreadable
     # block degrades to the prose alone.
+    assert view.started_at is not None
     report = view.summary
     structure = report_structure(report) if report else None
     return Subagent(

@@ -27,12 +27,14 @@ outscores capability-off on should-trigger questions.
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel
 from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import Model
+from pydantic_ai.toolsets import AbstractToolset
 
 from agent import build_chat_orchestrator
 from agent.meta import make_utility_agent
@@ -51,6 +53,7 @@ from services.conversation_search import ConversationSearch
 from services.corpus import ConversationAdapter, CorpusChunkStore, CorpusIndex, FolderAdapter
 from services.embeddings import Embedder
 from services.registry import ModelRegistry
+from tools.deps import RunDeps
 from tools.memory import memory_toolset
 from tools.platform import platform_toolset
 
@@ -75,7 +78,7 @@ async def _run_turn(
     question: str,
     *,
     model: Model,
-    categories: dict | None,
+    categories: Mapping[str, AbstractToolset[RunDeps]] | None,
     capabilities: ServiceContainer,
 ) -> TurnResult:
     """One real agent turn; reads the event stream for tool firings + answer text."""
@@ -169,7 +172,7 @@ async def score_consumer(
     consumer: str,
     retrieval_tool: str,
     model: Model,
-    categories: dict,
+    categories: Mapping[str, AbstractToolset[RunDeps]],
     capabilities_on: ServiceContainer,
     questions: list[EndToEndQuestion],
 ) -> ConsumerScores:

@@ -40,7 +40,7 @@ def attachments_toolset() -> FunctionToolset[RunDeps]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool
-    async def provision(ctx: RunContext[RunDeps], attachment_id: str) -> dict:
+    async def provision(ctx: RunContext[RunDeps], attachment_id: str) -> dict[str, object]:
         """Re-stage a file the operator attached to this conversation, by the upload id
         in its attachment note. Use it when the path that note gave is gone, or to bring
         back an earlier turn's file.
@@ -76,7 +76,7 @@ def attachments_toolset() -> FunctionToolset[RunDeps]:
             )
         except SandboxError as exc:
             return {"ok": False, "error": f"Could not stage the file: {exc}"}
-        result = {
+        result: dict[str, object] = {
             "ok": True,
             "path": workspace.display(staged_relpath),
             "filename": blob.filename,

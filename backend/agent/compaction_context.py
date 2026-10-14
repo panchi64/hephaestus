@@ -26,12 +26,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_ai import Agent
-
 from core.config import Settings
 from services.conversations import ConversationStore
 from tools import RunDeps
 
+from .factory import TurnAgent
 from .summarize import AutoCompactPolicy
 
 
@@ -45,7 +44,7 @@ class CompactionContext:
     # continuing its own conversation, so its request renders the brief and offers the
     # tools a turn's would. The in-turn recovery swaps in the live segment's pair, since a
     # context that came off a park holds the deps of the run that parked.
-    agent: Agent
+    agent: TurnAgent
     deps: RunDeps
     settings: Settings
     # When the automatic triggers fire — whether compaction is on for this thread, and at
@@ -59,7 +58,7 @@ def build_compaction_context(
     *,
     store: ConversationStore | None,
     conversation_id: str | None,
-    agent: Agent,
+    agent: TurnAgent,
     deps: RunDeps,
     settings: Settings,
     policy: AutoCompactPolicy | None = None,

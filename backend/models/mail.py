@@ -60,7 +60,7 @@ class MailAccount(SQLModel, table=True):
     auth_kind: str = AUTH_PASSWORD
     # Transport configuration: hosts, ports, TLS flags, the JMAP session url, the OAuth
     # account identifier. Structural, never a secret — secrets live in `secret_enc`.
-    config: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    config: dict[str, object] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     # AEAD ciphertext of this account's secret bundle, as JSON: ``{"password": …}`` for
     # `AUTH_PASSWORD`, ``{"access_token", "refresh_token", "expires_at", "scope"}`` for
     # `AUTH_OAUTH`. Re-sealed on every OAuth refresh — a rotated refresh token never
@@ -133,7 +133,7 @@ class MailMessage(SQLModel, table=True):
     # which is how the sync loop finds the backlog.
     urgency: str = "normal"  # "low" | "normal" | "high"
     spam: bool = False
-    tags: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    tags: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     triaged_at: datetime | None = None
     # When this row was last refreshed from the provider — the freshness window the
     # cached listing is served within (`XC-PERF-4`).

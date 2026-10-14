@@ -47,6 +47,8 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
 )
+from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 
 from core.text import strip_think_blocks, truncate_on_boundary
 from core.untrusted import new_nonce, untrusted_fence, untrusted_preamble
@@ -62,7 +64,7 @@ logger = logging.getLogger(__name__)
 # the titler's are. The generous `max_tokens` is the same tolerance for the same runtime:
 # reasoning is requested off, some runtimes ignore the lever, and a `<think>` block has to
 # have room to clear *and* still leave the two or three sentences behind it.
-_BASE_SETTINGS = {"max_tokens": 2048, "temperature": 0.3}
+_BASE_SETTINGS: ModelSettings = {"max_tokens": 2048, "temperature": 0.3}
 
 # The ceiling on the transcript handed to the model. A re-entry band is a cheap background
 # call, not a fold: a thread long enough to overflow this has almost certainly been folded
@@ -177,10 +179,10 @@ def _clean(raw: str) -> str | None:
 
 
 async def summarize_work(
-    model,
+    model: Model,
     history: list[ModelMessage],
     *,
-    reasoning_off=None,
+    reasoning_off: ModelSettings | None = None,
     timeout_s: float | None = None,
     max_tokens: int | None = None,
 ) -> str | None:
@@ -197,7 +199,9 @@ async def summarize_work(
     transcript = work_transcript(history)
     if not transcript:
         return None
-    settings = {**_BASE_SETTINGS, **(reasoning_off or {})}
+    settings: ModelSettings = {**_BASE_SETTINGS}
+    if reasoning_off:
+        settings.update(reasoning_off)
     if max_tokens is not None:
         settings["max_tokens"] = max_tokens
     agent = make_utility_agent(model, output_type=str, instructions=WORK_SUMMARY_INSTRUCTIONS)

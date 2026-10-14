@@ -24,7 +24,7 @@ class ProviderCreate(BaseModel):
     base_url: str
     enabled: bool = True
     engines: list[str] = []
-    params: dict = {}
+    params: dict[str, object] = {}
     api_key: str | None = None
 
 
@@ -33,7 +33,7 @@ class ProviderUpdate(BaseModel):
     base_url: str | None = None
     enabled: bool | None = None
     engines: list[str] | None = None
-    params: dict | None = None
+    params: dict[str, object] | None = None
     api_key: str | None = None  # "" clears the key; omitted leaves it unchanged
 
 
@@ -43,7 +43,7 @@ class ProviderView(BaseModel):
     base_url: str
     enabled: bool
     engines: list[str]
-    params: dict
+    params: dict[str, object]
     has_api_key: bool
 
 

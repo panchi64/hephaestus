@@ -28,12 +28,6 @@ from devkit import live, repo, surfaces
 from devkit.instance import DevInstance
 from devkit.processes import Supervisor, await_listening, listening
 
-#: The name of the generated Claude Code launch configuration, and so the name a session
-#: passes to `preview_start`. Fixed rather than per-slot: a session reads it from the
-#: skill, and one name that always means "this worktree's instance" is what makes that
-#: instruction correct in every worktree.
-LAUNCH_CONFIG = "hephaestus-dev"
-
 
 class LaunchError(RuntimeError):
     """A service would not come up. The message says which, and where its log is."""

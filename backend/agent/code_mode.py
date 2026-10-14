@@ -218,7 +218,7 @@ class _NarratedCodeModeToolset(CodeModeToolset[RunDeps]):
         # tools first, then the rest, each in the stack's order — the library hands the two
         # sets back apart, so the interleaving is not recoverable. It is stable within a
         # level; a level change that moves a tool across the line moves it in the array.
-        wrapped = getattr(run_code, "wrapped_tools", {})
+        wrapped: dict[str, ToolsetTool[RunDeps]] = getattr(run_code, "wrapped_tools", {})
         tools = {name: tools.get(name, tool) for name, tool in wrapped.items()} | {
             name: tool for name, tool in tools.items() if name not in wrapped
         }

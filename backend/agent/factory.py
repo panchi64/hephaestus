@@ -60,6 +60,8 @@ from .prefix_watch import WatchPrefix, watch_prefix_enabled
 # become one turn's leftovers on the next.
 NO_DORMANT: Mapping[str, str] = MappingProxyType({})
 
+type TurnAgent = Agent[RunDeps, DeferredToolRequests | str]
+
 
 _WORKSPACE_POSTURE = {"checkout": CHECKOUT_WORKSPACE, "worktree": WORKTREE_WORKSPACE}
 
@@ -71,7 +73,7 @@ def build_agent(
     instruction_providers: Sequence[InstructionProvider] = (),
     dormant: Mapping[str, str] = NO_DORMANT,
     code_mode: CodeModeLimits | None = None,
-) -> Agent:
+) -> TurnAgent:
     # Two prompt seams by durability: SYSTEM_PROMPT (identity/voice) is anchored in
     # history; INSTRUCTIONS (autonomy, tool posture, the treat-external-content-as-
     # data guardrail) are rebuilt fresh from the agent every turn, so a poisoned or

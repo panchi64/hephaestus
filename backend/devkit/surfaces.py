@@ -17,6 +17,12 @@ from devkit.instance import DevInstance
 #: The committed recipe these are generated from.
 SOURCE = repo.ROOT / "docs" / "dev-instance.md"
 
+#: The name of the generated Claude Code launch configuration, and so the name a session
+#: passes to `preview_start`. Fixed rather than per-slot: a session reads it from the
+#: skill, and one name that always means "this worktree's instance" is what makes that
+#: instruction correct in every worktree.
+LAUNCH_CONFIG = "hephaestus-dev"
+
 #: What the skill is called, and so what a session finds when it looks for a way to run
 #: the app. The built-in `run` skill checks for a project skill covering app launch first.
 SKILL_NAME = "dev-instance"
@@ -114,8 +120,6 @@ def write_skill(instance: DevInstance, config_name: str, root: Path) -> Path:
 
 def write_all(instance: DevInstance, root: Path | None = None) -> list[Path]:
     """Materialize every generated surface. Returns what was written, for reporting."""
-    from devkit.launch import LAUNCH_CONFIG
-
     claude_dir = root or repo.CLAUDE_DIR
     return [
         write_launch_json(instance, LAUNCH_CONFIG, claude_dir),

@@ -38,7 +38,7 @@ class SearchProvider(SQLModel, table=True):
     # Optional SearXNG engine filter (e.g. ["google", "duckduckgo"]); empty ⇒ default.
     engines: list[str] = Field(sa_column=Column(JSON, nullable=False, default=list))
     # Extra query params passed through verbatim (e.g. {"language": "en"}).
-    params: dict = Field(sa_column=Column(JSON, nullable=False, default=dict))
+    params: dict[str, object] = Field(sa_column=Column(JSON, nullable=False, default=dict))
     # App-layer AEAD ciphertext of the API key; None ⇒ no key (the SearXNG default).
     api_key_enc: str | None = None
     created_at: datetime = Field(default_factory=utcnow)

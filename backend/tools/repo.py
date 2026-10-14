@@ -120,5 +120,5 @@ async def _brief(root: Path) -> str:
 def repo_toolset() -> AbstractToolset[RunDeps]:
     """The `repo` category, built once at app assembly and shared by every run."""
     toolset = _CAPABILITY.get_toolset()
-    assert toolset is not None  # `expose_inventory_tool` is on
+    assert isinstance(toolset, AbstractToolset)  # `expose_inventory_tool` is on
     return WorkspaceToolset("repo", toolset)

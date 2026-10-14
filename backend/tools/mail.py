@@ -31,7 +31,7 @@ from .deps import RunDeps
 
 # The capability isn't wired for this run — the model is told plainly rather than shown a
 # broken tool, and adapts (the degrade posture every toolset here shares).
-_UNAVAILABLE = {
+_UNAVAILABLE: dict[str, object] = {
     "ok": False,
     "error": "Email is not available: no mail account is connected in this workspace.",
 }
@@ -100,7 +100,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool
-    async def list_accounts(ctx: RunContext[RunDeps]) -> dict:
+    async def list_accounts(ctx: RunContext[RunDeps]) -> dict[str, object]:
         """List the operator's connected email accounts.
 
         Returns each account's id, label and address. Use an account id to scope
@@ -131,7 +131,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         folder: str | None = None,
         limit: int = 20,
         unread_only: bool = False,
-    ) -> dict:
+    ) -> dict[str, object]:
         """List recent email, newest first, with its automatic triage.
 
         Each entry carries the message id (pass it to ``mail_read``), sender, subject,
@@ -168,7 +168,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         }
 
     @toolset.tool
-    async def read(ctx: RunContext[RunDeps], message_id: str) -> dict:
+    async def read(ctx: RunContext[RunDeps], message_id: str) -> dict[str, object]:
         """Read one email in full by its id, fetching the body if it isn't cached yet.
 
         Returns the sender's own text, with quoted history and signature separated out.
@@ -185,7 +185,9 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         return {"ok": True, "message": wrap_untrusted(_detail_text(detail), source="email")}
 
     @toolset.tool
-    async def draft_reply(ctx: RunContext[RunDeps], message_id: str, body: str) -> dict:
+    async def draft_reply(
+        ctx: RunContext[RunDeps], message_id: str, body: str
+    ) -> dict[str, object]:
         """Save a reply draft for the operator to review, **without sending it**.
 
         Prefer this over ``mail_reply`` whenever the operator has not clearly asked for
@@ -219,7 +221,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         body: str,
         explanation: str,
         cc: list[str] | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Send a new email from one of the operator's accounts.
 
         This leaves the machine in the operator's name and cannot be undone.
@@ -245,7 +247,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         body: str,
         explanation: str,
         reply_all: bool = False,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Reply to an email, threading the response correctly.
 
         Sending is irreversible and speaks in the operator's name. ``explanation`` MUST
@@ -269,7 +271,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         message_id: str,
         seen: bool | None = None,
         flagged: bool | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Mark an email read/unread or flagged/unflagged."""
         service = _service(ctx)
         if service is None:

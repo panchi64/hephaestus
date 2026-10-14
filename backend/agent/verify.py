@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from pydantic_ai import Agent, ModelMessage
+from pydantic_ai import ModelMessage
 
 from core.config import Settings
 from core.container import ServiceContainer
@@ -28,6 +28,7 @@ from prompts.agent import VERIFIER_NUDGE
 from runs import LimitNotice, Run, RunStatus
 from services.conversations import ConversationBinding, ConversationStore
 
+from .factory import TurnAgent
 from .history import TurnStart
 from .meta import Judge
 from .metrics import no_room_for
@@ -45,7 +46,7 @@ def should_verify(settings: Any, run: Run) -> bool:
 
 async def verify_and_correct(
     run: Run,
-    agent: Agent,
+    agent: TurnAgent,
     prompt: str,
     turn: TurnResult,
     announced: set[str],

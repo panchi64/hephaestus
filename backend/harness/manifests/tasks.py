@@ -137,6 +137,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         )
         if previous is None:
             return view.prompt
+        assert previous.finished_at is not None and previous.summary
         stamp = as_utc(previous.finished_at).strftime("%Y-%m-%d %H:%M UTC")
         last = wrap_untrusted(previous.summary, source="the routine's previous run")
         return f"{view.prompt}\n\nHow the previous run ended ({stamp}, {previous.outcome}):\n{last}"

@@ -33,7 +33,7 @@ _LOCKED = (
 )
 
 
-def _summary(view: SecretEntryView) -> dict:
+def _summary(view: SecretEntryView) -> dict[str, object]:
     """An entry without its secret — enough to say what is stored and pick one."""
     return {"id": view.id, "name": view.name, "username": view.username, "url": view.url}
 
@@ -42,7 +42,7 @@ def vault_toolset() -> FunctionToolset[RunDeps]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool(requires_approval=True)
-    async def list_entries(ctx: RunContext[RunDeps], reason: str) -> dict:
+    async def list_entries(ctx: RunContext[RunDeps], reason: str) -> dict[str, object]:
         """List what the operator keeps in their password vault — names, usernames, and
         URLs, never the passwords themselves.
 
@@ -58,7 +58,7 @@ def vault_toolset() -> FunctionToolset[RunDeps]:
         return {"ok": True, "entries": [_summary(v) for v in views]}
 
     @toolset.tool(requires_approval=True)
-    async def get_entry(ctx: RunContext[RunDeps], entry_id: str, reason: str) -> dict:
+    async def get_entry(ctx: RunContext[RunDeps], entry_id: str, reason: str) -> dict[str, object]:
         """Read one stored credential in full, **including its password**.
 
         Use it only when the task genuinely needs the secret itself. ``reason`` MUST be a

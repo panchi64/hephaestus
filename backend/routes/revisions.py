@@ -16,7 +16,7 @@ from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
 from routes.deps import OPERATOR_ID
-from services.revisions import FileDiff, Versioned, compare, restore
+from services.revisions import FileDiff, Published, Versioned, compare, restore
 
 
 class RevisionOut(BaseModel):
@@ -32,7 +32,9 @@ class FileDiffOut(BaseModel):
     patch: str | None
 
 
-def add_revision_routes(router: APIRouter, store: Callable[[Request], Versioned]) -> None:
+def add_revision_routes(
+    router: APIRouter, store: Callable[[Request], Versioned[Published]]
+) -> None:
     @router.get("/{subject_id}/revisions", response_model=list[RevisionOut])
     async def list_revisions(request: Request, subject_id: str) -> list[RevisionOut]:
         versioned = store(request)

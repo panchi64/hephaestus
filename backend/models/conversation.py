@@ -134,7 +134,9 @@ class Conversation(SQLModel, table=True):
     #
     # Slugs and character counts — structural metadata, not user content — so it stays in
     # the clear like `model`/`workspace_kind`/`ephemeral`. Null until the thread's first turn.
-    context_overhead: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    context_overhead: dict[str, object] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
