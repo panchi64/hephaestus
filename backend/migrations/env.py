@@ -110,6 +110,8 @@ def run_migrations_online() -> None:
         return
 
     url = os.environ.get("HEPHAESTUS_DB_URL") or config.get_main_option("sqlalchemy.url")
+    if url is None:
+        raise SchemaMigrationError("No database URL: set HEPHAESTUS_DB_URL or sqlalchemy.url.")
     engine = create_engine(url)
     with engine.connect() as connection:
         _run(connection)
