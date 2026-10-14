@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import override
 
 import pytest
 from sqlalchemy import Engine
@@ -11,10 +12,11 @@ from sqlalchemy import Engine
 from core.db import init_db, make_engine
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
-from services.embeddings import EmbeddingBatch
+from services.embeddings import Embedder, EmbeddingBatch
 from services.memory import MemoryStore
 
 from ._helpers import client_app
+from ._json import json_body, json_list, obj
 
 OWNER = "operator"
 
@@ -33,16 +35,18 @@ _CONCEPTS = {
 }
 
 
-class FakeEmbedder:
+class FakeEmbedder(Embedder):
     def __init__(self, model: str = "fake-embed", dim: int = 4) -> None:
-        self._model = model
-        self._dim = dim
+        self._model: str = model
+        self._dim: int = dim
 
+    @override
     async def is_available(self, owner_id: str) -> bool:
         return True
 
+    @override
     async def embed(self, owner_id: str, texts: list[str]) -> EmbeddingBatch:
-        vectors = []
+        vectors: list[list[float]] = []
         for text in texts:
             vec = [0.0] * self._dim
             for raw in text.lower().split():
@@ -53,23 +57,25 @@ class FakeEmbedder:
         return EmbeddingBatch(vectors=vectors, model=self._model, dim=self._dim)
 
 
-class DegradedEmbedder:
+class DegradedEmbedder(Embedder):
+    @override
     async def is_available(self, owner_id: str) -> bool:
         return False
 
+    @override
     async def embed(self, owner_id: str, texts: list[str]) -> EmbeddingBatch:
         raise DegradedCapabilityError("no embedding endpoint configured")
 
 
-def _store(embedder) -> tuple[Engine, Vault, MemoryStore]:
+def _store(embedder: Embedder) -> tuple[Engine, Vault, MemoryStore]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
     return engine, vault, MemoryStore(engine, vault, embedder)
 
 
-async def _setup(embedder) -> MemoryStore:
-    engine, vault, store = _store(embedder)
+async def _setup(embedder: Embedder) -> MemoryStore:
+    _engine, vault, store = _store(embedder)
     await vault.setup("pw")
     return store
 
@@ -79,8 +85,8 @@ async def _setup(embedder) -> MemoryStore:
 
 async def test_semantic_recall_matches_paraphrase():
     store = await _setup(FakeEmbedder())
-    await store.remember(OWNER, "I have a pet cat at home")
-    await store.remember(OWNER, "My commute uses a car")
+    _ = await store.remember(OWNER, "I have a pet cat at home")
+    _ = await store.remember(OWNER, "My commute uses a car")
 
     # "feline" shares no tokens with "cat" — only the dense path can match it.
     hits = await store.recall(OWNER, "feline", limit=5)
@@ -92,7 +98,7 @@ async def test_semantic_recall_matches_paraphrase():
 
 async def test_keyword_recall_matches_exact_token():
     store = await _setup(FakeEmbedder())
-    await store.remember(OWNER, "My AWS account id is 998877")
+    _ = await store.remember(OWNER, "My AWS account id is 998877")
 
     # A rare exact token embeddings would miss — the lexical path catches it.
     hits = await store.recall(OWNER, "998877", limit=5)
@@ -102,7 +108,7 @@ async def test_keyword_recall_matches_exact_token():
 
 async def test_recall_degrades_to_keyword_without_embeddings():
     store = await _setup(DegradedEmbedder())
-    await store.remember(OWNER, "The wifi password is hunter2")
+    _ = await store.remember(OWNER, "The wifi password is hunter2")
 
     # No embedder → vectors never stored, query can't embed → keyword only (MEM-2).
     hits = await store.recall(OWNER, "wifi password", limit=5)
@@ -115,8 +121,8 @@ async def test_recall_degrades_to_keyword_without_embeddings():
 
 async def test_pinned_memory_always_recalled():
     store = await _setup(FakeEmbedder())
-    await store.remember(OWNER, "unrelated note about a dog", pinned=True)
-    await store.remember(OWNER, "a memory about a car")
+    _ = await store.remember(OWNER, "unrelated note about a dog", pinned=True)
+    _ = await store.remember(OWNER, "a memory about a car")
 
     hits = await store.recall(OWNER, "automobile", limit=5)
     contents = [h.memory.content for h in hits]
@@ -128,7 +134,7 @@ async def test_embedding_model_change_is_segregated():
     # A memory embedded by one model is not dense-compared against another's
     # query vector (EMB-2) — it can still surface via keyword, not via meaning.
     store = await _setup(FakeEmbedder(model="model-a"))
-    await store.remember(OWNER, "I love my cat")
+    _ = await store.remember(OWNER, "I love my cat")
     store._embedder = FakeEmbedder(model="model-b")  # operator changed the model
 
     hits = await store.recall(OWNER, "feline", limit=5)
@@ -140,7 +146,7 @@ async def test_reembed_heals_a_model_change():
     # The inverse of segregation: after the operator switches embedding models,
     # reembed lifts every memory into the new space so meaning-recall works again.
     store = await _setup(FakeEmbedder(model="model-a"))
-    await store.remember(OWNER, "I love my cat")
+    _ = await store.remember(OWNER, "I love my cat")
     store._embedder = FakeEmbedder(model="model-b")  # operator changed the model
 
     before = await store.recall(OWNER, "feline", limit=5)
@@ -163,18 +169,18 @@ async def test_crud_and_timeline_order():
     views = await store.list_memories(OWNER)
     assert [v.id for v in views] == [b.id, a.id]  # newest first
 
-    await store.update(OWNER, a.id, content="first edited", pinned=True)
+    _ = await store.update(OWNER, a.id, content="first edited", pinned=True)
     got = await store.get(OWNER, a.id)
     assert got.content == "first edited" and got.pinned is True
 
-    await store.delete(OWNER, b.id)
+    _ = await store.delete(OWNER, b.id)
     assert [v.id for v in await store.list_memories(OWNER)] == [a.id]
 
 
 async def test_content_and_vector_encrypted_at_rest():
     engine, vault, store = _store(FakeEmbedder())
     await vault.setup("pw")
-    await store.remember(OWNER, "cat secret")
+    _ = await store.remember(OWNER, "cat secret")
 
     # Read the raw row: neither content nor embedding is stored in the clear.
     from sqlmodel import Session, select
@@ -189,9 +195,9 @@ async def test_content_and_vector_encrypted_at_rest():
 
 async def test_audit_flags_near_duplicates():
     store = await _setup(FakeEmbedder())
-    await store.remember(OWNER, "I have a cat")
-    await store.remember(OWNER, "my kitten is here")  # same concept → near-dup
-    await store.remember(OWNER, "I drive a car")
+    _ = await store.remember(OWNER, "I have a cat")
+    _ = await store.remember(OWNER, "my kitten is here")  # same concept → near-dup
+    _ = await store.remember(OWNER, "I drive a car")
 
     groups = await store.audit(OWNER)
     assert len(groups) == 1
@@ -201,7 +207,7 @@ async def test_audit_flags_near_duplicates():
 async def test_get_unknown_memory_is_not_found():
     store = await _setup(FakeEmbedder())
     with pytest.raises(NotFoundError):
-        await store.get(OWNER, "nope")
+        _ = await store.get(OWNER, "nope")
 
 
 # --- REST surface ---------------------------------------------------------
@@ -213,25 +219,25 @@ async def test_memory_rest_crud_and_keyword_recall():
     async with client_app() as (client, _app):
         created = await client.post("/memory", json={"content": "my gate code is 4455"})
         assert created.status_code == 201
-        body = created.json()
+        body = json_body(created)
         assert body["content"] == "my gate code is 4455"
         assert body["has_embedding"] is False  # degraded embedder, no vector
         memory_id = body["id"]
 
-        listing = (await client.get("/memory")).json()
-        assert [m["id"] for m in listing] == [memory_id]
+        listing = json_list(await client.get("/memory"))
+        assert [obj(m)["id"] for m in listing] == [memory_id]
 
         recall = await client.post("/memory/recall", json={"query": "4455"})
         assert recall.status_code == 200
-        hits = recall.json()
-        assert hits and hits[0]["matched_by"] == "keyword"
+        hits = json_list(recall)
+        assert hits and obj(hits[0])["matched_by"] == "keyword"
 
         patched = await client.patch(f"/memory/{memory_id}", json={"pinned": True})
-        assert patched.json()["pinned"] is True
+        assert json_body(patched)["pinned"] is True
 
         deleted = await client.delete(f"/memory/{memory_id}")
         assert deleted.status_code == 204
-        assert (await client.get("/memory")).json() == []
+        assert json_list(await client.get("/memory")) == []
 
 
 async def test_memory_rest_unknown_id_404():

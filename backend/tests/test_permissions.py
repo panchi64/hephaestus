@@ -20,7 +20,9 @@ behaviour must be written down rather than left to a loop that skips it.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
+import pytest
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -59,11 +61,13 @@ from services.workspace_kind import WORKSPACE_TOOLS
 from tools import RunDeps, build_agent_toolsets
 
 from ._helpers import (
+    app_state,
     client_app,
     collect_sse_events,
     full_tool_categories,
     patch_model_resolution,
 )
+from ._json import json_body, parse_json, s
 from .test_chat_concurrency_guards import _patch_hanging_model
 
 OWNER = "operator"
@@ -398,26 +402,26 @@ class TestTheThreadRemembers:
     """The level lives on the conversation: set at creation, moved by the operator, and
     read back as one binding with the workspace kind and the project."""
 
-    async def _store(self, tmp_path) -> ConversationStore:
+    async def _store(self, tmp_path: Path) -> ConversationStore:
         engine = make_engine("sqlite:///:memory:")
         init_db(engine)
         vault = Vault(tmp_path / "keyfile.json")
         await vault.setup("pw")
         return ConversationStore(engine, vault)
 
-    async def test_a_fresh_thread_starts_at_the_default_in_every_workspace(self, tmp_path):
+    async def test_a_fresh_thread_starts_at_the_default_in_every_workspace(self, tmp_path: Path):
         store = await self._store(tmp_path)
         for kind in WORKSPACE_TOOLS:
             conversation_id = await store.create_conversation(OWNER, workspace_kind=kind)
             binding = await store.binding(conversation_id)
             assert binding.permission == DEFAULT_PERMISSION
 
-    async def test_an_explicit_level_beats_the_default(self, tmp_path):
+    async def test_an_explicit_level_beats_the_default(self, tmp_path: Path):
         store = await self._store(tmp_path)
         conversation_id = await store.create_conversation(OWNER, permission="plan")
         assert (await store.binding(conversation_id)).permission == "plan"
 
-    async def test_the_level_moves_and_the_rest_of_the_binding_does_not(self, tmp_path):
+    async def test_the_level_moves_and_the_rest_of_the_binding_does_not(self, tmp_path: Path):
         store = await self._store(tmp_path)
         conversation_id = await store.create_conversation(
             OWNER, workspace_kind="worktree", project_id="p1"
@@ -428,13 +432,13 @@ class TestTheThreadRemembers:
         assert binding.workspace_kind == "worktree"
         assert binding.project_id == "p1"
 
-    async def test_a_corrupt_stored_level_reads_as_the_strictest(self, tmp_path):
+    async def test_a_corrupt_stored_level_reads_as_the_strictest(self, tmp_path: Path):
         store = await self._store(tmp_path)
         conversation_id = await store.create_conversation(OWNER)
-        await store.set_permission_level(conversation_id, "nonsense")
+        _ = await store.set_permission_level(conversation_id, "nonsense")
         assert (await store.binding(conversation_id)).permission == STRICTEST_PERMISSION
 
-    async def test_a_missing_thread_reads_as_the_default(self, tmp_path):
+    async def test_a_missing_thread_reads_as_the_default(self, tmp_path: Path):
         store = await self._store(tmp_path)
         assert (await store.binding("no-such-thread")).permission == DEFAULT_PERMISSION
 
@@ -442,14 +446,14 @@ class TestTheThreadRemembers:
 class TestTheLiveControl:
     """Switching mid-thread is a plain send, and a Plan turn ends by being accepted."""
 
-    async def test_a_send_carries_the_level_and_it_persists(self, monkeypatch):
+    async def test_a_send_carries_the_level_and_it_persists(self, monkeypatch: pytest.MonkeyPatch):
         patch_model_resolution(monkeypatch, output_text="ok")
         async with client_app() as (client, _app):
             created = await client.post("/chat", json={"prompt": "hi", "permission_level": "plan"})
-            conversation_id = created.json()["conversation_id"]
-            await collect_sse_events(client, created.json()["run_id"])
+            conversation_id = s(json_body(created)["conversation_id"])
+            _ = await collect_sse_events(client, s(json_body(created)["run_id"]))
             detail = await client.get(f"/conversations/{conversation_id}")
-            assert detail.json()["permission_level"] == "plan"
+            assert json_body(detail)["permission_level"] == "plan"
 
             # ...and the next send moves it, without a separate call.
             again = await client.post(
@@ -460,26 +464,30 @@ class TestTheLiveControl:
                     "permission_level": "edit",
                 },
             )
-            await collect_sse_events(client, again.json()["run_id"])
+            _ = await collect_sse_events(client, s(json_body(again)["run_id"]))
             detail = await client.get(f"/conversations/{conversation_id}")
-            assert detail.json()["permission_level"] == "edit"
+            assert json_body(detail)["permission_level"] == "edit"
 
-    async def test_a_send_without_a_level_leaves_the_thread_where_it_was(self, monkeypatch):
+    async def test_a_send_without_a_level_leaves_the_thread_where_it_was(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         patch_model_resolution(monkeypatch, output_text="ok")
         async with client_app() as (client, _app):
             created = await client.post(
                 "/chat", json={"prompt": "hi", "permission_level": "manual"}
             )
-            conversation_id = created.json()["conversation_id"]
-            await collect_sse_events(client, created.json()["run_id"])
+            conversation_id = s(json_body(created)["conversation_id"])
+            _ = await collect_sse_events(client, s(json_body(created)["run_id"]))
             again = await client.post(
                 "/chat", json={"prompt": "more", "conversation_id": conversation_id}
             )
-            await collect_sse_events(client, again.json()["run_id"])
+            _ = await collect_sse_events(client, s(json_body(again)["run_id"]))
             detail = await client.get(f"/conversations/{conversation_id}")
-            assert detail.json()["permission_level"] == "manual"
+            assert json_body(detail)["permission_level"] == "manual"
 
-    async def test_a_send_that_is_steered_into_a_live_run_leaves_the_level_alone(self, monkeypatch):
+    async def test_a_send_that_is_steered_into_a_live_run_leaves_the_level_alone(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """The stored level is what the *next* turn runs at, and it is what the composer
         shows. A plain-text send onto a busy thread is queued into the run already going,
         which keeps running at the level it started at — so moving the stored one would
@@ -488,8 +496,8 @@ class TestTheLiveControl:
         _patch_hanging_model(monkeypatch, hang, started)
         async with client_app() as (client, app):
             first = await client.post("/chat", json={"prompt": "hi", "permission_level": "manual"})
-            conversation_id = first.json()["conversation_id"]
-            await started.wait()
+            conversation_id = s(json_body(first)["conversation_id"])
+            _ = await started.wait()
 
             steered = await client.post(
                 "/chat",
@@ -501,12 +509,14 @@ class TestTheLiveControl:
             )
             assert steered.status_code == 202
             detail = await client.get(f"/conversations/{conversation_id}")
-            assert detail.json()["permission_level"] == "manual"
+            assert json_body(detail)["permission_level"] == "manual"
 
             hang.set()
-            await app.state.runs.get(first.json()["run_id"]).wait()
+            first_run = app_state(app, "runs", RunRegistry).get(s(json_body(first)["run_id"]))
+            assert first_run is not None
+            await first_run.wait()
 
-    async def test_a_rejected_send_leaves_the_level_alone(self, monkeypatch):
+    async def test_a_rejected_send_leaves_the_level_alone(self, monkeypatch: pytest.MonkeyPatch):
         """The other way a send gets no turn of its own: a busy thread answers 409 to a
         send carrying attachments, because steering is text-only."""
         hang, started = asyncio.Event(), asyncio.Event()
@@ -516,8 +526,8 @@ class TestTheLiveControl:
                 "/uploads", files={"file": ("note.txt", b"look at this", "text/plain")}
             )
             first = await client.post("/chat", json={"prompt": "hi", "permission_level": "manual"})
-            conversation_id = first.json()["conversation_id"]
-            await started.wait()
+            conversation_id = s(json_body(first)["conversation_id"])
+            _ = await started.wait()
 
             rejected = await client.post(
                 "/chat",
@@ -525,38 +535,43 @@ class TestTheLiveControl:
                     "prompt": "again",
                     "conversation_id": conversation_id,
                     "permission_level": "auto",
-                    "attachment_ids": [upload.json()["id"]],
+                    "attachment_ids": [json_body(upload)["id"]],
                 },
             )
             assert rejected.status_code == 409
             detail = await client.get(f"/conversations/{conversation_id}")
-            assert detail.json()["permission_level"] == "manual"
+            assert json_body(detail)["permission_level"] == "manual"
 
             hang.set()
-            await app.state.runs.get(first.json()["run_id"]).wait()
+            first_run = app_state(app, "runs", RunRegistry).get(s(json_body(first)["run_id"]))
+            assert first_run is not None
+            await first_run.wait()
 
-    async def test_an_unknown_level_is_refused_at_the_edge(self, monkeypatch):
+    async def test_an_unknown_level_is_refused_at_the_edge(self, monkeypatch: pytest.MonkeyPatch):
         patch_model_resolution(monkeypatch, output_text="ok")
         async with client_app() as (client, _app):
             resp = await client.post("/chat", json={"prompt": "hi", "permission_level": "root"})
             assert resp.status_code == 422
 
-    async def test_a_thread_with_no_plan_reports_none_rather_than_missing(self, monkeypatch):
+    async def test_a_thread_with_no_plan_reports_none_rather_than_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """ "This thread has no plan" is the ordinary state of nearly every thread, not a
         miss — so the backfill the panel reads answers `null` rather than 404, and the
         level stays exactly where the operator put it."""
         patch_model_resolution(monkeypatch, output_text="no plan here")
         async with client_app() as (client, _app):
             created = await client.post("/chat", json={"prompt": "hi", "permission_level": "plan"})
-            conversation_id = created.json()["conversation_id"]
-            await collect_sse_events(client, created.json()["run_id"])
+            conversation_id = s(json_body(created)["conversation_id"])
+            _ = await collect_sse_events(client, s(json_body(created)["run_id"]))
 
-            assert (await client.get(f"/conversations/{conversation_id}/plan")).json() is None
+            plan = await client.get(f"/conversations/{conversation_id}/plan")
+            assert parse_json(plan.content) is None
             detail = await client.get(f"/conversations/{conversation_id}")
-            assert detail.json()["permission_level"] == "plan"
+            assert json_body(detail)["permission_level"] == "plan"
 
 
-def _write_categories(calls: list[str]):
+def _write_categories(calls: list[str]) -> dict[str, FunctionToolset[RunDeps]]:
     """A category whose one tool classifies as a workspace write — and carries no marking
     of its own, so whether its call runs is entirely the level's answer."""
     toolset: FunctionToolset[RunDeps] = FunctionToolset()

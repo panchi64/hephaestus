@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import override
 
 import pytest
-from pydantic_ai.messages import ModelResponse, ToolCallPart
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 import agent.engine as engine
@@ -17,7 +17,7 @@ from runs import RunRegistry, RunStatus
 
 # --- LoopBreaker (unit) ------------------------------------------------------
 def _ask(
-    breaker: LoopBreaker, name: str, args: dict[str, Any], answer: object, call_id: str
+    breaker: LoopBreaker, name: str, args: dict[str, object], answer: object, call_id: str
 ) -> None:
     """One whole tool call: the guard's pre-check, then the answer it came back with."""
     breaker.check(name, args, call_id)
@@ -87,6 +87,7 @@ def test_an_unserializable_answer_is_still_compared():
     # Fingerprinting falls back to `repr`, so a result carrying an object json cannot
     # render is compared like anything else rather than crashing the guard.
     class Opaque:
+        @override
         def __repr__(self) -> str:
             return "<same>"
 
@@ -98,7 +99,7 @@ def test_an_unserializable_answer_is_still_compared():
 
 
 # --- Loop-breaker wired into a run -------------------------------------------
-async def test_run_blocks_when_loop_detected(monkeypatch):
+async def test_run_blocks_when_loop_detected(monkeypatch: pytest.MonkeyPatch):
     # threshold=1 trips on the first tool call — exercises the wiring end to end.
     monkeypatch.setattr(engine, "get_settings", lambda: Settings(loop_repeat_threshold=1))
     reg = RunRegistry()
@@ -117,9 +118,9 @@ async def test_run_blocks_when_loop_detected(monkeypatch):
 async def test_utility_judge_forwards_reasoning_off_settings():
     # The judge is background work that needn't reason: its model_settings (the
     # utility model's reasoning-off settings) must reach the model call.
-    captured: dict[str, Any] = {}
+    captured: dict[str, dict[str, object]] = {}
 
-    async def capture(messages, info):
+    async def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         captured["settings"] = dict(info.model_settings or {})
         tool = info.output_tools[0].name
         return ModelResponse(parts=[ToolCallPart(tool_name=tool, args={"ok": True})])
@@ -136,9 +137,9 @@ async def test_utility_judge_forwards_reasoning_off_settings():
 
 
 async def test_verifier_disabled_by_default():
-    calls = []
+    calls: list[tuple[str, str]] = []
 
-    async def judge(request, answer):
+    async def judge(request: str, answer: str) -> Verdict:
         calls.append((request, answer))
         return Verdict(ok=False, reason="should not run")
 
@@ -153,14 +154,14 @@ async def test_verifier_disabled_by_default():
     assert calls == []  # verify_enabled is False by default
 
 
-async def test_verifier_makes_one_corrective_attempt(monkeypatch):
+async def test_verifier_makes_one_corrective_attempt(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         engine, "get_settings", lambda: Settings(verify_enabled=True, verify_heuristic=False)
     )
     verdicts = [Verdict(ok=False, reason="missing the summary")]
-    seen = []
+    seen: list[str] = []
 
-    async def judge(request, answer):
+    async def judge(_request: str, answer: str) -> Verdict:
         seen.append(answer)
         return verdicts.pop(0) if verdicts else Verdict(ok=True)
 
@@ -179,12 +180,12 @@ async def test_verifier_makes_one_corrective_attempt(monkeypatch):
     assert notice.limit == "verify"
 
 
-async def test_verifier_accepts_a_good_answer(monkeypatch):
+async def test_verifier_accepts_a_good_answer(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         engine, "get_settings", lambda: Settings(verify_enabled=True, verify_heuristic=False)
     )
 
-    async def judge(request, answer):
+    async def judge(_request: str, _answer: str) -> Verdict:
         return Verdict(ok=True)
 
     reg = RunRegistry()
@@ -199,12 +200,12 @@ async def test_verifier_accepts_a_good_answer(monkeypatch):
     assert "limit.notice" not in types  # no re-attempt
 
 
-async def test_verifier_heuristic_skips_toolless_turn(monkeypatch):
+async def test_verifier_heuristic_skips_toolless_turn(monkeypatch: pytest.MonkeyPatch):
     # Default heuristic on: a chitchat turn that called no tools isn't judged.
     monkeypatch.setattr(engine, "get_settings", lambda: Settings(verify_enabled=True))
-    judged = []
+    judged: list[str] = []
 
-    async def judge(request, answer):
+    async def judge(_request: str, answer: str) -> Verdict:
         judged.append(answer)
         return Verdict(ok=False, reason="should not run")
 
@@ -219,13 +220,13 @@ async def test_verifier_heuristic_skips_toolless_turn(monkeypatch):
     assert judged == []  # no checkable artifact (no tool call) → judge skipped
 
 
-async def test_verifier_heuristic_off_judges_every_turn(monkeypatch):
+async def test_verifier_heuristic_off_judges_every_turn(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         engine, "get_settings", lambda: Settings(verify_enabled=True, verify_heuristic=False)
     )
-    judged = []
+    judged: list[str] = []
 
-    async def judge(request, answer):
+    async def judge(_request: str, answer: str) -> Verdict:
         judged.append(answer)
         return Verdict(ok=True)
 
