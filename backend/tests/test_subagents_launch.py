@@ -23,45 +23,54 @@ The things worth pinning are the ones that would quietly stop being true:
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import Callable
+from typing import cast
 from uuid import uuid4
 
 import pytest
+from fastapi import FastAPI
+from pydantic import TypeAdapter
 
+from core.container import ServiceContainer
+from routes.chat import compose_turn
+from runs import RunRegistry
 from services.agents import AgentDefinition, builtin_roster
-from services.settings_store import set_subagent_limit
+from services.conversations import ConversationStore
+from services.settings_store import SettingsStore, set_subagent_limit
 from services.subagent_store import SubagentStore
 from services.subagents import (
     SubagentLauncher,
     SubagentParent,
     SubagentUnavailableError,
 )
-from tests._helpers import client_app, patch_model_resolution
+from tests._helpers import app_state, client_app, patch_model_resolution
 
 EXPLORER = builtin_roster()["explorer"]
 WORKER = builtin_roster()["worker"]
 
 
-def _launcher(app) -> SubagentLauncher:
-    launcher = app.state.capabilities.get_optional(SubagentLauncher)
+def _launcher(app: FastAPI) -> SubagentLauncher:
+    launcher = app_state(app, "capabilities", ServiceContainer).get_optional(SubagentLauncher)
     assert launcher is not None, "the subagents manifest did not export its implementation"
     return launcher
 
 
-def _records(app) -> SubagentStore:
-    records = getattr(app.state, "subagent_records", None)
-    assert isinstance(records, SubagentStore), "the subagents manifest did not export its register"
-    return records
+def _records(app: FastAPI) -> SubagentStore:
+    return app_state(app, "subagent_records", SubagentStore)
 
 
-async def _settle(app, run_id: str) -> None:
+def _terminal_tasks(app: FastAPI) -> list[asyncio.Task[None]]:
+    return list(cast(set[asyncio.Task[None]], app_state(app, "run_terminal_tasks", set)))
+
+
+async def _settle(app: FastAPI, run_id: str) -> None:
     """Let the submitted run finish, *and* let the hooks that react to it finish too.
 
     A run's terminal hooks are background tasks, so awaiting the run alone leaves the wake
     — which settles the sub-agent's row — still in flight. A test that read the register
     there would be racing it.
     """
-    run = app.state.runs.get(run_id)
+    run = app_state(app, "runs", RunRegistry).get(run_id)
     assert run is not None
     if run.task is not None:
         await run.task
@@ -69,17 +78,17 @@ async def _settle(app, run_id: str) -> None:
     # snapshot taken the instant the task returns can still be empty, and a hook that
     # schedules nothing on its first pass may on its second.
     for _ in range(5):
-        pending = list(app.state.run_terminal_tasks)
+        pending = _terminal_tasks(app)
         if not pending:
             await asyncio.sleep(0)
-            if not app.state.run_terminal_tasks:
+            if not _terminal_tasks(app):
                 return
             continue
-        await asyncio.gather(*pending, return_exceptions=True)
+        _ = await asyncio.gather(*pending, return_exceptions=True)
 
 
 class TestLaunching:
-    async def test_returns_before_the_subagent_finishes(self, monkeypatch):
+    async def test_returns_before_the_subagent_finishes(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="what I found")
 
@@ -89,10 +98,10 @@ class TestLaunching:
 
             # THE assertion. A tool that awaited this would spend its whole turn here,
             # which is exactly what the blocking delegation did.
-            assert app.state.runs.get(started.run_id) is not None
+            assert app_state(app, "runs", RunRegistry).get(started.run_id) is not None
             await _settle(app, started.run_id)
 
-    async def test_the_task_is_what_names_the_thread(self, monkeypatch):
+    async def test_the_task_is_what_names_the_thread(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = await _launcher(app).launch(
@@ -100,13 +109,15 @@ class TestLaunching:
             )
             await _settle(app, started.run_id)
 
-            summary = await app.state.conversations.get_summary(started.conversation_id, "operator")
+            summary = await app_state(app, "conversations", ConversationStore).get_summary(
+                started.conversation_id, "operator"
+            )
             # Nobody wrote this thread's opening message, so without the task in its name
             # a card reads "Untitled" and the operator cannot tell it from its neighbours.
             assert summary is not None
             assert "find the parser" in (summary.title or "")
 
-    async def test_the_thread_is_hidden_but_readable(self, monkeypatch):
+    async def test_the_thread_is_hidden_but_readable(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = await _launcher(app).launch(
@@ -114,22 +125,26 @@ class TestLaunching:
             )
             await _settle(app, started.run_id)
 
-            listed = await app.state.conversations.list_conversations("operator")
+            listed = await app_state(app, "conversations", ConversationStore).list_conversations(
+                "operator"
+            )
             assert started.conversation_id not in {c.id for c in listed}
             # Hidden from the listing, and still a whole conversation — which is what the
             # panel opens when a card is expanded, and what keeps the transcript.
-            turns = await app.state.conversations.messages_view(started.conversation_id)
+            turns = await app_state(app, "conversations", ConversationStore).messages_view(
+                started.conversation_id
+            )
             assert [t.role for t in turns] == ["user", "assistant"]
 
-    async def test_an_empty_task_is_refused(self, monkeypatch):
+    async def test_an_empty_task_is_refused(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch)
             with pytest.raises(SubagentUnavailableError):
-                await _launcher(app).launch("operator", EXPLORER, "   ", handle="nothing-doer")
+                _ = await _launcher(app).launch("operator", EXPLORER, "   ", handle="nothing-doer")
 
 
 class TestWhatItMayDo:
-    async def test_it_never_reaches_further_than_its_parent(self, monkeypatch):
+    async def test_it_never_reaches_further_than_its_parent(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             # A worker's own ceiling is the mode's default; the parent is down at Manual.
@@ -142,11 +157,15 @@ class TestWhatItMayDo:
             )
             await _settle(app, started.run_id)
 
-            binding = await app.state.conversations.binding(started.conversation_id)
+            binding = await app_state(app, "conversations", ConversationStore).binding(
+                started.conversation_id
+            )
             # Otherwise one approved launch buys a standing level the operator never chose.
             assert binding.permission == "manual"
 
-    async def test_an_agent_that_may_not_delegate_is_not_offered_spawning(self, monkeypatch):
+    async def test_an_agent_that_may_not_delegate_is_not_offered_spawning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             composed = _capture_composition(monkeypatch)
@@ -157,9 +176,13 @@ class TestWhatItMayDo:
             await _settle(app, started.run_id)
 
             assert not EXPLORER.can_delegate
-            assert "agents_spawn" in composed["disabled_tools"]
+            assert "agents_spawn" in TypeAdapter(frozenset[str]).validate_python(
+                composed["disabled_tools"]
+            )
 
-    async def test_it_runs_in_the_lane_for_work_the_agent_opened_for_itself(self, monkeypatch):
+    async def test_it_runs_in_the_lane_for_work_the_agent_opened_for_itself(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             composed = _capture_composition(monkeypatch)
@@ -176,7 +199,9 @@ class TestWhatItMayDo:
             # cannot end a run that keeps streaming tokens.
             assert composed["wall_clock_timeout_s"]
 
-    async def test_a_spec_needing_a_withheld_tool_refuses_rather_than_pretends(self, monkeypatch):
+    async def test_a_spec_needing_a_withheld_tool_refuses_rather_than_pretends(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch)
             impossible = AgentDefinition(
@@ -188,7 +213,9 @@ class TestWhatItMayDo:
             # It may not delegate, so `agents_spawn` is withheld from it — and an agent that
             # ran anyway would answer from model memory as though it had done the work.
             with pytest.raises(SubagentUnavailableError, match="agents_spawn"):
-                await _launcher(app).launch("operator", impossible, "go", handle="the-impossible")
+                _ = await _launcher(app).launch(
+                    "operator", impossible, "go", handle="the-impossible"
+                )
 
 
 class TestItsHandle:
@@ -201,7 +228,9 @@ class TestItsHandle:
     all be named by without any of them disagreeing.
     """
 
-    async def test_it_is_normalised_by_the_rule_agent_files_are_read_under(self, monkeypatch):
+    async def test_it_is_normalised_by_the_rule_agent_files_are_read_under(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = await _launcher(app).launch(
@@ -214,13 +243,15 @@ class TestItsHandle:
             # than the identifier meant exactly one thing.
             assert started.handle == "helper-function-finder"
 
-    async def test_a_handle_that_is_not_a_name_is_refused(self, monkeypatch):
+    async def test_a_handle_that_is_not_a_name_is_refused(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch)
             with pytest.raises(SubagentUnavailableError, match="not a usable agent name"):
-                await _launcher(app).launch("operator", EXPLORER, "find it", handle="find it!!")
+                _ = await _launcher(app).launch("operator", EXPLORER, "find it", handle="find it!!")
 
-    async def test_a_launch_naming_nothing_takes_its_specs_name(self, monkeypatch):
+    async def test_a_launch_naming_nothing_takes_its_specs_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = await _launcher(app).launch("operator", EXPLORER, "find it", handle="")
@@ -230,7 +261,9 @@ class TestItsHandle:
             # is one answer to "what is this sub-agent called" rather than two.
             assert started.handle == "explorer"
 
-    async def test_a_clash_inside_a_thread_is_suffixed_rather_than_refused(self, monkeypatch):
+    async def test_a_clash_inside_a_thread_is_suffixed_rather_than_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             parent = SubagentParent(conversation_id="parent-handles")
@@ -255,7 +288,9 @@ class TestItsHandle:
             for one in (first, second, third):
                 await _settle(app, one.run_id)
 
-    async def test_a_handle_taken_by_a_finished_sub_agent_is_still_taken(self, monkeypatch):
+    async def test_a_handle_taken_by_a_finished_sub_agent_is_still_taken(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             parent = SubagentParent(conversation_id="parent-handles-2")
@@ -274,7 +309,9 @@ class TestItsHandle:
             # handle would silently redirect that read to different work.
             assert second.handle == "looker-2"
 
-    async def test_launches_in_the_same_step_do_not_take_the_same_handle(self, monkeypatch):
+    async def test_launches_in_the_same_step_do_not_take_the_same_handle(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """The case the suffix exists for, launched the way it actually happens.
 
         A fan-out is parallel tool calls, and a launch does not write its row until a whole
@@ -306,7 +343,7 @@ class TestItsHandle:
             for one in started:
                 await _settle(app, one.run_id)
 
-    async def test_two_threads_may_each_have_a_looker(self, monkeypatch):
+    async def test_two_threads_may_each_have_a_looker(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             mine = await _launcher(app).launch(
@@ -331,7 +368,7 @@ class TestItsHandle:
             for one in (mine, theirs):
                 await _settle(app, one.run_id)
 
-    async def test_the_handle_is_what_names_the_thread(self, monkeypatch):
+    async def test_the_handle_is_what_names_the_thread(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = await _launcher(app).launch(
@@ -339,7 +376,9 @@ class TestItsHandle:
             )
             await _settle(app, started.run_id)
 
-            summary = await app.state.conversations.get_summary(started.conversation_id, "operator")
+            summary = await app_state(app, "conversations", ConversationStore).get_summary(
+                started.conversation_id, "operator"
+            )
             assert summary is not None
             # Three `explorer`s produce three titles that differ only in whatever survives
             # the width; three handles differ in the first word.
@@ -347,7 +386,9 @@ class TestItsHandle:
 
 
 class TestTheRegister:
-    async def test_a_launch_is_recorded_so_the_transcript_stays_reachable(self, monkeypatch):
+    async def test_a_launch_is_recorded_so_the_transcript_stays_reachable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="what I found")
             started = await _launcher(app).launch(
@@ -389,7 +430,7 @@ class TestTheRegister:
                 delegation_id=None,
             )
 
-            await records.reconcile_stranded()
+            _ = await records.reconcile_stranded()
 
             # The count is deliberately not asserted: the pass is global, so it reflects
             # whatever else the suite has left lying around. What matters is what happened
@@ -404,7 +445,9 @@ class TestTheRegister:
 
 
 class TestTheCap:
-    async def test_there_is_no_limit_until_the_operator_sets_one(self, monkeypatch):
+    async def test_there_is_no_limit_until_the_operator_sets_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = [
@@ -420,16 +463,20 @@ class TestTheCap:
             for one in started:
                 await _settle(app, one.run_id)
 
-    async def test_a_launch_over_the_cap_is_refused_with_something_to_do_instead(self, monkeypatch):
+    async def test_a_launch_over_the_cap_is_refused_with_something_to_do_instead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            await set_subagent_limit(app.state.settings_store, "operator", 1)
+            _ = await set_subagent_limit(
+                app_state(app, "settings_store", SettingsStore), "operator", 1
+            )
             first = await _launcher(app).launch(
                 "operator", EXPLORER, "look here", handle="here-looker"
             )
 
             with pytest.raises(SubagentUnavailableError) as refused:
-                await _launcher(app).launch(
+                _ = await _launcher(app).launch(
                     "operator", EXPLORER, "look there", handle="there-looker"
                 )
 
@@ -438,10 +485,12 @@ class TestTheCap:
             assert "finishes" in str(refused.value)
             await _settle(app, first.run_id)
 
-    async def test_a_finished_subagent_gives_its_slot_back(self, monkeypatch):
+    async def test_a_finished_subagent_gives_its_slot_back(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            await set_subagent_limit(app.state.settings_store, "operator", 1)
+            _ = await set_subagent_limit(
+                app_state(app, "settings_store", SettingsStore), "operator", 1
+            )
             first = await _launcher(app).launch(
                 "operator", EXPLORER, "look here", handle="here-looker"
             )
@@ -454,10 +503,14 @@ class TestTheCap:
             )
             await _settle(app, second.run_id)
 
-    async def test_nothing_is_created_for_a_launch_that_is_refused(self, monkeypatch):
+    async def test_nothing_is_created_for_a_launch_that_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            await set_subagent_limit(app.state.settings_store, "operator", 1)
+            _ = await set_subagent_limit(
+                app_state(app, "settings_store", SettingsStore), "operator", 1
+            )
             first = await _launcher(app).launch(
                 "operator",
                 EXPLORER,
@@ -467,7 +520,7 @@ class TestTheCap:
             )
 
             with pytest.raises(SubagentUnavailableError):
-                await _launcher(app).launch(
+                _ = await _launcher(app).launch(
                     "operator",
                     EXPLORER,
                     "look there",
@@ -483,7 +536,9 @@ class TestTheCap:
 
 
 class TestIsolation:
-    async def test_sharing_puts_the_subagent_in_the_parents_workspace(self, monkeypatch):
+    async def test_sharing_puts_the_subagent_in_the_parents_workspace(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = await _launcher(app).launch(
@@ -501,7 +556,9 @@ class TestIsolation:
             assert row.workspace_key == "parent-1"
             assert row.delegation_id is None
 
-    async def test_isolating_gives_it_a_delegated_key_of_its_own(self, monkeypatch):
+    async def test_isolating_gives_it_a_delegated_key_of_its_own(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = await _launcher(app).launch(
@@ -522,7 +579,7 @@ class TestIsolation:
             assert row.workspace_key.startswith("parent-1/")
             assert row.delegation_id is not None
 
-    async def test_isolation_only_ever_increases(self, monkeypatch):
+    async def test_isolation_only_ever_increases(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             apart = AgentDefinition(
@@ -548,20 +605,20 @@ class TestIsolation:
             assert row.workspace_policy == "isolated"
 
 
-def _capture_composition(monkeypatch) -> dict[str, Any]:
+def _capture_composition(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """The arguments the sub-agent's turn was actually composed with.
 
     Wrapping the real `compose_turn` rather than replacing it: the turn still runs, so
     these stay tests of a sub-agent that works rather than of a call that was made.
     """
-    from harness.manifests import _subagents
-
-    seen: dict[str, Any] = {}
-    real = _subagents.compose_turn
-
-    def capture(**kwargs):
-        seen.update(kwargs)
-        return real(**kwargs)
-
-    monkeypatch.setattr(_subagents, "compose_turn", capture)
+    seen: dict[str, object] = {}
+    monkeypatch.setattr("harness.manifests._subagents.compose_turn", _recording(compose_turn, seen))
     return seen
+
+
+def _recording[**P, R](real: Callable[P, R], seen: dict[str, object]) -> Callable[P, R]:
+    def capture(*args: P.args, **kwargs: P.kwargs) -> R:
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    return capture
