@@ -75,5 +75,5 @@ class TestParsingTools:
         assert agent.tools.deny == frozenset()
 
     @pytest.mark.parametrize("raw", ["", "tools:\n"])
-    def test_no_tools_means_unrestricted(self, raw):
+    def test_no_tools_means_unrestricted(self, raw: str):
         assert parse_agent_file(_file(raw), name="scout").tools == ToolAccess()

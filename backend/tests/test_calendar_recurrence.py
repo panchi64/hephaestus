@@ -241,7 +241,7 @@ def test_next_occurrence_skips_the_past_and_bounds_its_search():
 
 def test_unknown_time_zone_is_rejected():
     with pytest.raises(ValueError):
-        expand(
+        _ = expand(
             starts_at=datetime(2026, 6, 1, tzinfo=UTC),
             ends_at=datetime(2026, 6, 1, 1, tzinfo=UTC),
             timezone="Mars/Olympus_Mons",
@@ -277,13 +277,13 @@ async def test_crud_round_trip_and_sealed_content():
 
     await service.delete_event(OWNER, event.id)
     with pytest.raises(NotFoundError):
-        await service.get_event(OWNER, event.id)
+        _ = await service.get_event(OWNER, event.id)
 
 
 async def test_content_is_encrypted_at_rest():
     service = await _service()
     calendar = await service.create_calendar(OWNER, "Private")
-    await service.create_event(
+    _ = await service.create_event(
         OWNER,
         calendar.id,
         title="Divorce lawyer",
@@ -307,13 +307,13 @@ async def test_another_owner_cannot_reach_the_event():
         OWNER, calendar.id, title="Standup", starts_at=datetime(2026, 6, 9, 9, tzinfo=UTC)
     )
     with pytest.raises(NotFoundError):
-        await service.get_event("someone-else", event.id)
+        _ = await service.get_event("someone-else", event.id)
 
 
 async def test_occurrences_expand_a_series_inside_the_window():
     service = await _service()
     calendar = await service.create_calendar(OWNER, "Work")
-    await service.create_event(
+    _ = await service.create_event(
         OWNER,
         calendar.id,
         title="Standup",
@@ -343,7 +343,7 @@ async def test_cancelling_one_occurrence_leaves_the_series_intact():
         ends_at=datetime(2026, 6, 1, 9, 15, tzinfo=UTC),
         rrule="FREQ=DAILY;COUNT=3",
     )
-    await service.cancel_occurrence(OWNER, event.id, datetime(2026, 6, 2, 9, 0, tzinfo=UTC))
+    _ = await service.cancel_occurrence(OWNER, event.id, datetime(2026, 6, 2, 9, 0, tzinfo=UTC))
 
     found = await service.occurrences(
         OWNER, datetime(2026, 6, 1, tzinfo=UTC), datetime(2026, 6, 10, tzinfo=UTC)
@@ -359,7 +359,7 @@ async def test_cancelling_a_non_recurring_event_is_rejected():
         OWNER, calendar.id, title="One-off", starts_at=datetime(2026, 6, 1, 9, tzinfo=UTC)
     )
     with pytest.raises(ValueError):
-        await service.cancel_occurrence(OWNER, event.id, datetime(2026, 6, 1, 9, tzinfo=UTC))
+        _ = await service.cancel_occurrence(OWNER, event.id, datetime(2026, 6, 1, 9, tzinfo=UTC))
 
 
 async def test_all_day_span_is_floored_to_exclusive_utc_midnights():
@@ -390,7 +390,7 @@ async def test_an_unparseable_rule_is_rejected_at_write_time():
     service = await _service()
     calendar = await service.create_calendar(OWNER, "Personal")
     with pytest.raises(ValueError):
-        await service.create_event(
+        _ = await service.create_event(
             OWNER,
             calendar.id,
             title="Nonsense",
@@ -424,7 +424,7 @@ async def test_changing_the_rule_clears_stale_cancellations():
         starts_at=datetime(2026, 6, 1, 9, tzinfo=UTC),
         rrule="FREQ=DAILY",
     )
-    await service.cancel_occurrence(OWNER, event.id, datetime(2026, 6, 2, 9, tzinfo=UTC))
+    _ = await service.cancel_occurrence(OWNER, event.id, datetime(2026, 6, 2, 9, tzinfo=UTC))
     assert (await service.get_event(OWNER, event.id)).exdates
 
     updated = await service.update_event(OWNER, event.id, rrule="FREQ=WEEKLY")
@@ -434,7 +434,7 @@ async def test_changing_the_rule_clears_stale_cancellations():
 async def test_deleting_a_calendar_takes_its_events_with_it():
     service = await _service()
     calendar = await service.create_calendar(OWNER, "Scratch")
-    await service.create_event(
+    _ = await service.create_event(
         OWNER, calendar.id, title="Gone", starts_at=datetime(2026, 6, 1, 9, tzinfo=UTC)
     )
     await service.delete_calendar(OWNER, calendar.id)
@@ -444,14 +444,14 @@ async def test_deleting_a_calendar_takes_its_events_with_it():
 async def test_upcoming_returns_one_next_hit_per_event_in_order():
     service = await _service()
     calendar = await service.create_calendar(OWNER, "Work")
-    await service.create_event(
+    _ = await service.create_event(
         OWNER,
         calendar.id,
         title="Daily",
         starts_at=datetime(2026, 6, 1, 9, tzinfo=UTC),
         rrule="FREQ=DAILY",
     )
-    await service.create_event(
+    _ = await service.create_event(
         OWNER, calendar.id, title="One-off", starts_at=datetime(2026, 6, 1, 15, tzinfo=UTC)
     )
 
@@ -485,4 +485,4 @@ async def test_credentials_for_a_local_calendar_are_rejected():
     service = await _service()
     calendar = await service.create_calendar(OWNER, "Local only")
     with pytest.raises(ValueError):
-        await service.caldav_credentials(OWNER, calendar.id)
+        _ = await service.caldav_credentials(OWNER, calendar.id)

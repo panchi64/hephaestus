@@ -4,6 +4,7 @@ A message that reaches an agent able to write from across or below asks first.""
 from __future__ import annotations
 
 import pytest
+from pydantic import JsonValue, TypeAdapter
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.models.test import TestModel
@@ -17,6 +18,9 @@ from services.subagents import Recipient, SubagentLauncher
 from tools.agents import agents_toolset
 from tools.deps import RunDeps
 
+from ._json import obj
+
+_JSON = TypeAdapter(JsonValue)
 OWNER = "operator"
 
 RECIPIENTS = {
@@ -32,10 +36,10 @@ class FakeLauncher:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
 
-    async def recipient(self, owner_id: str, conversation_id: str, to: str) -> Recipient:
+    async def recipient(self, _owner_id: str, _conversation_id: str, to: str) -> Recipient:
         return RECIPIENTS[to]
 
-    async def message(self, owner_id: str, conversation_id: str, to: str, text: str) -> str:
+    async def message(self, _owner_id: str, _conversation_id: str, to: str, text: str) -> str:
         self.sent.append((to, text))
         return RECIPIENTS[to].label
 
@@ -53,14 +57,20 @@ def _ctx(launcher: FakeLauncher, *, approved: bool = False) -> RunContext[RunDep
     return ctx
 
 
-async def _message(ctx: RunContext[RunDeps], to: str) -> dict[str, object]:
+async def _message(ctx: RunContext[RunDeps], to: str) -> dict[str, JsonValue]:
     toolset = agents_toolset()
     tools = await toolset.get_tools(ctx)
-    return await toolset.call_tool("message", {"to": to, "text": "found it"}, ctx, tools["message"])
+    return obj(
+        _JSON.validate_python(
+            await toolset.call_tool(
+                "message", {"to": to, "text": "found it"}, ctx, tools["message"]
+            )
+        )
+    )
 
 
 @pytest.mark.parametrize("to", ["parent", "lead", "reader"])
-async def test_up_the_tree_or_to_a_read_only_agent_goes_unasked(to):
+async def test_up_the_tree_or_to_a_read_only_agent_goes_unasked(to: str):
     launcher = FakeLauncher()
     result = await _message(_ctx(launcher), to)
     assert result == {"sent": True, "to": RECIPIENTS[to].label}
@@ -68,10 +78,10 @@ async def test_up_the_tree_or_to_a_read_only_agent_goes_unasked(to):
 
 
 @pytest.mark.parametrize("to", ["fixer", "gone"])
-async def test_across_or_down_to_an_agent_that_can_write_asks_first(to):
+async def test_across_or_down_to_an_agent_that_can_write_asks_first(to: str):
     launcher = FakeLauncher()
     with pytest.raises(ApprovalRequired):
-        await _message(_ctx(launcher), to)
+        _ = await _message(_ctx(launcher), to)
     assert launcher.sent == []
 
 

@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 from agent.injections import contributor_id
 from runs import Run, RunStream
-from services.agents import DEFAULT_AGENT, AgentCatalog, AgentDefinition, ToolAccess
+from services.agents import (
+    DEFAULT_AGENT,
+    UNRESTRICTED,
+    AgentCatalog,
+    AgentDefinition,
+    ToolAccess,
+)
 from services.agents.thread import DELEGATION_TOOLS, as_thread, resolve_thread_agent
 from services.conversations import ConversationBinding
 from services.permissions import PermissionLevel
@@ -18,8 +26,21 @@ from tools.plan import _retarget
 from ._agent_helpers import OWNER, agent_values, make_stores
 
 
-def _agent(**more) -> AgentDefinition:
-    return AgentDefinition(name="a", description="An agent.", **more)
+def _agent(
+    *,
+    permission_ceiling: str | None = None,
+    tools: ToolAccess = UNRESTRICTED,
+    can_delegate: bool = False,
+    instructions: str = "",
+) -> AgentDefinition:
+    return AgentDefinition(
+        name="a",
+        description="An agent.",
+        permission_ceiling=permission_ceiling,
+        tools=tools,
+        can_delegate=can_delegate,
+        instructions=instructions,
+    )
 
 
 def test_the_ceiling_lowers_the_threads_level():
@@ -60,9 +81,9 @@ async def test_the_brief_provider_returns_the_instructions():
     assert await provider(None) == "Be brief."
 
 
-async def test_a_thread_resolves_its_named_agent(tmp_path):
+async def test_a_thread_resolves_its_named_agent(tmp_path: Path):
     store, _ = await make_stores(tmp_path)
-    await store.create(OWNER, agent_values("live", permission_ceiling="plan"), published=True)
+    _ = await store.create(OWNER, agent_values("live", permission_ceiling="plan"), published=True)
     catalog = AgentCatalog(store)
 
     named = await resolve_thread_agent(

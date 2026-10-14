@@ -52,4 +52,4 @@ def test_repeated_tokens_get_distinct_offsets():
 
 def test_overlap_must_be_smaller_than_window():
     with pytest.raises(ValueError):
-        chunk_text("a b c", window=4, overlap=4)
+        _ = chunk_text("a b c", window=4, overlap=4)

@@ -11,14 +11,18 @@ from __future__ import annotations
 
 import json
 
+from pydantic import JsonValue
+from sqlalchemy import Engine
+
 from core.db import in_session
 from models.external_tool import McpServer
 
-from ._helpers import client_app
+from ._helpers import app_state, client_app
+from ._json import json_body, json_list, obj, s
 
 
-def _names(body) -> set[str]:
-    return {row["name"] for row in body}
+def _names(body: list[JsonValue]) -> set[str]:
+    return {s(obj(row)["name"]) for row in body}
 
 
 async def test_statically_marked_tools_are_scopes():
@@ -26,7 +30,7 @@ async def test_statically_marked_tools_are_scopes():
     vocabulary the day it lands in the catalog — mail send/reply and the vault reads were
     all missing from the constant this replaced."""
     async with client_app() as (client, _app):
-        body = (await client.get("/tools/approval-scopes")).json()
+        body = json_list(await client.get("/tools/approval-scopes"))
     names = _names(body)
     assert {
         "code_run_host_command",
@@ -44,7 +48,7 @@ async def test_once_only_tools_are_not_scopes():
     checkbox on the task form that stores a scope the fire silently drops — so it is
     absent from the vocabulary and refused on write, the same way a typo is."""
     async with client_app() as (client, _app):
-        names = _names((await client.get("/tools/approval-scopes")).json())
+        names = _names(json_list(await client.get("/tools/approval-scopes")))
         assert "code_request_egress" not in names
         resp = await client.post(
             "/tasks",
@@ -58,15 +62,15 @@ async def test_once_only_tools_are_not_scopes():
             },
         )
     assert resp.status_code == 422
-    assert "code_request_egress" in resp.json()["detail"]
+    assert "code_request_egress" in s(json_body(resp)["detail"])
 
 
 async def test_conditionally_gated_tools_are_scopes():
     """The gates that fire from inside the call can't be discovered by inspection, so
     they're listed explicitly — but every name must still resolve to a real tool."""
     async with client_app() as (client, _app):
-        body = (await client.get("/tools/approval-scopes")).json()
-        catalog = {t["name"] for t in (await client.get("/tools")).json()}
+        body = json_list(await client.get("/tools/approval-scopes"))
+        catalog = {s(obj(t)["name"]) for t in json_list(await client.get("/tools"))}
     names = _names(body)
     assert "platform_search" in names
     assert names <= catalog | {n for n in names if n.startswith("external_")}
@@ -76,7 +80,7 @@ async def test_ungated_tools_are_not_scopes():
     """The vocabulary is the tools that can *pause* a run — pre-authorizing something
     that never asks would be a checkbox that grants nothing."""
     async with client_app() as (client, _app):
-        body = (await client.get("/tools/approval-scopes")).json()
+        body = json_list(await client.get("/tools/approval-scopes"))
     names = _names(body)
     ungated_names = (
         "builtin_now",
@@ -103,7 +107,7 @@ async def test_external_tools_appear_as_scopes_and_validate():
         # lock that keeps this write from interleaving with a background drainer's
         # (a raw session's BEGIN can land inside another thread's open transaction).
         await in_session(
-            app.state.db_engine,
+            app_state(app, "db_engine", Engine),
             lambda session: session.add(
                 McpServer(
                     owner_id="operator",
@@ -119,7 +123,7 @@ async def test_external_tools_appear_as_scopes_and_validate():
             ),
         )
 
-        names = _names((await client.get("/tools/approval-scopes")).json())
+        names = _names(json_list(await client.get("/tools/approval-scopes")))
         assert "external_ticket_desk_close_ticket" in names
 
         created = await client.post(
@@ -134,7 +138,7 @@ async def test_external_tools_appear_as_scopes_and_validate():
             },
         )
         assert created.status_code == 201, created.text
-        assert created.json()["preAuthorized"] == ["external_ticket_desk_close_ticket"]
+        assert json_body(created)["preAuthorized"] == ["external_ticket_desk_close_ticket"]
 
 
 async def test_unknown_scope_is_still_rejected():
@@ -153,5 +157,5 @@ async def test_unknown_scope_is_still_rejected():
             },
         )
     assert resp.status_code == 422
-    assert "external_nope_do_it" in resp.json()["detail"]
-    assert "mail_read" in resp.json()["detail"]
+    assert "external_nope_do_it" in s(json_body(resp)["detail"])
+    assert "mail_read" in s(json_body(resp)["detail"])

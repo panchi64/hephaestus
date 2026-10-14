@@ -40,7 +40,7 @@ async def test_round_trip_is_lossless_for_every_field_we_model():
         location="Zoom",
         rrule="FREQ=WEEKLY;BYDAY=MO;COUNT=6",
     )
-    await service.cancel_occurrence(
+    _ = await service.cancel_occurrence(
         OWNER, original.id, datetime(2026, 6, 15, 14, 0, tzinfo=MADRID).astimezone(UTC)
     )
     original = await service.get_event(OWNER, original.id)
@@ -68,7 +68,7 @@ async def test_round_trip_is_lossless_for_every_field_we_model():
 async def test_all_day_round_trips_as_dates_and_keeps_its_day():
     service = await _service()
     calendar = await service.create_calendar(OWNER, "Personal")
-    await service.create_event(
+    _ = await service.create_event(
         OWNER,
         calendar.id,
         title="On-call",
@@ -84,7 +84,7 @@ async def test_all_day_round_trips_as_dates_and_keeps_its_day():
 
     other = await _service()
     target = await other.create_calendar(OWNER, "Imported")
-    await import_into(other, OWNER, target.id, document)
+    _ = await import_into(other, OWNER, target.id, document)
     imported = (await other.list_events(OWNER, target.id))[0]
     assert imported.all_day is True
     assert imported.starts_at == datetime(2026, 6, 9, tzinfo=UTC)
@@ -110,7 +110,7 @@ async def test_timed_events_are_written_with_their_tzid_not_flattened_to_utc():
 async def test_reimporting_the_same_file_updates_instead_of_duplicating():
     service = await _service()
     calendar = await service.create_calendar(OWNER, "Work")
-    await service.create_event(
+    _ = await service.create_event(
         OWNER,
         calendar.id,
         title="Standup",
@@ -258,7 +258,7 @@ END:VCALENDAR
 
 async def test_an_unreadable_document_is_rejected():
     with pytest.raises(ValueError):
-        parse_ics("this is not a calendar at all")
+        _ = parse_ics("this is not a calendar at all")
 
 
 async def test_export_names_the_calendar():

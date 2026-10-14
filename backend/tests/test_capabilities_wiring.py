@@ -20,10 +20,11 @@ import importlib
 import pkgutil
 from pathlib import Path
 
+from core.container import ServiceContainer
 from services.plugins import PluginRuntime
 from services.sandbox import SandboxSessionManager
 from services.vm.project import ProjectCopies
-from tests._helpers import client_app
+from tests._helpers import app_state, client_app
 
 _BACKEND = Path(__file__).resolve().parents[1]
 
@@ -90,7 +91,7 @@ async def test_every_bag_lookup_is_assembled() -> None:
     )
 
     async with client_app() as (_, app):
-        bag = app.state.capabilities
+        bag = app_state(app, "capabilities", ServiceContainer)
         missing = {
             f"{t.__name__} (looked up by {module})"
             for t, module in lookups.items()

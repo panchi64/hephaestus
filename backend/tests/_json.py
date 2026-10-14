@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import httpx
-from pydantic import JsonValue, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 _JSON = TypeAdapter(JsonValue)
 
@@ -43,6 +43,11 @@ def b(v: JsonValue) -> bool:
     """``v`` as a boolean."""
     assert isinstance(v, bool), f"expected a JSON boolean, got {v!r}"
     return v
+
+
+def dump(model: BaseModel) -> dict[str, JsonValue]:
+    """``model`` as a JSON object, so an ``Any`` field is read as ``JsonValue``."""
+    return obj(parse_json(model.model_dump_json()))
 
 
 def json_body(resp: httpx.Response) -> dict[str, JsonValue]:

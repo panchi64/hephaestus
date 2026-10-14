@@ -11,8 +11,10 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
-from pydantic_ai import ModelResponse, ToolCallPart
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.settings import ModelSettings
 
 from core.exceptions import DegradedCapabilityError
 from services.calendar.nl import CalendarNaturalLanguage
@@ -21,21 +23,23 @@ MADRID = ZoneInfo("Europe/Madrid")
 NOW = datetime(2026, 6, 10, 9, 0, tzinfo=UTC)  # a Wednesday
 
 
-def _model(**fields):
+def _model(**fields: str | bool) -> tuple[FunctionModel, dict[str, str]]:
     """A model that always answers with ``fields`` as its structured output, and records
     the prompt it was given."""
     seen: dict[str, str] = {}
 
-    async def respond(messages, info):
-        seen["prompt"] = str(messages[-1].parts[-1].content)
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        part = messages[-1].parts[-1]
+        assert isinstance(part, UserPromptPart)
+        seen["prompt"] = str(part.content)
         tool = info.output_tools[0].name
-        return ModelResponse(parts=[ToolCallPart(tool_name=tool, args=fields)])
+        return ModelResponse(parts=[ToolCallPart(tool_name=tool, args=dict(fields))])
 
     return FunctionModel(respond), seen
 
 
-def _parser(model) -> CalendarNaturalLanguage:
-    async def resolve():
+def _parser(model: FunctionModel) -> CalendarNaturalLanguage:
+    async def resolve() -> tuple[Model, ModelSettings | None]:
         return model, None
 
     return CalendarNaturalLanguage(resolve_model=resolve)
@@ -121,7 +125,7 @@ async def test_blank_optional_fields_come_back_as_none():
 
 async def test_the_prompt_carries_now_and_the_zone_so_relative_dates_resolve():
     model, seen = _model(title="Lunch", starts_at="2026-06-12T13:00:00")
-    await _parser(model).parse("lunch Friday 1pm", timezone="Europe/Madrid", now=NOW)
+    _ = await _parser(model).parse("lunch Friday 1pm", timezone="Europe/Madrid", now=NOW)
 
     assert "2026-06-10T11:00:00" in seen["prompt"]  # 09:00 UTC rendered in Madrid
     assert "Wednesday" in seen["prompt"]
@@ -132,28 +136,28 @@ async def test_the_prompt_carries_now_and_the_zone_so_relative_dates_resolve():
 async def test_an_empty_phrase_is_rejected():
     model, _ = _model(title="x", starts_at="2026-06-12T13:00:00")
     with pytest.raises(ValueError):
-        await _parser(model).parse("   ", timezone="UTC", now=NOW)
+        _ = await _parser(model).parse("   ", timezone="UTC", now=NOW)
 
 
 async def test_an_unknown_zone_is_rejected():
     model, _ = _model(title="x", starts_at="2026-06-12T13:00:00")
     with pytest.raises(ValueError):
-        await _parser(model).parse("lunch", timezone="Mars/Olympus_Mons", now=NOW)
+        _ = await _parser(model).parse("lunch", timezone="Mars/Olympus_Mons", now=NOW)
 
 
 async def test_no_utility_model_degrades_rather_than_guessing():
-    async def resolve():
+    async def resolve() -> tuple[Model, ModelSettings | None]:
         raise RuntimeError("no utility role bound")
 
     parser = CalendarNaturalLanguage(resolve_model=resolve)
     with pytest.raises(DegradedCapabilityError):
-        await parser.parse("lunch Friday 1pm", timezone="UTC", now=NOW)
+        _ = await parser.parse("lunch Friday 1pm", timezone="UTC", now=NOW)
 
 
 async def test_a_model_error_degrades_rather_than_guessing():
-    async def broken(messages, info):
+    async def broken(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise RuntimeError("the model fell over")
 
     parser = _parser(FunctionModel(broken))
     with pytest.raises(DegradedCapabilityError):
-        await parser.parse("lunch Friday 1pm", timezone="UTC", now=NOW)
+        _ = await parser.parse("lunch Friday 1pm", timezone="UTC", now=NOW)

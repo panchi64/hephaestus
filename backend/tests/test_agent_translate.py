@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic_ai import Agent, FunctionToolResultEvent, RetryPromptPart
+from pydantic_ai import Agent, FunctionToolResultEvent, RetryPromptPart, RunContext
 from pydantic_ai.models.test import TestModel
 
 from agent import stream_agent_run
@@ -13,6 +13,7 @@ from runs import Run, RunStream, ToolCompleted, ToolFailed, ToolStarted, ViewLiv
 from tools.emit import RunEventEmitted
 
 from ._helpers import first_body
+from ._json import dump, n, obj
 
 
 def _run() -> Run:
@@ -44,7 +45,8 @@ async def test_translates_steps_text_and_tool_calls():
     assert set(started.args) == {"a", "b"}
 
     completed = first_body(run, ToolCompleted)
-    assert completed.result == started.args["a"] + started.args["b"]
+    args = obj(dump(started)["args"])
+    assert dump(completed)["result"] == n(args["a"]) + n(args["b"])
 
     answer = "".join(b.text for b in _bodies(run) if b.type == "answer.delta")
     assert answer == "all done"
@@ -111,8 +113,8 @@ async def test_a_tool_puts_its_own_news_on_the_stream():
     agent = Agent(TestModel(custom_output_text="done"))
 
     @agent.tool
-    async def announce(ctx, note: str) -> str:
-        await ctx.emit(RunEventEmitted(body=ViewLiveStopped(conversation_id=note)))
+    async def announce(ctx: RunContext[object], note: str) -> str:
+        _ = await ctx.emit(RunEventEmitted(body=ViewLiveStopped(conversation_id=note)))
         return "ok"
 
     run = _run()
@@ -140,7 +142,7 @@ async def test_the_capabilities_need_nothing_of_ours_to_report():
         TestModel(custom_output_text="done"),
         capabilities=[MeasureOverhead(), AnnounceInjections()],
     )
-    agent.instructions(name="repo")(repo_instructions)
+    _ = agent.instructions(name="repo")(repo_instructions)
 
     run = _run()
     async with agent.iter("go") as agent_run:
@@ -191,7 +193,7 @@ async def test_a_scripts_calls_carry_the_script_that_made_them():
         "s__1",
         {"query": "q"},
     )
-    assert (completed.type, completed.result) == ("tool.completed", {"hits": 1})
+    assert (completed.type, dump(completed)["result"]) == ("tool.completed", {"hits": 1})
     assert (failed.type, failed.error) == ("tool.failed", "nope")
     assert {b.parent_tool_call_id for b in (started, completed, failed)} == {"s"}
 

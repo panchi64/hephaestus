@@ -8,10 +8,11 @@ bubblewrap.
 from __future__ import annotations
 
 import subprocess
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from pydantic import JsonValue, TypeAdapter
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
@@ -30,6 +31,7 @@ from tools.deps import RunDeps
 from .vm_local import local_vm
 
 OWNER = "operator"
+_JSON = TypeAdapter(JsonValue)
 
 
 def git(root: Path, *args: str) -> str:
@@ -40,29 +42,31 @@ def git(root: Path, *args: str) -> str:
 
 def make_repo(root: Path) -> Path:
     root.mkdir(parents=True)
-    git(root, "init", "-q", "-b", "main")
-    git(root, "config", "user.name", "Operator")
-    git(root, "config", "user.email", "op@example.com")
-    (root / "hello.txt").write_text("original\n")
-    git(root, "add", ".")
-    git(root, "commit", "-q", "-m", "first")
+    _ = git(root, "init", "-q", "-b", "main")
+    _ = git(root, "config", "user.name", "Operator")
+    _ = git(root, "config", "user.email", "op@example.com")
+    _ = (root / "hello.txt").write_text("original\n")
+    _ = git(root, "add", ".")
+    _ = git(root, "commit", "-q", "-m", "first")
     return root
+
+
+class _View:
+    def __init__(self, root_path: str) -> None:
+        self.root_path: str = root_path
+        self.base_ref: str = "main"
 
 
 class _Projects:
     def __init__(self, root: Path) -> None:
-        self._root = root
+        self._root: Path = root
 
-    async def get(self, owner_id: str, project_id: str):
-        class _View:
-            root_path = str(self._root)
-            base_ref = "main"
-
-        return _View()
+    async def get(self, _owner_id: str, _project_id: str) -> _View:
+        return _View(str(self._root))
 
 
 @asynccontextmanager
-async def local_copies(tmp_path: Path) -> AsyncIterator[ProjectCopies]:
+async def local_copies(tmp_path: Path) -> AsyncGenerator[ProjectCopies]:
     """A :class:`ProjectCopies` over a VM running on this machine."""
     platform, _driver = await local_vm(tmp_path)
     copies = ProjectCopies(platform, idle_ttl_s=3600, reap_interval_s=3600)
@@ -117,12 +121,14 @@ class Shell:
     """
 
     def __init__(self, toolset: AbstractToolset[RunDeps], ctx: RunContext[RunDeps]) -> None:
-        self._toolset = toolset
-        self.ctx = ctx
+        self._toolset: AbstractToolset[RunDeps] = toolset
+        self.ctx: RunContext[RunDeps] = ctx
         self._tools: dict[str, ToolsetTool[RunDeps]] | None = None
 
-    async def call(self, name: str, **args):
+    async def call(self, name: str, **args: object) -> JsonValue:
         tools = self._tools
         if tools is None:
             tools = self._tools = await self._toolset.get_tools(self.ctx)
-        return await self._toolset.call_tool(name, args, self.ctx, tools[name])
+        return _JSON.validate_python(
+            await self._toolset.call_tool(name, args, self.ctx, tools[name])
+        )

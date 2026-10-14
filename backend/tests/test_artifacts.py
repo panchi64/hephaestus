@@ -3,14 +3,16 @@ at rest, conversation scoping, and the sandboxing headers on served content."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from core.db import init_db, make_engine
 from core.vault import Vault
 from services.artifacts import ArtifactStore, guess_content_type
 
-from ._helpers import client_app
+from ._helpers import app_state, client_app
 
 
-async def _store(tmp_path) -> ArtifactStore:
+async def _store(tmp_path: Path) -> ArtifactStore:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
@@ -26,7 +28,7 @@ def test_guess_content_type_and_kind():
 
 
 # --- store round-trip --------------------------------------------------------
-async def test_publish_then_serve_round_trip(tmp_path):
+async def test_publish_then_serve_round_trip(tmp_path: Path):
     store = await _store(tmp_path)
     view = await store.publish(
         "operator", "conv-1", filename="report.html", content=b"<h1>hi</h1>", title="Report"
@@ -40,7 +42,7 @@ async def test_publish_then_serve_round_trip(tmp_path):
     assert blob.content_type == "text/html"
 
 
-async def test_content_is_encrypted_at_rest(tmp_path):
+async def test_content_is_encrypted_at_rest(tmp_path: Path):
     from sqlmodel import Session, select
 
     from models.artifact import Artifact
@@ -71,7 +73,7 @@ async def test_content_is_encrypted_at_rest(tmp_path):
     assert view.filename == "q3-layoffs.txt"
 
 
-async def test_legacy_cleartext_rows_still_read_until_the_backfill_seals_them(tmp_path):
+async def test_legacy_cleartext_rows_still_read_until_the_backfill_seals_them(tmp_path: Path):
     # A database written before these columns were sealed must read correctly from the
     # first request — the backfill runs after unlock, not during the migration.
     from sqlmodel import Session, select
@@ -97,7 +99,7 @@ async def test_legacy_cleartext_rows_still_read_until_the_backfill_seals_them(tm
     assert blob.filename == "old.txt"  # reads through the legacy column
 
     for legacy, sealed in (("title", "title_enc"), ("filename", "filename_enc")):
-        await seal_legacy_column(
+        _ = await seal_legacy_column(
             engine=engine,
             vault=vault,
             model_cls=Artifact,
@@ -114,7 +116,7 @@ async def test_legacy_cleartext_rows_still_read_until_the_backfill_seals_them(tm
 # --- REST surface ------------------------------------------------------------
 async def test_content_route_serves_inert_with_sandbox_headers():
     async with client_app() as (client, app):
-        view = await app.state.artifacts.publish(
+        view = await app_state(app, "artifacts", ArtifactStore).publish(
             "operator", "conv-1", filename="r.html", content=b"<b>x</b>", title="R"
         )
         resp = await client.get(f"/views/{view.id}/content")

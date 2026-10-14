@@ -22,10 +22,11 @@ from services.mail.models import (
     OutgoingMail,
     TransportCapabilities,
 )
-from services.mail.service import LiveTransport
+from services.mail.service import LiveTransport, MailService
+from services.mail.transport import MailTransport
 
 
-def sample_header(uid: str = "1", **overrides) -> MailHeader:
+def sample_header(uid: str = "1", **overrides: object) -> MailHeader:
     base = MailHeader(
         uid=uid,
         sender=MailAddress(address="ada@example.org", name="Ada Lovelace"),
@@ -38,7 +39,9 @@ def sample_header(uid: str = "1", **overrides) -> MailHeader:
     return replace(base, **overrides)
 
 
-async def install_transport(service, owner_id: str, account_id: str, transport) -> None:
+async def install_transport(
+    service: MailService, owner_id: str, account_id: str, transport: MailTransport
+) -> None:
     """Wire ``transport`` into the service's per-account cache in place of a real one.
 
     The cache holds an adapter *and* the credentials it was built with as one unit, so
@@ -67,9 +70,9 @@ class FakeTransport:
         self.flagged: list[tuple[str, str, bool | None, bool | None]] = []
         self.moved: list[tuple[str, str, str]] = []
         self.deleted: list[tuple[str, str]] = []
-        self.closed = False
+        self.closed: bool = False
         self.probe_error: Exception | None = None
-        self.supports_move = True
+        self.supports_move: bool = True
 
     def capabilities(self) -> TransportCapabilities:
         return TransportCapabilities(

@@ -15,6 +15,7 @@ from core.vault import Vault
 from models.service_credential import ServiceCredential
 from services.credential_store import CredentialStore
 from tests._helpers import client_app
+from tests._json import json_body, json_list, obj, s
 
 OWNER = "operator"
 
@@ -83,7 +84,7 @@ async def test_locked_vault_yields_none_not_a_crash():
 
 async def test_on_change_fires_after_writes():
     store, _engine, _vault = await _make()
-    hits = []
+    hits: list[int] = []
     store.on_change(lambda: hits.append(1))
     await store.set_key(OWNER, "microsoft_oauth", "k")
     await store.clear_key(OWNER, "microsoft_oauth")
@@ -94,19 +95,21 @@ async def test_credentials_route_set_list_clear_and_never_leaks_key():
     async with client_app() as (client, _app):
         resp = await client.get("/credentials")
         assert resp.status_code == 200
-        by_service = {c["service"]: c for c in resp.json()}
+        by_service = {s(obj(c)["service"]): obj(c) for c in json_list(resp)}
         assert {"google_oauth", "microsoft_oauth"} <= by_service.keys()
         assert by_service["google_oauth"]["has_key"] is False
 
         resp = await client.put("/credentials/google_oauth", json={"api_key": "sk-secret"})
         assert resp.status_code == 200
-        assert resp.json()["has_key"] is True
+        assert json_body(resp)["has_key"] is True
         assert "sk-secret" not in resp.text  # the key is never echoed back
 
         resp = await client.get("/credentials")
-        assert {c["service"]: c["has_key"] for c in resp.json()}["google_oauth"] is True
+        assert {s(obj(c)["service"]): obj(c)["has_key"] for c in json_list(resp)}[
+            "google_oauth"
+        ] is True
 
         assert (await client.put("/credentials/bogus", json={"api_key": "x"})).status_code == 404
 
         resp = await client.delete("/credentials/google_oauth")
-        assert resp.status_code == 200 and resp.json()["has_key"] is False
+        assert resp.status_code == 200 and json_body(resp)["has_key"] is False

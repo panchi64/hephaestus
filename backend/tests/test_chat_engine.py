@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
+import pytest
+from pydantic_ai import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
@@ -10,9 +14,7 @@ from agent import build_chat_orchestrator
 from core.config import Settings
 from runs import RunEnded, RunRegistry, RunStatus
 
-
-def _bodies(run):
-    return [e.body for e in run.stream.replay()]
+from ._helpers import run_bodies as _bodies
 
 
 async def test_chat_runs_to_done_with_metrics():
@@ -36,7 +38,7 @@ async def test_chat_runs_to_done_with_metrics():
     assert metrics.steps >= 1
 
 
-async def test_metrics_accumulate_across_verifier_correction(monkeypatch):
+async def test_metrics_accumulate_across_verifier_correction(monkeypatch: pytest.MonkeyPatch):
     # A verifier correction is a second turn; the reported metrics must cover the
     # whole run, not just the corrective turn.
     from agent.meta import Verdict
@@ -46,7 +48,7 @@ async def test_metrics_accumulate_across_verifier_correction(monkeypatch):
     )
     verdicts = [Verdict(ok=False, reason="redo")]
 
-    async def judge(request, answer):
+    async def judge(_request: str, _answer: str) -> Verdict:
         return verdicts.pop(0) if verdicts else Verdict(ok=True)
 
     reg = RunRegistry()
@@ -62,7 +64,7 @@ async def test_metrics_accumulate_across_verifier_correction(monkeypatch):
     assert metrics.steps >= 2  # original turn + the corrective re-attempt
 
 
-async def test_usage_limit_blocks_the_turn(monkeypatch):
+async def test_usage_limit_blocks_the_turn(monkeypatch: pytest.MonkeyPatch):
     # request_limit=0 trips on the first model request → bounded stop.
     monkeypatch.setattr(
         engine, "get_settings", lambda: Settings(agent_request_limit=0, agent_tool_calls_limit=None)
@@ -87,7 +89,7 @@ async def test_usage_limit_blocks_the_turn(monkeypatch):
     assert last.outcome == "blocked"
 
 
-async def test_usage_limit_stop_marker_matches_the_toast(monkeypatch):
+async def test_usage_limit_stop_marker_matches_the_toast(monkeypatch: pytest.MonkeyPatch):
     # The persisted stop marker is the *same* legible sentence as the toast. A bare
     # "usage limit reached" reads as a provider rate limit — the wrong thing to send
     # the operator looking for, since this is one of the run's own local budgets.
@@ -105,7 +107,9 @@ async def test_usage_limit_stop_marker_matches_the_toast(monkeypatch):
     assert "usage limit" not in run.detail
 
 
-async def test_explicit_request_limit_overrides_the_config_default(monkeypatch):
+async def test_explicit_request_limit_overrides_the_config_default(
+    monkeypatch: pytest.MonkeyPatch,
+):
     # The operator's setting is what bounds the turn — the config default is only the
     # fallback for a caller that resolved none. A default of 25 with an override of 0
     # must stop on the first model request.
@@ -213,7 +217,7 @@ async def test_parallel_tool_calls_reaches_the_model_request():
     # own settings are merged with each capability's before a request is built.
     seen: list[dict[str, object]] = []
 
-    async def capture(messages, info: AgentInfo):
+    async def capture(_messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         seen.append(dict(info.model_settings or {}))
         yield "ok"
 

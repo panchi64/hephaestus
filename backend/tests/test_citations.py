@@ -146,7 +146,7 @@ def test_a_citation_must_be_identifiable_by_its_kind():
     # A row nothing can be looked up by is not additive, it is a row the operator cannot
     # act on — so each kind's identity is required where it is built.
     with pytest.raises(ValueError):
-        Citation(kind="web")
+        _ = Citation(kind="web")
     with pytest.raises(ValueError):
-        Citation(kind="corpus", source_id="notes")
+        _ = Citation(kind="corpus", source_id="notes")
     assert Citation(kind="corpus", source_id="notes", ref="a.md").key == "notes:a.md"

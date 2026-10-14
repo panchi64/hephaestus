@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
-from pydantic_ai import FunctionToolset, ToolApproved, ToolDenied
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+from pydantic_ai import (
+    FunctionToolset,
+    ModelMessage,
+    ToolApproved,
+    ToolDenied,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.models.test import TestModel
 
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import RunRegistry, RunStatus
+from runs import Run, RunRegistry, RunStatus, ToolCompleted
 from services.conversations import ConversationBinding
 from services.notifications import NotificationService
 from tools import RunDeps
 
-from ._helpers import parked_turn
+from ._helpers import bodies_of, parked_turn, run_bodies
+from ._json import dump
 
 
 def _danger_categories():
@@ -27,8 +38,8 @@ def _danger_categories():
     return {"danger": toolset}
 
 
-def _types(run):
-    return [e.body.type for e in run.stream.replay()]
+def _types(run: Run) -> list[str]:
+    return [b.type for b in run_bodies(run)]
 
 
 async def _park_a_run(reg: RunRegistry):
@@ -85,14 +96,16 @@ async def test_denied_resume_completes_without_executing():
     parked = parked_turn(run)
     call_id = parked.requests.approvals[0].tool_call_id
 
-    await reg.resume(run.id, build_resume_orchestrator(parked, {call_id: ToolDenied(message="no")}))
+    _ = await reg.resume(
+        run.id, build_resume_orchestrator(parked, {call_id: ToolDenied(message="no")})
+    )
     await run.wait()
 
     assert run.status is RunStatus.done
     # The denial is surfaced to the model as the call's result, but the tool
     # body never ran — no real side effect.
-    completed = [e.body for e in run.stream.replay() if e.body.type == "tool.completed"]
-    assert all("deleted" not in str(b.result) for b in completed)
+    completed = bodies_of(run, ToolCompleted)
+    assert all("deleted" not in str(dump(b)["result"]) for b in completed)
 
 
 async def test_cancel_parked_run():
@@ -108,7 +121,7 @@ async def test_cancel_parked_run():
 # --- approval_needed notification wiring --------------------------------------------
 
 
-async def _notification_service(tmp_path) -> NotificationService:
+async def _notification_service(tmp_path: Path) -> NotificationService:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
@@ -118,7 +131,7 @@ async def _notification_service(tmp_path) -> NotificationService:
     return service
 
 
-async def test_park_notifies_approval_needed(tmp_path):
+async def test_park_notifies_approval_needed(tmp_path: Path):
     service = await _notification_service(tmp_path)
     reg = RunRegistry()
     orch = build_chat_orchestrator(
@@ -141,7 +154,7 @@ async def test_park_notifies_approval_needed(tmp_path):
     await service.stop()
 
 
-async def test_grant_short_circuit_resolves_a_dangling_notification(tmp_path):
+async def test_grant_short_circuit_resolves_a_dangling_notification(tmp_path: Path):
     # Everything this turn defers is already grant-covered from the start, so the
     # engine never parks — it continues the same turn inline. That branch is a
     # defensive `resolve_for_run` call too: this proves it actually fires by seeding a
@@ -155,7 +168,7 @@ async def test_grant_short_circuit_resolves_a_dangling_notification(tmp_path):
     service = await _notification_service(tmp_path)
     grants = await granting_store("operator", "c1", tool_name)
     run_id = "preset-run-1"
-    await service.notify("operator", "approval_needed", "stale", run_id=run_id)
+    _ = await service.notify("operator", "approval_needed", "stale", run_id=run_id)
 
     reg = RunRegistry()
     orch = build_chat_orchestrator(
@@ -225,12 +238,13 @@ async def test_a_parked_call_does_not_hold_back_the_plain_call_beside_it():
         ran.append("look")
         return f"saw {name}"
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         if any(
-            getattr(part, "tool_name", None) == "danger_delete_thing"
-            and type(part).__name__ == "ToolReturnPart"
+            isinstance(part, ToolReturnPart) and part.tool_name == "danger_delete_thing"
             for message in messages
-            for part in getattr(message, "parts", ())
+            for part in message.parts
         ):
             yield "done"
             return
