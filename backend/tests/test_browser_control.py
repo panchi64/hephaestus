@@ -13,9 +13,8 @@ environment-dependent without testing more of our own code.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
-from typing import cast
+from typing import cast, override
 
 import pytest
 from playwright.async_api import Browser
@@ -32,6 +31,8 @@ from services.browser.session import BrowserHost
 from tools import RunDeps
 from tools.browse import TOOL_NAMES, BrowserToolset, browse_instructions, browse_toolset
 
+from ._json import obj, parse_json
+
 OWNER = "operator"
 
 
@@ -43,7 +44,7 @@ class _FakeContext:
     the manager saves into the profile."""
 
     def __init__(self, state: dict[str, object] | None = None) -> None:
-        self.state = state or {"cookies": [{"name": "session", "value": "abc"}]}
+        self.state: dict[str, object] = state or {"cookies": [{"name": "session", "value": "abc"}]}
         self.pages: list[_FakePage] = []
 
     async def storage_state(self) -> dict[str, object]:
@@ -54,11 +55,11 @@ class _FakePage:
     def __init__(
         self, url: str = "https://example.com", context: _FakeContext | None = None
     ) -> None:
-        self.url = url
-        self.context = context or _FakeContext()
+        self.url: str = url
+        self.context: _FakeContext = context or _FakeContext()
         self.context.pages.append(self)
         self.init_scripts: list[str] = []
-        self.fronted = 0
+        self.fronted: int = 0
 
     async def title(self) -> str:
         return "Example"
@@ -75,36 +76,39 @@ class _FakeSession:
     event counter the sweep reads activity off."""
 
     def __init__(self, page: _FakePage | None = None, /, **kwargs: object) -> None:
-        self.page = page or _FakePage()
-        self.pages = [self.page]
-        self.events_recorded = 0
-        self.exited = False
-        self.kwargs = kwargs  # what `_attach` constructed this with
+        self.page: _FakePage = page or _FakePage()
+        self.pages: list[_FakePage] = [self.page]
+        self.events_recorded: int = 0
+        self.exited: bool = False
+        self.kwargs: dict[str, object] = kwargs  # what `_attach` constructed this with
 
     async def __aenter__(self) -> _FakeSession:
         return self
 
-    async def __aexit__(self, *_args) -> None:
+    async def __aexit__(self, *_args: object) -> None:
         self.exited = True
 
     async def ensure_page(self) -> _FakePage:
         return self.page
 
 
-class _FakeHost:
+class _FakeHost(BrowserHost):
     """A browser host whose browser a test can take away."""
 
     def __init__(self, cdp_url: str | None = "http://127.0.0.1:9222") -> None:
-        self.fake_cdp_url = cdp_url
+        self.fake_cdp_url: str | None = cdp_url
         self.stealthed: list[object] = []
 
     @property
+    @override
     def cdp_url(self) -> str | None:
         return self.fake_cdp_url
 
+    @override
     async def ensure(self) -> str | None:
         return self.fake_cdp_url
 
+    @override
     async def apply_stealth(self, page: object) -> None:
         self.stealthed.append(page)
 
@@ -157,7 +161,7 @@ def _browse() -> BrowserToolset:
 
 
 @pytest.fixture
-def attached(monkeypatch) -> list[_FakeSession]:
+def attached(monkeypatch: pytest.MonkeyPatch) -> list[_FakeSession]:
     """Make the real attach path build fake sessions, newest last."""
     built: list[_FakeSession] = []
 
@@ -194,7 +198,8 @@ async def test_two_conversations_get_two_sessions():
     assert _fake(first).page is not _fake(second).page
 
 
-async def test_an_attached_page_is_stealthed_and_left_where_it_is(attached):
+@pytest.mark.usefixtures("attached")
+async def test_an_attached_page_is_stealthed_and_left_where_it_is():
     # The masking is what keeps the page from being served a challenge. Coming forward is
     # not part of attaching: the agent's first browse tool call attaches too, and that one
     # must not throw a window over whatever the operator is doing.
@@ -209,23 +214,26 @@ async def test_an_attached_page_is_stealthed_and_left_where_it_is(attached):
     assert page.fronted == 0
 
 
-async def test_a_login_made_in_one_conversation_reaches_the_next(tmp_path, attached):
+async def test_a_login_made_in_one_conversation_reaches_the_next(
+    tmp_path: Path, attached: list[_FakeSession]
+):
     # The reason the profile exists: the operator logs in once, and a later conversation's
     # agent must not land on a login page.
     manager = _manager(_FakeHost(), state_dir=tmp_path)
-    await manager.acquire("c1")
+    _ = await manager.acquire("c1")
 
     await manager.release("c1")
 
-    saved = json.loads((tmp_path / "profile.json").read_text())
-    assert saved["cookies"] == [{"name": "session", "value": "abc"}]
-    await manager.acquire("c2")
+    saved = parse_json((tmp_path / "profile.json").read_text())
+    assert obj(saved)["cookies"] == [{"name": "session", "value": "abc"}]
+    _ = await manager.acquire("c2")
     assert attached[-1].kwargs["storage_state"] == saved
 
 
-async def test_deleting_a_conversation_keeps_the_shared_profile(tmp_path, attached):
+@pytest.mark.usefixtures("attached")
+async def test_deleting_a_conversation_keeps_the_shared_profile(tmp_path: Path):
     manager = _manager(_FakeHost(), state_dir=tmp_path)
-    await manager.acquire("c1")
+    _ = await manager.acquire("c1")
 
     await manager.purge("c1")
 
@@ -234,9 +242,10 @@ async def test_deleting_a_conversation_keeps_the_shared_profile(tmp_path, attach
     await manager.purge("c1")  # idempotent: deleting twice is not an error
 
 
-async def test_forgetting_the_profile_ends_every_session_unsaved(tmp_path, attached):
+@pytest.mark.usefixtures("attached")
+async def test_forgetting_the_profile_ends_every_session_unsaved(tmp_path: Path):
     manager = _manager(_FakeHost(), state_dir=tmp_path)
-    await manager.acquire("c1")
+    _ = await manager.acquire("c1")
     await manager.release("c1")
     live = await manager.acquire("c2")
 
@@ -247,7 +256,8 @@ async def test_forgetting_the_profile_ends_every_session_unsaved(tmp_path, attac
     assert live is not None and getattr(live.session, "exited", False)
 
 
-async def test_a_session_whose_window_is_gone_is_not_handed_out_again(attached):
+@pytest.mark.usefixtures("attached")
+async def test_a_session_whose_window_is_gone_is_not_handed_out_again():
     # The sweep is what normally notices, and it runs on its own clock — an operator who
     # quits Chromium and reopens their browser a second later must not be given the dead
     # session with a cheerful "active".
@@ -360,11 +370,11 @@ async def test_creation_locks_do_not_accumulate_forever():
     # the one structure that only ever grew — an entry per conversation that ever browsed.
     manager = _manager(_FakeHost(cdp_url=None), idle_ttl_s=0.0)
     for key in ("c1", "c2", "c3"):
-        await manager.acquire(key)  # degrades (no browser), but takes a lock on the way
+        _ = await manager.acquire(key)  # degrades (no browser), but takes a lock on the way
     assert len(manager._creating) == 3  # noqa: SLF001
 
     live = _live(manager, "c4")
-    manager._creating.setdefault("c4", asyncio.Lock())  # noqa: SLF001
+    _ = manager._creating.setdefault("c4", asyncio.Lock())  # noqa: SLF001
     await manager._sweep()  # noqa: SLF001
 
     # The three that hold nothing are gone; c4's went with its own reaped session.
@@ -452,10 +462,10 @@ async def test_a_new_session_gets_a_new_binding():
     caps.add(manager)
     toolset = _browse()
 
-    _live(manager, "c1")
+    _ = _live(manager, "c1")
     before = await toolset.bind("navigate", _ctx(caps, "c1"))
     await manager.release("c1")
-    _live(manager, "c1", page=_FakePage(url="https://example.com/after"))
+    _ = _live(manager, "c1", page=_FakePage(url="https://example.com/after"))
     manager._sessions["c1"].token = "token-fresh"  # noqa: SLF001 — a genuinely new session
     after = await toolset.bind("navigate", _ctx(caps, "c1"))
 
@@ -474,7 +484,9 @@ def test_every_tool_is_declared_network_dependent(name: str):
 # --- the operator closing the window ----------------------------------------------------
 
 
-async def test_a_window_the_operator_closed_is_not_silently_reopened(attached):
+async def test_a_window_the_operator_closed_is_not_silently_reopened(
+    attached: list[_FakeSession],
+):
     # The whole point: closing the window is how somebody says they are done with it, and
     # the next tool call must not answer that by launching a replacement on their screen.
     host = _FakeHost()
@@ -487,7 +499,7 @@ async def test_a_window_the_operator_closed_is_not_silently_reopened(attached):
     assert attached == []  # ...and nothing was launched to replace it
 
 
-async def test_an_explicit_reopen_starts_a_fresh_window(attached):
+async def test_an_explicit_reopen_starts_a_fresh_window(attached: list[_FakeSession]):
     # The way back. Something explicit — the model's own `navigate`, or the operator's
     # "open the browser" control — is allowed to start over, and doing so clears the record.
     manager = _manager(_FakeHost())
@@ -502,7 +514,9 @@ async def test_an_explicit_reopen_starts_a_fresh_window(attached):
     assert len(attached) == 1
 
 
-async def test_the_refusal_stands_until_something_actually_reopens(attached):
+async def test_the_refusal_stands_until_something_actually_reopens(
+    attached: list[_FakeSession],
+):
     # Not consumed by the first refusal. "They are done with this" holds until somebody
     # says otherwise, or the second browse tool of the same turn would quietly reopen the
     # window the first one just reported as closed.
@@ -515,12 +529,13 @@ async def test_the_refusal_stands_until_something_actually_reopens(attached):
     assert attached == []
 
 
-async def test_an_idle_reap_leaves_no_such_record(attached):
+@pytest.mark.usefixtures("attached")
+async def test_an_idle_reap_leaves_no_such_record():
     # Ours, not theirs. An idle session is reaped to save a window and a driver, and the
     # next call re-attaches with the login restored — the model never needed to hear about
     # it, and reporting it as "the operator closed the browser" would be a lie.
     manager = _manager(_FakeHost(), idle_ttl_s=0.0)
-    _live(manager, "c1")
+    _ = _live(manager, "c1")
 
     await manager._sweep()  # noqa: SLF001
 
@@ -529,12 +544,13 @@ async def test_an_idle_reap_leaves_no_such_record(attached):
     assert await manager.acquire("c1", reopen=False) is not None
 
 
-async def test_the_browser_going_away_is_not_the_operators_doing(attached):
+@pytest.mark.usefixtures("attached")
+async def test_the_browser_going_away_is_not_the_operators_doing():
     # A VM reset or offline mode is ours, so the next tool call degrades or re-attaches
     # rather than telling the model the operator ended it.
     host = _FakeHost()
     manager = _manager(host)
-    _live(manager, "c1")
+    _ = _live(manager, "c1")
     host.fake_cdp_url = None
 
     await manager._sweep()  # noqa: SLF001
@@ -542,9 +558,10 @@ async def test_the_browser_going_away_is_not_the_operators_doing(attached):
     assert not manager.closed("c1")
 
 
-async def test_the_operator_ending_the_browser_is_recorded(attached):
+@pytest.mark.usefixtures("attached")
+async def test_the_operator_ending_the_browser_is_recorded():
     manager = _manager(_FakeHost())
-    await manager.acquire("c1")
+    _ = await manager.acquire("c1")
 
     await manager.close("c1")
 
@@ -553,7 +570,7 @@ async def test_the_operator_ending_the_browser_is_recorded(attached):
     assert await manager.acquire("c1", reopen=False) is None
 
 
-async def test_only_navigate_may_reopen_after_a_close(attached):
+async def test_only_navigate_may_reopen_after_a_close(attached: list[_FakeSession]):
     # A `click` on a page that no longer exists must not open a blank window and let the
     # model believe the click landed; a `navigate` is it deliberately starting somewhere.
     caps = ServiceContainer()
@@ -596,7 +613,7 @@ async def test_an_open_browser_brings_the_harness_guidance_and_ours():
     caps = ServiceContainer()
     manager = _manager(_FakeHost())
     caps.add(manager)
-    _live(manager, "c1")
+    _ = _live(manager, "c1")
 
     text = await browse_instructions(_ctx(caps, "c1"))
 
@@ -612,7 +629,7 @@ async def test_the_harness_guidance_is_borrowed_whole(phrase: str):
     caps = ServiceContainer()
     manager = _manager(_FakeHost())
     caps.add(manager)
-    _live(manager, "c1")
+    _ = _live(manager, "c1")
     assert phrase in await browse_instructions(_ctx(caps, "c1"))
 
 
@@ -627,7 +644,7 @@ async def test_one_session_shares_one_toolset_so_parallel_calls_serialise():
     caps = ServiceContainer()
     manager = _manager(_FakeHost())
     caps.add(manager)
-    _live(manager, "c1")
+    _ = _live(manager, "c1")
     toolset = _browse()
 
     first, second = (
@@ -641,7 +658,7 @@ async def test_one_session_shares_one_toolset_so_parallel_calls_serialise():
     assert first._operation_lock is second._operation_lock  # noqa: SLF001 — the claim
 
 
-async def test_deleting_a_conversation_forgets_that_its_window_was_closed(tmp_path):
+async def test_deleting_a_conversation_forgets_that_its_window_was_closed(tmp_path: Path):
     # The tombstone is keyed by conversation and has no reaper of its own, so the one
     # place a key stops meaning anything has to drop it.
     manager = _manager(_FakeHost(), state_dir=tmp_path)

@@ -8,6 +8,8 @@ leaf — which navigation has moved to create a branch.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import Engine
 
@@ -18,22 +20,24 @@ from runs import RunRegistry
 from services.conversations import ConversationStore
 
 
-async def _unlocked_vault(tmp_path, name: str = "keyfile.json") -> Vault:
+async def _unlocked_vault(tmp_path: Path, name: str = "keyfile.json") -> Vault:
     vault = Vault(tmp_path / name)
     if not vault.is_initialized:
         await vault.setup("pw")
     else:
-        await vault.unlock("pw")
+        _ = await vault.unlock("pw")
     return vault
 
 
-async def _fresh_store(tmp_path) -> tuple[ConversationStore, Engine]:
+async def _fresh_store(tmp_path: Path) -> tuple[ConversationStore, Engine]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     return ConversationStore(engine, await _unlocked_vault(tmp_path)), engine
 
 
-async def _turn(store, conv, reg, *, prompt: str | None, answer: str) -> None:
+async def _turn(
+    store: ConversationStore, conv: str, reg: RunRegistry, *, prompt: str | None, answer: str
+) -> None:
     orch = build_chat_orchestrator(
         prompt,
         model=TestModel(custom_output_text=answer),
@@ -45,7 +49,7 @@ async def _turn(store, conv, reg, *, prompt: str | None, answer: str) -> None:
     await run.wait()
 
 
-async def test_regenerate_adds_a_sibling_answer(tmp_path):
+async def test_regenerate_adds_a_sibling_answer(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
@@ -71,7 +75,7 @@ async def test_regenerate_adds_a_sibling_answer(tmp_path):
     await store.stop()
 
 
-async def test_switch_version_restores_an_earlier_answer(tmp_path):
+async def test_switch_version_restores_an_earlier_answer(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
@@ -95,7 +99,7 @@ async def test_switch_version_restores_an_earlier_answer(tmp_path):
     await store.stop()
 
 
-async def test_edit_forks_the_user_turn(tmp_path):
+async def test_edit_forks_the_user_turn(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
@@ -122,7 +126,7 @@ async def test_edit_forks_the_user_turn(tmp_path):
     await store.stop()
 
 
-async def test_rewind_then_send_branches(tmp_path):
+async def test_rewind_then_send_branches(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
@@ -145,7 +149,7 @@ async def test_rewind_then_send_branches(tmp_path):
     await store.stop()
 
 
-async def test_rewind_to_user_turn_ends_before_its_answer(tmp_path):
+async def test_rewind_to_user_turn_ends_before_its_answer(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
@@ -163,7 +167,7 @@ async def test_rewind_to_user_turn_ends_before_its_answer(tmp_path):
     await store.stop()
 
 
-async def test_delete_removes_turn_and_downstream(tmp_path):
+async def test_delete_removes_turn_and_downstream(tmp_path: Path):
     store, engine = await _fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
@@ -187,7 +191,7 @@ async def test_delete_removes_turn_and_downstream(tmp_path):
     await cold.stop()
 
 
-async def test_pin_is_projected_and_durable(tmp_path):
+async def test_pin_is_projected_and_durable(tmp_path: Path):
     store, engine = await _fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
@@ -209,7 +213,7 @@ async def test_pin_is_projected_and_durable(tmp_path):
     await cold.stop()
 
 
-async def test_navigation_survives_cold_reload(tmp_path):
+async def test_navigation_survives_cold_reload(tmp_path: Path):
     """A regenerated branch and its active-leaf choice persist across a restart."""
     store, engine = await _fresh_store(tmp_path)
     await store.start()

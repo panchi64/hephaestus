@@ -8,7 +8,6 @@ it), none of which needs a browser.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -18,6 +17,8 @@ from starlette.testclient import TestClient
 from app import create_app
 from core.config import Settings
 
+from ._json import parse_json
+
 
 class _FakeCdp:
     """A CDP session that records what it was sent, and answers a screencast start with
@@ -26,7 +27,7 @@ class _FakeCdp:
     def __init__(self) -> None:
         self.sent: list[tuple[str, dict[str, object]]] = []
         self._handlers: dict[str, Callable[[dict[str, object]], object]] = {}
-        self.on_ack = lambda: None
+        self.on_ack: Callable[[], object] = lambda: None
 
     def on(self, event: str, handler: Callable[[dict[str, object]], object]) -> None:
         self._handlers[event] = handler
@@ -34,9 +35,9 @@ class _FakeCdp:
     async def send(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         self.sent.append((method, params or {}))
         if method == "Page.screencastFrameAck":
-            self.on_ack()
+            _ = self.on_ack()
         if method == "Page.startScreencast":
-            self._handlers["Page.screencastFrame"](
+            _ = self._handlers["Page.screencastFrame"](
                 {
                     "data": "AAAA",
                     "sessionId": 7,
@@ -51,37 +52,37 @@ class _FakeCdp:
 
 class _FakeContext:
     def __init__(self) -> None:
-        self.cdp = _FakeCdp()
+        self.cdp: _FakeCdp = _FakeCdp()
 
-    async def new_cdp_session(self, page) -> _FakeCdp:
+    async def new_cdp_session(self, _page: object) -> _FakeCdp:
         return self.cdp
 
 
 class _FakePage:
     def __init__(self) -> None:
-        self.url = "https://example.com/app"
-        self.context = _FakeContext()
+        self.url: str = "https://example.com/app"
+        self.context: _FakeContext = _FakeContext()
         self.visited: list[str] = []
 
     async def title(self) -> str:
         return "App"
 
-    async def goto(self, url: str, **_kwargs) -> None:
+    async def goto(self, url: str, **_kwargs: object) -> None:
         self.visited.append(url)
 
 
 class _FakeSession:
     def __init__(self) -> None:
-        self.page = _FakePage()
+        self.page: _FakePage = _FakePage()
 
 
 class _FakeLive:
     def __init__(self, token: str = "tok") -> None:
-        self.token = token
-        self.page_url = "https://example.com/app"
-        self.session = _FakeSession()
-        self.input_channel = None
-        self.touched = 0
+        self.token: str = token
+        self.page_url: str = "https://example.com/app"
+        self.session: _FakeSession = _FakeSession()
+        self.input_channel: object | None = None
+        self.touched: int = 0
 
     def touch(self) -> None:
         self.touched += 1
@@ -91,11 +92,11 @@ class _FakeManager:
     """Holds one conversation's browser, and records what was asked of it."""
 
     def __init__(self, live: _FakeLive | None, *, key: str = "c1") -> None:
-        self._live = live
-        self._key = key
+        self._live: _FakeLive | None = live
+        self._key: str = key
         self.acquired: list[str] = []
         self.ended: list[str] = []
-        self.forgot = 0
+        self.forgot: int = 0
 
     def existing(self, key: str) -> _FakeLive | None:
         return self._live if key == self._key else None
@@ -127,7 +128,7 @@ def _app[M: _FakeManager | None](tmp_path: Path, manager: M) -> tuple[FastAPI, T
 # --- session lookup --------------------------------------------------------------------
 
 
-def test_a_conversation_reports_its_live_browser(tmp_path):
+def test_a_conversation_reports_its_live_browser(tmp_path: Path):
     # What a freshly-loaded page reads: the run events that touched the browser are long
     # gone by then, and the manager is the source of truth for what is live right now.
     app, client, manager = _app(tmp_path, _FakeManager(_FakeLive()))
@@ -141,7 +142,7 @@ def test_a_conversation_reports_its_live_browser(tmp_path):
     assert manager.acquired == []  # asking never opens one
 
 
-def test_no_browser_control_wired_is_not_an_error_for_a_conversation(tmp_path):
+def test_no_browser_control_wired_is_not_an_error_for_a_conversation(tmp_path: Path):
     # A thread simply has no browser; the UI must not have to special-case a 500.
     app, client, _ = _app(tmp_path, None)
     with client:
@@ -152,7 +153,7 @@ def test_no_browser_control_wired_is_not_an_error_for_a_conversation(tmp_path):
 # --- opening one -----------------------------------------------------------------------
 
 
-def test_opening_a_browser_attaches_it(tmp_path):
+def test_opening_a_browser_attaches_it(tmp_path: Path):
     app, client, manager = _app(tmp_path, _FakeManager(_FakeLive()))
     with client:
         app.state.browser_sessions = manager
@@ -162,7 +163,7 @@ def test_opening_a_browser_attaches_it(tmp_path):
     assert manager.acquired == ["c1"]
 
 
-def test_a_browser_that_cannot_be_opened_is_a_503_with_a_reason(tmp_path):
+def test_a_browser_that_cannot_be_opened_is_a_503_with_a_reason(tmp_path: Path):
     app, client, manager = _app(tmp_path, _FakeManager(None))
     with client:
         app.state.browser_sessions = manager
@@ -171,7 +172,7 @@ def test_a_browser_that_cannot_be_opened_is_a_503_with_a_reason(tmp_path):
         assert response.json()["detail"]
 
 
-def test_opening_one_with_no_browser_control_wired_is_a_503(tmp_path):
+def test_opening_one_with_no_browser_control_wired_is_a_503(tmp_path: Path):
     # Unlike the lookup, a request to *open* a window must never report success quietly.
     app, client, _ = _app(tmp_path, None)
     with client:
@@ -182,7 +183,7 @@ def test_opening_one_with_no_browser_control_wired_is_a_503(tmp_path):
 # --- ending it, and the profile ----------------------------------------------------------
 
 
-def test_the_operator_can_end_a_conversations_browser(tmp_path):
+def test_the_operator_can_end_a_conversations_browser(tmp_path: Path):
     app, client, manager = _app(tmp_path, _FakeManager(_FakeLive()))
     with client:
         app.state.browser_sessions = manager
@@ -190,7 +191,7 @@ def test_the_operator_can_end_a_conversations_browser(tmp_path):
     assert manager.ended == ["c1"]
 
 
-def test_forgetting_the_profile_reaches_the_manager(tmp_path):
+def test_forgetting_the_profile_reaches_the_manager(tmp_path: Path):
     app, client, manager = _app(tmp_path, _FakeManager(None))
     with client:
         app.state.browser_sessions = manager
@@ -201,7 +202,7 @@ def test_forgetting_the_profile_reaches_the_manager(tmp_path):
 # --- the live view -----------------------------------------------------------------------
 
 
-def test_input_without_a_browser_is_a_404(tmp_path):
+def test_input_without_a_browser_is_a_404(tmp_path: Path):
     app, client, manager = _app(tmp_path, _FakeManager(None))
     with client:
         app.state.browser_sessions = manager
@@ -209,7 +210,7 @@ def test_input_without_a_browser_is_a_404(tmp_path):
         assert response.status_code == 404
 
 
-def test_a_click_reaches_cdp_as_a_mouse_event(tmp_path):
+def test_a_click_reaches_cdp_as_a_mouse_event(tmp_path: Path):
     live = _FakeLive()
     app, client, manager = _app(tmp_path, _FakeManager(live))
     with client:
@@ -240,12 +241,12 @@ def test_a_click_reaches_cdp_as_a_mouse_event(tmp_path):
     assert live.touched == 1  # the operator's input counts as use
 
 
-def test_a_typed_character_carries_its_text(tmp_path):
+def test_a_typed_character_carries_its_text(tmp_path: Path):
     live = _FakeLive()
     app, client, manager = _app(tmp_path, _FakeManager(live))
     with client:
         app.state.browser_sessions = manager
-        client.post(
+        _ = client.post(
             "/browser/session/c1/input",
             json={
                 "type": "key",
@@ -256,7 +257,7 @@ def test_a_typed_character_carries_its_text(tmp_path):
                 "key_code": 65,
             },
         )
-        client.post(
+        _ = client.post(
             "/browser/session/c1/input",
             json={"type": "key", "action": "down", "key": "Enter", "code": "Enter", "key_code": 13},
         )
@@ -265,7 +266,7 @@ def test_a_typed_character_carries_its_text(tmp_path):
     assert enter[1]["type"] == "rawKeyDown" and "text" not in enter[1]
 
 
-def test_the_address_bar_takes_only_web_urls(tmp_path):
+def test_the_address_bar_takes_only_web_urls(tmp_path: Path):
     live = _FakeLive()
     app, client, manager = _app(tmp_path, _FakeManager(live))
     with client:
@@ -281,14 +282,14 @@ def test_the_address_bar_takes_only_web_urls(tmp_path):
     assert live.session.page.visited == ["https://example.org"]
 
 
-def test_the_view_without_a_browser_is_a_404(tmp_path):
+def test_the_view_without_a_browser_is_a_404(tmp_path: Path):
     app, client, manager = _app(tmp_path, _FakeManager(None))
     with client:
         app.state.browser_sessions = manager
         assert client.get("/browser/session/c1/view").status_code == 404
 
 
-def test_the_view_streams_frames_and_acknowledges_them(tmp_path):
+def test_the_view_streams_frames_and_acknowledges_them(tmp_path: Path):
     live = _FakeLive()
     manager = _FakeManager(live)
     # The session ends once its first frame is acknowledged, which ends the stream.
@@ -299,7 +300,7 @@ def test_the_view_streams_frames_and_acknowledges_them(tmp_path):
         response = client.get("/browser/session/c1/view")
     assert response.status_code == 200
     events = [
-        json.loads(line[len("data: ") :])
+        parse_json(line[len("data: ") :])
         for line in response.text.splitlines()
         if line.startswith("data: ")
     ]
