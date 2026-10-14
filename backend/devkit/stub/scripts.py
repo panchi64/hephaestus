@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
+
+from pydantic import JsonValue
 
 from devkit.stub.wire import Reply, ToolCall
 
@@ -80,7 +81,7 @@ class ScriptBook:
         #: whole replayed transcript plus every tool schema, and an afternoon's chatting
         #: against an unbounded log would grow without limit and eventually make
         #: ``GET /_stub/requests`` too large to read.
-        self.requests: deque[dict[str, Any]] = deque(maxlen=REQUEST_LOG_LIMIT)
+        self.requests: deque[dict[str, JsonValue]] = deque(maxlen=REQUEST_LOG_LIMIT)
 
     def push(self, scenarios: list[Scenario]) -> None:
         self._scenarios.extend(scenarios)
@@ -120,7 +121,7 @@ class ScriptBook:
         return Scenario(text=DEFAULT_TEXT.format(prompt=prompt or "(nothing)"))
 
 
-def last_user_prompt(messages: list[dict[str, Any]]) -> str:
+def last_user_prompt(messages: list[JsonValue]) -> str:
     """The text of the last user message, flattened.
 
     Content arrives either as a plain string or as the list-of-parts form a multimodal
@@ -128,15 +129,16 @@ def last_user_prompt(messages: list[dict[str, Any]]) -> str:
     attachment entered the conversation.
     """
     for message in reversed(messages):
-        if message.get("role") != "user":
+        if not isinstance(message, dict) or message.get("role") != "user":
             continue
         content = message.get("content")
         if isinstance(content, str):
             return content
         if isinstance(content, list):
             return " ".join(
-                part.get("text", "")
+                text
                 for part in content
                 if isinstance(part, dict) and part.get("type") == "text"
+                if isinstance(text := part.get("text", ""), str)
             )
     return ""

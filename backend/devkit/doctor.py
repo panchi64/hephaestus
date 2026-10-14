@@ -43,7 +43,7 @@ class Finding:
 
 
 def _tooling() -> list[Finding]:
-    findings = []
+    findings: list[Finding] = []
     for tool, why in (("bun", "the frontend dev server"), ("uv", "the backend")):
         # Resolved once: two scans would be wasteful, and could in principle disagree —
         # reporting `ok` alongside an empty path.
@@ -72,7 +72,7 @@ def _tooling() -> list[Finding]:
 
 
 def _ports(instance: DevInstance) -> list[Finding]:
-    findings = []
+    findings: list[Finding] = []
     healthy = launch.backend_healthy(instance)
     for name, port in (
         ("backend", instance.backend_port),
@@ -91,7 +91,7 @@ def _ports(instance: DevInstance) -> list[Finding]:
                     FAIL,
                     f"{port} is held by something that does not answer /health",
                     "stop it, or delete "
-                    f"{instance.root / 'instance.json'} to be given another slot",
+                    + f"{instance.root / 'instance.json'} to be given another slot",
                 )
             )
         else:
@@ -101,7 +101,7 @@ def _ports(instance: DevInstance) -> list[Finding]:
 
 def _isolation(instance: DevInstance) -> list[Finding]:
     """The checks that matter most, because their failure is silent and expensive."""
-    findings = []
+    findings: list[Finding] = []
     env = instance.env()
     if not str(instance.data_dir).startswith(str(Path.home())):
         findings.append(
@@ -150,7 +150,7 @@ def _model(_instance: DevInstance) -> list[Finding]:
 
 
 def _surfaces() -> list[Finding]:
-    findings = []
+    findings: list[Finding] = []
     if not surfaces.SOURCE.is_file():
         findings.append(
             Finding(

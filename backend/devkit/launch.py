@@ -23,6 +23,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from http.client import HTTPResponse
+from types import FrameType
+from typing import cast
 
 from devkit import live, repo, surfaces
 from devkit.instance import DevInstance
@@ -33,6 +36,10 @@ class LaunchError(RuntimeError):
     """A service would not come up. The message says which, and where its log is."""
 
 
+def _open(url: str, *, timeout_s: float) -> HTTPResponse:
+    return cast(HTTPResponse, urllib.request.urlopen(url, timeout=timeout_s))
+
+
 def backend_healthy(instance: DevInstance, *, timeout_s: float = 2.0) -> bool:
     """Whether the backend answers ``/health`` — not merely holds its port.
 
@@ -41,7 +48,7 @@ def backend_healthy(instance: DevInstance, *, timeout_s: float = 2.0) -> bool:
     alone would call that ready and hand a session a URL that answers nothing.
     """
     try:
-        with urllib.request.urlopen(f"{instance.backend_url}/health", timeout=timeout_s) as reply:
+        with _open(f"{instance.backend_url}/health", timeout_s=timeout_s) as reply:
             return reply.status == 200
     except urllib.error.URLError, OSError, ValueError:
         return False
@@ -62,7 +69,7 @@ def ensure_stub(instance: DevInstance, supervisor: Supervisor) -> str:
         return "using the endpoint in HEPH_DEV_CHAT_* instead"
     if listening(instance.stub_port):
         return "already running"
-    supervisor.start(
+    _ = supervisor.start(
         "stub",
         [sys.executable, "-m", "devkit.stub.server", str(instance.stub_port)],
         cwd=repo.BACKEND,
@@ -81,10 +88,10 @@ def ensure_backend(instance: DevInstance, supervisor: Supervisor) -> str:
     if listening(instance.backend_port):
         raise LaunchError(
             f"port {instance.backend_port} is taken by something that is not this "
-            f"instance's backend (it does not answer /health). Stop it, or remove "
-            f"{instance.root / 'instance.json'} to be given a different slot."
+            + "instance's backend (it does not answer /health). Stop it, or remove "
+            + f"{instance.root / 'instance.json'} to be given a different slot."
         )
-    supervisor.start(
+    _ = supervisor.start(
         "backend",
         [sys.executable, "dev.py"],
         cwd=repo.BACKEND,
@@ -113,7 +120,7 @@ def ensure_frontend_deps(instance: DevInstance) -> bool:
     log = instance.logs_dir / "frontend.log"
     print("frontend dependencies are not installed — running `bun install` (first run only)")
     with log.open("a", buffering=1) as handle:
-        handle.write("\n--- bun install ---\n")
+        _ = handle.write("\n--- bun install ---\n")
         result = subprocess.run(
             ["bun", "install"], cwd=repo.FRONTEND, stdout=handle, stderr=subprocess.STDOUT
         )
@@ -129,7 +136,7 @@ def ensure_frontend(instance: DevInstance, supervisor: Supervisor) -> str:
     if shutil.which("bun") is None:
         raise LaunchError("`bun` is not on PATH — install it, or run the backend on its own")
     installed = ensure_frontend_deps(instance)
-    supervisor.start(
+    _ = supervisor.start(
         "frontend",
         # `--host 127.0.0.1`, because that is the address every URL this instance hands
         # out is spelled with. Vite's default is to bind whatever `localhost` resolves
@@ -165,8 +172,8 @@ def _warm_frontend(instance: DevInstance) -> None:
     concludes the change is broken has cost a turn.
     """
     with contextlib.suppress(urllib.error.URLError, OSError, ValueError):
-        with urllib.request.urlopen(instance.frontend_url, timeout=60.0) as reply:
-            reply.read()
+        with _open(instance.frontend_url, timeout_s=60.0) as reply:
+            _ = reply.read()
 
 
 def ensure_seeded(instance: DevInstance, *, force: bool = False) -> tuple[DevInstance, str]:
@@ -204,13 +211,17 @@ def bring_up(
     outcomes["frontend"] = ensure_frontend(instance, supervisor)
     # Written on every run rather than only the first: it carries the instance's ports,
     # and a stale one would point `preview_start` at another worktree's instance.
-    surfaces.write_all(instance)
+    _ = surfaces.write_all(instance)
     return instance, outcomes
 
 
 def wait_for_signal() -> None:
     """Block until interrupted, so the services this command started outlive it."""
     stop = threading.Event()
+
+    def _handle(_signum: int, _frame: FrameType | None) -> None:
+        stop.set()
+
     for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, lambda *_: stop.set())
-    stop.wait()
+        _ = signal.signal(sig, _handle)
+    _ = stop.wait()

@@ -17,12 +17,45 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import Any
+from collections.abc import Callable
+from typing import TypedDict
 
 from devkit import doctor, launch, ports, processes, surfaces
 from devkit.instance import DevInstance, resolve
 from devkit.processes import Supervisor
 from services.workspace_reset import reset_workspace
+
+
+def _no_command(_args: argparse.Namespace) -> int:
+    return 2
+
+
+class _Args(argparse.Namespace):
+    """The parsed command line; ``handler`` is replaced by the chosen subcommand's."""
+
+    handler: Callable[[_Args], int] = _no_command
+    json: bool = False
+    detach: bool = False
+    auth: bool | None = None
+    with_vm: bool | None = None
+    reseed: bool = False
+    force: bool = False
+    yes: bool = False
+
+
+class StatusPayload(TypedDict):
+    name: str
+    slot: int
+    root: str
+    data_dir: str
+    urls: dict[str, str]
+    ports: dict[str, int]
+    running: dict[str, bool]
+    ready: bool
+    seeded: str | None
+    auth: bool
+    vm: bool
+    password: str
 
 
 def _service_states(instance: DevInstance) -> dict[str, bool]:
@@ -35,7 +68,7 @@ def _service_states(instance: DevInstance) -> dict[str, bool]:
     }
 
 
-def status_payload(instance: DevInstance) -> dict[str, Any]:
+def status_payload(instance: DevInstance) -> StatusPayload:
     """Everything about an instance, in the shape ``--json`` prints.
 
     The single source for ports: the skill tells a session to read them from here rather
@@ -69,7 +102,7 @@ def status_payload(instance: DevInstance) -> dict[str, Any]:
     }
 
 
-def _print_status(payload: dict[str, Any]) -> None:
+def _print_status(payload: StatusPayload) -> None:
     running = payload["running"]
     mark = {True: "up", False: "down"}
     print(f"dev instance '{payload['name']}'  (slot {payload['slot']})")
@@ -83,7 +116,7 @@ def _print_status(payload: dict[str, Any]) -> None:
         print("\nnext: uv run python dev_instance.py up")
 
 
-def _cmd_status(args: argparse.Namespace) -> int:
+def _cmd_status(args: _Args) -> int:
     instance = resolve()
     payload = status_payload(instance)
     if args.json:
@@ -93,7 +126,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_ready(payload: dict[str, Any], outcomes: dict[str, str], *, detached: bool) -> None:
+def _print_ready(payload: StatusPayload, outcomes: dict[str, str], *, detached: bool) -> None:
     """The block a session reads after ``up``. Ends with the next action, spelled out —
     knowing the state and knowing what to do about it are different things."""
     print(f"\ndev instance '{payload['name']}' ready  (slot {payload['slot']})\n")
@@ -116,7 +149,7 @@ def _print_ready(payload: dict[str, Any], outcomes: dict[str, str], *, detached:
     )
 
 
-def _cmd_up(args: argparse.Namespace) -> int:
+def _cmd_up(args: _Args) -> int:
     instance = resolve(auth=args.auth, vm=args.with_vm)
     supervisor = Supervisor()
     try:
@@ -134,7 +167,7 @@ def _cmd_up(args: argparse.Namespace) -> int:
         print(f"       logs: {instance.logs_dir}", file=sys.stderr)
         return 1
 
-    supervisor.record(instance.root)
+    _ = supervisor.record(instance.root)
     payload = status_payload(instance)
     if args.json:
         print(json.dumps({**payload, "outcomes": outcomes, "detached": args.detach}, indent=2))
@@ -156,7 +189,7 @@ def _cmd_up(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_seed(args: argparse.Namespace) -> int:
+def _cmd_seed(args: _Args) -> int:
     instance = resolve()
     if not launch.backend_healthy(instance):
         print(
@@ -169,7 +202,7 @@ def _cmd_seed(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_reset(args: argparse.Namespace) -> int:
+def _cmd_reset(args: _Args) -> int:
     instance = resolve()
     if not args.yes:
         print(
@@ -177,7 +210,7 @@ def _cmd_reset(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    processes.stop_recorded(instance.root)
+    _ = processes.stop_recorded(instance.root)
     summary = reset_workspace(instance.data_dir)
     # `reset_workspace` deliberately preserves the live database — it is written for a
     # running app that holds the file open. Nothing holds it now, and leaving it would
@@ -198,7 +231,7 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_doctor(args: argparse.Namespace) -> int:
+def _cmd_doctor(args: _Args) -> int:
     findings = doctor.run(resolve())
     if args.json:
         print(json.dumps([finding.as_dict() for finding in findings], indent=2))
@@ -211,7 +244,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if any(f.status == doctor.FAIL for f in findings) else 0
 
 
-def _cmd_stop(args: argparse.Namespace) -> int:
+def _cmd_stop(args: _Args) -> int:
     instance = resolve()
     stopped = processes.stop_recorded(instance.root)
     if args.json:
@@ -237,7 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
         "up",
         help="bring the instance up (safe to run twice — it fills in what is missing)",
     )
-    up.add_argument(
+    _ = up.add_argument(
         "--detach",
         action="store_true",
         help="return once everything is up, leaving it running; stop it with `stop`",
@@ -246,19 +279,19 @@ def build_parser() -> argparse.ArgumentParser:
     # session need not repeat them; omitted, they leave the stored choice alone. Without
     # the `--no-` half a flag could only ever be turned on, and an instance that once ran
     # `--with-vm` would keep booting a VM on every later `up`.
-    up.add_argument(
+    _ = up.add_argument(
         "--auth",
         action=argparse.BooleanOptionalAction,
         default=None,
         help="put the real login screen in front of the app (default: off, and remembered)",
     )
-    up.add_argument(
+    _ = up.add_argument(
         "--with-vm",
         action=argparse.BooleanOptionalAction,
         default=None,
         help="also run the platform VM: sandbox, SearXNG and web fetch (remembered)",
     )
-    up.add_argument(
+    _ = up.add_argument(
         "--reseed",
         action="store_true",
         help="re-run the fixtures even if the pack has not changed",
@@ -274,7 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     stop.set_defaults(handler=_cmd_stop)
 
     seed = subcommands.add_parser("seed", help="run the fixture pack against the running instance")
-    seed.add_argument(
+    _ = seed.add_argument(
         "--force", action="store_true", help="re-run even if the pack has not changed"
     )
     seed.set_defaults(handler=_cmd_seed)
@@ -282,22 +315,22 @@ def build_parser() -> argparse.ArgumentParser:
     reset = subcommands.add_parser(
         "reset", help="wipe this instance's workspace so the next `up` starts clean"
     )
-    reset.add_argument("--yes", action="store_true", help="confirm the deletion")
+    _ = reset.add_argument("--yes", action="store_true", help="confirm the deletion")
     reset.set_defaults(handler=_cmd_reset)
 
     check = subcommands.add_parser("doctor", help="what is wrong and what to do about it")
     check.set_defaults(handler=_cmd_doctor)
 
     for sub in subcommands.choices.values():
-        sub.add_argument(
+        _ = sub.add_argument(
             "--json", action="store_true", help="machine-readable output (prefer this)"
         )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    return int(args.handler(args))
+    args = build_parser().parse_args(argv, namespace=_Args())
+    return args.handler(args)
 
 
 if __name__ == "__main__":

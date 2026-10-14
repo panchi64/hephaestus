@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from typing import Any
+from collections.abc import AsyncGenerator, Iterable
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 from devkit.stub.embeddings import embed as embed_text
 from devkit.stub.scripts import Scenario, ScriptBook, last_user_prompt
@@ -72,7 +72,7 @@ def create_stub() -> FastAPI:
     app.state.book = book
 
     @app.get("/v1/models")
-    async def list_models() -> dict[str, Any]:
+    async def list_models() -> dict[str, JsonValue]:
         # The picker discovers what an endpoint offers through this, and the registry's
         # connection test probes it — so a stub without it reads as an unreachable
         # endpoint rather than a working one.
@@ -82,10 +82,11 @@ def create_stub() -> FastAPI:
         }
 
     @app.post("/v1/chat/completions")
-    async def chat_completions(body: dict[str, Any]):
+    async def chat_completions(body: dict[str, JsonValue]):
         book.requests.append(body)
+        messages = body.get("messages")
         scenario = book.next_for(
-            last_user_prompt(body.get("messages") or []),
+            last_user_prompt(messages if isinstance(messages, list) else []),
             has_tools=bool(body.get("tools")),
         )
         if scenario.latency_s:
@@ -96,27 +97,35 @@ def create_stub() -> FastAPI:
                 content={"error": {"message": scenario.error, "type": "stub_error"}},
             )
 
-        model = body.get("model") or MODEL_ID
+        requested = body.get("model")
+        model = requested if isinstance(requested, str) and requested else MODEL_ID
         request_id = f"chatcmpl-{secrets.token_hex(8)}"
         reply: Reply = scenario.reply()
         if not body.get("stream"):
             return completion(model, reply, request_id=request_id)
 
-        include_usage = bool((body.get("stream_options") or {}).get("include_usage"))
+        options = body.get("stream_options")
+        include_usage = isinstance(options, dict) and bool(options.get("include_usage"))
         return StreamingResponse(
             _aiter(stream(model, reply, request_id=request_id, include_usage=include_usage)),
             media_type="text/event-stream",
         )
 
     @app.post("/v1/embeddings")
-    async def embed(body: dict[str, Any]) -> dict[str, Any]:
+    async def embed(body: dict[str, JsonValue]) -> dict[str, JsonValue]:
         text = body.get("input") or []
-        texts = [text] if isinstance(text, str) else [str(item) for item in text]
+        texts = (
+            [text]
+            if isinstance(text, str)
+            else [str(item) for item in text]
+            if isinstance(text, list)
+            else []
+        )
         return {
             "object": "list",
             "model": body.get("model") or MODEL_ID,
             "data": [
-                {"object": "embedding", "index": index, "embedding": embed_text(item)}
+                {"object": "embedding", "index": index, "embedding": list(embed_text(item))}
                 for index, item in enumerate(texts)
             ],
             "usage": {"prompt_tokens": len(texts), "total_tokens": len(texts)},
@@ -133,13 +142,13 @@ def create_stub() -> FastAPI:
         return {"pending": book.pending}
 
     @app.get("/_stub/requests")
-    async def requests() -> dict[str, Any]:
-        return {"count": len(book.requests), "requests": list(book.requests)}
+    async def requests() -> dict[str, JsonValue]:
+        return {"count": len(book.requests), "requests": [*book.requests]}
 
     return app
 
 
-async def _aiter(frames):
+async def _aiter(frames: Iterable[str]) -> AsyncGenerator[str]:
     """The sync generator `wire.stream` produces, as the async one Starlette wants."""
     for frame in frames:
         yield frame

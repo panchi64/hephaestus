@@ -27,6 +27,8 @@ import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from devkit import ports
 
 #: Where every dev instance on this host lives, one directory per worktree.
@@ -35,6 +37,18 @@ ROOT = Path("~/.hephaestus/dev").expanduser()
 #: The file recording what was decided the first time an instance was created. Mode 0600
 #: because it holds the vault passphrase.
 STATE_FILE = "instance.json"
+
+
+class _SlotRecord(BaseModel):
+    slot: int
+
+
+class _StoredState(_SlotRecord):
+    password: str
+    name: str | None = None
+    seeded: str = ""
+    auth: bool = False
+    vm: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,7 +157,7 @@ class DevInstance:
         """Record what was decided, so the next run inherits it rather than re-deciding."""
         self.root.mkdir(parents=True, exist_ok=True)
         state = self.root / STATE_FILE
-        state.write_text(
+        _ = state.write_text(
             json.dumps(
                 {
                     "name": self.name,
@@ -196,8 +210,8 @@ def claimed_slots(root: Path = ROOT) -> set[int]:
         return slots
     for state in root.glob(f"*/{STATE_FILE}"):
         try:
-            slots.add(int(json.loads(state.read_text())["slot"]))
-        except OSError, ValueError, KeyError, TypeError:
+            slots.add(_SlotRecord.model_validate_json(state.read_text()).slot)
+        except OSError, ValueError:
             continue  # an unreadable neighbour is not a reason to fail
     return slots
 
@@ -221,15 +235,15 @@ def resolve(
     state = home / STATE_FILE
     stored_instance: DevInstance | None = None
     if state.is_file():
-        stored = json.loads(state.read_text())
+        stored = _StoredState.model_validate_json(state.read_text())
         stored_instance = DevInstance(
-            name=stored.get("name", name),
-            slot=int(stored["slot"]),
+            name=stored.name if stored.name is not None else name,
+            slot=stored.slot,
             root=home,
-            password=stored["password"],
-            seeded=stored.get("seeded", ""),
-            auth=stored.get("auth", False),
-            vm=stored.get("vm", False),
+            password=stored.password,
+            seeded=stored.seeded,
+            auth=stored.auth,
+            vm=stored.vm,
         )
         instance = stored_instance
     else:

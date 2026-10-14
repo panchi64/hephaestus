@@ -59,26 +59,32 @@ def _usage(reply: Reply) -> dict[str, int]:
     return {"prompt_tokens": 16, "completion_tokens": completion, "total_tokens": 16 + completion}
 
 
-def _tool_calls_body(reply: Reply) -> list[dict[str, object]]:
-    """The wire form of a reply's tool calls, with ids that are unique among themselves.
+def _unique_ids(reply: Reply) -> list[str]:
+    """One id per tool call, unique among themselves.
 
     Only a *duplicate* id is rewritten. Ids are how a client matches each result back to
     the call that asked for it, so two calls sharing one would be indistinguishable — but
     an id the caller set deliberately, to assert on, must survive being one of several.
     """
     seen: set[str] = set()
-    body: list[dict[str, object]] = []
+    ids: list[str] = []
     for index, call in enumerate(reply.tool_calls):
         identifier = call.id if call.id not in seen else f"{call.id}_{index}"
         seen.add(identifier)
-        body.append(
-            {
-                "id": identifier,
-                "type": "function",
-                "function": {"name": call.name, "arguments": call.arguments},
-            }
-        )
-    return body
+        ids.append(identifier)
+    return ids
+
+
+def _tool_calls_body(reply: Reply) -> list[dict[str, object]]:
+    """The wire form of a reply's tool calls."""
+    return [
+        {
+            "id": identifier,
+            "type": "function",
+            "function": {"name": call.name, "arguments": call.arguments},
+        }
+        for identifier, call in zip(_unique_ids(reply), reply.tool_calls, strict=True)
+    ]
 
 
 def completion(model: str, reply: Reply, *, request_id: str) -> dict[str, object]:
@@ -125,9 +131,9 @@ def stream(model: str, reply: Reply, *, request_id: str, include_usage: bool) ->
         for piece in _split(reply.text, _TEXT_CHUNK):
             yield _chunk(model, request_id, delta={"content": piece}, finish_reason=None)
 
-    for index, call in enumerate(_tool_calls_body(reply)):
-        function = call["function"]
-        assert isinstance(function, dict)
+    for index, (identifier, call) in enumerate(
+        zip(_unique_ids(reply), reply.tool_calls, strict=True)
+    ):
         # The opening delta carries the identity and an empty argument string; every
         # later one carries only a fragment, indexed so the client knows what to append
         # it to. This is the shape a real server produces.
@@ -138,15 +144,15 @@ def stream(model: str, reply: Reply, *, request_id: str, include_usage: bool) ->
                 "tool_calls": [
                     {
                         "index": index,
-                        "id": call["id"],
+                        "id": identifier,
                         "type": "function",
-                        "function": {"name": function["name"], "arguments": ""},
+                        "function": {"name": call.name, "arguments": ""},
                     }
                 ]
             },
             finish_reason=None,
         )
-        for piece in _split(str(function["arguments"]), _ARG_CHUNK):
+        for piece in _split(call.arguments, _ARG_CHUNK):
             yield _chunk(
                 model,
                 request_id,
@@ -156,7 +162,7 @@ def stream(model: str, reply: Reply, *, request_id: str, include_usage: bool) ->
 
     yield _chunk(model, request_id, delta={}, finish_reason=reply.finish_reason)
     if include_usage:
-        body = {
+        body: dict[str, object] = {
             "id": request_id,
             "object": "chat.completion.chunk",
             "created": int(time.time()),

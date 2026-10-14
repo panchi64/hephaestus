@@ -23,7 +23,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic import TypeAdapter
+
 from devkit import ports
+
+_GROUPS = TypeAdapter(dict[str, int])
 
 #: Where a running instance records the process groups it started, so a later, unrelated
 #: command can stop them. Process *groups* rather than pids: both services spawn (the
@@ -116,7 +120,7 @@ class Supervisor:
         # Closed once Popen has dup'd it for the child: the parent's copy is pure leak,
         # and a caller that started services repeatedly would accumulate descriptors.
         with log.open("a", buffering=1) as handle:
-            handle.write(f"\n--- {name} started {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+            _ = handle.write(f"\n--- {name} started {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
             process = subprocess.Popen(
                 argv,
                 cwd=cwd,
@@ -150,7 +154,7 @@ class Supervisor:
         for service in self._services:
             with contextlib.suppress(ProcessLookupError, OSError):
                 groups[service.name] = os.getpgid(service.process.pid)
-        path.write_text(json.dumps(groups, indent=2) + "\n")
+        _ = path.write_text(json.dumps(groups, indent=2) + "\n")
         return path
 
     def forget(self, root: Path) -> None:
@@ -163,9 +167,9 @@ class Supervisor:
         path = root / PIDFILE
         groups = _read_groups(path)
         for service in self._services:
-            groups.pop(service.name, None)
+            _ = groups.pop(service.name, None)
         if groups:
-            path.write_text(json.dumps(groups, indent=2) + "\n")
+            _ = path.write_text(json.dumps(groups, indent=2) + "\n")
         else:
             path.unlink(missing_ok=True)
 
@@ -176,7 +180,7 @@ class Supervisor:
         deadline = time.monotonic() + _GRACE_S
         for service in reversed(self._services):
             with contextlib.suppress(subprocess.TimeoutExpired):
-                service.process.wait(timeout=max(0.1, deadline - time.monotonic()))
+                _ = service.process.wait(timeout=max(0.1, deadline - time.monotonic()))
         for service in reversed(self._services):
             if service.process.poll() is None:
                 signal_group(_group_of(service), signal.SIGKILL)
@@ -198,14 +202,9 @@ def _read_groups(path: Path) -> dict[str, int]:
     the leftover it describes.
     """
     try:
-        groups = json.loads(path.read_text())
+        return _GROUPS.validate_json(path.read_text())
     except OSError, ValueError:
         return {}
-    return (
-        {str(name): int(group) for name, group in groups.items()}
-        if (isinstance(groups, dict))
-        else {}
-    )
 
 
 def _group_alive(group: int) -> bool:
