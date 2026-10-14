@@ -12,11 +12,15 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
 
+import httpx
+import pytest
+from pydantic import JsonValue
 from pydantic_ai import Agent, BinaryContent, DeferredToolRequests
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -25,7 +29,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from agent import build_chat_orchestrator
@@ -50,6 +55,7 @@ from tools import RunDeps, build_agent_toolsets
 from tools.attachments import attachments_toolset
 
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
+from ._json import arr, json_body, obj, parse_json, s
 from .test_memory import FakeEmbedder
 from .test_uploads_extraction import NoVisionOCR
 
@@ -59,7 +65,7 @@ OWNER = "operator"
 # --- fixtures ---------------------------------------------------------------
 
 
-async def _uploads_store():
+async def _uploads_store() -> tuple[Engine, Vault, CorpusChunkStore, UploadsAdapter, UploadStore]:
     """An UploadStore + its corpus adapter over a throwaway in-memory DB. Workers are NOT
     started here — tests that index/drain start (and stop) them explicitly, so no drainer
     task is left pending at teardown. Resolve-only tests never need a worker."""
@@ -74,8 +80,8 @@ async def _uploads_store():
 
 
 async def _insert_upload(
-    engine,
-    vault,
+    engine: Engine,
+    vault: Vault,
     *,
     mime: str,
     text: str | None = "the operator's secret zebra dossier",
@@ -128,11 +134,13 @@ class _FakeSandboxSession:
 
 class _FakeSandboxSessions:
     def __init__(self) -> None:
-        self.session = _FakeSandboxSession()
+        self.session: _FakeSandboxSession = _FakeSandboxSession()
         self.acquired: str | None = None
+        self.holder: object = None
 
     async def acquire(self, key: str, *, holder: object = None) -> _FakeSandboxSession:
         self.acquired = key
+        self.holder = holder
         return self.session
 
 
@@ -153,9 +161,13 @@ def _text(parts: Sequence[object]) -> str:
     return "".join(p for p in parts if isinstance(p, str))
 
 
+def _binaries(parts: Sequence[object]) -> list[BinaryContent]:
+    return [p for p in parts if isinstance(p, BinaryContent)]
+
+
 async def test_a_document_becomes_a_marker_not_its_text():
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
-    uid = await _insert_upload(engine, store._vault, mime="text/plain")
+    engine, vault, _chunks, _adapter, store = await _uploads_store()
+    uid = await _insert_upload(engine, vault, mime="text/plain")
     sessions = _FakeSandboxSessions()
 
     resolved = await resolve_attachments(
@@ -178,8 +190,8 @@ async def test_a_document_becomes_a_marker_not_its_text():
 
 
 async def test_vision_model_gets_pixels_and_the_image_is_staged_too():
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
-    uid = await _insert_upload(engine, store._vault, mime="image/png")
+    engine, vault, _chunks, _adapter, store = await _uploads_store()
+    uid = await _insert_upload(engine, vault, mime="image/png")
     sessions = _FakeSandboxSessions()
 
     resolved = await resolve_attachments(
@@ -188,28 +200,28 @@ async def test_vision_model_gets_pixels_and_the_image_is_staged_too():
 
     # An image is still pixels, live and retained — there is nothing to page through in a
     # picture — but its bytes are staged as well, so code can act on it with no round-trip.
-    assert any(isinstance(part, BinaryContent) for part in resolved.content)
-    assert any(isinstance(part, BinaryContent) for part in resolved.persisted)
+    assert _binaries(resolved.content)
+    assert _binaries(resolved.persisted)
     assert sessions.session.files == {"attachments/dossier": b"raw-bytes"}
     assert "/work/attachments/dossier" in _text(resolved.persisted)
 
 
 async def test_an_image_for_a_text_only_model_is_a_staged_file_like_any_other():
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
-    uid = await _insert_upload(engine, store._vault, mime="image/png")
+    engine, vault, _chunks, _adapter, store = await _uploads_store()
+    uid = await _insert_upload(engine, vault, mime="image/png")
     sessions = _FakeSandboxSessions()
 
     resolved = await resolve_attachments(
         store, OWNER, [uid], vision=False, workspace=_workspace(sessions)
     )
 
-    assert not any(isinstance(part, BinaryContent) for part in resolved.content)
+    assert not _binaries(resolved.content)
     assert "/work/attachments/dossier" in _text(resolved.content)
 
 
 async def test_staging_failure_degrades_to_the_full_text_inline():
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
-    uid = await _insert_upload(engine, store._vault, mime="text/plain")
+    engine, vault, _chunks, _adapter, store = await _uploads_store()
+    uid = await _insert_upload(engine, vault, mime="text/plain")
 
     resolved = await resolve_attachments(store, OWNER, [uid], vision=False, workspace=None)
 
@@ -224,8 +236,8 @@ async def test_staging_failure_degrades_to_the_full_text_inline():
 
 
 async def test_no_sandbox_wired_degrades_the_same_way():
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
-    uid = await _insert_upload(engine, store._vault, mime="text/plain")
+    engine, vault, _chunks, _adapter, store = await _uploads_store()
+    uid = await _insert_upload(engine, vault, mime="text/plain")
 
     resolved = await resolve_attachments(store, OWNER, [uid], vision=False)
 
@@ -236,9 +248,9 @@ async def test_no_sandbox_wired_degrades_the_same_way():
 async def test_still_processing_attachment_is_staged_by_its_bytes():
     # Extraction is what's pending, not the file: the original bytes exist from the moment
     # of upload, so the agent can already read them from its computer.
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
+    engine, vault, _chunks, _adapter, store = await _uploads_store()
     uid = await _insert_upload(
-        engine, store._vault, mime="application/pdf", text=None, status=UploadStatus.EXTRACTING
+        engine, vault, mime="application/pdf", text=None, status=UploadStatus.EXTRACTING
     )
     sessions = _FakeSandboxSessions()
 
@@ -251,9 +263,9 @@ async def test_still_processing_attachment_is_staged_by_its_bytes():
 
 
 async def test_still_processing_attachment_without_a_sandbox_yields_a_placeholder():
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
+    engine, vault, _chunks, _adapter, store = await _uploads_store()
     uid = await _insert_upload(
-        engine, store._vault, mime="application/pdf", text=None, status=UploadStatus.EXTRACTING
+        engine, vault, mime="application/pdf", text=None, status=UploadStatus.EXTRACTING
     )
 
     resolved = await resolve_attachments(store, OWNER, [uid], vision=False)
@@ -262,7 +274,7 @@ async def test_still_processing_attachment_without_a_sandbox_yields_a_placeholde
 
 
 async def test_unknown_attachment_id_is_skipped():
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
+    _engine, _vault, _chunks, _adapter, store = await _uploads_store()
     resolved = await resolve_attachments(
         store, OWNER, ["nope"], vision=True, workspace=_workspace(_FakeSandboxSessions())
     )
@@ -270,9 +282,9 @@ async def test_unknown_attachment_id_is_skipped():
 
 
 async def test_two_files_sharing_a_basename_stage_to_distinct_paths():
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
+    engine, vault, _chunks, _adapter, store = await _uploads_store()
     ids = [
-        await _insert_upload(engine, store._vault, mime="text/plain", content=f"c{n}".encode())
+        await _insert_upload(engine, vault, mime="text/plain", content=f"c{n}".encode())
         for n in range(2)
     ]
     sessions = _FakeSandboxSessions()
@@ -286,41 +298,47 @@ async def test_two_files_sharing_a_basename_stage_to_distinct_paths():
     assert "/work/attachments/dossier-2" in body
 
 
-async def test_a_multi_file_turn_reads_the_store_a_fixed_number_of_times():
+def _counted[**P, R](calls: list[str], name: str, original: Callable[P, R]) -> Callable[P, R]:
+    def counted(*args: P.args, **kwargs: P.kwargs) -> R:
+        calls.append(name)
+        return original(*args, **kwargs)
+
+    return counted
+
+
+async def test_a_multi_file_turn_reads_the_store_a_fixed_number_of_times(
+    monkeypatch: pytest.MonkeyPatch,
+):
     # Resolution used to call `get` (and, for an image, `content`) per attachment, each a
     # thread hop into the DB — a four-file turn cost eight. The count must not scale with
     # the number of files.
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
+    engine, vault, _chunks, _adapter, store = await _uploads_store()
     ids = [
-        await _insert_upload(engine, store._vault, mime="image/png", content=f"px{n}".encode())
+        await _insert_upload(engine, vault, mime="image/png", content=f"px{n}".encode())
         for n in range(4)
     ]
     calls: list[str] = []
-    for name in ("get", "content", "get_many", "contents"):
-        original = getattr(store, name)
-
-        def counted(*args, _name=name, _original=original, **kwargs):
-            calls.append(_name)
-            return _original(*args, **kwargs)
-
-        setattr(store, name, counted)
+    monkeypatch.setattr(store, "get", _counted(calls, "get", store.get))
+    monkeypatch.setattr(store, "content", _counted(calls, "content", store.content))
+    monkeypatch.setattr(store, "get_many", _counted(calls, "get_many", store.get_many))
+    monkeypatch.setattr(store, "contents", _counted(calls, "contents", store.contents))
 
     resolved = await resolve_attachments(
         store, OWNER, ids, vision=True, workspace=_workspace(_FakeSandboxSessions())
     )
 
     assert resolved.ids == ids  # order preserved, every file resolved
-    assert len([p for p in resolved.content if isinstance(p, BinaryContent)]) == 4
+    assert len(_binaries(resolved.content)) == 4
     assert calls == ["get_many", "contents"]  # two reads, not two per file
 
 
 async def test_resolution_order_follows_the_request_not_the_database():
     # The batch read returns rows in whatever order SQLite hands them back; the marker
     # must still follow the order the operator attached them in.
-    engine, _vault, _chunks, _adapter, store = await _uploads_store()
+    engine, vault, _chunks, _adapter, store = await _uploads_store()
     ids = [
         await _insert_upload(
-            engine, store._vault, mime="text/plain", text=f"file-{n}", content=f"c{n}".encode()
+            engine, vault, mime="text/plain", text=f"file-{n}", content=f"c{n}".encode()
         )
         for n in range(3)
     ]
@@ -373,7 +391,7 @@ def test_install_collapses_to_text_when_no_binary_survives():
 # --- the engine: full live content, capped persisted content ----------------
 
 
-async def _conv_store():
+async def _conv_store() -> ConversationStore:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
@@ -384,8 +402,8 @@ async def _conv_store():
 async def test_image_attachment_is_retained_inline_in_history():
     # The file is handed to the model for this turn (pixels, vision=True), and — being an
     # image — it is *retained inline* in replayed history so a later turn re-sees it.
-    up_engine, _v, _c, _a, uploads = await _uploads_store()
-    uid = await _insert_upload(up_engine, uploads._vault, mime="image/png")
+    up_engine, vault, _c, _a, uploads = await _uploads_store()
+    uid = await _insert_upload(up_engine, vault, mime="image/png")
 
     conv = await _conv_store()
     await conv.start()
@@ -395,7 +413,7 @@ async def test_image_attachment_is_retained_inline_in_history():
     # place when the capped content is installed afterward.
     saw_binary: list[bool] = []
 
-    async def capture(messages, info):
+    async def capture(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
         # The engine streams the turn, so a stream_function is what FunctionModel needs.
         user = next(p for m in messages for p in m.parts if isinstance(p, UserPromptPart))
         content = user.content if isinstance(user.content, list) else [user.content]
@@ -430,10 +448,10 @@ async def test_image_attachment_is_retained_inline_in_history():
 # --- attachments_provision: re-stage a file into the sandbox ----------------
 
 
-def _provision_then_answer(uid: str):
+def _provision_then_answer(uid: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
     """A FunctionModel function: call attachments_provision once, then answer."""
 
-    def fn(messages, info):
+    def fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         already = any(
             isinstance(p, ToolReturnPart | RetryPromptPart) for m in messages for p in m.parts
         )
@@ -452,7 +470,9 @@ def _provision_then_answer(uid: str):
     return fn
 
 
-async def _run_provision(uid: str, *, uploads, sessions):
+async def _run_provision(
+    uid: str, *, uploads: UploadStore | None, sessions: _FakeSandboxSessions | None
+) -> tuple[list[ToolReturnPart], list[RetryPromptPart]]:
     agent = Agent(
         FunctionModel(_provision_then_answer(uid)),
         deps_type=RunDeps,
@@ -478,14 +498,13 @@ async def _run_provision(uid: str, *, uploads, sessions):
     return returns, retries
 
 
-def _payload(ret: ToolReturnPart) -> dict[str, object]:
-    assert isinstance(ret.content, dict)
-    return {str(k): v for k, v in ret.content.items()}
+def _payload(ret: ToolReturnPart) -> dict[str, JsonValue]:
+    return obj(parse_json(ret.model_response_str()))
 
 
 async def test_provision_stages_attachment_into_the_sandbox():
-    engine, _v, _c, _a, uploads = await _uploads_store()
-    uid = await _insert_upload(engine, uploads._vault, mime="text/csv", content=b"a,b\n1,2\n")
+    engine, vault, _c, _a, uploads = await _uploads_store()
+    uid = await _insert_upload(engine, vault, mime="text/csv", content=b"a,b\n1,2\n")
     sessions = _FakeSandboxSessions()
 
     returns, _retries = await _run_provision(uid, uploads=uploads, sessions=sessions)
@@ -500,7 +519,7 @@ async def test_provision_stages_attachment_into_the_sandbox():
 
 
 async def test_provision_unknown_id_retries_and_stages_nothing():
-    engine, _v, _c, _a, uploads = await _uploads_store()
+    _engine, _v, _c, _a, uploads = await _uploads_store()
     sessions = _FakeSandboxSessions()
 
     _returns, retries = await _run_provision("ghost", uploads=uploads, sessions=sessions)
@@ -510,8 +529,8 @@ async def test_provision_unknown_id_retries_and_stages_nothing():
 
 
 async def test_provision_degrades_without_a_sandbox():
-    engine, _v, _c, _a, uploads = await _uploads_store()
-    uid = await _insert_upload(engine, uploads._vault, mime="text/plain")
+    engine, vault, _c, _a, uploads = await _uploads_store()
+    uid = await _insert_upload(engine, vault, mime="text/plain")
 
     returns, _retries = await _run_provision(uid, uploads=uploads, sessions=None)
 
@@ -530,9 +549,9 @@ async def test_provision_disambiguates_a_filename_collision():
     # Two distinct attachments both sanitize to "dossier" (_insert_upload's fixed
     # filename) but carry different bytes — the second must not silently clobber
     # the first, and the result must report the actual path it landed at.
-    engine, _v, _c, _a, uploads = await _uploads_store()
-    uid1 = await _insert_upload(engine, uploads._vault, mime="text/csv", content=b"a,b\n1,2\n")
-    uid2 = await _insert_upload(engine, uploads._vault, mime="text/csv", content=b"c,d\n3,4\n")
+    engine, vault, _c, _a, uploads = await _uploads_store()
+    uid1 = await _insert_upload(engine, vault, mime="text/csv", content=b"a,b\n1,2\n")
+    uid2 = await _insert_upload(engine, vault, mime="text/csv", content=b"c,d\n3,4\n")
     sessions = _FakeSandboxSessions()
 
     returns1, _r1 = await _run_provision(uid1, uploads=uploads, sessions=sessions)
@@ -560,8 +579,8 @@ async def test_provision_disambiguates_a_filename_collision():
 async def test_provision_reprovisioning_the_same_attachment_is_idempotent():
     # Re-provisioning the *same* attachment (same bytes at the same name) is a
     # no-op re-stage, not a collision — it must land back at the original path.
-    engine, _v, _c, _a, uploads = await _uploads_store()
-    uid = await _insert_upload(engine, uploads._vault, mime="text/csv", content=b"a,b\n1,2\n")
+    engine, vault, _c, _a, uploads = await _uploads_store()
+    uid = await _insert_upload(engine, vault, mime="text/csv", content=b"a,b\n1,2\n")
     sessions = _FakeSandboxSessions()
 
     returns1, _r1 = await _run_provision(uid, uploads=uploads, sessions=sessions)
@@ -576,12 +595,12 @@ async def test_provision_reprovisioning_the_same_attachment_is_idempotent():
 # --- the retroactive knowledge-base exclude toggle --------------------------
 
 
-async def _drain_adapter(adapter):
+async def _drain_adapter(adapter: UploadsAdapter) -> None:
     await adapter._worker.join()
 
 
 async def test_excluded_upload_drops_from_retrieve_and_returns_on_reinclude():
-    engine, _vault, chunk_store, adapter, _store = await _uploads_store()
+    _engine, _vault, _chunks, adapter, _store = await _uploads_store()
     await adapter.start()
     try:
         adapter.index_upload(OWNER, "up-zebra", "the zebra dossier lives here")
@@ -600,14 +619,14 @@ async def test_excluded_upload_drops_from_retrieve_and_returns_on_reinclude():
 
 
 async def test_set_kb_excluded_flips_flag_and_restamps_chunks():
-    engine, vault, chunk_store, adapter, store = await _uploads_store()
+    engine, _vault, _chunks, adapter, store = await _uploads_store()
     await store.start()
     await adapter.start()
     view, _created = await store.create(OWNER, "n.txt", "text/plain", b"zebra facts abound here")
     await store._worker.join()
     await adapter._worker.join()
 
-    await store.set_kb_excluded(OWNER, view.id, True)
+    _ = await store.set_kb_excluded(OWNER, view.id, True)
     await adapter._worker.join()
 
     refreshed = await store.get(OWNER, view.id)
@@ -617,7 +636,7 @@ async def test_set_kb_excluded_flips_flag_and_restamps_chunks():
     assert chunks and all(c.kb_excluded for c in chunks)
     assert await adapter.retrieve(OWNER, "zebra", None, None, {"zebra"}, limit=5) == []
 
-    await store.set_kb_excluded(OWNER, view.id, False)
+    _ = await store.set_kb_excluded(OWNER, view.id, False)
     await adapter._worker.join()
     assert await adapter.retrieve(OWNER, "zebra", None, None, {"zebra"}, limit=5)
     await store.stop()
@@ -655,13 +674,18 @@ async def test_targeted_source_ids_read_scopes_to_one_file_and_overrides_exclude
 # --- routes -----------------------------------------------------------------
 
 
-async def _upload_file(client, name="note.txt", body=b"hello there", mime="text/plain"):
+async def _upload_file(
+    client: httpx.AsyncClient,
+    name: str = "note.txt",
+    body: bytes = b"hello there",
+    mime: str = "text/plain",
+) -> str:
     resp = await client.post("/uploads", files={"file": (name, body, mime)})
     assert resp.status_code in (200, 201)
-    return resp.json()["id"]
+    return s(json_body(resp)["id"])
 
 
-async def test_chat_accepts_attachment_ids_and_turn_carries_them(monkeypatch):
+async def test_chat_accepts_attachment_ids_and_turn_carries_them(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, _app):
         uid = await _upload_file(client)
@@ -669,25 +693,25 @@ async def test_chat_accepts_attachment_ids_and_turn_carries_them(monkeypatch):
             "/chat", json={"prompt": "look at my file", "attachment_ids": [uid]}
         )
         assert resp.status_code == 202
-        body = resp.json()
-        await collect_sse_events(client, body["run_id"])
+        body = json_body(resp)
+        _ = await collect_sse_events(client, s(body["run_id"]))
 
-        detail = await client.get(f"/conversations/{body['conversation_id']}")
-        messages = detail.json()["messages"]
-        user_turn = next(m for m in messages if m["role"] == "user")
+        detail = await client.get(f"/conversations/{s(body['conversation_id'])}")
+        messages = arr(json_body(detail)["messages"])
+        user_turn = next(obj(m) for m in messages if obj(m)["role"] == "user")
         # The conversations route emits snake_case (MessageOut is a plain BaseModel,
         # unlike the camelCase upload DTOs); the frontend maps it to attachmentIds.
         assert user_turn["attachment_ids"] == [uid]
 
 
-async def test_chat_rejects_unknown_attachment_id(monkeypatch):
+async def test_chat_rejects_unknown_attachment_id(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, _app):
         resp = await client.post("/chat", json={"prompt": "hi", "attachment_ids": ["ghost"]})
         assert resp.status_code == 404
 
 
-async def test_chat_allows_empty_prompt_with_an_attachment(monkeypatch):
+async def test_chat_allows_empty_prompt_with_an_attachment(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, _app):
         uid = await _upload_file(client)
@@ -698,16 +722,16 @@ async def test_chat_allows_empty_prompt_with_an_attachment(monkeypatch):
         assert empty.status_code == 422
 
 
-async def test_patch_upload_toggles_kb_excluded(monkeypatch):
+async def test_patch_upload_toggles_kb_excluded(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, _app):
         uid = await _upload_file(client)
         resp = await client.patch(f"/uploads/{uid}", json={"kbExcluded": True})
         assert resp.status_code == 200
-        assert resp.json()["kbExcluded"] is True
+        assert json_body(resp)["kbExcluded"] is True
 
         back = await client.patch(f"/uploads/{uid}", json={"kbExcluded": False})
-        assert back.json()["kbExcluded"] is False
+        assert json_body(back)["kbExcluded"] is False
 
 
 def test_provision_says_only_what_the_model_cannot_read_elsewhere():
