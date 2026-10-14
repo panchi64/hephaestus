@@ -29,6 +29,7 @@ from pydantic_ai.settings import ModelSettings
 from core.untrusted import wrap_untrusted
 
 from .cache import MessageDetail
+from .ports import BackgroundModelSource, Notifier
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +101,11 @@ class MailTriage:
     or main role bound gets an untriaged inbox, not a broken one.
     """
 
-    def __init__(self, registry, notifications=None) -> None:
-        self._registry = registry
-        self._notifications = notifications
+    def __init__(
+        self, registry: BackgroundModelSource, notifications: Notifier | None = None
+    ) -> None:
+        self._registry: BackgroundModelSource = registry
+        self._notifications: Notifier | None = notifications
 
     async def triage(self, owner_id: str, detail: MessageDetail) -> TriageVerdict | None:
         """Judge one message. Returns ``None`` when no model is available or the call
@@ -134,7 +137,7 @@ class MailTriage:
             return
         sender = detail.message.from_name or detail.message.from_address
         try:
-            await self._notifications.notify(
+            _ = await self._notifications.notify(
                 owner_id,
                 "system",
                 f"Urgent email from {sender}",

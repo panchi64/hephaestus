@@ -30,6 +30,16 @@ def as_list(value: object) -> list[object] | None:
     return list(cast("Sequence[object]", value)) if isinstance(value, list | tuple) else None
 
 
+def as_int(value: object) -> int | None:
+    """``value`` when it is an integer (a boolean is not one), else None."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def as_str(value: object) -> str | None:
+    """``value`` when it is a string, else None."""
+    return value if isinstance(value, str) else None
+
+
 def dict_list(value: object) -> list[dict[str, object]]:
     """The dict items of ``value`` when it is a list or tuple; anything else yields nothing."""
     return [item for item in map(as_dict, as_list(value) or []) if item is not None]

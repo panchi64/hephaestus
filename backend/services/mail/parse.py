@@ -14,11 +14,11 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from email import message_from_bytes, policy
-from email.headerregistry import Address
-from email.message import EmailMessage
+from email.headerregistry import Address, AddressHeader
+from email.message import EmailMessage, MIMEPart
 from email.utils import format_datetime, make_msgid, parsedate_to_datetime
 from html.parser import HTMLParser
-from typing import Any
+from typing import ClassVar, cast, override
 
 import trafilatura
 
@@ -82,26 +82,42 @@ class _TextExtractor(HTMLParser):
     """A minimal tag-stripper: text only, block elements separated by newlines, and the
     contents of ``script``/``style`` dropped entirely."""
 
-    _SKIP = {"script", "style", "head", "title"}
-    _BREAK = {"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6", "table"}
+    _SKIP: ClassVar[set[str]] = {"script", "style", "head", "title"}
+    _BREAK: ClassVar[set[str]] = {
+        "p",
+        "div",
+        "br",
+        "tr",
+        "li",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "table",
+    }
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self._chunks: list[str] = []
-        self._skipping = 0
+        self._skipping: int = 0
 
-    def handle_starttag(self, tag: str, attrs) -> None:
+    @override
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in self._SKIP:
             self._skipping += 1
         elif tag in self._BREAK:
             self._chunks.append("\n")
 
+    @override
     def handle_endtag(self, tag: str) -> None:
         if tag in self._SKIP and self._skipping:
             self._skipping -= 1
         elif tag in self._BREAK:
             self._chunks.append("\n")
 
+    @override
     def handle_data(self, data: str) -> None:
         if not self._skipping:
             self._chunks.append(data)
@@ -129,7 +145,7 @@ def snippet_of(text: str, limit: int = SNIPPET_CHARS) -> str:
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1].rstrip() + "…"
 
 
-def parse_utc(value: Any) -> datetime | None:
+def parse_utc(value: object) -> datetime | None:
     """An ISO-8601 timestamp from a JSON mail API, or ``None`` if it is absent or junk.
 
     Shared by the Graph and JMAP adapters, which had identical private copies. Both
@@ -175,56 +191,56 @@ def _address_header(address: MailAddress) -> Address:
     return Address(display_name=address.name or "", username=local, domain=domain)
 
 
-def _bodies(message: Any) -> tuple[str | None, str | None]:
+def _bodies(message: EmailMessage) -> tuple[str | None, str | None]:
     """The plain-text and HTML bodies, either of which may be absent."""
     text_part = message.get_body(preferencelist=("plain",))
     html_part = message.get_body(preferencelist=("html",))
     return _part_text(text_part), _part_text(html_part)
 
 
-def _part_text(part: Any) -> str | None:
+def _part_text(part: MIMEPart | None) -> str | None:
     if part is None:
         return None
     try:
-        content = part.get_content()
+        content = cast("object", part.get_content())
     except LookupError, UnicodeDecodeError, KeyError:
         # An unknown charset or a broken transfer encoding — read the raw payload with a
         # replacement decode rather than dropping the message entirely.
-        payload = part.get_payload(decode=True)
-        content = payload.decode("utf-8", "replace") if payload else ""
+        payload = cast("object", part.get_payload(decode=True))
+        content = payload.decode("utf-8", "replace") if isinstance(payload, bytes) else ""
     return content if isinstance(content, str) else None
 
 
-def _attachment_names(message: Any) -> list[str]:
+def _attachment_names(message: EmailMessage) -> list[str]:
     return [part.get_filename() or "attachment" for part in message.iter_attachments()]
 
 
-def _header_str(message: Any, name: str) -> str:
+def _header_str(message: EmailMessage, name: str) -> str:
     value = message.get(name)
-    return str(value).strip() if value is not None else ""
+    return value.strip() if isinstance(value, str) else ""
 
 
-def _received_at(message: Any):
+def _received_at(message: EmailMessage) -> datetime | None:
     raw = message.get("Date")
-    if raw is None:
+    if not isinstance(raw, str):
         return None
     try:
-        return parsedate_to_datetime(str(raw))
+        return parsedate_to_datetime(raw)
     except TypeError, ValueError:
         return None
 
 
-def _addresses(message: Any, name: str) -> tuple[MailAddress, ...]:
+def _addresses(message: EmailMessage, name: str) -> tuple[MailAddress, ...]:
     header = message.get(name)
-    if header is None:
+    if not isinstance(header, AddressHeader):
         return ()
     found: list[MailAddress] = []
-    for address in getattr(header, "addresses", ()):
+    for address in header.addresses:
         if address.addr_spec:
             found.append(MailAddress(address=address.addr_spec, name=address.display_name or None))
     return tuple(found)
 
 
-def _first_address(message: Any, name: str) -> MailAddress | None:
+def _first_address(message: EmailMessage, name: str) -> MailAddress | None:
     addresses = _addresses(message, name)
     return addresses[0] if addresses else None

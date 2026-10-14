@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TypedDict, Unpack
 
+from pydantic import TypeAdapter
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
 
@@ -24,6 +26,8 @@ from models.mail import MailDraft, MailStyleProfile
 # A draft the operator composed, versus one pre-generated as a reply suggestion.
 KIND_MANUAL = "manual"
 KIND_SUGGESTED = "suggested"
+
+_ADDRESSES = TypeAdapter(list[str])
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,10 +57,21 @@ class StyleProfileView:
     updated_at: datetime
 
 
+class DraftEdits(TypedDict, total=False):
+    """The fields :meth:`DraftStore.update` accepts. Only the ones passed are touched."""
+
+    to: list[str] | None
+    cc: list[str] | None
+    bcc: list[str] | None
+    subject: str | None
+    body: str | None
+    label: str | None
+
+
 class DraftStore:
     def __init__(self, engine: Engine, vault: Vault) -> None:
-        self._engine = engine
-        self._vault = vault
+        self._engine: Engine = engine
+        self._vault: Vault = vault
 
     async def create(
         self,
@@ -91,7 +106,7 @@ class DraftStore:
         await in_session(self._engine, work)
         return self._to_view(draft)
 
-    async def update(self, owner_id: str, draft_id: str, **fields) -> DraftView:
+    async def update(self, owner_id: str, draft_id: str, **fields: Unpack[DraftEdits]) -> DraftView:
         """Edit a draft. Only the fields passed are touched; ``None`` clears one."""
         sealed = {
             "to_enc": self._seal_list(fields["to"]) if "to" in fields else None,
@@ -185,7 +200,7 @@ class DraftStore:
 
     def _open_list(self, token: str | None) -> tuple[str, ...]:
         raw = self._open(token)
-        return tuple(json.loads(raw)) if raw else ()
+        return tuple(_ADDRESSES.validate_json(raw)) if raw else ()
 
     def _to_view(self, row: MailDraft) -> DraftView:
         return DraftView(
@@ -208,8 +223,8 @@ class StyleProfileStore:
     """The one-per-owner writing-style profile (`EMAIL-3`) — viewable and editable."""
 
     def __init__(self, engine: Engine, vault: Vault) -> None:
-        self._engine = engine
-        self._vault = vault
+        self._engine: Engine = engine
+        self._vault: Vault = vault
 
     async def get(self, owner_id: str) -> StyleProfileView | None:
         def work(session: Session) -> MailStyleProfile | None:

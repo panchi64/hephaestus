@@ -33,9 +33,11 @@ _SIG_DELIMITER = re.compile(r"^(--|__)\s?$", re.MULTILINE)
 # Sign-offs that commonly open a signature block when no "--" delimiter is present.
 # Deliberately short and unambiguous — anything looser starts eating real sentences.
 _SIGN_OFFS = re.compile(
-    r"^\s*(best regards|kind regards|warm regards|best wishes|regards|best|"
-    r"cheers|thanks|thank you|sincerely|yours truly|yours sincerely|"
-    r"sent from my \w+)[,.!]?\s*$",
+    (
+        r"^\s*(best regards|kind regards|warm regards|best wishes|regards|best|"
+        r"cheers|thanks|thank you|sincerely|yours truly|yours sincerely|"
+        r"sent from my \w+)[,.!]?\s*$"
+    ),
     re.IGNORECASE,
 )
 

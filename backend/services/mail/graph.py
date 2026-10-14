@@ -10,10 +10,13 @@ thing downstream.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any
+from typing import override
 
 import httpx
+
+from services.shapes import as_dict, as_int, as_list, as_str, dict_list
 
 from .errors import MailError
 from .models import (
@@ -34,6 +37,7 @@ from .models import (
 )
 from .parse import html_to_text, parse_utc, snippet_of
 from .rest import RestApi
+from .transport import MailTransport
 
 _BASE_URL = "https://graph.microsoft.com/v1.0/me"
 
@@ -53,35 +57,39 @@ _LIST_FIELDS = (
 )
 
 
-class GraphTransport:
+class GraphTransport(MailTransport):
     """A :class:`~services.mail.transport.MailTransport` over Microsoft Graph."""
 
     def __init__(self, spec: AccountSpec, *, client: httpx.AsyncClient | None = None) -> None:
-        self._spec = spec
-        self._api = RestApi(spec, _BASE_URL, client=client)
+        self._spec: AccountSpec = spec
+        self._api: RestApi = RestApi(spec, _BASE_URL, client=client)
 
+    @override
     def capabilities(self) -> TransportCapabilities:
         return TransportCapabilities(idle=False, search=True, move=True, flags=True, threads=True)
 
+    @override
     async def probe(self) -> None:
-        await self._api.request("GET", "")
+        _ = await self._api.request("GET", "")
 
+    @override
     async def list_folders(self) -> list[MailFolder]:
         payload = await self._api.request("GET", "mailFolders", params={"$top": "100"})
-        folders = []
-        for folder in payload.get("value", []):
+        folders: list[MailFolder] = []
+        for folder in dict_list(payload.get("value")):
             name = str(folder.get("displayName") or folder["id"])
             folders.append(
                 MailFolder(
                     id=str(folder["id"]),
                     name=name,
                     role=_ROLES.get(name.replace(" ", "").lower(), ROLE_OTHER),
-                    total=folder.get("totalItemCount"),
-                    unread=folder.get("unreadItemCount"),
+                    total=as_int(folder.get("totalItemCount")),
+                    unread=as_int(folder.get("unreadItemCount")),
                 )
             )
         return folders
 
+    @override
     async def list_messages(
         self, folder: str, *, limit: int = 50, since_uid: str | None = None
     ) -> list[MailHeader]:
@@ -95,18 +103,19 @@ class GraphTransport:
             },
         )
         headers: list[MailHeader] = []
-        for message in payload.get("value", []):
+        for message in dict_list(payload.get("value")):
             header = _to_header(message)
             if since_uid is not None and header.uid == since_uid:
                 break  # ordered newest-first — stop at what the caller last saw.
             headers.append(header)
         return headers
 
+    @override
     async def fetch(self, folder: str, uid: str) -> MailBody:
         message = await self._api.request("GET", f"messages/{uid}")
         if not message:
             raise MailError("that message is no longer on the server")
-        body = message.get("body") or {}
+        body = as_dict(message.get("body")) or {}
         content = str(body.get("content") or "")
         is_html = str(body.get("contentType") or "").lower() == "html"
         text = html_to_text(content) if is_html else content
@@ -117,6 +126,7 @@ class GraphTransport:
             attachments=(),
         )
 
+    @override
     async def send(self, message: OutgoingMail) -> str:
         envelope: dict[str, object] = {
             "subject": message.subject,
@@ -125,7 +135,7 @@ class GraphTransport:
             "ccRecipients": [_recipient(a) for a in message.cc],
             "bccRecipients": [_recipient(a) for a in message.bcc],
         }
-        payload = {"message": envelope, "saveToSentItems": True}
+        payload: dict[str, object] = {"message": envelope, "saveToSentItems": True}
         if message.in_reply_to:
             # Graph has no In-Reply-To field on `sendMail`; the internet message headers
             # extension is how a reply is threaded without fetching the parent first.
@@ -136,55 +146,61 @@ class GraphTransport:
                     "value": " ".join([*message.references, message.in_reply_to]),
                 },
             ]
-        await self._api.request("POST", "sendMail", json=payload)
+        _ = await self._api.request("POST", "sendMail", json=payload)
         # Graph mints the Message-ID server-side and `sendMail` returns nothing, so there
         # is genuinely no id to hand back — better an honest empty string than a fabricated
         # one the caller might record as the sent message's identity.
         return ""
 
+    @override
     async def flag(
         self, folder: str, uid: str, *, seen: bool | None = None, flagged: bool | None = None
     ) -> None:
-        patch: dict[str, Any] = {}
+        patch: dict[str, object] = {}
         if seen is not None:
             patch["isRead"] = seen
         if flagged is not None:
             patch["flag"] = {"flagStatus": "flagged" if flagged else "notFlagged"}
         if not patch:
             return
-        await self._api.request("PATCH", f"messages/{uid}", json=patch)
+        _ = await self._api.request("PATCH", f"messages/{uid}", json=patch)
 
+    @override
     async def move(self, folder: str, uid: str, destination: str) -> None:
-        await self._api.request("POST", f"messages/{uid}/move", json={"destinationId": destination})
+        _ = await self._api.request(
+            "POST", f"messages/{uid}/move", json={"destinationId": destination}
+        )
 
+    @override
     async def delete(self, folder: str, uid: str) -> None:
         # Graph's DELETE moves to Deleted Items rather than erasing — recoverable, which
         # matches how the other adapters behave.
-        await self._api.request("DELETE", f"messages/{uid}")
+        _ = await self._api.request("DELETE", f"messages/{uid}")
 
+    @override
     async def close(self) -> None:
         await self._api.close()
 
 
-def _recipient(address: MailAddress) -> dict[str, Any]:
+def _recipient(address: MailAddress) -> dict[str, object]:
     return {"emailAddress": {"address": address.address, "name": address.name or ""}}
 
 
-def _address(entry: Any) -> MailAddress | None:
-    email = (entry or {}).get("emailAddress") or {}
+def _address(entry: object) -> MailAddress | None:
+    email = as_dict((as_dict(entry) or {}).get("emailAddress")) or {}
     if not email.get("address"):
         return None
-    return MailAddress(address=str(email["address"]), name=email.get("name") or None)
+    return MailAddress(address=str(email["address"]), name=as_str(email.get("name")) or None)
 
 
-def _addresses(entries: Any) -> tuple[MailAddress, ...]:
-    found = (_address(entry) for entry in (entries or []))
+def _addresses(entries: object) -> tuple[MailAddress, ...]:
+    found = (_address(entry) for entry in (as_list(entries) or []))
     return tuple(address for address in found if address is not None)
 
 
-def _to_header(message: dict[str, Any]) -> MailHeader:
+def _to_header(message: Mapping[str, object]) -> MailHeader:
     sender = _address(message.get("from")) or MailAddress(address="unknown@invalid")
-    flag_status = str((message.get("flag") or {}).get("flagStatus") or "")
+    flag_status = str((as_dict(message.get("flag")) or {}).get("flagStatus") or "")
     header = MailHeader(
         uid=str(message["id"]),
         sender=sender,
@@ -193,10 +209,10 @@ def _to_header(message: dict[str, Any]) -> MailHeader:
         to=_addresses(message.get("toRecipients")),
         cc=_addresses(message.get("ccRecipients")),
         snippet=snippet_of(str(message.get("bodyPreview") or "")),
-        thread_id=message.get("conversationId"),
-        message_id=message.get("internetMessageId"),
+        thread_id=as_str(message.get("conversationId")),
+        message_id=as_str(message.get("internetMessageId")),
         seen=bool(message.get("isRead")),
         flagged=flag_status == "flagged",
         has_attachments=bool(message.get("hasAttachments")),
     )
-    return replace(header, size_bytes=message.get("size"))
+    return replace(header, size_bytes=as_int(message.get("size")))

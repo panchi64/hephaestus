@@ -29,6 +29,7 @@ from pydantic_ai.settings import ModelSettings
 from core.untrusted import wrap_untrusted
 
 from .cache import MessageDetail
+from .ports import BackgroundModelSource
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +80,8 @@ class ReplyDraft(BaseModel):
 class MailStyle:
     """Style learning + reply drafting over the utility model."""
 
-    def __init__(self, registry) -> None:
-        self._registry = registry
+    def __init__(self, registry: BackgroundModelSource) -> None:
+        self._registry: BackgroundModelSource = registry
 
     async def learn(self, owner_id: str, samples: list[str]) -> str | None:
         """Distill a style profile from the operator's own sent messages. ``None`` when

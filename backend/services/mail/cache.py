@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
+from pydantic import TypeAdapter
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
 
@@ -29,6 +30,9 @@ from models.mail import MailMessage
 
 from .models import MailAddress, MailBody, MailHeader
 from .quoting import split_body
+
+_ADDRESSES = TypeAdapter(list[str])
+_EVENTS = TypeAdapter(list[dict[str, object]])
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +83,8 @@ class MessageDetail:
 
 class MailCache:
     def __init__(self, engine: Engine, vault: Vault) -> None:
-        self._engine = engine
-        self._vault = vault
+        self._engine: Engine = engine
+        self._vault: Vault = vault
 
     # --- writes ---------------------------------------------------------------
 
@@ -314,7 +318,7 @@ class MailCache:
 
     def _open_list(self, token: str | None) -> tuple[str, ...]:
         raw = self._open(token)
-        return tuple(json.loads(raw)) if raw else ()
+        return tuple(_ADDRESSES.validate_json(raw)) if raw else ()
 
     def _to_view(self, row: MailMessage) -> MessageView:
         return MessageView(
@@ -349,5 +353,5 @@ class MailCache:
             quoted_text=self._open(row.quoted_text_enc),
             signature=self._open(row.signature_enc),
             cc=self._open_list(row.cc_enc),
-            implied_events=tuple(json.loads(events)) if events else (),
+            implied_events=tuple(_EVENTS.validate_json(events)) if events else (),
         )

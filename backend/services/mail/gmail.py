@@ -15,10 +15,12 @@ from __future__ import annotations
 import base64
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import override
 
 import httpx
 
 from core.concurrency import gather_bounded
+from services.shapes import as_int, as_list, as_str, dict_list
 
 from .errors import MailError
 from .models import (
@@ -39,6 +41,7 @@ from .models import (
 )
 from .parse import build_outgoing, parse_message, snippet_of
 from .rest import RestApi
+from .transport import MailTransport
 
 _BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
 
@@ -58,42 +61,46 @@ _ROLES = {
 }
 
 
-class GmailTransport:
+class GmailTransport(MailTransport):
     """A :class:`~services.mail.transport.MailTransport` over the Gmail REST API."""
 
     def __init__(self, spec: AccountSpec, *, client: httpx.AsyncClient | None = None) -> None:
-        self._spec = spec
-        self._api = RestApi(spec, _BASE_URL, client=client)
+        self._spec: AccountSpec = spec
+        self._api: RestApi = RestApi(spec, _BASE_URL, client=client)
 
+    @override
     def capabilities(self) -> TransportCapabilities:
         return TransportCapabilities(idle=False, search=True, move=True, flags=True, threads=True)
 
+    @override
     async def probe(self) -> None:
-        await self._api.request("GET", "profile")
+        _ = await self._api.request("GET", "profile")
 
+    @override
     async def list_folders(self) -> list[MailFolder]:
         payload = await self._api.request("GET", "labels")
-        folders = []
-        for label in payload.get("labels", []):
+        folders: list[MailFolder] = []
+        for label in dict_list(payload.get("labels")):
             label_id = str(label["id"])
             folders.append(
                 MailFolder(
                     id=label_id,
                     name=str(label.get("name") or label_id),
                     role=_ROLES.get(label_id, ROLE_ARCHIVE if label_id == "ALL" else ROLE_OTHER),
-                    total=label.get("messagesTotal"),
-                    unread=label.get("messagesUnread"),
+                    total=as_int(label.get("messagesTotal")),
+                    unread=as_int(label.get("messagesUnread")),
                 )
             )
         return folders
 
+    @override
     async def list_messages(
         self, folder: str, *, limit: int = 50, since_uid: str | None = None
     ) -> list[MailHeader]:
         params = {"labelIds": folder, "maxResults": str(limit)}
         listing = await self._api.request("GET", "messages", params=params)
         wanted: list[str] = []
-        for stub in listing.get("messages", []):
+        for stub in dict_list(listing.get("messages")):
             message_id = str(stub["id"])
             if since_uid is not None and message_id == since_uid:
                 break  # Gmail lists newest-first — stop at what the caller last saw.
@@ -107,9 +114,11 @@ class GmailTransport:
         bodies = await gather_bounded([self._read(mid) for mid in wanted], _LIST_CONCURRENCY)
         return [body.header for body in bodies]
 
+    @override
     async def fetch(self, folder: str, uid: str) -> MailBody:
         return await self._read(uid)
 
+    @override
     async def send(self, message: OutgoingMail) -> str:
         sender = MailAddress(address=self._spec.address)
         composed = build_outgoing(sender, message)
@@ -117,9 +126,10 @@ class GmailTransport:
         # composed — Gmail's own `threadId` is a different identifier space than the RFC
         # Message-IDs a caller has, so the standard headers are the portable route.
         payload = {"raw": _b64url_encode(composed.as_bytes())}
-        await self._api.request("POST", "messages/send", json=payload)
-        return str(composed["Message-ID"])
+        _ = await self._api.request("POST", "messages/send", json=payload)
+        return str(composed.get("Message-ID"))
 
+    @override
     async def flag(
         self, folder: str, uid: str, *, seen: bool | None = None, flagged: bool | None = None
     ) -> None:
@@ -131,24 +141,27 @@ class GmailTransport:
             (add if flagged else remove).append("STARRED")
         if not add and not remove:
             return
-        await self._api.request(
+        _ = await self._api.request(
             "POST",
             f"messages/{uid}/modify",
             json={"addLabelIds": add, "removeLabelIds": remove},
         )
 
+    @override
     async def move(self, folder: str, uid: str, destination: str) -> None:
-        await self._api.request(
+        _ = await self._api.request(
             "POST",
             f"messages/{uid}/modify",
             json={"addLabelIds": [destination], "removeLabelIds": [folder]},
         )
 
+    @override
     async def delete(self, folder: str, uid: str) -> None:
         # `trash`, not `delete`: the operator's mail should be recoverable, and Gmail's
         # hard delete is irreversible.
-        await self._api.request("POST", f"messages/{uid}/trash")
+        _ = await self._api.request("POST", f"messages/{uid}/trash")
 
+    @override
     async def close(self) -> None:
         await self._api.close()
 
@@ -160,9 +173,9 @@ class GmailTransport:
         if not raw:
             raise MailError("that message is no longer on the server")
         body = parse_message(
-            _b64url_decode(str(raw)), uid=message_id, thread_id=payload.get("threadId")
+            _b64url_decode(str(raw)), uid=message_id, thread_id=as_str(payload.get("threadId"))
         )
-        labels = {str(label) for label in payload.get("labelIds", [])}
+        labels = {str(label) for label in as_list(payload.get("labelIds")) or ()}
         snippet = snippet_of(str(payload.get("snippet") or "")) or body.header.snippet
         header = _stamp(
             body.header,
@@ -170,25 +183,40 @@ class GmailTransport:
             flagged="STARRED" in labels,
             snippet=snippet,
             received_at=_internal_date(payload.get("internalDate")),
-            size_bytes=payload.get("sizeEstimate"),
+            size_bytes=as_int(payload.get("sizeEstimate")),
         )
         return MailBody(header=header, text=body.text, html=body.html, attachments=body.attachments)
 
 
-def _stamp(header: MailHeader, **overrides) -> MailHeader:
+def _stamp(
+    header: MailHeader,
+    *,
+    seen: bool,
+    flagged: bool,
+    snippet: str,
+    received_at: datetime | None,
+    size_bytes: int | None,
+) -> MailHeader:
     """Overlay provider-authoritative fields onto a parsed header, ignoring absent ones."""
+    overrides: dict[str, object] = {
+        "seen": seen,
+        "flagged": flagged,
+        "snippet": snippet,
+        "received_at": received_at,
+        "size_bytes": size_bytes,
+    }
     clean = {key: value for key, value in overrides.items() if value is not None}
     return replace(header, **clean)
 
 
-def _internal_date(value) -> datetime | None:
+def _internal_date(value: object) -> datetime | None:
     """Gmail's ``internalDate`` is milliseconds since the epoch — more reliable than the
     ``Date`` header, which the sender controls."""
-    if value is None:
+    if not isinstance(value, str | int | float):
         return None
     try:
         return datetime.fromtimestamp(int(value) / 1000, tz=UTC)
-    except TypeError, ValueError:
+    except ValueError:
         return None
 
 
