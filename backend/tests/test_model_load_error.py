@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, override
+from typing import override
 
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelHTTPError
@@ -67,7 +67,7 @@ class _LoadFailingModel(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[Any] | None = None,
+        run_context: RunContext[object] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         if self.failure is not None:
             raise self.failure

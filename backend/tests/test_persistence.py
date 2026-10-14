@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
-from typing import Any, override
+from collections.abc import AsyncGenerator, AsyncIterator
+from pathlib import Path
+from typing import override
 
+import pytest
 from pydantic_ai import FunctionToolset, RunContext, ToolApproved
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ThinkingPart,
     ToolCallPart,
     UserPromptPart,
 )
@@ -32,32 +37,34 @@ from services.conversations.projection import project
 from tools import RunDeps
 
 from ._helpers import (
+    app_state,
     client_app,
     collect_sse_events,
     register_stub_provider,
     stub_resolution,
 )
+from ._json import json_body, s
 
 
-async def _unlocked_vault(tmp_path, name: str = "keyfile.json") -> Vault:
+async def _unlocked_vault(tmp_path: Path, name: str = "keyfile.json") -> Vault:
     vault = Vault(tmp_path / name)
     if not vault.is_initialized:
         await vault.setup("pw")
     else:
-        await vault.unlock("pw")
+        _ = await vault.unlock("pw")
     return vault
 
 
-async def _fresh_store(tmp_path) -> tuple[ConversationStore, Engine]:
+async def _fresh_store(tmp_path: Path) -> tuple[ConversationStore, Engine]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     return ConversationStore(engine, await _unlocked_vault(tmp_path)), engine
 
 
-def _noop_toolset() -> FunctionToolset:
+def _noop_toolset() -> FunctionToolset[RunDeps]:
     """One read-classed tool under the ``x`` category — a call the permission level lets
     through, so what stops the turn is the tool-call bound and nothing else."""
-    toolset = FunctionToolset()
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool_plain(metadata={"sensitivity": "read"})
     def noop(x: int) -> int:
@@ -66,7 +73,7 @@ def _noop_toolset() -> FunctionToolset:
     return toolset
 
 
-def _bounds_tool_calls(monkeypatch) -> None:
+def _bounds_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     """Zero the tool-call ceiling, so the first call the model reaches for stops the turn."""
     monkeypatch.setattr(
         engine, "get_settings", lambda: Settings(agent_request_limit=25, agent_tool_calls_limit=0)
@@ -86,16 +93,18 @@ def _calls_noop() -> FunctionModel:
     """
     args = {"x": 1}
 
-    async def respond(messages, info: AgentInfo) -> ModelResponse:
+    async def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart("x_noop", args)])
 
-    async def stream(messages, info: AgentInfo):
+    async def stream(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[dict[int, DeltaToolCall]]:
         yield {0: DeltaToolCall(name="x_noop", json_args=json.dumps(args))}
 
     return FunctionModel(respond, stream_function=stream)
 
 
-async def test_cache_is_bounded_and_evicted_trees_rehydrate(tmp_path):
+async def test_cache_is_bounded_and_evicted_trees_rehydrate(tmp_path: Path):
     # Every cached entry holds a fully decrypted tree (inline image bytes included), so
     # an unbounded cache grows to every conversation the process ever touched. Eviction
     # is safe precisely because a miss rehydrates.
@@ -114,7 +123,7 @@ async def test_cache_is_bounded_and_evicted_trees_rehydrate(tmp_path):
     await store.stop()
 
 
-async def test_a_conversation_with_queued_writes_is_never_evicted(tmp_path):
+async def test_a_conversation_with_queued_writes_is_never_evicted(tmp_path: Path):
     # `record()` extends the cached tree in place and queues only the new slice, so
     # evicting between the two would leave the next append building on an empty tree.
     engine = make_engine("sqlite:///:memory:")
@@ -123,16 +132,16 @@ async def test_a_conversation_with_queued_writes_is_never_evicted(tmp_path):
     store = ConversationStore(engine, vault, max_cached_conversations=1)
     # Never started, so nothing drains: every submitted job stays pending.
     conv = await store.create_conversation("operator", title="held")
-    store.record(conv, [ModelRequest(parts=[UserPromptPart("hello")])])
+    _ = store.record(conv, [ModelRequest(parts=[UserPromptPart("hello")])])
 
     for i in range(5):
-        await store.create_conversation("operator", title=f"other{i}")
+        _ = await store.create_conversation("operator", title=f"other{i}")
 
     assert conv in store._cache
     assert len(store._cache[conv].nodes) == 1
 
 
-async def test_store_records_and_rehydrates_from_db(tmp_path):
+async def test_store_records_and_rehydrates_from_db(tmp_path: Path):
     store, engine = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator", title="t")
@@ -166,7 +175,7 @@ async def test_store_records_and_rehydrates_from_db(tmp_path):
     await cold.stop()
 
 
-async def test_context_footprint_reads_last_response(tmp_path):
+async def test_context_footprint_reads_last_response(tmp_path: Path):
     """The footprint helper reconstructs the active path's most recent response
     usage — what seeds the context meter when an existing conversation loads, and
     what the live run reports. It is the LAST response's prompt+generation, never a
@@ -205,7 +214,7 @@ async def test_context_footprint_reads_last_response(tmp_path):
     await store.stop()
 
 
-async def test_content_is_encrypted_at_rest(tmp_path):
+async def test_content_is_encrypted_at_rest(tmp_path: Path):
     from sqlmodel import Session, select
 
     from models.conversation import Message
@@ -235,7 +244,9 @@ async def test_content_is_encrypted_at_rest(tmp_path):
         assert "SECRET-TOKEN-XYZ" not in row.text
 
 
-async def test_blocked_turn_persists_with_its_reason(tmp_path, monkeypatch):
+async def test_blocked_turn_persists_with_its_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # A tool-calls bound tripped after the model already committed to a call: the
     # turn stops blocked, but what ran (the tool-call response) is real conversation
     # content — persist it, tagged with why it stopped, so a reload shows the same
@@ -276,19 +287,19 @@ async def test_blocked_turn_persists_with_its_reason(tmp_path, monkeypatch):
     await cold.stop()
 
 
-async def test_wall_clock_timeout_persists_the_partial_turn(tmp_path):
+async def test_wall_clock_timeout_persists_the_partial_turn(tmp_path: Path):
     # The registry force-cancels the orchestrator's task on a wall-clock timeout,
     # interrupting it before its own normal finalize path can run — the engine's
     # `on_timeout` hook is what persists the partial turn instead, so a reload
     # doesn't silently drop it (see `RunRegistry._flush_timeout`).
     import asyncio
 
-    toolset = FunctionToolset()
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
     hang = asyncio.Event()
 
     @toolset.tool_plain(metadata={"sensitivity": "read"})
     async def slow(x: int) -> int:
-        await asyncio.wait_for(hang.wait(), timeout=2.0)
+        _ = await asyncio.wait_for(hang.wait(), timeout=2.0)
         return x
 
     store, db_engine = await _fresh_store(tmp_path)
@@ -320,7 +331,7 @@ async def test_wall_clock_timeout_persists_the_partial_turn(tmp_path):
     await cold.stop()
 
 
-async def test_inactivity_timeout_in_setup_window_persists_the_prompt(tmp_path):
+async def test_inactivity_timeout_in_setup_window_persists_the_prompt(tmp_path: Path):
     # The inactivity clock starts at run start and is refreshed only by events. If it
     # trips in the pre-model window — the model never produced a first token — the turn
     # has no response, only the operator's own request. Without the fix, the stop would
@@ -343,11 +354,13 @@ async def test_inactivity_timeout_in_setup_window_persists_the_prompt(tmp_path):
             messages: list[ModelMessage],
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
-            run_context: RunContext[Any] | None = None,
-        ) -> AsyncIterator[StreamedResponse]:
-            await asyncio.Event().wait()
-            raise AssertionError("unreachable")  # pragma: no cover
-            yield  # pragma: no cover
+            run_context: RunContext[object] | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            _ = await asyncio.Event().wait()
+            async with super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as stream:  # pragma: no cover
+                yield stream  # pragma: no cover
 
     store, db_engine = await _fresh_store(tmp_path)
     await store.start()
@@ -383,7 +396,7 @@ async def test_inactivity_timeout_in_setup_window_persists_the_prompt(tmp_path):
 
 
 async def test_inactivity_timeout_during_the_orchestrator_prelude_persists_the_prompt(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     # Everything before the first model call — the history read, auto-compaction, the
     # attachment and prompt-context resolution — awaits and emits nothing, so the
@@ -400,10 +413,10 @@ async def test_inactivity_timeout_during_the_orchestrator_prelude_persists_the_p
     await store.start()
     conv = await store.create_conversation("operator", title="t")
     # Seed a turn so the orchestrator actually takes the history-reading path.
-    store.record(conv, [ModelRequest(parts=[UserPromptPart("earlier")])])
+    _ = store.record(conv, [ModelRequest(parts=[UserPromptPart("earlier")])])
 
-    async def _hangs(conversation_id):  # stands in for a slow compaction/history read
-        await asyncio.Event().wait()
+    async def _hangs(_conversation_id: str) -> None:  # stands in for a slow compaction/history read
+        _ = await asyncio.Event().wait()
 
     monkeypatch.setattr(store, "model_history", _hangs)
 
@@ -426,7 +439,7 @@ async def test_inactivity_timeout_during_the_orchestrator_prelude_persists_the_p
     await store.stop()
 
 
-async def test_cancel_persists_the_partial_turn(tmp_path):
+async def test_cancel_persists_the_partial_turn(tmp_path: Path):
     # A manual Stop (`RunRegistry.cancel`) force-cancels the orchestrator's task just
     # like a wall-clock timeout does — the engine's `on_cancel` hook (the cancel
     # counterpart of `on_timeout`) is what persists the partial turn instead, so a
@@ -435,14 +448,14 @@ async def test_cancel_persists_the_partial_turn(tmp_path):
     # clobber them).
     import asyncio
 
-    toolset = FunctionToolset()
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
     started = asyncio.Event()
     hang = asyncio.Event()
 
     @toolset.tool_plain(metadata={"sensitivity": "read"})
     async def slow(x: int) -> int:
         started.set()
-        await hang.wait()  # never set — cancelled before it would return
+        _ = await hang.wait()  # never set — cancelled before it would return
         return x
 
     store, db_engine = await _fresh_store(tmp_path)
@@ -458,7 +471,7 @@ async def test_cancel_persists_the_partial_turn(tmp_path):
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await started.wait()  # let it commit to the tool call and start hanging inside it
+    _ = await started.wait()  # let it commit to the tool call and start hanging inside it
     assert await reg.cancel(run.id) is True
     await run.wait()
 
@@ -478,7 +491,7 @@ async def test_cancel_persists_the_partial_turn(tmp_path):
     await cold.stop()
 
 
-async def test_double_cancel_does_not_duplicate_the_persisted_turn(tmp_path):
+async def test_double_cancel_does_not_duplicate_the_persisted_turn(tmp_path: Path):
     # A repeated cancel() on the same run before the first cancellation actually
     # lands (no other await in between — mirrors a double-click Stop, or a client
     # retry against POST /runs/{id}/cancel, which has no server-side dedup) must be
@@ -487,17 +500,17 @@ async def test_double_cancel_does_not_duplicate_the_persisted_turn(tmp_path):
     # would re-flush and double-record the same partial turn.
     import asyncio
 
-    toolset = FunctionToolset()
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
     started = asyncio.Event()
     hang = asyncio.Event()
 
     @toolset.tool_plain(metadata={"sensitivity": "read"})
     async def slow(x: int) -> int:
         started.set()
-        await hang.wait()  # never set — cancelled before it would return
+        _ = await hang.wait()  # never set — cancelled before it would return
         return x
 
-    store, db_engine = await _fresh_store(tmp_path)
+    store, _db_engine = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator", title="t")
 
@@ -510,7 +523,7 @@ async def test_double_cancel_does_not_duplicate_the_persisted_turn(tmp_path):
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await started.wait()  # let it commit to the tool call and start hanging inside it
+    _ = await started.wait()  # let it commit to the tool call and start hanging inside it
 
     # Two cancels back-to-back, no other await between them — the task is still
     # `running` (its CancelledError hasn't landed yet) for the second call.
@@ -529,14 +542,14 @@ async def test_double_cancel_does_not_duplicate_the_persisted_turn(tmp_path):
     await store.stop()
 
 
-async def test_cancel_parked_run_persists_the_parked_turn(tmp_path):
+async def test_cancel_parked_run_persists_the_parked_turn(tmp_path: Path):
     # Cancelling a *parked* run (RunRegistry.cancel's awaiting_input branch) has no
     # task left to interrupt — a parked turn's persistence is otherwise only ever
     # recorded on resume (`agent.finalize.finalize`'s parked branch just wires resume
     # context). The engine's `on_park_cancel` hook — the parked counterpart of
     # `on_cancel` — is what persists it instead, so cancelling instead of resuming
     # doesn't silently drop the operator's own prompt (backend-correctness-01).
-    toolset = FunctionToolset()
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool_plain(requires_approval=True)
     def delete_thing(name: str) -> str:
@@ -575,16 +588,16 @@ async def test_cancel_parked_run_persists_the_parked_turn(tmp_path):
     await cold.stop()
 
 
-async def test_unhandled_exception_persists_the_partial_turn_and_errors(tmp_path):
+async def test_unhandled_exception_persists_the_partial_turn_and_errors(tmp_path: Path):
     # Anything that escapes `drive_turn` besides its specific bound catches (here: a
     # tool raising a plain exception) must not silently drop the operator's own prompt
     # (and whatever the turn had already produced) from persistence — the orchestrator's
     # broad `except Exception` flushes it, carrying a legible marker, before the
     # registry's own generic handler records the run as `error`.
-    toolset = FunctionToolset()
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool_plain(metadata={"sensitivity": "read"})
-    def boom(x: int) -> int:
+    def boom() -> int:
         raise RuntimeError("tool exploded")
 
     store, db_engine = await _fresh_store(tmp_path)
@@ -619,12 +632,12 @@ async def test_unhandled_exception_persists_the_partial_turn_and_errors(tmp_path
     await cold.stop()
 
 
-async def test_cooperative_cancel_flag_stops_the_turn(tmp_path):
+async def test_cooperative_cancel_flag_stops_the_turn(tmp_path: Path):
     # `cancel_requested`, flipped directly here with no `RunRegistry.cancel()` and no
     # `task.cancel()` anywhere in the picture, must still stop a running turn at its
     # next step boundary (`agent/turn.py`'s `report_progress`) — proving the flag is now a
     # real, independently-effective cooperative-cancel signal rather than dead state.
-    toolset = FunctionToolset()
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
     run_ref: list[Run | None] = [None]
 
     @toolset.tool_plain(metadata={"sensitivity": "read"})
@@ -683,13 +696,13 @@ async def test_foreign_keys_are_enforced():
     assert raised
 
 
-async def test_second_turn_continues_prior_history(tmp_path):
+async def test_second_turn_continues_prior_history(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     conv = await store.create_conversation("operator")
 
     reg = RunRegistry()
-    seen_history_lengths = []
+    seen_history_lengths: list[int] = []
 
     # A model that records how much history it was given each turn.
     def make_model(reply: str) -> TestModel:
@@ -713,7 +726,9 @@ async def test_second_turn_continues_prior_history(tmp_path):
     await store.stop()
 
 
-async def test_verifier_correction_persists_clean_history(tmp_path, monkeypatch):
+async def test_verifier_correction_persists_clean_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # A judge-rejected answer + the synthetic nudge must NOT end up in history —
     # only the original request → corrected answer.
     monkeypatch.setattr(
@@ -725,7 +740,7 @@ async def test_verifier_correction_persists_clean_history(tmp_path, monkeypatch)
 
     verdicts = [Verdict(ok=False, reason="add more detail")]
 
-    async def judge(request, answer):
+    async def judge(_request: str, _answer: str) -> Verdict:
         return verdicts.pop(0) if verdicts else Verdict(ok=True)
 
     reg = RunRegistry()
@@ -748,7 +763,7 @@ async def test_verifier_correction_persists_clean_history(tmp_path, monkeypatch)
     await store.stop()
 
 
-def _danger_categories():
+def _danger_categories() -> dict[str, FunctionToolset[RunDeps]]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
 
     @toolset.tool_plain(requires_approval=True)
@@ -758,7 +773,7 @@ def _danger_categories():
     return {"danger": toolset}
 
 
-async def test_verify_park_persists_once_on_resume(tmp_path, monkeypatch):
+async def test_verify_park_persists_once_on_resume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # The verifier's corrective re-attempt itself parks for approval. Nothing is
     # persisted while parked; the resume persists exactly once.
     monkeypatch.setattr(
@@ -768,26 +783,29 @@ async def test_verify_park_persists_once_on_resume(tmp_path, monkeypatch):
     await store.start()
     conv = await store.create_conversation("operator")
 
-    async def judge(request, answer):
+    async def judge(_request: str, _answer: str) -> Verdict:
         return Verdict(ok=False, reason="redo it")  # always reject → trigger a correction
 
-    def _is_correction(messages) -> bool:
+    def _is_correction(messages: list[ModelMessage]) -> bool:
         text = " ".join(
             part.content
             for message in messages
             for part in message.parts
-            if isinstance(getattr(part, "content", None), str)
+            if isinstance(part, UserPromptPart | TextPart | SystemPromptPart | ThinkingPart)
+            and isinstance(part.content, str)
         )
         return "did not fully satisfy" in text
 
-    def _tool_already_ran(messages) -> bool:
+    def _tool_already_ran(messages: list[ModelMessage]) -> bool:
         return any(
             type(part).__name__ == "ToolReturnPart"
             for message in messages
             for part in message.parts
         )
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         # First attempt: a plain text answer (no tool). The corrective re-attempt
         # calls the sensitive tool, which parks the run for approval. After the
         # approved tool runs, finish with text.
@@ -822,7 +840,7 @@ async def test_verify_park_persists_once_on_resume(tmp_path, monkeypatch):
     assert parked.prompt_message_id == run.prompt_message_id is not None
 
     call_id = parked.requests.approvals[0].tool_call_id
-    await reg.resume(
+    _ = await reg.resume(
         run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}, store=store)
     )
     await run.wait()
@@ -839,10 +857,12 @@ async def test_verify_park_persists_once_on_resume(tmp_path, monkeypatch):
     await store.stop()
 
 
-async def test_chat_route_returns_conversation_and_continues(monkeypatch):
-    from services.registry import ModelRegistry
+async def test_chat_route_returns_conversation_and_continues(monkeypatch: pytest.MonkeyPatch):
+    from services.registry import ModelRegistry, ResolvedModel
 
-    async def fake_resolve_detailed(self, role, **kwargs):
+    async def fake_resolve_detailed(
+        self: ModelRegistry, _role: str, **_kwargs: object
+    ) -> ResolvedModel:
         # call_tools=[] → a plain text turn; the default catalog's approval-gated
         # tool would otherwise park the run and stall the SSE this test reads.
         return await stub_resolution(self, TestModel(custom_output_text="hi", call_tools=[]))
@@ -853,21 +873,23 @@ async def test_chat_route_returns_conversation_and_continues(monkeypatch):
     async with client_app() as (client, app):
         first = await client.post("/chat", json={"prompt": "hello"})
         assert first.status_code == 202
-        conv_id = first.json()["conversation_id"]
-        run_id = first.json()["run_id"]
-        await collect_sse_events(client, run_id)
+        conv_id = s(json_body(first)["conversation_id"])
+        run_id = s(json_body(first)["run_id"])
+        _ = await collect_sse_events(client, run_id)
 
         # continue the same conversation
         second = await client.post("/chat", json={"prompt": "again", "conversation_id": conv_id})
-        assert second.json()["conversation_id"] == conv_id
-        await collect_sse_events(client, second.json()["run_id"])
+        assert json_body(second)["conversation_id"] == conv_id
+        _ = await collect_sse_events(client, s(json_body(second)["run_id"]))
 
-        history = await app.state.conversations.history(conv_id)
+        history = await app_state(app, "conversations", ConversationStore).history(conv_id)
 
     assert len(history) >= 4  # two turns, both persisted to the same conversation
 
 
-async def test_continuing_a_stopped_turn_retires_its_marker_for_good(tmp_path, monkeypatch):
+async def test_continuing_a_stopped_turn_retires_its_marker_for_good(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # The stop marker is a standing "this turn didn't finish — resume it?" prompt.
     # Once the operator has resumed it, leaving the warning up is the UI arguing with
     # itself, so the clear has to be as durable as the marker was.
@@ -904,7 +926,9 @@ async def test_continuing_a_stopped_turn_retires_its_marker_for_good(tmp_path, m
     await cold.stop()
 
 
-async def test_clearing_an_unknown_id_retires_the_last_stop_on_the_path(tmp_path, monkeypatch):
+async def test_clearing_an_unknown_id_retires_the_last_stop_on_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # A turn that stopped before anything persisted is shown under the client's own
     # optimistic id, which is not a node id here. The marker it means is still the
     # only one on the path, so the fallback retires that rather than no-oping and
@@ -934,7 +958,9 @@ async def test_clearing_an_unknown_id_retires_the_last_stop_on_the_path(tmp_path
     await store.stop()
 
 
-async def test_a_second_stop_after_a_retired_one_stands_on_its_own(tmp_path, monkeypatch):
+async def test_a_second_stop_after_a_retired_one_stands_on_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # Retiring a marker must not be a one-shot: a thread the operator keeps resuming
     # stops, gets continued, and stops again — and the second stop has to raise its own
     # marker on its own turn, with the first one staying retired underneath it.
@@ -981,7 +1007,9 @@ async def test_a_second_stop_after_a_retired_one_stands_on_its_own(tmp_path, mon
     await cold.stop()
 
 
-async def test_clearing_one_marker_leaves_an_earlier_one_alone(tmp_path, monkeypatch):
+async def test_clearing_one_marker_leaves_an_earlier_one_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # Two stops can stand on one path at once (the operator continued the first with a
     # question of their own, and that stopped too). Clearing by id must retire exactly
     # the turn named — an earlier marker is still an unanswered prompt to resume.
@@ -1016,7 +1044,9 @@ async def test_clearing_one_marker_leaves_an_earlier_one_alone(tmp_path, monkeyp
     await store.stop()
 
 
-async def test_the_fallback_retires_the_newest_stop_not_an_older_one(tmp_path, monkeypatch):
+async def test_the_fallback_retires_the_newest_stop_not_an_older_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # The fallback exists for a turn whose id the client made up locally, and a client
     # can only make one up for the turn it is streaming — the newest. With an older
     # marker also standing, the fallback must still take the newest, or continuing the
