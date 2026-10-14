@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import Engine, or_, update
+from sqlalchemy import ColumnElement, Engine, or_, update
 from sqlmodel import Session, col, select
 
 from core.db import in_session
@@ -65,7 +65,9 @@ def visible_project_ids(active: str | None) -> tuple[str | None, ...]:
     return (None,) if active is None else (None, active)
 
 
-def project_clause(column, visible: tuple[str | None, ...] | None):
+def project_clause(
+    column: str | None, visible: tuple[str | None, ...] | None
+) -> ColumnElement[bool] | None:
     """The scope rule as one SQL clause, or ``None`` for no filtering at all.
 
     Every scoped query goes through this rather than writing its own ``WHERE``, because
@@ -80,8 +82,9 @@ def project_clause(column, visible: tuple[str | None, ...] | None):
     if visible is None:
         return None
     filed = [pid for pid in visible if pid is not None]
-    unfiled = column.is_(None)
-    return unfiled if not filed else or_(unfiled, column.in_(filed))
+    field = col(column)
+    unfiled = field.is_(None)
+    return unfiled if not filed else or_(unfiled, field.in_(filed))
 
 
 @dataclass(frozen=True)
@@ -143,9 +146,9 @@ class ProjectStore:
     preference, not session state, so it survives a reload and a lock."""
 
     def __init__(self, db_engine: Engine, vault: Vault, settings: SettingsStore) -> None:
-        self._db = db_engine
-        self._vault = vault
-        self._settings = settings
+        self._db: Engine = db_engine
+        self._vault: Vault = vault
+        self._settings: SettingsStore = settings
         # owner → {project id: directory}, in most-recently-opened order — the whole
         # answer `workspace_roots` gives, memoised. See it for why, and `_forget` for
         # what clears it. Dropped on lock, so decrypted paths never outlive the key that
@@ -308,7 +311,7 @@ class ProjectStore:
         """Drop this owner's memoised roots. Called by every write that can change what
         :meth:`workspace_roots` answers — which includes :meth:`activate`, because the
         map's *order* is part of the answer and touching ``last_opened_at`` reorders it."""
-        self._roots.pop(owner_id, None)
+        _ = self._roots.pop(owner_id, None)
 
     async def workspace_names(self, owner_id: str) -> dict[str, str]:
         """Each project id mapped to the **basename** of its directory.
@@ -365,7 +368,7 @@ class ProjectStore:
 
         def work(session: Session) -> None:
             for model_cls in SCOPED_MODELS:
-                session.execute(
+                _ = session.exec(
                     update(model_cls)
                     .where(col(model_cls.project_id) == row.id)
                     .values(project_id=None)
@@ -387,7 +390,7 @@ class ProjectStore:
 
     async def activate(self, owner_id: str, project_id: str | None) -> None:
         if project_id is not None:
-            await self._row(owner_id, project_id)  # 404 rather than a dangling selection
+            _ = await self._row(owner_id, project_id)  # 404 rather than a dangling selection
 
             def touch(session: Session) -> None:
                 stored = session.get(Project, project_id)

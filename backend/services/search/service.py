@@ -21,18 +21,26 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import cast
 
 import httpx
+from pydantic import JsonValue
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from core.citations import Citation
 from core.db import get_owned, in_session
 from core.exceptions import DegradedCapabilityError
+from core.serde import parse_json
 from core.untrusted import unfence, untrusted_fence, untrusted_preamble
 from core.vault import Vault
 from models.search import SearchProvider
+
+type _QueryValue = str | int | float | bool | None
+
+
+def _text(value: JsonValue) -> str:
+    return value if isinstance(value, str) else ""
 
 
 @dataclass(frozen=True)
@@ -90,7 +98,7 @@ class SearchResults:
                 engagement="listed",
             )
             for item in self.results
-            if isinstance(item, SearchResult) and item.url
+            if item.url
         ]
 
 
@@ -101,7 +109,7 @@ class _SearchTarget:
 
     base_url: str
     engines: list[str]
-    params: dict[str, Any]
+    params: dict[str, object]
     api_key: str | None
 
 
@@ -125,12 +133,12 @@ class SearchService:
         timeout_s: float = 15.0,
         result_limit: int = 10,
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._http_client = http_client
-        self._managed_url = managed_url
-        self._timeout_s = timeout_s
-        self._result_limit = result_limit
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._http_client: httpx.AsyncClient | None = http_client
+        self._managed_url: Callable[[], str | None] | None = managed_url
+        self._timeout_s: float = timeout_s
+        self._result_limit: int = result_limit
 
     # --- provider catalog -------------------------------------------------
 
@@ -159,7 +167,7 @@ class SearchService:
         base_url: str,
         enabled: bool = True,
         engines: list[str] | None = None,
-        params: dict[str, Any] | None = None,
+        params: dict[str, object] | None = None,
         api_key: str | None = None,
     ) -> SearchProvider:
         provider = SearchProvider(
@@ -185,7 +193,7 @@ class SearchService:
     ) -> SearchProvider:
         """Apply field changes. ``api_key`` (plaintext, or "" to clear) is sealed
         before storage; every other key maps straight onto the column."""
-        await self.get_provider(owner_id, provider_id)  # ownership check
+        _ = await self.get_provider(owner_id, provider_id)  # ownership check
 
         def work(session: Session) -> SearchProvider:
             provider = session.get(SearchProvider, provider_id)
@@ -204,7 +212,7 @@ class SearchService:
         return await in_session(self._engine, work)
 
     async def delete_provider(self, owner_id: str, provider_id: str) -> None:
-        await self.get_provider(owner_id, provider_id)  # ownership check
+        _ = await self.get_provider(owner_id, provider_id)  # ownership check
 
         def work(session: Session) -> None:
             provider = session.get(SearchProvider, provider_id)
@@ -248,7 +256,7 @@ class SearchService:
         other value is ignored)."""
         target = await self._resolve_target(owner_id)
         limit = self._result_limit if limit is None else limit
-        params: dict[str, Any] = {"q": query, "format": "json", **target.params}
+        params: dict[str, object] = {"q": query, "format": "json", **target.params}
         if target.engines:
             params["engines"] = ",".join(target.engines)
         if time_range in ("day", "week", "month", "year"):
@@ -264,7 +272,11 @@ class SearchService:
             # No redirect-following: the provider answers /search?format=json
             # directly, and an unguarded redirect would be an SSRF hole — so refuse it.
             resp = await client.get(
-                url, params=params, headers=headers, timeout=self._timeout_s, follow_redirects=False
+                url,
+                params=cast("dict[str, _QueryValue]", params),
+                headers=headers,
+                timeout=self._timeout_s,
+                follow_redirects=False,
             )
         except httpx.HTTPError as exc:
             raise DegradedCapabilityError(f"search provider unreachable: {exc}") from exc
@@ -274,7 +286,7 @@ class SearchService:
         if resp.status_code >= 400 or resp.is_redirect:
             raise DegradedCapabilityError(f"search provider returned HTTP {resp.status_code}")
         try:
-            data = resp.json()
+            data = parse_json(resp.content)
         except ValueError as exc:
             raise DegradedCapabilityError(
                 "search provider did not return JSON (enable SearXNG's json format)"
@@ -283,6 +295,8 @@ class SearchService:
             raise DegradedCapabilityError("search provider returned an unexpected JSON shape")
 
         results = data.get("results") or []
+        if not isinstance(results, list):
+            raise DegradedCapabilityError("search provider returned an unexpected JSON shape")
         # One nonce for the whole call: the preamble ships once and every snippet is a bare
         # fence sharing it, so a batch of N results doesn't repeat the "treat as data"
         # instruction N times.
@@ -292,16 +306,18 @@ class SearchService:
         seen: set[str] = set()
         out: list[SearchResult] = []
         for r in results:
-            url = r.get("url") or ""
+            if not isinstance(r, dict):
+                continue
+            url = _text(r.get("url"))
             if url and url in seen:
                 continue
             seen.add(url)
             out.append(
                 SearchResult(
-                    title=r.get("title") or "",
+                    title=_text(r.get("title")),
                     url=url,
-                    snippet=untrusted_fence(r.get("content") or "", nonce, source=url),
-                    published=r.get("publishedDate") or None,
+                    snippet=untrusted_fence(_text(r.get("content")), nonce, source=url),
+                    published=_text(r.get("publishedDate")) or None,
                 )
             )
             if len(out) >= limit:

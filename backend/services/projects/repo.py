@@ -93,7 +93,7 @@ async def commit_worktree(path: Path, message: str | None = None) -> bool:
     """
     if not (path / ".git").exists():
         return False
-    await run_git(path, "add", "-A")
+    _ = await run_git(path, "add", "-A")
     # `diff --cached --quiet` exits 0 when nothing is staged — the cheapest way to
     # ask "is there anything to commit" without parsing porcelain.
     clean, _, _ = await run_git(path, "diff", "--cached", "--quiet")

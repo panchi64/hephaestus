@@ -66,8 +66,8 @@ async def add_child_worktree(
         return
     # A directory left behind by a previous run with no .git is not a worktree — clear
     # the registration and let the add below create it properly.
-    await run_git(root, "worktree", "prune")
-    await run_git_ok(root, "worktree", "add", "-b", branch, str(child), parent_branch)
+    _ = await run_git(root, "worktree", "prune")
+    _ = await run_git_ok(root, "worktree", "add", "-b", branch, str(child), parent_branch)
     for name in WARM_DIRS:
         source = parent_path / name
         if source.is_dir() and not (child / name).exists():
@@ -96,8 +96,8 @@ async def merge_child_back(
     stays usable, and the child is left exactly as it was for its caller to retire or
     keep. Only a clean landing retires it *here*.
     """
-    await commit_worktree(child, "Delegated agent changes")
-    await commit_worktree(parent_path, "Agent changes (before a delegated merge)")
+    _ = await commit_worktree(child, "Delegated agent changes")
+    _ = await commit_worktree(parent_path, "Agent changes (before a delegated merge)")
     # Three dots: what the child added since it diverged, not what the parent has done
     # meanwhile — computed before the merge, while the two are still distinguishable.
     # Deletions are counted apart from the rest, because "your file changed" and "your
@@ -114,7 +114,7 @@ async def merge_child_back(
         # Read the conflicting paths *before* aborting — the abort is what clears them.
         _code, unmerged, _err = await run_git(parent_path, "diff", "--name-only", "--diff-filter=U")
         conflicts = _paths(unmerged)
-        await run_git(parent_path, "merge", "--abort")
+        _ = await run_git(parent_path, "merge", "--abort")
         if not conflicts:
             # Not a conflict at all — a broken ref, an unreadable tree. Say what git
             # said rather than report an empty, mystifying "nothing merged".
@@ -132,8 +132,8 @@ async def remove_child_worktree(*, root: Path, child: Path, branch: str) -> None
     child it just landed), a discarded conversation, and the delegation's own ``finally``
     — and that last one must not fail over a checkout one of the others already took.
     """
-    await run_git(root, "worktree", "remove", "--force", str(child))
-    await run_git(root, "branch", "-D", branch)
+    _ = await run_git(root, "worktree", "remove", "--force", str(child))
+    _ = await run_git(root, "branch", "-D", branch)
 
 
 async def discard_children(
@@ -158,7 +158,7 @@ async def discard_children(
         await remove_child_worktree(root=root, child=child, branch=branch)
     # A child whose directory the operator had already deleted is removed by neither of
     # those; without the prune its registration outlives the branch it belonged to.
-    await run_git(root, "worktree", "prune")
+    _ = await run_git(root, "worktree", "prune")
 
 
 def _paths(out: str) -> list[str]:

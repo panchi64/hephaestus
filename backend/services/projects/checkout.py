@@ -24,7 +24,7 @@ class CheckoutHolders:
 
     def __init__(self) -> None:
         self._holders: dict[str, tuple[str, list[LiveWork]]] = {}
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def acquire(self, project_id: str, conversation_id: str, claim: LiveWork | None) -> None:
         """Hold the checkout for ``conversation_id``, refusing while another one holds it.
@@ -40,8 +40,8 @@ class CheckoutHolders:
                 if owner != conversation_id and live:
                     raise CheckoutBusyError(
                         "Another conversation is working in this project's folder right now. "
-                        "Open a worktree to work on your own branch beside it, or wait for "
-                        "that one to finish."
+                        + "Open a worktree to work on your own branch beside it, or wait for "
+                        + "that one to finish."
                     )
                 claims = live if owner == conversation_id else []
             else:
