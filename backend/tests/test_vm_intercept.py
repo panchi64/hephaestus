@@ -6,7 +6,9 @@ import asyncio
 import base64
 import datetime
 import ssl
+from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 from cryptography import x509
@@ -15,8 +17,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 import services.vm.egress as egress_mod
-from services.vm.egress import ALLOW_FILE, WORKSPACE, EgressGateway
-from services.vm.intercept import Interceptor, Secret
+from services.vm.egress import ALLOW_FILE, WORKSPACE, EgressGateway, Secret
+from services.vm.intercept import Interceptor
 
 HOST = "api.example.com"
 PLACEHOLDER = "hephaestus-secret-0123456789abcdef"
@@ -40,7 +42,7 @@ def _server_cert(tmp_path: Path) -> tuple[Path, bytes]:
     )
     cert_pem = cert.public_bytes(serialization.Encoding.PEM)
     path = tmp_path / "server.pem"
-    path.write_bytes(
+    _ = path.write_bytes(
         cert_pem
         + key.private_bytes(
             serialization.Encoding.PEM,
@@ -51,8 +53,14 @@ def _server_cert(tmp_path: Path) -> tuple[Path, bytes]:
     return path, cert_pem
 
 
+def _port_of(server: asyncio.Server) -> int:
+    return cast(tuple[str, int], server.sockets[0].getsockname())[1]
+
+
 @pytest.fixture
-async def upstream(tmp_path, monkeypatch):
+async def upstream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[tuple[int, bytes, list[bytes]]]:
     """An HTTPS server for ``HOST`` that records the request head it is sent."""
     pem, cert_pem = _server_cert(tmp_path)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -67,22 +75,23 @@ async def upstream(tmp_path, monkeypatch):
 
     server = await asyncio.start_server(handle, "127.0.0.1", 0, ssl=context)
 
-    async def resolve(host: str, port: int) -> list[str]:
+    async def resolve(_host: str, _port: int) -> list[str]:
         return ["127.0.0.1"]
 
     monkeypatch.setattr(egress_mod, "_resolve_public_ips", resolve)
-    yield server.sockets[0].getsockname()[1], cert_pem, heads
+    yield _port_of(server), cert_pem, heads
     server.close()
 
 
 async def _through_gateway(
     gateway: EgressGateway, credentials: str, port: int, trust: str, request: bytes
 ) -> bytes:
-    proxy = await asyncio.start_server(lambda r, w: gateway.serve(WORKSPACE, r, w), "127.0.0.1", 0)
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await gateway.serve(WORKSPACE, reader, writer)
+
+    proxy = await asyncio.start_server(handler, "127.0.0.1", 0)
     try:
-        reader, writer = await asyncio.open_connection(
-            "127.0.0.1", proxy.sockets[0].getsockname()[1]
-        )
+        reader, writer = await asyncio.open_connection("127.0.0.1", _port_of(proxy))
         auth = base64.b64encode(credentials.encode()).decode()
         writer.write(
             f"CONNECT {HOST}:{port} HTTP/1.1\r\nProxy-Authorization: Basic {auth}\r\n\r\n".encode()
@@ -103,11 +112,13 @@ async def _through_gateway(
 def _allow(tmp_path: Path) -> Path:
     directory = tmp_path / "allow"
     directory.mkdir()
-    (directory / ALLOW_FILE).write_text(f"{HOST}\n")
+    _ = (directory / ALLOW_FILE).write_text(f"{HOST}\n")
     return directory
 
 
-async def test_a_placeholder_becomes_the_secret_in_requests_to_its_host(tmp_path, upstream):
+async def test_a_placeholder_becomes_the_secret_in_requests_to_its_host(
+    tmp_path: Path, upstream: tuple[int, bytes, list[bytes]]
+):
     port, cert_pem, heads = upstream
     interceptor = Interceptor(lambda: ssl.create_default_context(cadata=cert_pem.decode()))
     gateway = EgressGateway(interceptor)
@@ -118,8 +129,10 @@ async def test_a_placeholder_becomes_the_secret_in_requests_to_its_host(tmp_path
         credentials,
         port,
         interceptor.ca_pem,
-        f"GET /v1?key={PLACEHOLDER} HTTP/1.1\r\nHost: elsewhere.example.org\r\n"
-        f"Authorization: Bearer {PLACEHOLDER}\r\n\r\n".encode(),
+        (
+            f"GET /v1?key={PLACEHOLDER} HTTP/1.1\r\nHost: elsewhere.example.org\r\n"
+            + f"Authorization: Bearer {PLACEHOLDER}\r\n\r\n"
+        ).encode(),
     )
 
     assert reply.endswith(b"ok")
@@ -132,7 +145,9 @@ async def test_a_placeholder_becomes_the_secret_in_requests_to_its_host(tmp_path
     await interceptor.close()
 
 
-async def test_a_grant_without_secrets_tunnels_untouched(tmp_path, upstream):
+async def test_a_grant_without_secrets_tunnels_untouched(
+    tmp_path: Path, upstream: tuple[int, bytes, list[bytes]]
+):
     port, cert_pem, heads = upstream
     interceptor = Interceptor()
     gateway = EgressGateway(interceptor)
@@ -151,10 +166,10 @@ async def test_a_grant_without_secrets_tunnels_untouched(tmp_path, upstream):
     await interceptor.close()
 
 
-async def test_a_secret_is_never_sent_to_another_host(tmp_path):
+async def test_a_secret_is_never_sent_to_another_host(tmp_path: Path):
     grant_secrets = [Secret(PLACEHOLDER, "s3cret", HOST)]
     gateway = EgressGateway(Interceptor())
-    gateway.grant(_allow(tmp_path), grant_secrets)
+    _ = gateway.grant(_allow(tmp_path), grant_secrets)
     grant = next(iter(gateway._grants.values()))
     assert grant.secrets_for("API.example.com.") == tuple(grant_secrets)
     assert grant.secrets_for("other.example.com") == ()
