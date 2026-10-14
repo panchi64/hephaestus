@@ -11,7 +11,9 @@ has agreed to something it cannot act on.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from pathlib import Path
+from typing import cast
 
 import pytest
 from pydantic_ai import RunContext
@@ -33,8 +35,11 @@ from tools.plan import plan_toolset
 OWNER = "operator"
 
 
+type _Wired = tuple[PlanMode, ConversationTasks, ConversationStore, str]
+
+
 @pytest.fixture
-async def wired(tmp_path):
+async def wired(tmp_path: Path) -> _Wired:
     """A plan-mode service over a real store, plus the conversation it works on."""
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("correct horse battery staple")
@@ -53,7 +58,7 @@ def _ctx(
     conversation_id: str | None,
     permission: PermissionLevel,
     kind: str = "chat",
-):
+) -> tuple[RunContext[RunDeps], Run]:
     run = Run(id="r-plan", kind=kind, owner_id=OWNER, stream=RunStream())
     caps = ServiceContainer()
     caps.add(plans, as_type=PlanMode)
@@ -74,10 +79,10 @@ def _ctx(
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage()), run
 
 
-async def _call(name: str, args: dict[str, Any], ctx: RunContext[RunDeps]):
+async def _call(name: str, args: Mapping[str, object], ctx: RunContext[RunDeps]) -> str:
     toolset = build_agent_toolsets({"plan": plan_toolset()})[0]
     tools = await toolset.get_tools(ctx)
-    return await toolset.call_tool(name, args, ctx, tools[name])
+    return cast(str, await toolset.call_tool(name, dict(args), ctx, tools[name]))
 
 
 async def _offered(ctx: RunContext[RunDeps]) -> set[str]:
@@ -94,7 +99,7 @@ def _bodies(run: Run) -> list[EventBody]:
     return [e.body for e in run.stream.replay()]
 
 
-async def test_entering_narrows_this_turns_catalog_not_just_the_next(wired):
+async def test_entering_narrows_this_turns_catalog_not_just_the_next(wired: _Wired):
     """The load-bearing half. Both gates re-read `ctx.deps` on every model request, so
     moving the level in place is what makes the narrowing bind before the turn ends —
     without it the model announces plan mode and keeps its editing tools until the next
@@ -108,7 +113,7 @@ async def test_entering_narrows_this_turns_catalog_not_just_the_next(wired):
     ctx, run = _ctx(plans, tasks, conversation_id, "auto")
     assert "files_write_file" in await _offered(ctx)
 
-    await _call("plan_enter", {"reason": "this rewrites the parser"}, ctx)
+    _ = await _call("plan_enter", {"reason": "this rewrites the parser"}, ctx)
 
     assert ctx.deps.permission == "plan"
     assert "files_write_file" not in await _offered(ctx)
@@ -117,7 +122,7 @@ async def test_entering_narrows_this_turns_catalog_not_just_the_next(wired):
     assert [b.level for b in _bodies(run) if isinstance(b, PermissionChanged)] == ["plan"]
 
 
-async def test_moving_the_level_leaves_the_other_withholding_reasons_alone(wired):
+async def test_moving_the_level_leaves_the_other_withholding_reasons_alone(wired: _Wired):
     """The bug this shape exists to prevent, in both directions.
 
     `disabled_tools` is a **union** of six sources and records no provenance, so a level
@@ -133,7 +138,7 @@ async def test_moving_the_level_leaves_the_other_withholding_reasons_alone(wired
     ctx.deps.disabled_tools = ctx.deps.disabled_tools | {"files_write_file"}
     assert "files_write_file" not in await _offered(ctx)
 
-    await _call("plan_enter", {"reason": "why not"}, ctx)
+    _ = await _call("plan_enter", {"reason": "why not"}, ctx)
     assert "files_write_file" not in await _offered(ctx)
 
     # ...and still gone after a plan is approved, which is where the old code handed it
@@ -144,14 +149,14 @@ async def test_moving_the_level_leaves_the_other_withholding_reasons_alone(wired
     assert "files_write_file" not in await _offered(ctx)
 
 
-async def test_submitting_records_the_plan_and_then_parks(wired):
+async def test_submitting_records_the_plan_and_then_parks(wired: _Wired):
     """Recorded *before* the park, not after the approval: the panel renders the document
     the operator is being asked about, so it has to exist before they are asked."""
     plans, tasks, _, conversation_id = wired
     ctx, run = _ctx(plans, tasks, conversation_id, "plan")
 
     with pytest.raises(ApprovalRequired):
-        await _call(
+        _ = await _call(
             "plan_submit",
             {"title": "Rewrite the parser", "body": "## Why\nIt is slow.", "steps": ["one", "two"]},
             ctx,
@@ -165,7 +170,7 @@ async def test_submitting_records_the_plan_and_then_parks(wired):
     assert [b.status for b in _bodies(run) if isinstance(b, PlanUpdated)] == ["pending"]
 
 
-async def test_resubmitting_after_feedback_is_a_new_revision(wired):
+async def test_resubmitting_after_feedback_is_a_new_revision(wired: _Wired):
     """The panel treats a revised plan as a fresh arrival rather than a redraw, and
     `revision` is what it reads to tell them apart."""
     plans, tasks, _, conversation_id = wired
@@ -173,7 +178,7 @@ async def test_resubmitting_after_feedback_is_a_new_revision(wired):
 
     for body in ("first attempt", "second attempt"):
         with pytest.raises(ApprovalRequired):
-            await _call("plan_submit", {"title": "T", "body": body, "steps": ["s"]}, ctx)
+            _ = await _call("plan_submit", {"title": "T", "body": body, "steps": ["s"]}, ctx)
 
     stored = await plans.current(OWNER, conversation_id)
     assert stored is not None
@@ -181,7 +186,7 @@ async def test_resubmitting_after_feedback_is_a_new_revision(wired):
     assert stored.body == "second attempt"
 
 
-async def test_a_second_plan_supersedes_the_first_rather_than_accumulating(wired):
+async def test_a_second_plan_supersedes_the_first_rather_than_accumulating(wired: _Wired):
     """A thread has **one** plan, whatever happened earlier in it.
 
     Two ways a thread reaches a second plan, and they are the same write: answering
@@ -196,21 +201,24 @@ async def test_a_second_plan_supersedes_the_first_rather_than_accumulating(wired
     what the panel needs, since it claims its one-shot steal per counter value and a
     reset would let a *new* plan land on a claim the previous one had already spent.
     """
-    plans, tasks, conversations, conversation_id = wired
+    plans, tasks, _conversations, conversation_id = wired
     ctx, _ = _ctx(plans, tasks, conversation_id, "plan")
     first = {"title": "First", "body": "one", "steps": ["a"]}
     with pytest.raises(ApprovalRequired):
-        await _call("plan_submit", first, ctx)
+        _ = await _call("plan_submit", first, ctx)
     ctx.tool_call_approved = True
-    await _call("plan_submit", first, ctx)
-    assert (await plans.current(OWNER, conversation_id)).status == "approved"
+    _ = await _call("plan_submit", first, ctx)
+    approved = await plans.current(OWNER, conversation_id)
+    assert approved is not None
+    assert approved.status == "approved"
 
     # Later in the same thread: new work, a new plan. The approved one is replaced.
     ctx, _ = _ctx(plans, tasks, conversation_id, "plan")
     with pytest.raises(ApprovalRequired):
-        await _call("plan_submit", {"title": "Second", "body": "two", "steps": ["b"]}, ctx)
+        _ = await _call("plan_submit", {"title": "Second", "body": "two", "steps": ["b"]}, ctx)
 
     current = await plans.current(OWNER, conversation_id)
+    assert current is not None
     assert current.title == "Second"
     assert current.status == "pending"
     # Counting submissions, not resetting per plan — see the docstring.
@@ -221,11 +229,11 @@ async def test_a_second_plan_supersedes_the_first_rather_than_accumulating(wired
     assert [i.content for i in await tasks.items(OWNER, conversation_id)] == ["a"]
 
     ctx.tool_call_approved = True
-    await _call("plan_submit", {"title": "Second", "body": "two", "steps": ["b"]}, ctx)
+    _ = await _call("plan_submit", {"title": "Second", "body": "two", "steps": ["b"]}, ctx)
     assert [i.content for i in await tasks.items(OWNER, conversation_id)] == ["b"]
 
 
-async def test_only_one_plan_can_be_awaiting_an_answer_at_a_time(wired):
+async def test_only_one_plan_can_be_awaiting_an_answer_at_a_time(wired: _Wired):
     """There is no way to open a second question while the first is unanswered.
 
     `plan_submit` defers, which parks the turn — so a turn cannot reach a second call,
@@ -240,7 +248,7 @@ async def test_only_one_plan_can_be_awaiting_an_answer_at_a_time(wired):
     ctx, _ = _ctx(plans, tasks, conversation_id, "plan")
     for body in ("first", "second", "third"):
         with pytest.raises(ApprovalRequired):
-            await _call("plan_submit", {"title": "T", "body": body, "steps": ["s"]}, ctx)
+            _ = await _call("plan_submit", {"title": "T", "body": body, "steps": ["s"]}, ctx)
 
     with Session(plans._db) as session:  # noqa: SLF001 - asserting the stored shape
         rows = session.exec(select(ConversationPlan)).all()
@@ -248,7 +256,7 @@ async def test_only_one_plan_can_be_awaiting_an_answer_at_a_time(wired):
     assert rows[0].revision == 3
 
 
-async def test_approving_is_one_act(wired):
+async def test_approving_is_one_act(wired: _Wired):
     """Records the yes, seeds the tasks, raises the level — and widens this turn's catalog
     so the same turn carries the plan out. A path that did any one without the others
     leaves a thread that can act with nothing agreed, or has agreed to something it cannot
@@ -257,7 +265,7 @@ async def test_approving_is_one_act(wired):
     ctx, run = _ctx(plans, tasks, conversation_id, "plan")
     args = {"title": "Rewrite", "body": "## Why", "steps": ["read it", "change it"]}
     with pytest.raises(ApprovalRequired):
-        await _call("plan_submit", args, ctx)
+        _ = await _call("plan_submit", args, ctx)
 
     # What Pydantic AI does on the re-invocation after the operator approves.
     ctx.tool_call_approved = True
@@ -284,14 +292,14 @@ async def test_approving_is_one_act(wired):
     assert [b for b in bodies if isinstance(b, TasksUpdated)]
 
 
-async def test_settling_moves_the_status_and_nothing_else(wired):
+async def test_settling_moves_the_status_and_nothing_else(wired: _Wired):
     """What a denial and a revision request do. Neither touches the level: only approval
     moves it, and it moves it through `approve`."""
     plans, tasks, conversations, conversation_id = wired
     ctx, _ = _ctx(plans, tasks, conversation_id, "plan")
     with pytest.raises(ApprovalRequired):
-        await _call("plan_submit", {"title": "T", "body": "B", "steps": ["s"]}, ctx)
-    await conversations.set_permission_level(conversation_id, "plan")
+        _ = await _call("plan_submit", {"title": "T", "body": "B", "steps": ["s"]}, ctx)
+    _ = await conversations.set_permission_level(conversation_id, "plan")
 
     run = Run(id="r-settle", kind="chat", owner_id=OWNER, stream=RunStream())
     for status in ("revising", "denied"):
@@ -303,7 +311,7 @@ async def test_settling_moves_the_status_and_nothing_else(wired):
         assert (await conversations.binding(conversation_id)).permission == "plan"
 
 
-async def test_a_run_with_no_conversation_says_so_rather_than_parking(wired):
+async def test_a_run_with_no_conversation_says_so_rather_than_parking(wired: _Wired):
     """Plan mode belongs to a thread. A stateless run has no operator to park on, so
     saying the capability is not there beats a park nobody can answer."""
     plans, tasks, _, _ = wired
@@ -315,7 +323,7 @@ async def test_a_run_with_no_conversation_says_so_rather_than_parking(wired):
     )
 
 
-async def test_an_unattended_run_is_not_offered_plan_mode_at_all(wired):
+async def test_an_unattended_run_is_not_offered_plan_mode_at_all(wired: _Wired):
     """Both halves of the guard, because either alone leaves a run that hangs.
 
     A scheduled task's whole point is that nobody is watching it, so a `plan_submit`
@@ -344,7 +352,7 @@ async def test_an_unattended_run_is_not_offered_plan_mode_at_all(wired):
     assert ctx.deps.permission == "auto"
 
 
-async def test_a_plan_that_could_not_be_stored_is_not_put_to_the_operator(wired):
+async def test_a_plan_that_could_not_be_stored_is_not_put_to_the_operator(wired: _Wired):
     """No document, no question.
 
     A locked vault drops the write *and* the announcement, so parking anyway would face
@@ -354,7 +362,7 @@ async def test_a_plan_that_could_not_be_stored_is_not_put_to_the_operator(wired)
     """
     plans, tasks, conversations, conversation_id = wired
     ctx, run = _ctx(plans, tasks, conversation_id, "plan")
-    plans._vault.lock()  # noqa: SLF001 - simulating the locked state
+    plans._vault.lock()
 
     before = (await conversations.binding(conversation_id)).permission
     result = await _call("plan_submit", {"title": "T", "body": "B", "steps": ["s"]}, ctx)
@@ -369,22 +377,22 @@ async def test_a_plan_that_could_not_be_stored_is_not_put_to_the_operator(wired)
     assert not [b for b in _bodies(run) if isinstance(b, PermissionChanged)]
 
 
-async def test_a_locked_vault_does_not_block_the_yes(wired):
+async def test_a_locked_vault_does_not_block_the_yes(wired: _Wired):
     """The operator read the plan and said so; the transcript holds what they agreed to
     either way. Refusing here would strand a thread on a decision that has been made."""
     plans, tasks, conversations, conversation_id = wired
     ctx, _ = _ctx(plans, tasks, conversation_id, "plan")
     with pytest.raises(ApprovalRequired):
-        await _call("plan_submit", {"title": "T", "body": "B", "steps": ["s"]}, ctx)
-    plans._vault.lock()  # noqa: SLF001 - simulating the locked state
+        _ = await _call("plan_submit", {"title": "T", "body": "B", "steps": ["s"]}, ctx)
+    plans._vault.lock()
 
     ctx.tool_call_approved = True
-    await _call("plan_submit", {"title": "T", "body": "B", "steps": ["s"]}, ctx)
+    _ = await _call("plan_submit", {"title": "T", "body": "B", "steps": ["s"]}, ctx)
 
     assert (await conversations.binding(conversation_id)).permission == "auto"
 
 
-async def test_the_plan_is_sealed_at_rest(wired):
+async def test_the_plan_is_sealed_at_rest(wired: _Wired):
     from sqlmodel import Session, select
 
     from models.plan import ConversationPlan
@@ -392,7 +400,7 @@ async def test_the_plan_is_sealed_at_rest(wired):
     plans, tasks, _, conversation_id = wired
     ctx, _ = _ctx(plans, tasks, conversation_id, "plan")
     with pytest.raises(ApprovalRequired):
-        await _call(
+        _ = await _call(
             "plan_submit",
             {"title": "T", "body": "rewrite acme's billing", "steps": ["s"]},
             ctx,
@@ -408,7 +416,7 @@ async def test_the_plan_is_sealed_at_rest(wired):
 
 
 async def test_the_two_backfills_are_reachable_and_shaped_as_the_panel_reads_them(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """The REST half of both surfaces, on a booted app.
 
@@ -418,36 +426,40 @@ async def test_the_two_backfills_are_reachable_and_shaped_as_the_panel_reads_the
     change: the task list moved to `/tasks` so the plan could have `/plan`, and a build
     where only one of them moved answers 404 on the other.
     """
-    from ._helpers import client_app, collect_sse_events, patch_model_resolution
+    from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+    from ._json import json_body, json_list, obj, parse_json, s
 
     patch_model_resolution(monkeypatch, output_text="hello")
     async with client_app() as (client, app):
         created = await client.post("/chat", json={"prompt": "hi"})
-        conversation_id = created.json()["conversation_id"]
-        await collect_sse_events(client, created.json()["run_id"])
+        conversation_id = s(json_body(created)["conversation_id"])
+        _ = await collect_sse_events(client, s(json_body(created)["run_id"]))
 
         # Empty rather than missing: a thread with neither is the ordinary case.
-        assert (await client.get(f"/conversations/{conversation_id}/tasks")).json() == []
-        assert (await client.get(f"/conversations/{conversation_id}/plan")).json() is None
+        assert json_list(await client.get(f"/conversations/{conversation_id}/tasks")) == []
+        plan_response = await client.get(f"/conversations/{conversation_id}/plan")
+        assert parse_json(plan_response.content) is None
 
-        await app.state.plan_mode.submit(
+        _ = await app_state(app, "plan_mode", PlanMode).submit(
             "operator",
             conversation_id,
             title="Rewrite the parser",
             body="## Why\nIt is slow.",
             steps=["read it", "change it"],
         )
-        await app.state.conversation_tasks.seed(
+        _ = await app_state(app, "conversation_tasks", ConversationTasks).seed(
             "operator", conversation_id, ["read it", "change it"]
         )
 
-        plan = (await client.get(f"/conversations/{conversation_id}/plan")).json()
+        plan = json_body(await client.get(f"/conversations/{conversation_id}/plan"))
         assert plan["title"] == "Rewrite the parser"
         assert plan["steps"] == ["read it", "change it"]
         assert plan["status"] == "pending"
         assert plan["revision"] == 1
 
-        tasks = (await client.get(f"/conversations/{conversation_id}/tasks")).json()
+        tasks = [
+            obj(t) for t in json_list(await client.get(f"/conversations/{conversation_id}/tasks"))
+        ]
         assert [t["content"] for t in tasks] == ["read it", "change it"]
         assert all(t["status"] == "pending" for t in tasks)
 
