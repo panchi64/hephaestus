@@ -213,7 +213,7 @@ async def test_only_plan_narrows_the_catalog():
         if level != "plan"
     }
     assert len(set(acting.values())) == 1, acting
-    counts = {}
+    counts: dict[PermissionLevel, tuple[int, int]] = {}
     for level in PERMISSION_LADDER:
         if level != "plan":
             fresh, corpus = await _catalog("sandbox", level)

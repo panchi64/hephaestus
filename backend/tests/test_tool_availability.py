@@ -58,9 +58,7 @@ def _ctx(disabled: frozenset[str]) -> RunContext[RunDeps]:
 
 
 def _availability(app: FastAPI) -> tuple[CategoryAvailability, ...]:
-    return cast(
-        tuple[CategoryAvailability, ...], app_state(app, "category_availability", tuple)
-    )
+    return cast(tuple[CategoryAvailability, ...], app_state(app, "category_availability", tuple))
 
 
 def _tools(app: FastAPI, category: str) -> frozenset[str]:
@@ -86,8 +84,10 @@ async def _withheld(app: FastAPI) -> frozenset[str]:
 
 
 async def _connect_mailbox(app: FastAPI) -> None:
-    _ = await _caps(app).get(MailService).create_account(
-        OWNER, name="Personal", address="operator@example.com", password="secret"
+    _ = (
+        await _caps(app)
+        .get(MailService)
+        .create_account(OWNER, name="Personal", address="operator@example.com", password="secret")
     )
 
 

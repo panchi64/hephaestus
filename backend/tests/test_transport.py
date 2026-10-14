@@ -21,7 +21,7 @@ type _Frame = str | bytes | memoryview
 def _frames(run: Run) -> AsyncGenerator[_Frame]:
     body = transport.sse_response(run, after_seq=0).body_iterator
     assert isinstance(body, AsyncGenerator)
-    return cast(AsyncGenerator[_Frame, None], body)
+    return cast(AsyncGenerator[_Frame], body)
 
 
 def _text(frame: _Frame) -> str:
