@@ -6,30 +6,36 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
+from pathlib import Path
 
 from pydantic_ai import FunctionToolset, RunContext, ToolApproved
-from pydantic_ai.messages import ToolReturnPart, UserPromptPart
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.messages import ModelMessage, ToolReturnPart, UserPromptPart
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+    StreamFunctionDef,
+)
 from pydantic_ai.models.test import TestModel
 
-from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
+from agent import build_chat_orchestrator, build_resume_orchestrator
 from runs import Run, RunRegistry, RunStatus, RunStream
 from tools import RunDeps
 
+from ._helpers import parked_turn
+from ._helpers import run_bodies as _bodies
 from .test_branching import _fresh_store
 
 OWNER = "operator"
 
 
-def _bodies(run):
-    return [e.body for e in run.stream.replay()]
-
-
-def _types(run):
+def _types(run: Run) -> list[str]:
     return [b.type for b in _bodies(run)]
 
 
-def _injected_user_texts(messages) -> list[str]:
+def _injected_user_texts(messages: list[ModelMessage]) -> list[str]:
     """The user-prompt texts riding the latest (tool-return) request."""
     return [
         p.content
@@ -52,18 +58,20 @@ def _steering_toolset(queue_text: str) -> FunctionToolset[RunDeps]:
     async def poke(ctx: RunContext[RunDeps]) -> str:
         # Async so it runs on the loop (like the real tools): enqueue emits on the
         # run's stream, which needs the running loop for its activity stamp.
-        ctx.deps.run.enqueue_message(queue_text)
+        _ = ctx.deps.run.enqueue_message(queue_text)
         return "poked"
 
     return toolset
 
 
-def _call_then_report(tool_name: str = "t_poke"):
+def _call_then_report(tool_name: str = "t_poke") -> StreamFunctionDef:
     """First request: call the tool. Second request: answer with the user texts
     found on the incoming (tool-return) request, so the assertion reads straight
     off the answer what the model was actually shown."""
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         settled = any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts)
         if not settled:
             yield {0: DeltaToolCall(name=tool_name, json_args=json.dumps({}))}
@@ -99,7 +107,9 @@ async def test_end_of_run_queued_message_autocontinues_same_run():
     # The message lands while the model is producing its final answer (no tool
     # loop left to inject into) — the turn must continue as a new segment on the
     # same run instead of dropping it.
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         user_texts = [
             p.content
             for m in messages
@@ -107,7 +117,7 @@ async def test_end_of_run_queued_message_autocontinues_same_run():
             if isinstance(p, UserPromptPart) and isinstance(p.content, str)
         ]
         if "more please" not in user_texts:
-            run_box["run"].enqueue_message("more please")
+            _ = run_box["run"].enqueue_message("more please")
             yield "first answer"
         else:
             yield "second answer"
@@ -130,7 +140,7 @@ async def test_end_of_run_queued_message_autocontinues_same_run():
     assert types.count("run.ended") == 1  # one run end to end
 
 
-async def test_injected_message_persists_as_its_own_user_turn(tmp_path):
+async def test_injected_message_persists_as_its_own_user_turn(tmp_path: Path):
     store, _ = await _fresh_store(tmp_path)
     await store.start()
     reg = RunRegistry()
@@ -164,7 +174,9 @@ async def test_queue_while_parked_is_injected_on_resume():
     def delete_thing() -> str:
         return "deleted"
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         settled = any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts)
         if not settled:
             yield {0: DeltaToolCall(name="danger_delete_thing", json_args=json.dumps({}))}
@@ -185,11 +197,10 @@ async def test_queue_while_parked_is_injected_on_resume():
     assert run.status is RunStatus.awaiting_input
 
     # Queued while parked: sits in the inbox (the parked task has fully exited)…
-    run.enqueue_message("while you were parked")
+    _ = run.enqueue_message("while you were parked")
     assert [m.text for m in run.pending_messages] == ["while you were parked"]
 
-    parked = run.parked_payload
-    assert isinstance(parked, ParkedTurn)
+    parked = parked_turn(run)
     call_id = parked.requests.approvals[0].tool_call_id
     resumed = await reg.resume(run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}))
     assert resumed is not None
@@ -304,11 +315,13 @@ async def test_a_hold_survives_an_edit_and_an_edit_keeps_the_source():
     assert [b.source for b in injected] == ["subagent"]
 
 
-def _echo_user_texts():
+def _echo_user_texts() -> StreamFunctionDef:
     """Answer with every user text on the incoming request, so the assertion reads
     straight off the answer what the model was actually shown."""
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         texts = [
             p.content
             for p in messages[-1].parts
@@ -319,7 +332,7 @@ def _echo_user_texts():
     return stream_fn
 
 
-async def test_steering_on_a_regenerate_never_mutates_the_stored_user_message(tmp_path):
+async def test_steering_on_a_regenerate_never_mutates_the_stored_user_message(tmp_path: Path):
     # Guards the invariant `_inject_queued` and `with_tail_context` both document:
     # never mutate what the store shares. On the regenerate path (`prompt is None`)
     # the library may build the first request by reusing the last history message's
@@ -361,7 +374,7 @@ async def test_steering_on_a_regenerate_never_mutates_the_stored_user_message(tm
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id=OWNER, orchestrator=regen)
-    run.enqueue_message("steer the retry")
+    _ = run.enqueue_message("steer the retry")
     await run.wait()
 
     answer = "".join(b.text for b in _bodies(run) if b.type == "answer.delta")
@@ -374,7 +387,7 @@ async def test_steering_on_a_regenerate_never_mutates_the_stored_user_message(tm
     originals = [
         p.content
         for node in tree.nodes.values()
-        for p in getattr(node.message, "parts", [])
+        for p in node.message.parts
         if isinstance(p, UserPromptPart) and isinstance(p.content, str)
     ]
     assert "the original question" in originals
