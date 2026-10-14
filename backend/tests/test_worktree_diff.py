@@ -15,10 +15,15 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from services.projects.diffstat import file_changes
-from services.projects.worktree import WorktreeManager, branch_for
+import pytest
 
-from ._helpers import client_app, patch_model_resolution
+from services.conversations import ConversationStore
+from services.projects.diffstat import file_changes
+from services.projects.repo import branch_for
+from services.projects.worktree import WorktreeManager
+
+from ._helpers import app_state, client_app, patch_model_resolution
+from ._json import json_body, s
 
 
 async def _git(cwd: Path, *args: str) -> None:
@@ -29,7 +34,7 @@ async def _git(cwd: Path, *args: str) -> None:
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    await proc.communicate()
+    _ = await proc.communicate()
 
 
 async def _commit(cwd: Path, message: str) -> None:
@@ -41,10 +46,10 @@ async def _repo(tmp_path: Path) -> Path:
     """A repository with a file of each interesting kind already committed."""
     root = tmp_path / "project"
     root.mkdir()
-    (root / "app.py").write_text("print('hi')\n")
-    (root / "uv.lock").write_text("version = 1\n")
-    (root / "doomed.py").write_text("unused = True\n")
-    (root / "moved me.py").write_text("x = 1\n")
+    _ = (root / "app.py").write_text("print('hi')\n")
+    _ = (root / "uv.lock").write_text("version = 1\n")
+    _ = (root / "doomed.py").write_text("unused = True\n")
+    _ = (root / "moved me.py").write_text("x = 1\n")
     await _git(root, "init", "-b", "main")
     await _commit(root, "first")
     return root
@@ -60,20 +65,20 @@ async def _worktree_with_changes(tmp_path: Path) -> tuple[WorktreeManager, Path,
     manager = _manager(tmp_path)
     state = await manager.acquire(project_id="p1", root=root, base_ref="main", conversation_id="c1")
     path = state.path
-    (path / "app.py").write_text("print('hi')\nprint('there')\n")
-    (path / "uv.lock").write_text("version = 2\n")
-    (path / "docker-compose.yml").write_text("services: {}\n")
-    (path / "README.md").write_text("# docs\n")
-    (path / "vite.config.ts").write_text("export default {}\n")
+    _ = (path / "app.py").write_text("print('hi')\nprint('there')\n")
+    _ = (path / "uv.lock").write_text("version = 2\n")
+    _ = (path / "docker-compose.yml").write_text("services: {}\n")
+    _ = (path / "README.md").write_text("# docs\n")
+    _ = (path / "vite.config.ts").write_text("export default {}\n")
     (path / "tests").mkdir()
-    (path / "tests" / "test_app.py").write_text("def test_x(): ...\n")
+    _ = (path / "tests" / "test_app.py").write_text("def test_x(): ...\n")
     (path / "doomed.py").unlink()
     await _git(path, "mv", "moved me.py", "moved.py")
     return manager, root, path
 
 
 class TestTheRows:
-    async def test_every_change_comes_back_as_its_own_row(self, tmp_path):
+    async def test_every_change_comes_back_as_its_own_row(self, tmp_path: Path):
         manager, root, _path = await _worktree_with_changes(tmp_path)
 
         diff = await manager.diff(root, base_ref="main", conversation_id="c1", project_id="p1")
@@ -84,7 +89,7 @@ class TestTheRows:
         assert by_path["doomed.py"].status == "deleted"
         assert by_path["docker-compose.yml"].status == "added"
 
-    async def test_a_rename_is_a_move_and_not_a_delete_beside_an_add(self, tmp_path):
+    async def test_a_rename_is_a_move_and_not_a_delete_beside_an_add(self, tmp_path: Path):
         """``-M``, and a path with a space in it — the two things that break a diff
         parser that splits on whitespace and trusts one record per file."""
         manager, root, _path = await _worktree_with_changes(tmp_path)
@@ -96,7 +101,7 @@ class TestTheRows:
         assert moved.old_path == "moved me.py"
         assert not any(row.path == "moved me.py" for row in diff.files)
 
-    async def test_the_rows_cover_the_same_files_the_shortstat_counted(self, tmp_path):
+    async def test_the_rows_cover_the_same_files_the_shortstat_counted(self, tmp_path: Path):
         manager, root, _path = await _worktree_with_changes(tmp_path)
 
         diff = await manager.diff(root, base_ref="main", conversation_id="c1", project_id="p1")
@@ -105,7 +110,7 @@ class TestTheRows:
 
 
 class TestTheVerdict:
-    async def test_the_bands_the_merge_gate_separates(self, tmp_path):
+    async def test_the_bands_the_merge_gate_separates(self, tmp_path: Path):
         manager, root, _path = await _worktree_with_changes(tmp_path)
 
         diff = await manager.diff(root, base_ref="main", conversation_id="c1", project_id="p1")
@@ -118,7 +123,7 @@ class TestTheVerdict:
         assert bands["tests/test_app.py"] == ("test", "normal")
         assert bands["README.md"] == ("docs", "normal")
 
-    async def test_a_deletion_never_sits_at_normal(self, tmp_path):
+    async def test_a_deletion_never_sits_at_normal(self, tmp_path: Path):
         """ "Was this used?" is the question the gate exists to raise, and a file that is
         gone cannot raise it for itself."""
         manager, root, _path = await _worktree_with_changes(tmp_path)
@@ -129,7 +134,7 @@ class TestTheVerdict:
         assert deleted.risk == "elevated"
         assert "deleted" in deleted.reason
 
-    async def test_the_riskiest_rows_arrive_first(self, tmp_path):
+    async def test_the_riskiest_rows_arrive_first(self, tmp_path: Path):
         """The order is part of the verdict: a client rendering the list top to bottom is
         already triaging, and does not decide anything to do it."""
         manager, root, _path = await _worktree_with_changes(tmp_path)
@@ -149,14 +154,14 @@ class TestTheVerdict:
 
 
 class TestStaleness:
-    async def test_a_branch_reports_how_far_it_has_drifted(self, tmp_path):
+    async def test_a_branch_reports_how_far_it_has_drifted(self, tmp_path: Path):
         """Ahead of the base by the agent's work, behind it by whatever the operator
         landed meanwhile. Reviewing against a base that has moved is the failure this
         number names."""
-        manager, root, path = await _worktree_with_changes(tmp_path)
-        await manager.diff(root, base_ref="main", conversation_id="c1", project_id="p1")
+        manager, root, _path = await _worktree_with_changes(tmp_path)
+        _ = await manager.diff(root, base_ref="main", conversation_id="c1", project_id="p1")
 
-        (root / "operator.txt").write_text("their own work\n")
+        _ = (root / "operator.txt").write_text("their own work\n")
         await _commit(root, "operator's commit")
 
         diff = await manager.diff(root, base_ref="main", conversation_id="c1", project_id="p1")
@@ -167,10 +172,10 @@ class TestStaleness:
         # The operator's own commit is not the agent's work, and must not show up as it.
         assert not any(row.path == "operator.txt" for row in diff.files)
 
-    async def test_a_branch_with_no_work_is_neither_ahead_nor_behind(self, tmp_path):
+    async def test_a_branch_with_no_work_is_neither_ahead_nor_behind(self, tmp_path: Path):
         root = await _repo(tmp_path)
         manager = _manager(tmp_path)
-        await manager.acquire(project_id="p1", root=root, base_ref="main", conversation_id="c1")
+        _ = await manager.acquire(project_id="p1", root=root, base_ref="main", conversation_id="c1")
 
         diff = await manager.diff(root, base_ref="main", conversation_id="c1", project_id="p1")
 
@@ -180,12 +185,14 @@ class TestStaleness:
         # answer to "when was this last touched".
         assert diff.last_commit_at is not None
 
-    async def test_a_base_ref_that_is_gone_stops_reporting_rather_than_failing(self, tmp_path):
+    async def test_a_base_ref_that_is_gone_stops_reporting_rather_than_failing(
+        self, tmp_path: Path
+    ):
         """The operator can delete or rename a branch at any time. Staleness going quiet
         is the right degrade; the diff read they are standing in front of must not 500."""
         root = await _repo(tmp_path)
         manager = _manager(tmp_path)
-        await manager.acquire(project_id="p1", root=root, base_ref="main", conversation_id="c1")
+        _ = await manager.acquire(project_id="p1", root=root, base_ref="main", conversation_id="c1")
 
         ahead, behind = await manager._divergence(
             root, base_ref="no-such-ref", branch=branch_for("c1")
@@ -195,27 +202,31 @@ class TestStaleness:
 
 
 class TestTheRouteCarriesIt:
-    async def test_the_branch_surface_serves_the_rows_camelcased(self, tmp_path, monkeypatch):
+    async def test_the_branch_surface_serves_the_rows_camelcased(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         """The wire shape two frontend tracks build against — camelCase, per this
         surface's convention, with the verdict already on each row."""
         async with client_app() as (client, app):
             root = await _repo(tmp_path)
-            project = (
+            project = json_body(
                 await client.post("/projects", json={"name": "work", "rootPath": str(root)})
-            ).json()
+            )
             patch_model_resolution(monkeypatch)
             created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
-            conversation_id = created.json()["conversation_id"]
-            assert await app.state.conversations.open_worktree(conversation_id)
-            state = await app.state.worktrees.acquire(
-                project_id=project["id"],
+            conversation_id = s(json_body(created)["conversation_id"])
+            assert await app_state(app, "conversations", ConversationStore).open_worktree(
+                conversation_id
+            )
+            state = await app_state(app, "worktrees", WorktreeManager).acquire(
+                project_id=s(project["id"]),
                 root=root,
-                base_ref=project["baseRef"],
+                base_ref=s(project["baseRef"]),
                 conversation_id=conversation_id,
             )
-            (state.path / "uv.lock").write_text("version = 2\n")
+            _ = (state.path / "uv.lock").write_text("version = 2\n")
 
-            body = (await client.get(f"/worktrees/{conversation_id}")).json()
+            body = json_body(await client.get(f"/worktrees/{conversation_id}"))
 
             assert body["ahead"] == 1
             assert body["behind"] == 0
@@ -234,18 +245,22 @@ class TestTheRouteCarriesIt:
                 }
             ]
 
-    async def test_a_thread_with_no_branch_answers_with_empty_rows(self, tmp_path, monkeypatch):
+    async def test_a_thread_with_no_branch_answers_with_empty_rows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         async with client_app() as (client, app):
             root = await _repo(tmp_path)
-            project = (
+            project = json_body(
                 await client.post("/projects", json={"name": "work", "rootPath": str(root)})
-            ).json()
+            )
             patch_model_resolution(monkeypatch)
             created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
 
-            conversation_id = created.json()["conversation_id"]
-            assert await app.state.conversations.open_worktree(conversation_id)
-            body = (await client.get(f"/worktrees/{conversation_id}")).json()
+            conversation_id = s(json_body(created)["conversation_id"])
+            assert await app_state(app, "conversations", ConversationStore).open_worktree(
+                conversation_id
+            )
+            body = json_body(await client.get(f"/worktrees/{conversation_id}"))
 
             assert body["files"] == []
             assert (body["ahead"], body["behind"]) == (0, 0)
