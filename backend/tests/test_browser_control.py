@@ -14,18 +14,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+from typing import cast, override
 
 import pytest
+from playwright.async_api import Browser
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness.playwright import PlaywrightBrowserToolset
 
 from core.container import ServiceContainer
 from runs import Run, RunStream
 from services.browser import BrowserSessionManager, ControlledBrowserSession, LiveBrowser
 from services.browser import session as session_module
+from services.browser.vm import VMBrowser
+from services.webfetch import ManagedBrowser
 from tools import RunDeps
-from tools.browse import TOOL_NAMES, browse_instructions, browse_toolset
+from tools.browse import TOOL_NAMES, BrowserToolset, browse_instructions, browse_toolset
 
 OWNER = "operator"
 
@@ -37,11 +43,11 @@ class _FakeContext:
     """The browser context behind a page: the tabs really open in it, and the cookie jar
     the manager saves into the profile."""
 
-    def __init__(self, state: dict | None = None) -> None:
+    def __init__(self, state: dict[str, object] | None = None) -> None:
         self.state = state or {"cookies": [{"name": "session", "value": "abc"}]}
         self.pages: list[_FakePage] = []
 
-    async def storage_state(self) -> dict:
+    async def storage_state(self) -> dict[str, object]:
         return self.state
 
 
@@ -69,7 +75,7 @@ class _FakeSession:
     """Stands in for a harness browser session: an active page, the open tabs, and the
     event counter the sweep reads activity off."""
 
-    def __init__(self, page: _FakePage | None = None, **kwargs) -> None:
+    def __init__(self, page: _FakePage | None = None, /, **kwargs: object) -> None:
         self.page = page or _FakePage()
         self.pages = [self.page]
         self.events_recorded = 0
@@ -86,31 +92,84 @@ class _FakeSession:
         return self.page
 
 
-class _FakeHost:
+class _FakeHost(VMBrowser):
     """A VMBrowser stand-in whose browser a test can take away."""
 
     def __init__(self, cdp_url: str | None = "http://127.0.0.1:9222") -> None:
-        self.cdp_url = cdp_url
-        self.stealthed: list[_FakePage] = []
+        super().__init__(
+            ManagedBrowser(
+                enabled=False,
+                vm=None,
+                startup_timeout_s=0.0,
+                concurrency=1,
+                user_agent="",
+                locale="en-US",
+                timezone_id="UTC",
+            ),
+            launch_timeout_s=0.0,
+        )
+        self.fake_cdp_url = cdp_url
+        self.stealthed: list[object] = []
 
+    @property
+    @override
+    def cdp_url(self) -> str | None:
+        return self.fake_cdp_url
+
+    @override
     async def ensure(self) -> str | None:
-        return self.cdp_url
+        return self.fake_cdp_url
 
-    async def apply_stealth(self, page) -> None:
+    @override
+    async def apply_stealth(self, page: object) -> None:
         self.stealthed.append(page)
 
 
-def _manager(host: _FakeHost, **kwargs) -> BrowserSessionManager:
-    options = {"idle_ttl_s": 900.0, "reap_interval_s": 60.0, "max_live": 3} | kwargs
-    return BrowserSessionManager(host, **options)  # type: ignore[arg-type]
+def _manager(
+    host: VMBrowser,
+    *,
+    idle_ttl_s: float = 900.0,
+    reap_interval_s: float = 60.0,
+    max_live: int = 3,
+    state_dir: Path | None = None,
+) -> BrowserSessionManager:
+    return BrowserSessionManager(
+        host,
+        idle_ttl_s=idle_ttl_s,
+        reap_interval_s=reap_interval_s,
+        max_live=max_live,
+        state_dir=state_dir,
+    )
 
 
 def _live(manager: BrowserSessionManager, key: str, page: _FakePage | None = None) -> LiveBrowser:
     """Install a fake session under ``key``, bypassing the real CDP attach."""
     session = _FakeSession(page)
-    live = LiveBrowser(key, f"token-{key}", session, None, session.page.context)  # type: ignore[arg-type]
+    live = LiveBrowser(
+        key,
+        f"token-{key}",
+        cast(ControlledBrowserSession, cast(object, session)),
+        None,
+        session.page.context,
+    )
     manager._sessions[key] = live  # noqa: SLF001 — constructing the state under test
     return live
+
+
+def _fake(live: LiveBrowser) -> _FakeSession:
+    assert isinstance(live.session, _FakeSession)
+    return live.session
+
+
+def _context(live: LiveBrowser) -> _FakeContext:
+    assert isinstance(live.context, _FakeContext)
+    return live.context
+
+
+def _browse() -> BrowserToolset:
+    toolset = browse_toolset()
+    assert isinstance(toolset, BrowserToolset)
+    return toolset
 
 
 @pytest.fixture
@@ -118,7 +177,7 @@ def attached(monkeypatch) -> list[_FakeSession]:
     """Make the real attach path build fake sessions, newest last."""
     built: list[_FakeSession] = []
 
-    def _build(**kwargs) -> _FakeSession:
+    def _build(**kwargs: object) -> _FakeSession:
         session = _FakeSession(**kwargs)
         built.append(session)
         return session
@@ -148,7 +207,7 @@ async def test_two_conversations_get_two_sessions():
     manager = _manager(_FakeHost())
     first, second = _live(manager, "c1"), _live(manager, "c2")
     assert first is not second
-    assert first.session.page is not second.session.page  # type: ignore[union-attr]
+    assert _fake(first).page is not _fake(second).page
 
 
 async def test_an_attached_page_is_stealthed_and_left_where_it_is(attached):
@@ -161,9 +220,9 @@ async def test_an_attached_page_is_stealthed_and_left_where_it_is(attached):
     live = await manager.acquire("c1")
 
     assert live is not None
-    page = live.session.page
+    page = _fake(live).page
     assert host.stealthed == [page]
-    assert page.fronted == 0  # type: ignore[union-attr]
+    assert page.fronted == 0
 
 
 async def test_a_login_made_in_one_conversation_reaches_the_next(tmp_path, attached):
@@ -213,11 +272,11 @@ async def test_a_session_whose_window_is_gone_is_not_handed_out_again(attached):
     stale = await manager.acquire("c1")
     assert stale is not None
 
-    host.cdp_url = None
+    host.fake_cdp_url = None
     assert await manager.acquire("c1") is None  # nothing to attach to: degrade, not a lie
-    assert stale.session.exited  # type: ignore[union-attr]
+    assert _fake(stale).exited
 
-    host.cdp_url = "http://127.0.0.1:9222"
+    host.fake_cdp_url = "http://127.0.0.1:9222"
     fresh = await manager.acquire("c1")
 
     assert fresh is not None and fresh is not stale
@@ -229,7 +288,7 @@ async def test_an_idle_session_is_reaped():
     await manager._sweep()  # noqa: SLF001 — driving the reaper directly, no clock wait
 
     assert manager.existing("c1") is None
-    assert live.session.exited  # type: ignore[union-attr]
+    assert _fake(live).exited
 
 
 async def test_the_operators_own_browsing_counts_as_use():
@@ -238,8 +297,8 @@ async def test_the_operators_own_browsing_counts_as_use():
     manager = _manager(_FakeHost(), idle_ttl_s=0.0)
     events, navigation = _live(manager, "c1"), _live(manager, "c2")
 
-    events.session.events_recorded += 1  # type: ignore[union-attr]
-    navigation.session.page.url = "https://example.com/billing"  # type: ignore[union-attr]
+    _fake(events).events_recorded += 1
+    _fake(navigation).page.url = "https://example.com/billing"
     await manager._sweep()  # noqa: SLF001
 
     assert manager.existing("c1") is events and manager.existing("c2") is navigation
@@ -254,12 +313,12 @@ async def test_a_window_with_no_tabs_left_is_released():
     # there is no page left for the session to be about.
     manager = _manager(_FakeHost())
     live = _live(manager, "c1")
-    live.context.pages.clear()
+    _context(live).pages.clear()
 
     await manager._sweep()  # noqa: SLF001
 
     assert manager.existing("c1") is None
-    assert live.session.exited  # type: ignore[union-attr]
+    assert _fake(live).exited
 
 
 async def test_a_tab_the_operator_opened_keeps_the_session_alive():
@@ -268,10 +327,10 @@ async def test_a_tab_the_operator_opened_keeps_the_session_alive():
     # closes the context, taking their tab with it.
     manager = _manager(_FakeHost(), idle_ttl_s=0.0)
     live = _live(manager, "c1")
-    live.context.pages.clear()  # they closed the agent's tab
-    theirs = _FakePage(url="https://example.com/inbox", context=live.context)
-    live.session.pages = []  # type: ignore[union-attr] — never held their tab
-    live.session.page = theirs  # type: ignore[union-attr]
+    _context(live).pages.clear()  # they closed the agent's tab
+    theirs = _FakePage(url="https://example.com/inbox", context=_context(live))
+    _fake(live).pages = []  # never held their tab
+    _fake(live).page = theirs
 
     await manager._sweep()  # noqa: SLF001
 
@@ -291,11 +350,11 @@ async def test_the_browser_going_away_reaps_every_session():
     manager = _manager(host)
     first, second = _live(manager, "c1"), _live(manager, "c2")
 
-    host.cdp_url = None
+    host.fake_cdp_url = None
     await manager._sweep()  # noqa: SLF001
 
     assert manager.existing("c1") is None and manager.existing("c2") is None
-    assert first.session.exited and second.session.exited  # type: ignore[union-attr]
+    assert _fake(first).exited and _fake(second).exited
 
 
 async def test_the_live_cap_evicts_the_least_recently_used():
@@ -309,7 +368,7 @@ async def test_the_live_cap_evicts_the_least_recently_used():
     assert manager.existing("c1") is None
     assert manager.existing("c2") is middle
     assert manager.existing("c3") is newest
-    assert oldest.session.exited  # type: ignore[union-attr]
+    assert _fake(oldest).exited
 
 
 async def test_creation_locks_do_not_accumulate_forever():
@@ -326,7 +385,7 @@ async def test_creation_locks_do_not_accumulate_forever():
 
     # The three that hold nothing are gone; c4's went with its own reaped session.
     assert manager._creating == {}  # noqa: SLF001
-    assert live.session.exited  # type: ignore[union-attr]
+    assert _fake(live).exited
 
 
 async def test_stop_tears_every_session_down():
@@ -334,7 +393,7 @@ async def test_stop_tears_every_session_down():
     live = _live(manager, "c1")
     await manager.stop()
     assert manager.existing("c1") is None
-    assert live.session.exited  # type: ignore[union-attr]
+    assert _fake(live).exited
 
 
 async def test_teardown_leaves_the_shared_window_alone():
@@ -347,7 +406,7 @@ async def test_teardown_leaves_the_shared_window_alone():
         async def close(self) -> None:
             closed.append(True)
 
-    session._browser = _Handle()  # noqa: SLF001 — the handle teardown would close
+    session._browser = cast(Browser, cast(object, _Handle()))  # noqa: SLF001 — the handle teardown would close
     await session.__aexit__(None, None, None)
 
     assert closed == []
@@ -365,11 +424,11 @@ def _ctx(caps: ServiceContainer, conversation_id: str) -> RunContext[RunDeps]:
 async def test_the_catalog_matches_the_harness_toolset():
     # The namespaced names are written out in `tools/browse.py` for the offline and vision
     # gates; if the harness renames a tool, the gate would silently stop covering it.
-    assert set(browse_toolset().tools) == TOOL_NAMES
+    assert set(_browse().tools) == TOOL_NAMES
 
 
 async def test_the_tools_degrade_when_there_is_no_session_manager():
-    toolset = browse_toolset()
+    toolset = _browse()
     refusal = await toolset.bind("navigate", _ctx(ServiceContainer(), "c1"))
     assert isinstance(refusal, str) and "not available" in refusal
 
@@ -377,7 +436,7 @@ async def test_the_tools_degrade_when_there_is_no_session_manager():
 async def test_the_tools_degrade_when_no_browser_can_be_attached():
     caps = ServiceContainer()
     caps.add(_manager(_FakeHost(cdp_url=None)))
-    refusal = await browse_toolset().bind("navigate", _ctx(caps, "c1"))
+    refusal = await _browse().bind("navigate", _ctx(caps, "c1"))
     assert isinstance(refusal, str) and "not available" in refusal
 
 
@@ -389,12 +448,13 @@ async def test_two_conversations_drive_two_pages_not_two_toolsets():
     caps = ServiceContainer()
     caps.add(manager)
     first_live, second_live = _live(manager, "c1"), _live(manager, "c2")
-    toolset = browse_toolset()
+    toolset = _browse()
 
     first = await toolset.bind("navigate", _ctx(caps, "c1"))
     second = await toolset.bind("navigate", _ctx(caps, "c2"))
 
-    assert not isinstance(first, str) and not isinstance(second, str)
+    assert isinstance(first, PlaywrightBrowserToolset)
+    assert isinstance(second, PlaywrightBrowserToolset)
     assert first is not second
     assert first._session is first_live.session  # noqa: SLF001 — the page each drives
     assert second._session is second_live.session  # noqa: SLF001
@@ -406,7 +466,7 @@ async def test_a_new_session_gets_a_new_binding():
     manager = _manager(_FakeHost())
     caps = ServiceContainer()
     caps.add(manager)
-    toolset = browse_toolset()
+    toolset = _browse()
 
     _live(manager, "c1")
     before = await toolset.bind("navigate", _ctx(caps, "c1"))
@@ -436,7 +496,7 @@ async def test_a_window_the_operator_closed_is_not_silently_reopened(attached):
     host = _FakeHost()
     manager = _manager(host)
     live = _live(manager, "c1")
-    live.context.pages.clear()  # they closed the last tab
+    _context(live).pages.clear()  # they closed the last tab
 
     assert await manager.acquire("c1", reopen=False) is None
     assert manager.closed("c1")
@@ -448,7 +508,7 @@ async def test_an_explicit_reopen_starts_a_fresh_window(attached):
     # "open the browser" control — is allowed to start over, and doing so clears the record.
     manager = _manager(_FakeHost())
     live = _live(manager, "c1")
-    live.context.pages.clear()
+    _context(live).pages.clear()
     assert await manager.acquire("c1", reopen=False) is None
 
     reopened = await manager.acquire("c1", reopen=True)
@@ -464,7 +524,7 @@ async def test_the_refusal_stands_until_something_actually_reopens(attached):
     # window the first one just reported as closed.
     manager = _manager(_FakeHost())
     live = _live(manager, "c1")
-    live.context.pages.clear()
+    _context(live).pages.clear()
 
     for _ in range(3):
         assert await manager.acquire("c1", reopen=False) is None
@@ -491,7 +551,7 @@ async def test_the_browser_going_away_is_not_the_operators_doing(attached):
     host = _FakeHost()
     manager = _manager(host)
     _live(manager, "c1")
-    host.cdp_url = None
+    host.fake_cdp_url = None
 
     await manager._sweep()  # noqa: SLF001
 
@@ -516,8 +576,8 @@ async def test_only_navigate_may_reopen_after_a_close(attached):
     manager = _manager(_FakeHost())
     caps.add(manager)
     live = _live(manager, "c1")
-    live.context.pages.clear()
-    toolset = browse_toolset()
+    _context(live).pages.clear()
+    toolset = _browse()
 
     refusal = await toolset.bind("click", _ctx(caps, "c1"))
 
@@ -584,13 +644,15 @@ async def test_one_session_shares_one_toolset_so_parallel_calls_serialise():
     manager = _manager(_FakeHost())
     caps.add(manager)
     _live(manager, "c1")
-    toolset = browse_toolset()
+    toolset = _browse()
 
     first, second = (
         await toolset.bind("navigate", _ctx(caps, "c1")),
         await toolset.bind("click", _ctx(caps, "c1")),
     )
 
+    assert isinstance(first, PlaywrightBrowserToolset)
+    assert isinstance(second, PlaywrightBrowserToolset)
     assert first is second
     assert first._operation_lock is second._operation_lock  # noqa: SLF001 — the claim
 
@@ -600,7 +662,7 @@ async def test_deleting_a_conversation_forgets_that_its_window_was_closed(tmp_pa
     # place a key stops meaning anything has to drop it.
     manager = _manager(_FakeHost(), state_dir=tmp_path)
     live = _live(manager, "c1")
-    live.context.pages.clear()
+    _context(live).pages.clear()
     assert await manager.acquire("c1", reopen=False) is None
     assert manager.closed("c1")
 
