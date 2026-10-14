@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from ._helpers import client_app
 
 
-async def _wait_indexed(client, source_id: str, *, timeout: float = 5.0) -> dict:
+async def _wait_indexed(client, source_id: str, *, timeout: float = 5.0) -> dict[str, Any]:
     """Poll the source list until the folder leaves the indexing state (the crawl
     drains on a background worker, so the POST returns before it finishes)."""
     deadline = asyncio.get_event_loop().time() + timeout

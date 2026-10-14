@@ -49,7 +49,7 @@ def _patch_hanging_model(monkeypatch, hang: asyncio.Event, started: asyncio.Even
     monkeypatch.setattr(ModelRegistry, "resolve_detailed", resolve_detailed)
 
 
-async def _complete_first_turn(client, prompt: str = "hello") -> tuple[str, dict]:
+async def _complete_first_turn(client, prompt: str = "hello") -> tuple[str, dict[str, object]]:
     """Run one normal (fast ``TestModel``) turn to completion and return
     ``(conversation_id, assistant_message)`` — the fixture every guard test builds on."""
     created = await client.post("/chat", json={"prompt": prompt})

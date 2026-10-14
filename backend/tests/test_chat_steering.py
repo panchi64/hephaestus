@@ -38,7 +38,7 @@ def _injected_user_texts(messages) -> list[str]:
     ]
 
 
-def _steering_toolset(queue_text: str) -> FunctionToolset:
+def _steering_toolset(queue_text: str) -> FunctionToolset[RunDeps]:
     """One tool that queues a steering message onto its own run mid-turn — the
     enqueue lands while the model's tool batch executes, exactly the window the
     live product sees between two model requests."""
@@ -112,7 +112,7 @@ async def test_end_of_run_queued_message_autocontinues_same_run():
         else:
             yield "second answer"
 
-    run_box: dict = {}
+    run_box: dict[str, Run] = {}
     reg = RunRegistry()
     orch = build_chat_orchestrator(
         "hello", model=FunctionModel(stream_function=stream_fn), categories={}

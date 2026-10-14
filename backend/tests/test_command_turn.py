@@ -10,12 +10,16 @@ under the operator's own label).
 
 from __future__ import annotations
 
+from typing import Any
+
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
 
 
-async def _turn(client, prompt: str, command: dict | None = None) -> tuple[list[dict], str]:
+async def _turn(
+    client, prompt: str, command: dict[str, str] | None = None
+) -> tuple[list[dict[str, Any]], str]:
     """Run one turn to its end; hand back its events and the thread it landed in."""
-    payload: dict = {"prompt": prompt}
+    payload: dict[str, object] = {"prompt": prompt}
     if command is not None:
         payload["command"] = command
     resp = await client.post("/chat", json=payload)
@@ -24,7 +28,7 @@ async def _turn(client, prompt: str, command: dict | None = None) -> tuple[list[
     return await collect_sse_events(client, created["run_id"]), created["conversation_id"]
 
 
-def _injections(events: list[dict]) -> list[dict]:
+def _injections(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [e for e in events if e["type"] == "context.injected"]
 
 
@@ -94,7 +98,7 @@ class TestRerunningTheTurn:
     history where a later turn would read it.
     """
 
-    async def _sent(self, client) -> tuple[str, dict]:
+    async def _sent(self, client) -> tuple[str, dict[str, Any]]:
         events, conversation_id = await _turn(
             client,
             "/reviewer check the auth path",

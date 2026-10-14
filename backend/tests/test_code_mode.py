@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from runs.run import TERMINAL_STATUSES
 from tests._helpers import client_app, patch_model_resolution
@@ -44,7 +45,7 @@ async def _settled(app, run_id: str) -> None:
     raise AssertionError(f"run {run_id} never settled")
 
 
-async def _project(client, tmp_path, name="work") -> dict:
+async def _project(client, tmp_path, name="work") -> dict[str, Any]:
     root = await _repo(tmp_path / name)
     resp = await client.post("/projects", json={"name": name, "rootPath": str(root)})
     assert resp.status_code == 201, resp.text

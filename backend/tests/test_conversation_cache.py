@@ -10,7 +10,7 @@ it is visible from a passing read.
 
 from __future__ import annotations
 
-from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 
 from core.db import init_db, make_engine
 from core.vault import Vault
@@ -27,7 +27,7 @@ async def _store(tmp_path, **kwargs) -> ConversationStore:
     return ConversationStore(engine, vault, **kwargs)
 
 
-def _turn(prompt: str, answer: str) -> list:
+def _turn(prompt: str, answer: str) -> list[ModelMessage]:
     return [
         ModelRequest(parts=[UserPromptPart(content=prompt)]),
         ModelResponse(parts=[TextPart(content=answer)]),

@@ -16,7 +16,7 @@ the operator for a branch they walked away from.
 from __future__ import annotations
 
 from pydantic_ai import ModelRequest, ModelResponse
-from pydantic_ai.messages import TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelResponsePart, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.usage import RequestUsage
 
 from agent.metrics import turn_metrics
@@ -43,7 +43,7 @@ def _response(
     cache_read: int = 0,
     tools: int = 0,
 ) -> ModelResponse:
-    parts: list = [TextPart(content="x")]
+    parts: list[ModelResponsePart] = [TextPart(content="x")]
     parts.extend(ToolCallPart(f"t{i}", {}) for i in range(tools))
     return ModelResponse(
         parts=parts,
@@ -361,6 +361,7 @@ def test_the_turn_attaches_the_prompt_size_and_the_wait_it_measured():
     assert metrics.last_request.prefill_ms == 2_000
     # The numerator is the footprint **less this response's own output**: the footprint is
     # prompt plus generation, and only the prompt is prefilled.
+    assert metrics.context_used is not None
     assert metrics.last_request.prefill_tokens == metrics.context_used - 120
     assert metrics.last_request.prefill_tokens_per_second is not None
 

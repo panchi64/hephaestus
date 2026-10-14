@@ -203,14 +203,13 @@ async def _level_under(thresholds: ContextThresholds | None) -> tuple[str, float
     from agent import build_chat_orchestrator
     from runs import RunRegistry, RunStatus
 
-    kwargs = {} if thresholds is None else {"context_thresholds": thresholds}
     # `call_tools=[]` keeps it a plain text turn: the default catalog carries an
     # approval-gated tool that TestModel would otherwise call and park the run on.
     orch = build_chat_orchestrator(
         "hi",
         model=TestModel(custom_output_text="ok", call_tools=[]),
         context_window=100_000,
-        **kwargs,
+        context_thresholds=DEFAULT_CONTEXT_THRESHOLDS if thresholds is None else thresholds,
     )
     run = RunRegistry().submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()

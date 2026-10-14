@@ -14,17 +14,22 @@ rather than letting it run unguarded.
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import override
 
 import httpx
 import pytest
+from pydantic_ai.settings import ModelSettings
 
 from core.vault import Vault
 from runs import Endpoint
 from services import llm
+from services.llm import EndpointSpec
 from services.providers import get_provider
 from services.providers.anthropic import PROVIDER as ANTHROPIC
 from services.providers.base import ModelLimits
 from services.providers.google import PROVIDER as GOOGLE
+from services.providers.openai_compat import OpenAICompatProvider
+from services.reasoning import ModelDescriptor
 
 
 def _client(handler) -> httpx.AsyncClient:
@@ -296,23 +301,33 @@ async def _registry(tmp_path, monkeypatch, *, window: int | None, max_output: in
     from services import providers
     from services.registry import ModelRegistry
 
-    class _Stub:
+    class _Stub(OpenAICompatProvider):
         id = "probe-stub"
         display_name = "Probe stub"
         requires_key = False
         asked = 0
 
-        async def model_limits(self, base_url, api_key, model, *, client=None):
+        @override
+        async def model_limits(
+            self,
+            base_url: str,
+            api_key: str | None,
+            model: str,
+            *,
+            client: object = None,
+        ) -> ModelLimits:
             type(self).asked += 1
             return ModelLimits(context_window=window, max_output_tokens=max_output)
 
         # Enough of the rest of the contract for a full resolve to run: the gate test
         # goes through `resolve_detailed`, which builds a model and asks the adapter
         # how to quiet its reasoning before it ever reaches the window check.
-        def build_model(self, spec):
+        @override
+        def build_model(self, spec: EndpointSpec) -> TestModel:
             return TestModel(custom_output_text="ok")
 
-        def reasoning_off(self, descriptor):
+        @override
+        def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
             return {}
 
     _Stub.asked = 0
@@ -564,7 +579,9 @@ async def test_a_server_without_props_still_reports_its_backend():
 
 
 async def test_an_mlx_row_is_reported_as_mlx():
-    assert llm._native_posture({"id": "m", "compatibility_type": "mlx"}).backend == "mlx"
+    posture = llm._native_posture({"id": "m", "compatibility_type": "mlx"})
+    assert posture is not None
+    assert posture.backend == "mlx"
 
 
 async def test_a_row_that_names_nothing_yields_no_posture():

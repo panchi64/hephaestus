@@ -8,14 +8,14 @@ active path onto an answer from a different model.
 
 from __future__ import annotations
 
-from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 
 from routes.deps import OPERATOR_ID
 
 from ._helpers import client_app
 
 
-def _turn(prompt: str, answer: str, model: str) -> list:
+def _turn(prompt: str, answer: str, model: str) -> list[ModelMessage]:
     """A user request + the assistant answer that a given model produced."""
     return [
         ModelRequest(parts=[UserPromptPart(content=prompt)]),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from services.commands import CommandRegistry, expand
+from services.commands import CommandRegistry, CommandSource, expand
 from services.commands.registry import LAUNCH_TOOL, _merge
 from services.commands.spec import CommandSpec
 from services.permissions import PERMISSION_LADDER
@@ -10,10 +10,10 @@ from services.permissions import PERMISSION_LADDER
 from ._helpers import client_app
 
 
-def _spec(name: str, source: str, **overrides) -> CommandSpec:
+def _spec(name: str, source: CommandSource, **overrides) -> CommandSpec:
     return CommandSpec(
         name=name,
-        source=source,  # type: ignore[arg-type]
+        source=source,
         kind="prompt",
         title=name,
         description="d",

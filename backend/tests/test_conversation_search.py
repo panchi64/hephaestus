@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from sqlmodel import Session, select
 
 from core.db import init_db, make_engine
@@ -71,7 +71,7 @@ class BrokenEmbedder:
         raise RuntimeError("embedding endpoint exploded")
 
 
-def _turn(prompt: str, answer: str) -> list:
+def _turn(prompt: str, answer: str) -> list[ModelMessage]:
     return [
         ModelRequest(parts=[UserPromptPart(content=prompt)]),
         ModelResponse(parts=[TextPart(content=answer)], model_name="m"),

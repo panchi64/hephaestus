@@ -78,7 +78,7 @@ def _tool_schema(name: str = "corpus_search") -> str:
     )
 
 
-def _tool_result() -> dict:
+def _tool_result() -> dict[str, object]:
     return {
         "results": [
             {
