@@ -21,7 +21,7 @@ from playwright.async_api import Browser
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.playwright import PlaywrightBrowserToolset
+from pydantic_ai_harness.playwright import PlaywrightBrowserSession, PlaywrightBrowserToolset
 
 from core.container import ServiceContainer
 from runs import Run, RunStream
@@ -29,6 +29,7 @@ from services.browser import BrowserSessionManager, ControlledBrowserSession, Li
 from services.browser import session as session_module
 from services.browser.session import BrowserHost
 from tools import RunDeps
+from tools import browse as browse_module
 from tools.browse import TOOL_NAMES, BrowserToolset, browse_instructions, browse_toolset
 
 from ._json import obj, parse_json
@@ -434,10 +435,22 @@ async def test_the_tools_degrade_when_no_browser_can_be_attached():
     assert isinstance(refusal, str) and "not available" in refusal
 
 
-async def test_two_conversations_drive_two_pages_not_two_toolsets():
+class _RecordingToolset[D](PlaywrightBrowserToolset[D]):
+    """The harness toolset, remembering the session it was built over (the harness keeps
+    its own reference private)."""
+
+    def __init__(self, *, session: PlaywrightBrowserSession) -> None:
+        super().__init__(session=session)
+        self.bound_session: PlaywrightBrowserSession = session
+
+
+async def test_two_conversations_drive_two_pages_not_two_toolsets(
+    monkeypatch: pytest.MonkeyPatch,
+):
     # The trap `tools/rebound.py` documents: asserting only "the toolsets differ" passes
     # while both dispatch onto the template's page. Assert the *pages* differ and each is
     # its own conversation's.
+    monkeypatch.setattr(browse_module, "PlaywrightBrowserToolset", _RecordingToolset)
     manager = _manager(_FakeHost())
     caps = ServiceContainer()
     caps.add(manager)
@@ -447,11 +460,11 @@ async def test_two_conversations_drive_two_pages_not_two_toolsets():
     first = await toolset.bind("navigate", _ctx(caps, "c1"))
     second = await toolset.bind("navigate", _ctx(caps, "c2"))
 
-    assert isinstance(first, PlaywrightBrowserToolset)
-    assert isinstance(second, PlaywrightBrowserToolset)
+    assert isinstance(first, _RecordingToolset)
+    assert isinstance(second, _RecordingToolset)
     assert first is not second
-    assert first._session is first_live.session  # noqa: SLF001 — the page each drives
-    assert second._session is second_live.session  # noqa: SLF001
+    assert first.bound_session is first_live.session
+    assert second.bound_session is second_live.session
 
 
 async def test_a_new_session_gets_a_new_binding():
@@ -655,7 +668,6 @@ async def test_one_session_shares_one_toolset_so_parallel_calls_serialise():
     assert isinstance(first, PlaywrightBrowserToolset)
     assert isinstance(second, PlaywrightBrowserToolset)
     assert first is second
-    assert first._operation_lock is second._operation_lock  # noqa: SLF001 — the claim
 
 
 async def test_deleting_a_conversation_forgets_that_its_window_was_closed(tmp_path: Path):

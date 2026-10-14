@@ -14,6 +14,7 @@ is collected — so patching here is what reaches every caller, including the on
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,7 +23,6 @@ from pydantic_ai.models.test import TestModel as _TestModel
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.tools import ToolDefinition
 
     from services.egress import EgressPolicy
 
@@ -65,19 +65,20 @@ core.crypto.PASSWORD_HASHER = PasswordHasher(time_cost=1, memory_cost=8, paralle
 # catalog, not about scripts; the ones that are about scripts name `run_code` and write
 # real code (`test_run_code.py`). So "call everything" leaves `run_code` out, and an
 # explicit `call_tools=[...]` list is untouched.
-_call_everything = _TestModel._get_tool_calls
+_customize = _TestModel.customize_request_parameters
 
 
 def _call_everything_but_scripts(
     self: _TestModel, model_request_parameters: ModelRequestParameters
-) -> list[tuple[str, ToolDefinition]]:
-    calls = _call_everything(self, model_request_parameters)
-    if self.call_tools == "all":
-        return [(name, tool) for name, tool in calls if name != "run_code"]
-    return calls
+) -> ModelRequestParameters:
+    params = _customize(self, model_request_parameters)
+    if self.call_tools != "all":
+        return params
+    tools = [tool for tool in params.function_tools if tool.name != "run_code"]
+    return replace(params, function_tools=tools)
 
 
-_TestModel._get_tool_calls = _call_everything_but_scripts
+_TestModel.customize_request_parameters = _call_everything_but_scripts
 
 
 def egress_policy(data_dir: Path, domains: tuple[str, ...] = ("pypi.org",)) -> EgressPolicy:

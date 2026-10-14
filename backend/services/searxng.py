@@ -90,12 +90,10 @@ class ManagedSearxng:
         """The instance's URL once reachable, else ``None`` (degrade web search)."""
         return self._base_url
 
-    async def wait_available(self, timeout_s: float) -> bool:
-        """Wait up to ``timeout_s`` for a bring-up in progress to finish."""
-        task = self._task
-        if task is not None and self._base_url is None:
-            _ = await asyncio.wait({task}, timeout=timeout_s)
-        return self._base_url is not None
+    @property
+    def bring_up(self) -> asyncio.Task[None] | None:
+        """The background bring-up task, or ``None`` before ``start`` launches one."""
+        return self._task
 
     async def start(self) -> None:
         """Begin bring-up. Returns immediately — waiting for the VM and launching the

@@ -94,7 +94,8 @@ def _manager(
 
 
 async def _ready(m: ManagedSearxng) -> None:
-    _ = await m.wait_available(5.0)
+    assert m.bring_up is not None
+    await asyncio.wait_for(m.bring_up, timeout=5.0)
 
 
 async def test_disabled_is_a_noop():

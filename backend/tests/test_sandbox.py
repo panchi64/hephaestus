@@ -208,9 +208,21 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(
         SandboxManager,
         SandboxRuntimeConfig,
     )
-    from sandbox_runtime import manager as runtime_manager
 
     seen: list[SandboxRuntimeConfig | None] = []
+    # The installed configuration lives behind the runtime's public accessors, stubbed so
+    # nothing leaks into the process-global one other tests share.
+    installed = SandboxRuntimeConfig(
+        network=NetworkConfig(allowed_domains=["pypi.org"], allow_local_binding=True),
+        filesystem=FilesystemConfig(deny_read=["/keys"], allow_write=["/tmp"]),
+    )
+    replaced: list[SandboxRuntimeConfig] = []
+
+    def get_config() -> SandboxRuntimeConfig:
+        return installed
+
+    def update_config(new_config: SandboxRuntimeConfig) -> None:
+        replaced.append(new_config)
 
     async def wrap(
         command: str, *, custom_config: SandboxRuntimeConfig | None = None, **_kwargs: object
@@ -221,33 +233,24 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(
         return command
 
     monkeypatch.setattr(SandboxManager, "wrap_with_sandbox", wrap)
-    before = SandboxManager.get_config()
-    SandboxManager.update_config(
-        SandboxRuntimeConfig(
-            network=NetworkConfig(allowed_domains=["pypi.org"], allow_local_binding=True),
-            filesystem=FilesystemConfig(deny_read=["/keys"], allow_write=["/tmp"]),
-        )
+    monkeypatch.setattr(SandboxManager, "get_config", get_config)
+    monkeypatch.setattr(SandboxManager, "update_config", update_config)
+
+    _ = await confine(
+        "curl https://files.example.com",
+        allowed_domains=["files.example.com"],
+        allow_write=["/work"],
+        deny_read=["/keys"],
     )
-    try:
-        _ = await confine(
-            "curl https://files.example.com",
-            allowed_domains=["files.example.com"],
-            allow_write=["/work"],
-            deny_read=["/keys"],
-        )
-        # The filesystem half is per-call, because the OS wrapper is what enforces it...
-        [config] = seen
-        assert config is not None
-        assert config.filesystem.allow_write == ["/work"]
-        # ...and the installation's allowlist is still the only thing the proxy will
-        # filter against for anything else on this host.
-        installed = SandboxManager.get_config()
-        assert installed is not None
-        assert installed.network.allowed_domains == ["pypi.org"]
-    finally:
-        # Restored through the module global rather than `update_config`, which has no way
-        # to say "there was no configuration here".
-        runtime_manager._config = before
+    # The filesystem half is per-call, because the OS wrapper is what enforces it...
+    [config] = seen
+    assert config is not None
+    assert config.filesystem.allow_write == ["/work"]
+    # ...and the installation's allowlist is still the only thing the proxy will filter
+    # against for anything else on this host: neither replaced nor edited in place.
+    assert replaced == []
+    assert SandboxManager.get_config() is installed
+    assert installed.network.allowed_domains == ["pypi.org"]
 
 
 async def test_confinement_denies_reading_the_data_directory(tmp_path: Path):
