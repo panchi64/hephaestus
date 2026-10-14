@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal, cast, override
 
 from jsonschema import Draft202012Validator
-from pydantic_ai import AbstractToolset, FunctionToolset, ModelRetry, RunContext
+from jsonschema.protocols import Validator
+from pydantic import JsonValue
+from pydantic_ai import AbstractToolset, FunctionToolset, ModelRetry, RunContext, Tool
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
@@ -38,6 +40,7 @@ from services.tool_sensitivity import SENSITIVITY_METADATA_KEY
 from services.vm import VMError
 
 from .deps import RunDeps
+from .describe import registered_tools
 
 #: Raised for approval only when a test would send the operator's secrets.
 GATED_TOOLS: frozenset[str] = frozenset({"plugins_test"})
@@ -139,7 +142,7 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
 
     @toolset.tool
     async def test(
-        ctx: RunContext[RunDeps], name: str, tool: str, args: dict[str, Any] | None = None
+        ctx: RunContext[RunDeps], name: str, tool: str, args: dict[str, object] | None = None
     ) -> dict[str, object]:
         """Run one of a plugin's tools with `args`: its draft when it has one, else the
         published version. It reaches only the hosts it declares that this conversation
@@ -156,13 +159,15 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         if chosen is None:
             raise ModelRetry(
                 f"{view.name} has no tool {tool!r}; it has "
-                f"{', '.join(t.name for t in manifest.tools)}."
+                + f"{', '.join(t.name for t in manifest.tools)}."
             )
         secrets = await _secrets(store, ctx.deps.owner_id, view.id, manifest)
         if secrets and not ctx.tool_call_approved:
             raise ApprovalRequired()
         policy = ctx.deps.caps.get_optional(EgressPolicy)
-        reachable = await policy.allowed_for(ctx.deps.workspace_key) if policy else frozenset()
+        reachable: frozenset[str] = (
+            await policy.allowed_for(ctx.deps.workspace_key) if policy else frozenset()
+        )
         hosts = [host for host in manifest.egress if host in reachable]
         files = await store.files(ctx.deps.owner_id, view.id, "current")
         return await _run(runtime, manifest, files, chosen, args or {}, hosts, secrets)
@@ -188,18 +193,21 @@ class PluginsToolset(WrapperToolset[RunDeps]):
         self._routes: dict[str, _Route] | None = None
 
     @property
+    @override
     def id(self) -> str:
         return "plugins"
 
     @property
-    def tools(self) -> dict[str, Any]:
+    def tools(self) -> Mapping[str, Tool[RunDeps]]:
         """The static registry the settings catalog enumerates."""
-        return getattr(self.wrapped, "tools", {})
+        return registered_tools(self.wrapped)
 
-    async def __aexit__(self, *exc: Any) -> bool | None:
+    @override
+    async def __aexit__(self, *args: object) -> bool | None:
         self._routes = None
-        return await super().__aexit__(*exc)
+        return await super().__aexit__(*args)
 
+    @override
     async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
         tools = await super().get_tools(ctx)
         for name, route in (await self._compose(ctx)).items():
@@ -216,23 +224,24 @@ class PluginsToolset(WrapperToolset[RunDeps]):
             )
         return tools
 
+    @override
     async def call_tool(
         self,
         name: str,
-        tool_args: dict[str, Any],
+        tool_args: dict[str, JsonValue],
         ctx: RunContext[RunDeps],
         tool: ToolsetTool[RunDeps],
-    ) -> Any:
+    ) -> object:
         route = (self._routes or {}).get(name)
         if route is None:
-            return await super().call_tool(name, tool_args, ctx, tool)
+            return cast(object, await super().call_tool(name, tool_args, ctx, tool))
         store = ctx.deps.caps.get_optional(PluginStore)
         runtime = ctx.deps.caps.get_optional(PluginRuntime)
         if store is None or runtime is None:
             raise ModelRetry(f"{name} is no longer available.")
-        errors = sorted(Draft202012Validator(route.tool.parameters).iter_errors(tool_args), key=str)
-        if errors:
-            raise ModelRetry(f"Those arguments do not fit {name}: {errors[0].message}")
+        problem = _first_problem(Draft202012Validator(route.tool.parameters), tool_args)
+        if problem is not None:
+            raise ModelRetry(f"Those arguments do not fit {name}: {problem}")
         secrets = await _secrets(store, ctx.deps.owner_id, route.plugin_id, route.manifest)
         return await _run(
             runtime,
@@ -260,6 +269,12 @@ class PluginsToolset(WrapperToolset[RunDeps]):
         return routes
 
 
+def _first_problem(validator: Validator, args: JsonValue) -> str | None:
+    """The message of the first schema violation in ``args``, in a stable order."""
+    errors = sorted(validator.iter_errors(args), key=str)
+    return errors[0].message if errors else None
+
+
 async def _secrets(
     store: PluginStore, owner_id: str, plugin_id: str, manifest: PluginManifest
 ) -> dict[str, SecretValue]:
@@ -273,7 +288,7 @@ async def _run(
     manifest: PluginManifest,
     files: Bundle,
     tool: PluginTool,
-    args: dict[str, Any],
+    args: Mapping[str, object],
     hosts: Iterable[str],
     secrets: Mapping[str, SecretValue],
 ) -> dict[str, object]:
@@ -284,7 +299,7 @@ async def _run(
     except (PluginError, VMError) as exc:
         return {"ok": False, "error": str(exc)}
     source = f"plugin {manifest.name}"
-    reply: dict[str, Any] = {"ok": result.ok}
+    reply: dict[str, object] = {"ok": result.ok}
     if result.ok:
         reply["result"] = wrap_untrusted(result.output, source=source)
     else:

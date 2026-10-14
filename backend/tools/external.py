@@ -28,7 +28,8 @@ from __future__ import annotations
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Any
+from types import TracebackType
+from typing import cast, override
 
 from pydantic_ai import AbstractToolset, CombinedToolset, FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
@@ -88,44 +89,53 @@ class ExternalCategoryToolset(AbstractToolset[RunDeps]):
         self._disabled: set[str] = set()
 
     @property
+    @override
     def id(self) -> str | None:
         return "external"
 
     @property
+    @override
     def label(self) -> str:
         return "the external tool category"
 
+    @override
     async def __aenter__(self) -> ExternalCategoryToolset:
         self._stack = AsyncExitStack()
-        await self._stack.__aenter__()
+        _ = await self._stack.__aenter__()
         return self
 
-    async def __aexit__(self, *exc: Any) -> bool | None:
+    @override
+    async def __aexit__(self, *args: object) -> bool | None:
         stack, self._stack = self._stack, None
         self._inner = None
         self._routes = {}
         self._disabled = set()
         if stack is None:
             return None
-        return await stack.__aexit__(*exc)
+        exc_type, exc, tb = cast(
+            tuple[type[BaseException] | None, BaseException | None, TracebackType | None], args
+        )
+        return await stack.__aexit__(exc_type, exc, tb)
 
+    @override
     async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
         inner = await self._compose(ctx)
         tools = await inner.get_tools(ctx)
         return {name: tool for name, tool in tools.items() if name not in self._disabled}
 
+    @override
     async def call_tool(
         self,
         name: str,
-        tool_args: dict[str, Any],
+        tool_args: dict[str, object],
         ctx: RunContext[RunDeps],
         tool: ToolsetTool[RunDeps],
-    ) -> Any:
+    ) -> object:
         route = self._routes.get(name)
         if route is None or self._inner is None:  # pragma: no cover - composed by get_tools
             raise ModelRetry(f"{name} is no longer available.")
         await self._gate(ctx, route)
-        return await self._inner.call_tool(name, tool_args, ctx, tool)
+        return cast(object, await self._inner.call_tool(name, tool_args, ctx, tool))
 
     # --- the AE-3.6 trust gate -------------------------------------------------------
 
@@ -198,9 +208,9 @@ class ExternalCategoryToolset(AbstractToolset[RunDeps]):
         """
         if self._stack is None:
             self._stack = AsyncExitStack()
-            await self._stack.__aenter__()
+            _ = await self._stack.__aenter__()
         try:
-            await self._stack.enter_async_context(client)
+            _ = await self._stack.enter_async_context(client)
         except Exception as exc:  # noqa: BLE001 - one dead server must not fail the run
             logger.info("external: MCP server %r is unreachable this run: %s", label, exc)
             return False
@@ -219,7 +229,7 @@ def _connector_toolset(
     for connector in connectors:
         for action in connector.actions:
             name = f"{connector.slug}_{action.name}"
-            toolset.add_function(
+            _ = toolset.add_function(
                 _connector_call(service, connector, action.name, action.takes_body),
                 name=name,
                 description=f"{connector.name}: {action.description}",
@@ -243,7 +253,7 @@ def _connector_call(
     async def call(
         ctx: RunContext[RunDeps],
         params: dict[str, str] | None = None,
-        body: dict[str, Any] | None = None,
+        body: dict[str, object] | None = None,
     ) -> str:
         """Call the connector.
 

@@ -21,7 +21,6 @@ Two things this surface is deliberate about:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -30,7 +29,7 @@ from core.exceptions import DegradedCapabilityError, SSRFError
 from routes import deps
 from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
-from services.integrations import IntegrationService, IntegrationView
+from services.integrations import IntegrationActionView, IntegrationService, IntegrationView
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -39,13 +38,13 @@ class IntegrationCreate(BaseModel):
     preset: str
     name: str | None = None
     base_url: str | None = None
-    credentials: dict[str, Any] | None = None
+    credentials: dict[str, object] | None = None
 
 
 class IntegrationUpdate(BaseModel):
     name: str | None = None
     base_url: str | None = None
-    credentials: dict[str, Any] | None = None
+    credentials: dict[str, object] | None = None
     enabled: bool | None = None
 
 
@@ -94,7 +93,7 @@ class IntegrationOut(CamelModel):
     updated_at: datetime
 
 
-def _action_out(action: Any) -> IntegrationActionOut:
+def _action_out(action: IntegrationActionView) -> IntegrationActionOut:
     return IntegrationActionOut(
         name=action.name,
         method=action.method,
@@ -206,7 +205,7 @@ async def set_action_policy(
 ) -> IntegrationActionOut:
     """Enable/disable one action, or mark it trusted / revoke that trust (`AE-3.6`)."""
     service = deps.integrations(request)
-    await service.set_action_policy(
+    _ = await service.set_action_policy(
         OPERATOR_ID, integration_id, action_name, enabled=body.enabled, trusted=body.trusted
     )
     view = await service.get(OPERATOR_ID, integration_id)

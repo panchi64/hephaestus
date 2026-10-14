@@ -19,6 +19,7 @@ from routes import deps
 from routes.deps import OPERATOR_ID
 from services import llm
 from services.providers import DEFAULT_PROVIDER_ID, all_providers
+from services.reindex import ReindexStatus
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -139,7 +140,20 @@ async def list_endpoints(request: Request) -> list[EndpointView]:
 @router.post("/endpoints", status_code=201, response_model=EndpointView)
 async def create_endpoint(body: EndpointCreate, request: Request) -> EndpointView:
     try:
-        endpoint = await deps.models(request).create_endpoint(OPERATOR_ID, **body.model_dump())
+        endpoint = await deps.models(request).create_endpoint(
+            OPERATOR_ID,
+            name=body.name,
+            base_url=body.base_url,
+            provider=body.provider,
+            model=body.model,
+            api_key=body.api_key,
+            context_window=body.context_window,
+            native_tools=body.native_tools,
+            vision=body.vision,
+            thinking=body.thinking,
+            enabled=body.enabled,
+            max_concurrent_runs=body.max_concurrent_runs,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return _view(endpoint)
@@ -199,7 +213,7 @@ async def check_endpoint(endpoint_id: str, request: Request) -> EndpointHealth:
 
 @router.patch("/endpoints/{endpoint_id}", response_model=EndpointView)
 async def update_endpoint(endpoint_id: str, body: EndpointUpdate, request: Request) -> EndpointView:
-    changes = body.model_dump(exclude_unset=True)
+    changes: dict[str, object] = body.model_dump(exclude_unset=True)
     try:
         endpoint = await deps.models(request).update_endpoint(OPERATOR_ID, endpoint_id, **changes)
     except NotFoundError:
@@ -323,7 +337,7 @@ class ReindexStatusView(BaseModel):
     completed_at: datetime | None = None
 
 
-def _reindex_view(status) -> ReindexStatusView:
+def _reindex_view(status: ReindexStatus) -> ReindexStatusView:
     return ReindexStatusView(
         state=status.state,
         memories=status.memories,

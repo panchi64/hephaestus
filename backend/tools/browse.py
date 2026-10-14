@@ -48,6 +48,8 @@ invisible: the next call re-attaches with the profile restored.
 
 from __future__ import annotations
 
+from typing import override
+
 from pydantic_ai import AbstractToolset, RunContext
 from pydantic_ai_harness.playwright import (
     EgressPolicy,
@@ -125,6 +127,7 @@ REOPENING_TOOLS = frozenset({"navigate"})
 class BrowserToolset(ReboundToolset):
     """The harness browser tools, dispatched through the conversation's live session."""
 
+    @override
     async def bind(self, name: str, ctx: RunContext[RunDeps]) -> AbstractToolset[RunDeps] | str:
         sessions = ctx.deps.caps.get_optional(BrowserSessionManager)
         if sessions is None:

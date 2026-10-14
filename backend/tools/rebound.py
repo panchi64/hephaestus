@@ -33,18 +33,19 @@ delegating the call alone would still act on the template. That is the whole tri
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import cast, override
 
-from pydantic_ai import AbstractToolset, RunContext, ToolsetTool
+from pydantic_ai import AbstractToolset, RunContext, Tool, ToolsetTool
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 
 from services.projects.worktree import WorktreeBusyError
 from services.workspace import RunWorkspace
 
 from .deps import RunDeps
+from .describe import registered_tools
 from .harness_events import attributable
 from .workspace import run_workspace, unavailable
 
@@ -66,28 +67,31 @@ class ReboundToolset(AbstractToolset[RunDeps]):
     instance. Subclasses decide *what* to bind to by implementing :meth:`bind`."""
 
     def __init__(self, name: str, template: AbstractToolset[RunDeps]) -> None:
-        self._id = name
-        self._template = template
+        self._id: str = name
+        self._template: AbstractToolset[RunDeps] = template
         self._bound: OrderedDict[str, AbstractToolset[RunDeps]] = OrderedDict()
         # Resolved tools per bound toolset, keyed by object identity and evicted with it.
         self._tools: dict[int, dict[str, ToolsetTool[RunDeps]]] = {}
 
     @property
+    @override
     def id(self) -> str:
         return self._id
 
     @property
-    def tools(self) -> dict[str, Any]:
+    def tools(self) -> Mapping[str, Tool[RunDeps]]:
         """The static registry ``tools/catalog.py`` enumerates for the settings surface.
         Read from the template, so the catalog is the same set every run is offered."""
-        return getattr(self._template, "tools", {})
+        return registered_tools(self._template)
 
+    @override
     async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
         return await self._template.get_tools(ctx)
 
     async def bind(self, name: str, ctx: RunContext[RunDeps]) -> AbstractToolset[RunDeps] | str:
         """The toolset this call should act through — or a string to hand the model
         instead, when the capability is unavailable or the call is refused."""
+        del name, ctx
         raise NotImplementedError
 
     async def resolve(
@@ -97,13 +101,14 @@ class ReboundToolset(AbstractToolset[RunDeps]):
         bound = await self.bind(name, ctx)
         return bound if isinstance(bound, str) else (bound, ctx)
 
+    @override
     async def call_tool(
         self,
         name: str,
-        tool_args: dict[str, Any],
+        tool_args: dict[str, object],
         ctx: RunContext[RunDeps],
         tool: ToolsetTool[RunDeps],
-    ) -> Any:
+    ) -> object:
         resolved = await self.resolve(name, ctx)
         if isinstance(resolved, str):
             return resolved
@@ -117,7 +122,7 @@ class ReboundToolset(AbstractToolset[RunDeps]):
         # be attributed: a prefixed toolset hands us the unprefixed `tool_name`, which is not
         # the key the library looks the owner up under (`tools/harness_events.py`).
         inward = attributable(ctx, f"{self.id}_{name}")
-        return await bound.call_tool(name, tool_args, inward, tools[name])
+        return cast(object, await bound.call_tool(name, tool_args, inward, tools[name]))
 
     async def _tools_for(
         self, bound: AbstractToolset[RunDeps], ctx: RunContext[RunDeps]
@@ -143,7 +148,7 @@ class ReboundToolset(AbstractToolset[RunDeps]):
             bound = build()
             if len(self._bound) >= _MAX_BOUND:
                 _, evicted = self._bound.popitem(last=False)
-                self._tools.pop(id(evicted), None)
+                _ = self._tools.pop(id(evicted), None)
         self._bound[key] = bound
         return bound
 
@@ -165,9 +170,10 @@ class WorkspaceToolset(ReboundToolset):
         guard: Guard | None = None,
     ) -> None:
         super().__init__(name, template)
-        self._build = build
-        self._guard = guard
+        self._build: Callable[[Path], AbstractToolset[RunDeps]] | None = build
+        self._guard: Guard | None = guard
 
+    @override
     async def resolve(
         self, name: str, ctx: RunContext[RunDeps]
     ) -> tuple[AbstractToolset[RunDeps], RunContext[RunDeps]] | str:
