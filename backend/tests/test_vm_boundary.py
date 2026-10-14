@@ -8,19 +8,21 @@ from __future__ import annotations
 
 import asyncio
 import io
-import json
 import tarfile
+from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 import services.vm.egress as egress_mod
 from services.vm.driver import VMError
 from services.vm.egress import ALLOW_FILE, DENIED_MARKER
-from services.vm.platform import WORKSPACE_PROXY
+from services.vm.platform import WORKSPACE_PROXY, PlatformVM
 from services.vm.sync import unpack
 from services.vm.workspace import GuestWorkspace
 
+from ._json import obj, parse_json
 from .vm_local import can_confine, local_vm
 
 confined = pytest.mark.skipif(not can_confine(), reason="needs root and bubblewrap")
@@ -36,7 +38,7 @@ except urllib.error.HTTPError as exc:
 
 
 @pytest.fixture
-async def vm(tmp_path):
+async def vm(tmp_path: Path) -> AsyncIterator[PlatformVM]:
     platform, _driver = await local_vm(tmp_path)
     yield platform
     await platform.stop()
@@ -48,11 +50,11 @@ def _proxy_env(credentials: str | None) -> dict[str, str]:
 
 
 @confined
-async def test_a_command_sees_only_its_own_workspace(vm, tmp_path):
+async def test_a_command_sees_only_its_own_workspace(vm: PlatformVM, tmp_path: Path):
     mine = GuestWorkspace(vm, "s-mine", tmp_path / "mine")
     theirs = GuestWorkspace(vm, "s-theirs", tmp_path / "theirs")
     (tmp_path / "theirs").mkdir()
-    (tmp_path / "theirs" / "secret.txt").write_text("not yours")
+    _ = (tmp_path / "theirs" / "secret.txt").write_text("not yours")
     await theirs.bring_in()
     await mine.bring_in()
 
@@ -70,7 +72,7 @@ async def test_a_command_sees_only_its_own_workspace(vm, tmp_path):
 
 
 @confined
-async def test_a_command_can_use_its_own_tmp(vm, tmp_path):
+async def test_a_command_can_use_its_own_tmp(vm: PlatformVM, tmp_path: Path):
     await GuestWorkspace(vm, "s-tmp", tmp_path / "ws").bring_in()
     result = await vm.run(
         "s-tmp", ["sh", "-c", "echo ok > /tmp/scratch && cat /tmp/scratch"], env={}, timeout_s=20
@@ -80,15 +82,15 @@ async def test_a_command_can_use_its_own_tmp(vm, tmp_path):
 
 
 @confined
-async def test_files_cross_both_ways_and_deletions_follow(vm, tmp_path):
+async def test_files_cross_both_ways_and_deletions_follow(vm: PlatformVM, tmp_path: Path):
     root = tmp_path / "ws"
     root.mkdir()
-    (root / "input.txt").write_text("from the host")
-    (root / "stale.txt").write_text("delete me")
+    _ = (root / "input.txt").write_text("from the host")
+    _ = (root / "stale.txt").write_text("delete me")
     workspace = GuestWorkspace(vm, "s-files", root)
     await workspace.bring_in()
 
-    await vm.run(
+    _ = await vm.run(
         "s-files",
         ["sh", "-c", "cat input.txt > copy.txt; mkdir -p out; echo built > out/a; rm stale.txt"],
         env={},
@@ -99,7 +101,7 @@ async def test_files_cross_both_ways_and_deletions_follow(vm, tmp_path):
     assert (root / "out" / "a").read_text() == "built\n"
     assert not (root / "stale.txt").exists()
 
-    (root / "input.txt").write_text("edited on the host")
+    _ = (root / "input.txt").write_text("edited on the host")
     (root / "copy.txt").unlink()
     await workspace.bring_in()
     result = await vm.run("s-files", ["sh", "-c", "cat input.txt; ls"], env={}, timeout_s=20)
@@ -108,11 +110,13 @@ async def test_files_cross_both_ways_and_deletions_follow(vm, tmp_path):
 
 
 @confined
-async def test_an_idle_workspace_is_wiped_from_the_guest_and_restored_intact(vm, tmp_path):
+async def test_an_idle_workspace_is_wiped_from_the_guest_and_restored_intact(
+    vm: PlatformVM, tmp_path: Path
+):
     root = tmp_path / "ws"
     workspace = GuestWorkspace(vm, "s-idle", root)
     await workspace.bring_in()
-    await vm.run("s-idle", ["sh", "-c", "echo kept > notes.md"], env={}, timeout_s=20)
+    _ = await vm.run("s-idle", ["sh", "-c", "echo kept > notes.md"], env={}, timeout_s=20)
 
     await workspace.evict()
     assert not Path(vm.layout.work("s-idle")).exists()
@@ -124,21 +128,21 @@ async def test_an_idle_workspace_is_wiped_from_the_guest_and_restored_intact(vm,
 
 
 @confined
-async def test_a_command_past_its_timeout_is_stopped(vm, tmp_path):
+async def test_a_command_past_its_timeout_is_stopped(vm: PlatformVM, tmp_path: Path):
     await GuestWorkspace(vm, "s-slow", tmp_path / "ws").bring_in()
     result = await vm.run("s-slow", ["sleep", "30"], env={}, timeout_s=1)
     assert result.exit_code == 124
 
 
 @confined
-async def test_stdin_reaches_the_command(vm, tmp_path):
+async def test_stdin_reaches_the_command(vm: PlatformVM, tmp_path: Path):
     await GuestWorkspace(vm, "s-in", tmp_path / "ws").bring_in()
     result = await vm.run("s-in", ["cat"], env={}, timeout_s=20, stdin="piped")
     assert result.stdout == "piped"
 
 
 @confined
-async def test_a_command_cannot_reach_the_relay_or_the_host(vm, tmp_path):
+async def test_a_command_cannot_reach_the_relay_or_the_host(vm: PlatformVM, tmp_path: Path):
     await GuestWorkspace(vm, "s-net", tmp_path / "ws").bring_in()
     probe = (
         "import socket, sys\n"
@@ -160,7 +164,7 @@ async def test_a_command_cannot_reach_the_relay_or_the_host(vm, tmp_path):
 
 
 @confined
-async def test_egress_needs_the_workspaces_credentials(vm, tmp_path):
+async def test_egress_needs_the_workspaces_credentials(vm: PlatformVM, tmp_path: Path):
     await GuestWorkspace(vm, "s-egress", tmp_path / "ws").bring_in()
     result = await vm.run(
         "s-egress",
@@ -172,22 +176,26 @@ async def test_egress_needs_the_workspaces_credentials(vm, tmp_path):
 
 
 @confined
-async def test_egress_reaches_only_what_the_allowlist_names(vm, tmp_path, monkeypatch):
+async def test_egress_reaches_only_what_the_allowlist_names(
+    vm: PlatformVM, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     allow_dir = tmp_path / "allow"
     allow_dir.mkdir()
-    (allow_dir / ALLOW_FILE).write_text("allowed.test\n")
+    _ = (allow_dir / ALLOW_FILE).write_text("allowed.test\n")
     credentials = vm.gateway.grant(allow_dir)
 
-    async def upstream(reader, writer):
-        await reader.readuntil(b"\r\n\r\n")
+    async def upstream(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        _ = await reader.readuntil(b"\r\n\r\n")
         writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nupgrade")
         await writer.drain()
         writer.close()
 
     server = await asyncio.start_server(upstream, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
+    port = cast(tuple[str, int], server.sockets[0].getsockname())[1]
 
-    async def dial(_host, _port, _client):
+    async def dial(
+        _host: str, _port: int, _client: asyncio.StreamWriter
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         return await asyncio.open_connection("127.0.0.1", port)
 
     monkeypatch.setattr(egress_mod, "dial_pinned", dial)
@@ -219,10 +227,10 @@ async def test_egress_reaches_only_what_the_allowlist_names(vm, tmp_path, monkey
 
 
 @confined
-async def test_a_preview_is_reached_through_the_mux(vm, tmp_path):
+async def test_a_preview_is_reached_through_the_mux(vm: PlatformVM, tmp_path: Path):
     root = tmp_path / "ws"
     root.mkdir()
-    (root / "index.html").write_text("hello preview")
+    _ = (root / "index.html").write_text("hello preview")
     await GuestWorkspace(vm, "s-web", root).bring_in()
     await vm.start_job(
         "s-web",
@@ -283,12 +291,12 @@ def _link(name: str, target: str, kind: bytes = tarfile.SYMTYPE) -> tuple[tarfil
 
 
 @pytest.mark.parametrize("name", ["../escape", "/etc/passwd", "a/../../escape"])
-def test_a_path_outside_the_workspace_is_refused(tmp_path, name):
+def test_a_path_outside_the_workspace_is_refused(tmp_path: Path, name: str):
     with pytest.raises(VMError):
         unpack(tmp_path / "ws", _archive(tmp_path, _file(name)), [], max_bytes=1024)
 
 
-def test_a_write_through_a_planted_symlink_is_refused(tmp_path):
+def test_a_write_through_a_planted_symlink_is_refused(tmp_path: Path):
     outside = tmp_path / "outside"
     outside.mkdir()
     archive = _archive(tmp_path, _link("door", str(outside)), _file("door/planted"))
@@ -297,13 +305,13 @@ def test_a_write_through_a_planted_symlink_is_refused(tmp_path):
     assert not (outside / "planted").exists()
 
 
-def test_a_symlink_is_stored_and_never_followed(tmp_path):
+def test_a_symlink_is_stored_and_never_followed(tmp_path: Path):
     root = tmp_path / "ws"
     unpack(root, _archive(tmp_path, _link("python", "/usr/bin/python3")), [], max_bytes=1024)
     assert (root / "python").is_symlink()
 
 
-def test_hard_links_and_devices_are_refused(tmp_path):
+def test_hard_links_and_devices_are_refused(tmp_path: Path):
     with pytest.raises(VMError):
         unpack(
             tmp_path / "ws",
@@ -317,17 +325,17 @@ def test_hard_links_and_devices_are_refused(tmp_path):
         unpack(tmp_path / "ws2", _archive(tmp_path, (device, None)), [], max_bytes=1024)
 
 
-def test_more_than_the_transfer_limit_is_refused(tmp_path):
+def test_more_than_the_transfer_limit_is_refused(tmp_path: Path):
     with pytest.raises(VMError):
         unpack(tmp_path / "ws", _archive(tmp_path, _file("big", b"x" * 2048)), [], max_bytes=1024)
 
 
-def test_a_deletion_never_reaches_through_a_symlink(tmp_path):
+def test_a_deletion_never_reaches_through_a_symlink(tmp_path: Path):
     root = tmp_path / "ws"
     root.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / "keep").write_text("mine")
+    _ = (outside / "keep").write_text("mine")
     (root / "door").symlink_to(outside)
     unpack(root, _archive(tmp_path), ["door/keep"], max_bytes=1024)
     assert (outside / "keep").exists()
@@ -336,5 +344,5 @@ def test_a_deletion_never_reaches_through_a_symlink(tmp_path):
 def test_a_listing_from_the_guest_is_parsed_defensively():
     from services.vm.sync import parse_manifest
 
-    raw = json.loads('{"a": ["f", 1, 2], "b": "junk", "c": ["d", 0, 0, 9]}')
+    raw = obj(parse_json('{"a": ["f", 1, 2], "b": "junk", "c": ["d", 0, 0, 9]}'))
     assert parse_manifest(raw) == {"a": ("f", 1, 2)}
