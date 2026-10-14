@@ -278,11 +278,11 @@ class _ContextOverflowModel(WrapperModel):
     def __init__(self) -> None:
         super().__init__(TestModel())
 
-    async def request(self, *args, **kwargs):  # type: ignore[override]
+    async def request(self, *args, **kwargs):
         raise _ctx_error()
 
     @asynccontextmanager
-    async def request_stream(self, *args, **kwargs):  # type: ignore[override]
+    async def request_stream(self, *args, **kwargs):
         raise _ctx_error()
         yield  # unreachable — keeps this a generator
 
