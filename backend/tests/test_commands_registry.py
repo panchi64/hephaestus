@@ -2,23 +2,33 @@
 
 from __future__ import annotations
 
+from fastapi import FastAPI
+
 from services.commands import CommandRegistry, CommandSource, expand
 from services.commands.registry import LAUNCH_TOOL, _merge
 from services.commands.spec import CommandSpec
 from services.permissions import PERMISSION_LADDER
 
-from ._helpers import client_app
+from ._helpers import app_state, client_app
+from ._json import arr, json_body, obj, s
 
 
-def _spec(name: str, source: CommandSource, **overrides) -> CommandSpec:
+def _spec(
+    name: str, source: CommandSource, *, target: str | None = None, body: str | None = None
+) -> CommandSpec:
     return CommandSpec(
         name=name,
         source=source,
         kind="prompt",
         title=name,
         description="d",
-        **overrides,
+        target=target,
+        body=body,
     )
+
+
+def _registry(app: FastAPI) -> CommandRegistry:
+    return app_state(app, "commands", CommandRegistry)
 
 
 class TestPrecedence:
@@ -51,7 +61,7 @@ class TestPrecedence:
 class TestCatalog:
     async def test_the_builtin_sources_answer(self):
         async with client_app() as (_client, app):
-            registry: CommandRegistry = app.state.commands
+            registry = _registry(app)
             entries = await registry.catalog(
                 "operator", workspace_kind="sandbox", has_conversation=True
             )
@@ -61,7 +71,7 @@ class TestCatalog:
 
     async def test_a_composer_with_no_thread_is_offered_no_thread_actions(self):
         async with client_app() as (_client, app):
-            registry: CommandRegistry = app.state.commands
+            registry = _registry(app)
             names = {
                 e.spec.name
                 for e in await registry.catalog(
@@ -75,7 +85,7 @@ class TestCatalog:
 
     async def test_withholding_the_launch_tool_withholds_every_agent_command(self):
         async with client_app() as (_client, app):
-            registry: CommandRegistry = app.state.commands
+            registry = _registry(app)
             entries = await registry.catalog(
                 "operator",
                 workspace_kind="sandbox",
@@ -86,11 +96,11 @@ class TestCatalog:
 
     async def test_only_published_skills_are_invocable(self):
         async with client_app() as (client, app):
-            await client.post(
+            _ = await client.post(
                 "/skills",
                 json={"name": "release-notes", "description": "d", "body": "b"},
             )
-            registry: CommandRegistry = app.state.commands
+            registry = _registry(app)
 
             async def skill_names() -> set[str]:
                 entries = await registry.catalog(
@@ -104,14 +114,14 @@ class TestCatalog:
             created = await client.post(
                 "/skills", json={"name": "other", "description": "d", "body": "b"}
             )
-            await client.post(f"/skills/{created.json()['id']}/publish")
+            _ = await client.post(f"/skills/{s(json_body(created)['id'])}/publish")
             assert "other" in await skill_names()
 
 
 class TestResolve:
     async def test_a_bare_name_resolves_the_winner(self):
         async with client_app() as (_client, app):
-            registry: CommandRegistry = app.state.commands
+            registry = _registry(app)
             spec = await registry.resolve(
                 "operator", "reviewer", workspace_kind="sandbox", has_conversation=True
             )
@@ -121,7 +131,7 @@ class TestResolve:
 
     async def test_a_qualified_name_resolves_exactly(self):
         async with client_app() as (_client, app):
-            registry: CommandRegistry = app.state.commands
+            registry = _registry(app)
             spec = await registry.resolve(
                 "operator", "agent:test-runner", workspace_kind="sandbox", has_conversation=True
             )
@@ -131,7 +141,7 @@ class TestResolve:
 
     async def test_an_unknown_name_resolves_to_nothing(self):
         async with client_app() as (_client, app):
-            registry: CommandRegistry = app.state.commands
+            registry = _registry(app)
             assert (
                 await registry.resolve(
                     "operator", "not-a-command", workspace_kind="sandbox", has_conversation=True
@@ -141,7 +151,7 @@ class TestResolve:
 
     async def test_a_withheld_command_cannot_be_reached_by_typing_its_name(self):
         async with client_app() as (_client, app):
-            registry: CommandRegistry = app.state.commands
+            registry = _registry(app)
             # The name is the one part of the exchange the operator authors by hand, so
             # resolution runs against the same narrowed catalog the picker was served.
             assert (
@@ -158,17 +168,18 @@ class TestResolve:
 class TestRoute:
     async def test_groups_are_served_with_the_rows(self):
         async with client_app() as (client, _app):
-            body = (await client.get("/commands")).json()
-            assert body["groups"], "the picker's headings come from the backend"
-            offered = {c["group"] for c in body["commands"]}
+            body = json_body(await client.get("/commands"))
+            groups = arr(body["groups"])
+            assert groups, "the picker's headings come from the backend"
+            offered = {s(obj(c)["group"]) for c in arr(body["commands"])}
             # No heading without rows under it — an empty group is a promise the operator
             # has to click to discover is empty.
-            assert {g["id"] for g in body["groups"]} == offered
+            assert {s(obj(g)["id"]) for g in groups} == offered
 
     async def test_rows_are_camel_case_and_carry_a_qualified_name(self):
         async with client_app() as (client, _app):
-            body = (await client.get("/commands")).json()
-            row = next(c for c in body["commands"] if c["name"] == "reviewer")
+            body = json_body(await client.get("/commands"))
+            row = next(obj(c) for c in arr(body["commands"]) if obj(c)["name"] == "reviewer")
             assert row["qualifiedName"] == "agent:reviewer"
             assert row["kind"] == "prompt"
             assert row["actionId"] is None
@@ -176,20 +187,21 @@ class TestRoute:
 
     async def test_an_action_row_names_an_id_and_never_a_route(self):
         async with client_app() as (client, _app):
-            body = (await client.get("/commands?conversation_id=c1")).json()
-            row = next(c for c in body["commands"] if c["name"] == "compact")
+            body = json_body(await client.get("/commands?conversation_id=c1"))
+            row = next(obj(c) for c in arr(body["commands"]) if obj(c)["name"] == "compact")
             assert row["kind"] == "action"
             assert row["actionId"] == "compact"
             assert set(row) & {"method", "path", "params"} == set()
 
     async def test_the_level_action_offers_the_levels_in_a_stable_order(self):
         async with client_app() as (client, _app):
-            body = (await client.get("/commands")).json()
-            row = next(c for c in body["commands"] if c["name"] == "level")
+            body = json_body(await client.get("/commands"))
+            row = next(obj(c) for c in arr(body["commands"]) if obj(c)["name"] == "level")
+            argument = obj(row["actionArgument"])
             # A set has no order to offer, and string hashing is randomised per process —
             # so a picker built from one would list the levels differently each boot.
-            assert row["actionArgument"]["choices"] == list(PERMISSION_LADDER)
-            assert row["actionArgument"]["required"] is True
+            assert argument["choices"] == list(PERMISSION_LADDER)
+            assert argument["required"] is True
 
 
 class TestExpansion:

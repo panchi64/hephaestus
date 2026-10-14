@@ -16,22 +16,35 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 
 from core.exceptions import CommandValidationError
+from services.commands import CommandRegistry
 from services.commands.definitions import (
     CommandFileError,
     parse_command_file,
     project_specs,
 )
 from services.commands.registry import _merge
+from services.commands.store import CommandStore
 
-from ._helpers import client_app
+from ._helpers import app_state, client_app
+from ._json import arr, json_body, json_list, obj
+from ._json import s as string
 
 
 def _write(root: Path, relpath: str, text: str) -> None:
     path = root / relpath
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    _ = path.write_text(text, encoding="utf-8")
+
+
+def _store(app: FastAPI) -> CommandStore:
+    return app_state(app, "command_store", CommandStore)
+
+
+def _registry(app: FastAPI) -> CommandRegistry:
+    return app_state(app, "commands", CommandRegistry)
 
 
 class TestWorkflowStore:
@@ -42,7 +55,7 @@ class TestWorkflowStore:
                 json={"name": "standup", "body": "Summarise what changed since yesterday."},
             )
             assert resp.status_code == 201, resp.text
-            specs = await app.state.command_store.specs("operator")
+            specs = await _store(app).specs("operator")
         assert [s.name for s in specs] == ["standup"]
         assert specs[0].source == "workflow"
         assert specs[0].body == "Summarise what changed since yesterday."
@@ -58,40 +71,40 @@ class TestWorkflowStore:
                 json={"name": "/Stand Up", "body": "b"},
             )
         assert resp.status_code == 201, resp.text
-        assert resp.json()["name"] == "stand-up"
+        assert json_body(resp)["name"] == "stand-up"
 
     async def test_a_name_that_could_not_be_typed_names_its_field(self):
         async with client_app() as (client, _app):
             resp = await client.post("/commands/workflows", json={"name": "what?!", "body": "b"})
         assert resp.status_code == 422
         # The editor marks a box rather than printing "invalid" over the whole form.
-        assert resp.json()["detail"]["field"] == "name"
+        assert obj(json_body(resp)["detail"])["field"] == "name"
 
     async def test_a_workflow_with_no_template_is_refused(self):
         async with client_app() as (client, _app):
             resp = await client.post("/commands/workflows", json={"name": "empty", "body": "   "})
         assert resp.status_code == 422
-        assert resp.json()["detail"]["field"] == "body"
+        assert obj(json_body(resp)["detail"])["field"] == "body"
 
     async def test_two_workflows_cannot_share_a_name(self):
         async with client_app() as (client, _app):
-            await client.post("/commands/workflows", json={"name": "dup", "body": "b"})
+            _ = await client.post("/commands/workflows", json={"name": "dup", "body": "b"})
             resp = await client.post("/commands/workflows", json={"name": "dup", "body": "b"})
         assert resp.status_code == 422
-        assert resp.json()["detail"]["field"] == "name"
+        assert obj(json_body(resp)["detail"])["field"] == "name"
 
     async def test_a_disabled_workflow_leaves_the_menu_but_not_the_editor(self):
         async with client_app() as (client, app):
             created = await client.post("/commands/workflows", json={"name": "draft", "body": "b"})
-            await client.patch(
-                f"/commands/workflows/{created.json()['id']}", json={"enabled": False}
+            _ = await client.patch(
+                f"/commands/workflows/{string(json_body(created)['id'])}", json={"enabled": False}
             )
-            specs = await app.state.command_store.specs("operator")
+            specs = await _store(app).specs("operator")
             listed = await client.get("/commands/workflows")
         assert specs == []
         # Still editable — this is a switch, not a delete, and the pane is where its
         # author left it.
-        assert [row["name"] for row in listed.json()] == ["draft"]
+        assert [obj(row)["name"] for row in json_list(listed)] == ["draft"]
 
     async def test_an_edit_leaves_the_fields_it_was_not_given(self):
         async with client_app() as (client, _app):
@@ -103,13 +116,13 @@ class TestWorkflowStore:
                 f"/commands/workflows/{created.json()['id']}", json={"name": "release-notes"}
             )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["name"] == "release-notes"
-        assert resp.json()["body"] == "original"
-        assert resp.json()["description"] == "d"
+        assert json_body(resp)["name"] == "release-notes"
+        assert json_body(resp)["body"] == "original"
+        assert json_body(resp)["description"] == "d"
 
     async def test_the_catalog_offers_it_and_the_turn_resolves_it(self):
         async with client_app() as (client, _app):
-            await client.post(
+            _ = await client.post(
                 "/commands/workflows",
                 json={
                     "name": "standup",
@@ -118,7 +131,7 @@ class TestWorkflowStore:
                 },
             )
             listed = await client.get("/commands")
-        rows = {row["name"]: row for row in listed.json()["commands"]}
+        rows = {string(obj(row)["name"]): obj(row) for row in arr(json_body(listed)["commands"])}
         assert rows["standup"]["group"] == "workflow"
         assert rows["standup"]["description"] == "The morning summary"
         # The body is the expansion's input, never the catalog's payload — a menu that
@@ -127,9 +140,9 @@ class TestWorkflowStore:
 
     async def test_the_workflows_group_is_named_by_the_backend(self):
         async with client_app() as (client, _app):
-            await client.post("/commands/workflows", json={"name": "s", "body": "b"})
+            _ = await client.post("/commands/workflows", json={"name": "s", "body": "b"})
             listed = await client.get("/commands")
-        groups = {g["id"]: g["label"] for g in listed.json()["groups"]}
+        groups = {string(obj(g)["id"]): obj(g)["label"] for g in arr(json_body(listed)["groups"])}
         assert groups["workflow"] == "Workflows"
 
     async def test_a_deleted_workflow_is_gone_from_both(self):
@@ -137,10 +150,10 @@ class TestWorkflowStore:
             created = await client.post("/commands/workflows", json={"name": "temp", "body": "b"})
             resp = await client.delete(f"/commands/workflows/{created.json()['id']}")
             assert resp.status_code == 204
-            specs = await app.state.command_store.specs("operator")
+            specs = await _store(app).specs("operator")
             listed = await client.get("/commands/workflows")
         assert specs == []
-        assert listed.json() == []
+        assert json_list(listed) == []
 
 
 class TestProjectFiles:
@@ -152,7 +165,7 @@ class TestProjectFiles:
             tmp_path,
             ".claude/commands/release-notes.md",
             "---\ndescription: Draft the notes\nargument-hint: the version\n---\n"
-            "Write release notes from the log.\n",
+            + "Write release notes from the log.\n",
         )
         specs = project_specs(tmp_path)
         assert [s.name for s in specs] == ["release-notes"]
@@ -233,7 +246,7 @@ class TestProjectFiles:
 
     def test_an_empty_file_is_an_error_the_caller_catches(self):
         with pytest.raises(CommandFileError):
-            parse_command_file("", name="blank")
+            _ = parse_command_file("", name="blank")
 
 
 class TestPrecedenceAcrossTheNewSources:
@@ -276,7 +289,7 @@ class TestTheCatalogReadsTheCheckout:
             "---\ndescription: reads ahead\n---\nLook around and report.",
         )
         async with client_app() as (_client, app):
-            entries = await app.state.commands.catalog(
+            entries = await _registry(app).catalog(
                 "operator", workspace_kind=kind, has_conversation=True, root=tmp_path
             )
         by_name = {e.spec.name: e.spec for e in entries}
@@ -295,7 +308,7 @@ class TestTheCatalogReadsTheCheckout:
             "---\ndescription: our own explorer\n---\nSearch this repository's way.",
         )
         async with client_app() as (_client, app):
-            entries = await app.state.commands.catalog(
+            entries = await _registry(app).catalog(
                 "operator", workspace_kind=kind, has_conversation=True, root=tmp_path
             )
         rows = [e.spec for e in entries if e.spec.name == "explorer"]
@@ -306,7 +319,7 @@ class TestTheCatalogReadsTheCheckout:
 
     async def test_without_a_root_the_project_sources_are_simply_absent(self):
         async with client_app() as (_client, app):
-            entries = await app.state.commands.catalog(
+            entries = await _registry(app).catalog(
                 "operator", workspace_kind="worktree", has_conversation=True
             )
         assert all(e.spec.source != "project" for e in entries)
@@ -318,7 +331,7 @@ class TestTheCatalogReadsTheCheckout:
             "---\ndescription: reads ahead\n---\nLook around and report.",
         )
         async with client_app() as (_client, app):
-            entries = await app.state.commands.catalog(
+            entries = await _registry(app).catalog(
                 "operator", workspace_kind="sandbox", has_conversation=True, root=tmp_path
             )
         # A thread files under a project in *every* kind of workspace, so a resolvable root
@@ -340,7 +353,7 @@ class TestTheCatalogReadsTheCheckout:
             "---\ndescription: ours\n---\nRun them our way.",
         )
         async with client_app() as (_client, app):
-            entries = await app.state.commands.catalog(
+            entries = await _registry(app).catalog(
                 "operator", workspace_kind=kind, has_conversation=True, root=tmp_path
             )
         rows = [e for e in entries if e.spec.name == "test-runner"]
@@ -354,7 +367,7 @@ class TestTheCatalogReadsTheCheckout:
     async def test_a_project_command_is_withheld_outside_a_project_folder(self, tmp_path: Path):
         _write(tmp_path, ".claude/commands/deploy.md", "ship it")
         async with client_app() as (_client, app):
-            entries = await app.state.commands.catalog(
+            entries = await _registry(app).catalog(
                 "operator", workspace_kind="sandbox", has_conversation=True, root=tmp_path
             )
         assert all(e.spec.name != "deploy" for e in entries)
@@ -365,7 +378,7 @@ class TestTheCatalogReadsTheCheckout:
     ):
         _write(tmp_path, ".claude/commands/deploy.md", "ship it carefully")
         async with client_app() as (_client, app):
-            spec = await app.state.commands.resolve(
+            spec = await _registry(app).resolve(
                 "operator", "deploy", workspace_kind=kind, has_conversation=True, root=tmp_path
             )
         # The send has to reach the same tree the menu listed from, or a picked command
@@ -382,6 +395,6 @@ class TestAuthoringRules:
         from services.commands.authoring import validate_name
 
         with pytest.raises(CommandValidationError):
-            validate_name(raw)
+            _ = validate_name(raw)
         _write(tmp_path, ".claude/commands/f.md", f"---\nname: {raw!r}\n---\nbody")
         assert all(s.name != raw for s in project_specs(tmp_path))
