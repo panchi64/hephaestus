@@ -18,7 +18,7 @@ from services.workspace_history import WorkspaceHistoryStore
 
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from .conftest import egress_policy
-from .vm_fakes import FakeVM
+from .vm_fakes import FakeVM, as_platform
 
 _EXCLUDES = Settings().sandbox_walk_excludes
 
@@ -33,7 +33,7 @@ async def _store(tmp_path) -> WorkspaceHistoryStore:
 
 def _manager(tmp_path, vault) -> SandboxSessionManager:
     return SandboxSessionManager(
-        FakeVM(tmp_path / "sandbox" / "work"),
+        as_platform(FakeVM(tmp_path / "sandbox" / "work")),
         vault,
         egress=egress_policy(tmp_path),
         data_dir=tmp_path,

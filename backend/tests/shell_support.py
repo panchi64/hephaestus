@@ -11,10 +11,11 @@ import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RunUsage
 
 from core.container import ServiceContainer
@@ -23,6 +24,7 @@ from services.egress import EgressPolicy
 from services.projects import ProjectStore
 from services.projects.checkout import CheckoutHolders
 from services.vm.project import ProjectCopies
+from services.workspace_kind import WorkspaceKind
 from tools.deps import RunDeps
 
 from .vm_local import local_vm
@@ -74,9 +76,9 @@ async def local_copies(tmp_path: Path) -> AsyncIterator[ProjectCopies]:
 def checkout_ctx(
     root: Path,
     *,
-    copies: Any = None,
+    copies: ProjectCopies | None = None,
     egress: EgressPolicy | None = None,
-    kind: str = "checkout",
+    kind: WorkspaceKind = "checkout",
     project_id: str = "proj-1",
     approved: bool = True,
 ) -> RunContext[RunDeps]:
@@ -114,12 +116,13 @@ class Shell:
     the guard refused before anything was spawned.
     """
 
-    def __init__(self, toolset, ctx: RunContext[RunDeps]) -> None:
+    def __init__(self, toolset: AbstractToolset[RunDeps], ctx: RunContext[RunDeps]) -> None:
         self._toolset = toolset
         self.ctx = ctx
-        self._tools: dict | None = None
+        self._tools: dict[str, ToolsetTool[RunDeps]] | None = None
 
     async def call(self, name: str, **args):
-        if self._tools is None:
-            self._tools = await self._toolset.get_tools(self.ctx)
-        return await self._toolset.call_tool(name, args, self.ctx, self._tools[name])
+        tools = self._tools
+        if tools is None:
+            tools = self._tools = await self._toolset.get_tools(self.ctx)
+        return await self._toolset.call_tool(name, args, self.ctx, tools[name])

@@ -77,7 +77,9 @@ def _add_task(
 # into "cannot start a transaction within a transaction".
 def _get_task(engine, task_id: str) -> ScheduledTask:
     with read_session(engine) as session:
-        return session.get(ScheduledTask, task_id)
+        task = session.get(ScheduledTask, task_id)
+        assert task is not None
+        return task
 
 
 def _list_runs(engine, task_id: str) -> list[TaskRun]:
@@ -159,6 +161,7 @@ async def test_once_agent_task_fires_records_the_run_and_self_disables(tmp_path)
         assert runs[0].outcome == TaskOutcome.OK.value
         assert runs[0].run_id == "run-1"
         assert runs[0].conversation_id == "conv-1"
+        assert runs[0].summary_enc is not None
         assert vault.decrypt_str(runs[0].summary_enc) == "did it"
 
         task = _get_task(engine, task_id)
@@ -194,6 +197,7 @@ async def test_interval_task_recomputes_forward_and_stays_enabled(tmp_path):
         task = _get_task(engine, task_id)
         assert task.enabled is True
         # Anchored on settlement (~now), not left at the stale past next_run_at.
+        assert task.next_run_at is not None
         assert as_utc(task.next_run_at) > before + timedelta(seconds=3500)
     finally:
         await scheduler.stop()
@@ -246,6 +250,7 @@ async def test_executor_exception_records_error_outcome_without_killing_the_loop
         runs = _list_runs(engine, task_id)
         assert len(runs) == 1
         assert runs[0].outcome == TaskOutcome.ERROR.value
+        assert runs[0].summary_enc is not None
         assert vault.decrypt_str(runs[0].summary_enc) == "boom"
         # A raising executor still counts as "it ran" — a once still self-disables.
         assert _get_task(engine, task_id).enabled is False
@@ -282,7 +287,9 @@ async def _fires_once_after(tmp_path, break_first_claim) -> None:
         await asyncio.sleep(0.2)
         assert calls == [task_id]
         assert [r.outcome for r in runs] == [TaskOutcome.OK.value]
-        assert as_utc(_get_task(engine, task_id).next_run_at) > utcnow()
+        next_run_at = _get_task(engine, task_id).next_run_at
+        assert next_run_at is not None
+        assert as_utc(next_run_at) > utcnow()
     finally:
         await scheduler.stop()
 
@@ -542,6 +549,7 @@ async def test_vault_locked_mid_execution_parks_finalize_until_unlock(tmp_path):
 
         [run] = _list_runs(engine, task_id)
         assert run.outcome == TaskOutcome.OK.value and run.finished_at is not None
+        assert run.summary_enc is not None
         assert vault.decrypt_str(run.summary_enc) == "finished while locked"
         assert _get_task(engine, task_id).enabled is False  # once task self-disables
     finally:
@@ -578,6 +586,7 @@ async def test_locked_vault_parks_and_fires_at_most_one_catch_up_on_unlock(tmp_p
 
         task = _get_task(engine, task_id)
         # Recomputed from now, not the stale hour-old timestamp.
+        assert task.next_run_at is not None
         assert as_utc(task.next_run_at) > utcnow()
     finally:
         await scheduler.stop()

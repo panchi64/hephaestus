@@ -41,13 +41,14 @@ from core.db import init_db, make_engine
 from core.text import CHARS_PER_TOKEN_JSON
 from harness.discovery import discover_manifests
 from runs import Run, RunStream
-from services.permissions import PERMISSION_LEVELS
+from services.permissions import PERMISSION_LADDER, PermissionLevel
 from services.settings_store import SettingsStore
 from services.tool_policy import effective_disabled_tools
 from services.workspace_kind import WORKSPACE_TOOLS, WorkspaceKind
 from tools import RunDeps, build_agent_toolsets, core_categories
 
 from ._helpers import full_tool_categories
+from .test_tool_policy import stub_offline
 
 #: What a fresh request's catalog may cost, in characters of serialized schema. Set a
 #: little above today's ~35.6k so an ordinary addition lands quietly and a category-sized one
@@ -94,14 +95,6 @@ CATALOG_CEILING_CHARS = 48_000
 CORPUS_CEILING_CHARS = 88_000
 
 
-class _AllOnline:
-    """Offline mode with nothing suspended — this file measures the catalog, not
-    connectivity, and the real service would make every case depend on a live probe."""
-
-    def web_tools_disabled(self) -> frozenset[str]:
-        return frozenset()
-
-
 def _dormant_categories() -> tuple[str, ...]:
     """The dormant declarations a real app assembles, read off the manifests the same way
     ``full_tool_categories`` reads their toolsets. Restating the set here would measure a
@@ -110,7 +103,7 @@ def _dormant_categories() -> tuple[str, ...]:
 
 
 async def _catalog(
-    kind: WorkspaceKind, permission: str, *, scripts: bool = True
+    kind: WorkspaceKind, permission: PermissionLevel, *, scripts: bool = True
 ) -> tuple[tuple[int, int], tuple[int, int]]:
     """``((tools, chars) on a fresh request, (tools, chars) with every group revealed)`` for
     a real run in this workspace and at this level — resolved through the composed toolset stack
@@ -126,7 +119,9 @@ async def _catalog(
     init_db(engine)
     # The level is deliberately absent here and rides on `RunDeps.permission` below: it is
     # applied live at the enabled gate, not folded into this set (`services/tool_policy`).
-    disabled = await effective_disabled_tools(SettingsStore(engine), _AllOnline(), "operator")
+    # Nothing suspended: this file measures the catalog, not connectivity.
+    all_online = stub_offline(frozenset())
+    disabled = await effective_disabled_tools(SettingsStore(engine), all_online, "operator")
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     deps = RunDeps(
         run=run,
@@ -141,7 +136,9 @@ async def _catalog(
     # the signature of every tool the level clears — ships on every request too. Its catalog
     # is the fresh request's: a dormant group joins it only once revealed, so the corpus
     # figure below counts a revealed group's signatures once, as schemas, not twice.
-    tools = await code_mode_capability().get_wrapper_toolset(stack).get_tools(ctx)
+    wrapper = code_mode_capability().get_wrapper_toolset(stack)
+    assert wrapper is not None
+    tools = await wrapper.get_tools(ctx)
     corpus = [tool.tool_def for name, tool in tools.items() if scripts or name != "run_code"]
     fresh = [tool_def for tool_def in corpus if not tool_def.defer_loading]
     return (
@@ -150,7 +147,7 @@ async def _catalog(
     )
 
 
-async def _corpus_chars(kind: WorkspaceKind, permission: str) -> int:
+async def _corpus_chars(kind: WorkspaceKind, permission: PermissionLevel) -> int:
     _, (_, chars) = await _catalog(kind, permission)
     return chars
 
@@ -208,15 +205,15 @@ async def test_only_plan_narrows_the_catalog():
     # description lists the tools the level clears unasked (`agent/code_mode.py`). So the
     # catalog is identical with it set aside, and the tool count is identical with it in.
     acting = {
-        level: await _catalog("normal", level, scripts=False)
-        for level in PERMISSION_LEVELS
+        level: await _catalog("sandbox", level, scripts=False)
+        for level in PERMISSION_LADDER
         if level != "plan"
     }
     assert len(set(acting.values())) == 1, acting
     counts = {}
-    for level in PERMISSION_LEVELS:
+    for level in PERMISSION_LADDER:
         if level != "plan":
-            fresh, corpus = await _catalog("normal", level)
+            fresh, corpus = await _catalog("sandbox", level)
             counts[level] = (fresh[0], corpus[0])
     assert len(set(counts.values())) == 1, counts
 

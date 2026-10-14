@@ -15,6 +15,7 @@ from pydantic_ai import Agent, ModelRequest, RunContext
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from agent.factory import build_agent
@@ -48,7 +49,7 @@ def _deps(disabled: frozenset[str] = frozenset()) -> RunDeps:
     return RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled)
 
 
-def _agent(categories, *, model: FunctionModel) -> Agent:
+def _agent(categories, *, model: FunctionModel) -> Agent[RunDeps, str]:
     """The stack a real turn composes, minus everything that has nothing to do with
     deferral — the same toolsets and the same capability the engine is wired with."""
     return Agent(
@@ -122,7 +123,7 @@ async def test_naming_a_group_reveals_the_whole_group_on_the_next_step():
     steps: list[set[str]] = []
     await _agent(categories, model=_reveal_browse(steps)).run("hi", deps=_deps())
     revealed = {name for name in steps[1] if name.startswith("browse_")}
-    assert revealed == {f"browse_{name}" for name in categories["browse"].tools}
+    assert revealed == {f"browse_{name}" for name in category_names(categories)["browse"]}
     # A reveal is one group, not the end of deferral: the others stay held back.
     assert not [name for name in steps[1] if name.startswith("calendar_")]
 
@@ -194,7 +195,7 @@ async def test_the_index_names_every_live_group_and_the_way_in():
 
 async def test_the_index_drops_a_group_the_operator_switched_off_entirely():
     categories = full_tool_categories()
-    all_vault = frozenset(f"vault_{name}" for name in categories["vault"].tools)
+    all_vault = frozenset(f"vault_{name}" for name in category_names(categories)["vault"])
     text = await _index(all_vault)
     assert "- vault:" not in text
     assert "- browse:" in text
@@ -260,11 +261,11 @@ async def test_the_engine_defers_and_reveals_exactly_as_this_stack_does():
     assert not [name for name in steps[0] if name.startswith("browse_")]
     assert "search_tools" in steps[0]
     assert {name for name in steps[1] if name.startswith("browse_")} == {
-        f"browse_{name}" for name in categories["browse"].tools
+        f"browse_{name}" for name in category_names(categories)["browse"]
     }
 
 
-def _defs_model(defs: list[list]):
+def _defs_model(defs: list[list[ToolDefinition]]):
     """A model that answers immediately and keeps the tool *definitions* it was handed,
     for the assertions that are about schema text rather than about which names arrived."""
 
@@ -276,7 +277,7 @@ def _defs_model(defs: list[list]):
 
 
 async def _search_tools_def(model=None):
-    defs: list[list] = []
+    defs: list[list[ToolDefinition]] = []
     await _agent(full_tool_categories(), model=model or _defs_model(defs)).run("hi", deps=_deps())
     return next(d for d in defs[0] if d.name == "search_tools")
 

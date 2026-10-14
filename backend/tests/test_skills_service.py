@@ -38,14 +38,14 @@ def _bundle_zip() -> bytes:
     )
 
 
-async def _seeded(store: SkillStore, **overrides):
-    payload = {
-        "name": "release-notes",
-        "description": "Draft release notes from a changelog.",
-        "body": "# Release notes\n\nCollect the merged PRs, group by area.",
-    }
-    payload.update(overrides)
-    return await store.create(OWNER, **payload)
+async def _seeded(
+    store: SkillStore,
+    *,
+    name: str = "release-notes",
+    description: str = "Draft release notes from a changelog.",
+    body: str = "# Release notes\n\nCollect the merged PRs, group by area.",
+):
+    return await store.create(OWNER, name=name, description=description, body=body)
 
 
 # ── SKILL-1: create, view, edit, publish, delete ─────────────────────────────────────────

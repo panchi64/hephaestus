@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 from pydantic_ai import FunctionToolset, ToolApproved
@@ -16,7 +17,7 @@ from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 import agent.engine as engine
-from agent import build_chat_orchestrator, build_resume_orchestrator
+from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
 from agent.title import (
     _MAX_TITLE_LEN,
     _clean,
@@ -142,7 +143,7 @@ async def test_generate_title_strips_inlined_think_block():
 
 async def test_generate_title_applies_max_tokens_override():
     # The per-call max_tokens overrides the base cap so a think block has room to clear.
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
     async def capture(messages, info):
         captured["settings"] = dict(info.model_settings or {})
@@ -326,9 +327,11 @@ async def test_parked_first_turn_is_titled_exactly_once(tmp_path):
     # the database with no event on the stream is the failure this guards.
     parked_titles = [b for b in _bodies(run) if b.type == "conversation.titled"]
     summary = await store.get_summary(conv, "operator")
+    assert summary is not None
     assert (summary.title == "Deleting The Thing") == bool(parked_titles)
 
     parked = run.parked_payload
+    assert isinstance(parked, ParkedTurn)
     call_id = parked.requests.approvals[0].tool_call_id
     await reg.resume(
         run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}, store=store)
@@ -383,7 +386,7 @@ async def test_titling_runs_concurrently_with_the_answer(tmp_path):
     await store.stop()
 
 
-async def test_title_is_announced_while_the_answer_is_still_streaming(tmp_path):
+async def test_title_is_announced_while_the_answer_is_still_streaming(tmp_path, monkeypatch):
     # Generating concurrently isn't enough: the name must also be *announced* the moment
     # it lands, not held until the turn finishes. Otherwise a long tool-using turn leaves
     # the thread visibly unnamed for its whole duration even though the name was ready in
@@ -401,7 +404,7 @@ async def test_title_is_announced_while_the_answer_is_still_streaming(tmp_path):
         announced.set()
         return stored
 
-    store.set_title_if_absent = hooked
+    monkeypatch.setattr(store, "set_title_if_absent", hooked)
 
     def title_fn(messages, info):
         return ModelResponse(parts=[TextPart("Named Mid Answer")])

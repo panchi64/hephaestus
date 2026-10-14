@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic_ai import ModelRequest, UserPromptPart
@@ -43,7 +44,7 @@ def _queued(text: str, *, source: MessageSource = "subagent") -> QueuedMessage:
     return QueuedMessage(id="m1", text=text, queued_at=datetime.now(UTC), source=source)
 
 
-def _woken(monkeypatch) -> list[dict]:
+def _woken(monkeypatch) -> list[dict[str, Any]]:
     """Every turn the wake composes, captured as it happens.
 
     Asking the registry afterwards is a race the test loses at random: a wake turn against
@@ -52,7 +53,7 @@ def _woken(monkeypatch) -> list[dict]:
     """
     from harness.manifests import _subagent_wake
 
-    calls: list[dict] = []
+    calls: list[dict[str, Any]] = []
     real = _subagent_wake.compose_turn
 
     def capture(**kwargs):

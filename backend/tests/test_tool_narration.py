@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 
+from pydantic import BaseModel
 from pydantic_ai import FunctionToolset, RunContext, ToolApproved, ToolDefinition
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
@@ -25,7 +26,14 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
-from runs import Run, RunRegistry, RunStream
+from runs import (
+    ApprovalRequired,
+    Run,
+    RunRegistry,
+    RunStream,
+    ToolCompleted,
+    ToolStarted,
+)
 from services.tool_sensitivity import SENSITIVITY_METADATA_KEY, Sensitivity
 from tools import NarrationCapability, RunDeps, build_agent_toolsets, strip_narration
 from tools.describe import NARRATION_ARG, NARRATION_TEXT
@@ -76,8 +84,8 @@ def _narrating_model() -> FunctionModel:
     return FunctionModel(stream_function=stream_fn)
 
 
-def _events(run: Run, type_: str) -> list:
-    return [e.body for e in run.stream.replay() if e.body.type == type_]
+def _events[B: BaseModel](run: Run, kind: type[B]) -> list[B]:
+    return [e.body for e in run.stream.replay() if isinstance(e.body, kind)]
 
 
 async def _context() -> RunContext[RunDeps]:
@@ -115,7 +123,7 @@ async def test_a_narrated_call_runs_and_the_tool_never_sees_the_narration():
         "the tool function was handed something other than its own parameters — the "
         "narration reached validation and the model was sent round a retry"
     )
-    assert [e.type for e in _events(run, "tool.completed")] == ["tool.completed"]
+    assert [e.type for e in _events(run, ToolCompleted)] == ["tool.completed"]
 
 
 async def test_the_work_log_keeps_the_sentence_the_tool_never_got():
@@ -129,7 +137,7 @@ async def test_the_work_log_keeps_the_sentence_the_tool_never_got():
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
 
-    started = _events(run, "tool.started")
+    started = _events(run, ToolStarted)
     assert [body.args.get(NARRATION_ARG) for body in started] == [WHY]
 
 
@@ -142,6 +150,7 @@ async def test_a_dict_payload_loses_the_narration_and_nothing_else():
 
 async def test_a_json_payload_loses_the_narration_and_nothing_else():
     stripped = await _stripped(json.dumps({"name": "widget", NARRATION_ARG: WHY}))
+    assert isinstance(stripped, str)
     assert json.loads(stripped) == {"name": "widget"}
 
 
@@ -246,10 +255,11 @@ async def test_a_narrated_call_survives_being_parked_and_approved():
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
 
-    parked: ParkedTurn = run.parked_payload
+    parked = run.parked_payload
+    assert isinstance(parked, ParkedTurn)
     call_id = parked.requests.approvals[0].tool_call_id
     # The operator is shown the model's reason alongside the arguments they are ruling on.
-    approval = _events(run, "approval.required")[0]
+    approval = _events(run, ApprovalRequired)[0]
     assert approval.args.get(NARRATION_ARG) == WHY
 
     await reg.resume(run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}))

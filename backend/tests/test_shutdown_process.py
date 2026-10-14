@@ -51,7 +51,7 @@ def _env(tmp: Path, port: int) -> dict[str, str]:
     return env
 
 
-def _wait_up(port: int, proc: subprocess.Popen, timeout_s: float = 60.0) -> None:
+def _wait_up(port: int, proc: subprocess.Popen[bytes], timeout_s: float = 60.0) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if proc.poll() is not None:

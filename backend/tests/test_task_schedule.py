@@ -43,6 +43,7 @@ def test_cron_computes_the_next_matching_slot_after_the_anchor():
 def test_cron_preserves_the_anchors_timezone():
     anchor = datetime(2026, 1, 1, 12, 3, 0, tzinfo=UTC)
     next_run = compute_next_run(ScheduleType.CRON, anchor=anchor, cron_expr="0 0 * * *")
+    assert next_run is not None
     assert next_run.tzinfo is not None
 
 

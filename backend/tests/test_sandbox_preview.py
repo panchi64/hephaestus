@@ -11,12 +11,12 @@ import pytest
 
 from core.config import Settings
 from core.vault import Vault
-from services.sandbox import SandboxSessionManager, SandboxSpec
+from services.sandbox import PreviewHandle, SandboxSessionManager, SandboxSpec
 from services.sandbox.base import SandboxError, safe_key
 from services.vm.driver import VMError
 
 from .conftest import egress_policy
-from .vm_fakes import FakeVM
+from .vm_fakes import FakePreview, FakeVM, as_platform
 
 _EXCLUDES = Settings().sandbox_walk_excludes
 
@@ -27,17 +27,29 @@ async def _vault(tmp_path) -> Vault:
     return vault
 
 
-def _manager(tmp_path, vault, vm, **overrides) -> SandboxSessionManager:
-    opts = dict(
+def _manager(
+    tmp_path,
+    vault: Vault,
+    vm: FakeVM,
+    *,
+    idle_ttl_s: float = 1800.0,
+    preview_startup_timeout_s: float = 2.0,
+) -> SandboxSessionManager:
+    return SandboxSessionManager(
+        as_platform(vm),
+        vault,
         egress=egress_policy(tmp_path),
         data_dir=tmp_path,
-        idle_ttl_s=1800.0,
+        idle_ttl_s=idle_ttl_s,
         reap_interval_s=60.0,
         excludes=_EXCLUDES,
-        preview_startup_timeout_s=2.0,
+        preview_startup_timeout_s=preview_startup_timeout_s,
     )
-    opts.update(overrides)
-    return SandboxSessionManager(vm, vault, **opts)
+
+
+def _forward(handle: PreviewHandle) -> FakePreview:
+    assert isinstance(handle.forward, FakePreview)
+    return handle.forward
 
 
 async def _answer(reader, writer):
@@ -96,7 +108,9 @@ async def test_a_server_that_never_serves_reports_its_log(tmp_path, vm):
         await mgr.start_preview("conv-a", ["npm", "run", "dev"], 8000)
 
     assert vm.previews[0].closed
-    assert mgr.existing("conv-a").preview is None
+    session = mgr.existing("conv-a")
+    assert session is not None
+    assert session.preview is None
 
 
 async def test_a_slow_server_that_is_still_running_is_opened_anyway(tmp_path, vm):
@@ -122,7 +136,7 @@ async def test_a_vm_that_cannot_start_the_job_is_a_sandbox_error(tmp_path, vm):
 async def test_starting_a_second_preview_replaces_the_first(tmp_path, vm):
     mgr = _manager(tmp_path, await _vault(tmp_path), vm)
     first = await mgr.start_preview("conv-a", ["one"], 8000)
-    first_forward = first.forward
+    first_forward = _forward(first)
     second = await mgr.start_preview("conv-a", ["two"], 8000)
 
     assert mgr.resolve_preview(first.token) is None  # the old token no longer resolves
@@ -148,7 +162,7 @@ async def test_stop_preview_deindexes_and_tears_down(tmp_path, vm):
     await mgr.stop_preview("conv-a")
 
     assert mgr.resolve_preview(handle.token) is None
-    assert handle.forward.closed
+    assert _forward(handle).closed
     assert not vm.background[f"preview-{safe_key('conv-a')}"]["running"]
     assert mgr._sessions  # the exec session itself survives an explicit stop
 
@@ -162,7 +176,7 @@ async def test_reaping_a_session_stops_its_preview_and_drops_the_token(tmp_path,
     assert not mgr._sessions
     assert mgr.resolve_preview(handle.token) is None
     assert mgr.preview_status(handle.token) == "stopped"
-    assert handle.forward.closed
+    assert _forward(handle).closed
     assert not vm.background[f"preview-{safe_key('conv-a')}"]["running"]
 
 
@@ -173,7 +187,7 @@ async def test_stop_clears_all_previews(tmp_path, vm):
     await mgr.stop()
 
     assert mgr.resolve_preview(handle.token) is None
-    assert handle.forward.closed
+    assert _forward(handle).closed
 
 
 def _unused_port() -> int:

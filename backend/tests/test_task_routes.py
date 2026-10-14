@@ -5,6 +5,7 @@ park/approve/resume path for a task-driven agent run."""
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from sqlmodel import select
 
@@ -30,11 +31,11 @@ async def _create_task(
     kind: str = "agent",
     title: str = "a task",
     prompt: str = "do the thing",
-    schedule: dict | None = None,
+    schedule: dict[str, Any] | None = None,
     output: str = "chat",
     pre_authorized: list[str] | None = None,
     enabled: bool = True,
-) -> dict:
+) -> dict[str, Any]:
     resp = await client.post(
         "/tasks",
         json={

@@ -12,11 +12,17 @@ import asyncio
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import cast
 
 from services.vm.driver import ExecResult, VMError
 from services.vm.egress import EgressGateway
-from services.vm.platform import GuestLayout, JobState
+from services.vm.platform import GuestLayout, JobState, PlatformVM
 from services.vm.sync import Changes, Manifest
+
+
+def as_platform(vm: object) -> PlatformVM:
+    """The one place a fake is handed to code that wants the concrete VM class."""
+    return cast(PlatformVM, vm)
 
 
 class FakePreview:
@@ -44,7 +50,7 @@ class FakeVM:
         self.runs: list[tuple[str, list[str], dict[str, str], str | None]] = []
         self.pushes: list[tuple[str, Changes]] = []
         self.pulls: list[tuple[str, Changes]] = []
-        self.background: dict[str, dict] = {}
+        self.background: dict[str, dict[str, object]] = {}
         self.preview_port = 0
         self.previews: list[FakePreview] = []
         self.alive_after_start = True

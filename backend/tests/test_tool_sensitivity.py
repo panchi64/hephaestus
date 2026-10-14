@@ -31,7 +31,7 @@ from services.tool_sensitivity import (
 from tools.catalog import tool_catalog
 
 from ._helpers import full_tool_categories
-from .test_tool_policy import _agent_visible, _store, _StubOffline
+from .test_tool_policy import _agent_visible, _store, stub_offline
 
 OWNER = "operator"
 
@@ -228,7 +228,7 @@ class TestTheUnion:
     async def test_the_sources_compose(self):
         store = _store()
         await set_tool_enabled(store, OWNER, "builtin_now", False)
-        offline = _StubOffline(frozenset({"web_search"}))
+        offline = stub_offline(frozenset({"web_search"}))
         disabled = await effective_disabled_tools(store, offline, OWNER)
         assert "builtin_now" in disabled  # the operator's
         assert "web_search" in disabled  # offline's
@@ -245,11 +245,11 @@ class TestTheUnion:
         the property a future "just add it to the union" would quietly break."""
         store = _store()
         await set_tool_enabled(store, OWNER, "files_write_file", False)
-        disabled = await effective_disabled_tools(store, _StubOffline(frozenset()), OWNER)
+        disabled = await effective_disabled_tools(store, stub_offline(frozenset()), OWNER)
         assert "files_write_file" in disabled  # the operator's, and *only* theirs
         assert permission_disabled_tools("plan") - disabled
 
     async def test_a_caller_with_no_level_is_unaffected(self):
         store = _store()
-        offline = _StubOffline(frozenset())
+        offline = stub_offline(frozenset())
         assert await effective_disabled_tools(store, offline, OWNER) == frozenset()

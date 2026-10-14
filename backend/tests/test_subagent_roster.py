@@ -22,11 +22,14 @@ with a checkout and nobody approved it.
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
+from pydantic_ai import RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
 from core.config import Settings
+from runs import Run, RunStream
 from services.agents import (
     BUILTIN,
     AgentDefinition,
@@ -36,9 +39,19 @@ from services.agents import (
     project_agents,
 )
 from services.agents.files import AgentFileError, agent_files, parse_agent_file
+from tools.agents import agents_toolset
 from tools.catalog import tool_catalog
+from tools.delegation import ProjectRoster
+from tools.deps import RunDeps
 
 from ._helpers import full_tool_categories
+
+
+def _agents_roster() -> ProjectRoster:
+    toolset = agents_toolset()
+    assert isinstance(toolset, ProjectRoster)
+    return toolset
+
 
 _AGENT_FILE = """---
 name: house-reviewer
@@ -250,11 +263,10 @@ class TestReadingItOncePerRun:
     """`get_tools` runs on every model request, up to the request limit in a single turn."""
 
     @staticmethod
-    def _ctx(run_id):
-        return SimpleNamespace(
-            deps=SimpleNamespace(
-                run=SimpleNamespace(id=run_id), caps=SimpleNamespace(get_optional=lambda _: None)
-            )
+    def _ctx(run_id: str) -> RunContext[RunDeps]:
+        run = Run(id=run_id, kind="chat", owner_id="operator", stream=RunStream())
+        return RunContext(
+            deps=RunDeps(run=run, owner_id="operator"), model=TestModel(), usage=RunUsage()
         )
 
     @staticmethod
@@ -333,12 +345,10 @@ class TestWhatTheModelActuallySees:
         assert tools["spawn"].tool_def.description == spawn_description(builtin_roster())
 
     def test_the_catalog_the_operator_reads_is_not_per_run(self):
-        from tools.agents import agents_toolset
-
         # The settings surface enumerates `.tools`, which has no run to resolve. A wrapper
         # that stopped forwarding it would silently cost the operator every toggle in this
         # category.
-        assert set(agents_toolset().tools) == {
+        assert set(_agents_roster().tools) == {
             "write",
             "publish",
             "spawn",
@@ -370,9 +380,7 @@ class TestWhichLaunchesAreTheOperatorsToAllow:
     """
 
     def test_launching_is_not_gated_by_name_alone(self):
-        from tools.agents import agents_toolset
-
-        launch = agents_toolset().tools["spawn"]
+        launch = _agents_roster().tools["spawn"]
         assert launch.requires_approval is False
 
     async def test_the_tool_the_model_is_offered_is_not_pre_deferred(self, monkeypatch):

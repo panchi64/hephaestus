@@ -23,6 +23,7 @@ The things worth pinning are the ones that would quietly stop being true:
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -517,6 +518,7 @@ class TestIsolation:
             assert row is not None
             # A delegated key — `<parent>/<delegation>` — which is what routes it to its
             # own copy in both workspace kinds (`services/workspace.py`).
+            assert row.workspace_key is not None
             assert row.workspace_key.startswith("parent-1/")
             assert row.delegation_id is not None
 
@@ -546,7 +548,7 @@ class TestIsolation:
             assert row.workspace_policy == "isolated"
 
 
-def _capture_composition(monkeypatch) -> dict:
+def _capture_composition(monkeypatch) -> dict[str, Any]:
     """The arguments the sub-agent's turn was actually composed with.
 
     Wrapping the real `compose_turn` rather than replacing it: the turn still runs, so
@@ -554,7 +556,7 @@ def _capture_composition(monkeypatch) -> dict:
     """
     from harness.manifests import _subagents
 
-    seen: dict = {}
+    seen: dict[str, Any] = {}
     real = _subagents.compose_turn
 
     def capture(**kwargs):

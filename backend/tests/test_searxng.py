@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 from services.searxng import ManagedSearxng
 from services.vm.platform import GuestLayout
+
+from .vm_fakes import as_platform
 
 
 class _ServiceVM:
@@ -17,10 +20,12 @@ class _ServiceVM:
     def __init__(self, port: int) -> None:
         self.layout = GuestLayout()
         self.port = port
-        self.calls: list[tuple] = []
-        self.hooks: list = []
+        self.calls: list[tuple[object, ...]] = []
+        self.puts: list[tuple[str, str]] = []
+        self.services: list[tuple[str, str, list[str]]] = []
+        self.hooks: list[Callable[[], Awaitable[None]]] = []
 
-    def on_ready(self, hook) -> None:
+    def on_ready(self, hook: Callable[[], Awaitable[None]]) -> None:
         self.hooks.append(hook)
 
     async def wait_ready(self, timeout_s: float) -> bool:
@@ -29,9 +34,11 @@ class _ServiceVM:
 
     async def put_text(self, guest: str, text: str, *, mode: str = "0644") -> None:
         self.calls.append(("put_text", guest, text))
+        self.puts.append((guest, text))
 
-    async def start_service(self, name: str, user: str, argv) -> None:
+    async def start_service(self, name: str, user: str, argv: Sequence[str]) -> None:
         self.calls.append(("start_service", name, user, list(argv)))
+        self.services.append((name, user, list(argv)))
 
     async def forward(self, guest_port: int) -> int:
         self.calls.append(("forward", guest_port))
@@ -40,7 +47,7 @@ class _ServiceVM:
     async def stop_service(self, name: str) -> None:
         self.calls.append(("stop_service", name))
 
-    def named(self, call: str) -> list[tuple]:
+    def named(self, call: str) -> list[tuple[object, ...]]:
         return [c for c in self.calls if c[0] == call]
 
 
@@ -57,14 +64,21 @@ async def _http_stub(status: int = 200):
     return server, server.sockets[0].getsockname()[1]
 
 
-def _manager(**overrides) -> ManagedSearxng:
-    defaults = dict(
-        enabled=True,
-        vm=None,
-        data_dir=Path(tempfile.mkdtemp()),
-        startup_timeout_s=2.0,
+def _manager(
+    *,
+    enabled: bool = True,
+    vm: _ServiceVM | None = None,
+    data_dir: Path | None = None,
+    startup_timeout_s: float = 2.0,
+    external_base_url: str | None = None,
+) -> ManagedSearxng:
+    return ManagedSearxng(
+        enabled=enabled,
+        vm=as_platform(vm) if vm is not None else None,
+        data_dir=data_dir or Path(tempfile.mkdtemp()),
+        startup_timeout_s=startup_timeout_s,
+        external_base_url=external_base_url,
     )
-    return ManagedSearxng(**{**defaults, **overrides})
 
 
 async def _ready(m: ManagedSearxng) -> None:
@@ -107,12 +121,12 @@ async def test_bring_up_writes_settings_starts_the_service_and_forwards_its_port
         await _ready(m)
 
         assert m.base_url == f"http://127.0.0.1:{port}"
-        (_, guest, text) = vm.named("put_text")[0]
+        (guest, text) = vm.puts[0]
         assert guest == "/etc/searxng/settings.yml"
         assert f"http://{vm.layout.platform_proxy}" in text  # the outgoing proxy
         assert "port: 8888" in text
         assert "json" in text
-        (_, name, _user, argv) = vm.named("start_service")[0]
+        (name, _user, argv) = vm.services[0]
         assert name == "searxng" and "searx.webapp" in argv
         assert vm.named("forward") == [("forward", 8888)]
         # Settings land before the service starts, and the service before its port is forwarded.

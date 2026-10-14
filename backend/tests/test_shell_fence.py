@@ -16,11 +16,13 @@ import pytest
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 
+from runs.events import ToolProgress
 from services.vm.project import ProjectCopies
+from tools.emit import RunEventEmitted
 from tools.shell import GATED_TOOLS, shell_toolset
 
 from .shell_support import Shell, checkout_ctx, make_repo
-from .vm_fakes import FakeVM
+from .vm_fakes import FakeVM, as_platform
 
 
 @pytest.fixture
@@ -30,7 +32,7 @@ def repo(tmp_path) -> Path:
 
 def _copies(tmp_path: Path, *, available: bool = True) -> tuple[ProjectCopies, FakeVM]:
     vm = FakeVM(tmp_path / "guest", available=available)
-    return ProjectCopies(vm, idle_ttl_s=3600, reap_interval_s=3600), vm
+    return ProjectCopies(as_platform(vm), idle_ttl_s=3600, reap_interval_s=3600), vm
 
 
 def _shell(repo: Path, tmp_path: Path, *, approved: bool = True) -> tuple[Shell, FakeVM]:
@@ -155,11 +157,12 @@ async def test_a_background_host_command_is_started_checked_and_stopped(repo, tm
     command_id = started["command_id"]
     assert started["command"] == "echo up; sleep 30"
 
+    checked = await shell.call("check_command", command_id=command_id)
     for _ in range(50):  # the process has to reach its first write
-        checked = await shell.call("check_command", command_id=command_id)
         if "up" in checked["stdout"]:
             break
         await asyncio.sleep(0.05)
+        checked = await shell.call("check_command", command_id=command_id)
     assert "up" in checked["stdout"] and checked["status"] == "running"
     assert checked["exit_code"] is None
 
@@ -214,9 +217,9 @@ async def test_the_operators_model_keys_are_not_in_a_host_commands_environment(
 
 
 async def test_a_host_commands_output_reaches_the_operators_stream(repo, tmp_path, monkeypatch):
-    frames: list = []
+    frames: list[RunEventEmitted] = []
 
-    async def emit(_self, event):
+    async def emit(_self, event: RunEventEmitted):
         frames.append(event)
         return event
 
@@ -227,7 +230,10 @@ async def test_a_host_commands_output_reaches_the_operators_stream(repo, tmp_pat
         "run_command", command="echo streaming; sleep 1.2; echo more", reach="host"
     )
 
-    bodies = [frame.body for frame in frames]
+    bodies: list[ToolProgress] = []
+    for frame in frames:
+        assert isinstance(frame.body, ToolProgress)
+        bodies.append(frame.body)
     assert bodies and all(body.tool_call_id == "call-1" for body in bodies)
     assert all(body.elapsed_s is not None for body in bodies)
     streamed = "".join(body.partial or "" for body in bodies)

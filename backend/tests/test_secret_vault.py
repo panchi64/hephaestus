@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import inspect
 from sqlmodel import Session, select
 
 from core.db import init_db, make_engine
@@ -109,7 +110,7 @@ async def test_unlocked_state_is_never_persisted(tmp_path):
     columns = {
         c.name
         for table in (SecretEntry, SecretVaultConfig)
-        for c in table.__table__.columns  # type: ignore[attr-defined]
+        for c in inspect(table).columns
     }
     assert not {c for c in columns if "unlock" in c or "locked" in c or "session" in c}
 

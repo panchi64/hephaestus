@@ -14,6 +14,10 @@ function alone would pass while any of those three came apart.
 
 from __future__ import annotations
 
+from pydantic_ai import RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
+
 from core.container import ServiceContainer
 from runs import Run, RunStream
 from services.calendar import CalendarService
@@ -39,12 +43,10 @@ OWNER = "operator"
 CHECKED = {"calendar", "mail", "vault"}
 
 
-class _Ctx:
-    """The one field an instruction provider reads off its run context."""
-
-    def __init__(self, disabled: frozenset[str]) -> None:
-        run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
-        self.deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled)
+def _ctx(disabled: frozenset[str]) -> RunContext[RunDeps]:
+    run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
+    deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled)
+    return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
 def _tools(app, category: str) -> frozenset[str]:
@@ -212,11 +214,11 @@ async def test_an_unconfigured_group_is_not_advertised_to_the_model():
         category_names(full_tool_categories()),
     )
     async with client_app() as (_, app):
-        text = await provider(_Ctx(await _withheld(app)))
+        text = await provider(_ctx(await _withheld(app)))
         assert "mail:" not in text
         assert "calendar:" not in text
 
         await _connect_mailbox(app)
-        text = await provider(_Ctx(await _withheld(app)))
+        text = await provider(_ctx(await _withheld(app)))
         assert "mail:" in text
         assert "calendar:" not in text

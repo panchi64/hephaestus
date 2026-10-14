@@ -13,12 +13,15 @@ an ordinary run — whose key *is* its conversation — resolves exactly as it d
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+from typing import cast
 
 import pytest
 
 from services.projects.repo import child_branch_for
 from services.projects.worktree import WorktreeManager
-from services.workspace import sandbox_workspace, split_workspace_key
+from services.sandbox import LiveWork, SandboxSessionManager
+from services.workspace import RunWorkspace, sandbox_workspace, split_workspace_key
 
 
 async def _run(cwd, *args: str) -> None:
@@ -132,21 +135,25 @@ class TestOpeningAChildCheckout:
         assert one.path != two.path
 
 
+class _Work:
+    is_terminal = False
+
+
 class _FakeSession:
     """Only what resolving a workspace asks of a session."""
 
-    def __init__(self, key: str, root, *, ephemeral: bool = False) -> None:
+    def __init__(self, key: str, root: Path, *, ephemeral: bool = False) -> None:
         self.key = key
         self.root = root
         self.ephemeral = ephemeral
-        self.holders: list[object] = []
+        self.holders: list[LiveWork | None] = []
         self.touches = 0
 
     def ensure_workspace(self):
         self.root.mkdir(parents=True, exist_ok=True)
         return self.root
 
-    def hold(self, holder) -> None:
+    def hold(self, holder: LiveWork | None) -> None:
         self.holders.append(holder)
 
     def touch(self) -> None:
@@ -169,7 +176,7 @@ class _FakeSessions:
     def existing(self, key: str):
         return self.sessions.get(key)
 
-    async def acquire(self, key: str, *, holder=None) -> _FakeSession:
+    async def acquire(self, key: str, *, holder: LiveWork | None = None) -> _FakeSession:
         self.acquired.append(key)
         session = self.sessions.setdefault(
             key, _FakeSession(key, self._root / key.replace("/", "_"))
@@ -177,7 +184,9 @@ class _FakeSessions:
         session.hold(holder)
         return session
 
-    async def fork(self, parent_key: str, child_key: str, *, holder=None) -> _FakeSession:
+    async def fork(
+        self, parent_key: str, child_key: str, *, holder: LiveWork | None = None
+    ) -> _FakeSession:
         if child_key in self.sessions:
             raise AssertionError(f"already forked {child_key!r}")
         self.forked.append((parent_key, child_key))
@@ -185,6 +194,10 @@ class _FakeSessions:
         session.hold(holder)
         self.sessions[child_key] = session
         return session
+
+
+async def _open(sessions: object, key: str, *, holder: LiveWork | None = None) -> RunWorkspace:
+    return await sandbox_workspace(cast(SandboxSessionManager, sessions), key, holder=holder)
 
 
 class TestOpeningADelegatedSandbox:
@@ -199,7 +212,7 @@ class TestOpeningADelegatedSandbox:
     async def test_an_ordinary_key_is_the_conversations_own_session(self, tmp_path):
         sessions = _FakeSessions(tmp_path)
 
-        await sandbox_workspace(sessions, "c1")
+        await _open(sessions, "c1")
 
         assert sessions.acquired == ["c1"]
         assert sessions.forked == []
@@ -207,7 +220,7 @@ class TestOpeningADelegatedSandbox:
     async def test_a_delegated_key_is_a_fork_of_the_workspace_it_delegates_from(self, tmp_path):
         sessions = _FakeSessions(tmp_path)
 
-        workspace = await sandbox_workspace(sessions, "c1/s-ab12")
+        workspace = await _open(sessions, "c1/s-ab12")
 
         assert sessions.forked == [("c1", "c1/s-ab12")]
         # And never as a session of its own: that is the empty workspace.
@@ -217,8 +230,8 @@ class TestOpeningADelegatedSandbox:
     async def test_resolving_it_again_reopens_the_same_fork(self, tmp_path):
         sessions = _FakeSessions(tmp_path)
 
-        first = await sandbox_workspace(sessions, "c1/s-ab12")
-        second = await sandbox_workspace(sessions, "c1/s-ab12")
+        first = await _open(sessions, "c1/s-ab12")
+        second = await _open(sessions, "c1/s-ab12")
 
         # A delegated run resolves its workspace on every file-tool call, not once at
         # launch — the fake raises on a second fork, which is what the real manager does.
@@ -227,10 +240,10 @@ class TestOpeningADelegatedSandbox:
 
     async def test_reopening_claims_the_fork_for_the_run_using_it(self, tmp_path):
         sessions = _FakeSessions(tmp_path)
-        holder = object()
+        holder = _Work()
 
-        await sandbox_workspace(sessions, "c1/s-ab12", holder=holder)
-        await sandbox_workspace(sessions, "c1/s-ab12", holder=holder)
+        await _open(sessions, "c1/s-ab12", holder=holder)
+        await _open(sessions, "c1/s-ab12", holder=holder)
 
         # Displacing a fork *deletes* it, nothing about a fork being sealed — so a copy
         # left unclaimed between two of a sub-agent's tool calls is its work thrown away
@@ -244,7 +257,7 @@ class TestOpeningADelegatedSandbox:
         sessions.sessions["c1/s-ab12"] = _FakeSession("c1/s-ab12", tmp_path / "squatter")
 
         with pytest.raises(AssertionError):
-            await sandbox_workspace(sessions, "c1/s-ab12")
+            await _open(sessions, "c1/s-ab12")
 
 
 async def _log(path) -> str:

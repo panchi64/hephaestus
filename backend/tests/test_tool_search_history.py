@@ -98,7 +98,7 @@ def _called(messages, name: str) -> bool:
     )
 
 
-def _delta(name: str, args: dict) -> dict[int, DeltaToolCall]:
+def _delta(name: str, args: dict[str, object]) -> dict[int, DeltaToolCall]:
     return {0: DeltaToolCall(name=name, json_args=json.dumps(args))}
 
 
@@ -168,7 +168,7 @@ class _OverflowsThenAnswers(WrapperModel):
 # --- driving a turn -------------------------------------------------------------------
 
 
-def _run(app, cid, *, model, prompt="open a page", **kwargs):
+def _run(app, cid, *, model, prompt: str | None = "open a page", **kwargs):
     orch = build_chat_orchestrator(
         prompt,
         model=model,
@@ -181,7 +181,7 @@ def _run(app, cid, *, model, prompt="open a page", **kwargs):
     return app.state.runs.submit(kind="chat", owner_id=OPERATOR_ID, orchestrator=orch)
 
 
-async def _turn(app, cid, *, model, prompt="open a page", **kwargs):
+async def _turn(app, cid, *, model, prompt: str | None = "open a page", **kwargs):
     run = _run(app, cid, model=model, prompt=prompt, **kwargs)
     await run.wait()
     return run

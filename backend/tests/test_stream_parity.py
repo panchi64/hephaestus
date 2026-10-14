@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall, FunctionModel
 
@@ -59,7 +60,7 @@ async def _interleaved(messages, info):
         yield "Done."
 
 
-def _event(ev: dict, seq: int) -> dict:
+def _event(ev: dict[str, Any], seq: int) -> dict[str, Any]:
     out = {k: ev[k] for k in _EVENT_KEYS if k in ev}
     # The clock's reading changes every run; what it said is not what parity is about.
     if "result" in out:
@@ -67,7 +68,7 @@ def _event(ev: dict, seq: int) -> dict:
     return {**out, "seq": seq}
 
 
-def _message(msg: dict) -> dict:
+def _message(msg: dict[str, Any]) -> dict[str, Any]:
     tools = [
         {**t, "result": "<result>" if t.get("result") is not None else None} for t in msg["tools"]
     ]

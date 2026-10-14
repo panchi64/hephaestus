@@ -31,10 +31,10 @@ from services.sandbox.legacy_seal import adopt_legacy_archive, partial_marker
 from services.sandbox.session import proxy_env
 from services.sandbox.walk import excluded
 from services.vm.driver import VMError
-from services.vm.platform import WORKSPACE_PROXY
+from services.vm.platform import WORKSPACE_PROXY, PlatformVM
 
 from .conftest import egress_policy
-from .vm_fakes import FakeVM
+from .vm_fakes import FakeVM, as_platform
 from .vm_local import can_confine, local_vm
 
 _EXCLUDES = Settings().sandbox_walk_excludes
@@ -50,17 +50,25 @@ def _vm(tmp_path, **kwargs) -> FakeVM:
     return FakeVM(tmp_path / "sandbox" / "work", **kwargs)
 
 
-def _manager(tmp_path, vault, **overrides) -> SandboxSessionManager:
-    vm = overrides.pop("vm", None) or _vm(tmp_path)
-    opts = dict(
+def _manager(
+    tmp_path,
+    vault: Vault,
+    *,
+    vm: FakeVM | PlatformVM | None = None,
+    idle_ttl_s: float = 1800.0,
+    max_sessions: int = 8,
+) -> SandboxSessionManager:
+    vm = vm or _vm(tmp_path)
+    return SandboxSessionManager(
+        as_platform(vm) if isinstance(vm, FakeVM) else vm,
+        vault,
         egress=egress_policy(tmp_path),
         data_dir=tmp_path,
-        idle_ttl_s=1800.0,
+        idle_ttl_s=idle_ttl_s,
         reap_interval_s=60.0,
         excludes=_EXCLUDES,
+        max_sessions=max_sessions,
     )
-    opts.update(overrides)
-    return SandboxSessionManager(vm, vault, **opts)
 
 
 def _legacy_archive(tmp_path: Path, vault: Vault, files: dict[str, str]) -> bytes:
@@ -79,21 +87,6 @@ def _legacy_archive(tmp_path: Path, vault: Vault, files: dict[str, str]) -> byte
         for item in sorted(staging.iterdir()):
             tar.add(item, arcname=item.name)
     return vault.encrypt_bytes(buf.getvalue())
-
-
-def _session(tmp_path, vault, **overrides) -> SandboxSession:
-    """A bare session, built without a manager — the unit under test in the bring-up
-    and teardown cases below."""
-    opts = dict(
-        workspace=tmp_path / "work",
-        sealed=tmp_path / "sealed.tar.enc.gz",
-        egress_dir=tmp_path / "egress",
-        vm=_vm(tmp_path),
-        vault=vault,
-        excludes=(),
-    )
-    opts.update(overrides)
-    return SandboxSession("s1", **opts)
 
 
 # --- naming + exclusion ------------------------------------------------------
@@ -412,6 +405,7 @@ async def test_shutdown_wipes_the_guest_copy_and_revokes_the_credentials(tmp_pat
     vm = _vm(tmp_path)
     session = await _manager(tmp_path, vault, vm=vm).acquire("conv-a")
     await session.run(SandboxSpec(command=["true"]))
+    assert session._credentials is not None
     token = session._credentials.partition(":")[2]
     assert token in vm.gateway._grants
 
@@ -615,7 +609,8 @@ async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown
     tearing down somebody *else's* conversation. Cancelled partway, its guest copy would
     be left out of every map — no sweep can find them and no purge names them."""
     vault = await _vault(tmp_path)
-    manager = _manager(tmp_path, vault, max_sessions=1)
+    vm = _vm(tmp_path)
+    manager = _manager(tmp_path, vault, vm=vm, max_sessions=1)
     displaced = await manager.acquire("conv-a")
     displaced.write_file("notes.txt", b"keep me")
     await displaced.run(SandboxSpec(command=["true"]))
@@ -644,7 +639,7 @@ async def test_a_cancelled_acquire_does_not_abort_another_conversations_teardown
     # The teardown finished on the manager's own task, and the conversation's files
     # were never what it was reclaiming.
     assert not displaced.is_warm
-    assert ("wipe", displaced.key) in manager._vm.events
+    assert ("wipe", displaced.key) in vm.events
     assert displaced.read_file("notes.txt") == b"keep me"
     assert set(manager._sessions) == {safe_key("conv-b")}
 
@@ -875,10 +870,17 @@ async def test_stopped_tokens_are_pruned_after_their_ttl(tmp_path, monkeypatch):
 _CHILD = "conv-parent#d1"
 
 
-async def _forked(tmp_path, vault, **overrides):
+async def _forked(
+    tmp_path,
+    vault: Vault,
+    *,
+    vm: FakeVM | None = None,
+    idle_ttl_s: float = 1800.0,
+    max_sessions: int = 8,
+):
     """A parent mid-session — files, and an environment that cost minutes — and the
     fork taken out of it."""
-    manager = _manager(tmp_path, vault, **overrides)
+    manager = _manager(tmp_path, vault, vm=vm, idle_ttl_s=idle_ttl_s, max_sessions=max_sessions)
     parent = await manager.acquire("conv-parent")
     parent.ensure_workspace()
     (parent.workspace / "notes.txt").write_text("what the parent wrote")

@@ -13,6 +13,7 @@ from pydantic_ai.usage import RunUsage
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
+from runs import Run, RunStream
 from services.sandbox import SandboxError, SandboxSessionManager
 from services.skills import SkillStore
 from services.skills.store import SkillCatalogEntry
@@ -56,10 +57,6 @@ class FakeSessions:
         return self.session
 
 
-class FakeRun:
-    id = "run-1"
-
-
 async def _store() -> SkillStore:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
@@ -73,35 +70,28 @@ def _tool(name: str):
     return toolset.tools[name].function
 
 
-def _ctx(deps: RunDeps):
-    class Ctx:
-        pass
-
-    ctx = Ctx()
-    ctx.deps = deps
-    return ctx
+def _ctx(deps: RunDeps) -> RunContext[RunDeps]:
+    return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
-def _deps(skills: SkillStore | None = None, sandbox_sessions=None, **overrides) -> RunDeps:
+def _deps(skills: SkillStore | None = None, sandbox_sessions: object = None) -> RunDeps:
     # The bag keys by concrete type; fakes register under the class the tools resolve.
     caps = ServiceContainer()
     if skills is not None:
         caps.add(skills, as_type=SkillStore)
     if sandbox_sessions is not None:
         caps.add(sandbox_sessions, as_type=SandboxSessionManager)
-    base = {"run": FakeRun(), "owner_id": OWNER, "conversation_id": "conv-1", "caps": caps}
-    base.update(overrides)
-    return RunDeps(**base)
+    run = Run(id="run-1", kind="chat", owner_id=OWNER, stream=RunStream())
+    return RunDeps(run=run, owner_id=OWNER, conversation_id="conv-1", caps=caps)
 
 
-async def _published(store: SkillStore, **overrides):
-    payload = {
-        "name": "release-notes",
-        "description": "Draft release notes from a changelog.",
-        "body": "# Release notes\n\nCollect the merged PRs.",
-    }
-    payload.update(overrides)
-    view = await store.create(OWNER, **payload)
+async def _published(store: SkillStore, *, body: str = "# Release notes\n\nCollect the merged PRs."):
+    view = await store.create(
+        OWNER,
+        name="release-notes",
+        description="Draft release notes from a changelog.",
+        body=body,
+    )
     return await store.set_published(OWNER, view.id, True)
 
 

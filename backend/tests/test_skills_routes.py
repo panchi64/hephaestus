@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from ._helpers import client_app
@@ -17,7 +19,7 @@ def _bundle_zip() -> bytes:
     )
 
 
-async def _create(client, **overrides) -> dict:
+async def _create(client, **overrides: str) -> dict[str, Any]:
     payload = {
         "name": "release-notes",
         "description": "Draft release notes from a changelog.",

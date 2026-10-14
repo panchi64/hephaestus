@@ -10,7 +10,7 @@ must have no plaintext left *after*.
 
 from __future__ import annotations
 
-from sqlmodel import Session, select
+from sqlmodel import Session, SQLModel, col, select
 
 from app import _backfill_sealed_columns
 from core.db import in_session
@@ -21,9 +21,11 @@ from routes.deps import OPERATOR_ID
 from ._helpers import client_app
 
 
-async def _row(engine, model_cls, row_id):
-    def work(session: Session):
-        return session.get(model_cls, row_id)
+async def _row[M: SQLModel](engine, model_cls: type[M], row_id: str) -> M:
+    def work(session: Session) -> M:
+        row = session.get(model_cls, row_id)
+        assert row is not None
+        return row
 
     return await in_session(engine, work)
 
@@ -192,8 +194,10 @@ async def test_no_cleartext_titles_remain_after_a_boot_with_a_mixed_database():
 
         await _backfill_sealed_columns(engine, app.state.vault)
 
-        def remaining(session: Session) -> list[str]:
-            rows = session.exec(select(Conversation).where(Conversation.title.is_not(None))).all()
+        def remaining(session: Session) -> list[str | None]:
+            rows = session.exec(
+                select(Conversation).where(col(Conversation.title).is_not(None))
+            ).all()
             return [r.title for r in rows]
 
         assert await in_session(engine, remaining) == []

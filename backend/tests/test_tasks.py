@@ -14,7 +14,7 @@ from pydantic_ai_harness.planning import TaskStatus
 from core.db import init_db, make_engine
 from core.vault import Vault
 from models.task_list import ConversationTaskList
-from runs import Run, RunStream, TasksUpdated
+from runs import EventBody, Run, RunStream, TasksUpdated
 from services.task_list import ConversationTasks, ConversationTaskStore
 
 OWNER = "operator"
@@ -39,7 +39,7 @@ def _items(*contents: str) -> list[TaskItem]:
     ]
 
 
-def _bodies(run: Run) -> list:
+def _bodies(run: Run) -> list[EventBody]:
     return [e.body for e in run.stream.replay()]
 
 
@@ -243,9 +243,10 @@ async def test_the_catalog_lists_the_same_names_the_model_is_offered(tasks):
     """The operator's settings list is derived from the toolset's static `tools` registry,
     and the enabled gate matches on the offered name. If the two spelled the category
     differently, switching a tool off in settings would withhold nothing."""
-    from tools.tasks import tasks_toolset
+    from tools.tasks import _ConversationTaskToolset, tasks_toolset
 
     toolset = tasks_toolset()
+    assert isinstance(toolset, _ConversationTaskToolset)
     _, ctx = await _toolset_ctx(tasks, "conv-catalog")
     offered = await toolset.get_tools(ctx)
     assert set(toolset.tools) == set(offered)

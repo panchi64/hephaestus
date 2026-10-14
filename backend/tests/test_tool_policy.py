@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import cast
 
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
@@ -21,6 +22,7 @@ import routes.chat.submit as chat_routes
 import routes.runs as runs_routes
 from core.db import init_db, make_engine
 from runs import Run, RunStream
+from services.offline import OfflineModeService
 from services.registry import ModelRegistry
 from services.settings_store import DISABLED_TOOLS_KEY, SettingsStore
 from services.tool_policy import (
@@ -257,10 +259,17 @@ class _StubOffline:
         return self._disabled
 
 
+def stub_offline(disabled: frozenset[str]) -> OfflineModeService:
+    """The stub in the shape `effective_disabled_tools` is annotated to take; it reads only
+    `web_tools_disabled`, and the real service needs a live monitor to build."""
+    stub: object = _StubOffline(disabled)
+    return cast(OfflineModeService, stub)
+
+
 async def test_operator_and_offline_sets_union_rather_than_overwrite():
     store = _store()
     await set_tool_enabled(store, OWNER, "builtin_now", False)
-    offline = _StubOffline(frozenset({"web_search", "web_fetch"}))
+    offline = stub_offline(frozenset({"web_search", "web_fetch"}))
     disabled = await effective_disabled_tools(store, offline, OWNER)
     assert disabled == {
         "builtin_now",
@@ -270,13 +279,13 @@ async def test_operator_and_offline_sets_union_rather_than_overwrite():
 
 
 async def test_the_workspace_kind_is_not_folded_into_the_union():
-    disabled = await effective_disabled_tools(_store(), _StubOffline(frozenset()), OWNER)
+    disabled = await effective_disabled_tools(_store(), stub_offline(frozenset()), OWNER)
     assert not disabled & {"code_execute", "shell_run_command"}
 
 
 async def test_offline_alone_still_applies_with_no_operator_choices():
     store = _store()
-    offline = _StubOffline(frozenset({"web_search"}))
+    offline = stub_offline(frozenset({"web_search"}))
     disabled = await effective_disabled_tools(store, offline, OWNER)
     assert disabled == {"web_search"}
 
@@ -285,7 +294,7 @@ async def test_a_model_that_cannot_see_is_not_offered_an_image_tool():
     # `browse_screenshot` answers with image content: a text-only model spends the call
     # and learns nothing, so it is withheld — and offered again the moment it can see.
     store = _store()
-    offline = _StubOffline(frozenset())
+    offline = stub_offline(frozenset())
     blind = await effective_disabled_tools(store, offline, OWNER, vision=False)
     sighted = await effective_disabled_tools(store, offline, OWNER, vision=True)
     assert "browse_screenshot" in blind
