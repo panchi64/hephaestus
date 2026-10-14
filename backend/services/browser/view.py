@@ -13,18 +13,25 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator, Callable
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Literal, cast
 
 from playwright.async_api import Page
 from pydantic import BaseModel, Field
 
-from .live import LiveBrowser
+from services.shapes import as_dict
+
+from .live import CdpSession, LiveBrowser
 
 logger = logging.getLogger(__name__)
 
 #: How often the stream checks whether the session moved to another tab or ended.
 _POLL_S = 0.5
-_SCREENCAST = {"format": "jpeg", "quality": 70, "maxWidth": 1600, "maxHeight": 1200}
+_SCREENCAST: dict[str, object] = {
+    "format": "jpeg",
+    "quality": 70,
+    "maxWidth": 1600,
+    "maxHeight": 1200,
+}
 _NAVIGATION_TIMEOUT_MS = 30_000
 
 
@@ -80,36 +87,36 @@ ViewInput = Annotated[
 _MOUSE_TYPES = {"down": "mousePressed", "up": "mouseReleased", "move": "mouseMoved"}
 
 
-async def frames(live: LiveBrowser, alive: Callable[[], bool]) -> AsyncIterator[dict[str, Any]]:
+async def frames(live: LiveBrowser, alive: Callable[[], bool]) -> AsyncIterator[dict[str, object]]:
     """Screencast frames of the session's current page while ``alive()``, following the
     agent from tab to tab; a ``closed`` event when the session ends."""
-    newest: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1)
-    acks: set[asyncio.Task[Any]] = set()
-    page: Any = None
-    cdp: Any = None
+    newest: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=1)
+    acks: set[asyncio.Task[object]] = set()
+    page: Page | None = None
+    cdp: CdpSession | None = None
     title = ""
 
-    def on_frame(session: Any, params: dict[str, Any]) -> None:
+    def on_frame(session: CdpSession, params: dict[str, object]) -> None:
         # Acknowledged on the session it came from, which may still be starting.
         ack = asyncio.ensure_future(
             session.send("Page.screencastFrameAck", {"sessionId": params["sessionId"]})
         )
         acks.add(ack)
         ack.add_done_callback(_settled(acks))
-        meta = params.get("metadata", {})
-        frame = {
+        meta = as_dict(params.get("metadata", {})) or {}
+        frame: dict[str, object] = {
             "type": "frame",
             "data": params["data"],
             "width": meta.get("deviceWidth", 0),
             "height": meta.get("deviceHeight", 0),
         }
         with contextlib.suppress(asyncio.QueueEmpty):
-            newest.get_nowait()
+            _ = newest.get_nowait()
         newest.put_nowait(frame)
 
     try:
         while alive():
-            current = live.session.page
+            current = live.page
             if current is not page:
                 await _stop(cdp)
                 cdp, page = None, current
@@ -119,7 +126,7 @@ async def frames(live: LiveBrowser, alive: Callable[[], bool]) -> AsyncIterator[
                 frame = await asyncio.wait_for(newest.get(), _POLL_S)
             except TimeoutError:
                 continue
-            url = getattr(page, "url", "") or ""
+            url = (page.url if page is not None else "") or ""
             with contextlib.suppress(Exception):
                 if page is not None:
                     title = await page.title()
@@ -129,61 +136,67 @@ async def frames(live: LiveBrowser, alive: Callable[[], bool]) -> AsyncIterator[
     finally:
         await _stop(cdp)
         for ack in acks:
-            ack.cancel()
+            _ = ack.cancel()
 
 
-async def _start(page: Any, on_frame: Callable[[Any, dict[str, Any]], None]) -> Any:
+async def _new_cdp(page: Page) -> CdpSession:
+    """A CDP session on ``page``, typed as the slice this module drives."""
+    return cast("CdpSession", await page.context.new_cdp_session(page))
+
+
+async def _start(
+    page: Page, on_frame: Callable[[CdpSession, dict[str, object]], None]
+) -> CdpSession | None:
     try:
-        cdp = await page.context.new_cdp_session(page)
+        cdp = await _new_cdp(page)
         cdp.on("Page.screencastFrame", lambda params: on_frame(cdp, params))
-        await cdp.send("Page.startScreencast", _SCREENCAST)
+        _ = await cdp.send("Page.startScreencast", _SCREENCAST)
     except Exception:
         logger.debug("browser view: could not start a screencast", exc_info=True)
         return None
     return cdp
 
 
-async def _stop(cdp: Any) -> None:
+async def _stop(cdp: CdpSession | None) -> None:
     if cdp is None:
         return
     with contextlib.suppress(Exception):
-        await cdp.send("Page.stopScreencast")
+        _ = await cdp.send("Page.stopScreencast")
     with contextlib.suppress(Exception):
         await cdp.detach()
 
 
-def _settled(tasks: set[asyncio.Task[Any]]) -> Callable[[asyncio.Task[Any]], None]:
-    def done(task: asyncio.Task[Any]) -> None:
+def _settled(tasks: set[asyncio.Task[object]]) -> Callable[[asyncio.Task[object]], None]:
+    def done(task: asyncio.Task[object]) -> None:
         tasks.discard(task)
         if not task.cancelled():
-            task.exception()
+            _ = task.exception()
 
     return done
 
 
 async def dispatch(live: LiveBrowser, event: ViewInput) -> None:
     """Replay one operator input on the session's current page."""
-    current = live.session.page
-    if current is None:
+    page = live.page
+    if page is None:
         return
-    page = cast(Page, current)
     live.touch()
     match event:
         case NavigateInput(url=url):
-            await page.goto(url, wait_until="commit", timeout=_NAVIGATION_TIMEOUT_MS)
+            _ = await page.goto(url, wait_until="commit", timeout=_NAVIGATION_TIMEOUT_MS)
         case HistoryInput(action="back"):
-            await page.go_back(wait_until="commit", timeout=_NAVIGATION_TIMEOUT_MS)
+            _ = await page.go_back(wait_until="commit", timeout=_NAVIGATION_TIMEOUT_MS)
         case HistoryInput(action="forward"):
-            await page.go_forward(wait_until="commit", timeout=_NAVIGATION_TIMEOUT_MS)
+            _ = await page.go_forward(wait_until="commit", timeout=_NAVIGATION_TIMEOUT_MS)
         case HistoryInput():
-            await page.reload(wait_until="commit", timeout=_NAVIGATION_TIMEOUT_MS)
+            _ = await page.reload(wait_until="commit", timeout=_NAVIGATION_TIMEOUT_MS)
         case _:
             cdp = await _input_session(live, page)
             method, params = _input_command(event)
-            await cdp.send(method, params)
+            _ = await cdp.send(method, params)
 
 
-def _input_command(event: ViewInput) -> tuple[str, dict[str, Any]]:
+def _input_command(event: ViewInput) -> tuple[str, dict[str, object]]:
     match event:
         case MouseInput():
             return "Input.dispatchMouseEvent", {
@@ -205,7 +218,7 @@ def _input_command(event: ViewInput) -> tuple[str, dict[str, Any]]:
             }
         case KeyInput():
             kind = "keyUp" if event.action == "up" else ("keyDown" if event.text else "rawKeyDown")
-            params: dict[str, Any] = {
+            params: dict[str, object] = {
                 "type": kind,
                 "key": event.key,
                 "code": event.code,
@@ -219,14 +232,15 @@ def _input_command(event: ViewInput) -> tuple[str, dict[str, Any]]:
             return "Input.dispatchKeyEvent", params
         case TextInput():
             return "Input.insertText", {"text": event.text}
-    raise ValueError(f"not a CDP input event: {event.type}")
+        case NavigateInput() | HistoryInput():
+            raise ValueError(f"not a CDP input event: {event.type}")
 
 
-async def _input_session(live: LiveBrowser, page: Any) -> Any:
+async def _input_session(live: LiveBrowser, page: Page) -> CdpSession:
     """One CDP session per page for input, kept while the session stays on that page."""
     held = live.input_channel
     if held is not None and held[0] is page:
         return held[1]
-    cdp = await page.context.new_cdp_session(page)
+    cdp = await _new_cdp(page)
     live.input_channel = (page, cdp)
     return cdp

@@ -33,14 +33,14 @@ import logging
 import secrets
 import time
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 from playwright.async_api import StorageState
 from pydantic_ai_harness.playwright import EgressPolicy
 
 from core.periodic import PeriodicTask
 
-from .live import ControlledBrowserSession, LiveBrowser, Profile
+from .live import ControlledBrowserSession, LiveBrowser, Profile, context_of
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +73,14 @@ class BrowserSessionManager:
         max_live: int,
         state_dir: Path | None = None,
     ) -> None:
-        self._host = host
-        self._idle_ttl = idle_ttl_s
-        self._max_live = max(1, max_live)
-        self.profile = Profile(state_dir / "profile.json" if state_dir is not None else None)
+        self._host: BrowserHost = host
+        self._idle_ttl: float = idle_ttl_s
+        self._max_live: int = max(1, max_live)
+        self.profile: Profile = Profile(
+            state_dir / "profile.json" if state_dir is not None else None
+        )
         self._sessions: dict[str, LiveBrowser] = {}
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
         # Per-conversation creation locks. Tool calls within one model response run
         # concurrently, so two browse tools can race the first acquire of a thread; without
         # this they would each attach a session and one would be silently orphaned.
@@ -87,7 +89,7 @@ class BrowserSessionManager:
         # the next tool call reports it instead of quietly starting a replacement. Cleared
         # the moment a session attaches again, which only something explicit can cause.
         self._closed: set[str] = set()
-        self._reaper = PeriodicTask(
+        self._reaper: PeriodicTask = PeriodicTask(
             "browser-reaper",
             interval_s=reap_interval_s,
             work=self._sweep,
@@ -161,7 +163,7 @@ class BrowserSessionManager:
             cdp_url=cdp_url,
             storage_state=cast(StorageState | None, loaded),
         )
-        await session.__aenter__()
+        _ = await session.__aenter__()
         try:
             page = await session.ensure_page()
             await self._prepare(page)
@@ -177,11 +179,11 @@ class BrowserSessionManager:
             self.profile,
             # The context itself, so the session counts tabs the harness never wired
             # (ones the operator opened). See `live.LiveBrowser.open_pages`.
-            getattr(page, "context", None),
+            context_of(page),
             loaded,
         )
 
-    async def _prepare(self, page: Any) -> None:
+    async def _prepare(self, page: object) -> None:
         """Bring a freshly-attached page up to the same disguise every fetched page gets.
 
         Best-effort: a page that browses without the automation masking is worse at passing
@@ -237,7 +239,7 @@ class BrowserSessionManager:
             )
             evicted = ordered[: len(self._sessions) - self._max_live]
             for live in evicted:
-                self._sessions.pop(live.key, None)
+                _ = self._sessions.pop(live.key, None)
         for live in evicted:
             logger.info("browser: evicted the session for %s (over the live cap)", live.key)
             await live.teardown()
@@ -302,7 +304,7 @@ class BrowserSessionManager:
                 elif live.idle_seconds(now) >= self._idle_ttl:
                     reasons.append((live, "idle"))
             for live, reason in reasons:
-                self._sessions.pop(live.key, None)
+                _ = self._sessions.pop(live.key, None)
                 if reason == "closed":
                     self._closed.add(live.key)
             self._prune_creation_locks()

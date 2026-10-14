@@ -11,7 +11,9 @@ reset); this only waits for it and hands out where to attach.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import cast
+
+from playwright.async_api import Page
 
 from services.webfetch import ManagedBrowser
 from services.webfetch.stealth import INIT_SCRIPT
@@ -19,8 +21,8 @@ from services.webfetch.stealth import INIT_SCRIPT
 
 class VMBrowser:
     def __init__(self, browser: ManagedBrowser, *, launch_timeout_s: float) -> None:
-        self._browser = browser
-        self._launch_timeout_s = launch_timeout_s
+        self._browser: ManagedBrowser = browser
+        self._launch_timeout_s: float = launch_timeout_s
 
     @property
     def cdp_url(self) -> str | None:
@@ -30,11 +32,15 @@ class VMBrowser:
         """Where to attach, waiting for a bring-up in progress; ``None`` when the browser
         is not coming up (no VM, offline, or disabled)."""
         if self.cdp_url is None:
-            await self._browser.wait_available(self._launch_timeout_s)
+            _ = await self._browser.wait_available(self._launch_timeout_s)
         return self.cdp_url
 
-    async def apply_stealth(self, page: Any) -> None:
+    async def apply_stealth(self, page: object) -> None:
         """The same disguise every fetched page gets: the automation tells masked, and
-        the headless shell's user agent and client hints replaced with a desktop one's."""
-        await page.add_init_script(INIT_SCRIPT)
-        await self._browser.apply_stealth(page)
+        the headless shell's user agent and client hints replaced with a desktop one's.
+
+        ``page`` is a Playwright page; the session harness hands it over as a structural
+        type that omits the methods used here."""
+        real = cast("Page", page)
+        _ = await real.add_init_script(INIT_SCRIPT)
+        await self._browser.apply_stealth(real)

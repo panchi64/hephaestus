@@ -22,10 +22,10 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
+from pydantic import TypeAdapter
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
 
@@ -40,6 +40,8 @@ from services.external_policy import ExternalPolicyStore, ToolPolicy, tool_slug
 from .presets import PRESETS, IntegrationAction, IntegrationPreset, action, preset
 
 logger = logging.getLogger(__name__)
+
+_CREDENTIALS = TypeAdapter(dict[str, object])
 
 STATUS_OK = "ok"
 STATUS_UNTESTED = "untested"
@@ -106,11 +108,11 @@ class IntegrationService:
         http_client: httpx.AsyncClient | None = None,
         timeout_s: float = DEFAULT_TIMEOUT_S,
     ) -> None:
-        self._db = db_engine
-        self._vault = vault
-        self._policy = policy
-        self._http = http_client
-        self._timeout = timeout_s
+        self._db: Engine = db_engine
+        self._vault: Vault = vault
+        self._policy: ExternalPolicyStore = policy
+        self._http: httpx.AsyncClient | None = http_client
+        self._timeout: float = timeout_s
 
     @property
     def policy(self) -> ExternalPolicyStore:
@@ -147,7 +149,7 @@ class IntegrationService:
         *,
         name: str | None = None,
         base_url: str | None = None,
-        credentials: dict[str, Any] | None = None,
+        credentials: dict[str, object] | None = None,
     ) -> IntegrationView:
         """Instantiate a connector from a preset, sealing whatever credential it was
         given (`INTEG-1`). Nothing is tested here — the operator decides when to prove the
@@ -181,7 +183,7 @@ class IntegrationService:
         *,
         name: str | None = None,
         base_url: str | None = None,
-        credentials: dict[str, Any] | None = None,
+        credentials: dict[str, object] | None = None,
         enabled: bool | None = None,
     ) -> IntegrationView:
         """Amend a connector. Changing the base URL or the credential invalidates the
@@ -262,7 +264,7 @@ class IntegrationService:
         action_name: str,
         *,
         params: dict[str, str] | None = None,
-        body: dict[str, Any] | None = None,
+        body: dict[str, object] | None = None,
     ) -> IntegrationResponse:
         """Perform one of the preset's actions on the operator's behalf (`INTEG-2`).
 
@@ -304,7 +306,7 @@ class IntegrationService:
         path: str,
         method: str,
         query: dict[str, str],
-        body: dict[str, Any] | None,
+        body: dict[str, object] | None,
     ) -> IntegrationResponse:
         url = _join(row.base_url, path)
         # The model supplies path parameters, so the *resolved* URL is what must be
@@ -340,7 +342,7 @@ class IntegrationService:
 
     @staticmethod
     def _auth_headers(
-        found: IntegrationPreset, credentials: dict[str, Any] | None
+        found: IntegrationPreset, credentials: dict[str, object] | None
     ) -> dict[str, str]:
         """The preset decides *where* a credential goes; the operator supplied *what*."""
         if not credentials:
@@ -420,22 +422,21 @@ class IntegrationService:
 
         await in_session(self._db, work)
 
-    def _seal(self, payload: dict[str, Any] | None) -> str | None:
+    def _seal(self, payload: dict[str, object] | None) -> str | None:
         if not payload:
             return None
         return self._vault.encrypt_str(json.dumps(payload))
 
-    def _open(self, sealed: str | None) -> dict[str, Any] | None:
+    def _open(self, sealed: str | None) -> dict[str, object] | None:
         if not sealed:
             return None
         try:
-            parsed = json.loads(self._vault.decrypt_str(sealed))
+            return _CREDENTIALS.validate_json(self._vault.decrypt_str(sealed))
         except VaultLocked:
             return None
         except TypeError, ValueError:
             logger.warning("integrations: stored credentials could not be read")
             return None
-        return parsed if isinstance(parsed, dict) else None
 
     @staticmethod
     def _view(row: Integration, policies: dict[str, ToolPolicy]) -> IntegrationView | None:
@@ -486,7 +487,7 @@ def _fill_path(chosen: IntegrationAction, params: dict[str, str]) -> tuple[str, 
         token = "{" + key + "}"
         if token in path:
             path = path.replace(token, quote(str(value), safe=""))
-            remaining.pop(key, None)
+            _ = remaining.pop(key, None)
     if "{" in path:
         missing = path[path.index("{") + 1 : path.index("}")] if "}" in path else path
         raise InvalidInputError(f"action {chosen.name!r} needs a {missing!r} parameter")
