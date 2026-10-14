@@ -2,60 +2,92 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pathlib import Path
+from typing import override
 
+from core.db import make_engine
 from core.exceptions import DegradedCapabilityError, NotFoundError
+from core.vault import Vault
+from services import llm
+from services.conversations import ConversationStore
+from services.corpus.chunk_store import CorpusChunkStore
+from services.embeddings import EmbeddingBatch
+from services.memory import MemoryStore
+from services.registry import ModelRegistry
 from services.reindex import EmbeddingReindexer
 
 OWNER = "operator"
 
 
-@dataclass
-class _Spec:
-    model: str
+class _NoEmbedder:
+    async def is_available(self, owner_id: str) -> bool:
+        return False
+
+    async def embed(self, owner_id: str, texts: list[str]) -> EmbeddingBatch:
+        raise DegradedCapabilityError("no embedder in this test")
 
 
-class _Registry:
-    def __init__(self, *, spec: _Spec | None = None, exc: Exception | None = None) -> None:
+def _db_args():
+    return make_engine("sqlite:///:memory:"), Vault(Path("unused-keyfile.json"))
+
+
+class _Registry(ModelRegistry):
+    def __init__(self, *, spec: llm.EndpointSpec | None = None, exc: Exception | None = None) -> None:
+        super().__init__(*_db_args())
         self._spec = spec
         self._exc = exc
 
-    async def resolve_embedding_spec(self, owner_id: str) -> _Spec:
+    @override
+    async def resolve_embedding_spec(self, owner_id: str) -> llm.EndpointSpec:
         if self._exc is not None:
             raise self._exc
         assert self._spec is not None
         return self._spec
 
 
-class _Memory:
+class _Memory(MemoryStore):
     def __init__(self, n: int = 0) -> None:
+        super().__init__(*_db_args(), _NoEmbedder())
         self._n = n
         self.seen_model: str | None = None
 
-    async def reembed(self, owner_id: str, *, current_model=None, batch_size: int = 64) -> int:
-        self.seen_model = current_model
-        return self._n
-
-
-class _Convos:
-    def __init__(self, n: int = 0) -> None:
-        self._n = n
-        self.seen_model: str | None = None
-
-    async def reindex_embeddings(
-        self, owner_id: str, *, current_model=None, batch_size: int = 64
+    @override
+    async def reembed(
+        self, owner_id: str, *, current_model: str | None = None, batch_size: int = 64
     ) -> int:
         self.seen_model = current_model
         return self._n
 
 
-class _Chunks:
+class _Convos(ConversationStore):
     def __init__(self, n: int = 0) -> None:
+        super().__init__(*_db_args())
         self._n = n
         self.seen_model: str | None = None
 
+    @override
+    async def reindex_embeddings(
+        self, owner_id: str, *, current_model: str | None = None, batch_size: int = 64
+    ) -> int:
+        self.seen_model = current_model
+        return self._n
+
+
+class _Chunks(CorpusChunkStore):
+    def __init__(self, n: int = 0) -> None:
+        super().__init__(*_db_args(), _NoEmbedder())
+        self._n = n
+        self.seen_model: str | None = None
+
+    @override
     async def reembed(
-        self, owner_id: str, source_id=None, *, current_model=None, batch_size: int = 64
+        self,
+        owner_id: str,
+        source_id: str | None = None,
+        *,
+        source_kind: str | None = None,
+        current_model: str | None = None,
+        batch_size: int = 64,
     ) -> int:
         self.seen_model = current_model
         return self._n
@@ -63,7 +95,7 @@ class _Chunks:
 
 async def test_reindex_reports_counts_and_passes_current_model():
     mem, conv, chunks = _Memory(3), _Convos(5), _Chunks(7)
-    reindexer = EmbeddingReindexer(_Registry(spec=_Spec("embed-m")), mem, conv, chunks)
+    reindexer = EmbeddingReindexer(_Registry(spec=llm.EndpointSpec(base_url="http://x/v1", model="embed-m")), mem, conv, chunks)
     await reindexer._run(OWNER)
 
     status = reindexer.status()

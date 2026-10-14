@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pydantic_ai.settings import ModelSettings
+
 from services import reasoning
 from services.reasoning import ModelDescriptor, disable_thinking
 
@@ -35,9 +37,9 @@ def test_unknown_model_returns_empty_settings():
 
 
 def test_register_strategy_extends_the_registry():
-    sentinel = {"extra_body": {"disable_reasoning": True}}
+    sentinel: ModelSettings = {"extra_body": {"disable_reasoning": True}}
 
-    def mylab(d: ModelDescriptor):
+    def mylab(d: ModelDescriptor) -> ModelSettings | None:
         return sentinel if d.model_id.startswith("mylab-") else None
 
     original = list(reasoning._strategies)
@@ -51,9 +53,9 @@ def test_register_strategy_extends_the_registry():
 
 
 def test_register_first_takes_priority_over_builtins():
-    override = {"extra_body": {"custom": True}}
+    override: ModelSettings = {"extra_body": {"custom": True}}
 
-    def qwen_override(d: ModelDescriptor):
+    def qwen_override(d: ModelDescriptor) -> ModelSettings | None:
         return override if "qwen" in d.model_id.lower() else None
 
     original = list(reasoning._strategies)

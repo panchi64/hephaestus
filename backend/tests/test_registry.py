@@ -256,7 +256,7 @@ async def test_embedding_role_persists_the_picked_model(monkeypatch):
     reg = await _registry()
     ep = await reg.create_endpoint(OWNER, name="multi", base_url="http://x/v1", model="default")
 
-    seen: dict = {}
+    seen: dict[str, str] = {}
 
     async def _record_probe(spec):
         seen["model"] = spec.model

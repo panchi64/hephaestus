@@ -17,12 +17,15 @@ from __future__ import annotations
 
 from datetime import timedelta
 from types import SimpleNamespace
+from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.profiles.openai import OpenAIModelProfile
 
 import services.providers.anthropic as anthropic_provider
 import services.providers.openai_compat as openai_compat
@@ -30,6 +33,10 @@ from services import llm
 from services.providers import get_provider
 
 CACHE_KEYS = ("anthropic_cache", "anthropic_cache_instructions", "anthropic_cache_tool_definitions")
+
+
+def _openai_profile(model: Model) -> OpenAIModelProfile:
+    return OpenAIModelProfile(**model.profile)
 
 
 def spec(provider: str = "anthropic", **overrides) -> llm.EndpointSpec:
@@ -49,26 +56,30 @@ class TestSettingsRideOnTheModel:
     async def test_a_models_own_settings_reach_the_request(self):
         """The mechanism the whole design rests on: settings given at construction arrive
         on every request without a single call site mentioning them."""
-        seen: list[dict | None] = []
+        seen: list[dict[str, Any]] = []
 
         def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             seen.append(dict(info.model_settings or {}))
             return ModelResponse(parts=[TextPart("ok")])
 
-        model = FunctionModel(capture, settings={"anthropic_cache": "1h", "temperature": 0.1})
+        model = FunctionModel(
+            capture, settings=AnthropicModelSettings(anthropic_cache="1h", temperature=0.1)
+        )
         await Agent(model).run("hi")
         assert seen[0]["anthropic_cache"] == "1h"
 
     async def test_a_callers_setting_wins_over_the_models(self):
         """A standing default is a default, not a ceiling — otherwise the reasoning-off
         pass and the summarizer's own budgets could be silently overruled by a lab."""
-        seen: list[dict | None] = []
+        seen: list[dict[str, Any]] = []
 
         def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             seen.append(dict(info.model_settings or {}))
             return ModelResponse(parts=[TextPart("ok")])
 
-        model = FunctionModel(capture, settings={"temperature": 0.1, "anthropic_cache": "5m"})
+        model = FunctionModel(
+            capture, settings=AnthropicModelSettings(temperature=0.1, anthropic_cache="5m")
+        )
         await Agent(model).run("hi", model_settings={"temperature": 0.9})
         assert seen[0]["temperature"] == 0.9
         # …and the setting the caller said nothing about is still there.
@@ -130,7 +141,9 @@ class TestTheAnthropicCacheBreakpoints:
     def test_the_default_ttl_is_the_messages_apis_own(self):
         """The operator's lever defaults to the tier the Messages API itself uses, so an
         installation that never touches it caches exactly as Anthropic intends."""
-        assert all(llm.build_model(spec()).settings.get(key) == "5m" for key in CACHE_KEYS)
+        settings = llm.build_model(spec()).settings
+        assert settings is not None
+        assert all(settings.get(key) == "5m" for key in CACHE_KEYS)
 
 
 # --- the hook itself -------------------------------------------------------
@@ -209,7 +222,8 @@ class TestTheOpenAICompatibleCacheField:
         An operator switches retention off because their server rejects unknown fields, and a
         per-request setting from anywhere else would reach it just the same."""
         monkeypatch.setattr(openai_compat, "get_settings", _retention("off"))
-        profile = llm.build_model(local()).profile
+        profile = _openai_profile(llm.build_model(local()))
+        assert "openai_unsupported_model_settings" in profile
         assert set(profile["openai_unsupported_model_settings"]) == {
             "openai_prompt_cache_key",
             "openai_prompt_cache_options",
@@ -218,7 +232,9 @@ class TestTheOpenAICompatibleCacheField:
 
     def test_retention_on_declares_nothing_unsupported(self, monkeypatch):
         monkeypatch.setattr(openai_compat, "get_settings", _retention("in_memory"))
-        assert not llm.build_model(local()).profile["openai_unsupported_model_settings"]
+        profile = _openai_profile(llm.build_model(local()))
+        assert "openai_unsupported_model_settings" in profile
+        assert not profile["openai_unsupported_model_settings"]
 
     def test_this_adapter_never_sends_a_cache_key_or_breakpoints(self, monkeypatch):
         """Pinned with the reason, so a contributor adding either has to argue with it.
@@ -243,7 +259,8 @@ class TestTheOpenAICompatibleCacheField:
         good for caching."""
         for value in ("off", "24h"):
             monkeypatch.setattr(openai_compat, "get_settings", _retention(value))
-            profile = llm.build_model(local()).profile
+            profile = _openai_profile(llm.build_model(local()))
+            assert "openai_chat_supports_multiple_system_messages" in profile
             assert profile["openai_chat_supports_multiple_system_messages"] is False
 
     def test_a_fallback_chain_keeps_the_setting_on_every_member(self, monkeypatch):

@@ -15,11 +15,13 @@ regenerate that writes the question again, a verifier correction dropping the wr
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 
 from pydantic_ai import FunctionToolset, ModelRequest, ModelResponse, TextPart, ToolApproved
-from pydantic_ai.messages import UserPromptPart
+from pydantic_ai.messages import UserContent, UserPromptPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
+from sqlalchemy import Engine
 
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
 from agent.finalize import finalize
@@ -35,7 +37,7 @@ from services.conversations import ConversationStore
 from ._helpers import client_app
 
 
-async def _fresh_store(tmp_path) -> tuple[ConversationStore, object]:
+async def _fresh_store(tmp_path) -> tuple[ConversationStore, Engine]:
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
     engine = make_engine("sqlite:///:memory:")
@@ -47,12 +49,17 @@ def _requests(store: ConversationStore, conversation_id: str) -> list[str]:
     """The text of every operator-prompt node in the tree, on any branch."""
     tree = store._cache[conversation_id]
     return [
-        part.content
+        _text(part.content)
         for node in sorted(tree.nodes.values(), key=lambda n: n.seq)
         if isinstance(node.message, ModelRequest) and not node.compacted
         for part in node.message.parts
         if isinstance(part, UserPromptPart)
     ]
+
+
+def _text(content: str | Sequence[UserContent]) -> str:
+    assert isinstance(content, str)
+    return content
 
 
 def _answering(answer: str) -> TestModel:
@@ -175,7 +182,9 @@ async def test_an_opening_request_carrying_steering_yields_it_as_its_own_request
     rest = after_recorded_prompt([opening, response])
 
     assert [type(m).__name__ for m in rest] == ["ModelRequest", "ModelResponse"]
-    assert rest[0].parts[0].content == "steered in"
+    assert isinstance(rest[0], ModelRequest)
+    steered = rest[0].parts[0]
+    assert isinstance(steered, UserPromptPart) and steered.content == "steered in"
     assert len(after_recorded_prompt([opening])) == 1  # the steering, with no response yet
     assert after_recorded_prompt([ModelRequest(parts=[UserPromptPart("only")])]) == []
     assert after_recorded_prompt([]) == []
@@ -274,7 +283,8 @@ async def test_a_park_holds_the_prompt_and_the_resume_adds_only_the_rest(tmp_pat
 
     # Parked: the prompt is on record and named; nothing else is.
     assert [v.role for v in await store.messages_view(conv)] == ["user"]
-    parked: ParkedTurn = run.parked_payload
+    parked = run.parked_payload
+    assert isinstance(parked, ParkedTurn)
     assert parked.prompt_message_id == run.prompt_message_id is not None
 
     call_id = parked.requests.approvals[0].tool_call_id
@@ -417,7 +427,7 @@ async def test_a_fold_never_swallows_the_prompt_being_answered(tmp_path):
         part.content
         for message in plan.messages
         for part in message.parts
-        if hasattr(part, "content")
+        if isinstance(part, UserPromptPart | TextPart)
     ]
     assert texts == ["earlier", "old"]  # the prompt stays out of the summary
     await store.stop()

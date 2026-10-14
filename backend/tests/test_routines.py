@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from pydantic_ai import ModelResponse, RunContext, ToolCallPart
@@ -28,7 +29,7 @@ from services.routines import (
     parse_schedule,
     upcoming,
 )
-from services.scheduler import SchedulerService
+from services.scheduler import ScheduledTaskView, SchedulerService, TaskRunResult
 from tools.deps import RunDeps
 from tools.routines import routines_toolset
 
@@ -50,7 +51,7 @@ async def store(tmp_path):
     return RoutineStore(engine, vault, AgentCatalog(agents))
 
 
-def _values(**more) -> dict:
+def _values(**more) -> dict[str, Any]:
     return {"title": "Morning brief", "prompt": "Summarize my inbox.", "schedule": DAILY, **more}
 
 
@@ -120,7 +121,14 @@ async def test_a_misread_cron_is_refused_rather_than_saved():
 
 async def test_an_agents_draft_never_fires_until_approved(store):
     draft = await store.create(OWNER, _values(), approved=False)
-    scheduler = SchedulerService(store._engine, store._vault, executor=None, notify=None)
+
+    async def executor(task: ScheduledTaskView) -> TaskRunResult:
+        raise AssertionError("an unapproved draft must not execute")
+
+    async def notify(task: ScheduledTaskView) -> None:
+        raise AssertionError("an unapproved draft must not notify")
+
+    scheduler = SchedulerService(store._engine, store._vault, executor=executor, notify=notify)
     assert await scheduler.fire_now(draft.id) is None
 
     approved = await store.approve(OWNER, draft.id)
@@ -175,7 +183,7 @@ def _ctx(store: RoutineStore, scheduler: _Scheduler, *, approved: bool = False):
     )
 
 
-async def _call(ctx, name: str, args: dict):
+async def _call(ctx, name: str, args: dict[str, Any]):
     toolset = routines_toolset()
     tool = (await toolset.get_tools(ctx))[name]
     return await toolset.call_tool(name, tool.args_validator.validate_python(args), ctx, tool)
@@ -194,7 +202,7 @@ def test_the_compact_schedule_forms_read_and_round_trip():
             parse_schedule(bad, "UTC")
 
 
-def _write(**more) -> dict:
+def _write(**more) -> dict[str, Any]:
     return {
         "title": "Morning brief",
         "prompt": "Summarize my inbox.",
@@ -246,7 +254,7 @@ async def test_running_an_approved_routine_fires_it(store):
 # --- the REST surface and the routine's thread -------------------------------------------
 
 
-def _routine_body(**more) -> dict:
+def _routine_body(**more) -> dict[str, Any]:
     return {
         "kind": "agent",
         "title": "Morning brief",
@@ -291,7 +299,7 @@ async def test_every_run_gets_a_fresh_thread_told_how_the_last_ended(monkeypatch
         assert latest == second["conversationId"]
 
 
-async def _run_and_wait(client, routine_id: str) -> dict:
+async def _run_and_wait(client, routine_id: str) -> dict[str, Any]:
     run_id = (await client.post(f"/tasks/{routine_id}/run_now")).json()["taskRunId"]
     for _ in range(500):
         items = (await client.get(f"/tasks/{routine_id}/runs")).json()["items"]

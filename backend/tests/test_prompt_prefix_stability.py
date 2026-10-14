@@ -23,8 +23,8 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
-from pydantic_ai import InstructionPart, ModelRequest, RunContext
-from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai import InstructionPart, RunContext
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 import agent.factory as factory
@@ -39,7 +39,7 @@ def _capturing() -> tuple[FunctionModel, list[AgentInfo]]:
     """A model that answers immediately and keeps what it was handed."""
     seen: list[AgentInfo] = []
 
-    def respond(_messages: list[ModelRequest], info: AgentInfo) -> ModelResponse:
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen.append(info)
         return ModelResponse(parts=[TextPart("ok")])
 
