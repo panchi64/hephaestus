@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai import (
     BinaryContent,
@@ -37,6 +37,7 @@ from core.serde import jsonable
 from core.text import chars_to_tokens
 from services.answers import ASK_USER_TOOL, AnsweredQuestion, parse_answer, questions_of
 from services.commands.spec import Invocation
+from services.shapes import as_dict, as_list
 from services.subagents.report import direction_body, message_body, report_body, report_prose
 
 if TYPE_CHECKING:  # a type, not a dependency — nothing here calls into the run substrate
@@ -122,22 +123,12 @@ class ToolView:
     parent_tool_call_id: str | None = None
 
 
-def _as_dict(value: object) -> dict[str, object] | None:
-    """``value`` as a string-keyed dict when it is a dict. Keys are not inspected."""
-    return cast("dict[str, object]", value) if isinstance(value, dict) else None
-
-
-def _as_list(value: object) -> list[object] | None:
-    """``value`` as a list when it is a list or tuple."""
-    return list(cast("Sequence[object]", value)) if isinstance(value, list | tuple) else None
-
-
 def _field(item: object, name: str) -> object:
     """One field of a part a script's result recorded — the library object while the
     thread is still in memory, the plain dict it serialized to once it has been stored."""
-    as_dict = _as_dict(item)
-    if as_dict is not None:
-        return as_dict.get(name)
+    recorded = as_dict(item)
+    if recorded is not None:
+        return recorded.get(name)
     value: object = getattr(item, name, None)
     return value
 
@@ -154,11 +145,11 @@ def _script_calls(part: ToolReturnPart) -> list[ToolView]:
     the reason (``tool.failed``), and a reload is the one place that is not kept.
     """
     raw_metadata: object = getattr(part, "metadata", None)
-    metadata = _as_dict(raw_metadata)
+    metadata = as_dict(raw_metadata)
     if metadata is None or not metadata.get("code_mode"):
         return []
-    calls = _as_dict(metadata.get("tool_calls") or {})
-    returns = _as_dict(metadata.get("tool_returns") or {})
+    calls = as_dict(metadata.get("tool_calls") or {})
+    returns = as_dict(metadata.get("tool_returns") or {})
     if calls is None or returns is None:
         return []
     views: list[ToolView] = []
@@ -167,7 +158,7 @@ def _script_calls(part: ToolReturnPart) -> list[ToolView]:
         if isinstance(raw_args, str):
             args: dict[str, object] = ToolCallPart(tool_name="", args=raw_args).args_as_dict()
         else:
-            args = _as_dict(raw_args) or {}
+            args = as_dict(raw_args) or {}
         view = ToolView(
             id=str(call_id),
             name=str(_field(call, "tool_name") or ""),
@@ -471,7 +462,7 @@ def _part_chars(part: ModelRequestPart | ModelResponsePart) -> tuple[int, int]:
     content: object = getattr(part, "content", None)
     if isinstance(content, str):
         return len(content), 0
-    items = _as_list(content)
+    items = as_list(content)
     if items is not None:
         strings = [item for item in items if isinstance(item, str)]
         if len(strings) == len(items):
@@ -538,12 +529,12 @@ def _content_text(content: object) -> str:
         return str(content)
     if isinstance(content, int | float):
         return str(content)
-    mapping = _as_dict(content)
+    mapping = as_dict(content)
     if mapping is not None:
         # Keys as well as values: they are serialized alongside the data and are a real
         # share of a wide row's tokens.
         return " ".join(f"{key} {_content_text(value)}" for key, value in mapping.items())
-    items = _as_list(content)
+    items = as_list(content)
     if items is not None:
         return " ".join(_content_text(item) for item in items)
     return ""
@@ -558,7 +549,7 @@ def flatten_content(content: object) -> str:
     composer is text-only today, so this only guards future multimodal input."""
     if isinstance(content, str):
         return content
-    items = _as_list(content)
+    items = as_list(content)
     if items is not None:
         text = " ".join(part for part in items if isinstance(part, str)).strip()
         if text:
@@ -584,7 +575,7 @@ def tool_images(content: object) -> list[ToolImageView]:
     images: a tool may hand back a PDF or an audio clip for the model to read, and a
     work-log card has nothing useful to do with either. Oversized ones are dropped rather
     than shrunk — re-encoding here would put an image pipeline in a projection."""
-    listed = _as_list(content)
+    listed = as_list(content)
     items = [content] if listed is None else listed
     return [
         ToolImageView(media_type=item.media_type, data=item.base64)
@@ -647,7 +638,7 @@ def _compaction_reason(message: object) -> str | None:
     without the segment, so an absent reason costs nothing; a *wrong* one would tell the
     operator the provider forced a fold they asked for themselves."""
     raw: object = getattr(message, "metadata", None)
-    metadata = _as_dict(raw)
+    metadata = as_dict(raw)
     if metadata is None:
         return None
     reason = metadata.get(COMPACTION_REASON_KEY)
@@ -678,11 +669,11 @@ def stamped_file_refs(message: object) -> list[str]:
     projection every transcript load goes through.
     """
     raw: object = getattr(message, "metadata", None)
-    metadata = _as_dict(raw)
+    metadata = as_dict(raw)
     if metadata is None:
         return []
     refs = metadata.get(FILE_REFS_KEY)
-    items = _as_list(refs)
+    items = as_list(refs)
     if items is None or isinstance(refs, tuple):
         return []
     return [ref for ref in items if isinstance(ref, str) and ref]
@@ -698,10 +689,10 @@ def stamped_command(message: object) -> Invocation | None:
     outcome, not a degraded one.
     """
     raw: object = getattr(message, "metadata", None)
-    metadata = _as_dict(raw)
+    metadata = as_dict(raw)
     if metadata is None:
         return None
-    stamp = _as_dict(metadata.get(COMMAND_KEY))
+    stamp = as_dict(metadata.get(COMMAND_KEY))
     if stamp is None:
         return None
     name = stamp.get("name")

@@ -100,7 +100,7 @@ def normalise_domain(raw: str) -> str:
             f"{raw!r} is not a domain: name one host, or one `*.example.com` wildcard"
         )
     try:
-        ipaddress.ip_address(name)
+        _ = ipaddress.ip_address(name)
     except ValueError:
         pass
     else:
@@ -114,10 +114,11 @@ def normalise_domain(raw: str) -> str:
     # resolver expands but a reader does not see as one. `*.com` is also a pattern the
     # host confinement refuses outright, and that fence has to come up.
     if len(labels) < 2 or labels[-1][0].isdigit():
-        raise InvalidInputError(
+        message = (
             f"{raw!r} does not name a host: an allowlist entry is a domain under a "
             "top-level domain, like `example.com`"
         )
+        raise InvalidInputError(message)
     return f"*.{name}" if wildcard else name
 
 
@@ -125,13 +126,13 @@ class EgressPolicy:
     """What each workspace may reach, and the file the fences read it from."""
 
     def __init__(self, db_engine: Engine, data_dir: Path, global_domains: tuple[str, ...]) -> None:
-        self._db = db_engine
-        self._root = Path(data_dir) / "sandbox" / "egress"
+        self._db: Engine = db_engine
+        self._root: Path = Path(data_dir) / "sandbox" / "egress"
         # Normalised through the same funnel as an approved domain, so the union below
         # can't hold two spellings of one host. A malformed configured domain raises here,
         # at boot: an operator who wrote one believes it is allowed, and silently dropping
         # it would leave them debugging the fence instead of their typo.
-        self._global = frozenset(normalise_domain(d) for d in global_domains)
+        self._global: frozenset[str] = frozenset(normalise_domain(d) for d in global_domains)
         # Forked workspace key → the key whose allowlist it is actually fenced by. See
         # `share`. In memory only: a fork does not outlive the process that took it.
         self._shared: dict[str, str] = {}
@@ -155,7 +156,7 @@ class EgressPolicy:
         key again: the delegation id lives only in the call that took it, so an entry
         left here is a pair of strings the process keeps until it exits, one per
         delegation, forever."""
-        self._shared.pop(key, None)
+        _ = self._shared.pop(key, None)
 
     def _fenced_by(self, key: str) -> str:
         return self._shared.get(key, key)
@@ -201,7 +202,7 @@ class EgressPolicy:
             # approvals naming the same domain race into a duplicate-key error otherwise,
             # and there is nothing to update — the row already says what it should.
             for domain in wanted:
-                session.execute(
+                _ = session.exec(
                     upsert(self._db, EgressGrant)
                     .values(
                         id=new_id(),
@@ -216,7 +217,7 @@ class EgressPolicy:
                 )
 
         await in_session(self._db, work)
-        await self.materialise(key)
+        _ = await self.materialise(key)
         return await self.allowed_for(key)
 
     async def forget(self, conversation_id: str) -> None:
@@ -233,7 +234,7 @@ class EgressPolicy:
         self.unshare(conversation_id)
 
         def work(session: Session) -> None:
-            session.execute(
+            _ = session.exec(
                 delete(EgressGrant)
                 .where(col(EgressGrant.owner_id) == _OWNER_ID)
                 .where(col(EgressGrant.conversation_id) == conversation_id)
@@ -273,5 +274,5 @@ def _write_allow_file(directory: Path, domains: list[str]) -> None:
     filesystem, and lands with a single ``os.replace``."""
     directory.mkdir(parents=True, exist_ok=True)
     tmp = directory / f".{ALLOW_FILE}.{os.getpid()}.{secrets.token_hex(4)}"
-    tmp.write_text("".join(f"{domain}\n" for domain in domains), encoding="utf-8")
+    _ = tmp.write_text("".join(f"{domain}\n" for domain in domains), encoding="utf-8")
     os.replace(tmp, directory / ALLOW_FILE)

@@ -56,8 +56,8 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
 
+from pydantic import TypeAdapter
 from sqlalchemy import Engine, delete
 from sqlmodel import Session, col, select
 
@@ -78,6 +78,8 @@ COMMAND_SCOPED_TOOLS = frozenset(
 
 #: The argument every one of those tools carries the command line in.
 _COMMAND_ARGUMENT = "command"
+
+_WORDS = TypeAdapter(list[str])
 
 #: Tools no grant may ever cover, whatever scope was asked for. A grant auto-approves a
 #: *tool name*, and nothing narrower — so a standing one on the egress request would not
@@ -126,15 +128,12 @@ def decode_prefix(stored: str) -> tuple[str, ...]:
     if not stored:
         return ()
     try:
-        decoded = json.loads(stored)
+        return tuple(_WORDS.validate_json(stored))
     except ValueError:
         return (stored,)
-    if not isinstance(decoded, list) or not all(isinstance(word, str) for word in decoded):
-        return (stored,)
-    return tuple(decoded)
 
 
-def grant_scopes(tool_name: str, args: Mapping[str, Any]) -> list[tuple[str, ...]] | None:
+def grant_scopes(tool_name: str, args: Mapping[str, object]) -> list[tuple[str, ...]] | None:
     """The scopes a "for this conversation" approval of this call should record.
 
     One empty scope — the whole tool — for everything but a command-running tool. For one
@@ -162,7 +161,7 @@ def grant_scopes(tool_name: str, args: Mapping[str, Any]) -> list[tuple[str, ...
     return list(dict.fromkeys(scopes))
 
 
-def _scopes_of(tool_name: str, args: Mapping[str, Any]) -> list[tuple[str, ...]] | None:
+def _scopes_of(tool_name: str, args: Mapping[str, object]) -> list[tuple[str, ...]] | None:
     """Every scope this call's command line names, or None when it names none.
 
     One per stage of the pipeline, each led by the reach marker where the call declared a
@@ -181,7 +180,7 @@ def _scopes_of(tool_name: str, args: Mapping[str, Any]) -> list[tuple[str, ...]]
 
 
 def grant_width(
-    tool_name: str | None, args: Mapping[str, Any], grants: Sequence[GrantInfo]
+    tool_name: str | None, args: Mapping[str, object], grants: Sequence[GrantInfo]
 ) -> GrantWidth:
     """How far this conversation's active grants reach over one deferred call.
 
@@ -236,7 +235,7 @@ def grant_width(
 
 
 def covered_by_grant(
-    tool_name: str | None, args: Mapping[str, Any], grants: Sequence[GrantInfo]
+    tool_name: str | None, args: Mapping[str, object], grants: Sequence[GrantInfo]
 ) -> bool:
     """Whether a deferred call is covered by a conversation's active grants at all.
 
@@ -249,7 +248,7 @@ def covered_by_grant(
     return grant_width(tool_name, args, grants) != "none"
 
 
-def _reach_marker(tool_name: str, args: Mapping[str, Any]) -> tuple[str, ...]:
+def _reach_marker(tool_name: str, args: Mapping[str, object]) -> tuple[str, ...]:
     """The word a scope leads with when the call declared a reach wider than its tool's own.
 
     ``reach`` is the model's own argument on the executing shell tools, and it is what
@@ -275,8 +274,8 @@ def _reach_marker(tool_name: str, args: Mapping[str, Any]) -> tuple[str, ...]:
 
 class ApprovalGrantStore:
     def __init__(self, db_engine: Engine, ttl_s: float) -> None:
-        self._db = db_engine
-        self._ttl = timedelta(seconds=ttl_s)
+        self._db: Engine = db_engine
+        self._ttl: timedelta = timedelta(seconds=ttl_s)
 
     async def grant(
         self,
@@ -341,7 +340,7 @@ class ApprovalGrantStore:
                     ),
                 )
             )
-            session.execute(stmt)
+            _ = session.exec(stmt)
             return expires_at
 
         return await in_session(self._db, work)
@@ -378,7 +377,9 @@ class ApprovalGrantStore:
                 else:
                     expired_ids.append(r.id)
             if expired_ids:
-                session.execute(delete(ApprovalGrant).where(col(ApprovalGrant.id).in_(expired_ids)))
+                _ = session.exec(
+                    delete(ApprovalGrant).where(col(ApprovalGrant.id).in_(expired_ids))
+                )
             return live
 
         return await in_session(self._db, work)

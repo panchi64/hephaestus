@@ -22,11 +22,12 @@ is two copies of a format that only works while they agree — the same reasonin
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
 
 from pydantic import BaseModel, Field
 
 from runs.events import QuestionOption, QuestionSpec
+from services.shapes import dict_list
 
 #: The namespaced name of the tool this format belongs to. A literal rather than an import
 #: because ``tools/`` sits above this layer; ``tests/test_ask_user.py`` pins it against the
@@ -59,12 +60,10 @@ class AnsweredQuestion(BaseModel):
     text: str | None = None
 
 
-def questions_of(args: dict[str, Any]) -> list[QuestionSpec]:
+def questions_of(args: Mapping[str, object]) -> list[QuestionSpec]:
     """The questions carried by one ``ask_user`` call, as event bodies."""
     questions: list[QuestionSpec] = []
-    for raw in args.get("questions") or []:
-        if not isinstance(raw, dict):
-            continue
+    for raw in dict_list(args.get("questions")):
         options = [
             QuestionOption(
                 label=str(opt["label"]),
@@ -72,8 +71,8 @@ def questions_of(args: dict[str, Any]) -> list[QuestionSpec]:
                     str(opt["description"]) if opt.get("description") is not None else None
                 ),
             )
-            for opt in (raw.get("options") or [])
-            if isinstance(opt, dict) and opt.get("label") is not None
+            for opt in dict_list(raw.get("options"))
+            if opt.get("label") is not None
         ]
         questions.append(
             QuestionSpec(

@@ -71,7 +71,7 @@ class ToolPolicy:
 
 class ExternalPolicyStore:
     def __init__(self, db_engine: Engine) -> None:
-        self._db = db_engine
+        self._db: Engine = db_engine
 
     async def snapshot(
         self, owner_id: str, source_kind: SourceKind, source_id: str
@@ -183,7 +183,7 @@ class ExternalPolicyStore:
                 updates["enabled"] = enabled
             if trusted is not None:
                 updates["trusted"] = trusted
-            session.execute(
+            _ = session.exec(
                 upsert(self._db, ExternalToolPolicy)
                 .values(**values)
                 .on_conflict_do_update(
@@ -209,7 +209,7 @@ class ExternalPolicyStore:
         removed, so a later registration at the same id can't inherit stale trust."""
 
         def work(session: Session) -> None:
-            session.execute(
+            _ = session.exec(
                 delete(ExternalToolPolicy)
                 .where(col(ExternalToolPolicy.owner_id) == owner_id)
                 .where(col(ExternalToolPolicy.source_kind) == source_kind)

@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Hashable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import override
 
 import numpy as np
 from sqlalchemy import Engine, func, or_
@@ -67,8 +68,9 @@ class DuplicateGroup:
 
 
 class MemoryCollection(Collection[None]):
-    name = "memories"
+    name: str = "memories"
 
+    @override
     def signature(self, session: Session, owner_id: str) -> Hashable:
         stmt = (
             select(Memory.embedding_model, func.count(), func.max(Memory.updated_at))
@@ -77,12 +79,14 @@ class MemoryCollection(Collection[None]):
         )
         return frozenset(session.exec(stmt).all())
 
+    @override
     def stamps(self, session: Session, owner_id: str) -> dict[str, Hashable]:
         stmt = select(Memory.id, Memory.updated_at, Memory.embedding_model).where(
             Memory.owner_id == owner_id
         )
         return {mid: (at, model) for mid, at, model in session.exec(stmt).all()}
 
+    @override
     def load(
         self, session: Session, vault: Vault, owner_id: str, ids: list[str]
     ) -> list[Loaded[None]]:
@@ -100,11 +104,11 @@ class MemoryCollection(Collection[None]):
 
 class MemoryStore:
     def __init__(self, engine: Engine, vault: Vault, embedder: Embedder) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._embedder = embedder
-        self._index = RecallIndex(engine, vault)
-        self._collection = MemoryCollection()
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._embedder: Embedder = embedder
+        self._index: RecallIndex = RecallIndex(engine, vault)
+        self._collection: MemoryCollection = MemoryCollection()
 
     # --- write path -------------------------------------------------------
 
@@ -134,7 +138,7 @@ class MemoryStore:
         content: str | None = None,
         pinned: bool | None = None,
     ) -> MemoryView:
-        await self._require(owner_id, memory_id)
+        _ = await self._require(owner_id, memory_id)
         # Re-embed only when the content actually changed (EMB-2 provenance).
         new_vector = (
             await self._embed_for_storage(owner_id, content) if content is not None else None
@@ -156,7 +160,7 @@ class MemoryStore:
         return await in_session(self._engine, work)
 
     async def delete(self, owner_id: str, memory_id: str) -> None:
-        await self._require(owner_id, memory_id)
+        _ = await self._require(owner_id, memory_id)
 
         def work(session: Session) -> None:
             memory = session.get(Memory, memory_id)

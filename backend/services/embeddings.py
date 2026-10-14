@@ -20,15 +20,26 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 from openai import APIConnectionError, AsyncOpenAI
+from pydantic import TypeAdapter
 from sqlalchemy import Engine
 from sqlmodel import Session
 
 from core.db import in_session
 from core.exceptions import DegradedCapabilityError
 from core.vault import Vault
-from services import llm
+from services.endpoint_spec import EndpointSpec
 
 logger = logging.getLogger(__name__)
+
+_VECTOR = TypeAdapter(list[float])
+
+
+class EmbeddedRow(Protocol):
+    """A table row that carries a sealed embedding."""
+
+    embedding_enc: str | None
+    embedding_model: str | None
+    embedding_dim: int | None
 
 
 @dataclass(frozen=True)
@@ -50,18 +61,18 @@ class Embedder(Protocol):
 class EmbeddingSpecSource(Protocol):
     """What the embedder needs from the model registry."""
 
-    async def resolve_embedding_spec(self, owner_id: str) -> llm.EndpointSpec: ...
+    async def resolve_embedding_spec(self, owner_id: str) -> EndpointSpec: ...
 
 
 class RegistryEmbedder:
     """Embeds via the operator's configured ``embedding``-role endpoint."""
 
     def __init__(self, registry: EmbeddingSpecSource) -> None:
-        self._registry = registry
+        self._registry: EmbeddingSpecSource = registry
 
     async def is_available(self, owner_id: str) -> bool:
         try:
-            await self._registry.resolve_embedding_spec(owner_id)
+            _ = await self._registry.resolve_embedding_spec(owner_id)
             return True
         except DegradedCapabilityError:
             return False
@@ -100,7 +111,7 @@ class RegistryEmbedder:
                 # is how it goes unnoticed for weeks.
                 logger.warning(
                     "embedding endpoint %s is unreachable — semantic recall is off until "
-                    "it is back; keyword recall still covers these messages",
+                    + "it is back; keyword recall still covers these messages",
                     spec.base_url,
                 )
                 raise DegradedCapabilityError(
@@ -138,7 +149,7 @@ def encode_vector(vault: Vault, vector: list[float]) -> str:
 
 def decode_vector(vault: Vault, embedding_enc: str) -> list[float]:
     """Open a sealed embedding back into its float vector."""
-    return json.loads(vault.decrypt_str(embedding_enc))
+    return _VECTOR.validate_json(vault.decrypt_str(embedding_enc))
 
 
 async def embed_and_seal_rows(
@@ -147,7 +158,7 @@ async def embed_and_seal_rows(
     vault: Vault,
     embedder: Embedder,
     owner_id: str,
-    model_cls: type,
+    model_cls: type[EmbeddedRow],
     pending: list[tuple[str, str]],
     batch_size: int = 64,
 ) -> int:
@@ -187,7 +198,7 @@ async def embed_and_seal_rows(
     return embedded
 
 
-async def probe_embedding(spec: llm.EndpointSpec) -> int:
+async def probe_embedding(spec: EndpointSpec) -> int:
     """One real ``/embeddings`` call to confirm an endpoint+model actually serves
     vectors — the bind-time check the ``embedding`` role lacked, so a chat model (or
     an unreachable server) can't be silently bound and degrade recall to keyword-only.
@@ -204,10 +215,11 @@ async def probe_embedding(spec: llm.EndpointSpec) -> int:
                 f"couldn't reach endpoint {spec.base_url!r} to validate the embedding model"
             ) from exc
         except Exception as exc:
-            raise DegradedCapabilityError(
+            message = (
                 f"model {spec.model!r} did not accept an embeddings request "
                 "(is it an embeddings model?)"
-            ) from exc
+            )
+            raise DegradedCapabilityError(message) from exc
     if not response.data or not response.data[0].embedding:
         raise DegradedCapabilityError(
             f"model {spec.model!r} returned no vector — not an embeddings model"
