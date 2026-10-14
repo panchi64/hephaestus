@@ -507,7 +507,7 @@ async def test_reaper_spares_fresh_and_busy_sessions(tmp_path: Path):
 
     busy_mgr = _manager(tmp_path / "b", vault, idle_ttl_s=0.0)
     session = await busy_mgr.acquire("conv-b")
-    await session._lock.acquire()  # simulate a call in flight
+    _ = await session._lock.acquire()  # simulate a call in flight
     try:
         await busy_mgr._sweep()
         assert busy_mgr._sessions  # never reaped mid-run, even past TTL
@@ -540,7 +540,7 @@ async def test_the_cap_never_displaces_a_session_with_a_call_in_flight(tmp_path:
     vault = await _vault(tmp_path)
     manager = _manager(tmp_path, vault, max_sessions=1)
     busy = await manager.acquire("conv-a")
-    await busy._lock.acquire()  # simulate a call in flight
+    _ = await busy._lock.acquire()  # simulate a call in flight
     try:
         _ = await manager.acquire("conv-b")
         # Over the cap rather than failing the tool call the operator is watching; the
