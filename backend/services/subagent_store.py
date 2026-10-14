@@ -40,8 +40,8 @@ LIVE_STATUSES: frozenset[str] = frozenset({"running", "blocked"})
 
 class SubagentStore:
     def __init__(self, db_engine: Engine, vault: Vault) -> None:
-        self._db = db_engine
-        self._vault = vault
+        self._db: Engine = db_engine
+        self._vault: Vault = vault
 
     async def record(
         self,
@@ -158,7 +158,7 @@ class SubagentStore:
 
         def work(session: Session) -> set[str]:
             rows = session.exec(
-                select(SubagentRecord.handle)  # type: ignore[call-overload]
+                select(col(SubagentRecord.handle))
                 .where(SubagentRecord.owner_id == owner_id)
                 .where(SubagentRecord.root_conversation_id == root_conversation_id)
             ).all()

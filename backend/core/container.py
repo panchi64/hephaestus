@@ -44,7 +44,7 @@ class ServiceContainer:
         except KeyError:
             raise LookupError(
                 f"no service registered for {service_type.__name__} — "
-                "a manifest is missing an `after` edge or an export"
+                + "a manifest is missing an `after` edge or an export"
             ) from None
 
     def get_optional[T](self, service_type: type[T]) -> T | None:

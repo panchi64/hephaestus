@@ -52,7 +52,7 @@ class SpanEditError(HephaestusError):
     :func:`core.text.replace_unique`, the one implementation behind every surgical edit."""
 
     def __init__(self, occurrences: int) -> None:
-        self.occurrences = occurrences
+        self.occurrences: int = occurrences
         super().__init__(
             "old_text was not found"
             if occurrences == 0
@@ -75,7 +75,7 @@ class FieldValidationError(HephaestusError):
     """
 
     def __init__(self, field: str, message: str) -> None:
-        self.field = field
+        self.field: str = field
         super().__init__(message)
 
 
@@ -115,7 +115,7 @@ class RateLimitedError(HephaestusError):
 
     def __init__(self, retry_after_s: float) -> None:
         super().__init__(f"rate limit exceeded; retry in {retry_after_s:.1f}s")
-        self.retry_after_s = retry_after_s
+        self.retry_after_s: float = retry_after_s
 
 
 class SSRFError(HephaestusError):

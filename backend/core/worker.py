@@ -144,7 +144,7 @@ class WriteBehindWorker[T]:
             try:
                 await self._handler(item)
                 return
-            except Exception as exc:  # noqa: BLE001 — a bad item must not kill the worker
+            except Exception as exc:  # a bad item must not kill the worker
                 # A lock that landed mid-handler isn't a failure — wait for unlock
                 # and retry without consuming an attempt.
                 if self._unlocked is not None and not self._unlocked.is_set():

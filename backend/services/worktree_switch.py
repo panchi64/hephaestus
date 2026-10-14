@@ -10,7 +10,7 @@ from services.conversations import ConversationStore
 
 class WorktreeSwitch:
     def __init__(self, conversations: ConversationStore) -> None:
-        self._conversations = conversations
+        self._conversations: ConversationStore = conversations
 
     async def open(self, conversation_id: str) -> bool:
         """Record that ``conversation_id`` works in its project's worktree from now on."""

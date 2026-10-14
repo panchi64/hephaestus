@@ -30,6 +30,7 @@ answered by reading one file.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
@@ -66,7 +67,7 @@ class Projection:
     #: to know a form was filled in.
     measured: tuple[str, ...] = ()
 
-    def describe(self, args: dict[str, object]) -> tuple[str, str | None]:
+    def describe(self, args: Mapping[str, object]) -> tuple[str, str | None]:
         """This call as (summary, detail).
 
         A key the call did not pass contributes nothing: most of these tools have optional
@@ -267,7 +268,7 @@ PROJECTIONS: dict[str, Projection] = {
 }
 
 
-def describe(tool: str, args: dict[str, object], *, fallback: str) -> tuple[str, str | None]:
+def describe(tool: str, args: Mapping[str, object], *, fallback: str) -> tuple[str, str | None]:
     """This call's summary and detail — projected where the tool is one of ours.
 
     ``fallback`` is what an unprojected tool says about itself, and it is the caller's

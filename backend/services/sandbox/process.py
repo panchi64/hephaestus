@@ -242,7 +242,7 @@ async def run_on_host(
                 allow_write=confinement.allow_write,
                 deny_read=confinement.deny_read,
             )
-        except Exception as exc:  # noqa: BLE001 - wrapping must never lose the command
+        except Exception as exc:  # wrapping must never lose the command
             raise HostExecutionError(f"failed to confine host command: {exc}") from exc
     try:
         proc = await spawn_confined(

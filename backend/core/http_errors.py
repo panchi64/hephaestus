@@ -102,7 +102,7 @@ def install_error_handlers(app: FastAPI) -> None:
     async def handle(_request: Request, exc: Exception) -> JSONResponse:
         status = status_for(exc)
         assert status is not None  # only mapped types are registered
-        headers = {}
+        headers: dict[str, str] = {}
         if isinstance(exc, RateLimitedError):
             # The caller is being asked to wait; tell it how long rather than leaving it
             # to guess or hammer.

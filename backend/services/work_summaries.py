@@ -172,7 +172,7 @@ class WorkSummaryService:
                 stored = await self._yielding(self._summarize(conversation_id))
             except _Yielded:
                 break
-            except Exception:  # noqa: BLE001 — one bad thread must not end the pass
+            except Exception:  # one bad thread must not end the pass
                 logger.warning(
                     "work summary: conversation %s failed", conversation_id, exc_info=True
                 )

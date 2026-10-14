@@ -30,7 +30,7 @@ _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
 def is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) so the v4 checks apply.
-    mapped = getattr(ip, "ipv4_mapped", None)
+    mapped: ipaddress.IPv4Address | None = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped
     return (

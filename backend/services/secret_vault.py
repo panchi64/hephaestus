@@ -107,10 +107,10 @@ class SecretVaultService:
         idle_timeout_s: float = _IDLE_TIMEOUT_S,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._idle_timeout_s = idle_timeout_s
-        self._clock = clock
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._idle_timeout_s: float = idle_timeout_s
+        self._clock: Callable[[], float] = clock
         # owner id → its live session. The only home the vault key ever has.
         self._sessions: dict[str, _Session] = {}
         # An app-level lock/logout ends every vault session too: the login DEK is gone, so
@@ -171,14 +171,14 @@ class SecretVaultService:
         kek = await asyncio.to_thread(crypto.derive_kek, passphrase, _b64d(config.kek_salt))
         try:
             key = crypto.aead_decrypt(kek, _b64d(self._vault.decrypt_str(config.wrapped_key_enc)))
-        except Exception:  # noqa: BLE001 — any unwrap failure is just a failed unlock
+        except Exception:  # any unwrap failure is just a failed unlock
             return False
         self._open_session(owner_id, key)
         return True
 
     def lock(self, owner_id: str) -> None:
         """Re-seal this operator's vault: the key is dropped from memory. Idempotent."""
-        self._sessions.pop(owner_id, None)
+        _ = self._sessions.pop(owner_id, None)
 
     def logout(self) -> None:
         """End every vault session in this process — the operator's explicit log out, and
@@ -268,7 +268,7 @@ class SecretVaultService:
     async def delete(self, owner_id: str, entry_id: str) -> None:
         # Deleting doesn't read the secret, but it is still a vault operation — a locked
         # vault must not be editable from outside, or "locked" means very little.
-        self._require_key(owner_id)
+        _ = self._require_key(owner_id)
         row = await self._row(owner_id, entry_id)
 
         def work(session: Session) -> None:

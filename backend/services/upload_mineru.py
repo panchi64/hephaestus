@@ -25,10 +25,12 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from typing import override
 
 from services.upload_extraction import (
     EXTRACTOR_MINERU,
     ExtractionResult,
+    UploadExtractor,
     pdf_has_text_layer,
 )
 
@@ -50,18 +52,19 @@ class _Unsupported(Exception):
     """The input isn't a format MinerU handles — fall back to the built-in extractor."""
 
 
-class MinerUExtractor:
+class MinerUExtractor(UploadExtractor):
     """Extract via the ``mineru`` CLI, run as a one-shot subprocess per document."""
 
     def __init__(self, *, timeout_s: float = 300.0, binary: str = "mineru") -> None:
-        self._timeout_s = timeout_s
-        self._binary = binary
+        self._timeout_s: float = timeout_s
+        self._binary: str = binary
 
     @staticmethod
     def is_available(binary: str = "mineru") -> bool:
         """Whether the ``mineru`` tool is on the host PATH (the detection gate)."""
         return shutil.which(binary) is not None
 
+    @override
     async def extract(
         self, owner_id: str, raw: bytes, mime: str, filename: str
     ) -> ExtractionResult:
@@ -81,7 +84,7 @@ class MinerUExtractor:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             src = tmp_dir / f"input{ext}"
-            src.write_bytes(raw)
+            _ = src.write_bytes(raw)
             out_dir = tmp_dir / "out"
             out_dir.mkdir()
             proc = await asyncio.create_subprocess_exec(
@@ -107,7 +110,7 @@ class MinerUExtractor:
                 proc.kill()
                 # Re-drain so the killed child's stderr pipe is consumed/closed rather
                 # than left to GC; communicate() returns promptly once the process is dead.
-                await proc.communicate()
+                _ = await proc.communicate()
                 raise RuntimeError("MinerU timed out") from None
             except asyncio.CancelledError:
                 # A shutdown (or a cancelled upload) is not a reason to leave a PyTorch

@@ -343,9 +343,7 @@ class _Output(Protocol):
 
 
 class _Guest(Protocol):
-    def run(
-        self, command: str, timeout: int = 30, shell: Literal["login", "raw"] = "login"
-    ) -> _Output: ...
+    def run(self, command: str, *, timeout: int, shell: Literal["login", "raw"]) -> _Output: ...
 
 
 def provision(

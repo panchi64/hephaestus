@@ -20,5 +20,5 @@ def backoff_delay(base_s: float, attempt: int, *, cap_s: float | None = None) ->
     ``cap_s`` bounds the doubling; without it a generous attempt budget eventually sleeps
     for a very long time on a permanently broken dependency.
     """
-    delay = base_s * 2 ** (max(1, attempt) - 1)
+    delay = base_s * 2.0 ** (max(1, attempt) - 1)
     return delay if cap_s is None else min(delay, cap_s)

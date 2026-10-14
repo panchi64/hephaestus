@@ -265,7 +265,7 @@ class SchedulerService:
                     timezone=task.timezone,
                 )
                 await self._advance(task.id, next_run_at=next_run)
-        except Exception:  # noqa: BLE001 — a failed reschedule must never kill the loop
+        except Exception:  # a failed reschedule must never kill the loop
             logger.exception("scheduler: task %s schedule advance failed", task.id)
             return
         _ = self._start(task, now)
@@ -306,7 +306,7 @@ class SchedulerService:
                 result = TaskRunResult(outcome=TaskOutcome.OK.value)
             else:
                 result = await self._executor(view)
-        except Exception as exc:  # noqa: BLE001 — a bad task must never kill the loop
+        except Exception as exc:  # a bad task must never kill the loop
             logger.exception("scheduler: task %s execution failed", task.id)
             result = TaskRunResult(outcome=TaskOutcome.ERROR.value, summary=str(exc))
         finished = utcnow()

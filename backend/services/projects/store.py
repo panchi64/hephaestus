@@ -175,7 +175,7 @@ class ProjectStore:
         def work(session: Session) -> list[Project]:
             query = select(Project).where(Project.owner_id == owner_id)
             if not include_archived:
-                query = query.where(Project.archived == False)  # noqa: E712 — SQL boolean compare
+                query = query.where(col(Project.archived).is_(False))
             return list(session.exec(query.order_by(col(Project.last_opened_at).desc())).all())
 
         rows = await in_session(self._db, work)

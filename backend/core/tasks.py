@@ -31,7 +31,7 @@ async def cancel_and_wait(task: asyncio.Task[object] | None, timeout: float) -> 
     """
     if task is None or task.done():
         return
-    task.cancel()
+    _ = task.cancel()
     # ``wait`` rather than ``wait_for``: it never cancels the task a second time and never
     # raises the task's result, which is exactly the contract above.
     done, _ = await asyncio.wait({task}, timeout=timeout)
@@ -41,4 +41,4 @@ async def cancel_and_wait(task: asyncio.Task[object] | None, timeout: float) -> 
         )
         return
     with contextlib.suppress(asyncio.CancelledError, Exception):
-        task.exception()  # retrieve, so an error here never warns as never-retrieved
+        _ = task.exception()  # retrieve, so an error here never warns as never-retrieved

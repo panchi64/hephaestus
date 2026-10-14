@@ -182,7 +182,7 @@ class BasicExtractor:
             try:
                 out[page.index] = await prepared.transcribe(page.image)
                 read_any = True
-            except Exception:  # noqa: BLE001 — one unreadable page mustn't abort the rest
+            except Exception:  # one unreadable page mustn't abort the rest
                 logger.exception("vision OCR failed for page %d", page.index)
                 notes.append(f"page {page.index + 1} could not be read by the vision model")
         return read_any, notes
@@ -241,7 +241,7 @@ def pdf_has_text_layer(raw: bytes) -> bool:
     has no text layer to read). Any read failure ⇒ assume no text layer."""
     try:
         pdf = pdfium.PdfDocument(raw)
-    except Exception:  # noqa: BLE001 — an unreadable PDF simply has no detectable text
+    except Exception:  # an unreadable PDF simply has no detectable text
         return False
     try:
         for index in range(min(len(pdf), _TEXT_PROBE_PAGES)):
@@ -272,7 +272,7 @@ class FallbackExtractor:
     ) -> ExtractionResult:
         try:
             return await self._primary.extract(owner_id, raw, mime, filename)
-        except Exception:  # noqa: BLE001 — any primary failure degrades to the built-in
+        except Exception:  # any primary failure degrades to the built-in
             logger.warning(
                 "primary extractor failed for %r; falling back to the built-in",
                 filename,

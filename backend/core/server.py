@@ -26,6 +26,7 @@ import logging
 import os
 import sys
 from types import FrameType
+from typing import override
 
 import uvicorn
 from uvicorn.supervisors import ChangeReload
@@ -42,6 +43,7 @@ STARTUP_FAILURE = 3
 class HephaestusServer(uvicorn.Server):
     """A uvicorn server that raises the app's shutdown signal as soon as it is stopped."""
 
+    @override
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         # Before ``super()``: raising the flag is what lets the connections close, and
         # nothing in the base handler can fail in a way that should skip it.

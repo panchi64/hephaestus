@@ -11,13 +11,13 @@ per-turn union in ``services/tool_policy.py``.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, get_args
+from typing import Literal, cast, get_args
 
 type WorkspaceKind = Literal["sandbox", "checkout", "worktree"]
 
 DEFAULT_WORKSPACE_KIND: WorkspaceKind = "sandbox"
 
-_KINDS: tuple[WorkspaceKind, ...] = get_args(WorkspaceKind.__value__)
+_KINDS: tuple[WorkspaceKind, ...] = get_args(cast("object", WorkspaceKind.__value__))
 
 #: The tools that belong to only some kinds of workspace. A tool in neither set is offered
 #: everywhere.

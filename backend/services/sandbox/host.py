@@ -255,7 +255,7 @@ async def _configure(settings: Settings) -> HostConfinement:
                 ),
             )
         )
-    except Exception as exc:  # noqa: BLE001 - any init failure means "not confined"
+    except Exception as exc:  # any init failure means "not confined"
         return HostConfinement(False, f"sandbox-runtime could not initialize ({exc})")
     # Carried on the resolution rather than re-derived at the run: `confine` fences each
     # command individually, and these are the settings half of what it needs — the same
@@ -287,7 +287,7 @@ async def shutdown_confinement() -> None:
         from sandbox_runtime import SandboxManager
 
         await SandboxManager.reset()
-    except Exception:  # noqa: BLE001 - shutdown is best-effort, like every other unit's
+    except Exception:  # shutdown is best-effort, like every other unit's
         logger.warning("host-command confinement did not shut down cleanly", exc_info=True)
 
 

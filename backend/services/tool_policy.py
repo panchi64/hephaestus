@@ -47,6 +47,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from core.container import ServiceContainer
+from core.serde import parse_json
 from runs.lanes import is_attended
 from services.permissions import (
     ApprovalPolicy,
@@ -72,7 +73,7 @@ def _decode(raw: str | None) -> frozenset[str]:
     if not raw:
         return frozenset()
     try:
-        names = json.loads(raw)
+        names = parse_json(raw)
     except ValueError:
         logger.warning("tool policy: ignoring unparseable %s value", DISABLED_TOOLS_KEY)
         return frozenset()

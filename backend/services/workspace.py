@@ -94,7 +94,7 @@ class HostFiles:
     """
 
     def __init__(self, root: Path) -> None:
-        self._root = root
+        self._root: Path = root
 
     def read_file(self, relpath: str) -> bytes:
         target = contained_path(self._root, relpath)
@@ -105,7 +105,7 @@ class HostFiles:
     def write_file(self, relpath: str, content: bytes) -> None:
         target = contained_path(self._root, relpath)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+        _ = target.write_bytes(content)
 
 
 @dataclass(frozen=True)
@@ -283,7 +283,7 @@ def prepare_worktree_workspace(path: Path) -> None:
         scratch.mkdir(parents=True, exist_ok=True)
         ignore = scratch / ".gitignore"
         if not ignore.is_file():
-            ignore.write_text("# Hephaestus' own scratch — never the operator's work.\n*\n")
+            _ = ignore.write_text("# Hephaestus' own scratch — never the operator's work.\n*\n")
     except OSError:
         logger.debug("workspace: could not exclude %s from git", WORKTREE_SCRATCH, exc_info=True)
 

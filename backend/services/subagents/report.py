@@ -44,9 +44,11 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
+
+from core.serde import parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +188,7 @@ class _Lenient(BaseModel):
     by hand at the end of a long task; a field it invented is not a reason to throw the
     report's structure away."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
 
 
 class ReportSource(_Lenient):
@@ -307,7 +309,7 @@ def report_structure(text: str) -> ReportStructure | None:
     if match is None:
         return None
     try:
-        payload = json.loads(match.group("json"))
+        payload = parse_json(match.group("json"))
     except ValueError as exc:
         logger.info("subagents: report findings block was not JSON (%s)", exc)
         return None

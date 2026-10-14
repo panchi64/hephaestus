@@ -29,7 +29,7 @@ import contextlib
 import weakref
 from collections.abc import AsyncIterator, Awaitable
 from enum import Enum
-from typing import Final
+from typing import Final, override
 
 
 class _Stopped(Enum):
@@ -39,6 +39,7 @@ class _Stopped(Enum):
 
     STOPPED = "STOPPED"
 
+    @override
     def __repr__(self) -> str:
         return "STOPPED"
 
@@ -62,7 +63,7 @@ def begin_shutdown() -> None:
     _flag = True
     for loop, event in list(_events.items()):
         with contextlib.suppress(RuntimeError):  # the loop already closed
-            loop.call_soon_threadsafe(event.set)
+            _ = loop.call_soon_threadsafe(event.set)
 
 
 def reset_shutdown() -> None:
@@ -84,7 +85,7 @@ async def wait_shutdown() -> None:
     # Re-check: the flag may have been raised between the first check and registration.
     if _flag:
         event.set()
-    await event.wait()
+    _ = await event.wait()
 
 
 async def _first[T](aw: Awaitable[T], timeout: float | None) -> T | _Stopped:
@@ -103,9 +104,9 @@ async def _first[T](aw: Awaitable[T], timeout: float | None) -> T | _Stopped:
     finally:
         for fut in (work, stop):
             if not fut.done():
-                fut.cancel()
+                _ = fut.cancel()
         # Reap the loser so it never warns as destroyed-while-pending.
-        await asyncio.gather(work, stop, return_exceptions=True)
+        _ = await asyncio.gather(work, stop, return_exceptions=True)
     if work in done:
         return work.result()
     if stop in done:

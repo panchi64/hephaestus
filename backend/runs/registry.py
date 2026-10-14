@@ -419,7 +419,7 @@ class RunRegistry:
             run.status = RunStatus.cancelled
             self._emit_metrics(run)
             self._emit(run, RunEnded(outcome="cancelled"))
-        except Exception as exc:  # noqa: BLE001 — orchestrator failures are terminal, not fatal
+        except Exception as exc:  # orchestrator failures are terminal, not fatal
             run.status = RunStatus.error
             run.error = str(exc)
             self._emit_metrics(run)

@@ -16,8 +16,10 @@ import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from core import crypto
+from core.serde import parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +77,9 @@ def _write_keyfile(path: Path, payload: dict[str, object]) -> None:
 
 class Vault:
     def __init__(self, keyfile: Path) -> None:
-        self._keyfile = keyfile
+        self._keyfile: Path = keyfile
         self._dek: bytes | None = None
-        self._unlocked = asyncio.Event()  # lets lock-aware workers wait on unlock
+        self._unlocked: asyncio.Event = asyncio.Event()  # lets lock-aware workers wait on unlock
         # Callbacks other services register to react to a lock without the auth
         # route (or this class) knowing who they are — e.g. the operator shell
         # tearing down every live PTY session the instant the vault re-locks.
@@ -123,12 +125,12 @@ class Vault:
         or `KeyError` out of the login route says nothing about what is wrong.
         """
         try:
-            data = json.loads(self._keyfile.read_text())
-        except (OSError, json.JSONDecodeError) as exc:
+            data = parse_json(self._keyfile.read_text())
+        except (OSError, ValueError) as exc:
             raise VaultError(f"keyfile is unreadable or corrupt: {exc}") from exc
         if not isinstance(data, dict) or not _KEYFILE_FIELDS <= data.keys():
             raise VaultError("keyfile is missing required fields")
-        return data
+        return cast("dict[str, str]", data)
 
     async def unlock(self, password: str) -> bool:
         """Verify the password and unwrap the DEK into memory. False on bad password."""
@@ -142,7 +144,7 @@ class Vault:
         kek = await asyncio.to_thread(crypto.derive_kek, password, _b64d(data["kek_salt"]))
         try:
             dek = crypto.aead_decrypt(kek, _b64d(data["wrapped_dek"]))
-        except Exception:  # noqa: BLE001 — any unwrap failure is just a failed unlock
+        except Exception:  # any unwrap failure is just a failed unlock
             return False
         self._set_dek(dek)
         await self._rehash_verifier_if_stale(data, password)
@@ -160,7 +162,7 @@ class Vault:
         try:
             verifier = await asyncio.to_thread(crypto.hash_password, password)
             _write_keyfile(self._keyfile, {**data, "verifier": verifier})
-        except Exception:  # noqa: BLE001 — a stale verifier still works; never fail a login
+        except Exception:  # a stale verifier still works; never fail a login
             logger.warning("could not re-mint the login verifier", exc_info=True)
 
     async def verify_password(self, password: str) -> bool:
@@ -187,7 +189,7 @@ class Vault:
         for cb in self._on_lock:
             try:
                 cb()
-            except Exception:  # noqa: BLE001 — one bad callback must not block the lock
+            except Exception:  # one bad callback must not block the lock
                 logger.exception("vault: on-lock callback failed")
 
     def encrypt_str(self, plaintext: str) -> str:

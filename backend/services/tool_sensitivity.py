@@ -42,7 +42,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Any
 
 
 class Sensitivity(StrEnum):
@@ -326,7 +325,7 @@ def tools_above(floor: Sensitivity) -> frozenset[str]:
 SENSITIVITY_METADATA_KEY = "sensitivity"
 
 
-def declared_sensitivity(metadata: Mapping[str, Any] | None) -> Sensitivity | None:
+def declared_sensitivity(metadata: Mapping[str, object] | None) -> Sensitivity | None:
     """The class a tool states about *itself*, or ``None`` when it states nothing.
 
     The registry above is a rule about **names**, which is all a module below ``tools/``

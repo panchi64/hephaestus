@@ -84,4 +84,4 @@ def clone_tree(source: Path, dest: Path) -> None:
             done.stderr.decode("utf-8", "replace").strip(),
         )
         shutil.rmtree(dest, ignore_errors=True)
-    shutil.copytree(source, dest, symlinks=True)
+    _ = shutil.copytree(source, dest, symlinks=True)

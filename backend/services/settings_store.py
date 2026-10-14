@@ -97,7 +97,7 @@ ACTIVE_PROJECT_KEY = "projects.active"
 
 class SettingsStore:
     def __init__(self, db_engine: Engine) -> None:
-        self._db = db_engine
+        self._db: Engine = db_engine
 
     async def get(self, owner_id: str, key: str, default: str | None = None) -> str | None:
         def work(session: Session) -> str | None:

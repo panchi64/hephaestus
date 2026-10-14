@@ -161,7 +161,7 @@ class EmailChannel:
             return ChannelHealth(self.key, self.label, False, "warn", "turned off")
         try:
             target = await self._target(owner_id)
-        except Exception:  # noqa: BLE001 — health never raises; a broken read is a state
+        except Exception:  # health never raises; a broken read is a state
             logger.warning("notifications: could not read the email channel target", exc_info=True)
             target = None
         if target is None:
@@ -252,7 +252,7 @@ class PushChannel:
     async def health(self, owner_id: str) -> ChannelHealth:
         try:
             endpoint = await self._endpoint(owner_id)
-        except Exception:  # noqa: BLE001 — health never raises
+        except Exception:  # health never raises
             logger.warning("notifications: could not read the push endpoint", exc_info=True)
             endpoint = None
         if endpoint is None:

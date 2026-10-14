@@ -65,6 +65,6 @@ async def check_online(anchors: list[str], timeout_s: float) -> bool:
         return online
     finally:
         for t in tasks:
-            t.cancel()
+            _ = t.cancel()
         with suppress(Exception):
-            await asyncio.gather(*tasks, return_exceptions=True)
+            _ = await asyncio.gather(*tasks, return_exceptions=True)

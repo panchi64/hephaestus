@@ -319,7 +319,7 @@ class SandboxSessionManager:
             try:
                 await session.shutdown()
                 torn_down = True
-            except Exception:  # noqa: BLE001 — one bad teardown must not stall the rest
+            except Exception:  # one bad teardown must not stall the rest
                 logger.warning(
                     "sandbox %s: teardown failed; leaving the session live for the sweep",
                     key,
@@ -550,7 +550,7 @@ class SandboxSessionManager:
             async def _stop(session: SandboxSession) -> None:
                 try:
                     await asyncio.wait_for(session.shutdown(), _SESSION_STOP_TIMEOUT_S)
-                except Exception:  # noqa: BLE001 — tear the rest down regardless
+                except Exception:  # tear the rest down regardless
                     logger.warning("sandbox: session teardown did not finish", exc_info=True)
 
             _ = await asyncio.gather(*(_stop(s) for s in list(self._sessions.values())))

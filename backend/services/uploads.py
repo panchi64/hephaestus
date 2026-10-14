@@ -119,10 +119,10 @@ class UploadStore:
         adapter: UploadsAdapter,
         extractor: UploadExtractor,
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._adapter = adapter
-        self._extractor = extractor
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._adapter: UploadsAdapter = adapter
+        self._extractor: UploadExtractor = extractor
         # Extraction seals content (the extracted text) and resolves a vision model
         # whose key is sealed, so it must park while the vault is locked.
         self._worker: WriteBehindWorker[ExtractJob] = WriteBehindWorker(
@@ -412,7 +412,7 @@ class UploadStore:
                 select(Upload.id).where(
                     Upload.owner_id == owner_id,
                     col(Upload.id).in_(wanted),
-                    Upload.mime.startswith("image/"),  # type: ignore[attr-defined]
+                    col(Upload.mime).startswith("image/"),
                 )
             ).all()
             return list(rows)
@@ -448,7 +448,7 @@ class UploadStore:
             result = await self._extractor.extract(job.owner_id, raw, mime, filename)
         except VaultLocked:
             raise  # not a failure — let the worker park and retry once unlocked
-        except Exception:  # noqa: BLE001 — a bad file mustn't kill the worker
+        except Exception:  # a bad file mustn't kill the worker
             logger.exception("extraction failed for upload %s", job.upload_id)
             await self._finish(job, status=UploadStatus.ERROR, note="could not read the file")
             return
@@ -552,7 +552,7 @@ class UploadStore:
         return await in_session(self._engine, work)
 
     async def _require(self, owner_id: str, upload_id: str) -> None:
-        await get_owned(self._engine, Upload, upload_id, owner_id, what="upload")
+        _ = await get_owned(self._engine, Upload, upload_id, owner_id, what="upload")
 
     def _view_from_row(self, upload: Upload) -> UploadView:
         text = (

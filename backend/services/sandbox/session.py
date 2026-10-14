@@ -225,7 +225,7 @@ class SandboxSession:
                 return await self._run_inner(spec)
             except SandboxError:
                 raise
-            except Exception as exc:  # noqa: BLE001 — surface as a failure, never crash the agent
+            except Exception as exc:  # surface as a failure, never crash the agent
                 raise SandboxError(f"unexpected sandbox failure: {exc}") from exc
 
     async def _run_inner(self, spec: SandboxSpec) -> SandboxResult:

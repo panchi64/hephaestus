@@ -75,11 +75,11 @@ class ManagedSearxng:
         startup_timeout_s: float,
         external_base_url: str | None = None,
     ) -> None:
-        self._enabled = enabled
-        self._vm = vm
-        self._dir = data_dir / "searxng"
-        self._startup_timeout_s = startup_timeout_s
-        self._external = external_base_url.rstrip("/") if external_base_url else None
+        self._enabled: bool = enabled
+        self._vm: ServiceHost | None = vm
+        self._dir: Path = data_dir / "searxng"
+        self._startup_timeout_s: float = startup_timeout_s
+        self._external: str | None = external_base_url.rstrip("/") if external_base_url else None
         self._base_url: str | None = None
         self._task: asyncio.Task[None] | None = None
         if vm is not None:
@@ -132,7 +132,7 @@ class ManagedSearxng:
         if vm is None:
             logger.info("search: no platform VM — managed web search unavailable")
             return
-        await vm.wait_ready(float("inf"))
+        _ = await vm.wait_ready(float("inf"))
         try:
             await vm.put_text(_SETTINGS_PATH, self._settings(vm.layout.platform_proxy))
             await vm.stop_service(_SERVICE)
@@ -161,6 +161,6 @@ class ManagedSearxng:
             secret_key = key_file.read_text().strip()
         else:
             secret_key = secrets.token_hex(32)
-            key_file.write_text(secret_key)
+            _ = key_file.write_text(secret_key)
             key_file.chmod(0o600)
         return _SETTINGS_TEMPLATE.format(secret_key=secret_key, port=_PORT, proxy=proxy)

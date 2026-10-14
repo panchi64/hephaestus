@@ -434,7 +434,7 @@ def make_utility_reviewer(
                 "auto review timed out for %s — parking instead", request.capability.tool
             )
             return None
-        except Exception:  # noqa: BLE001 — every failure degrades to a park, never to an allow
+        except Exception:  # every failure degrades to a park, never to an allow
             logger.warning(
                 "auto review failed for %s — parking instead",
                 request.capability.tool,

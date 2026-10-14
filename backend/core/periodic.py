@@ -115,5 +115,5 @@ class PeriodicTask:
                 # A stop landing inside the work: the loop is over, and swallowing this
                 # below would turn a shutdown into a job that keeps running.
                 raise
-            except Exception:  # noqa: BLE001 — the loop must survive a bad run
+            except Exception:  # the loop must survive a bad run
                 self._logger.log(self._log_level, "%s: run failed", self._name, exc_info=True)

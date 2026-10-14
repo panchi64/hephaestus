@@ -35,6 +35,7 @@ from services.vm import PlatformVM, VMError
 
 from .cdp import discover_cdp_ws
 from .cookies import DomainCookieJar
+from .fetcher import RenderPage
 from .stealth import (
     INIT_SCRIPT,
     LAUNCH_FLAGS,
@@ -197,14 +198,15 @@ class ManagedBrowser:
                 except Exception:
                     pass
 
-    async def apply_stealth(self, page: Page) -> None:
+    async def apply_stealth(self, page: RenderPage) -> None:
         """Bring a page's client hints + ``navigator.userAgentData`` into agreement with
         the spoofed UA (and strip the headless shell's ``HeadlessChrome`` brand) via a CDP
         user-agent override. Must run before the page's first navigation. Best-effort: a
         CDP hiccup degrades to UA-string-only stealth rather than failing an otherwise-fine
         fetch — the JS-surface evasions (init script) are unaffected either way."""
         try:
-            cdp = cast("_CdpSession", await page.context.new_cdp_session(page))
+            live = cast("Page", page)
+            cdp = cast("_CdpSession", await live.context.new_cdp_session(live))
             _ = await cdp.send(
                 "Emulation.setUserAgentOverride",
                 user_agent_override(

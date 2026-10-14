@@ -37,9 +37,9 @@ class RateLimiter:
         burst: int,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._rate = rate_per_second
-        self._burst = float(burst)
-        self._now = now
+        self._rate: float = rate_per_second
+        self._burst: float = float(burst)
+        self._now: Callable[[], float] = now
         self._buckets: dict[str, _Bucket] = {}
 
     def check(self, key: str) -> None:

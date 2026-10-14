@@ -535,7 +535,7 @@ class _Tail:
             await self._hook(chunk[:remaining], time.monotonic() - self._started)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 — watching a command must not be able to fail it
+        except Exception:  # watching a command must not be able to fail it
             logger.debug("shell progress hook failed", exc_info=True)
 
 

@@ -45,6 +45,7 @@ after — only the amount the model reviewer has to work with changed.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -237,7 +238,7 @@ def measured_against_root(tool: str) -> bool:
 _SANDBOXED_TOOLS = frozenset({"code_execute"})
 
 
-def declared_reach(tool: str, args: dict[str, object]) -> Reach | None:
+def declared_reach(tool: str, args: Mapping[str, object]) -> Reach | None:
     """How far this call says it needs to reach, or None when it said nothing.
 
     Four readings, and each is the conservative one for its case. A **host command**
@@ -308,7 +309,7 @@ def shell_capability(
     )
 
 
-def capability_of(tool: str, args: dict[str, object], *, root: Path | None = None) -> Capability:
+def capability_of(tool: str, args: Mapping[str, object], *, root: Path | None = None) -> Capability:
     """The worst case of one deferred call to ``tool`` with ``args``.
 
     Total: every tool resolves to *something*, because a call that has arrived has to be
@@ -384,7 +385,7 @@ def capability_of(tool: str, args: dict[str, object], *, root: Path | None = Non
 
 
 def _command_capability(
-    tool: str, args: dict[str, object], command_arg: str, root: Path | None
+    tool: str, args: Mapping[str, object], command_arg: str, root: Path | None
 ) -> Capability:
     command = _text_arg(args, command_arg)
     if command is None:
@@ -421,7 +422,7 @@ def _command_capability(
 
 
 def _file_capability(
-    tool: str, args: dict[str, object], path_arg: str, root: Path | None
+    tool: str, args: Mapping[str, object], path_arg: str, root: Path | None
 ) -> Capability:
     path = _text_arg(args, path_arg)
     if path is None:
@@ -440,12 +441,12 @@ def _file_capability(
     )
 
 
-def _text_arg(args: dict[str, object], name: str) -> str | None:
+def _text_arg(args: Mapping[str, object], name: str) -> str | None:
     value = args.get(name)
     return value if isinstance(value, str) else None
 
 
-def _domain_shape(args: dict[str, object]) -> str:
+def _domain_shape(args: Mapping[str, object]) -> str:
     """The hosts an egress request names, in the order it named them. The exception to
     :func:`_arg_shape`'s rule, argued for at :data:`_EGRESS_TOOL`."""
     value = args.get("domains")
@@ -454,7 +455,7 @@ def _domain_shape(args: dict[str, object]) -> str:
     return ", ".join(names) if names else "no host it named"
 
 
-def _arg_shape(args: dict[str, object]) -> str:
+def _arg_shape(args: Mapping[str, object]) -> str:
     """An argument set named by its keys, never by its values.
 
     The shape goes to a model and onto an event; the values may be a password, a mail

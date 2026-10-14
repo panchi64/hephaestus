@@ -78,11 +78,11 @@ class EmbeddingReindexer:
         conversations: MessageReindexer,
         chunks: ChunkReembedder,
     ) -> None:
-        self._registry = registry
-        self._memory = memory
-        self._conversations = conversations
-        self._chunks = chunks
-        self._status = ReindexStatus(state="idle", memories=0, messages=0)
+        self._registry: EmbeddingSpecSource = registry
+        self._memory: MemoryReembedder = memory
+        self._conversations: MessageReindexer = conversations
+        self._chunks: ChunkReembedder = chunks
+        self._status: ReindexStatus = ReindexStatus(state="idle", memories=0, messages=0)
         self._task: asyncio.Task[None] | None = None
 
     def status(self) -> ReindexStatus:
@@ -93,7 +93,7 @@ class EmbeddingReindexer:
         in-flight one so the most recently chosen embedding model is the one we
         converge on."""
         if self._task is not None and not self._task.done():
-            self._task.cancel()
+            _ = self._task.cancel()
         # Reflect "running" synchronously so the POST response (and an immediate
         # status poll) shows the just-started run, not the prior terminal state.
         self._status = ReindexStatus(state="running", memories=0, messages=0)
