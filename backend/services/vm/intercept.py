@@ -28,16 +28,10 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
-from services.vm import egress
+import services.vm.egress as egress
+from services.vm.egress import Secret
 
 _VALIDITY = datetime.timedelta(days=30)
-
-
-@dataclass(frozen=True)
-class Secret:
-    placeholder: str
-    value: str
-    host: str
 
 
 @dataclass(frozen=True)

@@ -59,7 +59,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Engine, delete
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session, upsert
 from core.serde import as_utc
@@ -378,7 +378,7 @@ class ApprovalGrantStore:
                 else:
                     expired_ids.append(r.id)
             if expired_ids:
-                session.execute(delete(ApprovalGrant).where(ApprovalGrant.id.in_(expired_ids)))
+                session.execute(delete(ApprovalGrant).where(col(ApprovalGrant.id).in_(expired_ids)))
             return live
 
         return await in_session(self._db, work)

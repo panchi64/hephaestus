@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import CommandValidationError, NotFoundError
@@ -184,7 +184,7 @@ class CommandStore:
             rows = session.exec(
                 select(Command)
                 .where(Command.owner_id == owner_id)
-                .order_by(Command.updated_at.desc())
+                .order_by(col(Command.updated_at).desc())
             ).all()
             return [self._view(row) for row in rows]
 

@@ -4,8 +4,11 @@ the capped attachment content a request persists.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from pydantic import TypeAdapter
 from pydantic_ai import BinaryContent, ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import UserContent
 
 _MESSAGE = TypeAdapter(ModelMessage)
 _TEXT_PARTS = {"TextPart", "UserPromptPart", "SystemPromptPart"}
@@ -28,7 +31,9 @@ def _project(message: ModelMessage) -> tuple[str, str]:
     listing preview and the per-message embedding — a string-only check would drop it."""
     kind = getattr(message, "kind", "")
     pieces = (
-        _part_text(part.content) for part in message.parts if type(part).__name__ in _TEXT_PARTS
+        _part_text(getattr(part, "content", None))
+        for part in message.parts
+        if type(part).__name__ in _TEXT_PARTS
     )
     return kind, " ".join(p for p in pieces if p)
 
@@ -46,7 +51,9 @@ def _prompt_text(content: object) -> str:
     return ""
 
 
-def install_persisted_attachments(message: ModelMessage, persisted: list | None) -> None:
+def install_persisted_attachments(
+    message: ModelMessage, persisted: Sequence[UserContent] | None
+) -> None:
     """Replace a user request's *live* attachment content with the durable ``persisted``
     parts (the engine's capped set: images + under-cap text inline, larger text cut to a
     pointer, a closing id marker), keeping the operator's typed prompt — so replayed
@@ -63,7 +70,7 @@ def install_persisted_attachments(message: ModelMessage, persisted: list | None)
     for part in message.parts:
         if isinstance(part, UserPromptPart):
             prompt = _prompt_text(part.content)
-            items: list = ([prompt] if prompt else []) + list(persisted)
+            items: list[UserContent] = ([prompt] if prompt else []) + list(persisted)
             if any(isinstance(item, BinaryContent) for item in items):
                 part.content = items
             else:

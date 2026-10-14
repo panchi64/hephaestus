@@ -20,7 +20,7 @@ outside it, and it is versioned with the verdict type it fills in.
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 # The category vocabulary. A closed set (rather than free-form tags) keeps the inbox
 # filterable and stops a model inventing a new label per message.
-CATEGORIES = (
+Category = Literal[
     "personal",
     "work",
     "finance",
@@ -46,7 +46,8 @@ CATEGORIES = (
     "social",
     "promotion",
     "other",
-)
+]
+CATEGORIES: tuple[Category, ...] = get_args(Category)
 
 URGENCY_HIGH = "high"
 
@@ -85,7 +86,7 @@ class TriageVerdict(BaseModel):
     """The typed result of one triage call — labels and a summary, never instructions."""
 
     summary: str = Field(default="", max_length=400)
-    category: Literal[CATEGORIES] = "other"  # type: ignore[valid-type]
+    category: Category = "other"
     urgency: Literal["low", "normal", "high"] = "normal"
     spam: bool = False
     events: list[ImpliedEvent] = Field(default_factory=list)
@@ -113,7 +114,7 @@ class MailTriage:
             return None
 
         agent = Agent(resolved.model, output_type=TriageVerdict, instructions=_INSTRUCTIONS)
-        settings: ModelSettings = {**_SETTINGS, **(resolved.reasoning_off or {})}
+        settings: ModelSettings = _SETTINGS | (resolved.reasoning_off or ModelSettings())
         try:
             result = await agent.run(_prompt(detail), model_settings=settings)
         except Exception as exc:  # noqa: BLE001 — never fail a sync over one message

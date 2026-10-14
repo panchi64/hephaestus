@@ -29,12 +29,13 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
 from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.serde import as_utc
@@ -46,8 +47,13 @@ from models.task import ScheduledTask, ScheduleType, TaskKind, TaskOutcome, Task
 
 logger = logging.getLogger(__name__)
 
+
+class _Keep(Enum):
+    KEEP = object()
+
+
 # Passed as `next_run_at` to leave the stored value as it is.
-_KEEP = object()
+_KEEP = _Keep.KEEP
 
 # The tick loop's own floor on how soon it re-checks after finding something already
 # due — see `_wait_for`.
@@ -152,10 +158,10 @@ class SchedulerService:
         self._executor = executor
         self._notify = notify
         # `TaskRun` id → the execution recording it.
-        self._running: dict[str, asyncio.Task] = {}
+        self._running: dict[str, asyncio.Task[None]] = {}
         self._wake = asyncio.Event()
         self._stopping = asyncio.Event()
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         self._stopping.clear()
@@ -219,11 +225,11 @@ class SchedulerService:
         if self._stopping.is_set():
             self._wake.clear()
             return
-        stop_wait = asyncio.ensure_future(self._stopping.wait())
-        wake_wait = asyncio.ensure_future(self._wake.wait())
+        stop_wait: asyncio.Task[bool] = asyncio.ensure_future(self._stopping.wait())
+        wake_wait: asyncio.Task[bool] = asyncio.ensure_future(self._wake.wait())
         waits = {stop_wait, wake_wait}
         if seconds is not None:
-            waits.add(asyncio.ensure_future(asyncio.sleep(max(seconds, _MIN_POLL_S))))
+            waits.add(asyncio.ensure_future(asyncio.sleep(max(seconds, _MIN_POLL_S), True)))
         try:
             await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -344,9 +350,9 @@ class SchedulerService:
             return list(
                 session.exec(
                     select(ScheduledTask)
-                    .where(ScheduledTask.enabled.is_(True))
-                    .where(ScheduledTask.approved.is_(True))
-                    .where(ScheduledTask.next_run_at.is_not(None))
+                    .where(col(ScheduledTask.enabled).is_(True))
+                    .where(col(ScheduledTask.approved).is_(True))
+                    .where(col(ScheduledTask.next_run_at).is_not(None))
                 ).all()
             )
 
@@ -363,9 +369,9 @@ class SchedulerService:
             return list(
                 session.exec(
                     select(ScheduledTask.next_run_at)
-                    .where(ScheduledTask.enabled.is_(True))
-                    .where(ScheduledTask.approved.is_(True))
-                    .where(ScheduledTask.next_run_at.is_not(None))
+                    .where(col(ScheduledTask.enabled).is_(True))
+                    .where(col(ScheduledTask.approved).is_(True))
+                    .where(col(ScheduledTask.next_run_at).is_not(None))
                 ).all()
             )
 
@@ -479,7 +485,7 @@ class SchedulerService:
         self,
         task_id: str,
         *,
-        next_run_at: datetime | None | object = _KEEP,
+        next_run_at: datetime | None | _Keep = _KEEP,
         last_run_at: datetime | None = None,
         enabled: bool | None = None,
     ) -> None:
@@ -497,7 +503,7 @@ class SchedulerService:
         self,
         task_id: str,
         *,
-        next_run_at: datetime | None | object = _KEEP,
+        next_run_at: datetime | None | _Keep = _KEEP,
         last_run_at: datetime | None = None,
         enabled: bool | None = None,
     ) -> None:

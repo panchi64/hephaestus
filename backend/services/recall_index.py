@@ -24,6 +24,7 @@ from collections import Counter
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 from sqlalchemy import Engine
@@ -214,7 +215,7 @@ class RecallIndex:
     def __init__(self, engine: Engine, vault: Vault) -> None:
         self._engine = engine
         self._vault = vault
-        self._shards: dict[tuple[str, str], _Shard] = {}
+        self._shards: dict[tuple[str, str], _Shard[Any]] = {}
         self._generation = 0
         vault.register_on_lock(self.clear)
 

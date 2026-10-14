@@ -249,7 +249,7 @@ class SubagentStore:
             query = (
                 select(SubagentRecord)
                 .where(SubagentRecord.owner_id == owner_id)
-                .where(SubagentRecord.status.in_(LIVE_STATUSES))  # type: ignore[attr-defined]
+                .where(col(SubagentRecord.status).in_(LIVE_STATUSES))
             )
             if root_conversation_id is not None:
                 query = query.where(SubagentRecord.root_conversation_id == root_conversation_id)
@@ -281,7 +281,7 @@ class SubagentStore:
 
         def work(session: Session) -> int:
             rows = session.exec(
-                select(SubagentRecord).where(SubagentRecord.status.in_(LIVE_STATUSES))  # type: ignore[attr-defined]
+                select(SubagentRecord).where(col(SubagentRecord.status).in_(LIVE_STATUSES))
             ).all()
             for row in rows:
                 row.status = "cancelled"

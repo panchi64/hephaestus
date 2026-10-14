@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.api_scopes import ScopeTable
 from core.auth import TokenIdentity
@@ -153,7 +153,7 @@ class ApiTokenStore:
             rows = session.exec(
                 select(ApiToken)
                 .where(ApiToken.owner_id == owner_id)
-                .order_by(ApiToken.created_at.desc())  # type: ignore[attr-defined]
+                .order_by(col(ApiToken.created_at).desc())
             ).all()
             return [_info(row) for row in rows]
 

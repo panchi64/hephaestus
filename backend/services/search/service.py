@@ -21,6 +21,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from sqlalchemy import Engine
@@ -100,7 +101,7 @@ class _SearchTarget:
 
     base_url: str
     engines: list[str]
-    params: dict
+    params: dict[str, Any]
     api_key: str | None
 
 
@@ -158,7 +159,7 @@ class SearchService:
         base_url: str,
         enabled: bool = True,
         engines: list[str] | None = None,
-        params: dict | None = None,
+        params: dict[str, Any] | None = None,
         api_key: str | None = None,
     ) -> SearchProvider:
         provider = SearchProvider(
@@ -247,12 +248,12 @@ class SearchService:
         other value is ignored)."""
         target = await self._resolve_target(owner_id)
         limit = self._result_limit if limit is None else limit
-        params: dict = {"q": query, "format": "json", **target.params}
+        params: dict[str, Any] = {"q": query, "format": "json", **target.params}
         if target.engines:
             params["engines"] = ",".join(target.engines)
         if time_range in ("day", "week", "month", "year"):
             params["time_range"] = time_range
-        headers: dict = {}
+        headers: dict[str, str] = {}
         if target.api_key:
             headers["Authorization"] = f"Bearer {target.api_key}"
         url = target.base_url.rstrip("/") + "/search"

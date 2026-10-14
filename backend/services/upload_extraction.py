@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 _SPARSE_TEXT_THRESHOLD = 16
 # Render scale for OCR rasterization — ~144 DPI (72 × 2), a good legibility/size
 # trade-off for a vision model that downscales internally anyway.
-_RENDER_SCALE = 2.0
+_RENDER_SCALE = 2
 _JPEG_QUALITY = 85
 
 

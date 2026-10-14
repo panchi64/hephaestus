@@ -35,7 +35,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
-from smolvm import InternetSettings, SmolVM, SmolVMError, VMConfig
+from smolvm import GuestOS, InternetSettings, SmolVM, SmolVMError, VMConfig
 from smolvm.utils import ensure_ssh_key
 
 from .driver import ExecResult, VMError
@@ -199,7 +199,7 @@ class SmolvmDriver:
             vm_id=vm_id,
             vcpu_count=self._cpus,
             memory=self._memory_mb if not internet else max(self._memory_mb, 2048),
-            guest_os=_GUEST_OS,
+            guest_os=GuestOS(_GUEST_OS),
             boot_mode="direct_kernel",
             kernel_path=image.kernel,
             rootfs_path=image.disk,
@@ -388,6 +388,7 @@ def provision(
 
 
 def _save_image(config: VMConfig, directory: Path) -> None:
+    assert config.rootfs_path is not None
     _flatten(Path(config.rootfs_path), directory / "disk.qcow2")
     shutil.copyfile(Path(str(config.kernel_path)), directory / "vmlinux")
     (directory / "image.json").write_text(

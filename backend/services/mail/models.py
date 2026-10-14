@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 # Well-known folder roles, normalized across providers: IMAP special-use flags
 # (`\Sent`, `\Junk`, …), JMAP mailbox roles and Gmail label ids all map onto these,
@@ -122,6 +123,6 @@ class AccountSpec:
     address: str
     provider: str
     auth_kind: str
-    config: dict = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
     password: str | None = None
     access_token: str | None = None

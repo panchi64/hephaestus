@@ -13,8 +13,9 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator, Callable
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
+from playwright.async_api import Page
 from pydantic import BaseModel, Field
 
 from .live import LiveBrowser
@@ -120,7 +121,8 @@ async def frames(live: LiveBrowser, alive: Callable[[], bool]) -> AsyncIterator[
                 continue
             url = getattr(page, "url", "") or ""
             with contextlib.suppress(Exception):
-                title = await page.title()
+                if page is not None:
+                    title = await page.title()
             live.touch()
             yield {**frame, "url": url, "title": title}
         yield {"type": "closed"}
@@ -161,9 +163,10 @@ def _settled(tasks: set[asyncio.Task[Any]]) -> Callable[[asyncio.Task[Any]], Non
 
 async def dispatch(live: LiveBrowser, event: ViewInput) -> None:
     """Replay one operator input on the session's current page."""
-    page = live.session.page
-    if page is None:
+    current = live.session.page
+    if current is None:
         return
+    page = cast(Page, current)
     live.touch()
     match event:
         case NavigateInput(url=url):

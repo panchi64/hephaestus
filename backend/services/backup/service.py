@@ -42,7 +42,7 @@ from typing import Any
 
 from sqlalchemy import Column, Engine, func
 from sqlalchemy.types import TypeDecorator
-from sqlmodel import Session, SQLModel, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import HephaestusError
@@ -50,7 +50,7 @@ from core.vault import Vault
 from services.settings_store import SettingsStore
 
 from .envelope import open_envelope, seal
-from .manifest import BackupEntity, discover_entities, sections
+from .manifest import BackupEntity, BackupModel, discover_entities, sections
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ class BackupImportReport:
         self.skipped[section] = self.skipped.get(section, 0) + skipped
 
 
-def _column_kind(column: Column) -> str:
+def _column_kind(column: Column[Any]) -> str:
     """How a column's value is carried in JSON. Driven by the declared type, not by
     sniffing values, so the encoding is exact both ways (a JSON column holding a string
     that *looks* like a timestamp is never re-parsed as one).
@@ -302,16 +302,16 @@ class BackupService:
 
         def work(session: Session) -> int:
             return session.exec(
-                select(func.count()).select_from(model).where(model.owner_id == owner_id)
+                select(func.count()).select_from(model).where(col(model.owner_id) == owner_id)
             ).one()
 
         return await in_session(self._engine, work)
 
-    async def _rows(self, entity: BackupEntity, owner_id: str) -> list[SQLModel]:
+    async def _rows(self, entity: BackupEntity, owner_id: str) -> list[BackupModel]:
         model = entity.model
 
-        def work(session: Session) -> list[SQLModel]:
-            return list(session.exec(select(model).where(model.owner_id == owner_id)).all())
+        def work(session: Session) -> list[BackupModel]:
+            return list(session.exec(select(model).where(col(model.owner_id) == owner_id)).all())
 
         return await in_session(self._engine, work)
 
@@ -324,7 +324,7 @@ class BackupService:
     ) -> tuple[int, int]:
         """Merge one entity's rows, reading and extending the import-wide id ``remap``."""
         existing = await self._rows(entity, owner_id)
-        seen_ids = {row.id for row in existing}  # type: ignore[attr-defined]
+        seen_ids: set[object] = {row.id for row in existing}
         # Natural key → the id that record already carries *here*. A dict, not a set,
         # because a skipped row has to hand its local id to whatever pointed at the
         # file's id — knowing only "a duplicate exists" is what orphans the children.
@@ -332,9 +332,9 @@ class BackupService:
         for row in existing:
             row_key = self._natural_key(entity, self._plain(entity, row))
             if row_key is not None:
-                local_by_key[row_key] = row.id  # type: ignore[attr-defined]
+                local_by_key[row_key] = row.id
 
-        fresh: list[SQLModel] = []
+        fresh: list[BackupModel] = []
         skipped = 0
         for incoming in rows:
             values = dict(incoming)
@@ -401,7 +401,7 @@ class BackupService:
         arbitrary nesting would risk mangling opaque operator data to fix nothing."""
         if not remap:
             return
-        for column in entity.model.__table__.columns:  # type: ignore[attr-defined]
+        for column in entity.model.__table__.columns:
             if column.primary_key:
                 continue
             value = values.get(column.name)
@@ -422,30 +422,30 @@ class BackupService:
             return None
         return tuple(values.get(column) for column in columns)
 
-    def _plain(self, entity: BackupEntity, row: SQLModel) -> dict[str, Any]:
+    def _plain(self, entity: BackupEntity, row: BackupModel) -> dict[str, Any]:
         """A DB row's values with its sealed columns opened — the shape an incoming row is
         already in, so the two can be compared without either side guessing."""
         values: dict[str, Any] = {}
-        for column in entity.model.__table__.columns:  # type: ignore[attr-defined]
+        for column in entity.model.__table__.columns:
             value = getattr(row, column.name)
             if column.name.endswith("_enc") and value is not None:
                 value = self._unseal(value)
             values[column.name] = value
         return values
 
-    def _encode(self, entity: BackupEntity, row: SQLModel) -> dict[str, Any]:
+    def _encode(self, entity: BackupEntity, row: BackupModel) -> dict[str, Any]:
         """One row, JSON-ready: the opened values from :meth:`_plain` (the envelope re-seals
         the whole payload under the backup secret) with bytes/timestamps made portable."""
         plain = self._plain(entity, row)
         return {
             column.name: _to_json(plain[column.name], _column_kind(column))
-            for column in entity.model.__table__.columns  # type: ignore[attr-defined]
+            for column in entity.model.__table__.columns
         }
 
-    def _decode(self, entity: BackupEntity, values: Mapping[str, Any]) -> SQLModel:
+    def _decode(self, entity: BackupEntity, values: Mapping[str, Any]) -> BackupModel:
         """The reverse: JSON back to column values, re-sealed under *this* host's DEK."""
         built: dict[str, Any] = {}
-        for column in entity.model.__table__.columns:  # type: ignore[attr-defined]
+        for column in entity.model.__table__.columns:
             if column.name not in values:
                 continue
             value = _from_json(values[column.name], _column_kind(column))

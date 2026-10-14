@@ -15,7 +15,7 @@ import threading
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, Protocol
 from weakref import WeakKeyDictionary
 
 from alembic import command
@@ -23,9 +23,10 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
-from sqlalchemy import Engine, event, inspect
+from sqlalchemy import Connection, Engine, event, inspect
+from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from core.exceptions import NotFoundError, SchemaMigrationError
@@ -85,7 +86,7 @@ def _is_locked(exc: OperationalError) -> bool:
 
 def make_engine(url: str) -> Engine:
     """Build the SQLite engine. In-memory URLs share one connection (for tests)."""
-    kwargs = {"connect_args": {"check_same_thread": False}}
+    kwargs: dict[str, object] = {"connect_args": {"check_same_thread": False}}
     if ":memory:" in url:
         kwargs["poolclass"] = StaticPool
     engine = create_engine(url, **kwargs)
@@ -96,7 +97,9 @@ def make_engine(url: str) -> Engine:
         _CONN_LOCKS[engine] = threading.Lock()
 
     @event.listens_for(engine, "connect")
-    def _configure_connection(dbapi_connection, _record):  # type: ignore[no-untyped-def]
+    def _configure_connection(
+        dbapi_connection: DBAPIConnection, _record: ConnectionPoolEntry
+    ) -> None:
         # pysqlite ships a legacy transaction model: it runs DDL in autocommit and opens
         # a transaction only before the first DML. That makes schema migrations
         # non-atomic — a migration that fails partway leaves its already-committed
@@ -124,7 +127,7 @@ def make_engine(url: str) -> Engine:
         cursor.close()
 
     @event.listens_for(engine, "begin")
-    def _emit_begin(connection):  # type: ignore[no-untyped-def]
+    def _emit_begin(connection: Connection) -> None:
         # With pysqlite handed over to autocommit above, SQLAlchemy must emit the BEGIN
         # itself; without this no transaction is ever opened and every statement commits.
         connection.exec_driver_sql("BEGIN")
@@ -262,7 +265,11 @@ async def in_session[T](engine: Engine, work: Callable[[Session], T]) -> T:
     raise AssertionError("unreachable")  # pragma: no cover
 
 
-async def get_owned[M](
+class _Owned(Protocol):
+    owner_id: str
+
+
+async def get_owned[M: _Owned](
     engine: Engine, model_cls: type[M], row_id: str, owner_id: str, *, what: str
 ) -> M:
     """The row ``row_id`` names, provided ``owner_id`` owns it. Raises ``NotFoundError``
@@ -277,7 +284,7 @@ async def get_owned[M](
 
     def work(session: Session) -> M | None:
         row = session.get(model_cls, row_id)
-        return row if row is not None and row.owner_id == owner_id else None  # type: ignore[attr-defined]
+        return row if row is not None and row.owner_id == owner_id else None
 
     row = await in_session(engine, work)
     if row is None:

@@ -13,18 +13,28 @@ a class the process never imported has no mapper, and would silently vanish from
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
+from sqlalchemy import Table
 from sqlmodel import SQLModel
 
 from models._backup import BackupSpec
 from models._discovery import import_all_models
 
 
+class BackupModel(SQLModel):
+    """The shape every backed-up table shares; typing only, never mapped."""
+
+    __table__: ClassVar[Table]
+    id: str
+    owner_id: str
+
+
 @dataclass(frozen=True)
 class BackupEntity:
     """One marked table, paired with what its marker declared."""
 
-    model: type[SQLModel]
+    model: type[BackupModel]
     spec: BackupSpec
 
     @property

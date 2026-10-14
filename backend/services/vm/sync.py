@@ -18,7 +18,7 @@ import stat
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import IO
+from typing import IO, Any
 
 from .driver import VMError
 
@@ -70,7 +70,7 @@ def scan_names(root: Path, names: set[str]) -> Manifest:
     return entries
 
 
-def parse_manifest(raw: dict) -> Manifest:
+def parse_manifest(raw: dict[str, Any]) -> Manifest:
     return {
         str(name): (str(entry[0]), int(entry[1]), int(entry[2]))
         for name, entry in raw.items()

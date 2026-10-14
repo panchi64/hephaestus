@@ -33,7 +33,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from sqlalchemy import Engine, delete
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session, upsert
 from core.exceptions import InvalidInputError
@@ -235,8 +235,8 @@ class EgressPolicy:
         def work(session: Session) -> None:
             session.execute(
                 delete(EgressGrant)
-                .where(EgressGrant.owner_id == _OWNER_ID)
-                .where(EgressGrant.conversation_id == conversation_id)
+                .where(col(EgressGrant.owner_id) == _OWNER_ID)
+                .where(col(EgressGrant.conversation_id) == conversation_id)
             )
 
         await in_session(self._db, work)

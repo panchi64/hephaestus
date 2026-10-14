@@ -15,7 +15,7 @@ class TasksUpdated(_Body):
     completed/cancelled. Additive to v1; no bump."""
 
     type: Literal["tasks.updated"] = "tasks.updated"
-    items: list[dict]
+    items: list[dict[str, object]]
 
 
 class PlanUpdated(_Body):

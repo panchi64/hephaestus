@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import func, or_
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from models.conversation import Conversation, Message
@@ -35,13 +35,13 @@ def _db_stats(session: Session, conversation_ids: list[str]) -> dict[str, tuple[
     counts = dict(
         session.exec(
             select(Message.conversation_id, func.count())
-            .where(Message.conversation_id.in_(conversation_ids))
+            .where(col(Message.conversation_id).in_(conversation_ids))
             .group_by(Message.conversation_id)
         ).all()
     )
     latest = (
         select(Message.conversation_id, func.max(Message.seq).label("seq"))
-        .where(Message.conversation_id.in_(conversation_ids))
+        .where(col(Message.conversation_id).in_(conversation_ids))
         .group_by(Message.conversation_id)
         .subquery()
     )
@@ -49,7 +49,7 @@ def _db_stats(session: Session, conversation_ids: list[str]) -> dict[str, tuple[
         session.exec(
             select(Message.conversation_id, Message.text).join(
                 latest,
-                (Message.conversation_id == latest.c.conversation_id)
+                (col(Message.conversation_id) == latest.c.conversation_id)
                 & (Message.seq == latest.c.seq),
             )
         ).all()
@@ -117,7 +117,7 @@ class _ListingMixin(_StoreCore):
             scope = project_clause(Conversation.project_id, visible_projects)
             if scope is not None:
                 query = query.where(scope)
-            conversations = session.exec(query.order_by(Conversation.updated_at.desc())).all()
+            conversations = session.exec(query.order_by(col(Conversation.updated_at).desc())).all()
             stats = _db_stats(session, [c.id for c in conversations])
             return [(c, *stats.get(c.id, (0, None))) for c in conversations]
 
@@ -174,7 +174,7 @@ class _ListingMixin(_StoreCore):
                 session.exec(
                     select(Conversation).where(
                         Conversation.owner_id == owner_id,
-                        Conversation.id.in_(wanted),  # type: ignore[attr-defined]
+                        col(Conversation.id).in_(wanted),
                     )
                 ).all()
             )
@@ -226,11 +226,11 @@ class _ListingMixin(_StoreCore):
                 .where(message_count >= min_messages)
                 .where(
                     or_(
-                        Conversation.work_summary_at.is_(None),  # type: ignore[union-attr]
-                        Conversation.work_summary_at < Conversation.updated_at,
+                        col(Conversation.work_summary_at).is_(None),
+                        col(Conversation.work_summary_at) < Conversation.updated_at,
                     )
                 )
-                .order_by(Conversation.updated_at.desc())  # type: ignore[attr-defined]
+                .order_by(col(Conversation.updated_at).desc())
                 .limit(limit)
             )
             return list(session.exec(query).all())

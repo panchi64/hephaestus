@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import or_
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from models.conversation import Conversation, Message
@@ -35,16 +35,16 @@ class _EmbeddingMixin(_StoreCore):
         def pending(session: Session) -> list[tuple[str, str]]:
             query = (
                 select(Message.id, Message.text)
-                .join(Conversation, Message.conversation_id == Conversation.id)
+                .join(Conversation, col(Message.conversation_id) == Conversation.id)
                 .where(Conversation.owner_id == owner_id)
             )
             if current_model is None:
-                query = query.where(Message.embedding_enc.is_(None))  # type: ignore[union-attr]
+                query = query.where(col(Message.embedding_enc).is_(None))
             else:
                 query = query.where(
                     or_(
-                        Message.embedding_enc.is_(None),  # type: ignore[union-attr]
-                        Message.embedding_model != current_model,
+                        col(Message.embedding_enc).is_(None),
+                        col(Message.embedding_model) != current_model,
                     )
                 )
             rows = session.exec(query).all()

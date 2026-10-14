@@ -96,9 +96,14 @@ def _resolve() -> _Helper | None:
             if shutil.which(name):
                 return _Helper(name, "powershell")
         return None
-    for name, kind in (("zenity", "zenity"), ("kdialog", "kdialog"), ("qarma", "zenity")):
+    candidates: tuple[tuple[str, Literal["zenity", "kdialog"]], ...] = (
+        ("zenity", "zenity"),
+        ("kdialog", "kdialog"),
+        ("qarma", "zenity"),
+    )
+    for name, kind in candidates:
         if shutil.which(name):
-            return _Helper(name, kind)  # type: ignore[arg-type]
+            return _Helper(name, kind)
     return None
 
 

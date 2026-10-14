@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from models.conversation import Conversation, Message
@@ -29,7 +29,7 @@ class _AttachmentsMixin(_StoreCore):
         def work(session: Session) -> set[str]:
             stmt = (
                 select(Message.attachment_ids)
-                .join(Conversation, Message.conversation_id == Conversation.id)
+                .join(Conversation, col(Message.conversation_id) == Conversation.id)
                 .where(Conversation.owner_id == owner_id)
             )
             if exclude_conversation_id is not None:
@@ -96,7 +96,7 @@ class _AttachmentsMixin(_StoreCore):
         def work(session: Session) -> None:
             rows = session.exec(
                 select(Message)
-                .join(Conversation, Message.conversation_id == Conversation.id)
+                .join(Conversation, col(Message.conversation_id) == Conversation.id)
                 .where(Conversation.owner_id == owner_id)
             ).all()
             for row in rows:

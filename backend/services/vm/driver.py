@@ -39,9 +39,11 @@ class VMDriver(Protocol):
 
     async def alive(self) -> bool:
         """Whether the VM is running and answers a command."""
+        ...
 
     async def exec(self, argv: list[str], *, timeout_s: float) -> ExecResult:
         """Run ``argv`` as root in the guest."""
+        ...
 
     async def put_file(self, local: Path, guest: str) -> None:
         """Copy one host file into the guest."""
@@ -51,3 +53,4 @@ class VMDriver(Protocol):
 
     async def forward(self, guest_port: int) -> int:
         """Expose a guest TCP port on host loopback and return the host port."""
+        ...

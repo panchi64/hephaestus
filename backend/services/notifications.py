@@ -56,6 +56,7 @@ from services.notification_channels import (
     ChannelHealth,
     NotificationChannel,
 )
+from services.notification_view import NotificationView
 
 logger = logging.getLogger(__name__)
 
@@ -68,24 +69,6 @@ _SUBSCRIBER_QUEUE_MAX = 1024
 # bounded; a reconnect past the horizon simply misses the oldest events (the same
 # in-memory-only tradeoff `runs/stream.py` already licenses).
 _RING_BUFFER_MAX = 500
-
-
-@dataclass(frozen=True)
-class NotificationView:
-    """A decrypted notification — the shape every read returns (the owner sees their
-    own content in the clear, like documents/memory)."""
-
-    id: str
-    owner_id: str
-    kind: str
-    title: str
-    body: str | None
-    conversation_id: str | None
-    run_id: str | None
-    task_id: str | None
-    created_at: datetime
-    read_at: datetime | None
-    resolved_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,6 +419,8 @@ class NotificationService:
 
     async def _persist(self, job: _Job) -> None:
         if job.op == "create":
+            created_at = job.created_at
+            assert created_at is not None
 
             def work(session: Session) -> None:
                 session.add(
@@ -450,7 +435,7 @@ class NotificationService:
                         conversation_id=job.conversation_id,
                         run_id=job.run_id,
                         task_id=job.task_id,
-                        created_at=job.created_at,
+                        created_at=created_at,
                     )
                 )
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.config import get_settings
 from core.db import in_session
@@ -122,7 +122,7 @@ class SettingsStore:
             rows = session.exec(
                 select(AppSetting)
                 .where(AppSetting.owner_id == owner_id)
-                .where(AppSetting.key.in_(keys))  # type: ignore[attr-defined]
+                .where(col(AppSetting.key).in_(keys))
             ).all()
             return {row.key: row.value for row in rows}
 

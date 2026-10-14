@@ -118,20 +118,18 @@ class GraphTransport:
         )
 
     async def send(self, message: OutgoingMail) -> str:
-        payload = {
-            "message": {
-                "subject": message.subject,
-                "body": {"contentType": "Text", "content": message.body},
-                "toRecipients": [_recipient(a) for a in message.to],
-                "ccRecipients": [_recipient(a) for a in message.cc],
-                "bccRecipients": [_recipient(a) for a in message.bcc],
-            },
-            "saveToSentItems": True,
+        envelope: dict[str, object] = {
+            "subject": message.subject,
+            "body": {"contentType": "Text", "content": message.body},
+            "toRecipients": [_recipient(a) for a in message.to],
+            "ccRecipients": [_recipient(a) for a in message.cc],
+            "bccRecipients": [_recipient(a) for a in message.bcc],
         }
+        payload = {"message": envelope, "saveToSentItems": True}
         if message.in_reply_to:
             # Graph has no In-Reply-To field on `sendMail`; the internet message headers
             # extension is how a reply is threaded without fetching the parent first.
-            payload["message"]["internetMessageHeaders"] = [
+            envelope["internetMessageHeaders"] = [
                 {"name": "In-Reply-To", "value": message.in_reply_to},
                 {
                     "name": "References",

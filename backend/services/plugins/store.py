@@ -340,10 +340,17 @@ class PluginStore:
                 .where(PluginSecret.plugin_id == plugin_id)
                 .where(PluginSecret.name == name)
             ).first()
+            encrypted = self._vault.encrypt_str(value)
             if row is None:
-                row = PluginSecret(owner_id=owner_id, plugin_id=plugin_id, name=name)
+                row = PluginSecret(
+                    owner_id=owner_id,
+                    plugin_id=plugin_id,
+                    name=name,
+                    domain=host,
+                    value_enc=encrypted,
+                )
             row.domain = host
-            row.value_enc = self._vault.encrypt_str(value)
+            row.value_enc = encrypted
             row.updated_at = datetime.now(UTC)
             session.add(row)
 

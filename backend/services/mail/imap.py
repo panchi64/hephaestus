@@ -23,6 +23,8 @@ import re
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import replace
+from re import Pattern
+from typing import cast
 
 import aioimaplib
 import aiosmtplib
@@ -105,7 +107,10 @@ class ImapTransport:
     async def list_folders(self) -> list[MailFolder]:
         async with self._lock:
             client = await self._connect()
-            status, lines = await self._command(client.list('""', "*"))
+            # aioimaplib annotates the pattern as `Pattern` but sends it verbatim as a string.
+            status, lines = await self._command(
+                client.list('""', cast(Pattern[str], cast(object, "*")))
+            )
             if status != "OK":
                 raise MailError("the server refused to list this account's folders")
             return [folder for folder in map(_parse_list_line, lines) if folder is not None]
@@ -242,7 +247,10 @@ class ImapTransport:
             await client.wait_hello_from_server()
             if self._spec.access_token:
                 status, _lines = await self._command(
-                    client.xoauth2(self._username(), self._spec.access_token)
+                    # aioimaplib annotates the token as `bytes` but formats it as a string.
+                    client.xoauth2(
+                        self._username(), cast(bytes, cast(object, self._spec.access_token))
+                    )
                 )
             else:
                 status, _lines = await self._command(
@@ -304,7 +312,7 @@ class ImapTransport:
             return
         await self._command(client.uid("expunge", uid))
 
-    async def _command(self, awaitable) -> tuple[str, list]:
+    async def _command(self, awaitable) -> tuple[str, list[object]]:
         """Await one IMAP command, turning connection-level failures into domain errors
         and dropping the cached connection so the next call reconnects."""
         try:
@@ -346,7 +354,9 @@ def _drop_socket(client: aioimaplib.IMAP4_SSL | None) -> None:
     if client is None:
         return
     with suppress(Exception):
-        client.protocol.transport.close()
+        protocol = client.protocol
+        if protocol is not None and protocol.transport is not None:
+            protocol.transport.close()
 
 
 def _self_address(spec: AccountSpec) -> MailAddress:
@@ -354,7 +364,7 @@ def _self_address(spec: AccountSpec) -> MailAddress:
     return MailAddress(address=spec.address, name=display or None)
 
 
-def _flags_of(lines: list) -> set[str]:
+def _flags_of(lines: list[object]) -> set[str]:
     for line in lines:
         text = line.decode("utf-8", "replace") if isinstance(line, bytes | bytearray) else str(line)
         match = re.search(r"FLAGS \(([^)]*)\)", text)
@@ -363,7 +373,7 @@ def _flags_of(lines: list) -> set[str]:
     return set()
 
 
-def _first_literal(lines: list) -> bytes | None:
+def _first_literal(lines: list[object]) -> bytes | None:
     """The first literal in a FETCH response — the raw RFC 5322 message.
 
     aioimaplib returns a flat list mixing the untagged response line, the literal
@@ -375,7 +385,7 @@ def _first_literal(lines: list) -> bytes | None:
     return bytes(max(literals, key=len)) if literals else None
 
 
-def _search_uids(lines: list) -> list[str]:
+def _search_uids(lines: list[object]) -> list[str]:
     for line in lines:
         text = line.decode("utf-8", "replace") if isinstance(line, bytes | bytearray) else str(line)
         tokens = text.split()

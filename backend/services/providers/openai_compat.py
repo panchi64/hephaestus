@@ -9,7 +9,7 @@ family.
 from __future__ import annotations
 
 from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
@@ -76,7 +76,7 @@ class OpenAICompatProvider:
         # settings over the model's, so a caller can still override deliberately.
         return OpenAIChatModel(spec.model, provider=provider, profile=profile, settings=settings)
 
-    def model_settings(self, descriptor: reasoning.ModelDescriptor) -> ModelSettings:
+    def model_settings(self, descriptor: reasoning.ModelDescriptor) -> OpenAIChatModelSettings:
         """Prompt-cache retention, and nothing else — usually not even that.
 
         OpenAI caches a matching prefix **implicitly**, with no request field: there is one

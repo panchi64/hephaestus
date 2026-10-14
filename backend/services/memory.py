@@ -172,7 +172,9 @@ class MemoryStore:
 
         def work(session: Session) -> list[MemoryView]:
             rows = session.exec(
-                select(Memory).where(Memory.owner_id == owner_id).order_by(Memory.created_at.desc())  # type: ignore[attr-defined]
+                select(Memory)
+                .where(Memory.owner_id == owner_id)
+                .order_by(col(Memory.created_at).desc())
             ).all()
             return [self._to_view(row, self._vault.decrypt_str(row.content_enc)) for row in rows]
 
@@ -275,12 +277,12 @@ class MemoryStore:
             # loaded and decrypted (not the whole table).
             query = select(Memory).where(Memory.owner_id == owner_id)
             if current_model is None:
-                query = query.where(Memory.embedding_enc.is_(None))  # type: ignore[union-attr]
+                query = query.where(col(Memory.embedding_enc).is_(None))
             else:
                 query = query.where(
                     or_(
-                        Memory.embedding_enc.is_(None),  # type: ignore[union-attr]
-                        Memory.embedding_model != current_model,
+                        col(Memory.embedding_enc).is_(None),
+                        col(Memory.embedding_model) != current_model,
                     )
                 )
             rows = session.exec(query).all()

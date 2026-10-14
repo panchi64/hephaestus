@@ -96,8 +96,11 @@ def open_envelope(secret: str, envelope: Mapping[str, Any]) -> bytes:
     if not isinstance(kdf, Mapping) or kdf.get("algorithm") != KDF_ALGORITHM:
         raise BackupFormatError("unsupported key derivation in this backup file")
     try:
-        salt = base64.b64decode(kdf["salt"])
-        sealed = base64.b64decode(envelope["payload"])
+        salt_text, payload_text = kdf["salt"], envelope["payload"]
+        if not isinstance(salt_text, str) or not isinstance(payload_text, str):
+            raise TypeError("salt and payload must be base64 strings")
+        salt = base64.b64decode(salt_text)
+        sealed = base64.b64decode(payload_text)
     except (KeyError, TypeError, ValueError) as exc:
         raise BackupFormatError("the backup file is malformed") from exc
 

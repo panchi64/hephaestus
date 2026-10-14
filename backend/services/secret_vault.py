@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core import crypto
 from core.db import in_session
@@ -196,7 +196,7 @@ class SecretVaultService:
                 session.exec(
                     select(SecretEntry)
                     .where(SecretEntry.owner_id == owner_id)
-                    .order_by(SecretEntry.created_at)  # type: ignore[arg-type]
+                    .order_by(col(SecretEntry.created_at))
                 ).all()
             )
 

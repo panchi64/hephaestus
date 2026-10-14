@@ -75,9 +75,13 @@ def _resolve() -> _Opener | None:
         # `explorer <path>` is the shell's own "open with the registered handler", and it
         # is always present — unlike a chooser, there is no fallback to look for.
         return _Opener("explorer", "explorer") if shutil.which("explorer") else None
-    for name, kind in (("xdg-open", "xdg-open"), ("gio", "gio")):
+    candidates: tuple[tuple[str, Literal["xdg-open", "gio"]], ...] = (
+        ("xdg-open", "xdg-open"),
+        ("gio", "gio"),
+    )
+    for name, kind in candidates:
         if shutil.which(name):
-            return _Opener(name, kind)  # type: ignore[arg-type]
+            return _Opener(name, kind)
     return None
 
 

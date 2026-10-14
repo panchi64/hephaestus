@@ -17,6 +17,8 @@ type WorkspaceKind = Literal["sandbox", "checkout", "worktree"]
 
 DEFAULT_WORKSPACE_KIND: WorkspaceKind = "sandbox"
 
+_KINDS: tuple[WorkspaceKind, ...] = get_args(WorkspaceKind.__value__)
+
 #: The tools that belong to only some kinds of workspace. A tool in neither set is offered
 #: everywhere.
 #:
@@ -44,7 +46,10 @@ WORKSPACE_TOOLS: Mapping[WorkspaceKind, frozenset[str]] = {
 
 def workspace_kind(value: str | None) -> WorkspaceKind:
     """A stored value as a kind, falling back to the sandbox, which never reaches the host."""
-    return value if value in get_args(WorkspaceKind.__value__) else DEFAULT_WORKSPACE_KIND
+    for known in _KINDS:
+        if value == known:
+            return known
+    return DEFAULT_WORKSPACE_KIND
 
 
 def workspace_disabled_tools(kind: str) -> frozenset[str]:

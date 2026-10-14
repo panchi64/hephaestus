@@ -25,6 +25,8 @@ walls (Cloudflare/DataDome class) — that needs a proxy network we don't run.
 
 from __future__ import annotations
 
+from typing import Any
+
 # Runs before any page script in every context, masking the standard automation tells.
 # The UA string, client hints and navigator.platform are handled natively by the CDP
 # override (user_agent_override); this covers the rest of the JS surface.
@@ -125,7 +127,9 @@ def realistic_user_agent(browser_version: str | None) -> str:
     )
 
 
-def user_agent_override(*, user_agent: str, locale: str, browser_version: str | None) -> dict:
+def user_agent_override(
+    *, user_agent: str, locale: str, browser_version: str | None
+) -> dict[str, object]:
     """Params for ``Emulation.setUserAgentOverride`` (applied per page over CDP).
 
     Overriding ``user_agent`` at the Playwright context level fixes the UA *string* but
@@ -169,7 +173,7 @@ def user_agent_override(*, user_agent: str, locale: str, browser_version: str | 
     }
 
 
-def context_options(*, user_agent: str, locale: str, timezone_id: str) -> dict:
+def context_options(*, user_agent: str, locale: str, timezone_id: str) -> dict[str, Any]:
     """Stealth-friendly ``new_context`` kwargs: a realistic UA, locale/timezone, a normal
     desktop viewport, and an Accept-Language header consistent with the locale. The client
     hints + ``navigator.userAgentData`` are brought into agreement separately, per page,

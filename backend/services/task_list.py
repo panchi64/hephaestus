@@ -61,7 +61,7 @@ def _load(raw: str) -> list[TaskItem]:
     return [TaskItem.model_validate(row) for row in json.loads(raw)]
 
 
-def tasks_payload(items: list[TaskItem]) -> list[dict]:
+def tasks_payload(items: list[TaskItem]) -> list[dict[str, object]]:
     """The task list as the frontend consumes it — the same shape on the event and on the
     REST backfill, so a reload rebuilds exactly what the stream was drawing."""
     return [

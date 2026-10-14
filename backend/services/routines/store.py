@@ -15,7 +15,7 @@ from typing import Any
 
 from sqlalchemy import Engine
 from sqlalchemy.sql.elements import ColumnElement
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError, RoutineValidationError
@@ -104,7 +104,7 @@ class RoutineStore:
             query = select(ScheduledTask).where(ScheduledTask.owner_id == owner_id)
             if scope is not None:
                 query = query.where(scope)
-            return list(session.exec(query.order_by(ScheduledTask.created_at)).all())
+            return list(session.exec(query.order_by(col(ScheduledTask.created_at))).all())
 
         return [self._view(row) for row in await in_session(self._engine, work)]
 
@@ -119,7 +119,7 @@ class RoutineStore:
                 session.exec(
                     select(TaskRun)
                     .where(TaskRun.task_id == routine_id)
-                    .order_by(TaskRun.started_at.desc())
+                    .order_by(col(TaskRun.started_at).desc())
                     .limit(limit)
                 ).all()
             )

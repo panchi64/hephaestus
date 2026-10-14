@@ -15,19 +15,27 @@ import asyncio
 import logging
 from collections.abc import Callable
 from contextlib import suppress
+from enum import Enum
 from uuid import uuid4
 
-from pydantic import BaseModel
-
 from .endpoint_gate import Endpoint, EndpointGate
-from .events import LimitNotice, RunEnded, RunError, RunQueued, RunStarted, now_utc
+from .events import EventBody, LimitNotice, RunEnded, RunError, RunQueued, RunStarted, now_utc
 from .lanes import LaneGate, LaneLimits
 from .run import Orchestrator, Run, RunStatus
 from .stream import RunStream
 
 logger = logging.getLogger(__name__)
 
-_UNSET = object()
+
+class _Unset(Enum):
+    UNSET = object()
+
+
+_UNSET = _Unset.UNSET
+
+
+def _ended(run: Run) -> RunEnded:
+    return RunEnded.model_validate({"outcome": run.status.value, "detail": run.detail})
 
 
 class ConversationBusyError(Exception):
@@ -214,8 +222,8 @@ class RunRegistry:
         run_id: str | None = None,
         conversation_id: str | None = None,
         endpoint: Endpoint | None = None,
-        wall_clock_timeout_s: float | None | object = _UNSET,
-        inactivity_timeout_s: float | None | object = _UNSET,
+        wall_clock_timeout_s: float | None | _Unset = _UNSET,
+        inactivity_timeout_s: float | None | _Unset = _UNSET,
     ) -> Run:
         # Atomic check-and-claim: reads ``self._runs`` and registers the new run with no
         # ``await`` in between, so this closes the race a caller's own pre-submit guard
@@ -238,7 +246,7 @@ class RunRegistry:
         wall = self._wall_clock if wall_clock_timeout_s is _UNSET else wall_clock_timeout_s
         idle = self._inactivity if inactivity_timeout_s is _UNSET else inactivity_timeout_s
         run.task = asyncio.create_task(
-            self._execute(run, orchestrator, wall, idle),  # type: ignore[arg-type]
+            self._execute(run, orchestrator, wall, idle),
             name=f"run:{run.id}",
         )
         return run
@@ -319,8 +327,8 @@ class RunRegistry:
         run_id: str,
         orchestrator: Orchestrator,
         *,
-        wall_clock_timeout_s: float | None | object = _UNSET,
-        inactivity_timeout_s: float | None | object = _UNSET,
+        wall_clock_timeout_s: float | None | _Unset = _UNSET,
+        inactivity_timeout_s: float | None | _Unset = _UNSET,
     ) -> Run | None:
         """Continue a parked run with a fresh orchestrator (approval resume).
 
@@ -341,7 +349,7 @@ class RunRegistry:
         wall = self._wall_clock if wall_clock_timeout_s is _UNSET else wall_clock_timeout_s
         idle = self._inactivity if inactivity_timeout_s is _UNSET else inactivity_timeout_s
         run.task = asyncio.create_task(
-            self._execute(run, orchestrator, wall, idle, resuming=True),  # type: ignore[arg-type]
+            self._execute(run, orchestrator, wall, idle, resuming=True),
             name=f"run:{run.id}:resume",
         )
         return run
@@ -379,7 +387,7 @@ class RunRegistry:
                 if not run.is_terminal:
                     run.status = RunStatus.done
                 self._emit_metrics(run)
-                self._emit(run, RunEnded(outcome=run.status.value, detail=run.detail))
+                self._emit(run, _ended(run))
         except RunTimeout as timeout:
             # Terminate the same way a usage-limit stop does (LimitNotice + a
             # blocked RunEnded), not RunError — a timeout is an expected bound, not
@@ -396,7 +404,7 @@ class RunRegistry:
                 # whole turn (the operator's own prompt included) is silently dropped.
                 self._flush_park_cancel(run)
             self._emit_metrics(run)
-            self._emit(run, RunEnded(outcome=run.status.value, detail=run.detail))
+            self._emit(run, _ended(run))
         except asyncio.CancelledError:
             # The Run's own top-level handler turns cancellation into a recorded
             # terminal state rather than propagating it — intentional.
@@ -433,7 +441,7 @@ class RunRegistry:
             cls._emit(run, run.metrics)
 
     @staticmethod
-    def _emit(run: Run, body: BaseModel) -> None:
+    def _emit(run: Run, body: EventBody) -> None:
         """Emit a lifecycle frame unless the stream is already closed.
 
         A parked run stays externally visible while its task is still unwinding (the

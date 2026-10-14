@@ -252,7 +252,10 @@ def permission_level(level: str) -> PermissionLevel:
     plan, and unable to act, which is a failure the operator can see and correct rather
     than one that quietly grants.
     """
-    return level if level in PERMISSION_LEVELS else STRICTEST_PERMISSION
+    for known in PERMISSION_LADDER:
+        if level == known:
+            return known
+    return STRICTEST_PERMISSION
 
 
 def permission_spec(level: str) -> PermissionSpec:

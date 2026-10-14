@@ -33,8 +33,9 @@ import logging
 import secrets
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from playwright.async_api import StorageState
 from pydantic_ai_harness.playwright import EgressPolicy
 
 from core.periodic import PeriodicTask
@@ -148,7 +149,7 @@ class BrowserSessionManager:
             # docstring; the default is True, so this must be said out loud.
             policy=EgressPolicy(block_private_addresses=False),
             cdp_url=cdp_url,
-            storage_state=loaded,
+            storage_state=cast(StorageState | None, loaded),
         )
         await session.__aenter__()
         try:

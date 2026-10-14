@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import Model
     from pydantic_ai.settings import ModelSettings
 
-    from services.llm import EndpointSpec
+    from services.endpoint_spec import EndpointSpec
     from services.reasoning import ModelDescriptor
 
 

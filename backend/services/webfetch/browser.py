@@ -93,7 +93,7 @@ class ManagedBrowser:
         self._user_agent = ""  # resolved from the override or the engine version in _bring_up
         self._browser_version = ""  # the engine version, for matching the client-hint brands
         self._ws_url: str | None = None
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         if vm is not None:
             vm.on_ready(self._after_boot)
 

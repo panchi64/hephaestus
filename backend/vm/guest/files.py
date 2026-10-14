@@ -17,7 +17,7 @@ import sys
 import tarfile
 
 
-def _entry(path: str) -> list | None:
+def _entry(path: str) -> list[object] | None:
     info = os.lstat(path)
     if stat.S_ISLNK(info.st_mode):
         return ["l", 0, info.st_mtime_ns]
@@ -29,7 +29,7 @@ def _entry(path: str) -> list | None:
 
 
 def manifest(root: str) -> int:
-    entries: dict[str, list] = {}
+    entries: dict[str, list[object]] = {}
     for dirpath, dirnames, filenames in os.walk(root):
         for name in [*dirnames, *filenames]:
             full = os.path.join(dirpath, name)

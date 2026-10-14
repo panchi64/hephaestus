@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter, OrderedDict
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, delete
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.vault import Vault
@@ -21,6 +22,7 @@ from services.workspace_kind import DEFAULT_WORKSPACE_KIND
 from services.workspace_kind import workspace_kind as normalise_workspace_kind
 
 from .projection import _MESSAGE
+from .records import ConversationBinding, ConversationSummaryView
 from .rows import _defer_fk, _HydratedRow, _PersistJob
 from .tree import _Node, _Tree
 
@@ -36,6 +38,16 @@ _OWNER_MEMO_MULTIPLE = 8
 
 
 class _StoreCore:
+    if TYPE_CHECKING:
+        # Implemented by sibling mixins; declared here so mixins can call across.
+        async def _persist(self, job: _PersistJob) -> None: ...
+        def _on_drop(self, job: _PersistJob, exc: Exception) -> None: ...
+        def _open_work_summary(self, conversation: Conversation) -> str | None: ...
+        async def get_summary(
+            self, conversation_id: str, owner_id: str
+        ) -> ConversationSummaryView | None: ...
+        async def binding(self, conversation_id: str) -> ConversationBinding: ...
+
     def __init__(
         self,
         engine: Engine,
@@ -202,7 +214,7 @@ class _StoreCore:
                 rows = session.exec(
                     select(Message)
                     .where(Message.conversation_id == conversation_id)
-                    .order_by(Message.seq)
+                    .order_by(col(Message.seq))
                 ).all()
                 conversation = session.get(Conversation, conversation_id)
                 active = conversation.active_leaf_id if conversation is not None else None
@@ -267,7 +279,7 @@ class _StoreCore:
             # Defer FK checks so the whole message set drops in one statement,
             # without ordering children before parents for the self-referential FK.
             _defer_fk(session)
-            session.execute(delete(Message).where(Message.conversation_id == conversation_id))
+            session.execute(delete(Message).where(col(Message.conversation_id) == conversation_id))
             if conversation is not None:
                 session.delete(conversation)
 

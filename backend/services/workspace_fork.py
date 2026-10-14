@@ -26,6 +26,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from core.container import ServiceContainer
 from core.fork import MergeReport
@@ -90,7 +91,7 @@ def reopen_fork(
         if projects is None or worktrees is None or not target.project_id:
             return None
 
-        async def where() -> dict:
+        async def where() -> dict[str, Any]:
             project = await projects.get(target.owner_id, target.project_id or "")
             return {
                 "project_id": target.project_id,

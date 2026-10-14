@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import Engine, delete
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError
@@ -93,7 +93,7 @@ class WorkspaceHistoryStore:
                 select(WorkspaceSnapshot)
                 .where(WorkspaceSnapshot.owner_id == owner_id)
                 .where(WorkspaceSnapshot.conversation_id == conversation_id)
-                .order_by(WorkspaceSnapshot.created_at.desc())  # type: ignore[attr-defined]
+                .order_by(col(WorkspaceSnapshot.created_at).desc())
             ).first()
             prev_manifest: dict[str, str] = self._manifest(prev) if prev else {}
             if (
@@ -109,7 +109,7 @@ class WorkspaceHistoryStore:
                 session.exec(
                     select(WorkspaceBlob.sha256)
                     .where(WorkspaceBlob.owner_id == owner_id)
-                    .where(WorkspaceBlob.sha256.in_(needed))  # type: ignore[attr-defined]
+                    .where(col(WorkspaceBlob.sha256).in_(needed))
                 ).all()
             )
             for path, sha in manifest.items():
@@ -148,7 +148,7 @@ class WorkspaceHistoryStore:
                 select(WorkspaceSnapshot)
                 .where(WorkspaceSnapshot.owner_id == owner_id)
                 .where(WorkspaceSnapshot.conversation_id == conversation_id)
-                .order_by(WorkspaceSnapshot.created_at)  # type: ignore[arg-type]
+                .order_by(col(WorkspaceSnapshot.created_at))
             ).all()
             return [_to_view(row) for row in rows]
 
@@ -271,8 +271,8 @@ class WorkspaceHistoryStore:
             if orphans:
                 session.exec(
                     delete(WorkspaceBlob)
-                    .where(WorkspaceBlob.owner_id == owner_id)
-                    .where(WorkspaceBlob.sha256.in_(orphans))  # type: ignore[attr-defined]
+                    .where(col(WorkspaceBlob.owner_id) == owner_id)
+                    .where(col(WorkspaceBlob.sha256).in_(orphans))
                 )
 
         await in_session(self._engine, work)
@@ -296,7 +296,7 @@ class WorkspaceHistoryStore:
             .where(WorkspaceSnapshot.owner_id == snapshot.owner_id)
             .where(WorkspaceSnapshot.conversation_id == snapshot.conversation_id)
             .where(WorkspaceSnapshot.created_at < snapshot.created_at)
-            .order_by(WorkspaceSnapshot.created_at.desc())  # type: ignore[attr-defined]
+            .order_by(col(WorkspaceSnapshot.created_at).desc())
         ).first()
 
     def _blob_bytes(self, session: Session, owner_id: str, sha: str) -> bytes:

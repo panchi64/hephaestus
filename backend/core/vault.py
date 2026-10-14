@@ -106,7 +106,7 @@ class Vault:
         # every live SSE stream and tool loop for its full duration, so it threads like
         # `derive_kek` above.
         verifier = await asyncio.to_thread(crypto.hash_password, password)
-        keyfile = {
+        keyfile: dict[str, object] = {
             "version": _KEYFILE_VERSION,
             "verifier": verifier,
             "kek_salt": _b64e(salt),

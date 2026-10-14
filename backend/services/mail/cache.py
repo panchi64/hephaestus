@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError
@@ -74,7 +74,7 @@ class MessageDetail:
     quoted_text: str | None
     signature: str | None
     cc: tuple[str, ...] = ()
-    implied_events: tuple[dict, ...] = ()
+    implied_events: tuple[dict[str, object], ...] = ()
 
 
 class MailCache:
@@ -146,7 +146,7 @@ class MailCache:
         urgency: str,
         tags: list[str],
         spam: bool,
-        implied_events: list[dict] | None = None,
+        implied_events: list[dict[str, object]] | None = None,
     ) -> None:
         """Stamp one message's triage verdicts (`EMAIL-2`) and implied events (`EMAIL-4`)."""
 
@@ -213,7 +213,7 @@ class MailCache:
                 query = query.where(MailMessage.seen == False)  # noqa: E712 — SQL, not Python
             if not include_spam:
                 query = query.where(MailMessage.spam == False)  # noqa: E712
-            query = query.order_by(MailMessage.received_at.desc()).limit(limit)
+            query = query.order_by(col(MailMessage.received_at).desc()).limit(limit)
             return list(session.exec(query).all())
 
         return [self._to_view(row) for row in await in_session(self._engine, work)]
@@ -259,7 +259,7 @@ class MailCache:
             query = (
                 select(MailMessage)
                 .where(MailMessage.owner_id == owner_id, MailMessage.triaged_at == None)  # noqa: E711
-                .order_by(MailMessage.received_at)
+                .order_by(col(MailMessage.received_at))
                 .limit(limit)
             )
             return list(session.exec(query).all())

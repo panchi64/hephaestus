@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
 from playwright.async_api import Error as PlaywrightError
@@ -34,6 +35,8 @@ from .distill import WebDistiller
 from .extract import extract
 from .pdf import fetch_pdf_text
 from .throttle import DomainThrottle
+
+WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
 
 
 class _DownloadStarted(Exception):
@@ -108,7 +111,7 @@ class BrowserFetcher:
         *,
         browser: ManagedBrowser,
         timeout_s: float = 15.0,
-        wait_until: str = "domcontentloaded",
+        wait_until: WaitUntil = "domcontentloaded",
         render_wait_ms: int = 250,
         max_bytes: int = 2_000_000,
         min_chars: int = 200,
@@ -126,7 +129,7 @@ class BrowserFetcher:
     ) -> None:
         self._browser = browser
         self._timeout_ms = int(timeout_s * 1000)
-        self._wait_until = wait_until
+        self._wait_until: WaitUntil = wait_until
         self._render_wait_ms = render_wait_ms
         self._max_bytes = max_bytes
         self._min_chars = min_chars

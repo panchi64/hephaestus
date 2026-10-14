@@ -35,15 +35,14 @@ def _discover() -> dict[str, Provider]:
     return providers
 
 
-_PROVIDERS: dict[str, Provider] | None = None
+_PROVIDERS: dict[str, Provider] = {}
 
 
 def _registry() -> dict[str, Provider]:
     # Deferred (not import-time) so the package can be imported without pulling in
     # every SDK; built once per process thereafter.
-    global _PROVIDERS
-    if _PROVIDERS is None:
-        _PROVIDERS = _discover()
+    if not _PROVIDERS:
+        _PROVIDERS.update(_discover())
     return _PROVIDERS
 
 

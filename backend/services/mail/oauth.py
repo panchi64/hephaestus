@@ -29,8 +29,10 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from typing import cast
 
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from sqlalchemy import Engine
@@ -190,7 +192,8 @@ async def _token_request(
         client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri
     )
     try:
-        async with client:
+        # authlib's client subclasses a runtime-selected httpx, which the checker can't see.
+        async with cast(AbstractAsyncContextManager[AsyncOAuth2Client], cast(object, client)):
             token = await client.fetch_token(provider.token_url, grant_type=grant, **params)
     except Exception as exc:  # noqa: BLE001 — authlib raises a wide family of errors
         # A refused grant and an unreachable identity provider are different problems for

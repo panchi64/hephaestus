@@ -92,6 +92,8 @@ def parse_ics(data: bytes | str) -> list[ParsedEvent]:
 
     parsed: list[ParsedEvent] = []
     for component in document.walk("VEVENT"):
+        if not isinstance(component, IEvent):
+            continue
         try:
             parsed.append(_from_component(component))
         except ValueError, TypeError, AttributeError:
@@ -284,7 +286,9 @@ def _instant(value: date | datetime, all_day: bool) -> datetime:
     as UTC, matching how the store treats a naive timestamp everywhere else."""
     if all_day:
         return datetime.combine(value, time.min, tzinfo=UTC)
-    return as_utc(value)  # type: ignore[arg-type]
+    if not isinstance(value, datetime):
+        raise TypeError("a non-all-day instant must be a datetime")
+    return as_utc(value)
 
 
 def _end_instant(component: IEvent, start: datetime, all_day: bool) -> datetime:

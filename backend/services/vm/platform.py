@@ -30,7 +30,7 @@ import posixpath
 import secrets
 import shlex
 import shutil
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -156,10 +156,10 @@ class PlatformVM:
         #: Bumped on every boot. A guest copy of a workspace belongs to one generation;
         #: a reset or a restart means it is gone and has to be piped in again.
         self.generation = 0
-        self._ready_hooks: list[Callable[[], Awaitable[None]]] = []
+        self._ready_hooks: list[Callable[[], Coroutine[object, object, None]]] = []
         self._hook_tasks: set[asyncio.Task[None]] = set()
 
-    def on_ready(self, hook: Callable[[], Awaitable[None]]) -> None:
+    def on_ready(self, hook: Callable[[], Coroutine[object, object, None]]) -> None:
         """Run ``hook`` after every boot that comes up, so a service the VM lost on a reset
         can start itself again."""
         self._ready_hooks.append(hook)

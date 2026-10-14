@@ -4,7 +4,10 @@ stop markers and pins on recorded nodes.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from pydantic_ai import ModelMessage, ModelRequest, ModelResponse
+from pydantic_ai.messages import UserContent
 
 from runs.timings import ResponseTiming
 from services.commands.spec import Invocation
@@ -25,7 +28,7 @@ class _RecordingMixin(_StoreCore):
         attachment_ids: list[str] | None = None,
         file_refs: list[str] | None = None,
         command: Invocation | None = None,
-        persisted: list | None = None,
+        persisted: Sequence[UserContent] | None = None,
         blocked_reason: str | None = None,
         timings: list[ResponseTiming] | None = None,
         prompt_id: str | None = None,
@@ -176,7 +179,7 @@ class _RecordingMixin(_StoreCore):
         attachment_ids: list[str] | None = None,
         file_refs: list[str] | None = None,
         command: Invocation | None = None,
-        persisted: list | None = None,
+        persisted: Sequence[UserContent] | None = None,
     ) -> str:
         """Write the operator's prompt down **as the turn begins**, returning its node id.
 

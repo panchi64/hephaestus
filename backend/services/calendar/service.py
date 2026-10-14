@@ -30,7 +30,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, or_
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError
@@ -169,7 +169,9 @@ class CalendarService:
     async def list_calendars(self, owner_id: str) -> list[CalendarView]:
         def work(session: Session) -> list[CalendarView]:
             rows = session.exec(
-                select(Calendar).where(Calendar.owner_id == owner_id).order_by(Calendar.created_at)  # type: ignore[arg-type]
+                select(Calendar)
+                .where(Calendar.owner_id == owner_id)
+                .order_by(col(Calendar.created_at))
             ).all()
             return [self._calendar_view(row) for row in rows]
 
@@ -458,9 +460,7 @@ class CalendarService:
             query = select(CalendarEvent).where(CalendarEvent.owner_id == owner_id)
             if calendar_id is not None:
                 query = query.where(CalendarEvent.calendar_id == calendar_id)
-            rows = session.exec(
-                query.order_by(CalendarEvent.starts_at)  # type: ignore[arg-type]
-            ).all()
+            rows = session.exec(query.order_by(col(CalendarEvent.starts_at))).all()
             return [self._event_view(row) for row in rows]
 
         return await in_session(self._engine, work)
@@ -490,12 +490,12 @@ class CalendarService:
                 CalendarEvent.owner_id == owner_id,
                 CalendarEvent.starts_at <= hi,
                 or_(
-                    CalendarEvent.rrule.is_not(None),  # type: ignore[union-attr]
-                    CalendarEvent.ends_at >= lo,
+                    col(CalendarEvent.rrule).is_not(None),
+                    col(CalendarEvent.ends_at) >= lo,
                 ),
             )
             if calendar_ids:
-                query = query.where(CalendarEvent.calendar_id.in_(calendar_ids))  # type: ignore[attr-defined]
+                query = query.where(col(CalendarEvent.calendar_id).in_(calendar_ids))
             return list(session.exec(query).all())
 
         rows = await in_session(self._engine, work)

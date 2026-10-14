@@ -80,7 +80,7 @@ class ManagedSearxng:
         self._startup_timeout_s = startup_timeout_s
         self._external = external_base_url.rstrip("/") if external_base_url else None
         self._base_url: str | None = None
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         if vm is not None:
             vm.on_ready(self._after_boot)
 

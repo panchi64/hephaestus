@@ -36,13 +36,13 @@ from urllib.parse import urlsplit
 import httpx
 
 from core.vault import Vault
+from services.notification_view import NotificationView
 from services.settings_store import SettingsStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from services.mail import MailService
-    from services.notifications import NotificationView
 
 logger = logging.getLogger(__name__)
 

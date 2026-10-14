@@ -31,14 +31,14 @@ from typing import Any
 
 from pydantic_ai.mcp import MCPToolset
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import DegradedCapabilityError, InvalidInputError, NotFoundError
 from core.vault import Vault, VaultLocked
 from models._fields import utcnow
 from models.external_tool import McpServer
-from services.external_tools import ExternalPolicyStore, ToolPolicy, tool_slug
+from services.external_policy import ExternalPolicyStore, ToolPolicy, tool_slug
 
 from .client import DEFAULT_CONNECT_TIMEOUT_S, TRANSPORTS, build_client
 
@@ -331,7 +331,7 @@ class McpRegistry:
                 session.exec(
                     select(McpServer)
                     .where(McpServer.owner_id == owner_id)
-                    .order_by(McpServer.created_at)
+                    .order_by(col(McpServer.created_at))
                 ).all()
             )
 

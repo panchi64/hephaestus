@@ -28,12 +28,9 @@ import ssl
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 from core.ssrf import is_blocked
-
-if TYPE_CHECKING:
-    from services.vm.intercept import Interceptor, Secret
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +106,32 @@ class Allowlist:
 
 
 @dataclass(frozen=True)
+class Secret:
+    placeholder: str
+    value: str
+    host: str
+
+
+class SecretInterceptor(Protocol):
+    """What the gateway needs from the TLS-terminating interceptor
+    (:class:`services.vm.intercept.Interceptor`)."""
+
+    @property
+    def ca_pem(self) -> str: ...
+
+    async def intercept(
+        self,
+        host: str,
+        port: int,
+        secrets: Sequence[Secret],
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None: ...
+
+    async def close(self) -> None: ...
+
+
+@dataclass(frozen=True)
 class Grant:
     """What one set of workspace credentials reaches, and the secrets sent for it."""
 
@@ -126,7 +149,7 @@ class Grant:
 class EgressGateway:
     """Serves tunnelled connections, deciding each by its channel and credentials."""
 
-    def __init__(self, interceptor: Interceptor | None = None) -> None:
+    def __init__(self, interceptor: SecretInterceptor | None = None) -> None:
         self._grants: dict[str, Grant] = {}
         self._standing: dict[Path, str] = {}
         self._public = Grant(PublicPolicy())

@@ -130,9 +130,9 @@ class MailStyle:
         draft = result.output
         return draft if draft.body.strip() else None
 
-    async def _agent(
-        self, owner_id: str, *, output_type, instructions: str
-    ) -> tuple[Agent, ModelSettings] | None:
+    async def _agent[T](
+        self, owner_id: str, *, output_type: type[T], instructions: str
+    ) -> tuple[Agent[None, T], ModelSettings] | None:
         """Resolve the utility model and build a one-shot agent on it, or ``None`` when
         the operator has bound no usable role (the capability degrades, it doesn't fail).
 
@@ -145,7 +145,7 @@ class MailStyle:
         except Exception as exc:  # noqa: BLE001
             logger.info("mail style: no utility model available (%s)", exc)
             return None
-        settings: ModelSettings = {**_SETTINGS, **(resolved.reasoning_off or {})}
+        settings: ModelSettings = _SETTINGS | (resolved.reasoning_off or ModelSettings())
         return Agent(resolved.model, output_type=output_type, instructions=instructions), settings
 
 

@@ -28,9 +28,10 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError
@@ -192,7 +193,7 @@ class MailService:
         name: str,
         address: str,
         provider: str = PROVIDER_IMAP,
-        config: dict | None = None,
+        config: dict[str, Any] | None = None,
         password: str | None = None,
         tokens: TokenBundle | None = None,
     ) -> AccountView:
@@ -227,13 +228,13 @@ class MailService:
         account_id: str,
         *,
         name: str | None = None,
-        config: dict | None = None,
+        config: dict[str, Any] | None = None,
         password: str | None = None,
         tokens: TokenBundle | None = None,
         enabled: bool | None = None,
     ) -> AccountView:
         row = await self._row(owner_id, account_id)
-        updates: dict = {"updated_at": utcnow()}
+        updates: dict[str, Any] = {"updated_at": utcnow()}
         if name is not None:
             updates["name"] = name
         if config is not None:
@@ -614,7 +615,7 @@ class MailService:
             query = select(MailAccount)
             if owner_id is not None:
                 query = query.where(MailAccount.owner_id == owner_id)
-            return list(session.exec(query.order_by(MailAccount.created_at)).all())
+            return list(session.exec(query.order_by(col(MailAccount.created_at))).all())
 
         return await in_session(self._engine, work)
 

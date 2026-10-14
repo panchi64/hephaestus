@@ -191,9 +191,7 @@ class CorpusChunkStore:
                     select(CorpusChunk.content_hash).where(
                         CorpusChunk.owner_id == owner_id,
                         CorpusChunk.source_id == source_id,
-                        CorpusChunk.external_ref.startswith(  # type: ignore[attr-defined]
-                            f"{base_ref}#", autoescape=True
-                        ),
+                        col(CorpusChunk.external_ref).startswith(f"{base_ref}#", autoescape=True),
                     )
                 ).all()
             )
@@ -264,7 +262,7 @@ class CorpusChunkStore:
             for start in range(0, len(doomed), _DELETE_BATCH):
                 session.exec(
                     delete(CorpusChunk).where(
-                        CorpusChunk.id.in_(doomed[start : start + _DELETE_BATCH])  # type: ignore[attr-defined]
+                        col(CorpusChunk.id).in_(doomed[start : start + _DELETE_BATCH])
                     )
                 )
             return len(doomed)
@@ -277,8 +275,8 @@ class CorpusChunkStore:
         def work(session: Session) -> None:
             session.exec(
                 delete(CorpusChunk).where(
-                    CorpusChunk.owner_id == owner_id,
-                    CorpusChunk.source_id == source_id,
+                    col(CorpusChunk.owner_id) == owner_id,
+                    col(CorpusChunk.source_id) == source_id,
                 )
             )
 
@@ -296,8 +294,8 @@ class CorpusChunkStore:
             session.exec(
                 update(CorpusChunk)
                 .where(
-                    CorpusChunk.owner_id == owner_id,
-                    CorpusChunk.source_id == source_id,
+                    col(CorpusChunk.owner_id) == owner_id,
+                    col(CorpusChunk.source_id) == source_id,
                 )
                 .values(kb_excluded=value)
             )
@@ -327,12 +325,12 @@ class CorpusChunkStore:
             if source_kind is not None:
                 query = query.where(CorpusChunk.source_kind == source_kind)
             if current_model is None:
-                query = query.where(CorpusChunk.embedding_enc.is_(None))  # type: ignore[union-attr]
+                query = query.where(col(CorpusChunk.embedding_enc).is_(None))
             else:
                 query = query.where(
                     or_(
-                        CorpusChunk.embedding_enc.is_(None),  # type: ignore[union-attr]
-                        CorpusChunk.embedding_model != current_model,
+                        col(CorpusChunk.embedding_enc).is_(None),
+                        col(CorpusChunk.embedding_model) != current_model,
                     )
                 )
             rows = session.exec(query).all()

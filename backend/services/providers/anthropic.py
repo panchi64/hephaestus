@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 import httpx
 from pydantic_ai.models import Model
-from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.anthropic import AnthropicProvider as _SdkProvider
 from pydantic_ai.settings import ModelSettings
@@ -56,7 +56,7 @@ class AnthropicNativeProvider:
 
     def build_model(self, spec: EndpointSpec) -> Model:
         provider = _SdkProvider(api_key=spec.api_key, base_url=spec.base_url)
-        settings = self.model_settings(descriptor_of(spec))
+        settings: AnthropicModelSettings = self.model_settings(descriptor_of(spec))
         if spec.max_output_tokens is not None:
             # The model's own ceiling in place of the library's 4096 — `Provider
             # .model_limits` has why. On the construction-time settings for the reason
@@ -159,7 +159,7 @@ class AnthropicNativeProvider:
         # asks for nothing gets nothing, so there is no lever to pull here.
         return {}
 
-    def model_settings(self, descriptor: ModelDescriptor) -> ModelSettings:
+    def model_settings(self, descriptor: ModelDescriptor) -> AnthropicModelSettings:
         """Prompt-cache breakpoints on the three prefixes a chat turn repeats verbatim.
 
         A conversation re-sends its whole history on every turn, and in front of that

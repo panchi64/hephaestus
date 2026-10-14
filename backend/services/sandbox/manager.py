@@ -132,7 +132,7 @@ class SandboxSessionManager:
         # Teardowns in flight, owned by the manager rather than by whoever triggered
         # them — see `_tear_down`. Held so they are not garbage-collected halfway
         # through and so `stop` can drain them.
-        self._teardowns: set[asyncio.Task] = set()
+        self._teardowns: set[asyncio.Task[None]] = set()
 
     @property
     def vm_starting(self) -> bool:
@@ -190,6 +190,7 @@ class SandboxSessionManager:
         safe = safe_key(key)
         evicted: list[_Detached] = []
         while True:
+            other: asyncio.Event | None = None
             async with self._lock:
                 session = self._sessions.get(safe)
                 if session is None:
@@ -205,6 +206,7 @@ class SandboxSessionManager:
                     session.touch()
                     session.hold(holder)
                     break
+            assert other is not None
             await other.wait()
         if not session.is_warm:
             # The allowlist has to be on disk before the first command can reach the

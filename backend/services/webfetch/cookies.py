@@ -18,6 +18,10 @@ from __future__ import annotations
 
 import time
 import urllib.parse
+from collections.abc import Sequence
+
+from playwright._impl._api_structures import SetCookieParam
+from playwright.async_api import Cookie
 
 
 def _host_matches(host: str, cookie_domain: str) -> bool:
@@ -27,7 +31,7 @@ def _host_matches(host: str, cookie_domain: str) -> bool:
     return bool(d) and (host == d or host.endswith("." + d))
 
 
-def _key(cookie: dict) -> tuple:
+def _key(cookie: SetCookieParam) -> tuple[str | None, str | None, str | None]:
     """The identity a later set overwrites: name within a (domain, path) scope."""
     return (cookie.get("name"), cookie.get("domain"), cookie.get("path"))
 
@@ -43,9 +47,11 @@ class DomainCookieJar:
         self._ttl_s = ttl_s
         self._max = max(1, max_entries)
         # _key -> (cookie_dict, stored_monotonic). Insertion order = eviction order.
-        self._entries: dict[tuple, tuple[dict, float]] = {}
+        self._entries: dict[
+            tuple[str | None, str | None, str | None], tuple[SetCookieParam, float]
+        ] = {}
 
-    def seed_for(self, url: str) -> list[dict]:
+    def seed_for(self, url: str) -> list[SetCookieParam]:
         """Cookies whose domain covers ``url``'s host — ready to hand to
         ``context.add_cookies``. ``_evict`` (run first) is the single owner of freshness, so
         what remains to do here is the host filter."""
@@ -59,13 +65,14 @@ class DomainCookieJar:
             if _host_matches(host, str(cookie.get("domain", "")))
         ]
 
-    def store(self, cookies: list[dict]) -> None:
+    def store(self, cookies: Sequence[Cookie]) -> None:
         """Merge a context's cookies into the cache (a later set overwrites an earlier one
         with the same name/domain/path). Expiry is ``_evict``'s job — storing an
         already-expired cookie (the standard way a site *deletes* one) correctly clears any
         cached entry it shadows, then `_evict` drops it on the spot."""
         now_mono = time.monotonic()
-        for cookie in cookies:
+        for raw in cookies:
+            cookie = SetCookieParam(**raw)
             key = _key(cookie)
             self._entries.pop(key, None)  # re-insert so eviction order tracks recency
             self._entries[key] = (cookie, now_mono)

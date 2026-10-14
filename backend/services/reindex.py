@@ -55,7 +55,7 @@ class EmbeddingReindexer:
         self._conversations = conversations
         self._chunks = chunks
         self._status = ReindexStatus(state="idle", memories=0, messages=0)
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     def status(self) -> ReindexStatus:
         return self._status

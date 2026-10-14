@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import DegradedCapabilityError, NotFoundError
@@ -70,7 +70,7 @@ class CorpusIndex:
             rows = session.exec(
                 select(CorpusSource.id, CorpusSource.project_id)
                 .where(CorpusSource.owner_id == owner_id)
-                .where(CorpusSource.project_id.is_not(None))
+                .where(col(CorpusSource.project_id).is_not(None))
             ).all()
             return frozenset(sid for sid, pid in rows if pid not in visible)
 

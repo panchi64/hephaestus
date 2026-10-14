@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from typing import TypedDict
 
 from sqlalchemy import Engine
 from sqlmodel import Session, select
@@ -54,6 +55,14 @@ PLANNING_LEVEL = "plan"
 ACTING_LEVEL = "auto"
 
 
+class PlanPayload(TypedDict):
+    title: str
+    body: str
+    steps: list[str]
+    status: str
+    revision: int
+
+
 @dataclass(frozen=True, slots=True)
 class Plan:
     """A thread's plan as everything above this layer reads it."""
@@ -64,7 +73,7 @@ class Plan:
     status: str
     revision: int
 
-    def payload(self) -> dict:
+    def payload(self) -> PlanPayload:
         """The wire shape — identical on the event and on the REST backfill, so a reload
         rebuilds exactly what the stream was drawing."""
         return {

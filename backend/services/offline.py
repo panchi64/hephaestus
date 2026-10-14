@@ -111,7 +111,7 @@ class OfflineModeService:
         self._effective_offline: bool | None = None
         self._fail = 0
         self._ok = 0
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         # Serializes service start/stop so a manual toggle can't race a monitor
         # transition into a double bring-up or a torn-down-then-half-started state.
         self._lock = asyncio.Lock()

@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import Engine, func
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import get_owned, in_session
 from core.exceptions import NotFoundError
@@ -147,7 +147,7 @@ class UploadStore:
         def work(session: Session) -> list[ExtractJob]:
             rows = session.exec(
                 select(Upload).where(
-                    Upload.status.in_([UploadStatus.QUEUED, UploadStatus.EXTRACTING])  # type: ignore[attr-defined]
+                    col(Upload.status).in_([UploadStatus.QUEUED, UploadStatus.EXTRACTING])
                 )
             ).all()
             jobs: list[ExtractJob] = []
@@ -303,7 +303,9 @@ class UploadStore:
 
         def work(session: Session) -> list[UploadSummaryView]:
             rows = session.exec(
-                select(Upload).where(Upload.owner_id == owner_id).order_by(Upload.created_at.desc())  # type: ignore[attr-defined]
+                select(Upload)
+                .where(Upload.owner_id == owner_id)
+                .order_by(col(Upload.created_at).desc())
             ).all()
             return [self._to_summary(row) for row in rows]
 
@@ -334,7 +336,7 @@ class UploadStore:
             rows = session.exec(
                 select(Upload).where(
                     Upload.owner_id == owner_id,
-                    Upload.id.in_(wanted),  # type: ignore[attr-defined]
+                    col(Upload.id).in_(wanted),
                 )
             ).all()
             return {row.id: self._view_from_row(row) for row in rows}
@@ -355,7 +357,7 @@ class UploadStore:
             rows = session.exec(
                 select(Upload).where(
                     Upload.owner_id == owner_id,
-                    Upload.id.in_(wanted),  # type: ignore[attr-defined]
+                    col(Upload.id).in_(wanted),
                 )
             ).all()
             return {
@@ -409,7 +411,7 @@ class UploadStore:
             rows = session.exec(
                 select(Upload.id).where(
                     Upload.owner_id == owner_id,
-                    Upload.id.in_(wanted),  # type: ignore[attr-defined]
+                    col(Upload.id).in_(wanted),
                     Upload.mime.startswith("image/"),  # type: ignore[attr-defined]
                 )
             ).all()
@@ -542,7 +544,7 @@ class UploadStore:
             rows = session.exec(
                 select(Upload.id).where(
                     Upload.owner_id == owner_id,
-                    Upload.id.in_(wanted),  # type: ignore[attr-defined]
+                    col(Upload.id).in_(wanted),
                 )
             ).all()
             return set(rows)

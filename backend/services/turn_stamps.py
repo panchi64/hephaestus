@@ -89,7 +89,9 @@ def _names_path(text: str, path: str) -> bool:
     token = f"@{path}"
     start = text.find(token)
     while start != -1:
-        run = _PATH_RUN.match(text, start + len(token)).group()
+        matched = _PATH_RUN.match(text, start + len(token))
+        assert matched is not None  # the pattern's `*` matches the empty string
+        run = matched.group()
         if not run or run.strip(".") == "":
             return True
         start = text.find(token, start + 1)

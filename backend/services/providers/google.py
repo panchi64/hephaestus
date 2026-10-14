@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import httpx
 from pydantic_ai.models import Model
-from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.google import GoogleProvider as _SdkProvider
-from pydantic_ai.settings import ModelSettings
 
 from core.exceptions import DegradedCapabilityError
 from services.llm import EndpointSpec
@@ -130,7 +129,7 @@ class GoogleNativeProvider:
             if client is None:
                 await http.aclose()
 
-    def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
+    def reasoning_off(self, descriptor: ModelDescriptor) -> GoogleModelSettings:
         # Only the Flash/Lite family accepts a zero thinking budget; Pro enforces a
         # floor and rejects 0, so an unrecognized Gemini is left to think.
         model_id = descriptor.model_id.lower()

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError
@@ -138,7 +138,7 @@ class DraftStore:
             )
             if account_id is not None:
                 query = query.where(MailDraft.account_id == account_id)
-            return list(session.exec(query.order_by(MailDraft.updated_at.desc())).all())
+            return list(session.exec(query.order_by(col(MailDraft.updated_at).desc())).all())
 
         return [self._to_view(row) for row in await in_session(self._engine, work)]
 
@@ -151,7 +151,7 @@ class DraftStore:
                 MailDraft.in_reply_to_id == message_id,
                 MailDraft.kind == KIND_SUGGESTED,
             )
-            return list(session.exec(query.order_by(MailDraft.created_at)).all())
+            return list(session.exec(query.order_by(col(MailDraft.created_at))).all())
 
         return [self._to_view(row) for row in await in_session(self._engine, work)]
 

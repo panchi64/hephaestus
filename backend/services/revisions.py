@@ -63,15 +63,15 @@ class Versioned[T: Published](Protocol):
     revision_kind: str
     revisions: RevisionStore | None
 
-    async def snapshot(self, owner_id: str, subject_id: str) -> Bundle:
+    async def snapshot(self, owner_id: str, subject_id: str, /) -> Bundle:
         """The item as published, or as it is now when the item has no separate draft."""
         ...
 
-    async def working_copy(self, owner_id: str, subject_id: str) -> Bundle:
+    async def working_copy(self, owner_id: str, subject_id: str, /) -> Bundle:
         """What publishing would make live."""
         ...
 
-    async def restore_snapshot(self, owner_id: str, subject_id: str, bundle: Bundle) -> T: ...
+    async def restore_snapshot(self, owner_id: str, subject_id: str, bundle: Bundle, /) -> T: ...
 
 
 class RevisionStore:
@@ -163,7 +163,7 @@ async def checkpoint[T: Published](store: Versioned[T], owner_id: str, item: T, 
     await store.revisions.record(owner_id, store.revision_kind, item.id, bundle, note)
 
 
-def records[S: Versioned, **P, T: Published](
+def records[S: Versioned[Published], **P, T: Published](
     note: str,
 ) -> Callable[
     [Callable[Concatenate[S, str, P], Awaitable[T]]],
@@ -202,7 +202,7 @@ async def restore[T: Published](
 
 
 async def compare(
-    store: Versioned, owner_id: str, subject_id: str, number: int | None = None
+    store: Versioned[Published], owner_id: str, subject_id: str, number: int | None = None
 ) -> list[FileDiff]:
     """How the working copy differs from version ``number``, or from the latest version
     when ``number`` is None (everything is new if it was never published)."""
@@ -242,7 +242,7 @@ def _patch(path: str, old: bytes, new: bytes) -> str | None:
     )
 
 
-def _revisions(store: Versioned) -> RevisionStore:
+def _revisions(store: Versioned[Published]) -> RevisionStore:
     if store.revisions is None:
         raise NotFoundError("this store keeps no history")
     return store.revisions

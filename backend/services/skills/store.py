@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import Engine, func
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError, SkillSpanError, SkillValidationError
@@ -508,7 +508,7 @@ class SkillStore:
             statement = select(Skill).where(Skill.owner_id == owner_id)
             if published_only:
                 statement = statement.where(Skill.published)
-            skills = session.exec(statement.order_by(Skill.updated_at.desc())).all()
+            skills = session.exec(statement.order_by(col(Skill.updated_at).desc())).all()
             stats = _file_stats(session, owner_id)
             return [
                 SkillSummaryView(
@@ -537,7 +537,7 @@ class SkillStore:
                 select(Skill)
                 .where(Skill.owner_id == owner_id)
                 .where(Skill.published)
-                .order_by(Skill.updated_at.desc())
+                .order_by(col(Skill.updated_at).desc())
             ).all()
             return [
                 SkillCatalogEntry(

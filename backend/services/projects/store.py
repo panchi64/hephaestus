@@ -34,7 +34,7 @@ from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import Engine, or_, update
-from sqlmodel import Session, SQLModel, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import InvalidInputError, NotFoundError
@@ -52,7 +52,7 @@ from services.settings_store import ACTIVE_PROJECT_KEY, SettingsStore
 #: to unfile *all* of them or the ones it misses vanish from every listing forever.
 #: `tests/test_projects.py` pins this against the live schema, so a fourth scoped entity
 #: fails there rather than silently losing its rows on the next project delete.
-SCOPED_MODELS: tuple[type[SQLModel], ...] = (
+SCOPED_MODELS: tuple[type[Conversation | ScheduledTask | CorpusSource | SubagentRecord], ...] = (
     Conversation,
     ScheduledTask,
     CorpusSource,
@@ -173,7 +173,7 @@ class ProjectStore:
             query = select(Project).where(Project.owner_id == owner_id)
             if not include_archived:
                 query = query.where(Project.archived == False)  # noqa: E712 — SQL boolean compare
-            return list(session.exec(query.order_by(Project.last_opened_at.desc())).all())
+            return list(session.exec(query.order_by(col(Project.last_opened_at).desc())).all())
 
         rows = await in_session(self._db, work)
         # Probes shell out, so fan them out rather than paying serially per project.
@@ -297,7 +297,7 @@ class ProjectStore:
 
         def work(session: Session) -> list[Project]:
             query = select(Project).where(Project.owner_id == owner_id)
-            return list(session.exec(query.order_by(Project.last_opened_at.desc())).all())
+            return list(session.exec(query.order_by(col(Project.last_opened_at).desc())).all())
 
         rows = await in_session(self._db, work)
         roots = {row.id: Path(self._vault.decrypt_str(row.root_path_enc)) for row in rows}
@@ -367,7 +367,7 @@ class ProjectStore:
             for model_cls in SCOPED_MODELS:
                 session.execute(
                     update(model_cls)
-                    .where(model_cls.project_id == row.id)  # type: ignore[arg-type]
+                    .where(col(model_cls.project_id) == row.id)
                     .values(project_id=None)
                 )
             stored = session.get(Project, row.id)

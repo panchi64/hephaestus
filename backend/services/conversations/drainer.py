@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import delete
-from sqlmodel import Session
+from sqlmodel import Session, col
 
 from core.db import in_session
 from core.exceptions import DegradedCapabilityError
@@ -131,7 +131,7 @@ class _DrainerMixin(_StoreCore):
                 return
             if job.deleted_ids:
                 _defer_fk(session)  # remove the subtree in one statement, FK-safe
-                session.execute(delete(Message).where(Message.id.in_(job.deleted_ids)))
+                session.execute(delete(Message).where(col(Message.id).in_(job.deleted_ids)))
             conversation.active_leaf_id = job.active_leaf_id
             conversation.model = job.model
             conversation.updated_at = datetime.now(UTC)

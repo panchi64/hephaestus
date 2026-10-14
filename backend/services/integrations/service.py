@@ -27,7 +27,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import DegradedCapabilityError, InvalidInputError, NotFoundError
@@ -35,7 +35,7 @@ from core.ssrf import assert_public_url
 from core.vault import Vault, VaultLocked
 from models._fields import utcnow
 from models.external_tool import Integration
-from services.external_tools import ExternalPolicyStore, ToolPolicy, tool_slug
+from services.external_policy import ExternalPolicyStore, ToolPolicy, tool_slug
 
 from .presets import PRESETS, IntegrationAction, IntegrationPreset, action, preset
 
@@ -375,7 +375,7 @@ class IntegrationService:
                 session.exec(
                     select(Integration)
                     .where(Integration.owner_id == owner_id)
-                    .order_by(Integration.created_at)
+                    .order_by(col(Integration.created_at))
                 ).all()
             )
 

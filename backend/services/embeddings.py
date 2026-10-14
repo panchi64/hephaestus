@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 from openai import APIConnectionError, AsyncOpenAI
@@ -27,9 +27,6 @@ from core.db import in_session
 from core.exceptions import DegradedCapabilityError
 from core.vault import Vault
 from services import llm
-
-if TYPE_CHECKING:
-    from services.registry import ModelRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +47,16 @@ class Embedder(Protocol):
     async def embed(self, owner_id: str, texts: list[str]) -> EmbeddingBatch: ...
 
 
+class EmbeddingSpecSource(Protocol):
+    """What the embedder needs from the model registry."""
+
+    async def resolve_embedding_spec(self, owner_id: str) -> llm.EndpointSpec: ...
+
+
 class RegistryEmbedder:
     """Embeds via the operator's configured ``embedding``-role endpoint."""
 
-    def __init__(self, registry: ModelRegistry) -> None:
+    def __init__(self, registry: EmbeddingSpecSource) -> None:
         self._registry = registry
 
     async def is_available(self, owner_id: str) -> bool:
@@ -171,7 +174,7 @@ async def embed_and_seal_rows(
             for (rid, _text), vector in zip(chunk, batch.vectors, strict=False)
         ]
 
-        def write(session: Session, updates: list = updates) -> None:
+        def write(session: Session, updates: list[tuple[str, str, str, int]] = updates) -> None:
             for rid, vector_enc, model, dim in updates:
                 row = session.get(model_cls, rid)
                 if row is not None:

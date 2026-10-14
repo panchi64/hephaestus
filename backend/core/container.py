@@ -9,6 +9,8 @@ a cycle.
 
 from __future__ import annotations
 
+from typing import cast
+
 
 class ServiceContainer:
     """Instances keyed by their concrete type.
@@ -38,7 +40,7 @@ class ServiceContainer:
 
     def get[T](self, service_type: type[T]) -> T:
         try:
-            return self._services[service_type]  # type: ignore[return-value]
+            return cast(T, self._services[service_type])
         except KeyError:
             raise LookupError(
                 f"no service registered for {service_type.__name__} — "
@@ -46,4 +48,4 @@ class ServiceContainer:
             ) from None
 
     def get_optional[T](self, service_type: type[T]) -> T | None:
-        return self._services.get(service_type)  # type: ignore[return-value]
+        return cast(T | None, self._services.get(service_type))

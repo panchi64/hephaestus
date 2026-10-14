@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 import anyio.to_thread
 
@@ -104,10 +104,11 @@ def connect(url: str, username: str | None, password: str | None) -> RemoteCalen
     Imported lazily: ``caldav`` pulls a full HTTP stack, and a system whose operator has no
     remote calendar shouldn't pay for it at boot.
     """
-    import caldav
+    from caldav.davclient import DAVClient
 
-    client = caldav.DAVClient(url=url, username=username, password=password)
-    return client.calendar(url=url)  # type: ignore[return-value]
+    client = DAVClient(url=url, username=username, password=password)
+    # caldav types its sync/async dual API as a union, which the sync-only protocol rejects.
+    return cast(RemoteCalendar, cast(object, client.calendar(url=url)))
 
 
 class CalDavSync:
