@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
@@ -22,7 +23,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from agent import ParkedTurn
 from app import create_app
 from core.config import Settings
-from runs import EventBody, Run
+from runs import EventBody, Run, RunRegistry
 from services.providers.base import ModelLimits, Provider, ProviderPreset
 from services.providers.openai_compat import PROVIDER as OPENAI_COMPAT
 from services.reasoning import ModelDescriptor
@@ -352,6 +353,21 @@ def parked_turn(run: Run) -> ParkedTurn:
     payload = run.parked_payload
     assert isinstance(payload, ParkedTurn)
     return payload
+
+
+async def await_parked(app: FastAPI, run_id: str) -> Run:
+    """The run once it reaches ``awaiting_input``.
+
+    Polls with a real sleep, not a bare yield: under full-suite load the background run
+    needs wall-clock time to park, and 100 ``sleep(0)`` yields can starve before it does.
+    """
+    runs = app_state(app, "runs", RunRegistry)
+    for _ in range(200):
+        run = runs.get(run_id)
+        if run is not None and run.status == "awaiting_input":
+            return run
+        await asyncio.sleep(0.01)
+    raise AssertionError("run never parked")
 
 
 def run_bodies(run: Run) -> list[EventBody]:

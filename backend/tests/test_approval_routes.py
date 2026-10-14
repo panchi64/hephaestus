@@ -22,6 +22,7 @@ from tools import RunDeps
 
 from ._helpers import (
     app_state,
+    await_parked,
     client_app,
     collect_sse_events,
     parked_turn,
@@ -77,24 +78,12 @@ async def _grants(client: httpx.AsyncClient, conv_id: str | None) -> list[JsonVa
     return json_list(await client.get(f"/conversations/{conv_id}/grants"))
 
 
-async def _await_parked(app: FastAPI, run_id: str) -> Run:
-    # Poll with a real (small) sleep, not a bare yield: under full-suite load the
-    # background run needs wall-clock to reach awaiting_input, and 100 sleep(0)
-    # yields can starve before it does (a flaky "never parked").
-    for _ in range(200):
-        run = app_state(app, "runs", RunRegistry).get(run_id)
-        if run is not None and run.status == "awaiting_input":
-            return run
-        await asyncio.sleep(0.01)
-    raise AssertionError("run never parked")
-
-
 async def test_approve_flow_resumes_and_completes(monkeypatch: pytest.MonkeyPatch):
     _install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
 
         status = json_body(await client.get(f"/runs/{run_id}"))
         assert status["status"] == "awaiting_input"
@@ -125,7 +114,7 @@ async def test_approve_resumes_under_the_operators_bounds(monkeypatch: pytest.Mo
             "/chat/settings", json={"wall_clock_timeout_s": 900, "inactivity_timeout_s": 45}
         )
         run_id = await _chat(client, "delete it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
 
         seen: dict[str, object] = {}
         runs = app_state(app, "runs", RunRegistry)
@@ -171,7 +160,7 @@ async def test_approve_with_conversation_scope_records_grant(monkeypatch: pytest
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
         approval = parked_turn(run).requests.approvals[0]
         conv_id = run.conversation_id
 
@@ -224,7 +213,7 @@ async def test_a_conversation_grant_on_a_command_names_the_command(
     async with client_app() as (client, app):
         swap_tool_catalog(app, command_categories())
         run_id = await _chat(client, "run it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
         approval = parked_turn(run).requests.approvals[0]
         assert approval.tool_name == "code_run_host_command"
         command = s(obj(JSON.validate_python(approval.args_as_dict()))["command"])
@@ -278,7 +267,7 @@ async def test_the_wider_width_grants_the_whole_tool_and_says_so(
     async with client_app() as (client, app):
         swap_tool_catalog(app, command_categories())
         run_id = await _chat(client, "run it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
         approval = parked_turn(run).requests.approvals[0]
         conv_id = run.conversation_id
 
@@ -315,7 +304,7 @@ async def test_the_wider_width_is_still_refused_for_a_once_only_tool(
     async with client_app() as (client, app):
         swap_tool_catalog(app, egress_categories())
         run_id = await _chat(client, "reach out")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
         approval = parked_turn(run).requests.approvals[0]
         conv_id = run.conversation_id
 
@@ -349,7 +338,7 @@ async def test_a_grant_names_the_command_the_operator_edited_it_to(
     async with client_app() as (client, app):
         swap_tool_catalog(app, command_categories())
         run_id = await _chat(client, "run it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
         approval = parked_turn(run).requests.approvals[0]
         conv_id = run.conversation_id
 
@@ -383,7 +372,7 @@ async def test_a_command_no_scope_could_stand_for_records_nothing_and_says_so(
     async with client_app() as (client, app):
         swap_tool_catalog(app, command_categories())
         run_id = await _chat(client, "run it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
         approval = parked_turn(run).requests.approvals[0]
         conv_id = run.conversation_id
 
@@ -419,7 +408,7 @@ async def test_egress_request_never_records_a_conversation_grant(
     async with client_app() as (client, app):
         swap_tool_catalog(app, egress_categories())
         run_id = await _chat(client, "reach pypi")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
         approval = parked_turn(run).requests.approvals[0]
         conv_id = run.conversation_id
         assert approval.tool_name == "code_request_egress"
@@ -458,7 +447,7 @@ async def test_failed_resume_rolls_back_the_recorded_grant(monkeypatch: pytest.M
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
         approval = parked_turn(run).requests.approvals[0]
         conv_id = run.conversation_id
 
@@ -501,7 +490,7 @@ async def test_a_failed_resume_leaves_a_grant_that_was_already_there(
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
         approval = parked_turn(run).requests.approvals[0]
         conv_id = run.conversation_id
         assert conv_id is not None
@@ -537,7 +526,7 @@ async def test_approve_rejects_decision_mismatch(monkeypatch: pytest.MonkeyPatch
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
-        _ = await _await_parked(app, run_id)
+        _ = await await_parked(app, run_id)
         resp = await client.post(
             f"/runs/{run_id}/approve",
             json={"decisions": [{"tool_call_id": "wrong-id", "approved": True}]},
@@ -572,7 +561,7 @@ async def test_park_creates_approval_needed_and_approve_resolves_it(
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
 
         notifs = await _run_notifications(app, run_id)
         assert len(notifs) == 1
@@ -595,7 +584,7 @@ async def test_deny_resolves_the_approval_needed_notification(monkeypatch: pytes
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
-        run = await _await_parked(app, run_id)
+        run = await await_parked(app, run_id)
         call_id = parked_turn(run).requests.approvals[0].tool_call_id
 
         resp = await client.post(
@@ -615,7 +604,7 @@ async def test_cancel_while_parked_resolves_the_approval_needed_notification(
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         run_id = await _chat(client, "delete it")
-        _ = await _await_parked(app, run_id)
+        _ = await await_parked(app, run_id)
 
         assert await app_state(app, "runs", RunRegistry).cancel(run_id) is True
         await _drain_terminal_notify_tasks(app)

@@ -12,14 +12,32 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, FunctionToolset
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+import httpx
+import pytest
+from fastapi import FastAPI
+from pydantic_ai import (
+    Agent,
+    DeferredToolRequests,
+    DeferredToolResults,
+    FunctionToolset,
+    ModelMessage,
+    ToolReturnPart,
+)
+from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+    StreamFunctionDef,
+)
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
 
 from agent import stream_agent_run
-from runs import QuestionOption, QuestionSpec, Run, RunStream
+from runs import QuestionOption, QuestionSpec, Run, RunRegistry, RunStream
 from services.answers import (
     ASK_USER_TOOL,
     AnswerError,
@@ -27,19 +45,23 @@ from services.answers import (
     questions_of,
     render_answer,
 )
+from services.conversations import ConversationStore
 from services.registry import ModelRegistry
 from services.tool_policy import lane_disabled_tools
 from tools import RunDeps, build_agent_toolsets
 from tools.builtin import NO_OPERATOR, builtin_toolset
 
 from ._helpers import (
+    app_state,
+    await_parked,
     client_app,
     collect_sse_events,
+    parked_turn,
     register_stub_provider,
     stub_resolution,
     swap_tool_catalog,
 )
-from ._json import arr, obj
+from ._json import arr, json_body, obj, s
 
 OWNER = "operator"
 # The constant the projection keys on. Used rather than a literal so the tests below —
@@ -49,7 +71,7 @@ ASK = ASK_USER_TOOL
 
 # One two-question call: a single-select and a multi-select, so the shapes the panel
 # renders and the shapes the renderer writes are both exercised by one park.
-QUESTIONS = {
+QUESTIONS: dict[str, list[dict[str, object]]] = {
     "questions": [
         {
             "question": "Which database?",
@@ -67,17 +89,23 @@ QUESTIONS = {
 }
 
 
-def _calls_once(tool_name: str, args: Mapping[str, object]):
+Output = str | DeferredToolRequests
+NO_REPLIES: list[dict[str, object]] = []
+NO_SELECTIONS: list[str] = []
+
+
+def _tool_ran(messages: list[ModelMessage]) -> bool:
+    return any(
+        type(part).__name__ == "ToolReturnPart" for message in messages for part in message.parts
+    )
+
+
+def _calls_once(tool_name: str, args: Mapping[str, object]) -> StreamFunctionDef:
     """A model that calls one tool once, then answers with text once it has a result."""
 
-    def _tool_ran(messages) -> bool:
-        return any(
-            type(part).__name__ == "ToolReturnPart"
-            for message in messages
-            for part in message.parts
-        )
-
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         if _tool_ran(messages):
             yield "done"
         else:
@@ -86,7 +114,7 @@ def _calls_once(tool_name: str, args: Mapping[str, object]):
     return stream_fn
 
 
-def _agent(kind: str = "chat"):
+def _agent(kind: str = "chat") -> tuple[Agent[RunDeps, Output], Run, RunDeps]:
     agent = Agent(
         FunctionModel(stream_function=_calls_once(ASK, QUESTIONS)),
         deps_type=RunDeps,
@@ -102,7 +130,14 @@ def _agent(kind: str = "chat"):
     return agent, run, deps
 
 
-async def _drive(agent, run, deps, *, deferred_results=None, message_history=None):
+async def _drive(
+    agent: Agent[RunDeps, Output],
+    run: Run,
+    deps: RunDeps,
+    *,
+    deferred_results: DeferredToolResults | None = None,
+    message_history: list[ModelMessage] | None = None,
+) -> AgentRunResult[Output]:
     prompt = None if message_history else "pick one"
     async with agent.iter(
         prompt,
@@ -111,6 +146,7 @@ async def _drive(agent, run, deps, *, deferred_results=None, message_history=Non
         message_history=message_history,
     ) as agent_run:
         await stream_agent_run(agent_run, run)
+    assert agent_run.result is not None
     return agent_run.result
 
 
@@ -132,6 +168,7 @@ async def test_the_call_defers_for_execution_not_for_approval():
 async def test_the_answer_becomes_the_tools_return_value():
     agent, run, deps = _agent()
     first = await _drive(agent, run, deps)
+    assert isinstance(first.output, DeferredToolRequests)
     call_id = first.output.calls[0].tool_call_id
 
     second = await _drive(
@@ -146,7 +183,7 @@ async def test_the_answer_becomes_the_tools_return_value():
         part
         for message in second.all_messages()
         for part in message.parts
-        if type(part).__name__ == "ToolReturnPart"
+        if isinstance(part, ToolReturnPart)
     ]
     assert any("SQLite" in str(part.content) for part in returns)
 
@@ -176,7 +213,7 @@ async def test_an_unattended_call_refuses_instead_of_parking():
         part
         for message in result.all_messages()
         for part in message.parts
-        if type(part).__name__ == "ToolReturnPart"
+        if isinstance(part, ToolReturnPart)
     ]
     assert any(NO_OPERATOR in str(part.content) for part in returns)
 
@@ -232,7 +269,7 @@ def test_writing_instead_of_choosing_says_so():
 
 def test_an_option_that_was_never_offered_is_refused():
     try:
-        render_answer([_spec("Which database?", ["Postgres"])], [(["MySQL"], None)])
+        _ = render_answer([_spec("Which database?", ["Postgres"])], [(["MySQL"], None)])
     except AnswerError as exc:
         assert "MySQL" in str(exc)
     else:
@@ -241,7 +278,7 @@ def test_an_option_that_was_never_offered_is_refused():
 
 def test_a_question_answered_with_nothing_is_refused():
     try:
-        render_answer([_spec("Which database?", ["Postgres"])], [([], "   ")])
+        _ = render_answer([_spec("Which database?", ["Postgres"])], [([], "   ")])
     except AnswerError as exc:
         assert "nothing was answered" in str(exc)
     else:
@@ -299,7 +336,7 @@ def test_parsing_recovers_what_it_can_from_a_string_it_cannot_read():
 
 def test_a_reply_per_question_is_required():
     try:
-        render_answer([_spec("a", ["x"]), _spec("b", ["y"])], [(["x"], None)])
+        _ = render_answer([_spec("a", ["x"]), _spec("b", ["y"])], [(["x"], None)])
     except AnswerError as exc:
         assert "one reply per question" in str(exc)
     else:
@@ -309,7 +346,7 @@ def test_a_reply_per_question_is_required():
 # --- over HTTP ---------------------------------------------------------------------
 
 
-def _ask_and_danger_categories():
+def _ask_and_danger_categories() -> dict[str, AbstractToolset[RunDeps]]:
     """The `ask_user` tool plus one approval-gated tool, so a single turn can stop for
     both reasons at once."""
     danger: FunctionToolset[RunDeps] = FunctionToolset()
@@ -321,18 +358,15 @@ def _ask_and_danger_categories():
     return {"builtin": builtin_toolset(), "danger": danger}
 
 
-def _install_asking_model(monkeypatch, args: Mapping[str, object], *, also_danger: bool = False):
+def _install_asking_model(
+    monkeypatch: pytest.MonkeyPatch, args: Mapping[str, object], *, also_danger: bool = False
+) -> None:
     """Point every model resolution at a model that makes the call(s) under test once,
     then answers with text."""
 
-    def _tool_ran(messages) -> bool:
-        return any(
-            type(part).__name__ == "ToolReturnPart"
-            for message in messages
-            for part in message.parts
-        )
-
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
         if _tool_ran(messages):
             yield "done"
             return
@@ -342,29 +376,30 @@ def _install_asking_model(monkeypatch, args: Mapping[str, object], *, also_dange
                 1: DeltaToolCall(name="danger_delete_thing", json_args=json.dumps({"name": "x"}))
             }
 
-    async def fake_resolve_detailed(self, role, **kwargs):
+    async def fake_resolve_detailed(self: ModelRegistry, _role: str, **_kwargs: object):
         return await stub_resolution(self, FunctionModel(stream_function=stream_fn))
 
     register_stub_provider(monkeypatch)
     monkeypatch.setattr(ModelRegistry, "resolve_detailed", fake_resolve_detailed)
 
 
-async def _await_parked(app, run_id):
-    for _ in range(200):
-        run = app.state.runs.get(run_id)
-        if run is not None and run.status == "awaiting_input":
-            return run
-        await asyncio.sleep(0.01)
-    raise AssertionError("run never parked")
+async def _chat(client: httpx.AsyncClient, prompt: str) -> str:
+    return s(json_body(await client.post("/chat", json={"prompt": prompt}))["run_id"])
 
 
-async def test_asking_parks_the_run_and_announces_the_questions(monkeypatch):
+def _run(app: FastAPI, run_id: str) -> Run:
+    run = app_state(app, "runs", RunRegistry).get(run_id)
+    assert run is not None
+    return run
+
+
+async def test_asking_parks_the_run_and_announces_the_questions(monkeypatch: pytest.MonkeyPatch):
     _install_asking_model(monkeypatch, QUESTIONS)
     async with client_app() as (client, app):
         swap_tool_catalog(app, {"builtin": builtin_toolset()})
-        run_id = (await client.post("/chat", json={"prompt": "pick one"})).json()["run_id"]
-        run = await _await_parked(app, run_id)
-        call_id = run.parked_payload.requests.calls[0].tool_call_id
+        run_id = await _chat(client, "pick one")
+        run = await await_parked(app, run_id)
+        call_id = parked_turn(run).requests.calls[0].tool_call_id
 
         resp = await client.post(
             f"/runs/{run_id}/approve",
@@ -395,7 +430,7 @@ async def test_asking_parks_the_run_and_announces_the_questions(monkeypatch):
     assert [e["type"] for e in events][-1] == "run.ended"
 
 
-async def test_the_answers_payload_agrees_warm_and_cold(monkeypatch):
+async def test_the_answers_payload_agrees_warm_and_cold(monkeypatch: pytest.MonkeyPatch):
     """The card is drawn twice from two different sources — live from
     ``question.answered``, built out of the replies before they were ever rendered, and on
     a reload from the call's own arguments and the prose in its result. They must say the
@@ -403,10 +438,10 @@ async def test_the_answers_payload_agrees_warm_and_cold(monkeypatch):
     _install_asking_model(monkeypatch, QUESTIONS)
     async with client_app() as (client, app):
         swap_tool_catalog(app, {"builtin": builtin_toolset()})
-        created = (await client.post("/chat", json={"prompt": "pick one"})).json()
-        run_id, conversation_id = created["run_id"], created["conversation_id"]
-        run = await _await_parked(app, run_id)
-        call_id = run.parked_payload.requests.calls[0].tool_call_id
+        created = json_body(await client.post("/chat", json={"prompt": "pick one"}))
+        run_id, conversation_id = s(created["run_id"]), s(created["conversation_id"])
+        run = await await_parked(app, run_id)
+        call_id = parked_turn(run).requests.calls[0].tool_call_id
 
         resp = await client.post(
             f"/runs/{run_id}/approve",
@@ -439,35 +474,30 @@ async def test_the_answers_payload_agrees_warm_and_cold(monkeypatch):
 
         # …and again with nothing left in memory to read it from: the sealed blob holds
         # the call and its result, and the projection takes the same answer back out.
-        store = app.state.conversations
+        store = app_state(app, "conversations", ConversationStore)
         await store._worker.join()
         store._cache.clear()
-        detail = (await client.get(f"/conversations/{conversation_id}")).json()
-        [cold] = [
-            tool
-            for message in detail["messages"]
-            for tool in message["tools"]
-            if tool["name"] == ASK
+        detail = json_body(await client.get(f"/conversations/{conversation_id}"))
+        tools = [
+            obj(tool) for message in arr(detail["messages"]) for tool in arr(obj(message)["tools"])
         ]
+        [cold] = [tool for tool in tools if tool["name"] == ASK]
         assert cold["answers"] == live["answers"]
 
         # Every other tool row stays empty — this is a card for one tool, not a field
         # every call now has to mean something by.
-        assert all(
-            tool["answers"] == []
-            for message in detail["messages"]
-            for tool in message["tools"]
-            if tool["name"] != ASK
-        )
+        assert all(tool["answers"] == [] for tool in tools if tool["name"] != ASK)
 
 
-async def test_an_approval_and_a_question_park_once_and_resume_once(monkeypatch):
+async def test_an_approval_and_a_question_park_once_and_resume_once(
+    monkeypatch: pytest.MonkeyPatch,
+):
     _install_asking_model(monkeypatch, QUESTIONS, also_danger=True)
     async with client_app() as (client, app):
         swap_tool_catalog(app, _ask_and_danger_categories())
-        run_id = (await client.post("/chat", json={"prompt": "go"})).json()["run_id"]
-        run = await _await_parked(app, run_id)
-        parked = run.parked_payload
+        run_id = await _chat(client, "go")
+        run = await await_parked(app, run_id)
+        parked = parked_turn(run)
         assert len(parked.requests.calls) == 1
         assert len(parked.requests.approvals) == 1
 
@@ -504,7 +534,7 @@ async def test_an_approval_and_a_question_park_once_and_resume_once(monkeypatch)
     assert types[-1] == "run.ended"
 
 
-async def test_a_call_settled_by_the_wrong_pile_is_refused(monkeypatch):
+async def test_a_call_settled_by_the_wrong_pile_is_refused(monkeypatch: pytest.MonkeyPatch):
     """An approval answered as if it were a question — or the reverse — is a 400, not a
     crash. The two piles are settled by different code and looked up in different maps,
     so a body checked only against their *union* would pass here and then index the map
@@ -512,8 +542,8 @@ async def test_a_call_settled_by_the_wrong_pile_is_refused(monkeypatch):
     _install_asking_model(monkeypatch, QUESTIONS, also_danger=True)
     async with client_app() as (client, app):
         swap_tool_catalog(app, _ask_and_danger_categories())
-        run_id = (await client.post("/chat", json={"prompt": "go"})).json()["run_id"]
-        parked = (await _await_parked(app, run_id)).parked_payload
+        run_id = await _chat(client, "go")
+        parked = parked_turn(await await_parked(app, run_id))
         question_id = parked.requests.calls[0].tool_call_id
         approval_id = parked.requests.approvals[0].tool_call_id
 
@@ -521,22 +551,24 @@ async def test_a_call_settled_by_the_wrong_pile_is_refused(monkeypatch):
             f"/runs/{run_id}/approve",
             json={
                 "decisions": [{"tool_call_id": question_id, "approved": True}],
-                "answers": [{"tool_call_id": approval_id, "replies": []}],
+                "answers": [{"tool_call_id": approval_id, "replies": NO_REPLIES}],
             },
         )
         assert swapped.status_code == 400
         # Still parked and still answerable — a refused body settles nothing.
-        assert app.state.runs.get(run_id).status == "awaiting_input"
-        await client.post(f"/runs/{run_id}/cancel")
+        assert _run(app, run_id).status == "awaiting_input"
+        _ = await client.post(f"/runs/{run_id}/cancel")
 
 
-async def test_an_option_that_was_never_offered_is_refused_over_http(monkeypatch):
+async def test_an_option_that_was_never_offered_is_refused_over_http(
+    monkeypatch: pytest.MonkeyPatch,
+):
     _install_asking_model(monkeypatch, QUESTIONS)
     async with client_app() as (client, app):
         swap_tool_catalog(app, {"builtin": builtin_toolset()})
-        run_id = (await client.post("/chat", json={"prompt": "pick one"})).json()["run_id"]
-        run = await _await_parked(app, run_id)
-        call_id = run.parked_payload.requests.calls[0].tool_call_id
+        run_id = await _chat(client, "pick one")
+        run = await await_parked(app, run_id)
+        call_id = parked_turn(run).requests.calls[0].tool_call_id
 
         resp = await client.post(
             f"/runs/{run_id}/approve",
@@ -552,42 +584,19 @@ async def test_an_option_that_was_never_offered_is_refused_over_http(monkeypatch
         assert resp.status_code == 422
         assert "MongoDB" in resp.json()["detail"]
         # Refused, not resumed: the run is still parked and still answerable.
-        assert app.state.runs.get(run_id).status == "awaiting_input"
-        await client.post(f"/runs/{run_id}/cancel")
+        assert _run(app, run_id).status == "awaiting_input"
+        _ = await client.post(f"/runs/{run_id}/cancel")
 
 
-async def test_a_question_answered_with_nothing_is_refused_over_http(monkeypatch):
+async def test_a_question_answered_with_nothing_is_refused_over_http(
+    monkeypatch: pytest.MonkeyPatch,
+):
     _install_asking_model(monkeypatch, QUESTIONS)
     async with client_app() as (client, app):
         swap_tool_catalog(app, {"builtin": builtin_toolset()})
-        run_id = (await client.post("/chat", json={"prompt": "pick one"})).json()["run_id"]
-        run = await _await_parked(app, run_id)
-        call_id = run.parked_payload.requests.calls[0].tool_call_id
-
-        resp = await client.post(
-            f"/runs/{run_id}/approve",
-            json={
-                "answers": [
-                    {
-                        "tool_call_id": call_id,
-                        "replies": [{"selections": [], "text": ""}, {"selections": ["Auth"]}],
-                    }
-                ]
-            },
-        )
-        assert resp.status_code == 422
-        await client.post(f"/runs/{run_id}/cancel")
-
-
-async def test_writing_an_answer_instead_of_choosing_reaches_the_model(monkeypatch):
-    """The affordance the whole feature turns on: the options are the model's guesses,
-    not the range of allowed answers."""
-    _install_asking_model(monkeypatch, QUESTIONS)
-    async with client_app() as (client, app):
-        swap_tool_catalog(app, {"builtin": builtin_toolset()})
-        run_id = (await client.post("/chat", json={"prompt": "pick one"})).json()["run_id"]
-        run = await _await_parked(app, run_id)
-        call_id = run.parked_payload.requests.calls[0].tool_call_id
+        run_id = await _chat(client, "pick one")
+        run = await await_parked(app, run_id)
+        call_id = parked_turn(run).requests.calls[0].tool_call_id
 
         resp = await client.post(
             f"/runs/{run_id}/approve",
@@ -596,7 +605,37 @@ async def test_writing_an_answer_instead_of_choosing_reaches_the_model(monkeypat
                     {
                         "tool_call_id": call_id,
                         "replies": [
-                            {"selections": [], "text": "DuckDB, actually"},
+                            {"selections": NO_SELECTIONS, "text": ""},
+                            {"selections": ["Auth"]},
+                        ],
+                    }
+                ]
+            },
+        )
+        assert resp.status_code == 422
+        _ = await client.post(f"/runs/{run_id}/cancel")
+
+
+async def test_writing_an_answer_instead_of_choosing_reaches_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The affordance the whole feature turns on: the options are the model's guesses,
+    not the range of allowed answers."""
+    _install_asking_model(monkeypatch, QUESTIONS)
+    async with client_app() as (client, app):
+        swap_tool_catalog(app, {"builtin": builtin_toolset()})
+        run_id = await _chat(client, "pick one")
+        run = await await_parked(app, run_id)
+        call_id = parked_turn(run).requests.calls[0].tool_call_id
+
+        resp = await client.post(
+            f"/runs/{run_id}/approve",
+            json={
+                "answers": [
+                    {
+                        "tool_call_id": call_id,
+                        "replies": [
+                            {"selections": NO_SELECTIONS, "text": "DuckDB, actually"},
                             {"selections": ["Auth"]},
                         ],
                     }
@@ -610,8 +649,8 @@ async def test_writing_an_answer_instead_of_choosing_reaches_the_model(monkeypat
     assert completed and "DuckDB, actually" in str(completed[0]["result"])
 
 
-async def test_answering_a_run_that_is_not_parked_conflicts(monkeypatch):
-    async def fake_resolve_detailed(self, role, **kwargs):
+async def test_answering_a_run_that_is_not_parked_conflicts(monkeypatch: pytest.MonkeyPatch):
+    async def fake_resolve_detailed(self: ModelRegistry, _role: str, **_kwargs: object):
         # `call_tools=[]` or the model calls every tool it is offered — including
         # `ask_user`, which would park the very run this test needs to have finished.
         return await stub_resolution(self, TestModel(custom_output_text="done", call_tools=[]))
@@ -620,11 +659,11 @@ async def test_answering_a_run_that_is_not_parked_conflicts(monkeypatch):
     monkeypatch.setattr(ModelRegistry, "resolve_detailed", fake_resolve_detailed)
     async with client_app() as (client, app):
         swap_tool_catalog(app, {"builtin": builtin_toolset()})
-        run_id = (await client.post("/chat", json={"prompt": "hello"})).json()["run_id"]
-        await asyncio.wait_for(app.state.runs.get(run_id).wait(), timeout=10)
+        run_id = await _chat(client, "hello")
+        await asyncio.wait_for(_run(app, run_id).wait(), timeout=10)
 
         resp = await client.post(
             f"/runs/{run_id}/approve",
-            json={"answers": [{"tool_call_id": "nope", "replies": []}]},
+            json={"answers": [{"tool_call_id": "nope", "replies": NO_REPLIES}]},
         )
         assert resp.status_code == 409
