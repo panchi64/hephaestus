@@ -24,9 +24,10 @@ from collections import Counter
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import cast
 
 import numpy as np
+from numpy.typing import NDArray
 from sqlalchemy import Engine
 from sqlmodel import Session
 
@@ -100,13 +101,13 @@ class _Vectors:
     """One embedding model's unit vectors, appended and removed in place."""
 
     def __init__(self, dim: int) -> None:
-        self.dim = dim
-        self.matrix = np.zeros((16, dim), dtype=np.float32)
+        self.dim: int = dim
+        self.matrix: NDArray[np.float32] = np.zeros((16, dim), dtype=np.float32)
         self.ids: list[str | None] = []
         self.row: dict[str, int] = {}
         self.free: list[int] = []
 
-    def put(self, doc_id: str, vector: np.ndarray) -> None:
+    def put(self, doc_id: str, vector: NDArray[np.float32]) -> None:
         self.drop(doc_id)
         if self.free:
             slot = self.free.pop()
@@ -128,12 +129,12 @@ class _Vectors:
             self.ids[slot] = None
             self.free.append(slot)
 
-    def scores(self, query: np.ndarray) -> list[tuple[str, float]]:
+    def scores(self, query: NDArray[np.float32]) -> list[tuple[str, float]]:
         if not self.row:
             return []
         values = self.matrix[: len(self.ids)] @ query
         return [
-            (doc_id, float(values[slot]))
+            (doc_id, float(cast("np.float32", values[slot])))
             for slot, doc_id in enumerate(self.ids)
             if doc_id is not None and values[slot] > 0
         ]
@@ -151,14 +152,14 @@ class _Shard[M]:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def remove(self, doc_id: str) -> None:
-        self.stamps.pop(doc_id, None)
-        self.docs.pop(doc_id, None)
+        _ = self.stamps.pop(doc_id, None)
+        _ = self.docs.pop(doc_id, None)
         counts = self.terms.pop(doc_id, None)
         if counts is not None:
             self.total_length -= counts.total()
             for term in counts:
                 posting = self.postings[term]
-                posting.pop(doc_id, None)
+                _ = posting.pop(doc_id, None)
                 if not posting:
                     del self.postings[term]
         for table in self.vectors.values():
@@ -213,10 +214,10 @@ class _Shard[M]:
 
 class RecallIndex:
     def __init__(self, engine: Engine, vault: Vault) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._shards: dict[tuple[str, str], _Shard[Any]] = {}
-        self._generation = 0
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._shards: dict[tuple[str, str], object] = {}
+        self._generation: int = 0
         vault.register_on_lock(self.clear)
 
     def clear(self) -> None:
@@ -259,9 +260,12 @@ class RecallIndex:
 
     async def _sync[M](self, collection: Collection[M], owner_id: str) -> _Shard[M]:
         key = (collection.name, owner_id)
-        shard = self._shards.get(key)
-        if shard is None:
-            shard = self._shards[key] = _Shard()
+        stored = self._shards.get(key)
+        if stored is None:
+            shard = _Shard[M]()
+            self._shards[key] = shard
+        else:
+            shard = cast("_Shard[M]", stored)
         async with shard.lock:
             generation = self._generation
             fresh = await in_session(

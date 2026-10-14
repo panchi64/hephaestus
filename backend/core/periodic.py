@@ -69,12 +69,12 @@ class PeriodicTask:
         log_level: int = logging.DEBUG,
         first_delay_s: float | None = None,
     ) -> None:
-        self._name = name
-        self._interval_s = interval_s
-        self._work = work
-        self._logger = logger or _logger
-        self._log_level = log_level
-        self._first_delay_s = interval_s if first_delay_s is None else first_delay_s
+        self._name: str = name
+        self._interval_s: float = interval_s
+        self._work: Callable[[], Awaitable[object]] = work
+        self._logger: logging.Logger = logger or _logger
+        self._log_level: int = log_level
+        self._first_delay_s: float = interval_s if first_delay_s is None else first_delay_s
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -100,7 +100,7 @@ class PeriodicTask:
         task, self._task = self._task, None
         if task is None:
             return
-        task.cancel()
+        _ = task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
@@ -110,7 +110,7 @@ class PeriodicTask:
             await asyncio.sleep(delay)
             delay = self._interval_s
             try:
-                await self._work()
+                _ = await self._work()
             except asyncio.CancelledError:
                 # A stop landing inside the work: the loop is over, and swallowing this
                 # below would turn a shutdown into a job that keeps running.

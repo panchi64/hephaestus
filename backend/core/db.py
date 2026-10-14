@@ -12,10 +12,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any, NoReturn, Protocol
+from typing import NoReturn, Protocol
 from weakref import WeakKeyDictionary
 
 from alembic import command
@@ -24,6 +24,10 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
 from sqlalchemy import Connection, Engine, event, inspect
+from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import Insert as SQLiteInsert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
@@ -130,7 +134,7 @@ def make_engine(url: str) -> Engine:
     def _emit_begin(connection: Connection) -> None:
         # With pysqlite handed over to autocommit above, SQLAlchemy must emit the BEGIN
         # itself; without this no transaction is ever opened and every statement commits.
-        connection.exec_driver_sql("BEGIN")
+        _ = connection.exec_driver_sql("BEGIN")
 
     return engine
 
@@ -218,9 +222,9 @@ def _raise_schema_error(
         lines.extend(f"    - {problem}" for problem in drift)
     lines.append(
         "  The recorded revision and/or the physical schema disagree with the "
-        "migration scripts — typically a dev DB left stamped at a deleted or "
-        "regenerated migration. Reconcile with Alembic (stamp to the matching "
-        "revision, or drop and re-create the drifted table) before restarting."
+        + "migration scripts — typically a dev DB left stamped at a deleted or "
+        + "regenerated migration. Reconcile with Alembic (stamp to the matching "
+        + "revision, or drop and re-create the drifted table) before restarting."
     )
     message = "\n".join(lines)
     logger.error(message)
@@ -292,7 +296,7 @@ async def get_owned[M: _Owned](
     return row
 
 
-def upsert(engine: Engine, model_cls: type) -> Any:
+def upsert(engine: Engine, model_cls: type[SQLModel]) -> SQLiteInsert | PostgresInsert:
     """An INSERT construct carrying ``on_conflict_do_update``, for this engine's dialect.
 
     Atomic get-or-create needs the conflict resolution pushed into the database — a
@@ -306,19 +310,17 @@ def upsert(engine: Engine, model_cls: type) -> Any:
     """
     name = engine.dialect.name
     if name == "sqlite":
-        from sqlalchemy.dialects.sqlite import insert as dialect_insert
-    elif name == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert as dialect_insert
-    else:
-        raise NotImplementedError(
-            f"upsert is not implemented for the {name!r} dialect "
-            "(ON CONFLICT DO UPDATE is SQLite/PostgreSQL syntax)"
-        )
-    return dialect_insert(model_cls)
+        return sqlite_insert(model_cls)
+    if name == "postgresql":
+        return postgresql_insert(model_cls)
+    raise NotImplementedError(
+        f"upsert is not implemented for the {name!r} dialect "
+        + "(ON CONFLICT DO UPDATE is SQLite/PostgreSQL syntax)"
+    )
 
 
 @contextmanager
-def read_session(engine: Engine) -> Iterator[Session]:
+def read_session(engine: Engine) -> Generator[Session]:
     """A session for a caller that is **not** on the event loop, taken under the same
     per-engine lock :func:`in_session` uses.
 
@@ -334,5 +336,5 @@ def read_session(engine: Engine) -> Iterator[Session]:
     lock = _CONN_LOCKS.get(engine)
     with ExitStack() as stack:
         if lock is not None:
-            stack.enter_context(lock)
+            _ = stack.enter_context(lock)
         yield stack.enter_context(Session(engine, expire_on_commit=False))

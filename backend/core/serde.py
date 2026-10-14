@@ -25,6 +25,11 @@ def parse_json(text: str | bytes) -> JsonValue:
     return _JSON.validate_json(text)
 
 
+def to_json(value: object) -> JsonValue:
+    """``value`` as JSON data; anything JSON cannot carry raises ``ValueError``."""
+    return _JSON.validate_python(value)
+
+
 def as_int(value: JsonValue) -> int:
     """``int(value)``; raises ``TypeError`` for null, arrays and objects."""
     if isinstance(value, bool | int | float | str):

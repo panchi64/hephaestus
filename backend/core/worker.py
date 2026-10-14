@@ -43,10 +43,10 @@ async def wait_unlocked_or_stop(unlocked: asyncio.Event | None, stopping: asynci
     stop_wait = asyncio.ensure_future(stopping.wait())
     unlock_wait = asyncio.ensure_future(unlocked.wait())
     try:
-        await asyncio.wait({stop_wait, unlock_wait}, return_when=asyncio.FIRST_COMPLETED)
+        _ = await asyncio.wait({stop_wait, unlock_wait}, return_when=asyncio.FIRST_COMPLETED)
     finally:
-        stop_wait.cancel()
-        unlock_wait.cancel()
+        _ = stop_wait.cancel()
+        _ = unlock_wait.cancel()
     return unlocked.is_set()
 
 
@@ -68,15 +68,15 @@ class WriteBehindWorker[T]:
         base_backoff_s: float = 0.2,
         on_drop: Callable[[T, Exception], None] | None = None,
     ) -> None:
-        self._handler = handler
-        self._name = name
-        self._unlocked = unlocked
-        self._max_attempts = max_attempts
-        self._base_backoff_s = base_backoff_s
-        self._on_drop = on_drop
+        self._handler: Callable[[T], Awaitable[None]] = handler
+        self._name: str = name
+        self._unlocked: asyncio.Event | None = unlocked
+        self._max_attempts: int = max_attempts
+        self._base_backoff_s: float = base_backoff_s
+        self._on_drop: Callable[[T, Exception], None] | None = on_drop
         self._queue: asyncio.Queue[T] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
-        self._stopping = asyncio.Event()
+        self._stopping: asyncio.Event = asyncio.Event()
 
     def submit(self, item: T) -> None:
         """Hot path: enqueue an item for background processing (never blocks)."""

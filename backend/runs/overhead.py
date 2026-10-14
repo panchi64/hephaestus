@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from pydantic import JsonValue
 
-from core.serde import as_int
+from core.serde import as_int, to_json
 
 
 def _rows(value: JsonValue) -> list[dict[str, JsonValue]]:
@@ -83,7 +83,7 @@ class TurnOverhead:
     blocks: tuple[BriefBlock, ...] = ()
     groups: tuple[ToolGroupOverhead, ...] = ()
 
-    def as_dict(self) -> dict[str, JsonValue]:
+    def as_dict(self) -> dict[str, object]:
         """The measurement as plain JSON-able data, for the conversation column that
         carries it between turns (``services.conversations``). Written out field by
         field rather than via ``dataclasses.asdict`` so the stored shape is a
@@ -100,7 +100,7 @@ class TurnOverhead:
         }
 
     @classmethod
-    def from_dict(cls, raw: JsonValue) -> TurnOverhead | None:
+    def from_dict(cls, stored: object) -> TurnOverhead | None:
         """Rebuild a stored measurement, or ``None`` if it can't be read.
 
         Total-tolerant on the way in for the same reason the totals exist at all: a blob
@@ -114,6 +114,10 @@ class TurnOverhead:
         in, it would flow through the composer's proportional scaling as a *negative
         share* and draw a bar segment of negative width — a wrong breakdown, which is the
         one outcome this is here to prevent."""
+        try:
+            raw = to_json(stored)
+        except ValueError:
+            return None
         if not isinstance(raw, dict):
             return None
         try:

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Concatenate, Literal, Protocol
 
+from pydantic import TypeAdapter
 from sqlalchemy import Engine, delete
 from sqlmodel import Session, col, select
 
@@ -32,6 +33,7 @@ type Bundle = dict[str, bytes]
 
 #: Older revisions beyond this many are dropped as new ones are recorded.
 KEEP = 50
+_FILES = TypeAdapter(dict[str, str])
 
 _restoring: contextvars.ContextVar[bool] = contextvars.ContextVar("restoring", default=False)
 
@@ -76,8 +78,8 @@ class Versioned[T: Published](Protocol):
 
 class RevisionStore:
     def __init__(self, engine: Engine, vault: Vault) -> None:
-        self._engine = engine
-        self._vault = vault
+        self._engine: Engine = engine
+        self._vault: Vault = vault
 
     async def record(
         self, owner_id: str, kind: str, subject_id: str, bundle: Bundle, note: str
@@ -102,7 +104,7 @@ class RevisionStore:
             )
             session.add(row)
             session.flush()
-            session.exec(
+            _ = session.exec(
                 delete(Revision)
                 .where(col(Revision.owner_id) == owner_id)
                 .where(col(Revision.kind) == kind)
@@ -144,7 +146,7 @@ class RevisionStore:
 
     async def forget(self, owner_id: str, kind: str, subject_id: str) -> None:
         def work(session: Session) -> None:
-            session.exec(
+            _ = session.exec(
                 delete(Revision)
                 .where(col(Revision.owner_id) == owner_id)
                 .where(col(Revision.kind) == kind)
@@ -160,7 +162,7 @@ async def checkpoint[T: Published](store: Versioned[T], owner_id: str, item: T, 
     if store.revisions is None or item.id is None or not item.published or _restoring.get():
         return
     bundle = await store.snapshot(owner_id, item.id)
-    await store.revisions.record(owner_id, store.revision_kind, item.id, bundle, note)
+    _ = await store.revisions.record(owner_id, store.revision_kind, item.id, bundle, note)
 
 
 def records[S: Versioned[Published], **P, T: Published](
@@ -273,4 +275,4 @@ def encode_bundle(bundle: Bundle) -> bytes:
 
 
 def decode_bundle(raw: bytes) -> Bundle:
-    return {path: base64.b64decode(text) for path, text in json.loads(raw).items()}
+    return {path: base64.b64decode(text) for path, text in _FILES.validate_json(raw).items()}

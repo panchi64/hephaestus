@@ -124,12 +124,12 @@ class NotificationService:
         channels: list[NotificationChannel] | None = None,
         ring_buffer_max: int = _RING_BUFFER_MAX,
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._channels = channels or []
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._channels: list[NotificationChannel] = channels or []
         self._cache: dict[str, NotificationView] = {}
         self._buffer: deque[NotificationEvent] = deque(maxlen=ring_buffer_max)
-        self._seq = 0
+        self._seq: int = 0
         self._subscribers: set[asyncio.Queue[NotificationEvent | None]] = set()
         self._worker: WriteBehindWorker[_Job] = WriteBehindWorker(
             self._persist,
@@ -211,7 +211,7 @@ class NotificationService:
             resolved_at=None,
         )
         self._cache[view.id] = view
-        self._emit("created", view)
+        _ = self._emit("created", view)
         self._worker.submit(
             _Job(
                 op="create",
@@ -255,7 +255,7 @@ class NotificationService:
             self._cache[notif_id] = updated
             resolved.append(updated)
         for view in resolved:
-            self._emit("updated", view)
+            _ = self._emit("updated", view)
             self._queue_update(view)
         return resolved
 
@@ -322,7 +322,7 @@ class NotificationService:
             self._cache[notif_id] = updated
             changed.append(updated)
         for view in changed:
-            self._emit("updated", view)
+            _ = self._emit("updated", view)
             self._queue_update(view)
         return len(changed)
 
@@ -347,7 +347,7 @@ class NotificationService:
         the ring buffer (mirrors `RunStream._drop_slow`)."""
         self._subscribers.discard(queue)
         while not queue.empty():
-            queue.get_nowait()
+            _ = queue.get_nowait()
         queue.put_nowait(None)
 
     def _queue_update(self, view: NotificationView) -> None:
@@ -386,7 +386,7 @@ class NotificationService:
         )
 
     async def _rehydrate(self) -> None:
-        await self._vault.unlocked_event.wait()
+        _ = await self._vault.unlocked_event.wait()
         try:
             rows = await in_session(
                 self._engine, lambda session: session.exec(select(Notification)).all()
