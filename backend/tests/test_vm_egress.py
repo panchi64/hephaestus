@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+from pathlib import Path
+from typing import cast
 
 import pytest
 
-import services.egress as egress_mod
 import services.vm.egress as gw_mod
 from services.vm.egress import (
     ALLOW_FILE,
@@ -69,31 +70,33 @@ def test_parse_allowlist_takes_one_domain_per_line():
     assert parse_allowlist("") == ()
 
 
-def test_the_allowlist_reloads_when_the_file_changes(tmp_path):
+def test_the_allowlist_reloads_when_the_file_changes(tmp_path: Path):
     # An approval exists to unblock a retry that is about to happen; a gateway still
     # holding the list as it stood earlier would refuse it.
     path = tmp_path / ALLOW_FILE
-    path.write_text("pypi.org\n")
+    _ = path.write_text("pypi.org\n")
     allow = Allowlist(tmp_path)
     assert allow.domains() == ("pypi.org",)
 
-    path.write_text("pypi.org\napi.example.com\n")
+    _ = path.write_text("pypi.org\napi.example.com\n")
     os.utime(path, (1, 1))  # a distinct mtime, whatever the filesystem's resolution
     assert allow.domains() == ("pypi.org", "api.example.com")
 
 
-def test_a_missing_allowlist_fails_closed(tmp_path):
+def test_a_missing_allowlist_fails_closed(tmp_path: Path):
     assert Allowlist(tmp_path).domains() == ()
     assert not Allowlist(tmp_path).permits("pypi.org")
 
 
-def test_the_gateway_and_the_policy_name_the_same_file():
-    assert ALLOW_FILE == egress_mod.ALLOW_FILE
+async def test_the_gateway_and_the_policy_name_the_same_file(tmp_path: Path):
+    policy = egress_policy(tmp_path, ("pypi.org",))
+    _ = await policy.materialise("conv-1")
+    assert (policy.allow_dir("conv-1") / ALLOW_FILE).is_file()
 
 
-async def test_the_policys_own_output_parses_and_matches(tmp_path):
+async def test_the_policys_own_output_parses_and_matches(tmp_path: Path):
     policy = egress_policy(tmp_path, ("pypi.org", "*.example.com"))
-    await policy.materialise("conv-1")
+    _ = await policy.materialise("conv-1")
     domains = Allowlist(policy.allow_dir("conv-1")).domains()
 
     assert allowed("pypi.org", domains)
@@ -116,11 +119,11 @@ def _basic(credentials: str) -> bytes:
 async def _serve_once(gateway: EgressGateway, channel: bytes, raw: bytes) -> bytes:
     """One request through the gateway over loopback; the reply it wrote."""
 
-    async def handler(reader, writer):
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         await gateway.serve(channel, reader, writer)
 
     server = await asyncio.start_server(handler, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
+    port = _port_of(server)
     async with server:
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         writer.write(raw)
@@ -130,8 +133,12 @@ async def _serve_once(gateway: EgressGateway, channel: bytes, raw: bytes) -> byt
     return reply
 
 
-async def _upstream(seen: list[bytes]):
-    async def handler(reader, writer):
+def _port_of(server: asyncio.Server) -> int:
+    return cast(tuple[str, int], server.sockets[0].getsockname())[1]
+
+
+async def _upstream(seen: list[bytes]) -> asyncio.Server:
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         seen.append(await reader.read(65536))
         writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
         await writer.drain()
@@ -141,12 +148,14 @@ async def _upstream(seen: list[bytes]):
 
 
 @pytest.fixture
-def gateway_to_upstream(monkeypatch):
+def gateway_to_upstream(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, int], list[str]]:
     """Point the pinned dial at a local stub, recording the host it was asked for."""
     dialled: list[str] = []
     state: dict[str, int] = {}
 
-    async def fake_dial(host, _port, _client_w):
+    async def fake_dial(
+        host: str, _port: int, _client_w: asyncio.StreamWriter
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         dialled.append(host)
         return await asyncio.open_connection("127.0.0.1", state["port"])
 
@@ -154,7 +163,7 @@ def gateway_to_upstream(monkeypatch):
     return state, dialled
 
 
-async def test_an_endless_request_head_is_refused_rather_than_buffered(tmp_path):
+async def test_an_endless_request_head_is_refused_rather_than_buffered(tmp_path: Path):
     # The head is held whole so `Host:` can be re-stated from the authority, and what
     # sends it is code the agent wrote; unbounded, it would grow the gateway's memory.
     gateway = EgressGateway()
@@ -168,7 +177,7 @@ async def test_an_endless_request_head_is_refused_rather_than_buffered(tmp_path)
 
 
 async def test_the_forwarded_host_header_names_the_authority_that_was_allowed(
-    tmp_path, gateway_to_upstream
+    tmp_path: Path, gateway_to_upstream: tuple[dict[str, int], list[str]]
 ):
     # The allowlist decision and the pinned dial are both made on the request line's
     # authority; a `Host:` the agent chose freely would reach a different origin on any
@@ -176,12 +185,12 @@ async def test_the_forwarded_host_header_names_the_authority_that_was_allowed(
     state, dialled = gateway_to_upstream
     seen: list[bytes] = []
     up = await _upstream(seen)
-    state["port"] = up.sockets[0].getsockname()[1]
-    (tmp_path / ALLOW_FILE).write_text("pypi.org\n")
+    state["port"] = _port_of(up)
+    _ = (tmp_path / ALLOW_FILE).write_text("pypi.org\n")
     gateway = EgressGateway()
     credentials = gateway.grant(tmp_path)
     async with up:
-        await _serve_once(
+        _ = await _serve_once(
             gateway,
             WORKSPACE,
             b"GET http://pypi.org/simple HTTP/1.1\r\nHost: attacker.example\r\n"
@@ -196,9 +205,11 @@ async def test_the_forwarded_host_header_names_the_authority_that_was_allowed(
     assert "Proxy-Authorization" not in head
 
 
-async def test_a_workspace_reaches_only_its_allowlist(tmp_path, gateway_to_upstream):
-    state, dialled = gateway_to_upstream
-    (tmp_path / ALLOW_FILE).write_text("pypi.org\n")
+async def test_a_workspace_reaches_only_its_allowlist(
+    tmp_path: Path, gateway_to_upstream: tuple[dict[str, int], list[str]]
+):
+    _state, dialled = gateway_to_upstream
+    _ = (tmp_path / ALLOW_FILE).write_text("pypi.org\n")
     gateway = EgressGateway()
     credentials = gateway.grant(tmp_path)
 
@@ -218,10 +229,10 @@ async def test_a_workspace_reaches_only_its_allowlist(tmp_path, gateway_to_upstr
     [b"", _basic("workspace:wrong"), b"Proxy-Authorization: Bearer abc\r\n"],
     ids=["missing", "wrong", "not-basic"],
 )
-async def test_a_workspace_without_its_credentials_gets_407(tmp_path, auth):
-    (tmp_path / ALLOW_FILE).write_text("pypi.org\n")
+async def test_a_workspace_without_its_credentials_gets_407(tmp_path: Path, auth: bytes):
+    _ = (tmp_path / ALLOW_FILE).write_text("pypi.org\n")
     gateway = EgressGateway()
-    gateway.grant(tmp_path)
+    _ = gateway.grant(tmp_path)
     reply = await _serve_once(
         gateway, WORKSPACE, b"GET http://pypi.org/ HTTP/1.1\r\n" + auth + b"\r\n"
     )
@@ -229,8 +240,8 @@ async def test_a_workspace_without_its_credentials_gets_407(tmp_path, auth):
     assert b"Proxy-Authenticate" in reply
 
 
-async def test_revoked_credentials_get_407(tmp_path):
-    (tmp_path / ALLOW_FILE).write_text("pypi.org\n")
+async def test_revoked_credentials_get_407(tmp_path: Path):
+    _ = (tmp_path / ALLOW_FILE).write_text("pypi.org\n")
     gateway = EgressGateway()
     credentials = gateway.grant(tmp_path)
     gateway.revoke(credentials)
@@ -242,16 +253,18 @@ async def test_revoked_credentials_get_407(tmp_path):
     assert reply.startswith(b"HTTP/1.1 407")
 
 
-async def test_an_unknown_channel_gets_407(tmp_path):
+async def test_an_unknown_channel_gets_407():
     reply = await _serve_once(EgressGateway(), b"X", b"GET http://pypi.org/ HTTP/1.1\r\n\r\n")
     assert reply.startswith(b"HTTP/1.1 407")
 
 
-async def test_the_platform_channel_allows_any_host_but_still_pins(tmp_path, gateway_to_upstream):
+async def test_the_platform_channel_allows_any_host_but_still_pins(
+    gateway_to_upstream: tuple[dict[str, int], list[str]],
+):
     state, dialled = gateway_to_upstream
     seen: list[bytes] = []
     up = await _upstream(seen)
-    state["port"] = up.sockets[0].getsockname()[1]
+    state["port"] = _port_of(up)
     async with up:
         reply = await _serve_once(
             EgressGateway(), PLATFORM, b"GET http://anything.example/ HTTP/1.1\r\n\r\n"
