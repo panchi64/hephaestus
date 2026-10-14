@@ -32,7 +32,7 @@ def _laid_out(tmp_path: Path) -> tuple[Path, list[str]]:
 # --- what dev.py excludes ---------------------------------------------------
 
 
-def test_runtime_writes_do_not_restart_the_server(tmp_path):
+def test_runtime_writes_do_not_restart_the_server(tmp_path: Path):
     """The bug this file exists for: the app writing ``*.py`` under its own data
     directory — an upload, a file the agent creates in its sandbox workspace — used to
     reload the server in the middle of the request that wrote it."""
@@ -42,7 +42,7 @@ def test_runtime_writes_do_not_restart_the_server(tmp_path):
     assert not _watches(excludes, written)
 
 
-def test_dependency_installs_do_not_restart_the_server(tmp_path):
+def test_dependency_installs_do_not_restart_the_server(tmp_path: Path):
     """`uv sync` rewrites the project virtualenv, which uvicorn otherwise watches — its
     default excludes only cover *dot-prefixed filenames*, never a dot-prefixed dir."""
     _, excludes = _laid_out(tmp_path)
@@ -50,7 +50,7 @@ def test_dependency_installs_do_not_restart_the_server(tmp_path):
     assert not _watches(excludes, tmp_path / ".venv/lib/site-packages/httpx/_client.py")
 
 
-def test_source_edits_still_restart_the_server(tmp_path):
+def test_source_edits_still_restart_the_server(tmp_path: Path):
     """The exclusions must not be so broad that the reloader stops being useful."""
     _, excludes = _laid_out(tmp_path)
 
@@ -58,7 +58,7 @@ def test_source_edits_still_restart_the_server(tmp_path):
     assert _watches(excludes, tmp_path / "services/registry.py")
 
 
-def test_exclusions_are_absolute(tmp_path):
+def test_exclusions_are_absolute(tmp_path: Path):
     """Uvicorn matches an exclusion against a changed file's parents only when the entry
     resolves to a directory; a *relative* entry is kept as a filename glob and matches
     nothing, so `--reload-exclude data` reads as correct and silently does nothing.
@@ -69,7 +69,7 @@ def test_exclusions_are_absolute(tmp_path):
     assert all(Path(entry).is_absolute() for entry in excludes)
 
 
-def test_excludes_the_configured_data_dir_not_a_hardcoded_one(tmp_path):
+def test_excludes_the_configured_data_dir_not_a_hardcoded_one(tmp_path: Path):
     """`HEPHAESTUS_DATA_DIR` moves where the app writes, so it has to move the exclusion
     too — otherwise the trap returns for anyone who relocates their data."""
     elsewhere = tmp_path / "somewhere-else"
@@ -80,7 +80,7 @@ def test_excludes_the_configured_data_dir_not_a_hardcoded_one(tmp_path):
     assert not _watches(excludes, elsewhere / "sandbox/workspace/scratch.py")
 
 
-def test_missing_directories_are_dropped_rather_than_passed_through(tmp_path):
+def test_missing_directories_are_dropped_rather_than_passed_through(tmp_path: Path):
     """A directory that doesn't exist yet can't be excluded as one — uvicorn falls back
     to treating the entry as a glob, and an *absolute* glob makes `Path.match` raise on
     Python 3.14. So the reloader wouldn't merely ignore the entry, it would blow up on
@@ -95,7 +95,7 @@ def test_missing_directories_are_dropped_rather_than_passed_through(tmp_path):
 # --- warning when the guard was bypassed ------------------------------------
 
 
-def test_the_bare_reload_flag_is_reported(tmp_path):
+def test_the_bare_reload_flag_is_reported(tmp_path: Path):
     """`uvicorn app:app --reload` is muscle memory and lives in shell history. Nothing in
     the app can stop the reloader — it is the parent process — so the least it can do is
     name the cause, since the symptom (a run that dies silently) points nowhere near."""
@@ -104,17 +104,17 @@ def test_the_bare_reload_flag_is_reported(tmp_path):
     assert reload_watches_runtime_state(argv, tmp_path / "data")
 
 
-def test_dev_py_does_not_warn(tmp_path):
+def test_dev_py_does_not_warn(tmp_path: Path):
     """`dev.py` turns reload on programmatically, so the flag never reaches argv — which
     is exactly what makes its presence a reliable sign the guard was bypassed."""
     assert not reload_watches_runtime_state(["python", "dev.py"], tmp_path / "data")
 
 
-def test_production_does_not_warn(tmp_path):
+def test_production_does_not_warn(tmp_path: Path):
     assert not reload_watches_runtime_state(["uvicorn", "app:app"], tmp_path / "data")
 
 
-def test_an_absolute_exclusion_covering_the_data_dir_clears_the_warning(tmp_path):
+def test_an_absolute_exclusion_covering_the_data_dir_clears_the_warning(tmp_path: Path):
     """Someone who did the work by hand shouldn't be nagged — and a parent directory
     covers it, since uvicorn matches an exclusion against every parent of a changed file."""
     data_dir = tmp_path / "data"
@@ -128,7 +128,7 @@ def test_an_absolute_exclusion_covering_the_data_dir_clears_the_warning(tmp_path
         )
 
 
-def test_a_relative_exclusion_still_warns(tmp_path):
+def test_a_relative_exclusion_still_warns(tmp_path: Path):
     """The trap this whole file guards: `--reload-exclude data` protects nothing, because
     uvicorn keeps it relative while watchfiles reports absolute paths. Treating it as
     protection would silence the warning in the one case that most needs it."""
@@ -137,7 +137,7 @@ def test_a_relative_exclusion_still_warns(tmp_path):
     assert reload_watches_runtime_state(argv, tmp_path / "data")
 
 
-def test_an_unrelated_exclusion_still_warns(tmp_path):
+def test_an_unrelated_exclusion_still_warns(tmp_path: Path):
     """Excluding some other directory says nothing about the data directory."""
     argv = ["uvicorn", "app:app", "--reload", "--reload-exclude", str(tmp_path / "logs")]
 
