@@ -6,26 +6,47 @@ keeps the harness's word for it out of the model's catalog.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+from typing import cast
 
 import pytest
+from pydantic_ai import RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.planning import PlanItem as TaskItem
 from pydantic_ai_harness.planning import TaskStatus
+from sqlalchemy import Engine
+from sqlmodel import Session, select
 
+from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
 from models.task_list import ConversationTaskList
 from runs import EventBody, Run, RunStream, TasksUpdated
 from services.task_list import ConversationTasks, ConversationTaskStore
+from tools import RunDeps, build_agent_toolsets, harness_events_capability
+from tools.tasks import tasks_toolset
 
 OWNER = "operator"
 
 
 @pytest.fixture
-async def tasks(tmp_path):
+async def vault(tmp_path: Path) -> Vault:
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("correct horse battery staple")
+    return vault
+
+
+@pytest.fixture
+def engine() -> Engine:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
+    return engine
+
+
+@pytest.fixture
+def tasks(engine: Engine, vault: Vault) -> ConversationTasks:
     return ConversationTasks(engine, vault)
 
 
@@ -43,17 +64,11 @@ def _bodies(run: Run) -> list[EventBody]:
     return [e.body for e in run.stream.replay()]
 
 
-async def _toolset_ctx(tasks: ConversationTasks | None, conversation_id: str | None):
+async def _toolset_ctx(
+    tasks: ConversationTasks | None, conversation_id: str | None
+) -> tuple[AbstractToolset[RunDeps], RunContext[RunDeps]]:
     """One built toolset plus a run context over it — the shape every tool test here
     needs, and built the way the app builds it (once, shared) rather than per call."""
-    from pydantic_ai import RunContext
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.usage import RunUsage
-
-    from core.container import ServiceContainer
-    from tools import RunDeps, build_agent_toolsets
-    from tools.tasks import tasks_toolset
-
     toolset = build_agent_toolsets({"tasks": tasks_toolset()})[0]
     run = Run(id=f"r-{conversation_id or 'solo'}", kind="chat", owner_id=OWNER, stream=RunStream())
     caps = ServiceContainer()
@@ -65,8 +80,6 @@ async def _toolset_ctx(tasks: ConversationTasks | None, conversation_id: str | N
     # event stream to emit into (a plain list is the shape the library carries), and it
     # refuses an event it cannot attribute to a capability. A real run attributes through
     # `tool_manager`, which a synthetic context has none of, so name the owner directly.
-    from tools import harness_events_capability
-
     ctx = RunContext(
         deps=deps,
         model=TestModel(),
@@ -77,7 +90,7 @@ async def _toolset_ctx(tasks: ConversationTasks | None, conversation_id: str | N
     return toolset, ctx
 
 
-async def test_tasks_round_trip_across_stores(tasks):
+async def test_tasks_round_trip_across_stores(tasks: ConversationTasks):
     await _store(tasks).set_items(_items("read the file", "fix the bug"))
 
     # A second store object is what a later turn (or a reload) gets — the list has to
@@ -86,7 +99,7 @@ async def test_tasks_round_trip_across_stores(tasks):
     assert [i.content for i in reloaded] == ["read the file", "fix the bug"]
 
 
-async def test_the_bulk_replace_emits_too(tasks):
+async def test_the_bulk_replace_emits_too(tasks: ConversationTasks):
     run = Run(id="r", kind="chat", owner_id=OWNER, stream=RunStream())
     await _store(tasks, run).set_items(_items("one", "two"))
 
@@ -97,12 +110,12 @@ async def test_the_bulk_replace_emits_too(tasks):
     assert [i["content"] for i in events[0].items] == ["one", "two"]
 
 
-async def test_each_granular_mutation_emits_the_whole_list(tasks):
+async def test_each_granular_mutation_emits_the_whole_list(tasks: ConversationTasks):
     run = Run(id="r", kind="chat", owner_id=OWNER, stream=RunStream())
     store = _store(tasks, run)
     await store.set_items(_items("one", "two"))
-    await store.update_item("t0", status=TaskStatus.completed)
-    await store.remove_item("t1")
+    _ = await store.update_item("t0", status=TaskStatus.completed)
+    _ = await store.remove_item("t1")
 
     events = [b for b in _bodies(run) if isinstance(b, TasksUpdated)]
     assert len(events) == 3
@@ -111,14 +124,14 @@ async def test_each_granular_mutation_emits_the_whole_list(tasks):
     assert [i["content"] for i in events[2].items] == ["one"]
 
 
-async def test_concurrent_updates_do_not_lose_one(tasks):
+async def test_concurrent_updates_do_not_lose_one(tasks: ConversationTasks):
     store = _store(tasks)
     await store.set_items(_items("one", "two", "three"))
 
     # A model can emit several task calls in one response, which Pydantic AI runs
     # concurrently. Each is a read-modify-write of the whole list, so without
     # serialization the later writer overwrites the earlier one's change.
-    await asyncio.gather(
+    _ = await asyncio.gather(
         store.update_item("t0", status=TaskStatus.completed),
         store.update_item("t1", status=TaskStatus.in_progress),
         store.update_item("t2", status=TaskStatus.cancelled),
@@ -132,7 +145,7 @@ async def test_concurrent_updates_do_not_lose_one(tasks):
     }
 
 
-async def test_seeding_replaces_the_list_and_announces_it(tasks):
+async def test_seeding_replaces_the_list_and_announces_it(tasks: ConversationTasks):
     """An approved plan's steps become the task list. It replaces rather than appends —
     the plan supersedes whatever the thread was tracking — and it goes out on the same
     event as a written one, so the panel cannot tell the two apart."""
@@ -148,7 +161,7 @@ async def test_seeding_replaces_the_list_and_announces_it(tasks):
     assert len(events) == 1
 
 
-async def test_one_shared_category_keeps_conversations_apart(tasks):
+async def test_one_shared_category_keeps_conversations_apart(tasks: ConversationTasks):
     """The category object is built **once** for the whole app and shared by every
     conversation, while each conversation owns its own list. The capability memoises its
     store on first use, so a single shared capability hands thread B thread A's tasks."""
@@ -179,20 +192,20 @@ async def test_a_run_without_a_conversation_keeps_one_list():
     await toolset.call_tool(
         "tasks_write", {"items": [TaskItem(content="only task")]}, ctx, tools["tasks_write"]
     )
-    read = await toolset.call_tool("tasks_read", {}, ctx, tools["tasks_read"])
+    read = cast(object, await toolset.call_tool("tasks_read", {}, ctx, tools["tasks_read"]))
     assert "only task" in str(read)
 
 
-async def test_a_duplicate_id_is_refused(tasks):
+async def test_a_duplicate_id_is_refused(tasks: ConversationTasks):
     store = _store(tasks)
     await store.set_items(_items("one"))
     # Two items sharing an id would shadow each other and make later updates land on
     # one of them at random — the protocol requires this to raise.
     with pytest.raises(ValueError):
-        await store.add_item(TaskItem(id="t0", content="again", status=TaskStatus.pending))
+        _ = await store.add_item(TaskItem(id="t0", content="again", status=TaskStatus.pending))
 
 
-async def test_updating_a_missing_task_reports_rather_than_writing(tasks):
+async def test_updating_a_missing_task_reports_rather_than_writing(tasks: ConversationTasks):
     store = _store(tasks)
     await store.set_items(_items("one"))
     assert await store.update_item("nope", status=TaskStatus.completed) is None
@@ -200,19 +213,17 @@ async def test_updating_a_missing_task_reports_rather_than_writing(tasks):
     assert [i.content for i in await store.get_items()] == ["one"]
 
 
-async def test_the_task_list_is_sealed_at_rest(tasks):
-    from sqlmodel import Session, select
-
+async def test_the_task_list_is_sealed_at_rest(tasks: ConversationTasks, engine: Engine):
     await _store(tasks).set_items(_items("something private"))
 
-    with Session(tasks._db) as session:  # noqa: SLF001 - asserting the stored bytes
+    with Session(engine) as session:
         row = session.exec(select(ConversationTaskList)).one()
     # The list describes what the operator asked for, so it is content, not policy.
     assert "something private" not in row.items_enc
 
 
-async def test_a_locked_vault_degrades_to_no_tasks(tasks):
-    tasks._vault.lock()  # noqa: SLF001 - simulating the locked state
+async def test_a_locked_vault_degrades_to_no_tasks(tasks: ConversationTasks, vault: Vault):
+    vault.lock()
     store = _store(tasks)
     # The list aids the turn; it is not the turn. A run that cannot read it carries on
     # without one rather than failing.
@@ -239,7 +250,7 @@ async def test_the_offered_surface_is_three_tools_under_our_own_names():
     assert descriptions["tasks_read"].startswith("The current list")
 
 
-async def test_the_catalog_lists_the_same_names_the_model_is_offered(tasks):
+async def test_the_catalog_lists_the_same_names_the_model_is_offered(tasks: ConversationTasks):
     """The operator's settings list is derived from the toolset's static `tools` registry,
     and the enabled gate matches on the offered name. If the two spelled the category
     differently, switching a tool off in settings would withhold nothing."""

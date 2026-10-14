@@ -22,10 +22,11 @@ because nothing in the code says so.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast, override
 
+from fastapi import FastAPI
 from pydantic_ai import (
     FunctionToolset,
     ModelMessage,
@@ -37,9 +38,16 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import TextPart, ToolSearchCallPart, ToolSearchReturnPart
-from pydantic_ai.models import ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.messages import (
+    BaseToolCallPart,
+    BaseToolReturnPart,
+    RetryPromptPart,
+    TextPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
+)
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
@@ -55,10 +63,12 @@ from agent.history import (
 )
 from agent.summarize import AutoCompactPolicy, compact_conversation
 from routes.deps import OPERATOR_ID
-from runs import RunStatus, TurnOverhead
+from runs import Run, RunRegistry, RunStatus, TurnOverhead
+from services.conversations import ConversationStore
 from tools import RunDeps
 
-from ._helpers import client_app, fold_with, is_fold_request
+from ._helpers import app_state, client_app, fold_with, is_fold_request
+from ._json import arr, obj, parse_json, s
 
 #: The dormant group under test. One plain tool and one that needs approval, so the same
 #: group covers both "the model may call it once it is loaded" and the park.
@@ -75,7 +85,7 @@ _NO_OVERHEAD = TurnOverhead(system=0, tools=0)
 _FOLD_ALL = AutoCompactPolicy(enabled=True, threshold=0.80)
 
 
-def _categories():
+def _categories() -> dict[str, FunctionToolset[RunDeps]]:
     browse: FunctionToolset[RunDeps] = FunctionToolset()
 
     @browse.tool_plain
@@ -98,21 +108,26 @@ def _categories():
 # --- models that read the tool list they were handed ----------------------------------
 
 
-def _called(messages, name: str) -> bool:
+def _called(messages: Sequence[ModelMessage], name: str) -> bool:
     return any(
-        getattr(part, "tool_name", None) == name for message in messages for part in message.parts
+        isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
+        and part.tool_name == name
+        for message in messages
+        for part in message.parts
     )
 
 
-def _delta(name: str, args: dict[str, object]) -> dict[int, DeltaToolCall]:
+def _delta(name: str, args: dict[str, object]) -> DeltaToolCalls:
     return {0: DeltaToolCall(name=name, json_args=json.dumps(args))}
 
 
-def _searcher(seen: list[set[str]], *, then_call: str | None = None):
+def _searcher(seen: list[set[str]], *, then_call: str | None = None) -> FunctionModel:
     """Searches for the browser on its first step, optionally calls one of its tools, then
     answers — recording the tool list of every request on the way."""
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         seen.append({tool.name for tool in info.function_tools})
         if not _called(messages, "search_tools"):
             yield _delta("search_tools", {"queries": ["browse"]})
@@ -124,12 +139,12 @@ def _searcher(seen: list[set[str]], *, then_call: str | None = None):
     return FunctionModel(stream_function=stream_fn)
 
 
-def _answerer(seen: list[set[str]]):
+def _answerer(seen: list[set[str]]) -> FunctionModel:
     """Answers without ever searching, so what it was handed is the whole story — and
     writes ``FOLDED AWAY`` when asked to fold, a request it does not record, since ``seen``
     is about what the *turn* was offered."""
 
-    async def stream_fn(messages, info):
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         if is_fold_request(messages):
             yield "FOLDED AWAY"
             return
@@ -153,13 +168,14 @@ class _OverflowsThenAnswers(WrapperModel):
 
     def __init__(self, seen: list[set[str]]) -> None:
         super().__init__(_answerer(seen))
-        self.refused = False
+        self.refused: bool = False
 
-    def _check(self, messages) -> None:
+    def _check(self, messages: list[ModelMessage]) -> None:
         if not self.refused and not is_fold_request(messages):
             self.refused = True
             raise _ctx_error()
 
+    @override
     async def request(
         self,
         messages: list[ModelMessage],
@@ -169,6 +185,7 @@ class _OverflowsThenAnswers(WrapperModel):
         self._check(messages)
         return await super().request(messages, model_settings, model_request_parameters)
 
+    @override
     @asynccontextmanager
     async def request_stream(
         self,
@@ -176,7 +193,7 @@ class _OverflowsThenAnswers(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         self._check(messages)
         async with super().request_stream(
             messages, model_settings, model_request_parameters, run_context
@@ -187,22 +204,57 @@ class _OverflowsThenAnswers(WrapperModel):
 # --- driving a turn -------------------------------------------------------------------
 
 
-def _run(app, cid, *, model, prompt: str | None = "open a page", **kwargs):
+def _discovered(result: object) -> set[str]:
+    body = obj(parse_json(json.dumps(result)))
+    return {s(obj(match)["name"]) for match in arr(body["discovered_tools"])}
+
+
+def _store(app: FastAPI) -> ConversationStore:
+    return app_state(app, "conversations", ConversationStore)
+
+
+def _run(
+    app: FastAPI,
+    cid: str,
+    *,
+    model: Model,
+    prompt: str | None = "open a page",
+    context_window: int | None = None,
+    auto_compact: AutoCompactPolicy | None = None,
+) -> Run:
     orch = build_chat_orchestrator(
         prompt,
         model=model,
         categories=_categories(),
         dormant=DORMANT,
-        store=app.state.conversations,
+        store=_store(app),
         conversation_id=cid,
-        **kwargs,
+        context_window=context_window,
+        auto_compact=auto_compact,
     )
-    return app.state.runs.submit(kind="chat", owner_id=OPERATOR_ID, orchestrator=orch)
+    return app_state(app, "runs", RunRegistry).submit(
+        kind="chat", owner_id=OPERATOR_ID, orchestrator=orch
+    )
 
 
-async def _turn(app, cid, *, model, prompt: str | None = "open a page", **kwargs):
-    run = _run(app, cid, model=model, prompt=prompt, **kwargs)
-    await run.wait()
+async def _turn(
+    app: FastAPI,
+    cid: str,
+    *,
+    model: Model,
+    prompt: str | None = "open a page",
+    context_window: int | None = None,
+    auto_compact: AutoCompactPolicy | None = None,
+) -> Run:
+    run = _run(
+        app,
+        cid,
+        model=model,
+        prompt=prompt,
+        context_window=context_window,
+        auto_compact=auto_compact,
+    )
+    _ = await run.wait()
     return run
 
 
@@ -210,20 +262,20 @@ def _browse(names: set[str]) -> set[str]:
     return {name for name in names if name.startswith("browse_")}
 
 
-def _texts(messages) -> list[str]:
-    return [
-        part.content
+def _texts(messages: Sequence[ModelMessage]) -> list[str]:
+    contents = (
+        cast(object, getattr(part, "content", None))
         for message in messages
         for part in message.parts
-        if isinstance(getattr(part, "content", None), str)
-    ]
+    )
+    return [content for content in contents if isinstance(content, str)]
 
 
-def _seed_revealed_turn(store, cid: str, *, input_tokens: int = 100) -> None:
+def _seed_revealed_turn(store: ConversationStore, cid: str, *, input_tokens: int = 100) -> None:
     """One recorded exchange in which the model loaded the browser — the shape the engine
     really produces (pinned end to end by the persistence tests below), recorded directly
     so a fold test can start from a thread that has already revealed something."""
-    store.record(
+    _ = store.record(
         cid,
         [
             ModelRequest(parts=[UserPromptPart(content="open a page")]),
@@ -251,10 +303,10 @@ def _seed_revealed_turn(store, cid: str, *, input_tokens: int = 100) -> None:
 
 async def test_the_search_exchange_survives_the_store_and_the_next_turn_needs_no_repeat():
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
         first: list[set[str]] = []
-        await _turn(app, cid, model=_searcher(first))
+        _ = await _turn(app, cid, model=_searcher(first))
 
         # The turn itself: nothing on the first request, the whole group on the second.
         assert _browse(first[0]) == set()
@@ -271,7 +323,7 @@ async def test_the_search_exchange_survives_the_store_and_the_next_turn_needs_no
         # And the next turn opens with the group already loaded, so a model that would
         # have searched again never needs to.
         second: list[set[str]] = []
-        await _turn(app, cid, model=_answerer(second), prompt="and again")
+        _ = await _turn(app, cid, model=_answerer(second), prompt="and again")
         assert _browse(second[0]) == REVEALED
 
 
@@ -280,9 +332,9 @@ async def test_the_operator_message_is_recorded_once_across_a_search_turn():
     search turn adds a response and a tool-return request in the middle of it, which is
     exactly where an off-by-one drops the operator's own message or records it twice."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
-        await _turn(app, cid, model=_searcher([]))
+        _ = await _turn(app, cid, model=_searcher([]))
         await store._worker.join()
         store._cache.clear()
 
@@ -334,16 +386,16 @@ async def test_the_history_surgeries_leave_a_reveal_where_it_was():
 
 async def test_the_work_log_renders_the_search_as_a_tool_row():
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
-        await _turn(app, cid, model=_searcher([]))
+        _ = await _turn(app, cid, model=_searcher([]))
         await store._worker.join()
         store._cache.clear()
 
         view = await store.messages_view(cid)
         tools = view[1].tools
         assert [(t.name, t.status) for t in tools] == [("search_tools", "ok")]
-        assert {match["name"] for match in tools[0].result["discovered_tools"]} == REVEALED
+        assert _discovered(cast(object, tools[0].result)) == REVEALED
         # The answer is still the answer — the search is a row, not the bubble.
         assert view[1].content == "done"
 
@@ -354,9 +406,9 @@ async def test_the_summary_request_keeps_the_search_so_its_tools_are_the_turns()
     turn would, and is offered the same loaded group. Dropping it would change the tool
     array and throw away the very prefix the summary is written on to reuse."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
-        await _turn(app, cid, model=_searcher([]))
+        _ = await _turn(app, cid, model=_searcher([]))
 
         request = summary_request(await store.model_history(cid))
         assert set(revealed_tools(request)) == REVEALED
@@ -369,7 +421,7 @@ async def test_the_summary_request_keeps_the_search_so_its_tools_are_the_turns()
 async def test_the_search_streams_as_a_tool_call():
     """The frontend has no other way to know the turn stopped to load something."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
         run = await _turn(app, cid, model=_searcher([]))
 
@@ -379,7 +431,7 @@ async def test_the_search_streams_as_a_tool_call():
         assert [b.name for b in started] == ["search_tools"]
         assert started[0].args == {"queries": ["browse"]}
         assert [b.name for b in completed] == ["search_tools"]
-        assert {m["name"] for m in completed[0].result["discovered_tools"]} == REVEALED
+        assert _discovered(cast(object, completed[0].result)) == REVEALED
 
 
 # --- 4. branching ---------------------------------------------------------------------
@@ -389,53 +441,53 @@ async def test_a_reveal_rides_the_branch_that_contains_it():
     """Two versions of the same turn, one of which loaded the browser. Which tools the
     next turn is offered has to follow the version the operator is actually on."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
-        await _turn(app, cid, model=_searcher([]))
+        _ = await _turn(app, cid, model=_searcher([]))
 
         # Regenerate that answer without searching: the new version carries no reveal.
         assistant_id = (await store.messages_view(cid))[1].id
         assert await store.regenerate_point(cid, assistant_id)
-        await _turn(app, cid, model=_answerer([]), prompt=None)
+        _ = await _turn(app, cid, model=_answerer([]), prompt=None)
 
         plain: list[set[str]] = []
-        await _turn(app, cid, model=_answerer(plain), prompt="and now")
+        _ = await _turn(app, cid, model=_answerer(plain), prompt="and now")
         assert _browse(plain[0]) == set()
 
         # Switch back to the version that searched, and the group is offered again.
         newest_id = (await store.messages_view(cid))[1].id
         assert await store.switch_version(cid, newest_id, 0)
         restored: list[set[str]] = []
-        await _turn(app, cid, model=_answerer(restored), prompt="and now")
+        _ = await _turn(app, cid, model=_answerer(restored), prompt="and now")
         assert _browse(restored[0]) == REVEALED
 
 
 async def test_an_edit_above_the_reveal_leaves_it_off_the_branch():
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
-        await _turn(app, cid, model=_searcher([]))
+        _ = await _turn(app, cid, model=_searcher([]))
 
         user_id = (await store.messages_view(cid))[0].id
         assert await store.edit_point(cid, user_id)
         edited: list[set[str]] = []
-        await _turn(app, cid, model=_answerer(edited), prompt="something else entirely")
+        _ = await _turn(app, cid, model=_answerer(edited), prompt="something else entirely")
         assert _browse(edited[0]) == set()
 
 
 async def test_a_rewind_past_the_reveal_leaves_it_off_the_branch():
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
-        await _turn(app, cid, model=_searcher([]))
-        await _turn(app, cid, model=_answerer([]), prompt="and again")
+        _ = await _turn(app, cid, model=_searcher([]))
+        _ = await _turn(app, cid, model=_answerer([]), prompt="and again")
 
         # Back to the operator's first message: everything that revealed the group hangs
         # off the branch this leaves behind.
         user_id = (await store.messages_view(cid))[0].id
         assert await store.rewind(cid, user_id)
         after: list[set[str]] = []
-        await _turn(app, cid, model=_answerer(after), prompt="try again")
+        _ = await _turn(app, cid, model=_answerer(after), prompt="try again")
         assert _browse(after[0]) == set()
 
 
@@ -447,21 +499,21 @@ async def test_a_reveal_before_a_park_is_still_in_effect_after_the_resume():
     toolset, and the reveal is read back off that same history. A resume that lost it would
     approve a call to a tool the model can no longer see."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
         seen: list[set[str]] = []
         run = await _turn(app, cid, model=_searcher(seen, then_call="browse_delete_page"))
 
         assert run.status is RunStatus.awaiting_input
-        parked: ParkedTurn = run.parked_payload
+        parked = run.parked_payload
         assert isinstance(parked, ParkedTurn)
         assert set(revealed_tools(parked.message_history)) == REVEALED
         call_id = parked.requests.approvals[0].tool_call_id
 
-        await app.state.runs.resume(
+        _ = await app_state(app, "runs", RunRegistry).resume(
             run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}, store=store)
         )
-        await run.wait()
+        _ = await run.wait()
 
         assert run.status is RunStatus.done
         # The request that continued the turn was still offered the whole group.
@@ -477,7 +529,7 @@ async def test_a_reveal_before_a_park_is_still_in_effect_after_the_resume():
 
 async def test_the_prelude_fold_carries_the_reveal_onto_the_checkpoint():
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
         _seed_revealed_turn(store, cid, input_tokens=7_000)
         await store.set_overhead(cid, _NO_OVERHEAD)
@@ -507,9 +559,9 @@ async def test_a_fold_of_a_thread_that_revealed_nothing_reveals_nothing():
     """The control the test above needs: the carry is what the folded stretch actually
     showed the model, not a standing re-offer of every dormant group."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
-        store.record(
+        _ = store.record(
             cid,
             [
                 ModelRequest(parts=[UserPromptPart(content="hello")]),
@@ -522,7 +574,7 @@ async def test_a_fold_of_a_thread_that_revealed_nothing_reveals_nothing():
         await store.set_overhead(cid, _NO_OVERHEAD)
 
         seen: list[set[str]] = []
-        await _turn(
+        _ = await _turn(
             app,
             cid,
             model=_answerer(seen),
@@ -538,7 +590,7 @@ async def test_the_overflow_fold_keeps_the_tools_the_turn_had_loaded():
     the request that overran. Losing the reveal there would answer the retry with a
     strictly smaller toolset than the one the model was working with."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
         _seed_revealed_turn(store, cid)
         await store.set_overhead(cid, _NO_OVERHEAD)
@@ -571,7 +623,7 @@ async def test_the_carried_reveal_persists_with_the_checkpoint():
     the replay from the stored blobs, and a delta that lived only in memory would unload
     the group on the next backend restart."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
         _seed_revealed_turn(store, cid)
 
@@ -598,13 +650,13 @@ async def test_a_second_fold_inherits_the_first_folds_reveal():
     """A checkpoint is folded like any other message, so its carried delta has to be read
     as evidence in its own right — otherwise a reveal survives exactly one compaction."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
         _seed_revealed_turn(store, cid)
 
         fold = fold_with("so far", categories=_categories())
         assert await compact_conversation(store, cid, reason="manual", **fold)
-        store.record(
+        _ = store.record(
             cid,
             [
                 ModelRequest(parts=[UserPromptPart(content="carry on")]),
@@ -622,9 +674,9 @@ async def test_a_fold_records_no_delta_when_nothing_was_revealed():
     """A part with an empty ``tools_added`` is a claim about the wire — a provider beta
     header, an announcement in system voice — for a change that never happened."""
     async with client_app() as (_client, app):
-        store = app.state.conversations
+        store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
-        store.record(
+        _ = store.record(
             cid,
             [
                 ModelRequest(parts=[UserPromptPart(content="hello")]),

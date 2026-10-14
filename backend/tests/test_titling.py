@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from pydantic_ai import FunctionToolset, ToolApproved
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 
 import agent.engine as engine
 from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
@@ -29,18 +32,18 @@ from agent.title import (
 from core.config import Settings
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import RunRegistry, RunStatus
+from runs import EventBody, Run, RunRegistry, RunStatus
 from services.conversations import ConversationStore
 from tools import RunDeps
 
 
-async def _unlocked_vault(tmp_path) -> Vault:
+async def _unlocked_vault(tmp_path: Path) -> Vault:
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
     return vault
 
 
-async def _fresh_store(tmp_path) -> ConversationStore:
+async def _fresh_store(tmp_path: Path) -> ConversationStore:
     engine_ = make_engine("sqlite:///:memory:")
     init_db(engine_)
     store = ConversationStore(engine_, await _unlocked_vault(tmp_path))
@@ -48,7 +51,7 @@ async def _fresh_store(tmp_path) -> ConversationStore:
     return store
 
 
-def _bodies(run):
+def _bodies(run: Run) -> list[EventBody]:
     return [e.body for e in run.stream.replay()]
 
 
@@ -86,7 +89,7 @@ def _bodies(run):
         ("<think>partial reasoning\nmore reasoning, no close tag", None),
     ],
 )
-def test_clean_sanitizes_model_replies(raw, expected):
+def test_clean_sanitizes_model_replies(raw: str, expected: str | None):
     assert _clean(raw) == expected
 
 
@@ -143,21 +146,21 @@ async def test_generate_title_strips_inlined_think_block():
 
 async def test_generate_title_applies_max_tokens_override():
     # The per-call max_tokens overrides the base cap so a think block has room to clear.
-    captured: dict[str, Any] = {}
+    captured: list[ModelSettings] = []
 
-    async def capture(messages, info):
-        captured["settings"] = dict(info.model_settings or {})
+    async def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured.append(info.model_settings or {})
         return ModelResponse(parts=[TextPart("A Title")])
 
     title = await generate_title(FunctionModel(capture), "q", max_tokens=4096)
     assert title == "A Title"
-    assert captured["settings"]["max_tokens"] == 4096
+    assert captured[0].get("max_tokens") == 4096
 
 
 # --- engine wiring ----------------------------------------------------------
 
 
-async def test_first_turn_emits_and_persists_title(tmp_path):
+async def test_first_turn_emits_and_persists_title(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     conv = await store.create_conversation("operator")  # untitled
     reg = RunRegistry()
@@ -171,7 +174,7 @@ async def test_first_turn_emits_and_persists_title(tmp_path):
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
 
     titled = [b for b in _bodies(run) if b.type == "conversation.titled"]
     assert len(titled) == 1
@@ -188,12 +191,12 @@ async def test_first_turn_emits_and_persists_title(tmp_path):
     await store.stop()
 
 
-async def test_continued_turn_is_not_retitled(tmp_path):
+async def test_continued_turn_is_not_retitled(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     conv = await store.create_conversation("operator")
     reg = RunRegistry()
 
-    def run_turn(prompt: str):
+    def run_turn(prompt: str) -> Run:
         orch = build_chat_orchestrator(
             prompt,
             model=TestModel(custom_output_text="ok"),
@@ -205,9 +208,9 @@ async def test_continued_turn_is_not_retitled(tmp_path):
         return reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
 
     first = run_turn("first message")
-    await first.wait()
+    _ = await first.wait()
     second = run_turn("second message")
-    await second.wait()
+    _ = await second.wait()
 
     # Only the opening turn names the thread; the continuation does not re-title.
     assert any(b.type == "conversation.titled" for b in _bodies(first))
@@ -215,7 +218,7 @@ async def test_continued_turn_is_not_retitled(tmp_path):
     await store.stop()
 
 
-async def test_existing_operator_title_is_never_clobbered(tmp_path):
+async def test_existing_operator_title_is_never_clobbered(tmp_path: Path):
     # A thread the operator already named must not be auto-renamed even on its
     # first turn — set_title_if_absent is the authoritative guard.
     store = await _fresh_store(tmp_path)
@@ -231,7 +234,7 @@ async def test_existing_operator_title_is_never_clobbered(tmp_path):
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
 
     assert not any(b.type == "conversation.titled" for b in _bodies(run))
     summary = await store.get_summary(conv, "operator")
@@ -239,7 +242,7 @@ async def test_existing_operator_title_is_never_clobbered(tmp_path):
     await store.stop()
 
 
-async def test_titling_skipped_without_title_model(tmp_path):
+async def test_titling_skipped_without_title_model(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     conv = await store.create_conversation("operator")
     reg = RunRegistry()
@@ -252,7 +255,7 @@ async def test_titling_skipped_without_title_model(tmp_path):
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
 
     assert not any(b.type == "conversation.titled" for b in _bodies(run))
     summary = await store.get_summary(conv, "operator")
@@ -260,7 +263,9 @@ async def test_titling_skipped_without_title_model(tmp_path):
     await store.stop()
 
 
-async def test_titling_skipped_when_disabled_in_settings(tmp_path, monkeypatch):
+async def test_titling_skipped_when_disabled_in_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     monkeypatch.setattr(engine, "get_settings", lambda: Settings(title_enabled=False))
     store = await _fresh_store(tmp_path)
     conv = await store.create_conversation("operator")
@@ -275,13 +280,13 @@ async def test_titling_skipped_when_disabled_in_settings(tmp_path, monkeypatch):
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
 
     assert not any(b.type == "conversation.titled" for b in _bodies(run))
     await store.stop()
 
 
-async def test_parked_first_turn_is_titled_exactly_once(tmp_path):
+async def test_parked_first_turn_is_titled_exactly_once(tmp_path: Path):
     # A first turn whose opening message triggers an approval-gated tool parks, then
     # resumes to completion — it must be named exactly once across the two halves. The
     # concurrent namer usually gets there first (a thread waiting on an approval shows
@@ -297,14 +302,16 @@ async def test_parked_first_turn_is_titled_exactly_once(tmp_path):
     def delete_thing(name: str) -> str:
         return f"deleted {name}"
 
-    def _tool_ran(messages) -> bool:
+    def _tool_ran(messages: list[ModelMessage]) -> bool:
         return any(
             type(part).__name__ == "ToolReturnPart"
             for message in messages
             for part in message.parts
         )
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         if _tool_ran(messages):
             yield "Done deleting the thing."
         else:
@@ -320,7 +327,7 @@ async def test_parked_first_turn_is_titled_exactly_once(tmp_path):
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
 
     assert run.status is RunStatus.awaiting_input
     # Whichever half named it, the announcement and the stored name agree — a name in
@@ -333,10 +340,10 @@ async def test_parked_first_turn_is_titled_exactly_once(tmp_path):
     parked = run.parked_payload
     assert isinstance(parked, ParkedTurn)
     call_id = parked.requests.approvals[0].tool_call_id
-    await reg.resume(
+    _ = await reg.resume(
         run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}, store=store)
     )
-    await run.wait()
+    _ = await run.wait()
     assert run.status is RunStatus.done
 
     # Named on the same stream, exactly once across both halves — `set_title_if_absent`
@@ -348,7 +355,7 @@ async def test_parked_first_turn_is_titled_exactly_once(tmp_path):
     await store.stop()
 
 
-async def test_titling_runs_concurrently_with_the_answer(tmp_path):
+async def test_titling_runs_concurrently_with_the_answer(tmp_path: Path):
     # Titling is kicked off up-front and overlaps the answer rather than following
     # it, so it adds no post-answer "writing" tail. Proven structurally: the answer
     # only completes once titling has begun — a deadlock unless the two run
@@ -359,12 +366,12 @@ async def test_titling_runs_concurrently_with_the_answer(tmp_path):
 
     title_started = asyncio.Event()
 
-    def title_fn(messages, info):
+    def title_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         title_started.set()
         return ModelResponse(parts=[TextPart("Concurrent Title")])
 
-    async def answer_stream(messages, info):
-        await asyncio.wait_for(title_started.wait(), timeout=2)
+    async def answer_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        _ = await asyncio.wait_for(title_started.wait(), timeout=2)
         yield "answer"
 
     orch = build_chat_orchestrator(
@@ -376,7 +383,7 @@ async def test_titling_runs_concurrently_with_the_answer(tmp_path):
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
 
     assert run.status is RunStatus.done
     titled = [b for b in _bodies(run) if b.type == "conversation.titled"]
@@ -386,7 +393,9 @@ async def test_titling_runs_concurrently_with_the_answer(tmp_path):
     await store.stop()
 
 
-async def test_title_is_announced_while_the_answer_is_still_streaming(tmp_path, monkeypatch):
+async def test_title_is_announced_while_the_answer_is_still_streaming(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # Generating concurrently isn't enough: the name must also be *announced* the moment
     # it lands, not held until the turn finishes. Otherwise a long tool-using turn leaves
     # the thread visibly unnamed for its whole duration even though the name was ready in
@@ -399,19 +408,19 @@ async def test_title_is_announced_while_the_answer_is_still_streaming(tmp_path, 
     announced = asyncio.Event()
     set_title = store.set_title_if_absent
 
-    async def hooked(conversation_id, name):
+    async def hooked(conversation_id: str, name: str) -> bool:
         stored = await set_title(conversation_id, name)
         announced.set()
         return stored
 
     monkeypatch.setattr(store, "set_title_if_absent", hooked)
 
-    def title_fn(messages, info):
+    def title_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart("Named Mid Answer")])
 
-    async def answer_stream(messages, info):
+    async def answer_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
         yield "still "
-        await asyncio.wait_for(announced.wait(), timeout=2)
+        _ = await asyncio.wait_for(announced.wait(), timeout=2)
         yield "writing"
 
     orch = build_chat_orchestrator(
@@ -423,7 +432,7 @@ async def test_title_is_announced_while_the_answer_is_still_streaming(tmp_path, 
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
 
     assert run.status is RunStatus.done
     types = [b.type for b in _bodies(run)]
@@ -432,7 +441,7 @@ async def test_title_is_announced_while_the_answer_is_still_streaming(tmp_path, 
     await store.stop()
 
 
-async def test_concurrent_title_is_cancelled_when_the_turn_fails(tmp_path):
+async def test_concurrent_title_is_cancelled_when_the_turn_fails(tmp_path: Path):
     # The title is kicked off concurrently *before* the answer; if the turn then
     # raises, the orchestrator must cancel it so the title-model call doesn't run on
     # detached past the failed run (and no stale title is announced).
@@ -444,19 +453,21 @@ async def test_concurrent_title_is_cancelled_when_the_turn_fails(tmp_path):
     cancelled = asyncio.Event()
     release = asyncio.Event()  # never set — the title stays in-flight until cancelled
 
-    async def title_fn(messages, info):
+    async def title_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         title_running.set()
         try:
-            await release.wait()
+            _ = await release.wait()
         except asyncio.CancelledError:
             cancelled.set()
             raise
         return ModelResponse(parts=[TextPart("Should Not Appear")])
 
-    async def boom_stream(messages, info):
-        await title_running.wait()  # ensure the title is in-flight first
+    async def fail_once_title_runs() -> str:
+        _ = await title_running.wait()  # ensure the title is in-flight first
         raise RuntimeError("main model failed")
-        yield  # pragma: no cover — makes this an async generator
+
+    async def boom_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield await fail_once_title_runs()
 
     orch = build_chat_orchestrator(
         "name me",
@@ -467,10 +478,10 @@ async def test_concurrent_title_is_cancelled_when_the_turn_fails(tmp_path):
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
 
     assert run.status is RunStatus.error
-    await asyncio.wait_for(cancelled.wait(), timeout=2)  # the title task was cancelled
+    _ = await asyncio.wait_for(cancelled.wait(), timeout=2)  # the title task was cancelled
     assert not any(b.type == "conversation.titled" for b in _bodies(run))
     await store.stop()
 
@@ -478,7 +489,7 @@ async def test_concurrent_title_is_cancelled_when_the_turn_fails(tmp_path):
 # --- history extraction -----------------------------------------------------
 
 
-async def test_title_text_extraction_from_history(tmp_path):
+async def test_title_text_extraction_from_history(tmp_path: Path):
     # The message the namer sees is read back from persisted history, so the
     # extraction helper must pull the first user prompt — the title is named for
     # what the operator asked, not the assistant's reply.
@@ -493,7 +504,7 @@ async def test_title_text_extraction_from_history(tmp_path):
         conversation_id=conv,
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
 
     history = await store.history(conv)
     assert "capital of France" in first_user_text(history)
@@ -527,8 +538,13 @@ async def test_title_from_history_scope_picks_opening_vs_full():
 
     seen: list[str] = []
 
-    def record(_messages, _info):
-        seen.append(_messages[-1].parts[-1].content)
+    def record(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        last = messages[-1]
+        assert isinstance(last, ModelRequest)
+        part = last.parts[-1]
+        assert isinstance(part, UserPromptPart)
+        assert isinstance(part.content, str)
+        seen.append(part.content)
         return ModelResponse(parts=[TextPart(content="A Title")])
 
     model = FunctionModel(record)
