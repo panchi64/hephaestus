@@ -18,21 +18,23 @@ from core.vault import Vault
 from models.registry import ModelRole
 from runs import Endpoint, EndpointGate
 from services import embeddings, llm
+from services.endpoint_spec import EndpointSpec
 from services.gated_model import EndpointGatedModel
 from services.registry import ModelRegistry
 
 from ._helpers import client_app
+from ._json import json_body, json_list, obj, s
 
 OWNER = "operator"
 
 
-async def _passing_probe(spec) -> int:
+async def _passing_probe(_spec: EndpointSpec) -> int:
     """A stub embedding probe that accepts any binding — lets role tests bind the
     embedding role without a live ``/embeddings`` server."""
     return 4
 
 
-async def _registry() -> ModelRegistry:
+async def make_registry() -> ModelRegistry:
     """A registry on a throwaway in-memory DB with an unlocked vault."""
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
@@ -42,7 +44,14 @@ async def _registry() -> ModelRegistry:
     return ModelRegistry(engine, vault)
 
 
-async def _resolve(reg: ModelRegistry, role: str, **overrides) -> Model:
+async def resolve_model(
+    reg: ModelRegistry,
+    role: str,
+    *,
+    owner_id: str,
+    override_endpoint_id: str | None = None,
+    override_model: str | None = None,
+) -> Model:
     """The chain ``role`` resolves to, reached the way production reaches it.
 
     Every caller — chat, research, the scheduler, titling — goes through
@@ -50,26 +59,32 @@ async def _resolve(reg: ModelRegistry, role: str, **overrides) -> Model:
     tests do too rather than through a model-only entry point nothing ships. The
     assertions below are about the built chain, so they take ``.model`` off the result;
     the reasoning-off settings that travel with it are covered separately."""
-    return (await reg.resolve_detailed(role, **overrides)).model
+    resolved = await reg.resolve_detailed(
+        role,
+        owner_id=owner_id,
+        override_endpoint_id=override_endpoint_id,
+        override_model=override_model,
+    )
+    return resolved.model
 
 
 async def test_single_endpoint_resolves_to_plain_model():
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="local", base_url="http://x/v1", model="qwen")
     await reg.set_role(OWNER, "main", [ep.id])
 
-    model = await _resolve(reg, "main", owner_id=OWNER)
+    model = await resolve_model(reg, "main", owner_id=OWNER)
     assert isinstance(model, OpenAIChatModel)
     assert not isinstance(model, FallbackModel)
 
 
 async def test_multi_endpoint_chain_wraps_in_fallback():
-    reg = await _registry()
+    reg = await make_registry()
     primary = await reg.create_endpoint(OWNER, name="a", base_url="http://a/v1", model="m1")
     backup = await reg.create_endpoint(OWNER, name="b", base_url="http://b/v1", model="m2")
     await reg.set_role(OWNER, "main", [primary.id, backup.id])
 
-    model = await _resolve(reg, "main", owner_id=OWNER)
+    model = await resolve_model(reg, "main", owner_id=OWNER)
     assert isinstance(model, FallbackModel)
     assert len(model.models) == 2
 
@@ -93,47 +108,47 @@ async def test_a_gated_registry_wraps_the_primary_and_names_its_capacity():
     assert isinstance(head, EndpointGatedModel)
     assert isinstance(tail, OpenAIChatModel)
 
-    await reg.update_endpoint(OWNER, primary.id, max_concurrent_runs=0)
+    _ = await reg.update_endpoint(OWNER, primary.id, max_concurrent_runs=0)
     cleared = await reg.resolve_detailed("main", owner_id=OWNER)
     assert cleared.endpoint is not None
     assert cleared.endpoint.capacity is None
 
 
 async def test_unbound_utility_is_degraded():
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="main-ep", base_url="http://m/v1", model="m")
     await reg.set_role(OWNER, "main", [ep.id])
     # utility no longer inherits main's chain — an unbound utility is degraded;
     # the chat layer reuses the resolved main model instead.
     with pytest.raises(DegradedCapabilityError):
-        await _resolve(reg, "utility", owner_id=OWNER)
+        _ = await resolve_model(reg, "utility", owner_id=OWNER)
 
 
 async def test_bound_utility_resolves_independently():
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="util", base_url="http://u/v1", model="u")
     await reg.set_role(OWNER, "utility", [ep.id])
-    model = await _resolve(reg, "utility", owner_id=OWNER)
+    model = await resolve_model(reg, "utility", owner_id=OWNER)
     assert isinstance(model, OpenAIChatModel)
 
 
 async def test_main_override_picks_a_specific_endpoint():
-    reg = await _registry()
+    reg = await make_registry()
     default = await reg.create_endpoint(OWNER, name="d", base_url="http://d/v1", model="d")
     picked = await reg.create_endpoint(OWNER, name="p", base_url="http://p/v1", model="p")
     await reg.set_role(OWNER, "main", [default.id])
 
-    model = await _resolve(reg, "main", owner_id=OWNER, override_endpoint_id=picked.id)
+    model = await resolve_model(reg, "main", owner_id=OWNER, override_endpoint_id=picked.id)
     assert isinstance(model, OpenAIChatModel)
     assert model.model_name == "p"
 
 
 async def test_main_override_with_model_picks_that_model():
-    reg = await _registry()
+    reg = await make_registry()
     # The endpoint is a bare provider connection (no baked model); the picker
     # supplies the specific model it discovered from the provider.
     ep = await reg.create_endpoint(OWNER, name="p", base_url="http://p/v1")
-    model = await _resolve(
+    model = await resolve_model(
         reg, "main", owner_id=OWNER, override_endpoint_id=ep.id, override_model="qwen-72b"
     )
     assert isinstance(model, OpenAIChatModel)
@@ -141,12 +156,12 @@ async def test_main_override_with_model_picks_that_model():
 
 
 async def test_modelless_endpoint_without_override_is_degraded():
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="p", base_url="http://p/v1")
     await reg.set_role(OWNER, "main", [ep.id])
     # No baked model and no picker override → nothing to run.
     with pytest.raises(DegradedCapabilityError):
-        await _resolve(reg, "main", owner_id=OWNER)
+        _ = await resolve_model(reg, "main", owner_id=OWNER)
 
 
 async def test_role_pinned_model_resolves_a_modelless_endpoint():
@@ -154,18 +169,18 @@ async def test_role_pinned_model_resolves_a_modelless_endpoint():
     a model — the stored binding is self-describing, so resolution needs no
     per-conversation override. This is the fact server-initiated callers (research,
     tasks, titling) depend on, since they never carry the picker's override."""
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="p", base_url="http://p/v1")  # no model
     await reg.set_role(OWNER, "main", [ep.id], model="qwen3-32b")
 
-    model = await _resolve(reg, "main", owner_id=OWNER)  # no override
+    model = await resolve_model(reg, "main", owner_id=OWNER)  # no override
     assert isinstance(model, OpenAIChatModel)
     assert model.model_name == "qwen3-32b"
 
     # Same for a bound utility on a modelless endpoint.
     util = await reg.create_endpoint(OWNER, name="u", base_url="http://u/v1")
     await reg.set_role(OWNER, "utility", [util.id], model="qwen3-4b")
-    util_model = await _resolve(reg, "utility", owner_id=OWNER)
+    util_model = await resolve_model(reg, "utility", owner_id=OWNER)
     assert isinstance(util_model, OpenAIChatModel)
     assert util_model.model_name == "qwen3-4b"
 
@@ -173,12 +188,12 @@ async def test_role_pinned_model_resolves_a_modelless_endpoint():
 async def test_role_pinned_model_applies_to_head_only_in_a_chain():
     """The role's single pinned model names a model on the head provider, so it
     applies to the chain head only; a fallback tail keeps its own default."""
-    reg = await _registry()
+    reg = await make_registry()
     head = await reg.create_endpoint(OWNER, name="head", base_url="http://h/v1")  # no default
     tail = await reg.create_endpoint(OWNER, name="tail", base_url="http://t/v1", model="tail-m")
     await reg.set_role(OWNER, "utility", [head.id, tail.id], model="head-pinned")
 
-    model = await _resolve(reg, "utility", owner_id=OWNER)
+    model = await resolve_model(reg, "utility", owner_id=OWNER)
     assert isinstance(model, FallbackModel)
     assert [m.model_name for m in model.models] == ["head-pinned", "tail-m"]
 
@@ -187,7 +202,7 @@ async def test_resolve_background_uses_main_pinned_model_when_utility_unbound():
     """The reported crash path: utility unbound, main on a discovery-only endpoint.
     Background resolution degrades utility→main and must pick up main's pinned model
     — no override in play — instead of raising 'no model configured'."""
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="m", base_url="http://m/v1")  # no default model
     await reg.set_role(OWNER, "main", [ep.id], model="qwen3-32b")
 
@@ -197,17 +212,17 @@ async def test_resolve_background_uses_main_pinned_model_when_utility_unbound():
 
 
 async def test_unconfigured_role_is_degraded():
-    reg = await _registry()
+    reg = await make_registry()
     # No endpoints, no bindings → degraded; the registry is the only source of
     # truth, so there is no env (or other) fallback to rescue resolution.
     with pytest.raises(DegradedCapabilityError):
-        await _resolve(reg, "main", owner_id=OWNER)
+        _ = await resolve_model(reg, "main", owner_id=OWNER)
     with pytest.raises(DegradedCapabilityError):
-        await _resolve(reg, "embedding", owner_id=OWNER)
+        _ = await resolve_model(reg, "embedding", owner_id=OWNER)
 
 
 async def test_api_key_is_encrypted_at_rest():
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(
         OWNER, name="keyed", base_url="http://x/v1", model="m", api_key="super-secret"
     )
@@ -215,12 +230,12 @@ async def test_api_key_is_encrypted_at_rest():
     assert "super-secret" not in ep.api_key_enc  # stored as ciphertext
     # And it round-trips on resolve: the built provider gets the plaintext key.
     await reg.set_role(OWNER, "main", [ep.id])
-    model = await _resolve(reg, "main", owner_id=OWNER)
+    model = await resolve_model(reg, "main", owner_id=OWNER)
     assert isinstance(model, OpenAIChatModel)
 
 
-async def test_tool_calling_role_rejects_non_tool_endpoint(monkeypatch):
-    reg = await _registry()
+async def test_tool_calling_role_rejects_non_tool_endpoint(monkeypatch: pytest.MonkeyPatch):
+    reg = await make_registry()
     ep = await reg.create_endpoint(
         OWNER, name="no-tools", base_url="http://x/v1", model="m", native_tools=False
     )
@@ -232,14 +247,16 @@ async def test_tool_calling_role_rejects_non_tool_endpoint(monkeypatch):
     await reg.set_role(OWNER, "embedding", [ep.id])
 
 
-async def test_embedding_role_rejects_a_model_that_serves_no_vectors(monkeypatch):
+async def test_embedding_role_rejects_a_model_that_serves_no_vectors(
+    monkeypatch: pytest.MonkeyPatch,
+):
     # Binding the embedding role probes the endpoint; a model that doesn't return a
     # vector (e.g. a chat model bound by mistake) is rejected up front, not silently
     # degraded to keyword-only recall.
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="chat", base_url="http://x/v1", model="gpt-4o")
 
-    async def _failing_probe(spec):
+    async def _failing_probe(spec: EndpointSpec) -> int:
         raise DegradedCapabilityError(f"model {spec.model!r} returned no vector")
 
     monkeypatch.setattr(embeddings, "probe_embedding", _failing_probe)
@@ -249,16 +266,16 @@ async def test_embedding_role_rejects_a_model_that_serves_no_vectors(monkeypatch
     assert await reg.get_role(OWNER, "embedding") == []
 
 
-async def test_embedding_role_persists_the_picked_model(monkeypatch):
+async def test_embedding_role_persists_the_picked_model(monkeypatch: pytest.MonkeyPatch):
     # The embedding role pins an explicit model on the endpoint (its stand-in for
     # main's per-conversation picker); the probe runs against that model and the
     # choice is persisted for resolution.
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="multi", base_url="http://x/v1", model="default")
 
     seen: dict[str, str] = {}
 
-    async def _record_probe(spec):
+    async def _record_probe(spec: EndpointSpec) -> int:
         seen["model"] = spec.model
         return 4
 
@@ -270,13 +287,15 @@ async def test_embedding_role_persists_the_picked_model(monkeypatch):
     assert spec.model == "text-embed-3"  # resolution honors the pinned model
 
 
-async def test_an_unreachable_embedding_endpoint_degrades_instead_of_raising(monkeypatch):
+async def test_an_unreachable_embedding_endpoint_degrades_instead_of_raising(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """A local model server that isn't running is the ordinary case, and every caller
     already handles "degraded" by falling back to keyword recall. Raised raw it instead
     buries a connection traceback in the log on every persisted turn — and never names
     the address, which is the one fact needed to fix it. The bind-time probe already
     draws this line; runtime has to draw it the same way."""
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(
         OWNER, name="local", base_url="http://127.0.0.1:9/v1", model="embed"
     )
@@ -284,11 +303,11 @@ async def test_an_unreachable_embedding_endpoint_degrades_instead_of_raising(mon
     await reg.set_role(OWNER, "embedding", [ep.id])
 
     with pytest.raises(DegradedCapabilityError, match="127.0.0.1:9"):
-        await embeddings.RegistryEmbedder(reg).embed(OWNER, ["hello"])
+        _ = await embeddings.RegistryEmbedder(reg).embed(OWNER, ["hello"])
 
 
 async def test_unknown_endpoint_in_chain_is_not_found():
-    reg = await _registry()
+    reg = await make_registry()
     with pytest.raises(NotFoundError):
         await reg.set_role(OWNER, "main", ["does-not-exist"])
 
@@ -297,7 +316,7 @@ async def test_resolve_background_falls_back_to_picked_main_when_utility_unbound
     """Background work (titling) resolves ``utility``, but an operator who never bound
     it must still get a model — the picker's ``main`` override. The reasoning-off
     settings travel with whichever resolves."""
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="m", base_url="http://m/v1", model="qwen3")
     # No utility role bound; the override supplies main directly (the picker-driven
     # operator with no default chain — the exact case the retitle 503 came from).
@@ -311,7 +330,7 @@ async def test_resolve_background_falls_back_to_picked_main_when_utility_unbound
 async def test_delete_endpoint_prunes_it_from_role_chains():
     """Deleting an endpoint must not leave a dangling id in any chain that
     referenced it — otherwise a later resolve trips on the missing endpoint."""
-    reg = await _registry()
+    reg = await make_registry()
     primary = await reg.create_endpoint(OWNER, name="a", base_url="http://a/v1", model="m1")
     backup = await reg.create_endpoint(OWNER, name="b", base_url="http://b/v1", model="m2")
     await reg.set_role(OWNER, "main", [primary.id, backup.id])
@@ -324,7 +343,7 @@ async def test_delete_endpoint_prunes_it_from_role_chains():
 async def test_main_context_window_survives_a_stale_chain():
     """A dangling id in the ``main`` chain degrades the context meter to None
     rather than raising — the conversation read must not 500 on it."""
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(
         OWNER, name="local", base_url="http://x/v1", model="qwen", context_window=8192
     )
@@ -352,18 +371,18 @@ async def test_endpoint_crud_over_rest_hides_api_key():
             json={"name": "local", "base_url": "http://x/v1", "model": "m", "api_key": "k"},
         )
         assert resp.status_code == 201
-        body = resp.json()
+        body = json_body(resp)
         assert body["has_api_key"] is True
         assert "api_key" not in body and "api_key_enc" not in body
-        endpoint_id = body["id"]
+        endpoint_id = s(body["id"])
 
-        listing = (await client.get("/models/endpoints")).json()
-        assert [e["id"] for e in listing] == [endpoint_id]
+        listing = json_list(await client.get("/models/endpoints"))
+        assert [obj(e)["id"] for e in listing] == [endpoint_id]
 
         # Bind it to the main role, then read the bindings back.
         put = await client.put("/models/roles/main", json={"endpoint_ids": [endpoint_id]})
         assert put.status_code == 204
-        roles = (await client.get("/models/roles")).json()
+        roles = json_body(await client.get("/models/roles"))
         # `context_window` is null here for two compounding reasons — no override was
         # set and the fake host can't be asked — which is exactly the state the send
         # gate refuses a turn in.
@@ -383,25 +402,29 @@ async def test_endpoint_crud_over_rest_hides_api_key():
 
         deleted = await client.delete(f"/models/endpoints/{endpoint_id}")
         assert deleted.status_code == 204
-        assert (await client.get("/models/endpoints")).json() == []
+        assert json_list(await client.get("/models/endpoints")) == []
 
 
-async def test_embedding_rebind_triggers_reindex(monkeypatch):
+async def test_embedding_rebind_triggers_reindex(monkeypatch: pytest.MonkeyPatch):
     # Binding (or changing) the embedding role enqueues a background reindex, so a
     # model swap heals the stranded vectors without further operator action.
     from services.reindex import EmbeddingReindexer
 
     monkeypatch.setattr(embeddings, "probe_embedding", _passing_probe)
     triggered: list[str] = []
-    monkeypatch.setattr(EmbeddingReindexer, "trigger", lambda self, owner: triggered.append(owner))
+
+    def _trigger(_self: EmbeddingReindexer, owner: str) -> None:
+        triggered.append(owner)
+
+    monkeypatch.setattr(EmbeddingReindexer, "trigger", _trigger)
 
     async with client_app() as (client, _app):
-        ep = (
+        ep = json_body(
             await client.post(
                 "/models/endpoints",
                 json={"name": "embed", "base_url": "http://x/v1", "model": "embed-m"},
             )
-        ).json()
+        )
         put = await client.put(
             "/models/roles/embedding",
             json={"endpoint_ids": [ep["id"]], "model": "embed-m"},
@@ -410,13 +433,13 @@ async def test_embedding_rebind_triggers_reindex(monkeypatch):
         assert triggered == ["operator"]  # the bind enqueued a reindex
 
         # An identical re-bind does not re-trigger (nothing changed).
-        await client.put(
+        _ = await client.put(
             "/models/roles/embedding",
             json={"endpoint_ids": [ep["id"]], "model": "embed-m"},
         )
         assert triggered == ["operator"]
 
-        status = (await client.get("/models/embedding/reindex")).json()
+        status = json_body(await client.get("/models/embedding/reindex"))
         assert status["state"] == "idle"
 
 
@@ -428,39 +451,41 @@ async def test_rest_rejects_unknown_role_and_missing_endpoint():
         assert missing.status_code == 404
 
 
-async def test_model_discovery_lists_provider_models(monkeypatch):
-    async def fake_list(self, owner_id, endpoint_id):
+async def test_model_discovery_lists_provider_models(monkeypatch: pytest.MonkeyPatch):
+    async def fake_list(_self: ModelRegistry, _owner_id: str, _endpoint_id: str) -> list[str]:
         return ["gpt-4o", "gpt-4o-mini"]
 
     monkeypatch.setattr(ModelRegistry, "list_provider_models", fake_list)
     async with client_app() as (client, _app):
-        ep = (
+        ep = json_body(
             await client.post(
                 "/models/endpoints", json={"name": "local", "base_url": "http://x/v1"}
             )
-        ).json()
+        )
         # The endpoint was created with no model — the picker discovers them.
         assert ep["model"] is None
-        resp = await client.get(f"/models/endpoints/{ep['id']}/models")
+        resp = await client.get(f"/models/endpoints/{s(ep['id'])}/models")
         assert resp.status_code == 200
-        assert resp.json() == {"models": ["gpt-4o", "gpt-4o-mini"], "supported": True}
+        assert json_body(resp) == {"models": ["gpt-4o", "gpt-4o-mini"], "supported": True}
 
 
-async def test_model_discovery_degrades_when_provider_has_no_models_api(monkeypatch):
-    async def fake_list(self, owner_id, endpoint_id):
+async def test_model_discovery_degrades_when_provider_has_no_models_api(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def fake_list(_self: ModelRegistry, _owner_id: str, _endpoint_id: str) -> list[str]:
         raise DegradedCapabilityError("no models API")
 
     monkeypatch.setattr(ModelRegistry, "list_provider_models", fake_list)
     async with client_app() as (client, _app):
-        ep = (
+        ep = json_body(
             await client.post(
                 "/models/endpoints", json={"name": "local", "base_url": "http://x/v1"}
             )
-        ).json()
-        resp = await client.get(f"/models/endpoints/{ep['id']}/models")
+        )
+        resp = await client.get(f"/models/endpoints/{s(ep['id'])}/models")
         assert resp.status_code == 200
         # Unsupported, not an error — the picker falls back to the configured model.
-        assert resp.json() == {"models": [], "supported": False}
+        assert json_body(resp) == {"models": [], "supported": False}
 
 
 def test_extract_model_ids_handles_provider_shapes():
@@ -486,11 +511,11 @@ def test_extract_model_ids_handles_provider_shapes():
 # --- endpoint health & disable -------------------------------------------
 
 
-async def test_test_endpoint_categorizes_probe_failures(monkeypatch):
+async def test_test_endpoint_categorizes_probe_failures(monkeypatch: pytest.MonkeyPatch):
     """The connection test turns each probe outcome into a stable category + a
     plain-language detail that never carries the key — categorization is the backend's
     policy, not the frontend's."""
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(
         OWNER, name="p", base_url="http://x/v1", model="m", api_key="super-secret"
     )
@@ -509,7 +534,7 @@ async def test_test_endpoint_categorizes_probe_failures(monkeypatch):
         (418, "bad_response"),
     ]:
 
-        async def _probe(base_url, api_key=None, *, client=None, _code=code):
+        async def _probe(*_args: object, _code: int = code, **_kwargs: object) -> None:
             raise httpx.HTTPStatusError(
                 "e", request=req, response=httpx.Response(_code, request=req)
             )
@@ -529,7 +554,7 @@ async def test_test_endpoint_categorizes_probe_failures(monkeypatch):
         (ValueError("not json"), "bad_response"),
     ]:
 
-        async def _probe_exc(base_url, api_key=None, *, client=None, _exc=exc):
+        async def _probe_exc(*_args: object, _exc: Exception = exc, **_kwargs: object) -> None:
             raise _exc
 
         monkeypatch.setattr(llm, "probe_openai_endpoint", _probe_exc)
@@ -539,11 +564,11 @@ async def test_test_endpoint_categorizes_probe_failures(monkeypatch):
         assert "super-secret" not in health.error_detail  # the key never leaks into the detail
 
 
-async def test_test_endpoint_records_ok_and_persists(monkeypatch):
-    reg = await _registry()
+async def test_test_endpoint_records_ok_and_persists(monkeypatch: pytest.MonkeyPatch):
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="p", base_url="http://x/v1", model="m")
 
-    async def _ok(base_url, api_key=None, *, client=None):
+    async def _ok(*_args: object, **_kwargs: object) -> None:
         return None
 
     monkeypatch.setattr(llm, "probe_openai_endpoint", _ok)
@@ -556,65 +581,69 @@ async def test_test_endpoint_records_ok_and_persists(monkeypatch):
 
 
 async def test_test_endpoint_unknown_is_not_found():
-    reg = await _registry()
+    reg = await make_registry()
     with pytest.raises(NotFoundError):
-        await reg.test_endpoint(OWNER, "does-not-exist")
+        _ = await reg.test_endpoint(OWNER, "does-not-exist")
 
 
 async def test_disabled_endpoint_via_main_override_is_degraded():
     """A disabled endpoint chosen via the per-conversation main override is rejected,
     not silently run — the same invariant the role-chain path enforces."""
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="picked", base_url="http://p/v1", model="m")
-    await reg.update_endpoint(OWNER, ep.id, enabled=False)
+    _ = await reg.update_endpoint(OWNER, ep.id, enabled=False)
     with pytest.raises(DegradedCapabilityError):
-        await _resolve(reg, "main", owner_id=OWNER, override_endpoint_id=ep.id, override_model="m")
+        _ = await resolve_model(
+            reg, "main", owner_id=OWNER, override_endpoint_id=ep.id, override_model="m"
+        )
 
 
 async def test_disabled_endpoint_is_skipped_in_role_chain():
     """A disabled endpoint falls through to the next in the chain — the pre-emptive
     side of the runtime FallbackModel failover."""
-    reg = await _registry()
+    reg = await make_registry()
     primary = await reg.create_endpoint(OWNER, name="a", base_url="http://a/v1", model="m1")
     backup = await reg.create_endpoint(OWNER, name="b", base_url="http://b/v1", model="m2")
     await reg.set_role(OWNER, "utility", [primary.id, backup.id])
 
-    await reg.update_endpoint(OWNER, primary.id, enabled=False)
-    model = await _resolve(reg, "utility", owner_id=OWNER)
+    _ = await reg.update_endpoint(OWNER, primary.id, enabled=False)
+    model = await resolve_model(reg, "utility", owner_id=OWNER)
     assert isinstance(model, OpenAIChatModel)
     assert not isinstance(model, FallbackModel)  # only the live backup remains
     assert model.model_name == "m2"
 
 
 async def test_all_disabled_chain_is_degraded():
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="a", base_url="http://a/v1", model="m1")
     await reg.set_role(OWNER, "utility", [ep.id])
-    await reg.update_endpoint(OWNER, ep.id, enabled=False)
+    _ = await reg.update_endpoint(OWNER, ep.id, enabled=False)
     with pytest.raises(DegradedCapabilityError):
-        await _resolve(reg, "utility", owner_id=OWNER)
+        _ = await resolve_model(reg, "utility", owner_id=OWNER)
 
 
-async def test_endpoint_test_route_returns_verdict_and_reflects_on_list(monkeypatch):
-    async def _ok(base_url, api_key=None, *, client=None):
+async def test_endpoint_test_route_returns_verdict_and_reflects_on_list(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def _ok(*_args: object, **_kwargs: object) -> None:
         return None
 
     monkeypatch.setattr(llm, "probe_openai_endpoint", _ok)
     async with client_app() as (client, _app):
-        ep = (
+        ep = json_body(
             await client.post(
                 "/models/endpoints",
                 json={"name": "p", "base_url": "http://x/v1", "model": "m"},
             )
-        ).json()
+        )
         assert ep["enabled"] is True and ep["last_status"] is None
-        resp = await client.post(f"/models/endpoints/{ep['id']}/test")
+        resp = await client.post(f"/models/endpoints/{s(ep['id'])}/test")
         assert resp.status_code == 200
-        body = resp.json()
+        body = json_body(resp)
         assert body["status"] == "ok" and body["error_category"] == "ok"
         assert "checked_at" in body
         # The verdict rides the endpoint listing for at-a-glance health.
-        listed = (await client.get("/models/endpoints")).json()[0]
+        listed = obj(json_list(await client.get("/models/endpoints"))[0])
         assert listed["last_status"] == "ok"
 
 
@@ -625,16 +654,16 @@ async def test_endpoint_test_route_404_for_unknown():
 
 async def test_patch_endpoint_enabled_round_trips():
     async with client_app() as (client, _app):
-        ep = (
+        ep = json_body(
             await client.post(
                 "/models/endpoints",
                 json={"name": "p", "base_url": "http://x/v1", "model": "m"},
             )
-        ).json()
+        )
         assert ep["enabled"] is True
-        patched = await client.patch(f"/models/endpoints/{ep['id']}", json={"enabled": False})
+        patched = await client.patch(f"/models/endpoints/{s(ep['id'])}", json={"enabled": False})
         assert patched.status_code == 200
-        assert patched.json()["enabled"] is False
+        assert json_body(patched)["enabled"] is False
 
 
 # ── Whether background work runs on the chat server ──────────────────────────────
@@ -648,7 +677,7 @@ async def test_patch_endpoint_enabled_round_trips():
 async def test_an_unbound_utility_reports_that_it_shares_the_chat_server():
     """The commonest shape, and the one where it is most true: `utility` unbound degrades
     onto `main` by the same rule titling and review already resolve through."""
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(OWNER, name="local", base_url="http://x/v1", model="qwen")
     await reg.set_role(OWNER, "main", [ep.id])
 
@@ -660,7 +689,7 @@ async def test_a_second_row_on_the_same_server_shares_it_too():
     configured twice — once per model — and two ids pointing at one process are one cache.
     The trailing version segment is normalised for the same reason: llama.cpp serves the
     chat route at the root and under `/v1`, so an operator can honestly configure either."""
-    reg = await _registry()
+    reg = await make_registry()
     main = await reg.create_endpoint(OWNER, name="chat", base_url="http://x/v1", model="qwen-32b")
     twin = await reg.create_endpoint(OWNER, name="small", base_url="http://x/", model="qwen-4b")
     await reg.set_role(OWNER, "main", [main.id])
@@ -672,7 +701,7 @@ async def test_a_second_row_on_the_same_server_shares_it_too():
 async def test_a_second_process_on_another_port_does_not():
     """The fix this flag exists to point at — and the only one available on a server with
     no host-RAM prompt cache."""
-    reg = await _registry()
+    reg = await make_registry()
     main = await reg.create_endpoint(OWNER, name="chat", base_url="http://x:8080/v1", model="big")
     other = await reg.create_endpoint(OWNER, name="util", base_url="http://x:8081/v1", model="sml")
     await reg.set_role(OWNER, "main", [main.id])
@@ -684,7 +713,7 @@ async def test_a_second_process_on_another_port_does_not():
 async def test_a_workspace_with_no_chat_model_reports_nothing_shared():
     """There is no chat prefix to evict, so the honest answer is False rather than the
     True an unbound `utility` would otherwise produce on its own."""
-    reg = await _registry()
+    reg = await make_registry()
     assert await reg.background_shares_main(OWNER) is False
 
 
@@ -693,24 +722,24 @@ async def test_the_roles_listing_carries_the_fact_on_main():
     unbound case has no `utility` row to carry a flag — and it is `main`'s prompt cache
     that a background call evicts either way."""
     async with client_app() as (client, _app):
-        ep = (
+        ep = json_body(
             await client.post(
                 "/models/endpoints",
                 json={"name": "local", "base_url": "http://x/v1", "model": "m"},
             )
-        ).json()
-        await client.put("/models/roles/main", json={"endpoint_ids": [ep["id"]]})
+        )
+        _ = await client.put("/models/roles/main", json={"endpoint_ids": [ep["id"]]})
 
-        roles = (await client.get("/models/roles")).json()
-        assert roles["main"]["background_shares_endpoint"] is True
+        roles = json_body(await client.get("/models/roles"))
+        assert obj(roles["main"])["background_shares_endpoint"] is True
 
-        second = (
+        second = json_body(
             await client.post(
                 "/models/endpoints",
                 json={"name": "util", "base_url": "http://y:9000/v1", "model": "m"},
             )
-        ).json()
-        await client.put("/models/roles/utility", json={"endpoint_ids": [second["id"]]})
+        )
+        _ = await client.put("/models/roles/utility", json={"endpoint_ids": [second["id"]]})
 
-        roles = (await client.get("/models/roles")).json()
-        assert roles["main"]["background_shares_endpoint"] is False
+        roles = json_body(await client.get("/models/roles"))
+        assert obj(roles["main"])["background_shares_endpoint"] is False

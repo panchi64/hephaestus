@@ -7,9 +7,14 @@ import zipfile
 
 import pytest
 import yaml
+from pydantic import JsonValue, TypeAdapter
 
 from core.exceptions import SkillValidationError
 from services.skills import bundle
+
+from ._json import obj, s
+
+_YAML = TypeAdapter(JsonValue)
 
 SKILL_MD = """\
 ---
@@ -102,12 +107,12 @@ def test_skill_md_round_trips_semantically():
 
 def test_warnings_report_preserved_keys_and_an_empty_body():
     warnings: list[str] = []
-    bundle.parse_skill_md(SKILL_MD, warnings=warnings)
+    _ = bundle.parse_skill_md(SKILL_MD, warnings=warnings)
     assert any("when_to_use" in note for note in warnings)
 
     bare = "---\nname: bare\ndescription: A skill with no instructions.\n---\n"
     warnings = []
-    bundle.parse_skill_md(bare, warnings=warnings)
+    _ = bundle.parse_skill_md(bare, warnings=warnings)
     assert any("no instructions" in note for note in warnings)
 
 
@@ -140,9 +145,9 @@ def test_non_mapping_metadata_is_dropped_not_fatal():
         ),
     ],
 )
-def test_invalid_skill_md_is_rejected_by_field(text, expected_field):
+def test_invalid_skill_md_is_rejected_by_field(text: str, expected_field: str):
     with pytest.raises(SkillValidationError) as caught:
-        bundle.parse_skill_md(text)
+        _ = bundle.parse_skill_md(text)
     assert caught.value.field == expected_field
 
 
@@ -176,15 +181,15 @@ def test_bundle_directory_may_differ_by_case_and_underscores():
         ({"other-name/SKILL.md": SKILL_MD.encode()}, "name"),
     ],
 )
-def test_invalid_bundles_are_rejected(entries, expected_field):
+def test_invalid_bundles_are_rejected(entries: dict[str, bytes], expected_field: str):
     with pytest.raises(SkillValidationError) as caught:
-        bundle.read_bundle(_zip(entries))
+        _ = bundle.read_bundle(_zip(entries))
     assert caught.value.field == expected_field
 
 
 def test_not_a_zip_is_rejected():
     with pytest.raises(SkillValidationError):
-        bundle.read_bundle(b"definitely not a zip")
+        _ = bundle.read_bundle(b"definitely not a zip")
 
 
 def test_symlink_entries_are_refused():
@@ -195,7 +200,7 @@ def test_symlink_entries_are_refused():
         link.external_attr = 0o120777 << 16
         archive.writestr(link, "/etc/passwd")
     with pytest.raises(SkillValidationError, match="symlink"):
-        bundle.read_bundle(buffer.getvalue())
+        _ = bundle.read_bundle(buffer.getvalue())
 
 
 def test_oversized_bundles_are_refused_before_extraction():
@@ -205,7 +210,7 @@ def test_oversized_bundles_are_refused_before_extraction():
         archive.writestr("pdf-processing/SKILL.md", SKILL_MD)
         archive.writestr("pdf-processing/bomb.bin", b"\0" * (bundle.BUNDLE_MAX_BYTES + 1))
     with pytest.raises(SkillValidationError, match="MB uncompressed"):
-        bundle.read_bundle(buffer.getvalue())
+        _ = bundle.read_bundle(buffer.getvalue())
 
 
 def test_read_import_accepts_a_bare_skill_md():
@@ -226,10 +231,14 @@ def test_claude_code_bundle_roundtrip():
 
     with zipfile.ZipFile(io.BytesIO(exported)) as archive:
         names = archive.namelist()
-        front = yaml.safe_load(archive.read("pdf-processing/SKILL.md").decode().split("---")[1])
+        front = obj(
+            _YAML.validate_python(
+                yaml.safe_load(archive.read("pdf-processing/SKILL.md").decode().split("---")[1])
+            )
+        )
     assert names[0] == "pdf-processing/SKILL.md"
     assert {name.split("/")[0] for name in names} == {"pdf-processing"}
-    assert front["when_to_use"].startswith("When the user mentions")
+    assert s(front["when_to_use"]).startswith("When the user mentions")
     assert front["allowed-tools"] == ["Read", "Bash"]
     assert front["metadata"] == {"version": "1.0"}
 
@@ -248,8 +257,8 @@ def test_comparison_operators_are_not_xml_tags():
     """`<1000 rows and >3 columns` is prose, not markup — rejecting it blocked a valid skill."""
     prose = "Use when a CSV has <1000 rows and >3 columns."
     text = SKILL_MD.replace(
-        "description: Fill and extract PDF forms. Use when the operator has a "
-        "PDF to read or complete.",
+        "description: Fill and extract PDF forms. "
+        + "Use when the operator has a PDF to read or complete.",
         f"description: {prose}",
     )
     assert bundle.parse_skill_md(text).description == prose
@@ -257,7 +266,7 @@ def test_comparison_operators_are_not_xml_tags():
 
 def test_real_markup_is_still_rejected():
     with pytest.raises(SkillValidationError) as caught:
-        bundle.parse_skill_md("---\nname: ok\ndescription: has <b>bold</b> markup\n---\nbody")
+        _ = bundle.parse_skill_md("---\nname: ok\ndescription: has <b>bold</b> markup\n---\nbody")
     assert caught.value.field == "description"
 
 

@@ -2,23 +2,27 @@
 
 from __future__ import annotations
 
-from tests._helpers import client_app
+import httpx
+
+from services.secret_vault import SecretVaultService
+from tests._helpers import app_state, client_app
+from tests._json import json_body, json_list, obj, s
 
 PASSPHRASE = "vault-passphrase"
 
 
-async def _unlocked(client):
+async def _unlocked(client: httpx.AsyncClient) -> None:
     resp = await client.post("/vault/configure", json={"passphrase": PASSPHRASE})
     assert resp.status_code == 201
 
 
 async def test_state_walks_unconfigured_to_unlocked():
     async with client_app() as (client, _):
-        state = (await client.get("/vault/state")).json()
+        state = json_body(await client.get("/vault/state"))
         assert state == {"configured": False, "unlocked": False}
 
         await _unlocked(client)
-        assert (await client.get("/vault/state")).json() == {
+        assert json_body(await client.get("/vault/state")) == {
             "configured": True,
             "unlocked": True,
         }
@@ -32,14 +36,17 @@ async def test_lock_then_unlock_round_trip():
     async with client_app() as (client, _):
         await _unlocked(client)
 
-        assert (await client.post("/vault/lock")).json()["unlocked"] is False
+        assert json_body(await client.post("/vault/lock"))["unlocked"] is False
         assert (await client.post("/vault/unlock", json={"passphrase": "wrong"})).status_code == 403
-        assert (await client.post("/vault/unlock", json={"passphrase": PASSPHRASE})).json()[
-            "unlocked"
-        ] is True
+        assert (
+            json_body(await client.post("/vault/unlock", json={"passphrase": PASSPHRASE}))[
+                "unlocked"
+            ]
+            is True
+        )
 
         # Logout is the broader teardown — same observable state, different scope.
-        assert (await client.post("/vault/logout")).json()["unlocked"] is False
+        assert json_body(await client.post("/vault/logout"))["unlocked"] is False
 
 
 async def test_unlock_before_configure_is_a_precondition_failure():
@@ -62,27 +69,31 @@ async def test_entry_crud():
             },
         )
         assert created.status_code == 201
-        entry = created.json()
+        entry = json_body(created)
         assert entry["name"] == "Production DB" and entry["password"] == "s3cret"
 
-        listed = (await client.get("/vault/entries")).json()
-        assert [e["id"] for e in listed] == [entry["id"]]
+        listed = json_list(await client.get("/vault/entries"))
+        assert [obj(e)["id"] for e in listed] == [entry["id"]]
 
-        patched = await client.patch(f"/vault/entries/{entry['id']}", json={"password": "rotated"})
-        assert patched.json()["password"] == "rotated"
-        assert patched.json()["name"] == "Production DB"
+        patched = await client.patch(
+            f"/vault/entries/{s(entry['id'])}", json={"password": "rotated"}
+        )
+        assert json_body(patched)["password"] == "rotated"
+        assert json_body(patched)["name"] == "Production DB"
 
-        assert (await client.delete(f"/vault/entries/{entry['id']}")).status_code == 204
-        assert (await client.get("/vault/entries")).json() == []
+        assert (await client.delete(f"/vault/entries/{s(entry['id'])}")).status_code == 204
+        assert json_list(await client.get("/vault/entries")) == []
 
 
 async def test_locked_vault_answers_409_everywhere():
     async with client_app() as (client, _):
         await _unlocked(client)
-        entry_id = (
-            await client.post("/vault/entries", json={"name": "db", "password": "pw"})
-        ).json()["id"]
-        await client.post("/vault/lock")
+        entry_id = s(
+            json_body(await client.post("/vault/entries", json={"name": "db", "password": "pw"}))[
+                "id"
+            ]
+        )
+        _ = await client.post("/vault/lock")
 
         assert (await client.get("/vault/entries")).status_code == 409
         assert (await client.post("/vault/entries", json={"name": "x"})).status_code == 409
@@ -104,7 +115,7 @@ async def test_unknown_entry_is_404():
 async def test_the_service_is_one_singleton_across_requests():
     async with client_app() as (client, app):
         await _unlocked(client)
-        first = app.state.secret_vault
-        await client.get("/vault/entries")
+        first = app_state(app, "secret_vault", SecretVaultService)
+        _ = await client.get("/vault/entries")
         # A per-request instance would have thrown the unlock away between the two calls.
-        assert app.state.secret_vault is first
+        assert app_state(app, "secret_vault", SecretVaultService) is first

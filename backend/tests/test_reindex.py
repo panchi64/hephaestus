@@ -2,32 +2,40 @@
 
 from __future__ import annotations
 
+from typing import override
+
 from core.exceptions import DegradedCapabilityError, NotFoundError
-from services import llm
-from services.reindex import EmbeddingReindexer
+from services.embeddings import EmbeddingSpecSource
+from services.endpoint_spec import EndpointSpec
+from services.reindex import (
+    ChunkReembedder,
+    EmbeddingReindexer,
+    MemoryReembedder,
+    MessageReindexer,
+)
 
 OWNER = "operator"
 
 
-class _Registry:
-    def __init__(
-        self, *, spec: llm.EndpointSpec | None = None, exc: Exception | None = None
-    ) -> None:
-        self._spec = spec
-        self._exc = exc
+class _Registry(EmbeddingSpecSource):
+    def __init__(self, *, spec: EndpointSpec | None = None, exc: Exception | None = None) -> None:
+        self._spec: EndpointSpec | None = spec
+        self._exc: Exception | None = exc
 
-    async def resolve_embedding_spec(self, owner_id: str) -> llm.EndpointSpec:
+    @override
+    async def resolve_embedding_spec(self, owner_id: str) -> EndpointSpec:
         if self._exc is not None:
             raise self._exc
         assert self._spec is not None
         return self._spec
 
 
-class _Memory:
+class _Memory(MemoryReembedder):
     def __init__(self, n: int = 0) -> None:
-        self._n = n
+        self._n: int = n
         self.seen_model: str | None = None
 
+    @override
     async def reembed(
         self, owner_id: str, *, current_model: str | None = None, batch_size: int = 64
     ) -> int:
@@ -35,11 +43,12 @@ class _Memory:
         return self._n
 
 
-class _Convos:
+class _Convos(MessageReindexer):
     def __init__(self, n: int = 0) -> None:
-        self._n = n
+        self._n: int = n
         self.seen_model: str | None = None
 
+    @override
     async def reindex_embeddings(
         self, owner_id: str, *, current_model: str | None = None, batch_size: int = 64
     ) -> int:
@@ -47,11 +56,12 @@ class _Convos:
         return self._n
 
 
-class _Chunks:
+class _Chunks(ChunkReembedder):
     def __init__(self, n: int = 0) -> None:
-        self._n = n
+        self._n: int = n
         self.seen_model: str | None = None
 
+    @override
     async def reembed(
         self,
         owner_id: str,
@@ -67,7 +77,7 @@ class _Chunks:
 
 async def test_reindex_reports_counts_and_passes_current_model():
     mem, conv, chunks = _Memory(3), _Convos(5), _Chunks(7)
-    spec = llm.EndpointSpec(base_url="http://x/v1", model="embed-m")
+    spec = EndpointSpec(base_url="http://x/v1", model="embed-m")
     reindexer = EmbeddingReindexer(_Registry(spec=spec), mem, conv, chunks)
     await reindexer._run(OWNER)
 

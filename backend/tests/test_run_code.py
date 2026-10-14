@@ -12,9 +12,11 @@ directly — while the same call made directly still parks.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 
+from pydantic import JsonValue, TypeAdapter
 from pydantic_ai import (
+    AgentRunResult,
     ApprovalRequired,
     CallDeferred,
     DeferredToolRequests,
@@ -22,7 +24,8 @@ from pydantic_ai import (
     RunContext,
 )
 from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, ToolReturnPart
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
@@ -40,10 +43,19 @@ from agent.code_mode import (
 from agent.factory import build_agent
 from core.config import Settings
 from runs import Run, RunStream, ToolCompleted, ToolFailed, ToolProgress, ToolStarted
-from services.conversation_view import project_tree
+from services.conversation_view import ToolView, project_tree
 from services.permissions import PermissionLevel, blocked_message
 from services.workspace_kind import WorkspaceKind
 from tools import RunDeps, build_agent_toolsets, core_categories
+
+from ._json import s
+
+_METADATA = TypeAdapter(dict[str, JsonValue])
+_JSON = TypeAdapter(JsonValue)
+
+
+def _result_of(body: ToolCompleted | ToolView) -> JsonValue:
+    return _JSON.validate_python(vars(body)["result"])
 
 
 def _run() -> Run:
@@ -167,7 +179,9 @@ def _script_then_answer(code: str, *, direct: tuple[str, dict[str, str]] | None 
     """A model that sends one call — a script, or ``direct`` — then answers."""
     seen: list[list[ModelMessage]] = []
 
-    async def stream_fn(messages, info):
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         seen.append(messages)
         if len(seen) == 1:
             if direct is not None:
@@ -184,7 +198,7 @@ def _script_then_answer(code: str, *, direct: tuple[str, dict[str, str]] | None 
     return FunctionModel(stream_function=stream_fn), seen
 
 
-def _gated_categories(calls: list[str]):
+def _gated_categories(calls: list[str]) -> dict[str, AbstractToolset[RunDeps]]:
     """A catalog read (`corpus_retrieve`) and an unclassified tool, both gating themselves
     the way a global recall does: approval needed until the call comes back approved."""
     corpus: FunctionToolset[RunDeps] = FunctionToolset()
@@ -202,6 +216,7 @@ def _gated_categories(calls: list[str]):
     # classifies, so the Auto judge will not clear it without a reviewer.
     @other.tool(metadata={"sensitivity": "read"})
     async def recall(ctx: RunContext[RunDeps], query: str) -> str:
+        _ = query
         if not ctx.tool_call_approved:
             raise ApprovalRequired()
         calls.append("recall")
@@ -220,7 +235,13 @@ def _gated_categories(calls: list[str]):
     return {"corpus": corpus, "x": other}
 
 
-async def _drive(model, categories, *, permission: PermissionLevel = "auto", limits=None):
+async def _drive(
+    model: Model,
+    categories: Mapping[str, AbstractToolset[RunDeps]],
+    *,
+    permission: PermissionLevel = "auto",
+    limits: CodeModeLimits | None = None,
+) -> tuple[Run, AgentRunResult[DeferredToolRequests | str], RunDeps]:
     agent = build_agent(model, categories=categories, code_mode=limits)
     run = _run()
     deps = RunDeps(run=run, owner_id="operator", permission=permission)
@@ -252,9 +273,9 @@ class TestAScriptsCalls:
         assert [f.type for f in nested] == ["tool.started", "tool.completed"]
         completed = nested[1]
         assert isinstance(completed, ToolCompleted)
-        assert completed.result == "passages for q"
+        assert _result_of(completed) == "passages for q"
         script = _script_result(run)
-        assert script.result == "passages for q"
+        assert _result_of(script) == "passages for q"
         # Live, and in order: the script opens, its call runs inside it, the script closes.
         order = [(f.type, f.tool_call_id) for f in _frames(run)]
         assert order == [
@@ -286,7 +307,7 @@ class TestAScriptsCalls:
         assert failed.parent_tool_call_id == "s"
         assert "directly, outside `run_code`" in failed.error
         script = _script_result(run)
-        assert "directly, outside `run_code`" in script.result
+        assert "directly, outside `run_code`" in s(_result_of(script))
 
     async def test_the_same_call_made_directly_still_parks(self):
         calls: list[str] = []
@@ -369,13 +390,13 @@ class TestAScriptsCalls:
         nested_failure = nested[1]
         assert isinstance(nested_failure, ToolFailed)
         assert "directly, outside `run_code`" in nested_failure.error
-        assert "directly, outside `run_code`" in _script_result(run).result
+        assert "directly, outside `run_code`" in s(_result_of(_script_result(run)))
 
     async def test_the_call_cap_is_enforced(self):
         calls: list[str] = []
         code = 'for n in ["a", "b", "c"]:\n    await x_look(name=n)\n"ok"'
         model, seen = _script_then_answer(code)
-        await _drive(model, _gated_categories(calls), limits=CodeModeLimits(max_tool_calls=2))
+        _ = await _drive(model, _gated_categories(calls), limits=CodeModeLimits(max_tool_calls=2))
 
         assert calls == ["look:a", "look:b"]
         retry = next(
@@ -410,10 +431,11 @@ class TestAScriptsCalls:
         returned = next(
             part
             for message in stored
-            for part in getattr(message, "parts", ())
+            if isinstance(message, ModelRequest)
+            for part in message.parts
             if isinstance(part, ToolReturnPart) and part.tool_name == RUN_CODE
         )
-        assert returned.metadata["code_mode"] is True
+        assert _METADATA.validate_python(vars(returned)["metadata"])["code_mode"] is True
 
         for messages in (result.all_messages(), stored):
             views = project_tree([(str(i), m) for i, m in enumerate(messages)])
@@ -423,7 +445,7 @@ class TestAScriptsCalls:
             assert script.parent_tool_call_id is None
             assert {t.parent_tool_call_id for t in nested} == {"s"}
             assert [t.status for t in nested] == ["ok", "ok", "error"]
-            assert nested[0].args == {"name": "a"} and nested[0].result == "saw a"
+            assert nested[0].args == {"name": "a"} and _result_of(nested[0]) == "saw a"
             assert nested[2].error is not None
             assert "directly, outside `run_code`" in nested[2].error
 

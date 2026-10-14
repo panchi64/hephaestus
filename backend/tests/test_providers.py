@@ -11,10 +11,12 @@ from sqlmodel import Session, text
 
 from core.db import make_engine
 from services import llm
+from services.endpoint_spec import EndpointSpec
 from services.providers import all_providers, get_provider
-from tests.test_registry import _registry, _resolve
+from tests.test_registry import make_registry, resolve_model
 
 from ._helpers import client_app
+from ._json import json_body, json_list, obj, s
 
 OWNER = "operator"
 
@@ -29,7 +31,7 @@ def test_builtin_providers_are_discovered():
 
 def test_unknown_provider_raises():
     with pytest.raises(LookupError):
-        get_provider("no-such-lab")
+        _ = get_provider("no-such-lab")
 
 
 def test_build_model_dispatches_to_the_native_classes():
@@ -41,7 +43,7 @@ def test_build_model_dispatches_to_the_native_classes():
         ("google", GoogleModel),
     ]
     for provider_id, model_cls in cases:
-        spec = llm.EndpointSpec(
+        spec = EndpointSpec(
             base_url="https://api.example.com",
             model="some-model",
             provider=provider_id,
@@ -66,7 +68,7 @@ async def test_openai_wire_carries_one_leading_system_message():
             instructions="RULES",
         )
     ]
-    spec = llm.EndpointSpec(
+    spec = EndpointSpec(
         base_url="http://127.0.0.1:8080/v1",
         model="Qwen3-30B",
         provider="openai-compatible",
@@ -100,9 +102,9 @@ def test_reasoning_off_is_provider_shaped():
 
 
 async def test_key_requiring_provider_rejects_a_keyless_save():
-    reg = await _registry()
+    reg = await make_registry()
     with pytest.raises(ValueError):
-        await reg.create_endpoint(
+        _ = await reg.create_endpoint(
             OWNER, name="a", base_url="https://api.anthropic.com", provider="anthropic"
         )
     # And clearing the key out from under one is rejected the same way.
@@ -115,21 +117,23 @@ async def test_key_requiring_provider_rejects_a_keyless_save():
         api_key="sk-ant-k",
     )
     with pytest.raises(ValueError):
-        await reg.update_endpoint(OWNER, ep.id, api_key="")
+        _ = await reg.update_endpoint(OWNER, ep.id, api_key="")
     # Switching a keyless endpoint onto a key-requiring provider is rejected too.
     keyless = await reg.create_endpoint(OWNER, name="c", base_url="http://x/v1", model="m")
     with pytest.raises(ValueError):
-        await reg.update_endpoint(OWNER, keyless.id, provider="google")
+        _ = await reg.update_endpoint(OWNER, keyless.id, provider="google")
 
 
 async def test_unknown_provider_rejected_at_save():
-    reg = await _registry()
+    reg = await make_registry()
     with pytest.raises(ValueError):
-        await reg.create_endpoint(OWNER, name="a", base_url="http://x/v1", provider="no-such-lab")
+        _ = await reg.create_endpoint(
+            OWNER, name="a", base_url="http://x/v1", provider="no-such-lab"
+        )
 
 
 async def test_provider_flows_into_the_resolved_spec():
-    reg = await _registry()
+    reg = await make_registry()
     ep = await reg.create_endpoint(
         OWNER,
         name="claude",
@@ -139,7 +143,7 @@ async def test_provider_flows_into_the_resolved_spec():
         api_key="sk-ant-k",
     )
     await reg.set_role(OWNER, "main", [ep.id])
-    model = await _resolve(reg, "main", owner_id=OWNER)
+    model = await resolve_model(reg, "main", owner_id=OWNER)
     assert isinstance(model, AnthropicModel)
 
 
@@ -148,8 +152,8 @@ async def test_provider_flows_into_the_resolved_spec():
 
 async def test_providers_route_serves_the_presets():
     async with client_app() as (client, _app):
-        rows = (await client.get("/models/providers")).json()
-        by_id = {row["id"]: row for row in rows}
+        rows = json_list(await client.get("/models/providers"))
+        by_id = {s(obj(row)["id"]): obj(row) for row in rows}
         assert {"openai-compatible", "anthropic", "google"} <= set(by_id)
         anthropic = by_id["anthropic"]
         assert anthropic["requires_key"] is True
@@ -176,13 +180,13 @@ async def test_endpoint_routes_carry_and_validate_provider():
             },
         )
         assert created.status_code == 201
-        body = created.json()
+        body = json_body(created)
         assert body["provider"] == "anthropic"
 
         # Default provider when unspecified.
-        plain = (
+        plain = json_body(
             await client.post("/models/endpoints", json={"name": "b", "base_url": "http://x/v1"})
-        ).json()
+        )
         assert plain["provider"] == "openai-compatible"
 
 
@@ -206,15 +210,19 @@ def test_migration_backfills_local_prefix_endpoints():
     command.upgrade(config, "5a07sec0007")
 
     with Session(engine) as session:
-        session.connection().execute(
+        _ = session.connection().execute(
             text(
-                "INSERT INTO model_endpoints "
-                "(id, owner_id, name, base_url, enabled, native_tools, vision, thinking, "
-                "created_at, updated_at) VALUES "
-                "('e1', 'op', 'Local · acme/m', 'http://127.0.0.1:9/v1', 0, 1, 0, 0, "
-                "'2026-01-01', '2026-01-01'), "
-                "('e2', 'op', 'My cloud', 'https://api.example.com/v1', 1, 1, 0, 0, "
-                "'2026-01-01', '2026-01-01')"
+                "".join(
+                    [
+                        "INSERT INTO model_endpoints ",
+                        "(id, owner_id, name, base_url, enabled, native_tools, vision, thinking, ",
+                        "created_at, updated_at) VALUES ",
+                        "('e1', 'op', 'Local · acme/m', 'http://127.0.0.1:9/v1', 0, 1, 0, 0, ",
+                        "'2026-01-01', '2026-01-01'), ",
+                        "('e2', 'op', 'My cloud', 'https://api.example.com/v1', 1, 1, 0, 0, ",
+                        "'2026-01-01', '2026-01-01')",
+                    ]
+                )
             )
         )
         session.commit()
@@ -237,7 +245,7 @@ def test_migration_backfills_local_prefix_endpoints():
 
 
 def _window(provider_id: str, model: str, window: int | None) -> int | None:
-    spec = llm.EndpointSpec(
+    spec = EndpointSpec(
         base_url="https://api.example.com",
         model=model,
         provider=provider_id,
@@ -278,7 +286,7 @@ def test_a_hosted_endpoint_with_no_window_keeps_the_librarys_figure():
 
 def _anthropic(max_output: int | None):
     return llm.build_model(
-        llm.EndpointSpec(
+        EndpointSpec(
             base_url="https://api.anthropic.com",
             model="claude-x",
             provider="anthropic",
@@ -308,7 +316,7 @@ def test_a_requests_own_max_tokens_still_wins():
 
 def test_the_other_wires_carry_no_output_ceiling():
     for provider_id in ("openai-compatible", "google"):
-        spec = llm.EndpointSpec(
+        spec = EndpointSpec(
             base_url="https://api.example.com",
             model="m",
             provider=provider_id,
@@ -321,7 +329,7 @@ def test_the_other_wires_carry_no_output_ceiling():
 def test_the_openai_wire_still_merges_leading_system_messages():
     """The window is a *second* field on that adapter's partial profile — the merge flag
     it has always set must survive being joined by one."""
-    spec = llm.EndpointSpec(
+    spec = EndpointSpec(
         base_url="http://127.0.0.1:8080/v1",
         model="Qwen3-30B",
         provider="openai-compatible",

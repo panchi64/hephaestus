@@ -5,43 +5,56 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Coroutine, Sequence
 from pathlib import Path
+from typing import cast, override
 
 from services.searxng import ManagedSearxng
+from services.vm.host import ServiceHost
 from services.vm.platform import GuestLayout
 
 
-class _ServiceVM:
+class _ServiceVM(ServiceHost):
     """Records the calls ManagedSearxng makes; its forwarded port is a local HTTP stub."""
 
     def __init__(self, port: int) -> None:
-        self.layout = GuestLayout()
-        self.port = port
+        self._layout: GuestLayout = GuestLayout()
+        self.port: int = port
         self.calls: list[tuple[object, ...]] = []
         self.puts: list[tuple[str, str]] = []
         self.services: list[tuple[str, str, list[str]]] = []
-        self.hooks: list[Callable[[], Awaitable[None]]] = []
+        self.hooks: list[Callable[[], Coroutine[object, object, None]]] = []
 
-    def on_ready(self, hook: Callable[[], Awaitable[None]]) -> None:
+    @property
+    @override
+    def layout(self) -> GuestLayout:
+        return self._layout
+
+    @override
+    def on_ready(self, hook: Callable[[], Coroutine[object, object, None]]) -> None:
         self.hooks.append(hook)
 
+    @override
     async def wait_ready(self, timeout_s: float) -> bool:
         self.calls.append(("wait_ready",))
         return True
 
+    @override
     async def put_text(self, guest: str, text: str, *, mode: str = "0644") -> None:
         self.calls.append(("put_text", guest, text))
         self.puts.append((guest, text))
 
+    @override
     async def start_service(self, name: str, user: str, argv: Sequence[str]) -> None:
         self.calls.append(("start_service", name, user, list(argv)))
         self.services.append((name, user, list(argv)))
 
+    @override
     async def forward(self, guest_port: int) -> int:
         self.calls.append(("forward", guest_port))
         return self.port
 
+    @override
     async def stop_service(self, name: str) -> None:
         self.calls.append(("stop_service", name))
 
@@ -49,9 +62,9 @@ class _ServiceVM:
         return [c for c in self.calls if c[0] == call]
 
 
-async def _http_stub(status: int = 200):
-    async def handler(reader, writer):
-        await reader.read(4096)
+async def _http_stub(status: int = 200) -> tuple[asyncio.Server, int]:
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        _ = await reader.read(4096)
         writer.write(
             f"HTTP/1.1 {status} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode()
         )
@@ -59,7 +72,8 @@ async def _http_stub(status: int = 200):
         writer.close()
 
     server = await asyncio.start_server(handler, "127.0.0.1", 0)
-    return server, server.sockets[0].getsockname()[1]
+    _host, port = cast(tuple[str, int], server.sockets[0].getsockname())
+    return server, port
 
 
 def _manager(
@@ -184,6 +198,6 @@ def test_settings_enable_json_and_keep_a_stable_secret_key():
     assert "limiter: false" in text  # a single local operator, not a public instance
 
     key_first = (data_dir / "searxng" / "secret_key").read_text()
-    m._settings("127.0.0.1:3129")  # a re-boot rewrites settings...
+    _ = m._settings("127.0.0.1:3129")  # a re-boot rewrites settings...
     key_second = (data_dir / "searxng" / "secret_key").read_text()
     assert key_first == key_second  # ...but reuses the persisted key

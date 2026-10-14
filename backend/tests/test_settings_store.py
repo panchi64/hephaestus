@@ -109,7 +109,7 @@ async def test_the_request_limit_distinguishes_unset_from_set():
     assert await get_agent_request_limit_override(store, OWNER) is None
     assert await get_agent_request_limit(store, OWNER) == get_settings().agent_request_limit
 
-    await set_agent_request_limit(store, OWNER, 10)
+    _ = await set_agent_request_limit(store, OWNER, 10)
     assert await get_agent_request_limit_override(store, OWNER) == 10
     assert await get_agent_request_limit(store, OWNER) == 10
 
@@ -131,10 +131,10 @@ async def test_there_is_no_subagent_cap_until_the_operator_sets_one():
     # many the work splits into" is the intended behaviour rather than an unset one.
     assert await get_subagent_limit(store, OWNER) is None
 
-    await set_subagent_limit(store, OWNER, 3)
+    _ = await set_subagent_limit(store, OWNER, 3)
     assert await get_subagent_limit(store, OWNER) == 3
 
-    await set_subagent_limit(store, OWNER, None)
+    _ = await set_subagent_limit(store, OWNER, None)
     assert await get_subagent_limit(store, OWNER) is None
 
 
@@ -189,7 +189,7 @@ async def test_wall_clock_timeout_off_is_stored_rather_than_falling_back():
     # The one getter where "no value" is a real answer: an operator who switches the bound
     # off must stay off even against a deploy that sets `run_wall_clock_timeout_s`.
     store = _store()
-    await set_wall_clock_timeout(store, OWNER, 3600.0)
+    _ = await set_wall_clock_timeout(store, OWNER, 3600.0)
     assert await set_wall_clock_timeout(store, OWNER, None) is None
     assert await get_wall_clock_timeout(store, OWNER) is None
     assert await store.get(OWNER, WALL_CLOCK_TIMEOUT_KEY) == ""

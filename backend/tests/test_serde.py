@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import override
 
 from core.serde import jsonable
 
@@ -42,6 +43,7 @@ def test_jsonable_stringifies_datetimes():
 
 def test_jsonable_falls_back_to_str_for_a_genuinely_unserializable_object():
     class Opaque:
+        @override
         def __repr__(self) -> str:
             return "opaque!"
 

@@ -36,11 +36,11 @@ def _poisoned_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo.mkdir()
     marker = tmp_path / "marker"
     hook = tmp_path / "hook.sh"
-    hook.write_text(f'#!/bin/sh\ntouch "{marker}"\nexit 1\n')
+    _ = hook.write_text(f'#!/bin/sh\ntouch "{marker}"\nexit 1\n')
     hook.chmod(0o755)
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "core.fsmonitor", str(hook)], cwd=repo, check=True)
-    (repo / "a.txt").write_text("hello\n")
+    _ = subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    _ = subprocess.run(["git", "config", "core.fsmonitor", str(hook)], cwd=repo, check=True)
+    _ = (repo / "a.txt").write_text("hello\n")
     return repo, marker
 
 
@@ -53,7 +53,7 @@ async def test_a_repository_cannot_run_its_own_hook_on_a_status(tmp_path: Path):
 
     # The precondition, asserted rather than assumed: on a git that does not run the hook
     # here there is nothing for the pins to prevent, and a green test would say nothing.
-    await _status(repo, dict(os.environ))
+    _ = await _status(repo, dict(os.environ))
     if not marker.exists():
         pytest.skip("this git does not consult core.fsmonitor for a status here")
 
@@ -72,15 +72,15 @@ async def test_an_ordinary_diff_still_works_under_the_pins(tmp_path: Path):
     """
     repo = tmp_path / "clean"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    (repo / "a.txt").write_text("one\n")
-    subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
-    subprocess.run(
+    _ = subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    _ = (repo / "a.txt").write_text("one\n")
+    _ = subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
+    _ = subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"],
         cwd=repo,
         check=True,
     )
-    (repo / "a.txt").write_text("one\ntwo\n")
+    _ = (repo / "a.txt").write_text("one\ntwo\n")
 
     result = await run_on_host("git diff", cwd=repo, env=git_config_pins(os.environ), timeout_s=30)
     assert result.exit_code == 0, result.stderr
@@ -124,7 +124,9 @@ class TestThePins:
         assert env["HOME"] == "/home/x"
 
 
-def test_the_spawn_environment_keeps_the_pins_and_still_drops_the_keys(monkeypatch):
+def test_the_spawn_environment_keeps_the_pins_and_still_drops_the_keys(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """The two controls compose, and they compose in *one* function on purpose.
 
     Both answer the same question — what a spawned command reads out of its environment

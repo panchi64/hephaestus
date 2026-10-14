@@ -61,8 +61,8 @@ async def test_cancel_and_wait_gives_up_on_a_task_that_ignores_the_cancel():
     assert time.monotonic() - started < 1.0
     assert not task.done()
     release.set()
-    task.cancel()
-    await asyncio.wait({task}, timeout=1.0)
+    _ = task.cancel()
+    _ = await asyncio.wait({task}, timeout=1.0)
 
 
 async def test_cancel_and_wait_accepts_none_and_finished_tasks():
@@ -83,7 +83,7 @@ async def test_worker_stop_respects_its_deadline_with_a_stuck_job():
     await worker.start()
     worker.submit(1)
     worker.submit(2)
-    await started.wait()
+    _ = await started.wait()
     began = time.monotonic()
     await worker.stop(drain_timeout_s=0.2)
     assert time.monotonic() - began < 2.0
@@ -125,8 +125,8 @@ async def test_get_unless_shutdown_yields_items_times_out_and_stops():
     queue.put_nowait(7)
     assert await get_unless_shutdown(queue, 1.0) == 7
     with pytest.raises(TimeoutError):
-        await get_unless_shutdown(queue, 0.05)
-    asyncio.get_running_loop().call_later(0.05, begin_shutdown)
+        _ = await get_unless_shutdown(queue, 0.05)
+    _ = asyncio.get_running_loop().call_later(0.05, begin_shutdown)
     assert await asyncio.wait_for(get_unless_shutdown(queue), 1.0) is STOPPED
 
 
@@ -162,7 +162,7 @@ async def test_run_stream_subscriber_ends_on_shutdown_though_the_run_never_close
     await asyncio.sleep(0.05)
     assert not ended.is_set()
     begin_shutdown()
-    await asyncio.wait_for(ended.wait(), 1.0)
+    _ = await asyncio.wait_for(ended.wait(), 1.0)
     await task
 
 
@@ -174,7 +174,7 @@ async def test_sse_response_ends_on_shutdown_instead_of_pinging_forever():
 
     response = sse_stream(never_ends, lambda item: f"data: {item}\n\n")
     frames = response.body_iterator.__aiter__()
-    asyncio.get_running_loop().call_later(0.05, begin_shutdown)
+    _ = asyncio.get_running_loop().call_later(0.05, begin_shutdown)
 
     async def drain():
         return [frame async for frame in frames]

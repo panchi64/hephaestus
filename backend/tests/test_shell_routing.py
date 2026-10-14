@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from services.permissions import Reach
+
 BRANCH = "hephaestus/thread-1"
 
 
@@ -15,7 +19,7 @@ class TestWhereTheToolRunsACommand:
     command runs in the VM" a statement with no exceptions in it.
     """
 
-    def _boundary(self, tmp_path, command, *, reach):
+    def _boundary(self, tmp_path: Path, command: str, *, reach: Reach):
         from services.workspace import HostFiles, RunWorkspace
         from tools import shell as shell_tool
 
@@ -28,21 +32,23 @@ class TestWhereTheToolRunsACommand:
         assert (boundary.reason is None) is boundary.fenced
         return boundary
 
-    def test_a_workspace_command_runs_in_the_vm_with_no_network(self, tmp_path):
+    def test_a_workspace_command_runs_in_the_vm_with_no_network(self, tmp_path: Path):
         boundary = self._boundary(tmp_path, "uv sync", reach="workspace")
         assert boundary.where == "vm" and boundary.network is False
 
-    def test_a_network_command_runs_in_the_vm_with_the_conversations_egress(self, tmp_path):
+    def test_a_network_command_runs_in_the_vm_with_the_conversations_egress(self, tmp_path: Path):
         boundary = self._boundary(tmp_path, "uv sync", reach="network")
         assert boundary.where == "vm" and boundary.network is True
 
-    def test_a_workspace_command_that_names_a_url_is_given_the_network_it_needs(self, tmp_path):
+    def test_a_workspace_command_that_names_a_url_is_given_the_network_it_needs(
+        self, tmp_path: Path
+    ):
         # It was approved in the words it was read in, so it gets what it plainly asks for
         # rather than failing; the declaration itself is reported as made.
         boundary = self._boundary(tmp_path, "curl https://example.com/x", reach="workspace")
         assert boundary.where == "vm" and boundary.network is True
 
-    def test_a_host_declaration_is_the_one_that_asks_for_the_machine(self, tmp_path):
+    def test_a_host_declaration_is_the_one_that_asks_for_the_machine(self, tmp_path: Path):
         boundary = self._boundary(tmp_path, "uv sync", reach="host")
         assert boundary.where == "host" and boundary.network is False
         assert boundary.reason is not None and "host" in boundary.reason

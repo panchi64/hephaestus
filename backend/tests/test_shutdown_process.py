@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -28,7 +29,8 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+        _host, port = cast(tuple[str, int], sock.getsockname())
+        return port
 
 
 def _env(tmp: Path, port: int) -> dict[str, str]:
@@ -89,4 +91,4 @@ def test_sigint_stops_a_server_with_an_open_notification_stream(tmp_path: Path):
     finally:
         if proc.poll() is None:
             proc.kill()
-            proc.wait()
+            _ = proc.wait()
