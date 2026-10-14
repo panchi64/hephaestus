@@ -4,50 +4,60 @@ from __future__ import annotations
 
 import asyncio
 
-from runs.events import AnswerDelta
+import pytest
 
-from ._helpers import client_app, collect_sse_events
+from runs import AnswerDelta, Run, RunRegistry
+from services.conversations import ConversationStore
+
+from ._helpers import app_state, client_app, collect_sse_events
+from ._json import json_body, json_list, n, obj, s
 
 
 async def test_stream_delivers_full_event_record():
     async with client_app() as (client, app):
 
-        async def orch(run):
-            run.emit(AnswerDelta(text="hello"))
+        async def orch(run: Run) -> None:
+            _ = run.emit(AnswerDelta(text="hello"))
 
-        run = app.state.runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
+        run = app_state(app, "runs", RunRegistry).submit(
+            kind="chat", owner_id="operator", orchestrator=orch
+        )
         events = await collect_sse_events(client, run.id)
 
     types = [e["type"] for e in events]
     assert types[0] == "run.started"
     assert "answer.delta" in types
     assert types[-1] == "run.ended"
-    assert [e["seq"] for e in events] == sorted(e["seq"] for e in events)
+    assert [n(e["seq"]) for e in events] == sorted(n(e["seq"]) for e in events)
 
 
 async def test_resume_replays_only_missed_events():
     async with client_app() as (client, app):
 
-        async def orch(run):
-            run.emit(AnswerDelta(text="a"))
-            run.emit(AnswerDelta(text="b"))
+        async def orch(run: Run) -> None:
+            _ = run.emit(AnswerDelta(text="a"))
+            _ = run.emit(AnswerDelta(text="b"))
 
-        run = app.state.runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
+        run = app_state(app, "runs", RunRegistry).submit(
+            kind="chat", owner_id="operator", orchestrator=orch
+        )
         await run.wait()
         events = await collect_sse_events(client, run.id, last_event_id=2)
 
-    assert all(e["seq"] > 2 for e in events)
+    assert all(n(e["seq"]) > 2 for e in events)
     assert events[-1]["type"] == "run.ended"
 
 
 async def test_cancel_endpoint():
     async with client_app() as (client, app):
 
-        async def orch(run):
-            run.emit(AnswerDelta(text="working"))
-            await asyncio.Event().wait()
+        async def orch(run: Run) -> None:
+            _ = run.emit(AnswerDelta(text="working"))
+            _ = await asyncio.Event().wait()
 
-        run = app.state.runs.submit(kind="agent", owner_id="operator", orchestrator=orch)
+        run = app_state(app, "runs", RunRegistry).submit(
+            kind="agent", owner_id="operator", orchestrator=orch
+        )
         await asyncio.sleep(0)
 
         resp = await client.post(f"/runs/{run.id}/cancel")
@@ -55,16 +65,18 @@ async def test_cancel_endpoint():
         await run.wait()
 
         status = await client.get(f"/runs/{run.id}")
-        assert status.json()["status"] == "cancelled"
+        assert json_body(status)["status"] == "cancelled"
 
 
 async def test_cancel_terminal_run_conflicts():
     async with client_app() as (client, app):
 
-        async def orch(run):
+        async def orch(_run: Run) -> None:
             return None
 
-        run = app.state.runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
+        run = app_state(app, "runs", RunRegistry).submit(
+            kind="chat", owner_id="operator", orchestrator=orch
+        )
         await run.wait()
         resp = await client.post(f"/runs/{run.id}/cancel")
         assert resp.status_code == 409
@@ -74,10 +86,12 @@ async def test_withdraw_queued_message_matrix():
     async with client_app() as (client, app):
         gate = asyncio.Event()
 
-        async def orch(run):
-            await gate.wait()
+        async def orch(_run: Run) -> None:
+            _ = await gate.wait()
 
-        run = app.state.runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
+        run = app_state(app, "runs", RunRegistry).submit(
+            kind="chat", owner_id="operator", orchestrator=orch
+        )
         await asyncio.sleep(0)
         message = run.enqueue_message("wait, also")
 
@@ -108,10 +122,12 @@ async def test_edit_queued_message_matrix():
     async with client_app() as (client, app):
         gate = asyncio.Event()
 
-        async def orch(run):
-            await gate.wait()
+        async def orch(_run: Run) -> None:
+            _ = await gate.wait()
 
-        run = app.state.runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
+        run = app_state(app, "runs", RunRegistry).submit(
+            kind="chat", owner_id="operator", orchestrator=orch
+        )
         await asyncio.sleep(0)
         message = run.enqueue_message("first draft")
 
@@ -153,10 +169,12 @@ async def test_hold_queued_message_matrix():
     async with client_app() as (client, app):
         gate = asyncio.Event()
 
-        async def orch(run):
-            await gate.wait()
+        async def orch(_run: Run) -> None:
+            _ = await gate.wait()
 
-        run = app.state.runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
+        run = app_state(app, "runs", RunRegistry).submit(
+            kind="chat", owner_id="operator", orchestrator=orch
+        )
         await asyncio.sleep(0)
         message = run.enqueue_message("still writing this")
 
@@ -203,69 +221,74 @@ async def test_hold_queued_message_matrix():
 
 async def test_list_runs_active_only_by_default():
     async with client_app() as (client, app):
+        runs = app_state(app, "runs", RunRegistry)
 
-        async def blocked(run):
-            run.emit(AnswerDelta(text="working"))
-            await asyncio.Event().wait()
+        async def blocked(run: Run) -> None:
+            _ = run.emit(AnswerDelta(text="working"))
+            _ = await asyncio.Event().wait()
 
-        async def done(run):
+        async def done(_run: Run) -> None:
             return None
 
-        live = app.state.runs.submit(kind="chat", owner_id="operator", orchestrator=blocked)
-        finished = app.state.runs.submit(kind="chat", owner_id="operator", orchestrator=done)
+        live = runs.submit(kind="chat", owner_id="operator", orchestrator=blocked)
+        finished = runs.submit(kind="chat", owner_id="operator", orchestrator=done)
         await finished.wait()
         await asyncio.sleep(0)
 
-        active = (await client.get("/runs")).json()
-        assert {r["id"] for r in active} == {live.id}
+        active = json_list(await client.get("/runs"))
+        assert {s(obj(r)["id"]) for r in active} == {live.id}
 
-        everything = (await client.get("/runs", params={"active": False})).json()
-        assert {finished.id, live.id} <= {r["id"] for r in everything}
+        everything = json_list(await client.get("/runs", params={"active": False}))
+        assert {finished.id, live.id} <= {s(obj(r)["id"]) for r in everything}
 
-        await app.state.runs.cancel(live.id)
+        _ = await runs.cancel(live.id)
         await live.wait()
 
 
 async def test_list_runs_empty():
     async with client_app() as (client, _app):
-        assert (await client.get("/runs")).json() == []
+        assert json_list(await client.get("/runs")) == []
 
 
 async def test_list_runs_enriches_with_conversation_id_and_title():
     async with client_app() as (client, app):
-        conv_id = await app.state.conversations.create_conversation("operator")
-        await app.state.conversations.set_title(conv_id, "Weekend plans")
+        conversations = app_state(app, "conversations", ConversationStore)
+        conv_id = await conversations.create_conversation("operator")
+        await conversations.set_title(conv_id, "Weekend plans")
         started, release = asyncio.Event(), asyncio.Event()
 
-        async def orch(run):
+        async def orch(_run: Run) -> None:
             started.set()
-            await release.wait()
+            _ = await release.wait()
 
-        run = app.state.runs.submit(
+        run = app_state(app, "runs", RunRegistry).submit(
             kind="chat", owner_id="operator", orchestrator=orch, conversation_id=conv_id
         )
-        await started.wait()
+        _ = await started.wait()
 
-        body = (await client.get("/runs")).json()
+        body = json_list(await client.get("/runs"))
         assert len(body) == 1
-        assert body[0]["conversationId"] == conv_id
-        assert body[0]["conversationTitle"] == "Weekend plans"
-        assert body[0]["status"] in ("queued", "running", "awaiting_input")
+        first = obj(body[0])
+        assert first["conversationId"] == conv_id
+        assert first["conversationTitle"] == "Weekend plans"
+        assert first["status"] in ("queued", "running", "awaiting_input")
         # Existing fields keep their original (snake_case) key — backward compatible.
-        assert body[0]["owner_id"] == "operator"
+        assert first["owner_id"] == "operator"
 
         release.set()
         await run.wait()
 
 
-async def test_listing_many_runs_reads_titles_once_and_still_matches_them_up():
+async def test_listing_many_runs_reads_titles_once_and_still_matches_them_up(
+    monkeypatch: pytest.MonkeyPatch,
+):
     # The listing used to ask for a full conversation summary per run — every thread's rows
     # read to produce one title. It now resolves the whole page in one query; each run must
     # still get *its own* title, and an untitled thread must stay null rather than
     # borrowing a neighbour's.
     async with client_app() as (client, app):
-        store = app.state.conversations
-        titled = []
+        store = app_state(app, "conversations", ConversationStore)
+        titled: list[tuple[str, str]] = []
         for name in ("Weekend plans", "Tax return", "Bike repair"):
             conv_id = await store.create_conversation("operator")
             await store.set_title(conv_id, name)
@@ -275,31 +298,33 @@ async def test_listing_many_runs_reads_titles_once_and_still_matches_them_up():
         release = asyncio.Event()
         started: list[asyncio.Event] = []
 
-        async def orch(run):
+        async def orch(_run: Run) -> None:
             started[-1].set()
-            await release.wait()
+            _ = await release.wait()
 
-        runs = []
+        runs: list[Run] = []
         for conv_id in [c for c, _ in titled] + [untitled]:
             started.append(asyncio.Event())
             runs.append(
-                app.state.runs.submit(
+                app_state(app, "runs", RunRegistry).submit(
                     kind="chat", owner_id="operator", orchestrator=orch, conversation_id=conv_id
                 )
             )
-            await started[-1].wait()
+            _ = await started[-1].wait()
 
         calls: list[list[str]] = []
         original = store.titles
 
-        async def counted(ids, owner_id):
+        async def counted(ids: list[str], owner_id: str) -> dict[str, str]:
             calls.append(list(ids))
             return await original(ids, owner_id)
 
-        store.titles = counted
-        body = (await client.get("/runs")).json()
+        monkeypatch.setattr(store, "titles", counted)
+        body = json_list(await client.get("/runs"))
 
-        by_conversation = {row["conversationId"]: row["conversationTitle"] for row in body}
+        by_conversation = {
+            s(obj(row)["conversationId"]): obj(row)["conversationTitle"] for row in body
+        }
         assert by_conversation == {**dict(titled), untitled: None}
         assert len(calls) == 1  # one read for four runs, not four
 
@@ -311,13 +336,15 @@ async def test_listing_many_runs_reads_titles_once_and_still_matches_them_up():
 async def test_get_run_conversation_fields_are_null_without_a_conversation():
     async with client_app() as (client, app):
 
-        async def orch(run):
+        async def orch(_run: Run) -> None:
             return None
 
-        run = app.state.runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
+        run = app_state(app, "runs", RunRegistry).submit(
+            kind="chat", owner_id="operator", orchestrator=orch
+        )
         await run.wait()
 
-        body = (await client.get(f"/runs/{run.id}")).json()
+        body = json_body(await client.get(f"/runs/{run.id}"))
         assert body["conversationId"] is None
         assert body["conversationTitle"] is None
 

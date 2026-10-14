@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 
 from alembic import context
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Connection, Engine, create_engine
 from sqlmodel import SQLModel
 
 from core.exceptions import SchemaMigrationError
@@ -34,7 +34,7 @@ config = context.config
 target_metadata = SQLModel.metadata
 
 
-def _set_sqlite_foreign_keys(connection, *, enabled: bool) -> None:
+def _set_sqlite_foreign_keys(connection: Connection, *, enabled: bool) -> None:
     """Toggle SQLite foreign-key enforcement on the raw DBAPI connection.
 
     ``make_engine`` turns enforcement on for every connection, but batch migrations
@@ -53,7 +53,7 @@ def _set_sqlite_foreign_keys(connection, *, enabled: bool) -> None:
         cursor.close()
 
 
-def _assert_foreign_key_integrity(connection) -> None:
+def _assert_foreign_key_integrity(connection: Connection) -> None:
     """Re-validate referential integrity after the batch rebuilds.
 
     Enforcement is off while migrating, so SQLite accepts the table-rebuild's
@@ -66,14 +66,15 @@ def _assert_foreign_key_integrity(connection) -> None:
     dbapi_connection = connection.connection
     cursor = dbapi_connection.cursor()
     try:
-        violations = cursor.execute("PRAGMA foreign_key_check").fetchall()
+        cursor.execute("PRAGMA foreign_key_check")
+        violations = cursor.fetchall()
     finally:
         cursor.close()
     if violations:
         raise SchemaMigrationError(f"foreign-key integrity broken by migration: {violations}")
 
 
-def _run(connection) -> None:
+def _run(connection: Connection) -> None:
     # SQLite can't ALTER in place, so batch mode rebuilds the table (create copy → drop
     # original → rename). Dropping a table other rows still reference fails while FK
     # enforcement is on — and SQLite only lets the pragma change outside a transaction —
@@ -99,13 +100,15 @@ def _run(connection) -> None:
 
 
 def run_migrations_online() -> None:
-    attached = config.attributes.get("connection")
+    attributes: dict[str, object] = config.attributes
+    attached = attributes.get("connection")
     if attached is not None:
         # A live engine or connection handed in by the app at startup.
         if isinstance(attached, Engine):
             with attached.connect() as connection:
                 _run(connection)
         else:
+            assert isinstance(attached, Connection)
             _run(attached)
         return
 

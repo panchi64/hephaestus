@@ -14,6 +14,11 @@ is collected — so patching here is what reaches every caller, including the on
 from __future__ import annotations
 
 import os
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.egress import EgressPolicy
 
 # Host-command confinement is a *process-global* singleton (`sandbox-runtime` configures
 # one sandbox for the whole interpreter). Several tests drive `code_run_host_command`
@@ -23,9 +28,11 @@ import os
 # behave differently on two developers' laptops for reasons unrelated to what is being
 # tested. Off here, so the host path under test is the plain subprocess; the confinement
 # logic itself is exercised explicitly in `test_sandbox.py`, which configures it directly.
-os.environ.setdefault("HEPHAESTUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
+_ = os.environ.setdefault("HEPHAESTUS_HOST_COMMAND_SANDBOX_ENABLED", "false")
 # The app would otherwise boot a real QEMU VM; the VM tests drive a local stand-in.
-os.environ.setdefault("HEPHAESTUS_VM_ENABLED", "false")
+_ = os.environ.setdefault("HEPHAESTUS_VM_ENABLED", "false")
+
+from argon2 import PasswordHasher  # noqa: E402
 
 import core.crypto  # noqa: E402 — must follow the environment default above
 import core.db  # noqa: E402
@@ -45,7 +52,7 @@ core.db.init_db = _schema.init_db
 core.crypto._KEK_TIME_COST = 1
 core.crypto._KEK_MEMORY_COST = 8
 core.crypto._KEK_PARALLELISM = 1
-core.crypto._PASSWORD_HASHER = core.crypto.PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
+core.crypto._PASSWORD_HASHER = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
 
 # Every agent carries `run_code` (`agent/code_mode.py`), and `TestModel`'s default of
 # calling *every* tool it is offered would call it too — with the placeholder string it
@@ -54,12 +61,16 @@ core.crypto._PASSWORD_HASHER = core.crypto.PasswordHasher(time_cost=1, memory_co
 # catalog, not about scripts; the ones that are about scripts name `run_code` and write
 # real code (`test_run_code.py`). So "call everything" leaves `run_code` out, and an
 # explicit `call_tools=[...]` list is untouched.
+from pydantic_ai.models import ModelRequestParameters  # noqa: E402
 from pydantic_ai.models.test import TestModel as _TestModel  # noqa: E402
+from pydantic_ai.tools import ToolDefinition  # noqa: E402
 
 _call_everything = _TestModel._get_tool_calls
 
 
-def _call_everything_but_scripts(self, model_request_parameters):
+def _call_everything_but_scripts(
+    self: _TestModel, model_request_parameters: ModelRequestParameters
+) -> list[tuple[str, ToolDefinition]]:
     calls = _call_everything(self, model_request_parameters)
     if self.call_tools == "all":
         return [(name, tool) for name, tool in calls if name != "run_code"]
@@ -69,7 +80,7 @@ def _call_everything_but_scripts(self, model_request_parameters):
 _TestModel._get_tool_calls = _call_everything_but_scripts
 
 
-def egress_policy(data_dir, domains: tuple[str, ...] = ("pypi.org",)):
+def egress_policy(data_dir: Path, domains: tuple[str, ...] = ("pypi.org",)) -> EgressPolicy:
     """A real :class:`~services.egress.EgressPolicy` over a throwaway database.
 
     Here rather than in each suite because four of them need one now — the session

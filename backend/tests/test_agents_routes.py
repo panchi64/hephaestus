@@ -3,24 +3,25 @@
 from __future__ import annotations
 
 from ._helpers import client_app
+from ._json import json_body, json_list, obj, s
 
 _BODY = {"name": "scout", "description": "Looks around.", "instructions": "Look around."}
 
 
-async def test_the_builtins_are_listed_read_only(monkeypatch):
+async def test_the_builtins_are_listed_read_only():
     async with client_app() as (client, _app):
-        listed = (await client.get("/agents")).json()
-    by_id = {a["id"]: a for a in listed}
+        listed = json_list(await client.get("/agents"))
+    by_id = {s(obj(a)["id"]): obj(a) for a in listed}
     assert by_id["builtin:default"]["editable"] is False
     assert by_id["builtin:explorer"]["source"] == "builtin"
-    assert all(not a["editable"] for a in listed)
+    assert all(not obj(a)["editable"] for a in listed)
 
 
 async def test_a_builtin_is_fetched_by_its_id():
     async with client_app() as (client, _app):
         got = await client.get("/agents/builtin:reviewer")
         assert got.status_code == 200
-        assert got.json()["name"] == "reviewer"
+        assert json_body(got)["name"] == "reviewer"
         assert (await client.get("/agents/builtin:nope")).status_code == 404
 
 
@@ -30,13 +31,14 @@ async def test_creating_makes_an_inactive_draft():
             "/agents", json={**_BODY, "tools": ["files"], "deny_tools": ["shell"]}
         )
         assert made.status_code == 201
-        body = made.json()
+        body = json_body(made)
         assert body["published"] is False
         assert body["source"] == "user"
         assert body["editable"] is True
         assert body["tools"] == ["files"]
         assert body["deny_tools"] == ["shell"]
-        assert body["id"] == (await client.get(f"/agents/{body['id']}")).json()["id"]
+        fetched = json_body(await client.get(f"/agents/{s(body['id'])}"))
+        assert body["id"] == fetched["id"]
 
 
 async def test_bad_input_is_a_422_naming_the_field():
@@ -48,27 +50,27 @@ async def test_bad_input_is_a_422_naming_the_field():
         ):
             resp = await client.post("/agents", json=body)
             assert resp.status_code == 422
-            assert resp.json()["detail"]["field"] == field
+            assert obj(json_body(resp)["detail"])["field"] == field
         assert (await client.post("/agents", json={**_BODY, "workspace": "x"})).status_code == 422
 
 
 async def test_publishing_and_unpublishing():
     async with client_app() as (client, _app):
-        agent_id = (await client.post("/agents", json=_BODY)).json()["id"]
-        live = (await client.post(f"/agents/{agent_id}/publish")).json()
+        agent_id = s(json_body(await client.post("/agents", json=_BODY))["id"])
+        live = json_body(await client.post(f"/agents/{agent_id}/publish"))
         assert live["published"] is True and live["active"] is True
-        down = (await client.post(f"/agents/{agent_id}/unpublish")).json()
+        down = json_body(await client.post(f"/agents/{agent_id}/unpublish"))
         assert down["published"] is False and down["active"] is False
 
 
 async def test_patching_changes_what_is_sent_and_clears_an_explicit_null():
     async with client_app() as (client, _app):
-        agent_id = (await client.post("/agents", json={**_BODY, "model": "m"})).json()["id"]
+        agent_id = s(json_body(await client.post("/agents", json={**_BODY, "model": "m"}))["id"])
         patched = await client.patch(
             f"/agents/{agent_id}", json={"description": "Looks harder.", "model": None}
         )
         assert patched.status_code == 200
-        body = patched.json()
+        body = json_body(patched)
         assert body["description"] == "Looks harder."
         assert body["model"] is None
         assert body["instructions"] == "Look around."
@@ -79,23 +81,25 @@ async def test_patching_changes_what_is_sent_and_clears_an_explicit_null():
 
 async def test_deleting():
     async with client_app() as (client, _app):
-        agent_id = (await client.post("/agents", json=_BODY)).json()["id"]
+        agent_id = s(json_body(await client.post("/agents", json=_BODY))["id"])
         assert (await client.delete(f"/agents/{agent_id}")).status_code == 204
         assert (await client.get(f"/agents/{agent_id}")).status_code == 404
 
 
 async def test_a_stored_agent_shadows_a_builtin_of_the_same_name():
     async with client_app() as (client, _app):
-        agent_id = (await client.post("/agents", json={**_BODY, "name": "reviewer"})).json()["id"]
-        await client.post(f"/agents/{agent_id}/publish")
-        listed = {a["id"]: a for a in (await client.get("/agents")).json()}
+        agent_id = s(
+            json_body(await client.post("/agents", json={**_BODY, "name": "reviewer"}))["id"]
+        )
+        _ = await client.post(f"/agents/{agent_id}/publish")
+        listed = {s(obj(a)["id"]): obj(a) for a in json_list(await client.get("/agents"))}
         assert listed[agent_id]["active"] is True
         assert listed["builtin:reviewer"]["active"] is False
 
 
 async def test_an_exported_agent_imports_back_as_a_draft():
     async with client_app() as (client, _app):
-        made = (
+        made = json_body(
             await client.post(
                 "/agents",
                 json={
@@ -108,17 +112,17 @@ async def test_an_exported_agent_imports_back_as_a_draft():
                     "can_delegate": True,
                 },
             )
-        ).json()
-        exported = await client.get(f"/agents/{made['id']}/export")
+        )
+        exported = await client.get(f"/agents/{s(made['id'])}/export")
         assert exported.status_code == 200
         assert 'filename="scout.md"' in exported.headers["content-disposition"]
-        await client.delete(f"/agents/{made['id']}")
+        _ = await client.delete(f"/agents/{s(made['id'])}")
 
         imported = await client.post(
             "/agents/import", files={"file": ("scout.md", exported.content, "text/markdown")}
         )
         assert imported.status_code == 201
-        body = imported.json()
+        body = json_body(imported)
         assert body["published"] is False
         assert {k: body[k] for k in ("name", "tools", "deny_tools", "workspace")} == {
             "name": "scout",
@@ -145,24 +149,24 @@ async def test_an_unreadable_import_is_a_422():
             "/agents/import", files={"file": ("x.md", b"no frontmatter here", "text/markdown")}
         )
         assert resp.status_code == 422
-        assert resp.json()["detail"]["field"] == "file"
+        assert obj(json_body(resp)["detail"])["field"] == "file"
 
 
 async def test_an_agent_is_edited_as_its_whole_file():
     async with client_app() as (client, _app):
-        agent_id = (await client.post("/agents", json=_BODY)).json()["id"]
-        document = (await client.get(f"/agents/{agent_id}/document")).json()["content"]
+        agent_id = s(json_body(await client.post("/agents", json=_BODY))["id"])
+        document = s(json_body(await client.get(f"/agents/{agent_id}/document"))["content"])
         assert document.startswith("---\nname: scout\n")
         edited = document.replace("Look around.", "Look harder.").replace(
             "description: Looks around.", "description: Looks around.\npermission: plan"
         )
         saved = await client.put(f"/agents/{agent_id}/document", json={"content": edited})
         assert saved.status_code == 200
-        assert saved.json()["instructions"] == "Look harder."
-        assert saved.json()["permission_ceiling"] == "plan"
+        assert json_body(saved)["instructions"] == "Look harder."
+        assert json_body(saved)["permission_ceiling"] == "plan"
         broken = await client.put(f"/agents/{agent_id}/document", json={"content": "nope"})
         assert broken.status_code == 422
-        assert broken.json()["detail"]["field"] == "file"
+        assert obj(json_body(broken)["detail"])["field"] == "file"
 
 
 async def test_a_builtin_reads_as_a_document_but_cannot_be_written():

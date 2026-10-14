@@ -1,0 +1,3 @@
+from pathlib import Path
+
+def ensure_ssh_key(key_dir: Path | None = None) -> tuple[Path, Path]: ...

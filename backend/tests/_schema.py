@@ -71,9 +71,9 @@ def init_db(engine: Engine) -> None:
         # connection handed `isolation_level = None` opens no transaction. The cursor is
         # closed explicitly before the backup — an unfinished read statement holds the
         # destination open, and `backup` refuses a destination that is still in use.
-        cursor = destination.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'")
+        cursor = destination.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1")
         try:
-            (tables,) = cursor.fetchone()
+            tables = bool(cursor.fetchall())
         finally:
             cursor.close()
         if not tables:

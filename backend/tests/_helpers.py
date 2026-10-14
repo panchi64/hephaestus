@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, override
 
 import httpx
+from fastapi import FastAPI
+from pydantic import JsonValue
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import AbstractToolset
 
 from agent import ParkedTurn
 from app import create_app
@@ -19,8 +26,15 @@ from runs import EventBody, Run
 from services.providers.base import ModelLimits
 from services.providers.openai_compat import OpenAICompatProvider
 
+from ._json import obj, parse_json
+
 if TYPE_CHECKING:
+    import pytest
+
     from agent.factory import TurnAgent
+    from services.approval_grants import ApprovalGrantStore
+    from services.endpoint_spec import EndpointSpec
+    from services.registry import ModelRegistry, ResolvedModel
     from tools import RunDeps
 
 #: The window the stub provider reports. It lives on the *provider*, not on the
@@ -42,17 +56,20 @@ class _StubProvider(OpenAICompatProvider):
     Only the limits are overridden; the rest is the OpenAI-compatible adapter's, and
     resolution is stubbed before it ever builds a model."""
 
-    id = _STUB_PROVIDER_ID
-    display_name = "Test stub"
-    requires_key = False
+    id: str = _STUB_PROVIDER_ID
+    display_name: str = "Test stub"
+    requires_key: bool = False
 
+    @override
     async def model_limits(
-        self, base_url: str, api_key: str | None, model: str, *, client=None
+        self, base_url: str, api_key: str | None, model: str, *, client: object = None
     ) -> ModelLimits:
         return ModelLimits(context_window=STUB_CONTEXT_WINDOW)
 
 
-async def stub_resolution(registry, model, *, reasoning_off=None):
+async def stub_resolution(
+    registry: ModelRegistry, model: Model, *, reasoning_off: ModelSettings | None = None
+) -> ResolvedModel:
     """A ``ResolvedModel`` whose window was **discovered**, for a test that stubs
     resolution but still wants the window to arrive the way it really does.
 
@@ -69,8 +86,8 @@ async def stub_resolution(registry, model, *, reasoning_off=None):
     )
 
 
-def _stub_spec():
-    from services.llm import EndpointSpec
+def _stub_spec() -> EndpointSpec:
+    from services.endpoint_spec import EndpointSpec
 
     # `context_window=None` is the point: it is what sends `_with_model_limits` to
     # the provider instead of short-circuiting on an operator-set value.
@@ -82,7 +99,7 @@ def _stub_spec():
     )
 
 
-def register_stub_provider(monkeypatch) -> None:
+def register_stub_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     """Add the stub adapter to the provider registry for one test.
 
     Through ``monkeypatch`` on the built registry dict, so it is removed afterwards —
@@ -95,7 +112,7 @@ def register_stub_provider(monkeypatch) -> None:
     monkeypatch.setattr(providers, "_PROVIDERS", registry)
 
 
-def is_fold_request(messages) -> bool:
+def is_fold_request(messages: Sequence[ModelMessage]) -> bool:
     """Whether a model request is a compaction summary — the turn's replay with the
     compaction instructions appended as the last user message."""
     from pydantic_ai import ModelRequest, UserPromptPart
@@ -109,20 +126,19 @@ def is_fold_request(messages) -> bool:
     )
 
 
-def fold_aware_model(*, answer: str = "the answer", summary: str = "FOLDED AWAY"):
+def fold_aware_model(*, answer: str = "the answer", summary: str = "FOLDED AWAY") -> FunctionModel:
     """A main model that writes ``summary`` when asked to fold the thread and ``answer``
     to anything else — the summary is written by the thread's own model now, so a test
     driving a turn that folds needs one model that can tell the two requests apart."""
     from pydantic_ai import ModelResponse, TextPart
-    from pydantic_ai.models.function import FunctionModel
 
-    def _text(messages) -> str:
+    def _text(messages: Sequence[ModelMessage]) -> str:
         return summary if is_fold_request(messages) else answer
 
-    async def respond(messages, info):
+    async def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content=_text(messages))])
 
-    async def stream(messages, info):
+    async def stream(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
         yield _text(messages)
 
     return FunctionModel(respond, stream_function=stream)
@@ -133,7 +149,9 @@ class FoldArgs(TypedDict):
     deps: RunDeps
 
 
-def fold_with(summary: str, *, categories=None) -> FoldArgs:
+def fold_with(
+    summary: str, *, categories: Mapping[str, AbstractToolset[RunDeps]] | None = None
+) -> FoldArgs:
     """The ``agent``/``deps`` pair ``compact_conversation`` writes a summary with: a turn's
     agent on a model that answers the fold with ``summary``, and the deps a turn would run
     it with. ``categories`` defaults to none, so no tool is offered."""
@@ -151,7 +169,9 @@ def fold_with(summary: str, *, categories=None) -> FoldArgs:
     }
 
 
-def patch_model_resolution(monkeypatch, *, output_text: str = "hi", call_tools=()):
+def patch_model_resolution(
+    monkeypatch: pytest.MonkeyPatch, *, output_text: str = "hi", call_tools: Sequence[str] = ()
+) -> None:
     """Point registry resolution at a ``TestModel`` so route tests run without a live
     model server. One patch covers every caller: ``resolve_detailed`` is the single
     entry point that builds a chat model, and ``resolve_background`` delegates to it,
@@ -165,13 +185,15 @@ def patch_model_resolution(monkeypatch, *, output_text: str = "hi", call_tools=(
     def _model() -> TestModel:
         return TestModel(custom_output_text=output_text, call_tools=list(call_tools))
 
-    async def resolve_detailed(self, role, **kwargs):
+    async def resolve_detailed(self: ModelRegistry, _role: str, **_kwargs: object) -> ResolvedModel:
         return await stub_resolution(self, _model())
 
     monkeypatch.setattr(ModelRegistry, "resolve_detailed", resolve_detailed)
 
 
-async def granting_store(owner: str, conv: str, *tool_names: str, ttl_s: float = 3600):
+async def granting_store(
+    owner: str, conv: str, *tool_names: str, ttl_s: float = 3600
+) -> ApprovalGrantStore:
     """An ``ApprovalGrantStore`` on a throwaway DB that pre-grants ``tool_names`` in
     ``conv``. Lets a ``TestModel``-driven wiring test (which calls every offered tool)
     drive an AE-3.8-gated recall tool through to its service — the active grant makes the
@@ -183,20 +205,30 @@ async def granting_store(owner: str, conv: str, *tool_names: str, ttl_s: float =
     init_db(engine)
     store = ApprovalGrantStore(engine, ttl_s)
     for name in tool_names:
-        await store.grant(owner, conv, name)
+        _ = await store.grant(owner, conv, name)
     return store
 
 
-def swap_tool_catalog(app, categories) -> None:
+def app_state[T](app: FastAPI, name: str, kind: type[T]) -> T:
+    """``app.state.<name>``, checked to be a ``kind`` — Starlette types every attribute ``Any``."""
+    state: dict[str, dict[str, object]] = vars(app.state)
+    value = state["_state"][name]
+    assert isinstance(value, kind), f"app.state.{name} is {type(value).__name__}"
+    return value
+
+
+def swap_tool_catalog(app: FastAPI, categories: Mapping[str, AbstractToolset[RunDeps]]) -> None:
     """Replace the booted app's assembled tool catalog **in place**. The mapping is one
     shared object — the chat route, the approval-resume path, and the scheduler's
     executor all hold the same dict the app assembled — so mutating its contents (not
     rebinding `app.state.tool_categories`) is what reaches every path."""
-    app.state.tool_categories.clear()
-    app.state.tool_categories.update(categories)
+    state: dict[str, dict[str, dict[str, AbstractToolset[RunDeps]]]] = vars(app.state)
+    current = state["_state"]["tool_categories"]
+    current.clear()
+    current.update(categories)
 
 
-def full_tool_categories():
+def full_tool_categories() -> dict[str, AbstractToolset[RunDeps]]:
     """The complete category mapping a real app assembles — core plus every manifest's
     `toolsets` export, via the same discovery the app uses — for tests that measure
     the whole catalog without booting an app."""
@@ -211,7 +243,9 @@ def full_tool_categories():
 
 
 @asynccontextmanager
-async def client_app(*, auth_enabled: bool = False, passphrase: str | None = "test-passphrase"):
+async def client_app(
+    *, auth_enabled: bool = False, passphrase: str | None = "test-passphrase"
+) -> AsyncGenerator[tuple[httpx.AsyncClient, FastAPI]]:
     """A booted app + async client, backed by a throwaway in-memory DB.
 
     An in-memory SQLite URL plus a temp data dir (for the keyfile) keep tests off
@@ -247,15 +281,17 @@ async def client_app(*, auth_enabled: bool = False, passphrase: str | None = "te
                 yield client, app
 
 
-async def collect_sse_events(client, run_id, *, last_event_id=None):
+async def collect_sse_events(
+    client: httpx.AsyncClient, run_id: str, *, last_event_id: int | None = None
+) -> list[dict[str, JsonValue]]:
     """Drain a run's SSE stream to a list of decoded event envelopes."""
     params = {} if last_event_id is None else {"last_event_id": last_event_id}
-    events = []
+    events: list[dict[str, JsonValue]] = []
     async with client.stream("GET", f"/runs/{run_id}/events", params=params) as resp:
         assert resp.status_code == 200
         async for line in resp.aiter_lines():
             if line.startswith("data:"):
-                events.append(json.loads(line[len("data:") :].strip()))
+                events.append(obj(parse_json(line[len("data:") :].strip())))
     return events
 
 

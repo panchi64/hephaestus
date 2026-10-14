@@ -39,6 +39,7 @@ from ._helpers import (
     stub_resolution,
     swap_tool_catalog,
 )
+from ._json import arr, obj
 
 OWNER = "operator"
 # The constant the projection keys on. Used rather than a literal so the tests below —
@@ -384,8 +385,9 @@ async def test_asking_parks_the_run_and_announces_the_questions(monkeypatch):
 
     asked = [e for e in events if e["type"] == "question.asked"]
     assert len(asked) == 1
-    assert [q["question"] for q in asked[0]["questions"]] == ["Which database?", "Which extras?"]
-    assert asked[0]["questions"][1]["multi_select"] is True
+    questions = arr(asked[0]["questions"])
+    assert [obj(q)["question"] for q in questions] == ["Which database?", "Which extras?"]
+    assert obj(questions[1])["multi_select"] is True
     # The answer rides back as the call's own result, so the transcript's record of it is
     # the ordinary tool block rather than anything written by hand.
     completed = [e for e in events if e["type"] == "tool.completed" and e["name"] == ASK]

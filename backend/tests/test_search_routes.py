@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from ._helpers import client_app
+from ._json import json_body, json_list, s
 
 
 async def test_provider_crud_over_http():
     async with client_app() as (client, _app):
-        assert (await client.get("/search/providers")).json() == []
+        assert json_list(await client.get("/search/providers")) == []
 
         created = await client.post(
             "/search/providers",
@@ -20,8 +21,8 @@ async def test_provider_crud_over_http():
             },
         )
         assert created.status_code == 201
-        body = created.json()
-        provider_id = body["id"]
+        body = json_body(created)
+        provider_id = s(body["id"])
         assert body["name"] == "local-searx"
         assert body["engines"] == ["google", "duckduckgo"]
         assert body["params"] == {"language": "en"}
@@ -31,13 +32,14 @@ async def test_provider_crud_over_http():
 
         patched = await client.patch(f"/search/providers/{provider_id}", json={"enabled": False})
         assert patched.status_code == 200
-        assert patched.json()["enabled"] is False
+        assert json_body(patched)["enabled"] is False
 
-        assert (await client.get(f"/search/providers/{provider_id}")).json()["enabled"] is False
+        fetched = json_body(await client.get(f"/search/providers/{provider_id}"))
+        assert fetched["enabled"] is False
 
         deleted = await client.delete(f"/search/providers/{provider_id}")
         assert deleted.status_code == 204
-        assert (await client.get("/search/providers")).json() == []
+        assert json_list(await client.get("/search/providers")) == []
 
 
 async def test_provider_unknown_id_404():

@@ -1,0 +1,55 @@
+"""Typed reads of JSON off the wire: each helper asserts the shape it returns."""
+
+from __future__ import annotations
+
+import httpx
+from pydantic import JsonValue, TypeAdapter
+
+_JSON = TypeAdapter(JsonValue)
+
+
+def parse_json(text: str | bytes) -> JsonValue:
+    """The JSON document in ``text``."""
+    return _JSON.validate_json(text)
+
+
+def obj(v: JsonValue) -> dict[str, JsonValue]:
+    """``v`` as an object."""
+    assert isinstance(v, dict), f"expected a JSON object, got {v!r}"
+    return v
+
+
+def arr(v: JsonValue) -> list[JsonValue]:
+    """``v`` as an array."""
+    assert isinstance(v, list), f"expected a JSON array, got {v!r}"
+    return v
+
+
+def s(v: JsonValue) -> str:
+    """``v`` as a string."""
+    assert isinstance(v, str), f"expected a JSON string, got {v!r}"
+    return v
+
+
+def n(v: JsonValue) -> int | float:
+    """``v`` as a number; a boolean is not one."""
+    assert isinstance(v, int | float) and not isinstance(v, bool), (
+        f"expected a JSON number, got {v!r}"
+    )
+    return v
+
+
+def b(v: JsonValue) -> bool:
+    """``v`` as a boolean."""
+    assert isinstance(v, bool), f"expected a JSON boolean, got {v!r}"
+    return v
+
+
+def json_body(resp: httpx.Response) -> dict[str, JsonValue]:
+    """The response body as a JSON object."""
+    return obj(parse_json(resp.content))
+
+
+def json_list(resp: httpx.Response) -> list[JsonValue]:
+    """The response body as a JSON array."""
+    return arr(parse_json(resp.content))

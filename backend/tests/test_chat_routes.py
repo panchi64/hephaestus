@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from core.config import get_settings
 
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
+from ._json import s
 
 
 async def test_chat_creates_run_and_streams_answer(monkeypatch):
@@ -24,7 +25,7 @@ async def test_chat_creates_run_and_streams_answer(monkeypatch):
     types = [e["type"] for e in events]
     assert types[0] == "run.started"
     assert types[-1] == "run.ended"
-    answer = "".join(e["text"] for e in events if e["type"] == "answer.delta")
+    answer = "".join(s(e["text"]) for e in events if e["type"] == "answer.delta")
     assert answer == "hi"
 
 

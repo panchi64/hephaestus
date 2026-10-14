@@ -23,15 +23,15 @@ Create Date: 2026-08-29 00:00:00.000000
 
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b7ad41c9e208"
-down_revision: Union[str, None] = "e41b7c95d0a3"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "e41b7c95d0a3"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 RETIRED_SERVICES = ("artificial_analysis", "llm_stats", "huggingface")
 
