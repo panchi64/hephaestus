@@ -22,13 +22,15 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import cast
 
+from pydantic import JsonValue
 from sqlalchemy import Engine, func
 from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError, SkillSpanError, SkillValidationError
+from core.serde import parse_json
 from core.text import replace_unique
 from core.vault import Vault
 from models.skill import Skill, SkillFile, SkillSource
@@ -97,9 +99,9 @@ class SkillView:
     pinned: bool = False
     license: str | None = None
     compatibility: str | None = None
-    metadata: dict[str, Any] | None = None
+    metadata: dict[str, JsonValue] | None = None
     allowed_tools: list[str] | None = None
-    extras: dict[str, Any] | None = None
+    extras: dict[str, JsonValue] | None = None
     files: tuple[SkillFileView, ...] = ()
 
     def parsed(self) -> ParsedSkill:
@@ -118,14 +120,14 @@ class SkillView:
 
 
 class SkillStore:
-    revision_kind = "skill"
+    revision_kind: str = "skill"
 
     def __init__(
         self, engine: Engine, vault: Vault, revisions: RevisionStore | None = None
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self.revisions = revisions
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self.revisions: RevisionStore | None = revisions
 
     # ── writes ───────────────────────────────────────────────────────────────────────────
 
@@ -138,9 +140,9 @@ class SkillStore:
         body: str = "",
         license: str | None = None,
         compatibility: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        metadata: dict[str, JsonValue] | None = None,
         allowed_tools: list[str] | None = None,
-        extras: dict[str, Any] | None = None,
+        extras: dict[str, JsonValue] | None = None,
         source: str = SkillSource.AUTHORED,
         published: bool = False,
         files: list[tuple[str, bytes]] | None = None,
@@ -185,9 +187,9 @@ class SkillStore:
         body: str | None = None,
         license: str | None = None,
         compatibility: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        metadata: dict[str, JsonValue] | None = None,
         allowed_tools: list[str] | None = None,
-        extras: dict[str, Any] | None = None,
+        extras: dict[str, JsonValue] | None = None,
     ) -> SkillView:
         """Full-rewrite edit. Every provided field is re-validated against the standard, so
         the API can't produce a skill that wouldn't survive an export."""
@@ -279,8 +281,8 @@ class SkillStore:
         def work(session: Session) -> SkillView:
             skill = _require(session, owner_id, skill_id)
             if published:
-                validate_name(skill.name)
-                validate_description(self._vault.decrypt_str(skill.description_enc))
+                _ = validate_name(skill.name)
+                _ = validate_description(self._vault.decrypt_str(skill.description_enc))
                 if not self._vault.decrypt_str(skill.body_enc).strip():
                     raise SkillValidationError(
                         "body", "a skill needs instructions before it can be published"
@@ -377,13 +379,14 @@ class SkillStore:
         files = dict(await self.file_contents(owner_id, skill_id))
         return {SKILL_FILE: render_skill_md(view.parsed()).encode(), **files}
 
-    working_copy = snapshot
+    async def working_copy(self, owner_id: str, skill_id: str) -> Bundle:
+        return await self.snapshot(owner_id, skill_id)
 
     async def restore_snapshot(self, owner_id: str, skill_id: str, bundle: Bundle) -> SkillView:
         document = bundle.get(SKILL_FILE)
         if document is None:
             raise SkillValidationError("bundle", f"that version has no {SKILL_FILE}")
-        await self.replace_document(owner_id, skill_id, document.decode())
+        _ = await self.replace_document(owner_id, skill_id, document.decode())
 
         def work(session: Session) -> SkillView:
             skill = _require(session, owner_id, skill_id)
@@ -457,7 +460,7 @@ class SkillStore:
         what the sandbox stager writes."""
 
         def work(session: Session) -> list[tuple[str, bytes]]:
-            _require(session, owner_id, skill_id)
+            _ = _require(session, owner_id, skill_id)
             rows = session.exec(
                 select(SkillFile).where(SkillFile.skill_id == skill_id).order_by(SkillFile.relpath)
             ).all()
@@ -467,7 +470,7 @@ class SkillStore:
 
     async def file_content(self, owner_id: str, skill_id: str, relpath: str) -> bytes:
         def work(session: Session) -> bytes:
-            _require(session, owner_id, skill_id)
+            _ = _require(session, owner_id, skill_id)
             row = session.exec(
                 select(SkillFile)
                 .where(SkillFile.skill_id == skill_id)
@@ -588,9 +591,9 @@ class SkillStore:
             pinned=skill.pinned,
             license=skill.license,
             compatibility=self._open(skill.compatibility_enc),
-            metadata=self._open_json(skill.metadata_json_enc),
+            metadata=self._open_object(skill.metadata_json_enc),
             allowed_tools=_load_list(skill.allowed_tools_json),
-            extras=self._open_json(skill.extras_json_enc),
+            extras=self._open_object(skill.extras_json_enc),
             files=tuple(
                 SkillFileView(relpath=row.relpath, sha256=row.sha256, size_bytes=row.size_bytes)
                 for row in rows
@@ -603,11 +606,14 @@ class SkillStore:
     def _open(self, enc: str | None) -> str | None:
         return None if enc is None else self._vault.decrypt_str(enc)
 
-    def _seal_json(self, value: Any | None) -> str | None:
+    def _seal_json(self, value: JsonValue) -> str | None:
         return None if value is None else self._vault.encrypt_str(json.dumps(value))
 
-    def _open_json(self, enc: str | None) -> Any | None:
-        return None if enc is None else json.loads(self._vault.decrypt_str(enc))
+    def _open_object(self, enc: str | None) -> dict[str, JsonValue] | None:
+        if enc is None:
+            return None
+        value = parse_json(self._vault.decrypt_str(enc))
+        return value if isinstance(value, dict) else None
 
 
 # ── module helpers ───────────────────────────────────────────────────────────────────────
@@ -683,4 +689,6 @@ def _dump_list(value: list[str] | None) -> str | None:
 
 
 def _load_list(raw: str | None) -> list[str] | None:
-    return None if not raw else list(json.loads(raw))
+    if not raw:
+        return None
+    return [str(item) for item in cast("list[object]", json.loads(raw))]

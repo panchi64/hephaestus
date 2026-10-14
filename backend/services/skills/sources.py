@@ -60,7 +60,7 @@ def read_skills(directories: list[Path]) -> tuple[DiskSkill, ...]:
         except (SkillValidationError, OSError, UnicodeDecodeError) as exc:
             logger.info("skills: skipped %s (%s)", directory, exc)
             continue
-        found.setdefault(entry.skill.name, entry)
+        _ = found.setdefault(entry.skill.name, entry)
     return tuple(found.values())
 
 

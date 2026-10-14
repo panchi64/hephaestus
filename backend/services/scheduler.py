@@ -153,14 +153,14 @@ class SchedulerService:
         executor: TaskExecutor,
         notify: TaskNotifier,
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self._executor = executor
-        self._notify = notify
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._executor: TaskExecutor = executor
+        self._notify: TaskNotifier = notify
         # `TaskRun` id → the execution recording it.
         self._running: dict[str, asyncio.Task[None]] = {}
-        self._wake = asyncio.Event()
-        self._stopping = asyncio.Event()
+        self._wake: asyncio.Event = asyncio.Event()
+        self._stopping: asyncio.Event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -181,14 +181,14 @@ class SchedulerService:
             # waiting forever means every lifecycle unit registered before this one never
             # gets to stop either, and the process hangs instead of exiting.
             try:
-                await asyncio.wait_for(
+                _ = await asyncio.wait_for(
                     asyncio.gather(*list(self._running.values()), return_exceptions=True),
                     timeout=_SHUTDOWN_DRAIN_TIMEOUT_S,
                 )
             except TimeoutError:
                 logger.warning(
                     "scheduler: %d task execution(s) did not settle within %.0fs; "
-                    "their TaskRun rows stay unfinished",
+                    + "their TaskRun rows stay unfinished",
                     len(self._running),
                     _SHUTDOWN_DRAIN_TIMEOUT_S,
                 )
@@ -231,11 +231,11 @@ class SchedulerService:
         if seconds is not None:
             waits.add(asyncio.ensure_future(asyncio.sleep(max(seconds, _MIN_POLL_S), True)))
         try:
-            await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+            _ = await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
         finally:
             for fut in waits:
-                fut.cancel()
-            await asyncio.gather(*waits, return_exceptions=True)
+                _ = fut.cancel()
+            _ = await asyncio.gather(*waits, return_exceptions=True)
         self._wake.clear()
 
     async def _sleep_duration(self) -> float | None:
@@ -268,7 +268,7 @@ class SchedulerService:
         except Exception:  # noqa: BLE001 — a failed reschedule must never kill the loop
             logger.exception("scheduler: task %s schedule advance failed", task.id)
             return
-        self._start(task, now)
+        _ = self._start(task, now)
 
     # --- on-demand fire (manual run_now / an inbound webhook) ----------------------
 
@@ -378,9 +378,9 @@ class SchedulerService:
         rows = await in_session(self._engine, work)
         return min((as_utc(at) for at in rows if at is not None), default=None)
 
-    async def _insert_task_run(self, **kwargs) -> None:
+    async def _insert_task_run(self, *, id: str, task_id: str, started_at: datetime) -> None:
         def work(session: Session) -> None:
-            session.add(TaskRun(**kwargs))
+            session.add(TaskRun(id=id, task_id=task_id, started_at=started_at))
 
         await in_session(self._engine, work)
 
@@ -470,7 +470,7 @@ class SchedulerService:
                 if attempts_left == 0:
                     logger.error(
                         "scheduler: %s still hitting a locked database after %d attempts"
-                        " — giving up",
+                        + " — giving up",
                         what,
                         _DB_LOCK_RETRIES,
                     )

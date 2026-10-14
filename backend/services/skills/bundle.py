@@ -30,11 +30,13 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any
+from typing import cast
 
 import yaml
+from pydantic import JsonValue
 
 from core.exceptions import SkillValidationError
 from core.frontmatter import FrontmatterError, split_frontmatter
@@ -78,10 +80,10 @@ class ParsedSkill:
     body: str
     license: str | None = None
     compatibility: str | None = None
-    metadata: dict[str, Any] | None = None
+    metadata: dict[str, JsonValue] | None = None
     allowed_tools: list[str] | None = None
     #: Non-spec frontmatter keys, in their original order, preserved for round-tripping.
-    extras: dict[str, Any] = field(default_factory=dict)
+    extras: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
 
 @dataclass(frozen=True)
@@ -97,7 +99,7 @@ class ImportedBundle:
 # ── Field validators (also called by SkillStore, so REST and tools can't bypass them) ─────
 
 
-def validate_name(name: Any) -> str:
+def validate_name(name: object) -> str:
     """The bundle's identity: its directory name, its uniqueness key, and the handle the
     model calls it by. Constraints are the standard's, not ours."""
     if not isinstance(name, str) or not name.strip():
@@ -115,7 +117,7 @@ def validate_name(name: Any) -> str:
     return value
 
 
-def validate_description(description: Any) -> str:
+def validate_description(description: object) -> str:
     """What the skill does and when to use it — the one field the model reads before deciding
     to open the skill, which is why the standard requires it and caps it."""
     if not isinstance(description, str) or not description.strip():
@@ -140,7 +142,11 @@ def normalize_dir_name(value: str) -> str:
     return value.strip().lower().replace("_", "-")
 
 
-def _json_safe(value: Any) -> Any:
+def _json_object(mapping: Mapping[str, object]) -> dict[str, JsonValue]:
+    return {str(key): _json_safe(item) for key, item in mapping.items()}
+
+
+def _json_safe(value: object) -> JsonValue:
     """Coerce YAML's richer scalar set down to what JSON can hold.
 
     ``yaml.safe_load`` decodes an unquoted ``2025-01-01`` into a ``datetime.date``, which
@@ -150,9 +156,9 @@ def _json_safe(value: Any) -> Any:
     (stable across a re-export/re-import cycle, since they round-trip quoted) and any other
     exotic scalar becomes its ``str``."""
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        return _json_object(cast("dict[str, object]", value))
     if isinstance(value, list | tuple):
-        return [_json_safe(item) for item in value]
+        return [_json_safe(item) for item in cast("Sequence[object]", value)]
     if isinstance(value, str | int | float | bool) or value is None:
         return value
     if isinstance(value, date | datetime):
@@ -160,7 +166,7 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
-def _normalize_allowed_tools(raw: Any, warnings: list[str]) -> list[str] | None:
+def _normalize_allowed_tools(raw: object, warnings: list[str]) -> list[str] | None:
     """``allowed-tools`` accepts a space- or comma-separated string or a YAML list. Advisory
     here — recorded and displayed, never enforced. The tool policy is the enforcement
     point; this list arrives with the bundle, from wherever it was imported."""
@@ -169,7 +175,8 @@ def _normalize_allowed_tools(raw: Any, warnings: list[str]) -> list[str] | None:
     if isinstance(raw, str):
         parts = [part for part in re.split(r"[,\s]+", raw) if part]
     elif isinstance(raw, list):
-        parts = [str(part).strip() for part in raw if str(part).strip()]
+        items = cast("list[object]", raw)
+        parts = [str(part).strip() for part in items if str(part).strip()]
     else:
         warnings.append("allowed-tools was not a string or list and was dropped")
         return None
@@ -210,14 +217,15 @@ def parse_skill_md(text: str, *, warnings: list[str] | None = None) -> ParsedSki
 
     # The standard drops a non-map `metadata` rather than failing the bundle; match that
     # so a skill that is otherwise fine still imports.
-    metadata = loaded.get("metadata")
-    if metadata is not None and not isinstance(metadata, dict):
+    raw_metadata = loaded.get("metadata")
+    metadata: dict[str, JsonValue] | None = None
+    if isinstance(raw_metadata, dict):
+        metadata = _json_object(cast("dict[str, object]", raw_metadata))
+    elif raw_metadata is not None:
         notes.append("metadata was not a mapping and was dropped")
-        metadata = None
-    metadata = _json_safe(metadata) if metadata is not None else None
 
     allowed_tools = _normalize_allowed_tools(loaded.get("allowed-tools"), notes)
-    extras = _json_safe({key: value for key, value in loaded.items() if key not in SPEC_FIELDS})
+    extras = _json_object({key: value for key, value in loaded.items() if key not in SPEC_FIELDS})
     if extras:
         notes.append(
             "kept non-standard frontmatter keys: " + ", ".join(sorted(extras)),
@@ -240,7 +248,7 @@ def parse_skill_md(text: str, *, warnings: list[str] | None = None) -> ParsedSki
 def render_skill_md(skill: ParsedSkill) -> str:
     """Serialize back to the standard: the spec fields in spec order, then the preserved
     non-spec keys in theirs."""
-    front: dict[str, Any] = {"name": skill.name, "description": skill.description}
+    front: dict[str, JsonValue] = {"name": skill.name, "description": skill.description}
     if skill.license is not None:
         front["license"] = skill.license
     if skill.compatibility is not None:
@@ -248,7 +256,7 @@ def render_skill_md(skill: ParsedSkill) -> str:
     if skill.metadata is not None:
         front["metadata"] = skill.metadata
     if skill.allowed_tools:
-        front["allowed-tools"] = list(skill.allowed_tools)
+        front["allowed-tools"] = list[JsonValue](skill.allowed_tools)
     front.update(skill.extras)
     dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, default_flow_style=False)
     return f"---\n{dumped}---\n\n{skill.body}\n"

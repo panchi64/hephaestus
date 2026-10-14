@@ -10,6 +10,7 @@ import json
 from collections.abc import Callable
 
 from core.exceptions import NotFoundError
+from core.serde import parse_json
 from services.settings_store import SettingsStore
 
 from .sources import DiskSkill, platform_skills
@@ -23,8 +24,8 @@ class PlatformSkills:
         settings: SettingsStore,
         skills: Callable[[], tuple[DiskSkill, ...]] = platform_skills,
     ) -> None:
-        self._settings = settings
-        self._skills = skills
+        self._settings: SettingsStore = settings
+        self._skills: Callable[[], tuple[DiskSkill, ...]] = skills
 
     def all(self) -> tuple[DiskSkill, ...]:
         return self._skills()
@@ -32,8 +33,10 @@ class PlatformSkills:
     async def disabled(self, owner_id: str) -> frozenset[str]:
         raw = await self._settings.get(owner_id, DISABLED_KEY)
         try:
-            names = json.loads(raw) if raw else []
+            names = parse_json(raw) if raw else []
         except ValueError:
+            return frozenset()
+        if not isinstance(names, list):
             return frozenset()
         return frozenset(name for name in names if isinstance(name, str))
 
