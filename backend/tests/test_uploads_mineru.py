@@ -76,7 +76,7 @@ def test_read_markdown_picks_largest():
 
 
 class _StubExtractor:
-    def __init__(self, *, result=None, boom=False) -> None:
+    def __init__(self, *, result: ExtractionResult | None = None, boom=False) -> None:
         self._result = result
         self._boom = boom
         self.calls = 0
@@ -85,6 +85,7 @@ class _StubExtractor:
         self.calls += 1
         if self._boom:
             raise RuntimeError("primary failed")
+        assert self._result is not None
         return self._result
 
 

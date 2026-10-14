@@ -15,6 +15,7 @@ import os
 import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -285,6 +286,10 @@ async def test_fetch_degrades_when_browser_unavailable():
         await fetcher.fetch(OWNER, "http://93.184.216.34/")
 
 
+def _as_browser(fake: object) -> ManagedBrowser:
+    return cast(ManagedBrowser, fake)
+
+
 class _DroppingBrowser:
     """available reports True, but acquiring a context fails — models the browser dropping
     between the availability check and context entry (a TOCTOU disconnect)."""
@@ -301,7 +306,7 @@ async def test_fetch_maps_browser_dropout_to_webfetch_error():
     # Public IP literal passes the pre-flight and the available-check; context() then raises
     # RuntimeError. It must surface as a recoverable WebFetchError, not an unhandled error
     # the tool can't translate.
-    fetcher = BrowserFetcher(browser=_DroppingBrowser())  # type: ignore[arg-type]
+    fetcher = BrowserFetcher(browser=_as_browser(_DroppingBrowser()))
     with pytest.raises(WebFetchError):
         await fetcher.fetch(OWNER, "http://93.184.216.34/")
 
@@ -323,7 +328,7 @@ def _fetcher_with_body(
     monkeypatch, body: str, *, output_max_tokens: int = 4000, distiller=None
 ) -> BrowserFetcher:
     fetcher = BrowserFetcher(
-        browser=_AvailableBrowser(),  # type: ignore[arg-type]
+        browser=_as_browser(_AvailableBrowser()),
         output_max_tokens=output_max_tokens,
         distiller=distiller,
     )
@@ -465,6 +470,7 @@ async def test_distiller_windows_and_drops_irrelevant():
         resolve_model=_resolve, instructions="x", window_tokens=3, max_windows=2, timeout_s=30
     )
     out2 = await capped.distill(body, goal="g", url="http://x/")
+    assert out2 is not None
     assert "covered the first 24 of 36 characters" in out2
 
 
@@ -496,7 +502,7 @@ class _SettlePage:
 
 
 async def test_capture_resnapshots_thin_page_until_content_appears():
-    fetcher = BrowserFetcher(browser=_AvailableBrowser(), render_wait_ms=0)  # type: ignore[arg-type]
+    fetcher = BrowserFetcher(browser=_as_browser(_AvailableBrowser()), render_wait_ms=0)
     page = _SettlePage(["thin shell", "RICHBODY " * 6000])  # first snapshot thin, then ~54k
     _final_url, _html, text = await fetcher._capture("http://93.184.216.34/", page)
     assert "RICHBODY" in text  # settled onto the filled-in content
@@ -504,7 +510,7 @@ async def test_capture_resnapshots_thin_page_until_content_appears():
 
 
 async def test_capture_fast_path_skips_settle_waits():
-    fetcher = BrowserFetcher(browser=_AvailableBrowser(), render_wait_ms=0)  # type: ignore[arg-type]
+    fetcher = BrowserFetcher(browser=_as_browser(_AvailableBrowser()), render_wait_ms=0)
     page = _SettlePage(["RICHBODY " * 6000])  # already rich and stable on the first snapshot
     _final_url, _html, text = await fetcher._capture("http://93.184.216.34/", page)
     assert "RICHBODY" in text
@@ -561,7 +567,7 @@ async def test_download_error_routes_to_pdf_path(monkeypatch):
         return "Attention Is All You Need — full paper text"
 
     monkeypatch.setattr("services.webfetch.fetcher.fetch_pdf_text", _fake_pdf)
-    fetcher = BrowserFetcher(browser=_PdfDownloadBrowser())  # type: ignore[arg-type]
+    fetcher = BrowserFetcher(browser=_as_browser(_PdfDownloadBrowser()))
     page = await fetcher.fetch(OWNER, "http://93.184.216.34/paper.pdf")
     assert "Attention Is All You Need" in page.content
     assert "BEGIN UNTRUSTED CONTENT" in page.content

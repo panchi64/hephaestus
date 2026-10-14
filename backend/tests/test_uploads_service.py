@@ -84,6 +84,7 @@ async def test_native_pdf_extracted():
     view, _ = await store.create(OWNER, "d.pdf", "application/pdf", text_pdf("pdf marker quokka"))
     await _drain(store, adapter)
     got = await store.get(OWNER, view.id)
+    assert got.extracted_text is not None
     assert got.status == "done" and "pdf marker quokka" in got.extracted_text
     assert got.vision is False
     await _teardown(store, adapter)

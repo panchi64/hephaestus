@@ -25,9 +25,12 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from pydantic_ai import ModelRetry
+from pydantic_ai import ModelRetry, RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
 from core.exceptions import DegradedCapabilityError, WebFetchError
+from runs import Run, RunStream
 from services.search import SearchResults, SearchService
 from services.webfetch import BrowserFetcher, FetchedPage
 from tools.deps import RunDeps
@@ -74,10 +77,9 @@ def _ctx(*, search=None, fetcher=None):
     if fetcher is not None:
         caps.add(fetcher, as_type=BrowserFetcher)
 
-    class _Ctx:
-        deps = RunDeps(run=None, owner_id="operator", caps=caps)  # type: ignore[arg-type]
-
-    return _Ctx()
+    run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
+    deps = RunDeps(run=run, owner_id="operator", caps=caps)
+    return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
 
 async def _call(name: str, ctx, **kwargs):

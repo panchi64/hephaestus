@@ -262,8 +262,7 @@ class _StubOffline:
 def stub_offline(disabled: frozenset[str]) -> OfflineModeService:
     """The stub in the shape `effective_disabled_tools` is annotated to take; it reads only
     `web_tools_disabled`, and the real service needs a live monitor to build."""
-    stub: object = _StubOffline(disabled)
-    return cast(OfflineModeService, stub)
+    return cast(OfflineModeService, cast(object, _StubOffline(disabled)))
 
 
 async def test_operator_and_offline_sets_union_rather_than_overwrite():

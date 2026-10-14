@@ -58,7 +58,7 @@ class FakeManager:
     def __init__(self, files: dict[str, bytes] | None = None, *, fail: bool = False) -> None:
         self._session = FakeSession(files or {})
         self.fail = fail
-        self.started: list[tuple] = []
+        self.started: list[tuple[str, tuple[str, ...], int]] = []
         self.stopped: list[str] = []
 
     async def acquire(self, key: str, *, holder: object = None) -> FakeSession:
@@ -89,7 +89,7 @@ async def _stores(tmp_path) -> tuple[ArtifactStore, WorkspaceHistoryStore]:
     return ArtifactStore(engine, vault), WorkspaceHistoryStore(engine, vault)
 
 
-def _call_then_finish(args: dict):
+def _call_then_finish(args: dict[str, object]):
     """A model that calls ``view_show`` once with ``args``, then answers with text.
     Ends the loop on either a tool return or a validation retry, so a rejected call
     doesn't spin forever."""
