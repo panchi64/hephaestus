@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sqlmodel import Session, select
@@ -316,7 +317,7 @@ async def run_now(task_id: str, request: Request) -> RunNowOut:
 
 @router.get("/{task_id}/runs", response_model=TaskRunListOut)
 async def list_task_runs(
-    task_id: str, request: Request, limit: int = Query(default=50, ge=1, le=200)
+    task_id: str, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 50
 ) -> TaskRunListOut:
     runs = await deps.routines(request).runs(OPERATOR_ID, task_id, limit=limit)
     return TaskRunListOut(items=[_task_run_out(run) for run in runs])
@@ -386,4 +387,4 @@ async def fire_webhook(token: str, request: Request) -> None:
     )
     if matched is None:
         raise HTTPException(status_code=404, detail="not found")
-    await deps.scheduler(request).fire_now(matched.id)
+    _ = await deps.scheduler(request).fire_now(matched.id)

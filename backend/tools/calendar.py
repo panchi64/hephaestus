@@ -165,7 +165,7 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
             return _UNAVAILABLE
         try:
             if occurrence_start:
-                await service.cancel_occurrence(
+                _ = await service.cancel_occurrence(
                     ctx.deps.owner_id, event_id, _moment(occurrence_start)
                 )
                 return "Cancelled that occurrence; the rest of the series is unchanged."

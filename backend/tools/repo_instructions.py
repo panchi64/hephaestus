@@ -90,7 +90,7 @@ def within_budget(files: list[ContextFile], budget: int) -> list[ContextFile]:
     total = sum(sizes)
     while len(kept) > 1 and total > budget:
         total -= sizes.pop(0)
-        kept.pop(0)
+        _ = kept.pop(0)
     if kept and sizes[0] > budget:
         kept[0] = _truncate(kept[0], budget)
     return kept

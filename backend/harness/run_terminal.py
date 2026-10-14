@@ -76,7 +76,7 @@ class RunTerminalDispatcher:
         destroyed-while-pending."""
         pending = list(self.tasks)
         for task in pending:
-            task.cancel()
+            _ = task.cancel()
         if pending:
             # Bounded: a hook that swallows the cancel must not hold the shutdown.
-            await asyncio.wait(pending, timeout=STOP_TIMEOUT_S)
+            _ = await asyncio.wait(pending, timeout=STOP_TIMEOUT_S)

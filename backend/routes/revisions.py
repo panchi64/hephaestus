@@ -38,7 +38,7 @@ def add_revision_routes(
     @router.get("/{subject_id}/revisions", response_model=list[RevisionOut])
     async def list_revisions(request: Request, subject_id: str) -> list[RevisionOut]:
         versioned = store(request)
-        await versioned.snapshot(OPERATOR_ID, subject_id)
+        _ = await versioned.snapshot(OPERATOR_ID, subject_id)
         if versioned.revisions is None:
             return []
         history = await versioned.revisions.history(
@@ -56,7 +56,7 @@ def add_revision_routes(
 
     @router.post("/{subject_id}/revisions/{number}/restore", status_code=204)
     async def restore_revision(request: Request, subject_id: str, number: int) -> Response:
-        await restore(store(request), OPERATOR_ID, subject_id, number)
+        _ = await restore(store(request), OPERATOR_ID, subject_id, number)
         return Response(status_code=204)
 
 

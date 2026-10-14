@@ -74,7 +74,7 @@ def finalize(
         # `blocked_reason` stamps the turn's branch node so a reload shows the same
         # persistent stop marker the live stream rendered. With nothing after the prompt
         # (a stop before the first token) the prompt itself carries it.
-        store.record(
+        _ = store.record(
             conversation_id,
             split_injected_requests(turn_messages),
             prompt_id=recorded,

@@ -48,12 +48,12 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     # finishing at shutdown never leaves a task notifying through a stopped store.
     ctx.lifecycle.on_stop("run-terminal-notifies", ctx.services.get(RunTerminalDispatcher).drain)
 
-    async def _resolve_dangling_approvals(run: Run, watched: bool) -> None:
+    async def _resolve_dangling_approvals(run: Run, _watched: bool) -> None:
         """The backstop: a cancel-while-parked never reaches the approve route, and
         even a normal completion may still carry a dangling approval_needed if the
         operator never decided it."""
         try:
-            await notifications.resolve_for_run(OPERATOR_ID, run.id)
+            _ = await notifications.resolve_for_run(OPERATOR_ID, run.id)
         except Exception:
             logger.exception("notifications: failed to resolve run %s at terminal", run.id)
 
@@ -87,7 +87,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             summary = await conversations.get_summary(run.conversation_id, OPERATOR_ID)
             title = summary.title if summary is not None and summary.title else "this conversation"
             if run.status is RunStatus.error:
-                await notifications.notify(
+                _ = await notifications.notify(
                     OPERATOR_ID,
                     "run_failed",
                     f'"{title}" hit an error',
@@ -98,7 +98,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             elif run.status is RunStatus.done and not watched:
                 # Only notify a plain completion when nobody was watching — a
                 # subscriber attached to the run's own stream already saw it finish.
-                await notifications.notify(
+                _ = await notifications.notify(
                     OPERATOR_ID,
                     "run_completed",
                     f'"{title}" finished',

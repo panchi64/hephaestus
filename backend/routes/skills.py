@@ -20,7 +20,7 @@ Two things this surface is deliberate about:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
@@ -48,7 +48,7 @@ class SkillUpdate(BaseModel):
     body: str | None = None
     license: str | None = None
     compatibility: str | None = None
-    metadata: dict[str, Any] | None = None
+    metadata: dict[str, object] | None = None
     allowed_tools: list[str] | None = None
 
 
@@ -92,11 +92,11 @@ class SkillOut(CamelModel):
     updated_at: datetime
     license: str | None = None
     compatibility: str | None = None
-    metadata: dict[str, Any] | None = None
+    metadata: dict[str, object] | None = None
     #: Advisory: recorded and displayed, never enforced (the tool policy enforces).
     allowed_tools: list[str] | None = None
     #: Non-standard frontmatter preserved from the bundle, so an export is lossless.
-    extras: dict[str, Any] | None = None
+    extras: dict[str, object] | None = None
     files: list[SkillFileOut] = []
 
 
@@ -205,10 +205,7 @@ async def create_skill(body: SkillCreate, request: Request) -> SkillOut:
 
 
 @router.post("/import", response_model=SkillImportOut, status_code=201)
-async def import_skill(
-    request: Request,
-    file: UploadFile = File(...),  # noqa: B008 — FastAPI's parameter-marker default
-) -> SkillImportOut:
+async def import_skill(request: Request, file: Annotated[UploadFile, File()]) -> SkillImportOut:
     """Import a `.zip` bundle or a bare `SKILL.md`. The result is always a **draft**: a
     bundle is instructions the agent would follow, so it stays invisible to the model until
     the operator has read it and published it."""
@@ -334,7 +331,7 @@ async def put_skill_file(
     skill_id: str,
     relpath: str,
     request: Request,
-    file: UploadFile = File(...),  # noqa: B008 — FastAPI's parameter-marker default
+    file: Annotated[UploadFile, File()],
 ) -> SkillOut:
     content = await file.read()
     try:

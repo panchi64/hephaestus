@@ -33,8 +33,9 @@ answer one in the operator's place — so every deferred call reaches them.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
 
 from pydantic_ai import (
     DeferredToolRequests,
@@ -153,7 +154,7 @@ _VALUE_MAX_CHARS = 200
 _SUMMARY_MAX_CHARS = 400
 
 
-def summarize_call(name: str, args: dict[str, Any]) -> str:
+def summarize_call(name: str, args: Mapping[str, object]) -> str:
     """The one-line rendering of a call the operator is being asked about.
 
     **A rendering, not a record.** This string rides the ``approval.required`` event beside
@@ -215,7 +216,7 @@ async def park_for_input(
         # `explanation` argument (the host-execution path requires one); surface
         # it as a distinct field so the client need not parse it out of the args.
         explanation = args.get("explanation")
-        run.emit(
+        _ = run.emit(
             ApprovalRequired(
                 tool_call_id=call.tool_call_id,
                 name=call.tool_name,
@@ -230,7 +231,7 @@ async def park_for_input(
     asked = False
     for call in requests.calls:
         asked = True
-        run.emit(
+        _ = run.emit(
             QuestionAsked(
                 tool_call_id=call.tool_call_id,
                 questions=questions_of(call.args_as_dict()),
@@ -259,7 +260,7 @@ async def park_for_input(
         if asked:
             wants.append("an answer from you")
         try:
-            await notifications.notify(
+            _ = await notifications.notify(
                 run.owner_id,
                 "approval_needed",
                 f'"{title}" needs {" and ".join(wants)}',

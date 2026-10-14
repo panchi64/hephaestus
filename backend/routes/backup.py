@@ -15,10 +15,9 @@ passphrase is not that.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 
 from core.vault import VaultLocked
 from routes import deps
@@ -61,12 +60,12 @@ class ExportIn(BaseModel):
 
 class ImportIn(BaseModel):
     secret: str = Field(min_length=1)
-    envelope: dict[str, Any]
+    envelope: dict[str, JsonValue]
     include: list[str] | None = None
 
 
 class ExportOut(BaseModel):
-    envelope: dict[str, Any]
+    envelope: dict[str, JsonValue]
     manifest: ManifestOut
 
 

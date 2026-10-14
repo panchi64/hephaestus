@@ -41,7 +41,7 @@ async def _backfill_embeddings(
     content. Runs in the background, waits for unlock so it never touches sealed
     data, and degrades to a no-op when no embedder is configured. Every store is
     lifted symmetrically."""
-    await vault.unlocked_event.wait()
+    _ = await vault.unlocked_event.wait()
     try:
         count = await conversations.backfill_embeddings(OPERATOR_ID)
         if count:
@@ -75,7 +75,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     # Lift any pre-existing backlog (messages + memories + corpus chunks) into the
     # semantic index once unlocked — off the critical path; new content is already
     # embedded as it persists.
-    ctx.lifecycle.track(
+    _ = ctx.lifecycle.track(
         "embedding-backfill",
         _backfill_embeddings(conversations, memory, chunk_store, ctx.vault),
     )

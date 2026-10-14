@@ -54,7 +54,7 @@ MANIFEST = FeatureManifest(
         DormantCategory(
             "mail",
             "read and act on the operator's email — search the inbox, open a message, "
-            "mark it, draft a reply, send",
+            + "mark it, draft a reply, send",
         ),
     ),
     available=_available,

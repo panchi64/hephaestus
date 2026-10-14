@@ -300,7 +300,7 @@ async def init_repo(request: Request, project_id: str) -> ProjectOut:
     except (InvalidInputError, WorktreeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if created:
-        await store.update(OPERATOR_ID, project_id, git_initialized=True)
+        _ = await store.update(OPERATOR_ID, project_id, git_initialized=True)
     return _out(await store.get(OPERATOR_ID, project_id))
 
 

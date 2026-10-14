@@ -10,7 +10,6 @@ answers with the fire times it produces, so a misread shows up before anything r
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
@@ -35,7 +34,7 @@ GATED_TOOLS: frozenset[str] = frozenset({"routines_write", "routines_delete"})
 _UNAVAILABLE = "Routines are not available in this deployment."
 
 
-def _summary(routine: Routine) -> dict[str, Any]:
+def _summary(routine: Routine) -> dict[str, object]:
     status = "draft" if not routine.approved else "on" if routine.enabled else "off"
     return {
         "id": routine.id,
@@ -135,7 +134,7 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
             return {"ok": False, "error": "It is a draft; the operator has not approved it."}
         if not routine.enabled:
             return {"ok": False, "error": "It is switched off."}
-        await scheduler.fire_now(routine.id)
+        _ = await scheduler.fire_now(routine.id)
         return {"ok": True, "started": routine.title}
 
     return toolset

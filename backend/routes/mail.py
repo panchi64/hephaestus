@@ -452,7 +452,7 @@ async def learn_style(account_id: str, request: Request) -> StyleProfileOut | No
     alone — their own description outranks ours."""
     service = deps.mail(request)
     try:
-        await service.learn_style(OPERATOR_ID, account_id)
+        _ = await service.learn_style(OPERATOR_ID, account_id)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="account not found") from None
     except MailError as exc:

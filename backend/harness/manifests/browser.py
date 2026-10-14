@@ -68,7 +68,7 @@ MANIFEST = FeatureManifest(
         DormantCategory(
             "browse",
             "drive a real browser — navigate, click, type, read pages behind logins, "
-            "inspect network and console",
+            + "inspect network and console",
         ),
     ),
     network_tools=NETWORK_TOOLS,

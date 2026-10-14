@@ -32,8 +32,8 @@ MANIFEST = FeatureManifest(
         DormantCategory(
             "agents",
             "spawn agents to do self-contained work on their own and report back, message "
-            "the agents of your delegation tree, or draft a new agent for the operator to "
-            "publish",
+            + "the agents of your delegation tree, or draft a new agent for the operator to "
+            + "publish",
         ),
     ),
     build=_build,

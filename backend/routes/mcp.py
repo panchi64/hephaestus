@@ -19,7 +19,6 @@ Two things this surface is deliberate about:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -43,7 +42,7 @@ class McpServerCreate(BaseModel):
     # sse / http
     url: str | None = None
     auth_required: bool = False
-    credentials: dict[str, Any] | None = None
+    credentials: dict[str, object] | None = None
 
 
 class McpServerUpdate(BaseModel):
@@ -54,7 +53,7 @@ class McpServerUpdate(BaseModel):
     env: dict[str, str] | None = None
     url: str | None = None
     auth_required: bool | None = None
-    credentials: dict[str, Any] | None = None
+    credentials: dict[str, object] | None = None
 
 
 class McpToolPolicyUpdate(BaseModel):

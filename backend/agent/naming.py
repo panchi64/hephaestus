@@ -124,7 +124,7 @@ async def announce_title(
     if not name or store is None or conversation_id is None:
         return
     if await store.set_title_if_absent(conversation_id, name):
-        run.emit(ConversationTitled(conversation_id=conversation_id, title=name))
+        _ = run.emit(ConversationTitled(conversation_id=conversation_id, title=name))
 
 
 @dataclass(frozen=True)
@@ -214,7 +214,7 @@ async def discard_title(namer: Namer | None) -> None:
     if namer.announcing.is_set():
         await settle_title(namer)
         return
-    namer.task.cancel()
+    _ = namer.task.cancel()
     with suppress(asyncio.CancelledError):
         await namer.task
 
@@ -226,7 +226,7 @@ async def reap_title(namer: Namer | None) -> None:
         if not namer.announcing.is_set():
             # Still waiting on the title model — nothing committed yet, so a
             # bare cancel is safe and this path is unwinding anyway.
-            namer.task.cancel()
+            _ = namer.task.cancel()
         else:
             # Past `announcing` there is no model call left to abandon, only the
             # write and the emit, which must not be split. Left detached, it

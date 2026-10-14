@@ -227,6 +227,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         This leaves the machine in the operator's name and cannot be undone.
         ``explanation`` MUST say who this goes to and what it says.
         """
+        del explanation  # Read by the approval card from the call's arguments, not by this body.
         service = _service(ctx)
         if service is None:
             return _UNAVAILABLE
@@ -254,6 +255,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         plainly describe what the reply says and who receives it. To prepare a response
         *without* sending it, use ``mail_draft_reply`` instead.
         """
+        del explanation  # Read by the approval card from the call's arguments, not by this body.
         service = _service(ctx)
         if service is None:
             return _UNAVAILABLE

@@ -48,7 +48,7 @@ async def run_catalog(ctx: RunContext[RunDeps]) -> dict[str, AgentDefinition]:
     if cached is None:
         cached = await _resolve(ctx)
         if len(_catalogs) >= _MAX_CATALOGS:
-            _catalogs.popitem(last=False)
+            _ = _catalogs.popitem(last=False)
     _catalogs[run_id] = cached
     return cached
 

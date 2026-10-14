@@ -124,7 +124,7 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
             return NO_THREAD
         if _unattended(ctx):
             return NO_OPERATOR
-        await plans.enter(conversation_id, reason=reason, run=ctx.deps.run)
+        _ = await plans.enter(conversation_id, reason=reason, run=ctx.deps.run)
         _retarget(ctx, PLANNING_LEVEL)
         return (
             "This conversation is now in plan mode: nothing you call can change anything. "

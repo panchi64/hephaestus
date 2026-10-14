@@ -8,7 +8,7 @@ endpoint because it is the boundary between a draft and instructions the model a
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
@@ -211,17 +211,22 @@ async def _resolved(request: Request, agent: AgentDefinition) -> AgentOut:
     return _out(agent, active=effective.get(agent.name) == agent)
 
 
-def _values(body: AgentWrite, current: AgentDefinition | None = None) -> dict[str, Any]:
+def _values(body: AgentWrite, current: AgentDefinition | None = None) -> dict[str, object]:
     """The fields the body sets, as the store's values. An explicit null clears a field."""
-    sent = body.model_dump(exclude_unset=True)
-    tools = sent.pop("tools", ...)
-    deny = sent.pop("deny_tools", ...)
-    if tools is not ... or deny is not ...:
+    sent: dict[str, object] = body.model_dump(exclude_unset=True)
+    tools_sent = "tools" in sent
+    deny_sent = "deny_tools" in sent
+    _ = sent.pop("tools", None)
+    _ = sent.pop("deny_tools", None)
+    if tools_sent or deny_sent:
         base = current.tools if current is not None else ToolAccess()
-        sent["tools"] = ToolAccess(
-            allow=base.allow if tools is ... else (None if tools is None else frozenset(tools)),
-            deny=base.deny if deny is ... else frozenset(deny or ()),
+        allow = (
+            base.allow
+            if not tools_sent
+            else (None if body.tools is None else frozenset(body.tools))
         )
+        deny = base.deny if not deny_sent else frozenset(body.deny_tools or ())
+        sent["tools"] = ToolAccess(allow=allow, deny=deny)
     return sent
 
 

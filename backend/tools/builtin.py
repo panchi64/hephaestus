@@ -83,6 +83,7 @@ def builtin_toolset() -> FunctionToolset[RunDeps]:
 
         Ask everything you need in ONE call — up to four questions, answered together.
         """
+        del questions  # Carried to the operator by the deferral, not read by this body.
         # Guard before deferring: an unattended run has nobody to park on.
         if not is_attended(ctx.deps.run.kind):
             return NO_OPERATOR

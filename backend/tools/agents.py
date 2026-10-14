@@ -9,7 +9,7 @@ front of future turns, so both are the operator's to allow.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
@@ -57,7 +57,7 @@ def agents_toolset() -> AbstractToolset[RunDeps]:
         store = ctx.deps.caps.get_optional(AgentStore)
         if store is None:
             return {"ok": False, "error": _UNAVAILABLE}
-        values: dict[str, Any] = {
+        values: dict[str, object] = {
             "name": name,
             "description": description,
             "instructions": instructions,
@@ -99,7 +99,7 @@ def agents_toolset() -> AbstractToolset[RunDeps]:
         agent = await store.get_by_name(ctx.deps.owner_id, name)
         if agent is None or agent.id is None:
             raise ModelRetry(f"There is no stored agent called {name!r} to publish.")
-        await store.set_published(ctx.deps.owner_id, agent.id, True)
+        _ = await store.set_published(ctx.deps.owner_id, agent.id, True)
         return {"ok": True, "name": agent.name, "status": "published"}
 
     add_delegation_tools(toolset)

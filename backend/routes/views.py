@@ -13,6 +13,7 @@ the frontend still hosts it in a sandboxed iframe.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import ClassVar
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
@@ -40,7 +41,7 @@ _VIEW_HEADERS = {
 # Declared before the dynamic ``/{artifact_id}`` route so ``/snapshots`` isn't
 # captured as an artifact id.
 class SnapshotOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)  # built from a SnapshotView
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)  # from a SnapshotView
 
     id: str
     conversation_id: str
@@ -61,14 +62,14 @@ class KeeperUpdate(BaseModel):
 
 
 class SnapshotFileOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     path: str
     status: str  # "added" | "modified" | "unchanged"
 
 
 class SnapshotDiffOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     path: str
     status: str  # "added" | "modified" | "removed"

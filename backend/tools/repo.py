@@ -95,7 +95,7 @@ async def _run_brief(run_id: str, root: Path) -> str:
     if brief is None:
         brief = await _brief(root)
         if len(_briefs) >= _MAX_BRIEFS:
-            _briefs.popitem(last=False)
+            _ = _briefs.popitem(last=False)
     _briefs[key] = brief
     return brief
 

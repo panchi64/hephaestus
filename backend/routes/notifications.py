@@ -23,7 +23,8 @@ from core.sse import parse_last_event_id, sse_stream
 from routes import deps
 from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
-from services.notifications import NotificationEvent, NotificationView
+from services.notification_view import NotificationView
+from services.notifications import NotificationEvent
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -88,9 +89,9 @@ def _envelope(event: NotificationEvent) -> NotificationStreamEnvelope:
 @router.get("", response_model=NotificationListOut)
 async def list_notifications(
     request: Request,
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
     before: Annotated[datetime | None, Query()] = None,
-    unread_only: bool = Query(default=False),
+    unread_only: Annotated[bool, Query()] = False,
 ) -> NotificationListOut:
     items, unread_count = await deps.notifications(request).list_notifications(
         OPERATOR_ID, limit=limit, before=before, unread_only=unread_only
@@ -118,7 +119,9 @@ def _frame(event: NotificationEvent) -> str:
 
 
 @router.get("/stream")
-async def stream_notifications(request: Request, last_event_id: int | None = Query(default=None)):
+async def stream_notifications(
+    request: Request, last_event_id: Annotated[int | None, Query()] = None
+):
     """SSE stream of `notification.created`/`notification.updated`. Reconnect with
     `Last-Event-ID` to replay from the in-memory ring buffer (process-lifetime)."""
     after = parse_last_event_id(request.headers.get("last-event-id"), last_event_id)

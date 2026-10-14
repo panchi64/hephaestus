@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
+from typing import cast
 
 from pydantic_ai import ModelMessage
 from pydantic_ai.models import Model
@@ -72,11 +74,11 @@ def _part_text(message: ModelMessage, part_names: frozenset[str]) -> str:
     for part in message.parts:
         if type(part).__name__ not in part_names:
             continue
-        content = getattr(part, "content", None)
+        content: object = getattr(part, "content", None)
         if isinstance(content, str):
             chunks.append(content)
         elif isinstance(content, list | tuple):
-            chunks.extend(item for item in content if isinstance(item, str))
+            chunks.extend(item for item in cast(Sequence[object], content) if isinstance(item, str))
     return " ".join(chunks).strip()
 
 

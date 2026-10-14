@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -106,5 +105,5 @@ async def forget_profile(request: Request) -> Response:
     return Response(status_code=204)
 
 
-def _frame(item: dict[str, Any]) -> str:
+def _frame(item: dict[str, object]) -> str:
     return f"data: {json.dumps(item, separators=(',', ':'))}\n\n"

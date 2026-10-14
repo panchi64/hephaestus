@@ -54,7 +54,7 @@ MANIFEST = FeatureManifest(
         DormantCategory(
             "calendar",
             "read and change the operator's calendars — what is scheduled, when they "
-            "are free, creating and moving events",
+            + "are free, creating and moving events",
         ),
     ),
     available=_available,

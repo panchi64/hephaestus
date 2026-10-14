@@ -62,7 +62,7 @@ async def _capture_version(
         preview_artifact_id=preview_artifact_id,
         preview_kind=preview_kind,
     )
-    await ctx.emit(
+    _ = await ctx.emit(
         RunEventEmitted(
             body=ViewSnapshot(
                 conversation_id=ctx.deps.workspace_key,
@@ -136,7 +136,7 @@ async def _show_live(
     # server whose root would list the directory (`python -m http.server` with no
     # `index.html`) renders the page instead.
     url = handle.url_for(path)
-    await ctx.emit(
+    _ = await ctx.emit(
         RunEventEmitted(
             body=ViewLive(
                 conversation_id=ctx.deps.workspace_key,
@@ -155,7 +155,7 @@ async def _show_live(
     if ctx.deps.caps.get_optional(WorkspaceHistoryStore) is not None:
         try:
             session = await sessions.acquire(ctx.deps.workspace_key, holder=ctx.deps.run)
-            await _capture_version(
+            _ = await _capture_version(
                 ctx, session, title=title, preview_artifact_id=None, preview_kind=None
             )
         except Exception:  # noqa: BLE001 — history is best-effort, never break the turn
@@ -192,7 +192,7 @@ def view_toolset() -> FunctionToolset[RunDeps]:
         if (file is None) == (serve is None):
             raise ModelRetry(
                 "Pass exactly one of `file` (show a file you made) or `serve` (run a "
-                "live server) — not both, not neither."
+                + "live server) — not both, not neither."
             )
         if serve is not None:
             return await _show_live(ctx, serve, port, path, title)
@@ -207,7 +207,7 @@ def view_toolset() -> FunctionToolset[RunDeps]:
         if sessions is None:
             return "The live view is unavailable — your computer isn't available right now."
         await sessions.stop_preview(ctx.deps.workspace_key)
-        await ctx.emit(
+        _ = await ctx.emit(
             RunEventEmitted(body=ViewLiveStopped(conversation_id=ctx.deps.workspace_key))
         )
         return "Stopped the live view."

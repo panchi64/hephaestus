@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import override
 
-from pydantic_ai import FunctionToolset, ModelRetry, RunContext
+from pydantic_ai import FunctionToolset, ModelRetry, RunContext, Tool
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
@@ -35,6 +35,7 @@ from services.subagents import (
     SubagentView,
 )
 from tools.deps import RunDeps
+from tools.describe import registered_tools
 from tools.project_agents import run_catalog, run_roster
 
 #: The spawn tool's name inside the category, before the prefix makes it ``agents_spawn``.
@@ -83,7 +84,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         if agent is None:
             raise ModelRetry(
                 f"There is no agent called {agent_name!r}. Choose one of: "
-                f"{', '.join(sorted(roster))}."
+                + f"{', '.join(sorted(roster))}."
             )
         # Before a workspace is forked for it: a launch that ends in edits is the
         # operator's to allow.
@@ -115,7 +116,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
     spawn.__doc__ = spawn_description(delegable(builtin_roster()))
     # Not `requires_approval=True`: that defers every call before the body runs, while
     # only an agent that can write is gated.
-    toolset.add_function(spawn, name=SPAWN_TOOL)
+    _ = toolset.add_function(spawn, name=SPAWN_TOOL)
 
     @toolset.tool(name="message")
     async def message(ctx: RunContext[RunDeps], to: str, text: str) -> dict[str, object]:
@@ -206,14 +207,16 @@ class ProjectRoster(WrapperToolset[RunDeps]):
     run, which keeps the static catalog honest."""
 
     @property
+    @override
     def id(self) -> str:
         return "agents"
 
     @property
-    def tools(self) -> dict[str, Any]:
+    def tools(self) -> Mapping[str, Tool[RunDeps]]:
         """The static registry the settings catalog enumerates."""
-        return getattr(self.wrapped, "tools", {})
+        return registered_tools(self.wrapped)
 
+    @override
     async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
         tools = await super().get_tools(ctx)
         tool = tools.get(SPAWN_TOOL)

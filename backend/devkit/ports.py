@@ -95,7 +95,7 @@ def allocate(taken: set[int]) -> int:
             return slot
     raise NoFreeSlot(
         f"all {MAX_SLOTS} dev-instance slots are claimed or in use. "
-        "Remove an instance you no longer need from ~/.hephaestus/dev/, "
-        "or stop whatever is holding ports "
-        f"{BACKEND_BASE}-{BACKEND_BASE + MAX_SLOTS - 1}."
+        + "Remove an instance you no longer need from ~/.hephaestus/dev/, "
+        + "or stop whatever is holding ports "
+        + f"{BACKEND_BASE}-{BACKEND_BASE + MAX_SLOTS - 1}."
     )

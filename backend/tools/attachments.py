@@ -63,7 +63,7 @@ def attachments_toolset() -> FunctionToolset[RunDeps]:
         except NotFoundError:
             raise ModelRetry(
                 f"No attachment with id {attachment_id!r}. Use an id from the "
-                "attachment note for a file in this conversation."
+                + "attachment note for a file in this conversation."
             ) from None
 
         try:

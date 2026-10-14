@@ -33,9 +33,9 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     # nothing on an installation that has never run a sub-agent.
 
     async def reconcile() -> None:
-        await records.reconcile_stranded()
+        _ = await records.reconcile_stranded()
 
-    ctx.lifecycle.track("subagent-reconcile", reconcile())
+    _ = ctx.lifecycle.track("subagent-reconcile", reconcile())
     return FeatureRuntime(
         services=(records, launcher),
         # On the app as well, because the register is what the panel's own routes read —

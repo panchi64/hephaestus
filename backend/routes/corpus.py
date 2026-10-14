@@ -128,7 +128,7 @@ async def remove_folder(source_id: str, request: Request) -> None:
 @router.post("/sources/{source_id}/reindex", status_code=202)
 async def reindex_source(source_id: str, request: Request) -> None:
     try:
-        await deps.corpus(request).reindex(OPERATOR_ID, source_id)
+        _ = await deps.corpus(request).reindex(OPERATOR_ID, source_id)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="source not found") from None
 

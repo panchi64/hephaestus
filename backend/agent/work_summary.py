@@ -42,7 +42,6 @@ import logging
 from pydantic_ai import (
     ModelMessage,
     ModelRequest,
-    ModelResponse,
     TextPart,
     ToolCallPart,
     UserPromptPart,
@@ -111,7 +110,7 @@ def _turn_lines(message: ModelMessage) -> tuple[list[str], list[str]]:
                 text = flatten_content(part.content).strip()
                 if text:
                     trusted.append(f"OPERATOR: {text}")
-    elif isinstance(message, ModelResponse):
+    else:
         for part in message.parts:
             if isinstance(part, TextPart):
                 text = part.content.strip()

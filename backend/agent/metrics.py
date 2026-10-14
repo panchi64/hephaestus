@@ -178,7 +178,7 @@ def _log_prefill_diagnostic(run: Run, last_request: LastRequestUsage | None) -> 
     verdict = run.prefix_verdict
     logger.debug(
         "prefix run=%s route=%s prompt=%s cached=%s ttft_ms=%s prefill_tok_s=%s "
-        "brief=%s schemas=%s %s",
+        + "brief=%s schemas=%s %s",
         run.id,
         last_request.route if last_request else None,
         last_request.prefill_tokens if last_request else None,

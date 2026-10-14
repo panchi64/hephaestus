@@ -47,7 +47,7 @@ MANIFEST = FeatureManifest(
         DormantCategory(
             "vault",
             "the operator's stored secrets — list what is held, and read one credential "
-            "by name when a task needs it",
+            + "by name when a task needs it",
         ),
     ),
     available=_available,

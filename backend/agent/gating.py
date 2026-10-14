@@ -46,7 +46,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic_ai import ToolApproved, ToolDenied
 from pydantic_ai.messages import ModelMessage, ToolCallPart
@@ -401,7 +401,7 @@ async def review_call(
     *,
     tool_call_id: str,
     tool: str,
-    args: dict[str, Any],
+    args: dict[str, object],
     root: Path | None,
     transcript: Sequence[TranscriptEntry],
     reviewer: Reviewer | None,
@@ -422,7 +422,7 @@ async def review_call(
     fence token the batch shares, so every review's prompt opens on the same bytes.
     """
     capability = capability_of(tool, args, root=root)
-    run.emit(
+    _ = run.emit(
         ReviewStarted(
             tool_call_id=tool_call_id,
             name=tool,
@@ -441,7 +441,7 @@ async def review_call(
         nonce=nonce,
     )
     verdict = outcome.verdict
-    run.emit(
+    _ = run.emit(
         ReviewCompleted(
             tool_call_id=tool_call_id,
             name=tool,

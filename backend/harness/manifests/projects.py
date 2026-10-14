@@ -39,7 +39,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     # cutting real worktrees into the operator's own home directory.
     worktrees = WorktreeManager(ctx.settings.worktrees_dir)
     checkouts = CheckoutHolders()
-    ctx.lifecycle.track("projects.legacy_branches", _rename_branches(store, ctx.vault))
+    _ = ctx.lifecycle.track("projects.legacy_branches", _rename_branches(store, ctx.vault))
     return FeatureRuntime(
         services=(store, worktrees, checkouts),
         capabilities=(store, worktrees, checkouts),
@@ -49,9 +49,9 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
 async def _rename_branches(store: ProjectStore, vault: Vault) -> None:
     """Project paths are sealed, so this waits for the vault."""
-    await vault.unlocked_event.wait()
+    _ = await vault.unlocked_event.wait()
     for project in await store.list(OPERATOR_ID, include_archived=True):
-        await rename_legacy_branches(Path(project.root_path))
+        _ = await rename_legacy_branches(Path(project.root_path))
 
 
 MANIFEST = FeatureManifest(

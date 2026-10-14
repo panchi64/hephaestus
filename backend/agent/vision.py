@@ -31,8 +31,8 @@ class _PreparedTranscriber:
     """A vision agent bound to one document's owner, ready to read its page images."""
 
     def __init__(self, agent: Agent[None, str], timeout_s: float) -> None:
-        self._agent = agent
-        self._timeout_s = timeout_s
+        self._agent: Agent[None, str] = agent
+        self._timeout_s: float = timeout_s
 
     async def transcribe(self, image: bytes) -> str:
         result = await asyncio.wait_for(
@@ -51,8 +51,8 @@ class VisionTranscriber:
     page by page."""
 
     def __init__(self, registry: ModelRegistry, *, timeout_s: float = 120.0) -> None:
-        self._registry = registry
-        self._timeout_s = timeout_s
+        self._registry: ModelRegistry = registry
+        self._timeout_s: float = timeout_s
 
     async def prepare(self, owner_id: str) -> _PreparedTranscriber:
         model = await self._registry.resolve_vision(owner_id)

@@ -17,11 +17,12 @@ consulted where the provider has already told us the answer.
 
 from __future__ import annotations
 
-from typing import Any
-
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 
 from runs import Run
+
+_BODY = TypeAdapter(dict[str, JsonValue])
 
 # --- context-window overflow ------------------------------------------------------
 
@@ -61,8 +62,9 @@ def provider_error_code(exc: ModelHTTPError) -> str | None:
     (what most local servers send) has no code, and this returns ``None`` — which is the
     signal to fall back to reading the prose.
     """
-    body: Any = exc.body
-    if not isinstance(body, dict):
+    try:
+        body = _BODY.validate_python(exc.body)
+    except ValidationError:
         return None
     error = body.get("error")
     if not isinstance(error, dict):

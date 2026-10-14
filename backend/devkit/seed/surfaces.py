@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from devkit.seed.registry import SeedContext, fixture, rows
+from devkit.seed.registry import SeedContext, fixture, json_object, rows
 
 
 def _soon(days: int, hour: int) -> str:
@@ -33,9 +33,9 @@ async def seed_calendar(ctx: SeedContext) -> str:
         created = await ctx.client.post("/calendar/calendars", json={"name": "Personal"})
         if created.status_code not in (200, 201):
             return "could not create a calendar"
-        calendar_id = created.json()["id"]
+        calendar_id = str(json_object(created)["id"])
     else:
-        calendar_id = calendars[0]["id"]
+        calendar_id = str(calendars[0]["id"])
 
     if rows(await ctx.client.get("/calendar/events")):
         return "already populated"

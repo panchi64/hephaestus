@@ -21,7 +21,7 @@ both are mapped here (404 / 422) rather than anywhere below.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -478,7 +478,7 @@ async def parse_phrase(body: ParseIn, request: Request) -> DraftOut:
 
 
 @contextmanager
-def _mapped() -> Iterator[None]:
+def _mapped() -> Generator[None]:
     """Map the two domain errors this surface can raise onto HTTP in one place, rather
     than repeating the same pair of ``except`` clauses on a dozen handlers — an unknown id
     is a 404 and malformed input (a bad zone, an unparseable rule, an empty title) is a

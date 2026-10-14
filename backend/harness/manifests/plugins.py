@@ -36,7 +36,7 @@ MANIFEST = FeatureManifest(
         DormantCategory(
             "plugins",
             "the tools of the operator's published plugins, and writing and testing new "
-            "plugins: tools in Python that run in the platform VM",
+            + "plugins: tools in Python that run in the platform VM",
         ),
     ),
     build=_build,

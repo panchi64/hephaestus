@@ -25,7 +25,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
 
 from pydantic_ai import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.messages import UserContent
@@ -82,7 +81,7 @@ class TurnSetup:
     #: prompt; this is the structured form of the same fact, for rendering.
     file_refs: list[str] = field(default_factory=list)
     # filled by prepare_turn
-    user_prompt: str | list[Any] | None = None
+    user_prompt: str | list[UserContent] | None = None
     history: list[ModelMessage] | None = None  # persistence baseline
     model_history: list[ModelMessage] | None = None  # what the model replays
     compaction: CompactionContext | None = None
@@ -246,7 +245,7 @@ async def prepare_turn(
     # vision model additionally gets an image's pixels, the one kind that stays
     # inline in both the live and the persisted shape. Only on a fresh turn: a
     # regenerate (prompt is None) re-runs history, which already carries the markers.
-    user_prompt: str | list[Any] | None = prompt
+    user_prompt: str | list[UserContent] | None = prompt
     refs_marker = ""
 
     # Resolved the one way the file tools resolve it, so an attachment lands in — and a
@@ -298,7 +297,13 @@ async def prepare_turn(
     if file_refs and prompt is not None:
         setup.file_refs, refs_marker = resolve_file_refs(file_refs, workspace)
         if refs_marker:
-            base = user_prompt if isinstance(user_prompt, list) else [user_prompt]
+            base: list[UserContent] = (
+                user_prompt
+                if isinstance(user_prompt, list)
+                else []
+                if user_prompt is None
+                else [user_prompt]
+            )
             user_prompt = [*base, refs_marker]
             # Beside whatever the attachments left, never instead of it: a turn can carry
             # both, and an empty list here is still the "strip to the typed prompt" signal
@@ -355,8 +360,14 @@ async def prepare_turn(
         announce_injection(run, contributor_id(provider), text, "prompt")
     if context_texts:
         if prompt is not None:
-            base = user_prompt if isinstance(user_prompt, list) else [user_prompt]
-            user_prompt = [*base, *context_texts]
+            context_base: list[UserContent] = (
+                user_prompt
+                if isinstance(user_prompt, list)
+                else []
+                if user_prompt is None
+                else [user_prompt]
+            )
+            user_prompt = [*context_base, *context_texts]
             # An empty (non-None) persisted set still strips the live payload back
             # to the typed prompt on record — the tail context must not persist.
             setup.persisted = setup.persisted if setup.persisted is not None else []
@@ -403,7 +414,7 @@ async def prepare_turn(
         # estimate instead — which is the point of emitting one at all: the operator
         # asked for a fold and must see the gauge fall, not sit at its old figure until
         # the answer lands.
-        run.emit(post_fold_metrics(run, history or [], settings=settings))
+        _ = run.emit(post_fold_metrics(run, history or [], settings=settings))
     # What the model replays — `history` plus, on a regenerate, the per-turn prompt
     # context. `history` itself stays the persistence baseline.
     setup.model_history = history

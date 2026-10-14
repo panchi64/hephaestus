@@ -48,6 +48,7 @@ def vault_toolset() -> FunctionToolset[RunDeps]:
 
         ``reason`` MUST say why you need to see the vault's contents.
         """
+        del reason  # Read by the approval card from the call's arguments, not by this body.
         service = ctx.deps.caps.get_optional(SecretVaultService)
         if service is None:
             return {"ok": False, "error": _UNAVAILABLE}
@@ -65,6 +66,7 @@ def vault_toolset() -> FunctionToolset[RunDeps]:
         plain-language statement of what you will do with the credential. Find an entry's
         id with ``vault_list_entries`` first.
         """
+        del reason  # Read by the approval card from the call's arguments, not by this body.
         service = ctx.deps.caps.get_optional(SecretVaultService)
         if service is None:
             return {"ok": False, "error": _UNAVAILABLE}

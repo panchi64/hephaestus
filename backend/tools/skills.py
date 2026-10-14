@@ -139,7 +139,7 @@ async def _project_skills(ctx: RunContext[RunDeps]) -> tuple[DiskSkill, ...]:
         root = await project_tree(ctx)
         cached = project_skills(root) if root is not None else ()
         if len(_project_cache) >= _MAX_CACHED_RUNS:
-            _project_cache.popitem(last=False)
+            _ = _project_cache.popitem(last=False)
     _project_cache[run_id] = cached
     return cached
 
@@ -303,6 +303,7 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
         ``old_text`` must appear **exactly once** in the skill's text; include enough
         surrounding context to make it unique. To append rather than replace, use the last
         line of the skill as ``old_text`` and return it followed by your new text."""
+        del explanation  # Read by the approval card from the call's arguments, not by this body.
         store = ctx.deps.caps.get_optional(SkillStore)
         if store is None:
             return {"ok": False, "error": _UNAVAILABLE}
@@ -318,16 +319,16 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
                 f"No published skill named {name!r}. Available skills: {available}."
             ) from None
         try:
-            await store.replace_span(ctx.deps.owner_id, skill.id, old_text, new_text)
+            _ = await store.replace_span(ctx.deps.owner_id, skill.id, old_text, new_text)
         except SkillSpanError as exc:
             if exc.occurrences == 0:
                 raise ModelRetry(
                     "old_text was not found in that skill. Quote its existing text exactly, "
-                    "including whitespace."
+                    + "including whitespace."
                 ) from None
             raise ModelRetry(
                 f"old_text matched {exc.occurrences} places in that skill. Include more "
-                "surrounding context so it identifies exactly one."
+                + "surrounding context so it identifies exactly one."
             ) from None
         return {"ok": True, "name": skill.name, "note": "Skill updated."}
 

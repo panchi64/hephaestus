@@ -59,7 +59,7 @@ class LifecycleRegistry:
         Startup failures propagate — a capability that can't come up should fail
         the boot loudly, not limp into a half-wired process.
         """
-        await start()
+        _ = await start()
         self._units.append(_Unit(name, stop))
 
     def on_stop(self, name: str, stop: StopFn) -> None:

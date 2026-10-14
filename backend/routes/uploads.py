@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import math
 from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, File, Header, HTTPException, Request, Response, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -131,7 +132,7 @@ async def list_uploads(request: Request) -> list[UploadSummaryOut]:
 async def create_upload(
     request: Request,
     response: Response,
-    file: UploadFile = File(...),  # noqa: B008 — FastAPI's parameter-marker default
+    file: Annotated[UploadFile, File()],
 ) -> UploadOut:
     # UP-4: rate-limit the endpoint to protect the service before doing any work.
     try:
@@ -198,7 +199,7 @@ async def thumbnail_upload(
     upload_id: str,
     request: Request,
     size: int = _DEFAULT_THUMB,
-    if_none_match: str | None = Header(default=None),
+    if_none_match: Annotated[str | None, Header()] = None,
 ) -> Response:
     """A downscaled preview of an image upload for an image grid (a full multi-MB
     original per tile would be wasteful). The ETag is content-addressed (the upload's

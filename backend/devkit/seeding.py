@@ -37,7 +37,7 @@ async def _authenticate(client: httpx.AsyncClient, instance: DevInstance) -> Non
     if not instance.auth:
         return
     response = await client.post("/auth/login", json={"password": instance.password})
-    response.raise_for_status()
+    _ = response.raise_for_status()
     client.headers["Authorization"] = f"Bearer {response.json()['token']}"
 
 
