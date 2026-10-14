@@ -21,7 +21,7 @@ type AgentSource = Callable[[str], Awaitable[Iterable[AgentDefinition]]]
 
 class AgentCatalog:
     def __init__(self, store: AgentStore) -> None:
-        self._store = store
+        self._store: AgentStore = store
         self._contributors: list[AgentSource] = []
 
     def contribute(self, source: AgentSource) -> None:

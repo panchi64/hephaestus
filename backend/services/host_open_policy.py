@@ -219,7 +219,7 @@ def ensure_openable(target: Path) -> None:
         if target.suffix:
             raise PermissionDeniedError(
                 f"{name} is a folder with an extension, which your machine may launch as "
-                "an application rather than show, so it isn't opened from here"
+                + "an application rather than show, so it isn't opened from here"
             )
         return
 
@@ -230,10 +230,10 @@ def ensure_openable(target: Path) -> None:
     if extension and extension not in openable_suffixes():
         raise PermissionDeniedError(
             f"{name} isn't a kind of file this opens — only text, source and documents, "
-            "because your machine would run some of the rest rather than show them"
+            + "because your machine would run some of the rest rather than show them"
         )
     if S_IMODE(mode) & 0o111:
         raise PermissionDeniedError(
             f"{name} is marked executable, so opening it could run it instead of showing "
-            "it; clear the execute bit if it's meant to be read"
+            + "it; clear the execute bit if it's meant to be read"
         )

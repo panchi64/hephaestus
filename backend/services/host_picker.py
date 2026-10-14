@@ -194,9 +194,11 @@ def _build_argv(
     # path to stdout and nothing on cancel, matching the other helpers' contract.
     if directory:
         script = (
-            "Add-Type -AssemblyName System.Windows.Forms;"
-            "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
-            f"$d.Description = {_powershell_string(title)};"
+            (
+                "Add-Type -AssemblyName System.Windows.Forms;"
+                "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
+                f"$d.Description = {_powershell_string(title)};"
+            )
             + (f"$d.SelectedPath = {_powershell_string(start_dir)};" if start_dir else "")
             + "if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }"
         )
@@ -206,10 +208,12 @@ def _build_argv(
             or "All files|*.*"
         )
         script = (
-            "Add-Type -AssemblyName System.Windows.Forms;"
-            "$d = New-Object System.Windows.Forms.OpenFileDialog;"
-            f"$d.Title = {_powershell_string(title)};"
-            f"$d.Filter = {_powershell_string(filt)};"
+            (
+                "Add-Type -AssemblyName System.Windows.Forms;"
+                "$d = New-Object System.Windows.Forms.OpenFileDialog;"
+                f"$d.Title = {_powershell_string(title)};"
+                f"$d.Filter = {_powershell_string(filt)};"
+            )
             + (f"$d.InitialDirectory = {_powershell_string(start_dir)};" if start_dir else "")
             + "if ($d.ShowDialog() -eq 'OK') { $d.FileName }"
         )
@@ -260,7 +264,7 @@ async def _run(argv: list[str]) -> str | None:
         with suppress(ProcessLookupError):
             proc.kill()
         with suppress(Exception):
-            await proc.wait()
+            _ = await proc.wait()
         logger.info("host picker: the file chooser timed out with no selection")
         return None
     if proc.returncode != 0:

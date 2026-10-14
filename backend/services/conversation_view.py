@@ -15,14 +15,14 @@ need not import the orchestrator.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic_ai import (
     BinaryContent,
     ModelRequest,
-    ModelResponse,
     RetryPromptPart,
     TextPart,
     ThinkingPart,
@@ -30,6 +30,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.messages import ModelMessage, ModelRequestPart, ModelResponsePart
 
 from core.compaction_sections import SummarySection, summary_sections
 from core.serde import jsonable
@@ -80,6 +81,8 @@ FILE_REFS_MARKER_OPEN = "[The operator referenced these files with @:"
 #: the layer that holds the registry. Nothing in ``agent/`` resolves a command name.
 COMMAND_KEY = "command"
 
+_NO_IDS: frozenset[str] = frozenset()
+
 
 @dataclass
 class ToolImageView:
@@ -103,9 +106,9 @@ class ToolImageView:
 class ToolView:
     id: str
     name: str
-    args: dict[str, Any]
+    args: dict[str, object]
     status: str = "running"  # "running" | "ok" | "error"
-    result: Any = None
+    result: object = None
     error: str | None = None
     images: list[ToolImageView] = field(default_factory=list)
     # `ask_user` only — the questions this call asked and what the operator said to each,
@@ -119,10 +122,24 @@ class ToolView:
     parent_tool_call_id: str | None = None
 
 
-def _field(item: Any, name: str) -> Any:
+def _as_dict(value: object) -> dict[str, object] | None:
+    """``value`` as a string-keyed dict when it is a dict. Keys are not inspected."""
+    return cast("dict[str, object]", value) if isinstance(value, dict) else None
+
+
+def _as_list(value: object) -> list[object] | None:
+    """``value`` as a list when it is a list or tuple."""
+    return list(cast("Sequence[object]", value)) if isinstance(value, list | tuple) else None
+
+
+def _field(item: object, name: str) -> object:
     """One field of a part a script's result recorded — the library object while the
     thread is still in memory, the plain dict it serialized to once it has been stored."""
-    return item.get(name) if isinstance(item, dict) else getattr(item, name, None)
+    as_dict = _as_dict(item)
+    if as_dict is not None:
+        return as_dict.get(name)
+    value: object = getattr(item, name, None)
+    return value
 
 
 def _script_calls(part: ToolReturnPart) -> list[ToolView]:
@@ -136,22 +153,25 @@ def _script_calls(part: ToolReturnPart) -> list[ToolView]:
     account of why, so the row says only that it did not complete. The live stream showed
     the reason (``tool.failed``), and a reload is the one place that is not kept.
     """
-    metadata = part.metadata
-    if not isinstance(metadata, dict) or not metadata.get("code_mode"):
+    raw_metadata: object = getattr(part, "metadata", None)
+    metadata = _as_dict(raw_metadata)
+    if metadata is None or not metadata.get("code_mode"):
         return []
-    calls = metadata.get("tool_calls") or {}
-    returns = metadata.get("tool_returns") or {}
-    if not isinstance(calls, dict) or not isinstance(returns, dict):
+    calls = _as_dict(metadata.get("tool_calls") or {})
+    returns = _as_dict(metadata.get("tool_returns") or {})
+    if calls is None or returns is None:
         return []
     views: list[ToolView] = []
     for call_id, call in calls.items():
-        args = _field(call, "args")
-        if isinstance(args, str):
-            args = ToolCallPart(tool_name="", args=args).args_as_dict()
+        raw_args = _field(call, "args")
+        if isinstance(raw_args, str):
+            args: dict[str, object] = ToolCallPart(tool_name="", args=raw_args).args_as_dict()
+        else:
+            args = _as_dict(raw_args) or {}
         view = ToolView(
             id=str(call_id),
             name=str(_field(call, "tool_name") or ""),
-            args=args if isinstance(args, dict) else {},
+            args=args,
             parent_tool_call_id=part.tool_call_id,
         )
         returned = returns.get(call_id)
@@ -282,7 +302,7 @@ _UNSENT_CLASSES = frozenset({"reasoning"})
 _TAG_MODE_ID = "content"
 
 
-def estimate_tokens(messages: list[Any]) -> int:
+def estimate_tokens(messages: Sequence[ModelMessage]) -> int:
     """A coarse token estimate for what ``messages`` cost **on the wire**.
 
     The fallback for endpoints that report no usage — local servers commonly return
@@ -314,10 +334,7 @@ def estimate_tokens(messages: list[Any]) -> int:
 
     It lives here rather than beside the compaction code that first needed it because the
     projection needs the same number: a compaction divider reports what it folded, and a
-    cold read must report the same figure the live event did.
-
-    ``messages`` is a list of ``ModelMessage``; typed loosely so this module keeps the
-    same duck-typed part handling as the projection below."""
+    cold read must report the same figure the live event did."""
     sent = sum(
         chars_to_tokens(chars.prose, chars.structured)
         for name, chars in message_class_chars(messages).items()
@@ -326,7 +343,7 @@ def estimate_tokens(messages: list[Any]) -> int:
     return int(sent + chars_to_tokens(_tag_mode_reasoning_chars(messages), 0))
 
 
-def _tag_mode_reasoning_chars(messages: list[Any]) -> int:
+def _tag_mode_reasoning_chars(messages: Sequence[ModelMessage]) -> int:
     """Characters of thinking that will be re-sent as assistant text, whatever the template.
 
     The library decides per part. Thinking it read out of a **provider field** goes back into
@@ -349,14 +366,12 @@ def _tag_mode_reasoning_chars(messages: list[Any]) -> int:
         len(part.content)
         for message in messages
         for part in message.parts
-        if isinstance(part, ThinkingPart)
-        and isinstance(part.content, str)
-        and getattr(part, "id", None) in (None, "", _TAG_MODE_ID)
+        if isinstance(part, ThinkingPart) and part.id in (None, "", _TAG_MODE_ID)
     )
 
 
 def estimate_footprint(
-    messages: list[Any],
+    messages: Sequence[ModelMessage],
     overhead: TurnOverhead | None,
     *,
     fallback_overhead_tokens: int,
@@ -426,7 +441,7 @@ _PART_CLASSES: tuple[tuple[type, str], ...] = (
 MESSAGE_CLASSES = ("conversation", "tool_results", "tool_calls", "reasoning")
 
 
-def _part_class(part: Any) -> str | None:
+def _part_class(part: ModelRequestPart | ModelResponsePart) -> str | None:
     """Which class a part's characters belong to, or None to leave it uncounted."""
     if type(part).__name__ == "SystemPromptPart":
         return None
@@ -438,7 +453,7 @@ def _part_class(part: Any) -> str | None:
     return "conversation"
 
 
-def _part_chars(part: Any) -> tuple[int, int]:
+def _part_chars(part: ModelRequestPart | ModelResponsePart) -> tuple[int, int]:
     """One part as (prose, structured) characters.
 
     The classification is by content shape, not by part type, because that is exactly the
@@ -452,16 +467,19 @@ def _part_chars(part: Any) -> tuple[int, int]:
     the one place guaranteed to mislead: unattributed, so scaling spread it across the
     parts that *were* measured."""
     if isinstance(part, ToolCallPart):
-        return 0, len(_content_text(getattr(part, "args", None)))
-    content = getattr(part, "content", None)
+        return 0, len(_content_text(part.args))
+    content: object = getattr(part, "content", None)
     if isinstance(content, str):
         return len(content), 0
-    if isinstance(content, list | tuple) and all(isinstance(item, str) for item in content):
-        return sum(len(item) for item in content), 0
+    items = _as_list(content)
+    if items is not None:
+        strings = [item for item in items if isinstance(item, str)]
+        if len(strings) == len(items):
+            return sum(len(item) for item in strings), 0
     return 0, len(_content_text(content))
 
 
-def message_class_chars(messages: list[Any]) -> dict[str, ContentChars]:
+def message_class_chars(messages: Sequence[ModelMessage]) -> dict[str, ContentChars]:
     """Characters across ``messages``, split by class and by how each tokenizes.
 
     Keyed by the classes in :data:`MESSAGE_CLASSES`; a class with no characters is
@@ -484,7 +502,7 @@ def message_class_chars(messages: list[Any]) -> dict[str, ContentChars]:
     }
 
 
-def message_chars(messages: list[Any]) -> ContentChars:
+def message_chars(messages: Sequence[ModelMessage]) -> ContentChars:
     """Characters across ``messages``, split prose vs. serialized-structure.
 
     The whole-conversation figure, summed from :func:`message_class_chars` so the total
@@ -496,7 +514,7 @@ def message_chars(messages: list[Any]) -> ContentChars:
     )
 
 
-def _content_text(content: Any) -> str:
+def _content_text(content: object) -> str:
     """A part's content as the text a model would actually be sent.
 
     **Structured content counts.** A tool result is usually a dict — a search's hits, a
@@ -520,16 +538,18 @@ def _content_text(content: Any) -> str:
         return str(content)
     if isinstance(content, int | float):
         return str(content)
-    if isinstance(content, dict):
+    mapping = _as_dict(content)
+    if mapping is not None:
         # Keys as well as values: they are serialized alongside the data and are a real
         # share of a wide row's tokens.
-        return " ".join(f"{key} {_content_text(value)}" for key, value in content.items())
-    if isinstance(content, list | tuple):
-        return " ".join(_content_text(item) for item in content)
+        return " ".join(f"{key} {_content_text(value)}" for key, value in mapping.items())
+    items = _as_list(content)
+    if items is not None:
+        return " ".join(_content_text(item) for item in items)
     return ""
 
 
-def flatten_content(content: Any) -> str:
+def flatten_content(content: object) -> str:
     """Flatten a message part's content (str or multimodal sequence) to text.
 
     A multimodal turn keeps its text parts; non-text parts (images, files) are
@@ -538,11 +558,12 @@ def flatten_content(content: Any) -> str:
     composer is text-only today, so this only guards future multimodal input."""
     if isinstance(content, str):
         return content
-    if isinstance(content, list | tuple):
-        text = " ".join(part for part in content if isinstance(part, str)).strip()
+    items = _as_list(content)
+    if items is not None:
+        text = " ".join(part for part in items if isinstance(part, str)).strip()
         if text:
             return text
-        return "[attachment]" if content else ""
+        return "[attachment]" if items else ""
     return ""
 
 
@@ -556,14 +577,15 @@ def flatten_content(content: Any) -> str:
 MAX_TOOL_IMAGE_BYTES = 2_000_000
 
 
-def tool_images(content: Any) -> list[ToolImageView]:
+def tool_images(content: object) -> list[ToolImageView]:
     """The images in a tool's returned content, in order.
 
     Shared with the live translator so a screenshot looks the same warm and cold. Only
     images: a tool may hand back a PDF or an audio clip for the model to read, and a
     work-log card has nothing useful to do with either. Oversized ones are dropped rather
     than shrunk — re-encoding here would put an image pipeline in a projection."""
-    items = content if isinstance(content, list | tuple) else [content]
+    listed = _as_list(content)
+    items = [content] if listed is None else listed
     return [
         ToolImageView(media_type=item.media_type, data=item.base64)
         for item in items
@@ -574,7 +596,9 @@ def tool_images(content: Any) -> list[ToolImageView]:
 
 
 def _attach_tool_images(
-    user_parts: list[Any], returns: list[Any], by_call: dict[str, ToolView]
+    user_parts: list[UserPromptPart],
+    returns: list[ToolReturnPart | RetryPromptPart],
+    by_call: dict[str, ToolView],
 ) -> None:
     """Hang a tool-return request's image payloads on the calls that produced them.
 
@@ -615,15 +639,16 @@ def _attach_answers(tool: ToolView) -> None:
     tool.answers = parse_answer(questions_of(tool.args), tool.result)
 
 
-def _compaction_reason(message: Any) -> str | None:
+def _compaction_reason(message: object) -> str | None:
     """Why this checkpoint folded, off its own ``ModelRequest.metadata`` — or ``None``.
 
     ``None`` covers both a checkpoint recorded before the reason was stored and any
     metadata shape this doesn't recognise. The divider is written to read correctly
     without the segment, so an absent reason costs nothing; a *wrong* one would tell the
     operator the provider forced a fold they asked for themselves."""
-    metadata = getattr(message, "metadata", None)
-    if not isinstance(metadata, dict):
+    raw: object = getattr(message, "metadata", None)
+    metadata = _as_dict(raw)
+    if metadata is None:
         return None
     reason = metadata.get(COMPACTION_REASON_KEY)
     return reason if isinstance(reason, str) and reason else None
@@ -644,7 +669,7 @@ def strip_file_refs_marker(text: str) -> str:
     return head.rstrip() if sep else text
 
 
-def stamped_file_refs(message: Any) -> list[str]:
+def stamped_file_refs(message: object) -> list[str]:
     """The `@` paths stamped on this request, or an empty list.
 
     Read defensively for the same reason ``_compaction_reason`` is: a turn recorded before
@@ -652,16 +677,18 @@ def stamped_file_refs(message: Any) -> list[str]:
     without inspecting — so anything unrecognised reads as "none", never as a crash in the
     projection every transcript load goes through.
     """
-    metadata = getattr(message, "metadata", None)
-    if not isinstance(metadata, dict):
+    raw: object = getattr(message, "metadata", None)
+    metadata = _as_dict(raw)
+    if metadata is None:
         return []
     refs = metadata.get(FILE_REFS_KEY)
-    if not isinstance(refs, list):
+    items = _as_list(refs)
+    if items is None or isinstance(refs, tuple):
         return []
-    return [ref for ref in refs if isinstance(ref, str) and ref]
+    return [ref for ref in items if isinstance(ref, str) and ref]
 
 
-def stamped_command(message: Any) -> Invocation | None:
+def stamped_command(message: object) -> Invocation | None:
     """The slash command this request was sent with, or ``None``.
 
     Read as defensively as the two above, and for one more reason besides: this one is fed
@@ -670,11 +697,12 @@ def stamped_command(message: Any) -> Invocation | None:
     existed simply has no key, and replays exactly as it did before — which is the correct
     outcome, not a degraded one.
     """
-    metadata = getattr(message, "metadata", None)
-    if not isinstance(metadata, dict):
+    raw: object = getattr(message, "metadata", None)
+    metadata = _as_dict(raw)
+    if metadata is None:
         return None
-    stamp = metadata.get(COMMAND_KEY)
-    if not isinstance(stamp, dict):
+    stamp = _as_dict(metadata.get(COMMAND_KEY))
+    if stamp is None:
         return None
     name = stamp.get("name")
     argument = stamp.get("argument", "")
@@ -683,7 +711,7 @@ def stamped_command(message: Any) -> Invocation | None:
     return Invocation(name=name, argument=argument if isinstance(argument, str) else "")
 
 
-def _summary_part(message: Any) -> Any | None:
+def _summary_part(message: ModelMessage) -> UserPromptPart | None:
     """A checkpoint's summary part — the one the divider renders.
 
     Found by type rather than by position: a fold carries the dormant groups the folded
@@ -696,7 +724,7 @@ def _summary_part(message: Any) -> Any | None:
 
 
 def project_tree(
-    nodes: list[tuple[str, Any]], *, compacted_ids: frozenset[str] = frozenset()
+    nodes: Sequence[tuple[str, ModelMessage]], *, compacted_ids: frozenset[str] = _NO_IDS
 ) -> list[MessageView]:
     """Fold an active-path ``(node_id, ModelMessage)`` sequence into ordered
     user/assistant view turns.
@@ -742,7 +770,7 @@ def project_tree(
     # The messages a checkpoint would fold: everything since the previous one (which is
     # itself part of the set — a second fold summarizes the first summary plus what
     # followed it, exactly as `compaction_plan` collects them).
-    since_checkpoint: list[Any] = []
+    since_checkpoint: list[ModelMessage] = []
     for node_id, message in nodes:
         if node_id in compacted_ids:
             # A conversation-compaction checkpoint: its own turn, not the operator's.
@@ -755,7 +783,7 @@ def project_tree(
                     role="compaction",
                     content=summary_text,
                     sections=summary_sections(summary_text),
-                    timestamp=getattr(summary_part, "timestamp", None),
+                    timestamp=None if summary_part is None else summary_part.timestamp,
                     id=node_id,
                     messages_compacted=len(since_checkpoint),
                     tokens_before=estimate_tokens(since_checkpoint),
@@ -805,7 +833,7 @@ def project_tree(
                             role="subagent",
                             author=sent[0],
                             content=sent[1],
-                            timestamp=getattr(part, "timestamp", None),
+                            timestamp=part.timestamp,
                             id=node_id,
                         )
                     )
@@ -815,7 +843,7 @@ def project_tree(
                     MessageView(
                         role="subagent" if report is not None else "user",
                         content=strip_file_refs_marker(text if body is None else body),
-                        timestamp=getattr(part, "timestamp", None),
+                        timestamp=part.timestamp,
                         id=node_id,
                         file_refs=stamped_file_refs(message),
                     )
@@ -838,16 +866,14 @@ def project_tree(
                         tool.status = "error"
                         tool.error = part.model_response()
             _attach_tool_images(user_parts, returns, by_call)
-        elif isinstance(message, ModelResponse):
+        else:
             if assistant is None:
                 # First response of the turn — its node id is the branch point.
-                assistant = MessageView(
-                    role="assistant", timestamp=getattr(message, "timestamp", None), id=node_id
-                )
+                assistant = MessageView(role="assistant", timestamp=message.timestamp, id=node_id)
                 views.append(assistant)
             # A turn can span several responses (tool round-trips); the last one
             # carrying a name is the model that wrote the final answer.
-            assistant.model = getattr(message, "model_name", None) or assistant.model
+            assistant.model = message.model_name or assistant.model
             for part in message.parts:
                 if isinstance(part, TextPart):
                     assistant.content += part.content

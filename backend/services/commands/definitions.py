@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 from pydantic_ai_harness.repo_context import RepoContext
 
@@ -83,7 +82,7 @@ def project_specs(root: Path) -> tuple[CommandSpec, ...]:
         except (CommandFileError, OSError, UnicodeDecodeError) as exc:
             logger.info("commands: skipped command file %s (%s)", path, exc)
             continue
-        specs.setdefault(spec.name, spec)
+        _ = specs.setdefault(spec.name, spec)
     return tuple(specs.values())
 
 
@@ -118,6 +117,7 @@ def parse_command_file(text: str, *, name: str) -> CommandSpec:
     description defaults to the file's first line, which is what a prompt template's first
     line almost always already is.
     """
+    fields: dict[str, object]
     try:
         fields, body = split_frontmatter(text)
     except FrontmatterError:
@@ -144,7 +144,7 @@ def parse_command_file(text: str, *, name: str) -> CommandSpec:
     )
 
 
-def _name(raw: Any, *, fallback: str) -> str:
+def _name(raw: object, *, fallback: str) -> str:
     try:
         return validate_name(_line(raw) or fallback)
     except CommandValidationError as exc:
@@ -153,7 +153,7 @@ def _name(raw: Any, *, fallback: str) -> str:
         raise CommandFileError(str(exc)) from None
 
 
-def _line(raw: Any) -> str:
+def _line(raw: object) -> str:
     """A frontmatter scalar as one line of text, or ``""`` for anything that is not one.
 
     Wrong types read as absent rather than raising, because every field this is used for has

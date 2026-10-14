@@ -104,10 +104,10 @@ def _digest(presented: str) -> str:
 
 class ApiTokenStore:
     def __init__(self, engine: Engine, scope_table: ScopeTable) -> None:
-        self._engine = engine
+        self._engine: Engine = engine
         # The same table the auth gate resolves against, so a scope this store lets
         # onto a token is exactly a scope the gate can honor.
-        self._scope_table = scope_table
+        self._scope_table: ScopeTable = scope_table
         # digest(presented token) → identity, for tokens already verified this process.
         self._verified: dict[str, TokenIdentity] = {}
         # token id → monotonic time of its last `last_used_at` write.
@@ -179,7 +179,7 @@ class ApiTokenStore:
         for digest, identity in list(self._verified.items()):
             if identity.token_id == token_id:
                 del self._verified[digest]
-        self._touched.pop(token_id, None)
+        _ = self._touched.pop(token_id, None)
         return _info(row)
 
     # --- the auth gate -------------------------------------------------------------

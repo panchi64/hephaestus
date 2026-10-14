@@ -34,8 +34,11 @@ letting it pile up in whichever part happens to be measured last.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
+
+from pydantic_ai.messages import ModelMessage
 
 from core.text import chars_to_tokens
 from runs import ContextComposition, ContextSegment, TurnOverhead
@@ -64,7 +67,7 @@ class _Piece:
 
 
 def compose(
-    used: int | None, overhead: TurnOverhead | None, messages: list[Any]
+    used: int | None, overhead: TurnOverhead | None, messages: Sequence[ModelMessage]
 ) -> ContextComposition | None:
     """Split ``used`` — the provider's own footprint figure — into groups and segments.
 
@@ -111,7 +114,7 @@ def compose(
     )
 
 
-def _pieces(overhead: TurnOverhead, messages: list[Any]) -> list[_Piece]:
+def _pieces(overhead: TurnOverhead, messages: Sequence[ModelMessage]) -> list[_Piece]:
     """Everything in the window, itemised as far as it was measured.
 
     Falls back to a group's total whenever its itemisation is missing — an overhead

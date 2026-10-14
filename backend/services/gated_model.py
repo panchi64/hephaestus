@@ -6,10 +6,10 @@ waiting on it from inside a run that holds another endpoint could close a cycle.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import override
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -30,6 +30,7 @@ class EndpointGatedModel(WrapperModel):
         self.gate = gate
         self.endpoint = endpoint
 
+    @override
     async def request(
         self,
         messages: list[ModelMessage],
@@ -39,14 +40,15 @@ class EndpointGatedModel(WrapperModel):
         async with self.gate.request(self.endpoint):
             return await self.wrapped.request(messages, model_settings, model_request_parameters)
 
+    @override
     @asynccontextmanager
     async def request_stream(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+        run_context: RunContext[object] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
         async with (
             self.gate.request(self.endpoint),
             self.wrapped.request_stream(

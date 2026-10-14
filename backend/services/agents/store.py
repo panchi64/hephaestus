@@ -15,8 +15,9 @@ from collections.abc import Mapping
 from dataclasses import fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
+from pydantic import TypeAdapter
 from sqlalchemy import Engine, update
 from sqlmodel import Session, col, select
 
@@ -69,15 +70,35 @@ EDITABLE: frozenset[str] = frozenset(
 )
 
 
+class _Columns(TypedDict):
+    name: str
+    description_enc: str
+    instructions_enc: str
+    endpoint_id: str | None
+    model: str | None
+    tools_allow_json: str | None
+    tools_deny_json: str | None
+    permission_ceiling: str | None
+    workspace: str
+    request_limit: int | None
+    wall_clock_timeout_s: float | None
+    can_delegate: bool
+    max_depth: int | None
+
+
+_NAMES = TypeAdapter(list[str])
+_OBJECT = TypeAdapter(dict[str, object])
+
+
 class AgentStore:
-    revision_kind = "agent"
+    revision_kind: str = "agent"
 
     def __init__(
         self, engine: Engine, vault: Vault, revisions: RevisionStore | None = None
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self.revisions = revisions
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self.revisions: RevisionStore | None = revisions
 
     async def list(self, owner_id: str, *, published_only: bool = False) -> list[AgentDefinition]:
         def work(session: Session) -> list[AgentDefinition]:
@@ -105,7 +126,7 @@ class AgentStore:
     async def create(
         self,
         owner_id: str,
-        values: Mapping[str, Any],
+        values: Mapping[str, object],
         *,
         source: str = "user",
         published: bool = False,
@@ -130,7 +151,7 @@ class AgentStore:
 
     @records("edited")
     async def update(
-        self, owner_id: str, agent_id: str, changes: Mapping[str, Any]
+        self, owner_id: str, agent_id: str, changes: Mapping[str, object]
     ) -> AgentDefinition:
         """Apply ``changes`` (any of :data:`EDITABLE`). A rename carries every thread that
         ran the agent along with it."""
@@ -144,7 +165,7 @@ class AgentStore:
                     raise AgentValidationError(
                         "name", f"an agent named {agent.name!r} already exists"
                     )
-                session.exec(
+                _ = session.exec(
                     update(Conversation)
                     .where(col(Conversation.owner_id) == owner_id)
                     .where(col(Conversation.agent_name) == before.name)
@@ -199,7 +220,8 @@ class AgentStore:
             MODEL_FILE: json.dumps(model, indent=2).encode(),
         }
 
-    working_copy = snapshot
+    async def working_copy(self, owner_id: str, agent_id: str) -> Bundle:
+        return await self.snapshot(owner_id, agent_id)
 
     async def restore_snapshot(
         self, owner_id: str, agent_id: str, bundle: Bundle
@@ -208,12 +230,12 @@ class AgentStore:
         if document is None:
             raise AgentValidationError("file", f"that version has no {AGENT_FILE}")
         current = await self.get(owner_id, agent_id)
-        model = json.loads(bundle.get(MODEL_FILE) or b"{}")
+        model = _OBJECT.validate_json(bundle.get(MODEL_FILE) or b"{}")
         values = _file_values(document.decode(), current.name)
         values.update({key: model.get(key) for key in ("endpoint_id", "model")})
         return await self.update(owner_id, agent_id, values)
 
-    def _columns(self, agent: AgentDefinition) -> dict[str, Any]:
+    def _columns(self, agent: AgentDefinition) -> _Columns:
         return {
             "name": agent.name,
             "description_enc": self._vault.encrypt_str(agent.description),
@@ -233,8 +255,8 @@ class AgentStore:
         }
 
     def _definition(self, row: Agent) -> AgentDefinition:
-        allow = None if row.tools_allow_json is None else json.loads(row.tools_allow_json)
-        deny = [] if row.tools_deny_json is None else json.loads(row.tools_deny_json)
+        allow = None if row.tools_allow_json is None else _NAMES.validate_json(row.tools_allow_json)
+        deny = [] if row.tools_deny_json is None else _NAMES.validate_json(row.tools_deny_json)
         return AgentDefinition(
             id=row.id,
             name=row.name,
@@ -256,7 +278,7 @@ class AgentStore:
         )
 
 
-def _file_values(text: str, name: str) -> dict[str, Any]:
+def _file_values(text: str, name: str) -> dict[str, object]:
     try:
         parsed = parse_agent_file(text, name=name, clip=False)
     except AgentFileError as exc:
@@ -264,7 +286,7 @@ def _file_values(text: str, name: str) -> dict[str, Any]:
     return {key: getattr(parsed, key) for key in EDITABLE - {"endpoint_id", "model"}}
 
 
-def _apply(agent: AgentDefinition, values: Mapping[str, Any]) -> AgentDefinition:
+def _apply(agent: AgentDefinition, values: Mapping[str, object]) -> AgentDefinition:
     unknown = set(values) - EDITABLE
     if unknown:
         raise AgentValidationError(sorted(unknown)[0], "not a field an agent can set")
@@ -296,8 +318,11 @@ def _validated(agent: AgentDefinition) -> AgentDefinition:
         )
     if agent.workspace not in WORKSPACE_POLICIES:
         raise AgentValidationError("workspace", "workspace is one of shared, isolated, own")
-    for field_name in ("request_limit", "wall_clock_timeout_s"):
-        value = getattr(agent, field_name)
+    limits: dict[str, float | None] = {
+        "request_limit": agent.request_limit,
+        "wall_clock_timeout_s": agent.wall_clock_timeout_s,
+    }
+    for field_name, value in limits.items():
         if value is not None and value <= 0:
             raise AgentValidationError(field_name, "must be positive")
     if agent.max_depth is not None and agent.max_depth < 0:

@@ -58,15 +58,19 @@ KNOWN_SERVICES: tuple[ServiceInfo, ...] = (
     ServiceInfo(
         "google_oauth",
         "Google (OAuth client)",
-        "Gmail accounts — the client secret of your Google OAuth app, used to obtain and "
-        "refresh each connected mailbox's access.",
+        (
+            "Gmail accounts — the client secret of your Google OAuth app, used to obtain and "
+            "refresh each connected mailbox's access."
+        ),
         "https://console.cloud.google.com/apis/credentials",
     ),
     ServiceInfo(
         "microsoft_oauth",
         "Microsoft (OAuth client)",
-        "Outlook / Microsoft 365 accounts — the client secret of your Entra app "
-        "registration, used to obtain and refresh each connected mailbox's access.",
+        (
+            "Outlook / Microsoft 365 accounts — the client secret of your Entra app "
+            "registration, used to obtain and refresh each connected mailbox's access."
+        ),
         "https://entra.microsoft.com/",
     ),
 )
@@ -75,8 +79,8 @@ _SERVICE_IDS = frozenset(s.id for s in KNOWN_SERVICES)
 
 class CredentialStore:
     def __init__(self, engine: Engine, vault: Vault) -> None:
-        self._engine = engine
-        self._vault = vault
+        self._engine: Engine = engine
+        self._vault: Vault = vault
         self._on_change: list[Callable[[], None]] = []
 
     @staticmethod

@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
 
 from core.exceptions import NotFoundError
 from services.agents.catalog import AgentCatalog, lower_of
@@ -25,7 +24,7 @@ from services.workspace_kind import is_project_folder
 #: The tools that hand work to another agent, withheld from one that may not delegate.
 DELEGATION_TOOLS: frozenset[str] = frozenset({"agents_spawn"})
 
-type InstructionProvider = Callable[[Any], Awaitable[str]]
+type InstructionProvider = Callable[[object], Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -79,7 +78,7 @@ def may_delegate(agent: AgentDefinition, depth: int, limit: int) -> bool:
 
 
 def _brief(text: str) -> InstructionProvider:
-    async def agent_brief_instructions(_ctx: Any) -> str:
+    async def agent_brief_instructions(_ctx: object) -> str:
         return text
 
     return agent_brief_instructions

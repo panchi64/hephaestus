@@ -79,9 +79,9 @@ class CommandRegistry:
     def __init__(
         self, skills: SkillStore, commands: CommandStore, agents: AgentCatalog | None = None
     ) -> None:
-        self._skills = skills
-        self._commands = commands
-        self._agents = agents
+        self._skills: SkillStore = skills
+        self._commands: CommandStore = commands
+        self._agents: AgentCatalog | None = agents
 
     async def catalog(
         self,
@@ -206,7 +206,7 @@ def _agent_specs(
     commands: dict[str, CommandSpec] = {}
     for agent in roster.values():
         command = _agent_command(agent)
-        commands.setdefault(command.name, command)
+        _ = commands.setdefault(command.name, command)
     return list(commands.values())
 
 

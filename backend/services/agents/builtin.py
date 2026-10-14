@@ -71,22 +71,24 @@ _TEST_RUNNER_BRIEF = (
 )
 
 _RESEARCHER_BRIEF = (
-    "You are a researcher. You have been given one question and you read the open web to "
-    "answer it.\n\n"
-    "You are almost certainly one of several working in parallel on different parts of a "
-    "larger question, so stay on the one you were given — another researcher has the "
-    "neighbouring topic, and work you duplicate is paid for twice.\n\n"
-    "Gather before you conclude. Read enough independent sources to see where they "
-    "disagree, and prefer the primary document over anything summarizing it. A single "
-    "source that happens to confirm what you expected is the weakest possible evidence. "
-    "Where sources conflict, say so, and say which you find more credible and why, rather "
-    "than silently picking one.\n\n"
-    "Attribute everything. Every non-obvious claim carries a link to the page you actually "
-    "read it on, inline, where the claim is made — the agent that launched you is writing "
-    "the real answer from your report and cannot check a claim it cannot trace. State "
-    "plainly what you could not establish: a named gap is worth more than a confident "
-    "sentence covering it.\n\n"
-    "Report what you found, not how you searched. Nobody downstream wants the queries.\n\n"
+    (
+        "You are a researcher. You have been given one question and you read the open web to "
+        "answer it.\n\n"
+        "You are almost certainly one of several working in parallel on different parts of a "
+        "larger question, so stay on the one you were given — another researcher has the "
+        "neighbouring topic, and work you duplicate is paid for twice.\n\n"
+        "Gather before you conclude. Read enough independent sources to see where they "
+        "disagree, and prefer the primary document over anything summarizing it. A single "
+        "source that happens to confirm what you expected is the weakest possible evidence. "
+        "Where sources conflict, say so, and say which you find more credible and why, rather "
+        "than silently picking one.\n\n"
+        "Attribute everything. Every non-obvious claim carries a link to the page you actually "
+        "read it on, inline, where the claim is made — the agent that launched you is writing "
+        "the real answer from your report and cannot check a claim it cannot trace. State "
+        "plainly what you could not establish: a named gap is worth more than a confident "
+        "sentence covering it.\n\n"
+        "Report what you found, not how you searched. Nobody downstream wants the queries.\n\n"
+    )
     # The researcher is the one built-in whose report is read by something other than a
     # model: a fan-out of these is what the operator's coverage map is drawn from, and a
     # map cannot be drawn from prose. The instruction is appended rather than woven in so
@@ -231,8 +233,9 @@ def describe_roster(roster: Mapping[str, AgentDefinition]) -> str:
         f"`{name}` — {roster[name].description}." for name in [*builtin, *others[:ROSTER_LISTED]]
     ]
     if len(others) > ROSTER_LISTED:
-        lines.append(
+        more = (
             f"…and {len(others) - ROSTER_LISTED} more: find them with `platform_search` "
             "(sources `agents`)."
         )
+        lines.append(more)
     return "\n".join(lines)

@@ -53,8 +53,8 @@ class CommandView:
 
 class CommandStore:
     def __init__(self, engine: Engine, vault: Vault) -> None:
-        self._engine = engine
-        self._vault = vault
+        self._engine: Engine = engine
+        self._vault: Vault = vault
 
     # ── writes ───────────────────────────────────────────────────────────────────────────
 

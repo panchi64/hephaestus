@@ -68,8 +68,10 @@ def validate_name(raw: str) -> str:
     if not _NAME.match(value):
         raise CommandValidationError(
             "name",
-            f"{value!r} is not a usable command name — lowercase letters, digits, "
-            "hyphens and underscores only",
+            (
+                f"{value!r} is not a usable command name — lowercase letters, digits, "
+                "hyphens and underscores only"
+            ),
         )
     return value
 

@@ -19,7 +19,7 @@ import logging
 import re
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import yaml
 from pydantic_ai_harness.repo_context import RepoContext
@@ -146,10 +146,11 @@ def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinit
     file the operator wrote keeps its text and is validated by the store instead.
     """
     try:
-        fields, body = split_frontmatter(text)
+        loaded, body = split_frontmatter(text)
     except FrontmatterError as exc:
         raise AgentFileError(str(exc)) from None
 
+    fields: dict[str, object] = loaded
     spec_name = _name(fields.get("name"), fallback=name)
     description = _text(fields.get("description"), field="description")
     if not description:
@@ -180,7 +181,7 @@ def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinit
 def render_agent_file(agent: AgentDefinition) -> str:
     """``agent`` as an agent file that :func:`parse_agent_file` reads back. The model is
     left out: it names an endpoint of this installation."""
-    front: dict[str, Any] = {"name": agent.name, "description": agent.description}
+    front: dict[str, object] = {"name": agent.name, "description": agent.description}
     if agent.tools.allow is not None:
         front["tools"] = ", ".join(sorted(agent.tools.allow))
     if agent.tools.deny:
@@ -220,14 +221,15 @@ def normalize_agent_name(raw: str) -> str:
     """
     value = raw.strip().lower().replace(" ", "-")
     if not _NAME.match(value):
-        raise AgentNameError(
+        message = (
             f"{value!r} is not a usable agent name — lowercase letters, digits, "
             "hyphens and underscores only"
         )
+        raise AgentNameError(message)
     return value
 
 
-def _name(raw: Any, *, fallback: str) -> str:
+def _name(raw: object, *, fallback: str) -> str:
     try:
         return normalize_agent_name(_text(raw) or fallback)
     except AgentNameError as exc:
@@ -236,7 +238,7 @@ def _name(raw: Any, *, fallback: str) -> str:
         raise AgentFileError(str(exc)) from None
 
 
-def _text(raw: Any, *, field: str | None = None) -> str:
+def _text(raw: object, *, field: str | None = None) -> str:
     """A frontmatter scalar as one line of text.
 
     Collapsed rather than rejected for containing newlines: a description written as a YAML
@@ -256,7 +258,7 @@ def _clip(value: str, limit: int) -> str:
     return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
-def _declared_workspace(fields: dict[str, Any], *, name: str) -> WorkspacePolicy:
+def _declared_workspace(fields: dict[str, object], *, name: str) -> WorkspacePolicy:
     """Which files this agent works in, if the file says.
 
     Ours rather than the foreign standard's — that standard has no notion of a workspace,
@@ -275,7 +277,7 @@ def _declared_workspace(fields: dict[str, Any], *, name: str) -> WorkspacePolicy
     return policy
 
 
-def _declared_ceiling(fields: dict[str, Any], *, name: str) -> str | None:
+def _declared_ceiling(fields: dict[str, object], *, name: str) -> str | None:
     """How far this agent may reach, read from whichever of the two fields says something.
 
     ``permission`` is ours and names one of this installation's levels directly.
@@ -310,7 +312,7 @@ def _declared_ceiling(fields: dict[str, Any], *, name: str) -> str | None:
     return None
 
 
-def _declared_tools(fields: dict[str, Any]) -> ToolAccess:
+def _declared_tools(fields: dict[str, object]) -> ToolAccess:
     """The tools this agent is offered, when the file names them in this catalog's terms.
 
     A list made only of the foreign standard's names (``Read``, ``Bash``) cannot be
@@ -325,21 +327,21 @@ def _declared_tools(fields: dict[str, Any]) -> ToolAccess:
     )
 
 
-def _positive[T: (int, float)](raw: Any, kind: type[T]) -> T | None:
+def _positive[T: (int, float)](raw: object, kind: type[T]) -> T | None:
     """A positive number from frontmatter, or None for anything else."""
     if isinstance(raw, bool) or not isinstance(raw, int | float) or raw <= 0:
         return None
     return kind(raw)
 
 
-def _tool_names(raw: Any) -> frozenset[str]:
+def _tool_names(raw: object) -> frozenset[str]:
     """The ``tools`` field's names, lowercased. Accepts the standard's comma-separated
     string and a YAML list, since both are written in the wild."""
     parts: Iterable[str]
     if isinstance(raw, str):
         parts = re.split(r"[,\s]+", raw)
     elif isinstance(raw, list):
-        parts = [str(part) for part in raw]
+        parts = [str(part) for part in cast("list[object]", raw)]
     else:
         return frozenset()
     return frozenset(part.strip().lower() for part in parts if part.strip())
