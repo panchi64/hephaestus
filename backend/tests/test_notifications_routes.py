@@ -3,17 +3,21 @@ gating, and the camelCase out-shape."""
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from itertools import count as _count
 
+import pytest
+from pydantic import JsonValue
+
 from routes.deps import OPERATOR_ID
+from services.notifications import NotificationService
 
-from ._helpers import client_app
+from ._helpers import app_state, client_app
+from ._json import arr, json_body, n, obj, parse_json, s
 
 
-def _ticking_clock(monkeypatch):
+def _ticking_clock(monkeypatch: pytest.MonkeyPatch):
     """A deterministic, strictly-increasing clock so ordering/pagination assertions
     never race real wall-clock resolution."""
     ticks = _count()
@@ -25,7 +29,9 @@ def _ticking_clock(monkeypatch):
     monkeypatch.setattr("services.notifications.utcnow", fake_utcnow)
 
 
-async def _collect_stream_frames(service, *, after_seq: int, n: int):
+async def _collect_stream_frames(
+    service: NotificationService, *, after_seq: int, n: int
+) -> list[dict[str, JsonValue]]:
     """Drive the notification stream's frame generator directly, bounded to `n` frames.
 
     The stream is deliberately process-lifetime (it never ends on its own), and
@@ -39,7 +45,7 @@ async def _collect_stream_frames(service, *, after_seq: int, n: int):
     from routes.notifications import _frame
 
     resp = sse_stream(lambda: service.subscribe(after_seq), _frame)
-    frames = []
+    frames: list[dict[str, JsonValue]] = []
     gen = resp.body_iterator
     assert isinstance(gen, AsyncGenerator)
     try:
@@ -47,7 +53,7 @@ async def _collect_stream_frames(service, *, after_seq: int, n: int):
             assert isinstance(chunk, str)
             for line in chunk.splitlines():
                 if line.startswith("data:"):
-                    frames.append(json.loads(line[len("data:") :].strip()))
+                    frames.append(obj(parse_json(line[len("data:") :].strip())))
             if len(frames) >= n:
                 break
     finally:
@@ -58,58 +64,62 @@ async def _collect_stream_frames(service, *, after_seq: int, n: int):
 # --- REST list: pagination / unread filter / unreadCount -----------------------
 
 
-async def test_list_pagination_unread_filter_and_unread_count(monkeypatch):
+def _titles(body: dict[str, JsonValue]) -> list[str]:
+    return [s(obj(item)["title"]) for item in arr(body["items"])]
+
+
+async def test_list_pagination_unread_filter_and_unread_count(monkeypatch: pytest.MonkeyPatch):
     _ticking_clock(monkeypatch)
     async with client_app() as (client, app):
-        service = app.state.notifications
+        service = app_state(app, "notifications", NotificationService)
         views = [await service.notify(OPERATOR_ID, "system", f"n{i}") for i in range(3)]
-        await service.mark_read(OPERATOR_ID, [views[0].id])
+        _ = await service.mark_read(OPERATOR_ID, [views[0].id])
 
-        body = (await client.get("/notifications")).json()
+        body = json_body(await client.get("/notifications"))
         assert body["unreadCount"] == 2
-        assert [item["title"] for item in body["items"]] == ["n2", "n1", "n0"]  # newest first
+        assert _titles(body) == ["n2", "n1", "n0"]  # newest first
 
-        page = (await client.get("/notifications", params={"limit": 1})).json()
-        assert [item["title"] for item in page["items"]] == ["n2"]
+        page = json_body(await client.get("/notifications", params={"limit": 1}))
+        assert _titles(page) == ["n2"]
 
-        unread_only = (await client.get("/notifications", params={"unread_only": True})).json()
-        assert {item["title"] for item in unread_only["items"]} == {"n1", "n2"}
+        unread_only = json_body(await client.get("/notifications", params={"unread_only": True}))
+        assert set(_titles(unread_only)) == {"n1", "n2"}
 
-        before = (
+        before = json_body(
             await client.get("/notifications", params={"before": views[2].created_at.isoformat()})
-        ).json()
-        assert {item["title"] for item in before["items"]} == {"n0", "n1"}
+        )
+        assert set(_titles(before)) == {"n0", "n1"}
 
 
-async def test_list_spans_rehydrated_and_live_notifications(monkeypatch):
+async def test_list_spans_rehydrated_and_live_notifications(monkeypatch: pytest.MonkeyPatch):
     """After a restart the cache holds both DB-read notifications (SQLite has no tz type,
     so they come back naive) and ones `notify()` cached since — the route sorts and
     filters across both, and must not 500 on a naive/aware comparison."""
     _ticking_clock(monkeypatch)
     async with client_app() as (client, app):
-        service = app.state.notifications
+        service = app_state(app, "notifications", NotificationService)
         old = await service.notify(OPERATOR_ID, "system", "persisted")
         await service._worker.join()
         # Drop it from the cache and reload from the DB — the restart path, without a
         # second app: `_rehydrate` skips ids already cached.
-        service._cache.pop(old.id)
+        _ = service._cache.pop(old.id)
         await service._rehydrate()
         fresh = await service.notify(OPERATOR_ID, "system", "live")
 
         resp = await client.get("/notifications")
         assert resp.status_code == 200
-        assert [item["title"] for item in resp.json()["items"]] == ["live", "persisted"]
+        assert _titles(json_body(resp)) == ["live", "persisted"]
 
         # `before` is aware only when the client sends an offset — both forms filter.
         for cutoff in (fresh.created_at, fresh.created_at.replace(tzinfo=None)):
             page = await client.get("/notifications", params={"before": cutoff.isoformat()})
             assert page.status_code == 200
-            assert [item["id"] for item in page.json()["items"]] == [old.id]
+            assert [obj(item)["id"] for item in arr(json_body(page)["items"])] == [old.id]
 
 
 async def test_notification_out_is_camel_case():
     async with client_app() as (client, app):
-        await app.state.notifications.notify(
+        _ = await app_state(app, "notifications", NotificationService).notify(
             OPERATOR_ID,
             "approval_needed",
             "t",
@@ -117,8 +127,8 @@ async def test_notification_out_is_camel_case():
             conversation_id="conv-1",
             run_id="run-1",
         )
-        body = (await client.get("/notifications")).json()
-        item = body["items"][0]
+        body = json_body(await client.get("/notifications"))
+        item = obj(arr(body["items"])[0])
         assert set(item) == {
             "id",
             "kind",
@@ -141,25 +151,27 @@ async def test_notification_out_is_camel_case():
 
 async def test_mark_read_route_updates_and_reports_count():
     async with client_app() as (client, app):
-        view = await app.state.notifications.notify(OPERATOR_ID, "system", "a")
+        view = await app_state(app, "notifications", NotificationService).notify(
+            OPERATOR_ID, "system", "a"
+        )
 
         resp = await client.post("/notifications/read", json={"ids": [view.id]})
-        assert resp.json() == {"updated": 1}
+        assert json_body(resp) == {"updated": 1}
 
         again = await client.post("/notifications/read", json={"ids": [view.id]})
-        assert again.json() == {"updated": 0}
+        assert json_body(again) == {"updated": 0}
 
 
 async def test_mark_all_read_route():
     async with client_app() as (client, app):
-        service = app.state.notifications
-        await service.notify(OPERATOR_ID, "system", "a")
-        await service.notify(OPERATOR_ID, "system", "b")
+        service = app_state(app, "notifications", NotificationService)
+        _ = await service.notify(OPERATOR_ID, "system", "a")
+        _ = await service.notify(OPERATOR_ID, "system", "b")
 
         resp = await client.post("/notifications/read_all")
-        assert resp.json() == {"updated": 2}
+        assert json_body(resp) == {"updated": 2}
 
-        listing = (await client.get("/notifications")).json()
+        listing = json_body(await client.get("/notifications"))
         assert listing["unreadCount"] == 0
 
 
@@ -167,20 +179,20 @@ async def test_mark_all_read_route():
 
 
 async def test_stream_delivers_created_then_replays_after_reconnect():
-    async with client_app() as (client, app):
-        service = app.state.notifications
-        await service.notify(OPERATOR_ID, "system", "a")
-        await service.notify(OPERATOR_ID, "system", "b")
+    async with client_app() as (_client, app):
+        service = app_state(app, "notifications", NotificationService)
+        _ = await service.notify(OPERATOR_ID, "system", "a")
+        _ = await service.notify(OPERATOR_ID, "system", "b")
 
         frames = await _collect_stream_frames(service, after_seq=0, n=2)
-        assert [f["notification"]["title"] for f in frames] == ["a", "b"]
+        assert [obj(f["notification"])["title"] for f in frames] == ["a", "b"]
         assert frames[0]["type"] == "notification.created"
-        last_seq = frames[-1]["seq"]
+        last_seq = n(frames[-1]["seq"])
 
-        await service.notify(OPERATOR_ID, "system", "c")
-        resumed = await _collect_stream_frames(service, after_seq=last_seq, n=1)
-        assert resumed[0]["notification"]["title"] == "c"
-        assert resumed[0]["seq"] > last_seq
+        _ = await service.notify(OPERATOR_ID, "system", "c")
+        resumed = await _collect_stream_frames(service, after_seq=int(last_seq), n=1)
+        assert obj(resumed[0]["notification"])["title"] == "c"
+        assert n(resumed[0]["seq"]) > last_seq
 
 
 # --- auth --------------------------------------------------------------------

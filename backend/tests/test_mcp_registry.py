@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from core.db import init_db, make_engine
@@ -19,13 +20,13 @@ from core.exceptions import InvalidInputError, NotFoundError
 from core.vault import Vault
 from models.external_tool import McpServer
 from services.external_tools import ExternalPolicyStore, tool_slug
-from services.mcp import McpRegistry, auth_headers
+from services.mcp import McpRegistry, McpServerView, auth_headers
 from services.mcp.registry import STATUS_DISCONNECTED, STATUS_ERROR
 
 OWNER = "operator"
 
 
-async def _registry():
+async def _registry() -> tuple[Engine, Vault, McpRegistry]:
     """A registry over a throwaway in-memory DB with an unlocked vault."""
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
@@ -34,7 +35,7 @@ async def _registry():
     return engine, vault, McpRegistry(engine, vault, ExternalPolicyStore(engine))
 
 
-async def _register_unreachable(registry, name="Remote", **kwargs):
+async def _register_unreachable(registry: McpRegistry, name: str = "Remote") -> McpServerView:
     """Register an http server pointed at a closed port — registration always attempts a
     connect, and here it is expected to fail, which is the state most tests want."""
     return await registry.register(
@@ -42,7 +43,6 @@ async def _register_unreachable(registry, name="Remote", **kwargs):
         name=name,
         transport="http",
         url="http://127.0.0.1:1/mcp",
-        **kwargs,
     )
 
 
@@ -67,13 +67,13 @@ async def test_register_rejects_a_shape_that_cannot_be_dialled():
     _engine, _vault, registry = await _registry()
 
     with pytest.raises(InvalidInputError):
-        await registry.register(OWNER, name="No command", transport="stdio")
+        _ = await registry.register(OWNER, name="No command", transport="stdio")
     with pytest.raises(InvalidInputError):
-        await registry.register(OWNER, name="No url", transport="http")
+        _ = await registry.register(OWNER, name="No url", transport="http")
     with pytest.raises(InvalidInputError):
-        await registry.register(OWNER, name="Bad", transport="carrier-pigeon", url="x")
+        _ = await registry.register(OWNER, name="Bad", transport="carrier-pigeon", url="x")
     with pytest.raises(InvalidInputError):
-        await registry.register(OWNER, name="  ", transport="http", url="http://x/mcp")
+        _ = await registry.register(OWNER, name="  ", transport="http", url="http://x/mcp")
 
 
 async def test_slugs_stay_unique_so_two_servers_never_share_a_tool_namespace():
@@ -149,7 +149,7 @@ async def test_remove_drops_the_server_and_every_decision_made_about_it():
     engine, _vault, registry = await _registry()
     policy = ExternalPolicyStore(engine)
     view = await _register_unreachable(registry)
-    await policy.set(OWNER, "mcp", view.id, "echo", trusted=True)
+    _ = await policy.set(OWNER, "mcp", view.id, "echo", trusted=True)
 
     await registry.remove(OWNER, view.id)
 
@@ -158,7 +158,7 @@ async def test_remove_drops_the_server_and_every_decision_made_about_it():
     # otherwise inherit an approval the operator granted to something else.
     assert await policy.snapshot(OWNER, "mcp", view.id) == {}
     with pytest.raises(NotFoundError):
-        await registry.get(OWNER, view.id)
+        _ = await registry.get(OWNER, view.id)
 
 
 async def test_tool_policy_only_applies_to_a_tool_the_server_actually_exposes():
@@ -177,7 +177,7 @@ async def test_tool_policy_only_applies_to_a_tool_the_server_actually_exposes():
     assert policy.trusted is False
 
     with pytest.raises(NotFoundError):
-        await registry.set_tool_policy(OWNER, view.id, "not-a-tool", trusted=True)
+        _ = await registry.set_tool_policy(OWNER, view.id, "not-a-tool", trusted=True)
 
 
 async def test_a_disabled_or_unconnected_server_offers_the_agent_nothing():

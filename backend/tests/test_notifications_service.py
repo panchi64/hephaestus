@@ -12,6 +12,7 @@ from pathlib import Path
 from sqlmodel import select
 
 from core.db import in_session, init_db, make_engine
+from core.shutdown import begin_shutdown, reset_shutdown
 from core.vault import Vault
 from models.notification import Notification
 from services.notifications import NotificationEvent, NotificationService
@@ -19,21 +20,26 @@ from services.notifications import NotificationEvent, NotificationService
 OWNER = "operator"
 
 
-async def _service(tmp_path: Path, **kwargs) -> NotificationService:
+async def _service(tmp_path: Path, *, ring_buffer_max: int | None = None) -> NotificationService:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
-    service = NotificationService(engine, vault, **kwargs)
+    if ring_buffer_max is None:
+        service = NotificationService(engine, vault)
+    else:
+        service = NotificationService(engine, vault, ring_buffer_max=ring_buffer_max)
     await service.start()
     return service
 
 
-def _titles(events) -> list[str]:
+def _titles(events: list[NotificationEvent]) -> list[str]:
     return [e.notification.title for e in events]
 
 
-async def _collect(service: NotificationService, *, after_seq: int, n: int):
+async def _collect(
+    service: NotificationService, *, after_seq: int, n: int
+) -> list[NotificationEvent]:
     """Pull exactly ``n`` events off `subscribe`, then close it cleanly — `subscribe`
     never ends on its own (this surface is process-lifetime, not tied to a run)."""
     gen = service.subscribe(after_seq)
@@ -50,7 +56,7 @@ async def _collect(service: NotificationService, *, after_seq: int, n: int):
 # --- seq + backlog replay -----------------------------------------------------
 
 
-async def test_notify_assigns_monotonic_seq(tmp_path):
+async def test_notify_assigns_monotonic_seq(tmp_path: Path):
     service = await _service(tmp_path)
     a = await service.notify(OWNER, "system", "a")
     b = await service.notify(OWNER, "system", "b")
@@ -61,17 +67,17 @@ async def test_notify_assigns_monotonic_seq(tmp_path):
     await service.stop()
 
 
-async def test_subscribe_resumes_only_after_last_seen_seq(tmp_path):
+async def test_subscribe_resumes_only_after_last_seen_seq(tmp_path: Path):
     service = await _service(tmp_path)
     for t in ("a", "b", "c"):
-        await service.notify(OWNER, "system", t)
+        _ = await service.notify(OWNER, "system", t)
     events = await _collect(service, after_seq=1, n=2)
     assert _titles(events) == ["b", "c"]
     assert [e.seq for e in events] == [2, 3]
     await service.stop()
 
 
-async def test_live_subscriber_receives_new_notifications(tmp_path):
+async def test_live_subscriber_receives_new_notifications(tmp_path: Path):
     service = await _service(tmp_path)
     received: list[NotificationEvent] = []
 
@@ -82,26 +88,26 @@ async def test_live_subscriber_receives_new_notifications(tmp_path):
 
     task = asyncio.create_task(consume())
     await asyncio.sleep(0)  # let it register
-    await service.notify(OWNER, "system", "hello")
+    _ = await service.notify(OWNER, "system", "hello")
     await task
     assert _titles(received) == ["hello"]
     await service.stop()
 
 
-async def test_fanout_to_multiple_subscribers(tmp_path):
+async def test_fanout_to_multiple_subscribers(tmp_path: Path):
     service = await _service(tmp_path)
     out_a: list[NotificationEvent] = []
     out_b: list[NotificationEvent] = []
 
-    async def consume(sink):
+    async def consume(sink: list[NotificationEvent]) -> None:
         async for event in service.subscribe():
             sink.append(event)
             return
 
     tasks = [asyncio.create_task(consume(out_a)), asyncio.create_task(consume(out_b))]
     await asyncio.sleep(0)
-    await service.notify(OWNER, "system", "x")
-    await asyncio.gather(*tasks)
+    _ = await service.notify(OWNER, "system", "x")
+    _ = await asyncio.gather(*tasks)
     assert _titles(out_a) == ["x"]
     assert _titles(out_b) == ["x"]
     await service.stop()
@@ -110,10 +116,10 @@ async def test_fanout_to_multiple_subscribers(tmp_path):
 # --- ring-buffer bounds --------------------------------------------------------
 
 
-async def test_ring_buffer_evicts_oldest_beyond_cap(tmp_path):
+async def test_ring_buffer_evicts_oldest_beyond_cap(tmp_path: Path):
     service = await _service(tmp_path, ring_buffer_max=3)
     for i in range(5):
-        await service.notify(OWNER, "system", f"n{i}")
+        _ = await service.notify(OWNER, "system", f"n{i}")
     events = await _collect(service, after_seq=0, n=3)
     # Only the 3 most recent survive the ring; the seq numbering still reflects the
     # true (evicted) history, so a very-stale Last-Event-ID just can't be replayed.
@@ -122,7 +128,7 @@ async def test_ring_buffer_evicts_oldest_beyond_cap(tmp_path):
     await service.stop()
 
 
-async def test_slow_subscriber_is_dropped_not_grown_unbounded(tmp_path):
+async def test_slow_subscriber_is_dropped_not_grown_unbounded(tmp_path: Path):
     from services.notifications import _SUBSCRIBER_QUEUE_MAX
 
     service = await _service(tmp_path)
@@ -136,10 +142,10 @@ async def test_slow_subscriber_is_dropped_not_grown_unbounded(tmp_path):
     assert len(service._subscribers) == 1
 
     for i in range(_SUBSCRIBER_QUEUE_MAX + 50):  # flood past the cap (no yields)
-        await service.notify(OWNER, "system", str(i))
+        _ = await service.notify(OWNER, "system", str(i))
 
     assert len(service._subscribers) == 0  # evicted, not ballooning
-    task.cancel()
+    _ = task.cancel()
     with suppress(asyncio.CancelledError):
         await task
     await service.stop()
@@ -148,7 +154,7 @@ async def test_slow_subscriber_is_dropped_not_grown_unbounded(tmp_path):
 # --- read / resolve transitions -------------------------------------------------
 
 
-async def test_mark_read_flags_and_reports_count(tmp_path):
+async def test_mark_read_flags_and_reports_count(tmp_path: Path):
     service = await _service(tmp_path)
     a = await service.notify(OWNER, "system", "a")
     b = await service.notify(OWNER, "system", "b")
@@ -165,7 +171,7 @@ async def test_mark_read_flags_and_reports_count(tmp_path):
     await service.stop()
 
 
-async def test_mark_read_emits_notification_updated_live(tmp_path):
+async def test_mark_read_emits_notification_updated_live(tmp_path: Path):
     service = await _service(tmp_path)
     view = await service.notify(OWNER, "system", "a")
     received: list[NotificationEvent] = []
@@ -177,7 +183,7 @@ async def test_mark_read_emits_notification_updated_live(tmp_path):
 
     task = asyncio.create_task(consume())
     await asyncio.sleep(0)
-    await service.mark_read(OWNER, [view.id])
+    _ = await service.mark_read(OWNER, [view.id])
     await task
 
     assert received[0].kind == "updated"
@@ -186,10 +192,10 @@ async def test_mark_read_emits_notification_updated_live(tmp_path):
     await service.stop()
 
 
-async def test_mark_all_read_flags_every_unread(tmp_path):
+async def test_mark_all_read_flags_every_unread(tmp_path: Path):
     service = await _service(tmp_path)
-    await service.notify(OWNER, "system", "a")
-    await service.notify(OWNER, "system", "b")
+    _ = await service.notify(OWNER, "system", "a")
+    _ = await service.notify(OWNER, "system", "b")
 
     assert await service.mark_all_read(OWNER) == 2
     _, unread = await service.list_notifications(OWNER)
@@ -198,7 +204,7 @@ async def test_mark_all_read_flags_every_unread(tmp_path):
     await service.stop()
 
 
-async def test_resolve_for_run_marks_only_that_runs_pending_notification(tmp_path):
+async def test_resolve_for_run_marks_only_that_runs_pending_notification(tmp_path: Path):
     service = await _service(tmp_path)
     approval = await service.notify(OWNER, "approval_needed", "needs approval", run_id="run-1")
     other = await service.notify(OWNER, "run_failed", "unrelated", run_id="run-2")
@@ -218,7 +224,7 @@ async def test_resolve_for_run_marks_only_that_runs_pending_notification(tmp_pat
 # --- durability: the lock-aware drainer ----------------------------------------
 
 
-async def test_drainer_parks_while_locked_and_drains_after_unlock(tmp_path):
+async def test_drainer_parks_while_locked_and_drains_after_unlock(tmp_path: Path):
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
@@ -236,7 +242,7 @@ async def test_drainer_parks_while_locked_and_drains_after_unlock(tmp_path):
 
     assert await rows() == []
 
-    await vault.unlock("pw")
+    _ = await vault.unlock("pw")
     await service._worker.join()  # let the parked write drain now that it can encrypt
     await service.stop()
 
@@ -246,7 +252,7 @@ async def test_drainer_parks_while_locked_and_drains_after_unlock(tmp_path):
     assert "locked write" not in persisted[0].title_enc  # sealed at rest
 
 
-async def test_cold_restart_rehydrates_prior_notifications(tmp_path):
+async def test_cold_restart_rehydrates_prior_notifications(tmp_path: Path):
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
@@ -269,7 +275,7 @@ async def test_cold_restart_rehydrates_prior_notifications(tmp_path):
     await cold.stop()
 
 
-async def test_rehydrated_and_live_notifications_sort_together(tmp_path):
+async def test_rehydrated_and_live_notifications_sort_together(tmp_path: Path):
     """The cache has two populations after a restart — rows read back from SQLite (which
     has no tz type, so they arrive naive) and anything `notify()` cached since boot (aware
     from `utcnow()`). Listing them compares and sorts across both, so the read must
@@ -312,8 +318,6 @@ async def test_rehydrated_and_live_notifications_sort_together(tmp_path):
 
 async def test_subscribe_ends_when_the_app_begins_shutting_down(tmp_path: Path):
     """The feed has no end of its own; the shutdown signal is what lets the server stop."""
-    from core.shutdown import begin_shutdown, reset_shutdown  # noqa: PLC0415
-
     service = await _service(tmp_path)
     try:
         ended = asyncio.Event()
@@ -327,7 +331,7 @@ async def test_subscribe_ends_when_the_app_begins_shutting_down(tmp_path: Path):
         await asyncio.sleep(0.05)
         assert not ended.is_set()
         begin_shutdown()
-        await asyncio.wait_for(ended.wait(), 1.0)
+        _ = await asyncio.wait_for(ended.wait(), 1.0)
         await task
     finally:
         reset_shutdown()
