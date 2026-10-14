@@ -202,7 +202,7 @@ class NotificationService:
         """The startup history-rehydration task, or None before `start`."""
         return self._rehydrate_task
 
-    async def flush(self) -> None:
+    async def flush_deliveries(self) -> None:
         """Wait until every queued channel delivery has been attempted."""
         await self._deliveries.join()
 

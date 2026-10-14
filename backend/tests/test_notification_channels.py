@@ -97,7 +97,7 @@ async def test_an_approval_request_reaches_the_operator_by_email(tmp_path: Path)
     """An unattended run parks until answered, so the ask has to leave the app."""
     service, mail, _email, _push, _settings = await _wired(tmp_path)
     _ = await service.notify(OWNER, "approval_needed", "run needs approval", "wants to send mail")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
 
     [(owner, account_id, to, subject, body)] = mail.sent
@@ -109,7 +109,7 @@ async def test_an_approval_request_reaches_the_operator_by_email(tmp_path: Path)
 async def test_a_reminder_reaches_the_operator_by_email(tmp_path: Path):
     service, mail, _email, _push, _settings = await _wired(tmp_path)
     _ = await service.notify(OWNER, "reminder", "Call the dentist")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
     assert [s[3] for s in mail.sent] == ["Call the dentist"]
 
@@ -119,7 +119,7 @@ async def test_informational_notifications_stay_in_the_app(tmp_path: Path):
     service, mail, _email, _push, _settings = await _wired(tmp_path)
     for kind in ("run_completed", "run_failed", "task_outcome", "system"):
         _ = await service.notify(OWNER, kind, f"{kind} happened")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
     assert mail.sent == []
 
@@ -145,7 +145,7 @@ async def test_an_unreachable_mail_server_does_not_break_the_notification(tmp_pa
     mail = _FakeMail(fail=RuntimeError("smtp down"))
     service, _mail, _email, _push, _settings = await _wired(tmp_path, mail=mail)
     view = await service.notify(OWNER, "approval_needed", "needs approval")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
     rows, _unread = await service.list_notifications(OWNER)
     assert [v.id for v in rows] == [view.id]
@@ -164,7 +164,7 @@ async def test_a_disabled_account_is_never_sent_from(tmp_path: Path):
     mail = _FakeMail(accounts=[_account(enabled=False)])
     service, _mail, _email, _push, _settings = await _wired(tmp_path, mail=mail)
     _ = await service.notify(OWNER, "reminder", "Call the dentist")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
     assert mail.sent == []
 
@@ -173,7 +173,7 @@ async def test_turning_the_email_channel_off_is_honored(tmp_path: Path):
     service, mail, email, _push, _settings = await _wired(tmp_path)
     await email.configure(OWNER, enabled=False, address=None, account_id=None)
     _ = await service.notify(OWNER, "reminder", "Call the dentist")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
     assert mail.sent == []
 
@@ -194,7 +194,7 @@ async def test_an_explicit_address_overrides_the_account_address_and_is_sealed(t
     service, mail, email, _push, settings = await _wired(tmp_path)
     await email.configure(OWNER, enabled=True, address="phone@example.net", account_id=None)
     _ = await service.notify(OWNER, "reminder", "Call the dentist")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
 
     assert mail.sent[0][2] == ("phone@example.net",)
@@ -208,7 +208,7 @@ async def test_an_override_for_a_deleted_account_falls_back_rather_than_sending_
     service, mail, email, _push, _settings = await _wired(tmp_path)
     await email.configure(OWNER, enabled=True, address=None, account_id="gone")
     _ = await service.notify(OWNER, "reminder", "Call the dentist")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
     assert mail.sent[0][1] == "acct-1"
 
@@ -231,7 +231,7 @@ async def test_push_posts_the_notification_to_the_operators_endpoint(tmp_path: P
     )
     await push.configure(OWNER, enabled=True, endpoint="https://ntfy.example/hephaestus")
     _ = await service.notify(OWNER, "approval_needed", "needs approval", "wants to send mail")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
 
     [request] = seen
@@ -250,7 +250,7 @@ async def test_push_is_silent_until_an_endpoint_is_configured(tmp_path: Path):
     )
     health = await push.health(OWNER)
     _ = await service.notify(OWNER, "reminder", "Call the dentist")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
     assert seen == []
     assert (health.configured, health.status) == (False, "warn")
@@ -294,7 +294,7 @@ async def test_a_lan_endpoint_is_allowed_because_a_self_hosted_notifier_is_the_p
     )
     await push.configure(OWNER, enabled=True, endpoint="http://192.168.1.10:8080/message")
     _ = await service.notify(OWNER, "reminder", "Call the dentist")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
     assert len(seen) == 1
 
@@ -307,7 +307,7 @@ async def test_a_failing_push_endpoint_does_not_re_send_the_email(tmp_path: Path
     )
     await push.configure(OWNER, enabled=True, endpoint="https://ntfy.example/hephaestus")
     _ = await service.notify(OWNER, "reminder", "Call the dentist")
-    await service.flush()
+    await service.flush_deliveries()
     await service.stop()
 
     assert len(seen) > 1  # push retried
