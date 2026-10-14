@@ -33,7 +33,7 @@ zero, for the many endpoints that don't report it. See ``RunMetrics``.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -78,7 +78,7 @@ class TurnTimer:
         return max(0, round((self.clock() - since) * 1000))
 
     @contextmanager
-    def model_request(self) -> Iterator[Callable[[], None]]:
+    def model_request(self) -> Generator[Callable[[], None]]:
         """Time one model round-trip, yielding the callback that marks first content.
 
         The callback is idempotent — the translator calls it on every content part
@@ -107,7 +107,7 @@ class TurnTimer:
             )
 
     @contextmanager
-    def tool_calls(self) -> Iterator[None]:
+    def tool_calls(self) -> Generator[None]:
         """Time a batch of tool executions, onto the response that requested them.
 
         A ``CallToolsNode`` always follows the ``ModelRequestNode`` whose response

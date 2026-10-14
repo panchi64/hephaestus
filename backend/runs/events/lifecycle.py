@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from typing import Literal
 
-from .base import PROTOCOL_VERSION, _Body
+from .base import PROTOCOL_VERSION, Body
 
 
-class RunStarted(_Body):
+class RunStarted(Body):
     type: Literal["run.started"] = "run.started"
     run_id: str
     kind: str
     protocol_version: int = PROTOCOL_VERSION
 
 
-class RunQueued(_Body):
+class RunQueued(Body):
     """The run is waiting for its model endpoint, at ``position`` in that endpoint's line.
     Sent again whenever the position moves; ``run.started`` ends the wait. Added in v1.1."""
 
@@ -23,7 +23,7 @@ class RunQueued(_Body):
     endpoint: str
 
 
-class RunEnded(_Body):
+class RunEnded(Body):
     """The closing frame for a run that reached an *expected* end.
 
     A run closes with exactly one of `run.ended` or `run.error`, never both — the
@@ -39,7 +39,7 @@ class RunEnded(_Body):
     detail: str | None = None
 
 
-class RunError(_Body):
+class RunError(Body):
     """The closing frame for a run that failed. See :class:`RunEnded` — these two are
     the same terminal position in the protocol, not a frame plus an extra."""
 
@@ -48,28 +48,28 @@ class RunError(_Body):
     kind: str | None = None
 
 
-class StepStarted(_Body):
+class StepStarted(Body):
     type: Literal["step.started"] = "step.started"
     index: int
     title: str | None = None
 
 
-class StepCompleted(_Body):
+class StepCompleted(Body):
     type: Literal["step.completed"] = "step.completed"
     index: int
 
 
-class ThinkingDelta(_Body):
+class ThinkingDelta(Body):
     type: Literal["thinking.delta"] = "thinking.delta"
     text: str
 
 
-class AnswerDelta(_Body):
+class AnswerDelta(Body):
     type: Literal["answer.delta"] = "answer.delta"
     text: str
 
 
-class LimitNotice(_Body):
+class LimitNotice(Body):
     type: Literal["limit.notice"] = "limit.notice"
     # "steps" | "tool_calls" | "tokens" | "time" | "loop" | "verify" | "context" | "search"
     # ("context" = the model's context window was exceeded; the run stops, it isn't degraded.

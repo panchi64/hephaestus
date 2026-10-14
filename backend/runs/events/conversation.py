@@ -8,10 +8,10 @@ from pydantic import computed_field
 
 from core.compaction_sections import SummarySection, summary_sections
 
-from .base import _Body
+from .base import Body
 
 
-class ConversationTitled(_Body):
+class ConversationTitled(Body):
     """The chassis named a freshly-created conversation from its first exchange,
     so the operator never has to. The title is persisted too; the frontend reveals
     it with a typing animation. Emitted mid-run (before ``run.ended``) so a still-
@@ -29,7 +29,7 @@ class ConversationTitled(_Body):
 CompactionReason = Literal["threshold", "overflow", "manual"]
 
 
-class CompactionStarted(_Body):
+class CompactionStarted(Body):
     """A fold is about to be summarized — emitted *before* the summarizer call, which is
     the one part of compaction that takes real time (a whole model pass over the thread).
 
@@ -50,7 +50,7 @@ class CompactionStarted(_Body):
     tokens_estimate: int
 
 
-class CompactionDelta(_Body):
+class CompactionDelta(Body):
     """A piece of the summary as the summarizer writes it.
 
     ``compaction.started`` says a fold has begun and ``conversation.compacted`` says it is
@@ -70,7 +70,7 @@ class CompactionDelta(_Body):
     text: str
 
 
-class CompactionFailed(_Body):
+class CompactionFailed(Body):
     """A fold that began did not land — the closing frame for a ``compaction.started`` that
     will never be followed by ``conversation.compacted``.
 
@@ -89,7 +89,7 @@ class CompactionFailed(_Body):
     message: str
 
 
-class ConversationCompacted(_Body):
+class ConversationCompacted(Body):
     """The thread's earlier turns were folded into a summary before this turn ran,
     because its context footprint had reached the operator's threshold. Nothing was
     deleted — the transcript keeps every turn; this marks where the *model's* replayed

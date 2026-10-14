@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic import Field
 
@@ -107,9 +107,9 @@ class Event:
     ts: datetime
     body: EventBody
 
-    def envelope(self) -> dict[str, Any]:
+    def envelope(self) -> dict[str, object]:
         """Flat ``{type, seq, ts, ...payload}`` dict — the on-the-wire shape."""
-        data = self.body.model_dump(mode="json")
+        data: dict[str, object] = self.body.model_dump(mode="json")
         data["seq"] = self.seq
         data["ts"] = self.ts.isoformat()
         return data

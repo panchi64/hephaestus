@@ -46,7 +46,7 @@ def check_schedule(schedule: Schedule) -> None:
     if schedule.type not in _TYPES:
         raise bad(f"unknown schedule type {schedule.type!r}")
     try:
-        parse_zone(schedule.timezone)
+        _ = parse_zone(schedule.timezone)
     except ValueError:
         raise bad(f"unknown time zone {schedule.timezone!r}") from None
     if schedule.type == ScheduleType.ONCE:
@@ -62,7 +62,7 @@ def check_schedule(schedule: Schedule) -> None:
         if not schedule.cron:
             raise bad("schedule.cron is required for a 'cron' schedule")
         try:
-            croniter(schedule.cron)
+            _ = croniter(schedule.cron)
         except (ValueError, KeyError) as exc:
             raise bad(f"invalid cron expression: {exc}") from None
 

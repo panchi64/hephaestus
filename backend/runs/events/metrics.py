@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import Field, computed_field
 
-from .base import _Body
+from .base import Body
 from .context import (
     DEFAULT_CONTEXT_THRESHOLDS,
     ContextComposition,
@@ -16,7 +16,7 @@ from .context import (
 )
 
 
-class LastRequestUsage(_Body):
+class LastRequestUsage(Body):
     """What the thread's most recent model request cost, on its own.
 
     Spelled out rather than named ``RequestUsage``, which is what Pydantic AI calls the
@@ -85,7 +85,7 @@ class LastRequestUsage(_Body):
         return self.prefill_tokens / (self.prefill_ms / 1000)
 
 
-class RunMetrics(_Body):
+class RunMetrics(Body):
     """What the thread has cost so far — the readout under the composer.
 
     **Conversation-cumulative, not per-run.** Every count here spans the whole active

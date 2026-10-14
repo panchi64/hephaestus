@@ -6,7 +6,7 @@ from typing import Literal, TypedDict
 
 from pydantic import ConfigDict, with_config
 
-from .base import _Body
+from .base import Body
 
 
 # Forbidding extra keys makes a field added to the payload but not here fail loudly
@@ -22,7 +22,7 @@ class TaskPayload(TypedDict):
     active_form: str | None
 
 
-class TasksUpdated(_Body):
+class TasksUpdated(Body):
     """The agent's task list changed. Carries the **whole** list, not a delta: the stream
     is replayable from any seq, so full state is idempotent on replay and needs no ordering
     rules, and the list is small enough that the bytes don't matter. Additive to v1; no
@@ -32,7 +32,7 @@ class TasksUpdated(_Body):
     items: list[TaskPayload]
 
 
-class PlanUpdated(_Body):
+class PlanUpdated(Body):
     """The written plan a Plan-level turn produced, or its status changing.
 
     Distinct from :class:`TasksUpdated` in the way the two concepts are: that one is the
@@ -51,7 +51,7 @@ class PlanUpdated(_Body):
     revision: int
 
 
-class PermissionChanged(_Body):
+class PermissionChanged(Body):
     """The thread's permission level changed from inside the run.
 
     Load-bearing rather than informational. The level is the one fact the client both

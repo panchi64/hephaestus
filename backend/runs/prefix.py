@@ -218,4 +218,4 @@ class PrefixLedger:
         self._seen[conversation_id] = digest
         self._seen.move_to_end(conversation_id)
         while len(self._seen) > self.limit:
-            self._seen.popitem(last=False)
+            _ = self._seen.popitem(last=False)

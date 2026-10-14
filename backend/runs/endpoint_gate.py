@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -77,7 +77,7 @@ class _Queue:
 class EndpointGate:
     def __init__(self) -> None:
         self._queues: dict[str, _Queue] = {}
-        self._seq = itertools.count()
+        self._seq: itertools.count[int] = itertools.count()
 
     def snapshot(self, endpoint_id: str) -> tuple[int, int]:
         """Running and waiting counts for one endpoint."""
@@ -91,7 +91,7 @@ class EndpointGate:
         kind: str,
         *,
         on_position: Callable[[int], None] | None = None,
-    ) -> AsyncIterator[None]:
+    ) -> AsyncGenerator[None]:
         """Hold ``endpoint`` for the block, waiting in line for it first. Requests made
         inside the block (and in tasks it starts) to the same endpoint pass through."""
         if endpoint is None:
@@ -109,7 +109,7 @@ class EndpointGate:
             self._release(endpoint.id)
 
     @asynccontextmanager
-    async def request(self, endpoint: Endpoint) -> AsyncIterator[None]:
+    async def request(self, endpoint: Endpoint) -> AsyncGenerator[None]:
         """Hold one slot of ``endpoint`` for one model request. The block may be exited
         on another task than the one that entered it, as a streamed response is."""
         held = _LEASE.get()

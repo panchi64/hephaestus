@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .base import _Body
+from .base import Body
 
 
-class ToolStarted(_Body):
+class ToolStarted(Body):
     """A tool call began. ``parent_tool_call_id`` is set when a script made the call — the
     ``tool_call_id`` of the ``run_code`` call it was made from — and absent for a call the
     model made directly; the same field rides ``tool.completed`` and ``tool.failed``, so a
@@ -18,11 +18,11 @@ class ToolStarted(_Body):
     type: Literal["tool.started"] = "tool.started"
     tool_call_id: str
     name: str
-    args: dict[str, Any] = Field(default_factory=dict)
+    args: dict[str, object] = Field(default_factory=dict)
     parent_tool_call_id: str | None = None
 
 
-class ToolProgress(_Body):
+class ToolProgress(Body):
     type: Literal["tool.progress"] = "tool.progress"
     tool_call_id: str
     elapsed_s: float | None = None
@@ -42,16 +42,16 @@ class ToolImage(BaseModel):
     data: str  # base64, no data-URI scheme — the renderer adds it
 
 
-class ToolCompleted(_Body):
+class ToolCompleted(Body):
     type: Literal["tool.completed"] = "tool.completed"
     tool_call_id: str
     name: str
-    result: Any = None
+    result: object = None
     images: list[ToolImage] = Field(default_factory=list)
     parent_tool_call_id: str | None = None
 
 
-class ToolFailed(_Body):
+class ToolFailed(Body):
     type: Literal["tool.failed"] = "tool.failed"
     tool_call_id: str
     name: str

@@ -63,7 +63,7 @@ class ConversationBusyError(Exception):
 
     def __init__(self, conversation_id: str) -> None:
         super().__init__(f"a run is already in progress for conversation {conversation_id!r}")
-        self.conversation_id = conversation_id
+        self.conversation_id: str = conversation_id
 
 
 class RunTimeout(Exception):
@@ -77,7 +77,7 @@ class RunTimeout(Exception):
 
     def __init__(self, kind: str, bound_s: float | None = None) -> None:
         super().__init__(_timeout_message(kind, bound_s))
-        self.kind = kind
+        self.kind: str = kind
 
 
 def _fmt_minutes(minutes: float) -> str:
@@ -123,7 +123,7 @@ def _timeout_message(kind: str, bound_s: float | None) -> str:
 
 def _queued(run: Run, position: int) -> None:
     if run.endpoint is not None and not run.stream.closed:
-        run.emit(RunQueued(position=position, endpoint=run.endpoint.name))
+        _ = run.emit(RunQueued(position=position, endpoint=run.endpoint.name))
 
 
 class RunRegistry:
@@ -138,11 +138,11 @@ class RunRegistry:
         on_terminal: Callable[[Run], None] | None = None,
     ) -> None:
         self._runs: dict[str, Run] = {}
-        self._lanes = LaneGate(lanes)
-        self._endpoints = endpoints or EndpointGate()
-        self._wall_clock = wall_clock_timeout_s
-        self._inactivity = inactivity_timeout_s
-        self._max_retained = max_retained
+        self._lanes: LaneGate = LaneGate(lanes)
+        self._endpoints: EndpointGate = endpoints or EndpointGate()
+        self._wall_clock: float | None = wall_clock_timeout_s
+        self._inactivity: float | None = inactivity_timeout_s
+        self._max_retained: int = max_retained
         # (owner_id, conversation_id) pairs a route currently holds via `claim` —
         # in-flight requests that haven't (yet, or ever will) register a Run but must
         # still block a second request from mutating/submitting on the same
@@ -153,7 +153,7 @@ class RunRegistry:
         # stays decoupled from what a caller does with it (app.py composes the
         # attention-surface emit policy over this; nothing in `runs/` imports
         # `services/`). Synchronous and best-effort: see `_fire_terminal`.
-        self._on_terminal = on_terminal
+        self._on_terminal: Callable[[Run], None] | None = on_terminal
 
     @property
     def endpoints(self) -> EndpointGate:
@@ -287,7 +287,7 @@ class RunRegistry:
             run.cancel_requested = True
             run.status = RunStatus.cancelled
             self._flush_park_cancel(run)
-            run.emit(RunEnded(outcome="cancelled"))
+            _ = run.emit(RunEnded(outcome="cancelled"))
             run.ended_at = now_utc()
             self._fire_terminal(run)
             run.stream.close()
@@ -296,7 +296,7 @@ class RunRegistry:
             # unwind (settling the concurrent namer). Interrupt it, or it resumes into a
             # run this call has already finalized.
             if run.task is not None and not run.task.done():
-                run.task.cancel()
+                _ = run.task.cancel()
             return True
         if run.cancel_requested:
             # Already flushed and hard-cancelled by an earlier call; the task
@@ -306,7 +306,7 @@ class RunRegistry:
         run.cancel_requested = True
         self._flush_cancel(run)
         if run.task is not None:
-            run.task.cancel()
+            _ = run.task.cancel()
         return True
 
     async def shutdown(self, timeout_s: float = 5.0) -> None:
@@ -321,7 +321,7 @@ class RunRegistry:
         """
         live = [run for run in self._runs.values() if not run.is_terminal]
         for run in live:
-            await self.cancel(run.id)
+            _ = await self.cancel(run.id)
         pending = [run.task for run in live if run.task is not None and not run.task.done()]
         if pending:
             # Bounded: a turn's own pre-cancel flush is worth waiting for, a tool that
@@ -386,9 +386,9 @@ class RunRegistry:
                 run.touch()
                 if not resuming:
                     run.started_at = now_utc()
-                    run.emit(RunStarted(run_id=run.id, kind=run.kind))
+                    _ = run.emit(RunStarted(run_id=run.id, kind=run.kind))
                 await self._supervise(run, orchestrator, wall_clock, inactivity)
-                if run.status is RunStatus.awaiting_input:
+                if run.is_parked:
                     # Parked for approval: leave the stream open and the
                     # slot free; the run is resumed or cancelled out of band.
                     return
@@ -460,7 +460,7 @@ class RunRegistry:
         recorded the outcome; there is nothing left for these frames to say.
         """
         if not run.stream.closed:
-            run.emit(body)
+            _ = run.emit(body)
 
     async def _supervise(
         self,
@@ -506,7 +506,7 @@ class RunRegistry:
                     raise timeout_exc
         finally:
             if not main.done():
-                main.cancel()
+                _ = main.cancel()
                 with suppress(asyncio.CancelledError):
                     await main
 
@@ -585,4 +585,4 @@ class RunRegistry:
             return
         terminal.sort(key=lambda r: r.ended_at or r.created_at)
         for run in terminal[:overflow]:
-            self._runs.pop(run.id, None)
+            _ = self._runs.pop(run.id, None)

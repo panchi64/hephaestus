@@ -10,9 +10,10 @@ way instead of carrying a private copy.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
-from typing import Any, overload
+from typing import cast, overload
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -22,6 +23,13 @@ _JSON = TypeAdapter(JsonValue)
 def parse_json(text: str | bytes) -> JsonValue:
     """The JSON document in ``text``; malformed input raises ``ValueError``."""
     return _JSON.validate_json(text)
+
+
+def as_int(value: JsonValue) -> int:
+    """``int(value)``; raises ``TypeError`` for null, arrays and objects."""
+    if isinstance(value, bool | int | float | str):
+        return int(value)
+    raise TypeError(f"not a number: {value!r}")
 
 
 @overload
@@ -45,7 +53,7 @@ def as_utc(value: datetime | None) -> datetime | None:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
-def _structure(value: Any) -> Any:
+def _structure(value: object) -> JsonValue:
     """Recursively unwrap dataclasses/datetimes into plain JSON-able structures.
     A tool may return a dataclass (or a list/dict of them) — e.g. `SearchResult` —
     and losing that structure to `str(value)` would make the persisted result
@@ -56,13 +64,14 @@ def _structure(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, dict):
-        return {k: _structure(v) for k, v in value.items()}
+        return {k: _structure(v) for k, v in cast("dict[str, object]", value).items()}
     if isinstance(value, list | tuple):
-        return [_structure(v) for v in value]
-    return value
+        return [_structure(v) for v in cast("Sequence[object]", value)]
+    # Anything else passes through as is; `jsonable` rejects what `json.dumps` cannot carry.
+    return cast("JsonValue", value)
 
 
-def jsonable(value: Any) -> Any:
+def jsonable(value: object) -> JsonValue:
     """Coerce a tool result into something the JSON envelope can carry.
 
     Never raises: the whole coercion — the ``_structure`` pre-pass included — sits under
@@ -71,7 +80,7 @@ def jsonable(value: Any) -> Any:
     rather than crashing tool-result serialization for the turn."""
     try:
         structured = _structure(value)
-        json.dumps(structured)
+        _ = json.dumps(structured)
         return structured
-    except Exception:  # noqa: BLE001 — total fallback: any coercion failure degrades to str
+    except Exception:  # total fallback: any coercion failure degrades to str
         return str(value)

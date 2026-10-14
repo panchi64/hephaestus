@@ -22,6 +22,8 @@ from typing import IO
 
 from pydantic import JsonValue
 
+from core.serde import as_int
+
 from .driver import VMError
 
 #: path → (kind, size, mtime_ns); kind is ``f`` file, ``d`` directory or ``l`` symlink.
@@ -70,13 +72,6 @@ def scan_names(root: Path, names: set[str]) -> Manifest:
         elif stat.S_ISREG(info.st_mode):
             entries[name] = ("f", info.st_size, info.st_mtime_ns)
     return entries
-
-
-def as_int(value: JsonValue) -> int:
-    """``int(value)``; raises ``TypeError`` for null, arrays and objects."""
-    if isinstance(value, bool | int | float | str):
-        return int(value)
-    raise TypeError(f"not a number: {value!r}")
 
 
 def parse_manifest(raw: dict[str, JsonValue]) -> Manifest:

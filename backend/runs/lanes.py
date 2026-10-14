@@ -40,10 +40,10 @@ out attended work.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 type Lane = Literal["interactive", "routine", "background", "linked"]
 
@@ -142,7 +142,7 @@ class LaneLimits:
     def for_lane(self, lane: Lane) -> int:
         """How many slots this lane may hold at once: of the ceiling's, except for the
         routine lane's own."""
-        slots = max(1, int(getattr(self, lane)))
+        slots = max(1, int(cast("int", getattr(self, lane))))
         return slots if lane == "routine" else min(self.ceiling, slots)
 
 
@@ -162,8 +162,8 @@ class LaneGate:
     """
 
     def __init__(self, limits: LaneLimits | None = None) -> None:
-        self._limits = limits or LaneLimits()
-        self._host = asyncio.Semaphore(self._limits.ceiling)
+        self._limits: LaneLimits = limits or LaneLimits()
+        self._host: asyncio.Semaphore = asyncio.Semaphore(self._limits.ceiling)
         self._semaphores: dict[Lane, asyncio.Semaphore] = {
             lane: asyncio.Semaphore(self._limits.for_lane(lane)) for lane in LANES
         }
@@ -173,7 +173,7 @@ class LaneGate:
         return self._limits
 
     @asynccontextmanager
-    async def slot(self, kind: str) -> AsyncIterator[None]:
+    async def slot(self, kind: str) -> AsyncGenerator[None]:
         """Hold a slot for a run of this kind, for the duration of the block.
 
         A burst waits at its own lane's gate and nowhere else; what it waits for *after*

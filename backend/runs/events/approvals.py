@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field
 
-from .base import _Body
+from .base import Body
 
 
-class ApprovalRequired(_Body):
+class ApprovalRequired(Body):
     """A sensitive action is parked awaiting operator approval."""
 
     type: Literal["approval.required"] = "approval.required"
     tool_call_id: str
     name: str
-    args: dict[str, Any] = Field(default_factory=dict)
+    args: dict[str, object] = Field(default_factory=dict)
     summary: str
     # Plain-language description of what the action does and its effect, so the
     # operator can judge it without reading the raw arguments — set when the tool
@@ -23,14 +23,14 @@ class ApprovalRequired(_Body):
     explanation: str | None = None
 
 
-class QuestionOption(_Body):
+class QuestionOption(Body):
     """One answer offered for a question."""
 
     label: str
     description: str | None = None
 
 
-class QuestionSpec(_Body):
+class QuestionSpec(Body):
     """One question the operator is being asked."""
 
     question: str
@@ -38,7 +38,7 @@ class QuestionSpec(_Body):
     multi_select: bool = False
 
 
-class QuestionAsked(_Body):
+class QuestionAsked(Body):
     """The turn is parked on the operator answering, not on them permitting.
 
     Its own event rather than an `approval.required` with a different shape, because the
@@ -55,7 +55,7 @@ class QuestionAsked(_Body):
     questions: list[QuestionSpec] = Field(default_factory=list)
 
 
-class AnsweredQuestionOut(_Body):
+class AnsweredQuestionOut(Body):
     """One question and what the operator said to it, as structure rather than as prose.
 
     The tool's *result* is a rendered paragraph, because that is what the model reads. A
@@ -72,7 +72,7 @@ class AnsweredQuestionOut(_Body):
     text: str | None = None
 
 
-class QuestionAnswered(_Body):
+class QuestionAnswered(Body):
     """The operator answered a parked ``ask_user`` call.
 
     The counterpart to :class:`QuestionAsked`, and it exists for the same reason that one
@@ -90,7 +90,7 @@ class QuestionAnswered(_Body):
     answers: list[AnsweredQuestionOut] = Field(default_factory=list)
 
 
-class ReviewStarted(_Body):
+class ReviewStarted(Body):
     """An action at the Auto level is being ruled on in the operator's place.
 
     Auto's proposition is that the operator's approvals are given for them. The only thing
@@ -114,7 +114,7 @@ class ReviewStarted(_Body):
     reach: Literal["workspace", "network", "host"] | None = None
 
 
-class ReviewCompleted(_Body):
+class ReviewCompleted(Body):
     """How the review ruled, on the three axes it ruled on.
 
     ``decision`` is the outcome the run then took — ``allow`` ran the call without a

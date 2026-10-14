@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from .base import _Body
+from .base import Body
 
 
-class CitationAdded(_Body):
+class CitationAdded(Body):
     """A source the turn met, and how far it got with it.
 
     ``key`` is what this source *is* — a URL for a page, ``source:ref`` for a corpus

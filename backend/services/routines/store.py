@@ -8,10 +8,10 @@ and the agent's tools apply the same rules.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import cast
 
 from sqlalchemy import Engine
 from sqlalchemy.sql.elements import ColumnElement
@@ -75,13 +75,47 @@ class RoutineRun:
     summary: str | None
 
 
-def narrows(routine: Routine, changes: Mapping[str, Any]) -> bool:
+def _text(values: Mapping[str, object], key: str) -> str:
+    value = values[key]
+    if not isinstance(value, str):
+        raise RoutineValidationError(key, f"{key} must be text")
+    return value
+
+
+def _optional_text(values: Mapping[str, object], key: str) -> str | None:
+    value = values[key]
+    if value is not None and not isinstance(value, str):
+        raise RoutineValidationError(key, f"{key} must be text")
+    return value
+
+
+def _flag(values: Mapping[str, object], key: str) -> bool:
+    value = values[key]
+    if not isinstance(value, bool):
+        raise RoutineValidationError(key, f"{key} must be true or false")
+    return value
+
+
+def _names(value: object, key: str) -> list[str]:
+    if not isinstance(value, list | tuple | set | frozenset):
+        raise RoutineValidationError(key, f"{key} must be a list")
+    return [str(item) for item in cast("Collection[object]", value)]
+
+
+def _schedule(values: Mapping[str, object]) -> Schedule:
+    value = values["schedule"]
+    if not isinstance(value, Schedule):
+        raise RoutineValidationError("schedule", "schedule must be a schedule")
+    return value
+
+
+def narrows(routine: Routine, changes: Mapping[str, object]) -> bool:
     """Whether ``changes`` only take reach away: switching the routine off, or dropping
     pre-authorizations."""
     for key, value in changes.items():
         if key == "enabled" and value is False:
             continue
-        if key == "pre_authorized" and set(value) <= set(routine.pre_authorized):
+        if key == "pre_authorized" and set(_names(value, key)) <= set(routine.pre_authorized):
             continue
         if getattr(routine, key) == value:
             continue
@@ -91,9 +125,9 @@ def narrows(routine: Routine, changes: Mapping[str, Any]) -> bool:
 
 class RoutineStore:
     def __init__(self, engine: Engine, vault: Vault, agents: AgentCatalog | None = None):
-        self._engine = engine
-        self._vault = vault
-        self._agents = agents
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self._agents: AgentCatalog | None = agents
 
     # --- reads ------------------------------------------------------------------------
 
@@ -112,7 +146,7 @@ class RoutineStore:
         return self._view(await self._row(owner_id, routine_id))
 
     async def runs(self, owner_id: str, routine_id: str, *, limit: int = 50) -> list[RoutineRun]:
-        await self._row(owner_id, routine_id)
+        _ = await self._row(owner_id, routine_id)
 
         def work(session: Session) -> list[TaskRun]:
             return list(
@@ -143,7 +177,7 @@ class RoutineStore:
     async def create(
         self,
         owner_id: str,
-        values: Mapping[str, Any],
+        values: Mapping[str, object],
         *,
         approved: bool,
         project_id: str | None = None,
@@ -159,18 +193,18 @@ class RoutineStore:
             **values,
         }
         await self._check(owner_id, values)
-        schedule: Schedule = values["schedule"]
+        schedule = _schedule(values)
         row = ScheduledTask(
             owner_id=owner_id,
             project_id=project_id,
-            kind=values["kind"],
-            title_enc=self._vault.encrypt_str(values["title"]),
-            prompt_enc=self._vault.encrypt_str(values["prompt"]),
+            kind=_text(values, "kind"),
+            title_enc=self._vault.encrypt_str(_text(values, "title")),
+            prompt_enc=self._vault.encrypt_str(_text(values, "prompt")),
             schedule_type=schedule.type,
-            output=values["output"],
-            pre_authorized=list(values["pre_authorized"]),
-            agent_name=values["agent_name"],
-            enabled=values["enabled"],
+            output=_text(values, "output"),
+            pre_authorized=_names(values["pre_authorized"], "pre_authorized"),
+            agent_name=_optional_text(values, "agent_name"),
+            enabled=_flag(values, "enabled"),
             approved=approved,
         )
         _set_schedule(row, schedule)
@@ -187,7 +221,7 @@ class RoutineStore:
         self,
         owner_id: str,
         routine_id: str,
-        changes: Mapping[str, Any],
+        changes: Mapping[str, object],
         *,
         approved: bool | None = None,
         rotate_webhook_token: bool = False,
@@ -196,7 +230,7 @@ class RoutineStore:
         too; left ``None``, it stays as it was."""
         await self._check(owner_id, changes)
         current = await self.get(owner_id, routine_id)
-        schedule: Schedule | None = changes.get("schedule")
+        schedule = _schedule(changes) if "schedule" in changes else None
         if rotate_webhook_token and (schedule or current.schedule).type != ScheduleType.WEBHOOK:
             raise RoutineValidationError(
                 "schedule", "rotateWebhookToken only applies to a webhook-type task"
@@ -204,15 +238,20 @@ class RoutineStore:
 
         def work(session: Session) -> ScheduledTask:
             row = _owned(session, owner_id, routine_id)
-            for key in ("kind", "output", "agent_name", "enabled"):
-                if key in changes:
-                    setattr(row, key, changes[key])
+            if "kind" in changes:
+                row.kind = _text(changes, "kind")
+            if "output" in changes:
+                row.output = _text(changes, "output")
+            if "agent_name" in changes:
+                row.agent_name = _optional_text(changes, "agent_name")
+            if "enabled" in changes:
+                row.enabled = _flag(changes, "enabled")
             if "title" in changes:
-                row.title_enc = self._vault.encrypt_str(changes["title"])
+                row.title_enc = self._vault.encrypt_str(_text(changes, "title"))
             if "prompt" in changes:
-                row.prompt_enc = self._vault.encrypt_str(changes["prompt"])
+                row.prompt_enc = self._vault.encrypt_str(_text(changes, "prompt"))
             if "pre_authorized" in changes:
-                row.pre_authorized = list(changes["pre_authorized"])
+                row.pre_authorized = _names(changes["pre_authorized"], "pre_authorized")
             if schedule is not None:
                 _set_schedule(row, schedule)
             if rotate_webhook_token:
@@ -255,7 +294,7 @@ class RoutineStore:
     async def _row(self, owner_id: str, routine_id: str) -> ScheduledTask:
         return await in_session(self._engine, lambda s: _owned(s, owner_id, routine_id))
 
-    async def _check(self, owner_id: str, values: Mapping[str, Any]) -> None:
+    async def _check(self, owner_id: str, values: Mapping[str, object]) -> None:
         unknown = set(values) - FIELDS
         if unknown:
             raise RoutineValidationError(sorted(unknown)[0], "not a routine field")
@@ -267,7 +306,7 @@ class RoutineStore:
             if key in values and not str(values[key]).strip():
                 raise RoutineValidationError(key, f"{key} must not be empty")
         if "schedule" in values:
-            check_schedule(values["schedule"])
+            check_schedule(_schedule(values))
         name = values.get("agent_name")
         if name is not None and self._agents is not None:
             known = await self._agents.agents(owner_id, include_drafts=True)

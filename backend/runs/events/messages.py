@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from .base import _Body
+from .base import Body
 
 #: Who a queued message came from. ``operator`` is somebody typing while a run is going;
 #: ``subagent`` is a sub-agent's report, delivered into the thread that launched it; and
@@ -23,7 +23,7 @@ from .base import _Body
 MessageSource = Literal["operator", "subagent", "agent"]
 
 
-class MessageQueued(_Body):
+class MessageQueued(Body):
     """A message arrived while this run was still executing; it is queued for injection at
     the run's next model-request boundary. ``text`` rides inline so a reattaching client
     can rebuild the pending bubble purely from replay.
@@ -40,7 +40,7 @@ class MessageQueued(_Body):
     sender: str | None = None
 
 
-class MessageEdited(_Body):
+class MessageEdited(Body):
     """The operator rewrote a queued message's text before the run consumed it.
     ``text`` is the full replacement (not a delta), inline for the same reason as
     ``message.queued``'s: a reattaching client rebuilds the pending bubble purely
@@ -51,7 +51,7 @@ class MessageEdited(_Body):
     text: str
 
 
-class MessageWithdrawn(_Body):
+class MessageWithdrawn(Body):
     """The operator withdrew a queued message before the run consumed it.
     Additive to v1; no bump."""
 
@@ -59,7 +59,7 @@ class MessageWithdrawn(_Body):
     message_id: str
 
 
-class MessageHeld(_Body):
+class MessageHeld(Body):
     """A queued message was held back from the drain, or released again.
 
     Held is not withdrawn: the message stays in the queue, in its place, and goes to the
@@ -78,7 +78,7 @@ class MessageHeld(_Body):
     held: bool
 
 
-class MessageInjected(_Body):
+class MessageInjected(Body):
     """A queued message was handed to the model (emitted in drain order). From
     here on the message is part of the turn and will persist as a normal user
     message. Additive to v1; no bump."""

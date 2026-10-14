@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from .base import _Body
+from .base import Body
 
 
 # The View is one canvas with a history of **versions** to compare plus an optional
 # live **head**. A version is one ``view.snapshot`` (the captured workspace tree +
 # how it previews); ``view.live`` / ``view.live.stopped`` are the interactive head
 # overlaid on the latest version.
-class ViewLive(_Body):
+class ViewLive(Body):
     """The agent started (or replaced) the View's live head — a running server.
     ``url`` is a token-gated proxy path on this same API origin
     (``/previews/{token}/…``) that streams the server's HTTP and WebSocket traffic
@@ -34,7 +34,7 @@ class ViewLive(_Body):
     port: int  # the sandbox port it listens on
 
 
-class ViewLiveStopped(_Body):
+class ViewLiveStopped(Body):
     """The View's live head was torn down (explicitly via close_view, or reaped with
     its idle session); the frontend drops the live iframe for this conversation."""
 
@@ -42,7 +42,7 @@ class ViewLiveStopped(_Body):
     conversation_id: str
 
 
-class ViewSnapshot(_Body):
+class ViewSnapshot(Body):
     """A new **version** of the conversation's View — minted by a ``show``. It captures
     the agent's sandbox tree (the version's code, browsable + diffable via
     ``/views/snapshots/{snapshot_id}/…``) and how it previews: ``preview_artifact_id``

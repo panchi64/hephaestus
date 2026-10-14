@@ -9,7 +9,23 @@ is the run's.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+
+from pydantic import JsonValue
+
+from core.serde import as_int
+
+
+def _rows(value: JsonValue) -> list[dict[str, JsonValue]]:
+    if not value:
+        return []
+    if not isinstance(value, list):
+        raise TypeError("expected a list")
+    rows: list[dict[str, JsonValue]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise TypeError("expected an object")
+        rows.append(item)
+    return rows
 
 
 @dataclass(frozen=True)
@@ -67,7 +83,7 @@ class TurnOverhead:
     blocks: tuple[BriefBlock, ...] = ()
     groups: tuple[ToolGroupOverhead, ...] = ()
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> dict[str, JsonValue]:
         """The measurement as plain JSON-able data, for the conversation column that
         carries it between turns (``services.conversations``). Written out field by
         field rather than via ``dataclasses.asdict`` so the stored shape is a
@@ -84,7 +100,7 @@ class TurnOverhead:
         }
 
     @classmethod
-    def from_dict(cls, raw: Any) -> TurnOverhead | None:
+    def from_dict(cls, raw: JsonValue) -> TurnOverhead | None:
         """Rebuild a stored measurement, or ``None`` if it can't be read.
 
         Total-tolerant on the way in for the same reason the totals exist at all: a blob
@@ -102,17 +118,19 @@ class TurnOverhead:
             return None
         try:
             overhead = cls(
-                system=int(raw["system"]),
-                tools=int(raw["tools"]),
+                system=as_int(raw["system"]),
+                tools=as_int(raw["tools"]),
                 blocks=tuple(
-                    BriefBlock(id=str(b["id"]), chars=int(b["chars"]))
-                    for b in raw.get("blocks") or ()
+                    BriefBlock(id=str(b["id"]), chars=as_int(b["chars"]))
+                    for b in _rows(raw.get("blocks"))
                 ),
                 groups=tuple(
                     ToolGroupOverhead(
-                        category=str(g["category"]), tools=int(g["tools"]), chars=int(g["chars"])
+                        category=str(g["category"]),
+                        tools=as_int(g["tools"]),
+                        chars=as_int(g["chars"]),
                     )
-                    for g in raw.get("groups") or ()
+                    for g in _rows(raw.get("groups"))
                 ),
             )
         except KeyError, TypeError, ValueError:

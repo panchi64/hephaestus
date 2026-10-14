@@ -38,9 +38,9 @@ _SUBSCRIBER_QUEUE_MAX = 1024
 class RunStream:
     def __init__(self) -> None:
         self._buffer: list[Event] = []
-        self._seq = 0
+        self._seq: int = 0
         self._subscribers: set[asyncio.Queue[Event | None]] = set()
-        self._closed = False
+        self._closed: bool = False
 
     @property
     def last_seq(self) -> int:
@@ -79,7 +79,7 @@ class RunStream:
         client can reconnect and replay the missed events from the buffer."""
         self._subscribers.discard(queue)
         while not queue.empty():  # make room for the close sentinel
-            queue.get_nowait()
+            _ = queue.get_nowait()
         queue.put_nowait(None)
 
     def replay(self, after_seq: int = 0) -> list[Event]:

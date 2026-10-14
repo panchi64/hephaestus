@@ -36,8 +36,8 @@ class ScheduleNaturalLanguage:
     """Parses a phrase into a :class:`Schedule` on the utility model."""
 
     def __init__(self, *, resolve_model: ResolveModel, timeout_s: float = DEFAULT_TIMEOUT_S):
-        self._resolve_model = resolve_model
-        self._timeout_s = timeout_s
+        self._resolve_model: ResolveModel = resolve_model
+        self._timeout_s: float = timeout_s
 
     async def parse(self, phrase: str, *, timezone: str, now: datetime | None = None) -> Schedule:
         """Raises :class:`InvalidInputError` for an empty phrase or one that reads as no

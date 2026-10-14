@@ -7,12 +7,12 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .base import _Body
+from .base import Body
 
 logger = logging.getLogger(__name__)
 
 
-class ContextThresholds(_Body):
+class ContextThresholds(Body):
     """Where a filling context window stops being unremarkable and starts being a
     problem — the two boundaries the gauge changes colour on.
 
@@ -58,7 +58,7 @@ class ContextThresholds(_Body):
 DEFAULT_CONTEXT_THRESHOLDS = ContextThresholds(warn=0.75, alert=0.9)
 
 
-class FoldPoint(_Body):
+class FoldPoint(Body):
     """Where conversation compaction will fold this thread, and whether it is armed.
 
     Rides on :class:`ContextWindow` rather than being fetched separately, because it is
@@ -103,7 +103,7 @@ class FoldPoint(_Body):
         return cls(fraction=fraction, active=active)
 
 
-class ContextSegment(_Body):
+class ContextSegment(Body):
     """One line item inside a group — a tool category, a contributor to the standing
     brief, a class of message content.
 
@@ -127,7 +127,7 @@ class ContextSegment(_Body):
     count: int | None = None
 
 
-class ContextComposition(_Body):
+class ContextComposition(Body):
     """What the occupied part of the window is actually holding.
 
     Two resolutions of one measurement. The three totals are exhaustive by construction —
@@ -152,7 +152,7 @@ class ContextComposition(_Body):
     segments: tuple[ContextSegment, ...] = ()
 
 
-class ContextWindow(_Body):
+class ContextWindow(Body):
     """How full a model's context window is after a turn — the single owner of
     the fullness derivation and its severity thresholds. Built by
     :meth:`from_usage` and emitted both live (run metrics) and on load
@@ -210,7 +210,7 @@ class ContextWindow(_Body):
 INJECTED_TEXT_LIMIT = 8_000
 
 
-class ContextInjected(_Body):
+class ContextInjected(Body):
     """Something the chassis put in front of the model that nobody in the conversation
     wrote — a project's instruction files, the skill catalog, the plan reminder, the
     date.

@@ -35,13 +35,13 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
-from core.serde import parse_json
+from core.serde import as_int, parse_json
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 
 from .driver import ExecResult, VMDriver, VMError
 from .egress import EgressGateway
 from .intercept import Interceptor
-from .sync import Changes, Manifest, as_int, pack, parse_manifest, unpack
+from .sync import Changes, Manifest, pack, parse_manifest, unpack
 from .tunnel import EgressTunnel, PreviewPort
 
 logger = logging.getLogger(__name__)

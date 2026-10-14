@@ -10,7 +10,7 @@ with a parked ``awaiting_input`` when a sensitive action needs approval.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -207,7 +207,7 @@ class Run:
         self.last_activity_mono = asyncio.get_running_loop().time()
 
     @asynccontextmanager
-    async def keepalive(self) -> AsyncIterator[None]:
+    async def keepalive(self) -> AsyncGenerator[None]:
         """Hold the inactivity clock open across a single long call that streams nothing.
 
         The watchdog reads activity from the event stream, which is the right signal
@@ -229,7 +229,7 @@ class Run:
         try:
             yield
         finally:
-            task.cancel()
+            _ = task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
             self.touch()  # the call returned — that is real activity
@@ -282,7 +282,7 @@ class Run:
             id=uuid4().hex, text=text, queued_at=now_utc(), source=source, sender=sender
         )
         self.pending_messages.append(message)
-        self.emit(
+        _ = self.emit(
             MessageQueued(
                 message_id=message.id,
                 text=message.text,
@@ -311,7 +311,7 @@ class Run:
                     sender=message.sender,
                     held=message.held,
                 )
-                self.emit(MessageEdited(message_id=message_id, text=text))
+                _ = self.emit(MessageEdited(message_id=message_id, text=text))
                 return True
         return False
 
@@ -347,7 +347,7 @@ class Run:
                     sender=message.sender,
                     held=held,
                 )
-                self.emit(MessageHeld(message_id=message_id, held=held))
+                _ = self.emit(MessageHeld(message_id=message_id, held=held))
                 return True
         return False
 
@@ -357,7 +357,7 @@ class Run:
         for i, message in enumerate(self.pending_messages):
             if message.id == message_id:
                 del self.pending_messages[i]
-                self.emit(MessageWithdrawn(message_id=message_id))
+                _ = self.emit(MessageWithdrawn(message_id=message_id))
                 return True
         return False
 
@@ -385,7 +385,7 @@ class Run:
             self.pending_messages[stop:],
         )
         for message in drained:
-            self.emit(MessageInjected(message_id=message.id, source=message.source))
+            _ = self.emit(MessageInjected(message_id=message.id, source=message.source))
         return drained
 
     def set_metrics(self, metrics: RunMetrics) -> None:
@@ -395,6 +395,10 @@ class Run:
     @property
     def is_terminal(self) -> bool:
         return self.status in TERMINAL_STATUSES
+
+    @property
+    def is_parked(self) -> bool:
+        return self.status is RunStatus.awaiting_input
 
     async def wait(self) -> None:
         """Await the executing task — it ends when the Run settles, which means either a
