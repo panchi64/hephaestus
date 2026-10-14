@@ -1488,7 +1488,9 @@ def _grant_store(ttl_s: float = 3600) -> ApprovalGrantStore:
     return ApprovalGrantStore(engine, ttl_s)
 
 
-async def _settle(permission: PermissionLevel, calls: list[ToolCallPart], *, caps=None, budget=None):
+async def _settle(
+    permission: PermissionLevel, calls: list[ToolCallPart], *, caps=None, budget=None
+):
     """One hop's deferred calls, ruled on by the engine's own gate."""
     run = Run(id="r1", kind="chat", owner_id=OWNER, stream=RunStream())
     return await gating.settle_deferred(

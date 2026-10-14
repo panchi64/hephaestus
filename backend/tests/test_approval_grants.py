@@ -10,9 +10,9 @@ from datetime import timedelta
 
 import pytest
 from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset
-from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
 from sqlmodel import Session, select
 
 from agent import build_chat_orchestrator, stream_agent_run

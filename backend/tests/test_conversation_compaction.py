@@ -21,17 +21,25 @@ would do:
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from typing import Any, override
+
 import pytest
 from pydantic_ai import (
     BinaryContent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
+    RunContext,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from agent import build_chat_orchestrator
@@ -55,16 +63,16 @@ from services.conversation_view import estimate_tokens, project_tree
 from ._helpers import client_app, fold_aware_model, fold_with, patch_model_resolution
 
 
-def _turn(prompt: str, answer: str) -> list:
+def _turn(prompt: str, answer: str) -> list[ModelMessage]:
     return [
         ModelRequest(parts=[UserPromptPart(content=prompt)]),
         ModelResponse(parts=[TextPart(content=answer)]),
     ]
 
 
-def _texts(messages: list) -> list[str]:
+def _texts(messages: list[ModelMessage]) -> list[str]:
     """Every message's flattened text, for asserting on shape without part surgery."""
-    out = []
+    out: list[str] = []
     for message in messages:
         for part in message.parts:
             content = getattr(part, "content", None)
@@ -328,7 +336,15 @@ async def test_summarize_history_degrades_to_a_failed_fold_on_a_model_error():
     to make room for."""
 
     class _Boom(TestModel):
-        async def request_stream(self, *args, **kwargs):
+        @asynccontextmanager
+        @override
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
             raise RuntimeError("model down")
             yield  # pragma: no cover
 
@@ -516,7 +532,7 @@ async def test_a_second_folds_stats_cover_only_what_it_folded():
             reason="threshold",
             **fold_with("second"),
         )
-        assert first is not None and second is not None
+        assert isinstance(first, CompactionOutcome) and isinstance(second, CompactionOutcome)
         assert first.messages_compacted == 4  # q0/a0/q1/a1
         assert second.messages_compacted == 7  # the first summary + q2/a2/q3/a3/q4/a4
 
@@ -583,7 +599,7 @@ async def test_the_divider_renders_above_the_request_a_branch_point_fold_left_st
 # --- the engine trigger ------------------------------------------------------
 
 
-def _loaded_turn(prompt: str, answer: str, input_tokens: int) -> list:
+def _loaded_turn(prompt: str, answer: str, input_tokens: int) -> list[ModelMessage]:
     """A turn whose answer reports a real prompt size, so `context_footprint` can read it."""
     return [
         ModelRequest(parts=[UserPromptPart(content=prompt)]),
@@ -750,7 +766,7 @@ def test_consecutive_requests_merge_so_the_index_stays_honest():
         ]
     )
     assert len(merged) == 3
-    assert [p.content for p in merged[0].parts] == ["a", "b"]
+    assert [getattr(p, "content", None) for p in merged[0].parts] == ["a", "b"]
 
 
 async def test_the_library_really_does_merge_and_its_own_index_is_not_a_substitute():
@@ -807,7 +823,7 @@ def test_the_merge_does_not_mutate_the_messages_it_was_given():
     corrupt the durable history of every later read."""
     first = ModelRequest(parts=[UserPromptPart(content="a")])
     merge_consecutive_requests([first, ModelRequest(parts=[UserPromptPart(content="b")])])
-    assert [p.content for p in first.parts] == ["a"]
+    assert [getattr(p, "content", None) for p in first.parts] == ["a"]
 
 
 async def test_a_steered_turn_replays_without_losing_the_next_turns_prompt():
@@ -1282,7 +1298,7 @@ async def test_a_reload_after_a_fold_ignores_usage_reported_before_it(monkeypatc
 
     monkeypatch.setattr(ModelRegistry, "main_context_window", window)
 
-    def reported(prompt: str, answer: str, tokens: int) -> list:
+    def reported(prompt: str, answer: str, tokens: int) -> list[ModelMessage]:
         return [
             ModelRequest(parts=[UserPromptPart(content=prompt)]),
             ModelResponse(

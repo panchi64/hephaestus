@@ -174,7 +174,9 @@ async def _run_one_tool(
         messages = agent_run.result.all_messages()
     if not isinstance(output, DeferredToolRequests) or not output.approvals:
         return run
-    approvals: dict[str, ToolApproved | ToolDenied | bool] = {call.tool_call_id: ToolApproved() for call in output.approvals}
+    approvals: dict[str, ToolApproved | ToolDenied | bool] = {
+        call.tool_call_id: ToolApproved() for call in output.approvals
+    }
     async with agent.iter(
         None,
         deps=deps,

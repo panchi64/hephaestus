@@ -87,6 +87,7 @@ def test_a_provider_is_filed_under_its_own_name_minus_the_convention():
 def test_a_provider_with_nothing_left_after_the_strip_is_still_a_row():
     """A name that is all convention and no word strips to the empty string, which is not
     a slug — a row with no id is a row the client can neither label nor key."""
+
     class Underscore:
         __name__ = "_"
 

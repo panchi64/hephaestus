@@ -41,7 +41,11 @@ async def _call(ctx: RunContext[RunDeps], name: str, args: dict[str, object]):
     return await toolset.call_tool(name, args, ctx, tools[name])
 
 
-_WRITE: dict[str, object] = {"name": "scout", "description": "Looks around.", "instructions": "Look around."}
+_WRITE: dict[str, object] = {
+    "name": "scout",
+    "description": "Looks around.",
+    "instructions": "Look around.",
+}
 
 
 @pytest.fixture

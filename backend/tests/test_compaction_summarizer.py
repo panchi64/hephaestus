@@ -18,6 +18,7 @@ continuing its own conversation, which makes three properties load-bearing:
 
 from __future__ import annotations
 
+from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     DeferredToolRequests,
@@ -39,7 +40,6 @@ from pydantic_ai.models.function import (
     DeltaToolCalls,
     FunctionModel,
 )
-from pydantic import BaseModel
 
 from agent.compaction_summary import (
     FOLD_SETTINGS,
@@ -200,7 +200,10 @@ class TestTheRequestIsTheTurns:
         # "do it" and the instructions are one request, not two in a row.
         assert isinstance(request[-1], ModelRequest)
         assert not isinstance(request[-2], ModelRequest)
-        assert [getattr(p, "content", None) for p in request[-1].parts] == ["do it", COMPACT_INSTRUCTIONS]
+        assert [getattr(p, "content", None) for p in request[-1].parts] == [
+            "do it",
+            COMPACT_INSTRUCTIONS,
+        ]
 
 
 class TestItIsASideRun:
