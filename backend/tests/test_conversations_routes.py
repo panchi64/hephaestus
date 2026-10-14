@@ -70,10 +70,10 @@ async def test_summary_model_survives_a_cold_read(monkeypatch: pytest.MonkeyPatc
     async with client_app() as (client, app):
         conversation_id = await _start_conversation(client)
         store = app_state(app, "conversations", ConversationStore)
-        store._cache.clear()  # force the cold (DB) summary path
+        store.evict_cache()  # force the cold (DB) summary path
 
-        await store._worker.join()  # let the write-behind drainer settle the model
-        store._cache.clear()  # force the cold (DB) summary path
+        await store.flush()  # let the write-behind drainer settle the model
+        store.evict_cache()  # force the cold (DB) summary path
 
         rows = await _rows(client)
         assert obj(rows[0])["id"] == conversation_id

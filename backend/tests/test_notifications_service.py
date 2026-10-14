@@ -243,7 +243,7 @@ async def test_drainer_parks_while_locked_and_drains_after_unlock(tmp_path: Path
     assert await rows() == []
 
     _ = await vault.unlock("pw")
-    await service._worker.join()  # let the parked write drain now that it can encrypt
+    await service.flush()  # let the parked write drain now that it can encrypt
     await service.stop()
 
     persisted = await rows()
@@ -261,7 +261,7 @@ async def test_cold_restart_rehydrates_prior_notifications(tmp_path: Path):
     service = NotificationService(engine, vault)
     await service.start()
     view = await service.notify(OWNER, "system", "before restart", "with a body")
-    await service._worker.join()
+    await service.flush()
     await service.stop()
 
     cold = NotificationService(engine, vault)
@@ -288,7 +288,7 @@ async def test_rehydrated_and_live_notifications_sort_together(tmp_path: Path):
     service = NotificationService(engine, vault)
     await service.start()
     old = await service.notify(OWNER, "system", "persisted")
-    await service._worker.join()
+    await service.flush()
     await service.stop()
 
     # SQLModel now declares a datetime field as its own UTC-restoring column type, so the

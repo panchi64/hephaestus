@@ -220,6 +220,11 @@ class RecallIndex:
         self._generation: int = 0
         vault.register_on_lock(self.clear)
 
+    @property
+    def shard_count(self) -> int:
+        """How many (collection, owner) shards are resident."""
+        return len(self._shards)
+
     def clear(self) -> None:
         self._shards.clear()
         self._generation += 1

@@ -129,6 +129,16 @@ class RoutineStore:
         self._vault: Vault = vault
         self._agents: AgentCatalog | None = agents
 
+    @property
+    def engine(self) -> Engine:
+        """The database engine the routines live in."""
+        return self._engine
+
+    @property
+    def vault(self) -> Vault:
+        """The vault that seals routine fields."""
+        return self._vault
+
     # --- reads ------------------------------------------------------------------------
 
     async def list(

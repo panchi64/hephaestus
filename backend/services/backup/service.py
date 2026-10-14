@@ -302,7 +302,7 @@ class BackupService:
                     write(json.dumps(section) + ": {")
                     open_section = section
                     first_entity = True
-                rows = await self._rows(entity, owner_id)
+                rows = await self.rows(entity, owner_id)
                 write(("" if first_entity else ", ") + json.dumps(entity.name) + ": [")
                 first_entity = False
                 for index, row in enumerate(rows):
@@ -322,7 +322,7 @@ class BackupService:
 
         return await in_session(self._engine, work)
 
-    async def _rows(self, entity: BackupEntity, owner_id: str) -> list[BackupModel]:
+    async def rows(self, entity: BackupEntity, owner_id: str) -> list[BackupModel]:
         model = entity.model
 
         def work(session: Session) -> list[BackupModel]:
@@ -338,7 +338,7 @@ class BackupService:
         remap: dict[str, str],
     ) -> tuple[int, int]:
         """Merge one entity's rows, reading and extending the import-wide id ``remap``."""
-        existing = await self._rows(entity, owner_id)
+        existing = await self.rows(entity, owner_id)
         seen_ids: set[object] = {row.id for row in existing}
         # Natural key → the id that record already carries *here*. A dict, not a set,
         # because a skipped row has to hand its local id to whatever pointed at the

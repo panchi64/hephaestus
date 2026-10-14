@@ -65,7 +65,7 @@ class StoreCore:
         # Least-recently-used first. Every entry holds a fully *decrypted* tree —
         # including any inline image bytes a turn carried — so an unbounded dict grows
         # to the size of every conversation the process has ever touched and never
-        # gives it back. It is a pure cache (`_tree` rehydrates on a miss), so evicting
+        # gives it back. It is a pure cache (`tree` rehydrates on a miss), so evicting
         # costs one reload and nothing else.
         self._cache: OrderedDict[str, Tree] = OrderedDict()
         self._max_cached: int = max_cached_conversations
@@ -97,6 +97,52 @@ class StoreCore:
     async def stop(self) -> None:
         await self._worker.stop()
 
+    @property
+    def engine(self) -> Engine:
+        """The database engine the conversations live in."""
+        return self._engine
+
+    @property
+    def embedder(self) -> Embedder | None:
+        """The embedder for message vectors; assignable when the endpoint changes."""
+        return self._embedder
+
+    @embedder.setter
+    def embedder(self, value: Embedder | None) -> None:
+        self._embedder = value
+
+    @property
+    def vault(self) -> Vault:
+        """The vault that seals message payloads."""
+        return self._vault
+
+    async def flush(self) -> None:
+        """Wait until the write-behind queue has drained."""
+        await self._worker.join()
+
+    def evict_cache(self) -> None:
+        """Drop every cached tree so the next read rehydrates from the database."""
+        self._cache.clear()
+
+    @property
+    def cached_ids(self) -> list[str]:
+        """Cached conversation ids, least recently used first."""
+        return list(self._cache)
+
+    def pending_writes(self, conversation_id: str) -> int:
+        """How many queued durable writes still pin this conversation's tree."""
+        return self._pending[conversation_id]
+
+    @property
+    def memoized_owner_ids(self) -> list[str]:
+        """Conversation ids whose owner is memoized, least recently used first."""
+        return list(self._owners)
+
+    @property
+    def max_memoized_owners(self) -> int:
+        """The owner memo's ceiling."""
+        return self._max_memoized_owners
+
     # --- cache residency -----------------------------------------------------------
     def _cache_put(self, conversation_id: str, tree: Tree) -> Tree:
         """Install a tree as the most-recently-used entry and trim back to the cap."""
@@ -105,7 +151,7 @@ class StoreCore:
         self._trim_cache()
         return tree
 
-    def _cache_get(self, conversation_id: str) -> Tree | None:
+    def cache_get(self, conversation_id: str) -> Tree | None:
         """The cached tree, counting the read as a use so it isn't evicted next.
 
         Only genuine reads go through here. The listing summary and the compaction
@@ -197,16 +243,16 @@ class StoreCore:
 
         return await in_session(self._engine, work)
 
-    async def _tree(self, conversation_id: str) -> Tree:
+    async def tree(self, conversation_id: str) -> Tree:
         """The conversation's tree — from the cache, or rehydrated once from the DB."""
-        cached = self._cache_get(conversation_id)
+        cached = self.cache_get(conversation_id)
         if cached is not None:
             return cached
 
         # Serialize rehydration per conversation and re-check inside the lock, so a
         # concurrent record()/history() can't be clobbered by a stale DB snapshot.
         async with self._locks.setdefault(conversation_id, asyncio.Lock()):
-            cached = self._cache_get(conversation_id)
+            cached = self.cache_get(conversation_id)
             if cached is not None:
                 return cached
 
@@ -288,7 +334,7 @@ class StoreCore:
         _ = self._locks.pop(conversation_id, None)
         _ = self._owners.pop(conversation_id, None)
 
-    async def _owner_of(self, conversation_id: str) -> str | None:
+    async def owner_of(self, conversation_id: str) -> str | None:
         """The conversation's owner, memoized. A conversation never changes hands, and
         this sits on the write-behind path — one extra round trip per persisted turn,
         purely to re-read an immutable column."""
@@ -308,7 +354,7 @@ class StoreCore:
 
     def _remember_owner(self, conversation_id: str, owner_id: str) -> None:
         """Memoize an owner as the most-recently-used row, dropping the oldest past the
-        cap. Pure cache: `_owner_of` re-reads the column on a miss."""
+        cap. Pure cache: `owner_of` re-reads the column on a miss."""
         self._owners[conversation_id] = owner_id
         self._owners.move_to_end(conversation_id)
         while len(self._owners) > self._max_memoized_owners:

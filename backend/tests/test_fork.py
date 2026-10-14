@@ -49,7 +49,7 @@ async def _thread(store: ConversationStore) -> tuple[str, list[str]]:
     conversation_id = await store.create_conversation(OWNER, title="Original")
     for n in range(3):
         _ = store.record(conversation_id, [_user(f"q{n}"), _assistant(f"a{n}")])
-    tree = await store._tree(conversation_id)  # noqa: SLF001 — the structure is the subject
+    tree = await store.tree(conversation_id)
     return conversation_id, [node.id for node in tree.active_path()]
 
 
@@ -67,12 +67,12 @@ class TestTheCopy:
     async def test_the_source_is_untouched(self, tmp_path: Path):
         store = await _store(tmp_path)
         source, ids = await _thread(store)
-        before = await store._tree(source)  # noqa: SLF001
+        before = await store.tree(source)
         leaf_before = before.active_leaf_id
 
         _ = await store.fork(source, ids[2], OWNER)
 
-        after = await store._tree(source)  # noqa: SLF001
+        after = await store.tree(source)
         assert after.active_leaf_id == leaf_before
         assert [n.id for n in after.active_path()] == ids
 
@@ -82,7 +82,7 @@ class TestTheCopy:
         forked = await store.fork(source, ids[2], OWNER)
         assert forked is not None
 
-        tree = await store._tree(forked)  # noqa: SLF001
+        tree = await store.tree(forked)
         copied = [n.id for n in tree.active_path()]
         # Shared ids would make the two threads alias each other's rows — the message
         # table is keyed on id, not on (conversation, id).
@@ -119,7 +119,7 @@ class TestTheCopy:
         store = await _store(tmp_path)
         source = await store.create_conversation(OWNER)
         _ = store.record(source, [_user("q"), _assistant("a")])
-        tree = await store._tree(source)  # noqa: SLF001
+        tree = await store.tree(source)
         forked = await store.fork(source, tree.active_path()[0].id, OWNER)
         assert forked is not None
         summary = await store.get_summary(forked, OWNER)
@@ -133,7 +133,7 @@ class TestTheBinding:
             OWNER, title="T", project_id="proj-1", workspace_kind="worktree"
         )
         _ = store.record(source, [_user("q"), _assistant("a")])
-        tree = await store._tree(source)  # noqa: SLF001
+        tree = await store.tree(source)
 
         forked = await store.fork(source, tree.active_path()[0].id, OWNER)
         assert forked is not None

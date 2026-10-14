@@ -130,6 +130,10 @@ class FolderAdapter(SourceAdapter):
     async def stop(self) -> None:
         await self._worker.stop()
 
+    async def flush(self) -> None:
+        """Wait until the crawl queue has drained."""
+        await self._worker.join()
+
     # --- registry ---------------------------------------------------------
 
     async def add_folder(

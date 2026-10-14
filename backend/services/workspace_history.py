@@ -73,6 +73,11 @@ class WorkspaceHistoryStore:
         self._engine: Engine = engine
         self._vault: Vault = vault
 
+    @property
+    def engine(self) -> Engine:
+        """The database engine the snapshots live in."""
+        return self._engine
+
     async def capture(
         self,
         owner_id: str,

@@ -86,7 +86,7 @@ async def test_folder_crawls_chunks_and_embeds(tmp_path: Path):
     _engine, _vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
-    await adapter._worker.join()  # drain the queued crawl
+    await adapter.flush()  # drain the queued crawl
     await adapter.stop()
 
     assert await chunk_store.count(OWNER, source.id) == 2  # two text files, binary skipped
@@ -99,11 +99,11 @@ async def test_folder_reindex_is_idempotent(tmp_path: Path):
     _engine, _vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
-    await adapter._worker.join()
+    await adapter.flush()
     first = await chunk_store.count(OWNER, source.id)
 
     _ = await adapter.rebuild(OWNER, source.id)  # re-crawl identical content
-    await adapter._worker.join()
+    await adapter.flush()
     await adapter.stop()
     # No dup rows — content hash dedups the unchanged file.
     assert await chunk_store.count(OWNER, source.id) == first
@@ -113,7 +113,7 @@ async def test_missing_path_marks_error_status(tmp_path: Path):
     _engine, _vault, _chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path / "does-not-exist"))
-    await adapter._worker.join()
+    await adapter.flush()
     await adapter.stop()
 
     statuses = await adapter.status(OWNER)
@@ -131,7 +131,7 @@ async def test_retrieve_fuses_folder_and_memory(tmp_path: Path):
     engine, vault, chunk_store, folder = await _folder(embedder)
     await folder.start()
     src = await folder.add_folder(OWNER, str(tmp_path))
-    await folder._worker.join()
+    await folder.flush()
 
     memory = MemoryStore(engine, vault, embedder)
     _ = await memory.remember(OWNER, "I drive a car to work")
@@ -154,7 +154,7 @@ async def test_retrieve_degrades_to_sparse_without_embeddings(tmp_path: Path):
     _engine, _vault, chunk_store, folder = await _folder(DegradedEmbedder())
     await folder.start()
     _ = await folder.add_folder(OWNER, str(tmp_path))
-    await folder._worker.join()
+    await folder.flush()
 
     index = CorpusIndex(
         DegradedEmbedder(), ModelRegistry.__new__(ModelRegistry), chunk_store, folder
@@ -194,7 +194,7 @@ async def test_strong_memory_hit_not_buried_under_folder_hits(tmp_path: Path):
     engine, vault, chunk_store, folder = await _folder(embedder)
     await folder.start()
     _ = await folder.add_folder(OWNER, str(tmp_path))
-    await folder._worker.join()
+    await folder.flush()
 
     # One memory that matches "cat" only by meaning (no literal "cat" token).
     memory = MemoryStore(engine, vault, embedder)
@@ -282,7 +282,7 @@ async def test_folder_index_parks_while_vault_locked(tmp_path: Path):
     assert await chunk_store.count(OWNER, source.id) == 0  # nothing sealed while locked
 
     assert await vault.unlock("pw")  # unlock ⇒ the parked worker resumes
-    await asyncio.wait_for(adapter._worker.join(), timeout=5)
+    await asyncio.wait_for(adapter.flush(), timeout=5)
     await adapter.stop()
     assert await chunk_store.count(OWNER, source.id) == 1
 
@@ -299,7 +299,7 @@ async def test_symlinked_file_outside_tree_is_skipped(tmp_path: Path):
     engine, vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
-    await adapter._worker.join()
+    await adapter.flush()
     await adapter.stop()
 
     assert await chunk_store.count(OWNER, source.id) == 1  # only real.txt, not the symlink
@@ -334,12 +334,12 @@ async def test_recrawl_prunes_a_file_deleted_on_disk(tmp_path: Path):
     engine, vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
-    await adapter._worker.join()
+    await adapter.flush()
     assert await chunk_store.count_items(OWNER, "folder", source.id) == 2
 
     secrets.unlink()
     _ = await adapter.rebuild(OWNER, source.id)
-    await adapter._worker.join()
+    await adapter.flush()
     await adapter.stop()
 
     indexed = _indexed(engine, vault)
@@ -359,12 +359,12 @@ async def test_recrawl_replaces_an_edited_files_chunks(tmp_path: Path):
     engine, vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
-    await adapter._worker.join()
+    await adapter.flush()
     assert await chunk_store.count(OWNER, source.id) == 1
 
     _ = note.write_text("the wifi password is correcthorse")
     _ = await adapter.rebuild(OWNER, source.id)
-    await adapter._worker.join()
+    await adapter.flush()
     await adapter.stop()
 
     indexed = _indexed(engine, vault)
@@ -384,7 +384,7 @@ async def test_recrawl_keeps_a_file_it_could_not_read(
     _engine, _vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
-    await adapter._worker.join()
+    await adapter.flush()
     assert await chunk_store.count(OWNER, source.id) == 1
 
     def _unreadable(_path: str) -> str:
@@ -392,7 +392,7 @@ async def test_recrawl_keeps_a_file_it_could_not_read(
 
     monkeypatch.setattr(FolderAdapter, "_read", staticmethod(_unreadable))
     _ = await adapter.rebuild(OWNER, source.id)
-    await adapter._worker.join()
+    await adapter.flush()
     await adapter.stop()
 
     assert await chunk_store.count(OWNER, source.id) == 1
@@ -415,7 +415,7 @@ async def test_two_identical_files_are_both_indexed(tmp_path: Path):
     engine, vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
-    await adapter._worker.join()
+    await adapter.flush()
     await adapter.stop()
 
     refs = {ref for ref, _text in _indexed(engine, vault)}
@@ -451,11 +451,11 @@ async def test_identical_files_still_dedup_within_themselves_across_recrawls(tmp
     _engine, _vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
-    await adapter._worker.join()
+    await adapter.flush()
     first = await chunk_store.count(OWNER, source.id)
 
     _ = await adapter.rebuild(OWNER, source.id)
-    await adapter._worker.join()
+    await adapter.flush()
     await adapter.stop()
 
     assert first == 2

@@ -129,6 +129,11 @@ class SkillStore:
         self._vault: Vault = vault
         self.revisions: RevisionStore | None = revisions
 
+    @property
+    def engine(self) -> Engine:
+        """The database engine the skills live in."""
+        return self._engine
+
     # ── writes ───────────────────────────────────────────────────────────────────────────
 
     async def create(

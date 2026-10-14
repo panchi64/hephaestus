@@ -118,7 +118,7 @@ class ChunkCollection(RecallCollection[ChunkMeta]):
 _MAX_OVERLAP = 256
 
 
-def _stitch(passages: list[str]) -> str:
+def stitch(passages: list[str]) -> str:
     """Join consecutive chunks back into one text, dropping the words each repeats from
     the one before (chunk windows overlap)."""
     words: list[str] = []
@@ -370,7 +370,7 @@ class CorpusChunkStore:
             chunks = [row for row in rows if item_of(row.external_ref) == item]
             if not chunks:
                 return None
-            text = _stitch([self._vault.decrypt_str(row.text_enc) for row in chunks])
+            text = stitch([self._vault.decrypt_str(row.text_enc) for row in chunks])
             return text, max(row.updated_at for row in chunks)
 
         return await in_session(self._engine, work)

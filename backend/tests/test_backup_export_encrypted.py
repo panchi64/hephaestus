@@ -176,13 +176,13 @@ async def test_counting_a_group_does_not_read_its_rows(
     engine, vault, backup = await _host(tmp_path)
     _ = await _seed(engine, vault)
     loaded: list[str] = []
-    original = backup._rows
+    original = backup.rows
 
     async def counted(entity: BackupEntity, owner_id: str):
         loaded.append(entity.name)
         return await original(entity, owner_id)
 
-    monkeypatch.setattr(backup, "_rows", counted)
+    monkeypatch.setattr(backup, "rows", counted)
 
     counts = {item.name: item.count for item in await backup.counts(OWNER)}
 

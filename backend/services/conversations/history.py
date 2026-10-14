@@ -25,7 +25,7 @@ class HistoryMixin(StoreCore):
         far above what the next request actually carries. The two are deliberately separate
         methods rather than one with a flag, because every caller here wants the whole
         thread."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         return [node.message for node in tree.active_path()]
 
     async def replay_history(self, conversation_id: str) -> ReplayHistory:
@@ -35,7 +35,7 @@ class HistoryMixin(StoreCore):
         ``Run.fold_boundary`` — so a cold read measures the context exactly as the stream
         did: the footprint from responses recorded since the newest fold, and an estimate
         over the whole replay when none has landed yet."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         path = tree.active_path()
         return ReplayHistory([node.message for node in replay_nodes(path)], replay_boundary(path))
 
@@ -48,7 +48,7 @@ class HistoryMixin(StoreCore):
         before timings existed (or by a run whose stopwatch never reached them) carry
         null and contribute nothing, which is why a thread can honestly report tokens
         it can't report a duration for."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         nodes = tree.active_path()
         ttft = [n.ttft_ms for n in nodes if n.ttft_ms is not None]
         return TimingTotals(
@@ -63,7 +63,7 @@ class HistoryMixin(StoreCore):
         thread has been compacted, then the newest checkpoint's summary followed by the
         turns it doesn't cover. Nothing is lost — the folded turns stay in the tree and in
         the transcript; only what is re-sent each turn shrinks."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         return [node.message for node in replay_nodes(tree.active_path())]
 
     async def turn_stamps(self, conversation_id: str, message_id: str | None = None) -> TurnStamps:
@@ -83,11 +83,11 @@ class HistoryMixin(StoreCore):
         so that on a settled thread it still answers about the most recent turn rather than
         about whichever node happens to sit at the end.
 
-        Cheap on purpose — the cached tree, and no decrypt beyond the one ``_tree`` already
+        Cheap on purpose — the cached tree, and no decrypt beyond the one ``tree`` already
         did — because it runs on every regenerate and every edit, including the
         overwhelming majority that carried neither.
         """
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         if message_id is not None:
             node = tree.nodes.get(message_id)
             message = node.message if node is not None else None
@@ -108,7 +108,7 @@ class HistoryMixin(StoreCore):
         """The active path projected to render-ready user/assistant turns (reasoning
         split out, tool calls stitched to results), each carrying its branch node id
         and version index/count so the operator can regenerate, edit, or cycle it."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         nodes = view_nodes(tree.active_path())
         compacted_ids = frozenset(n.id for n in nodes if n.compacted)
         views = project_tree([(n.id, n.message) for n in nodes], compacted_ids=compacted_ids)
@@ -126,4 +126,4 @@ class HistoryMixin(StoreCore):
 
     async def leaf_id(self, conversation_id: str) -> str | None:
         """The active leaf — on a regenerate, the request about to be re-answered."""
-        return (await self._tree(conversation_id)).active_leaf_id
+        return (await self.tree(conversation_id)).active_leaf_id

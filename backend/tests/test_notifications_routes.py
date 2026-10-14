@@ -99,10 +99,10 @@ async def test_list_spans_rehydrated_and_live_notifications(monkeypatch: pytest.
     async with client_app() as (client, app):
         service = app_state(app, "notifications", NotificationService)
         old = await service.notify(OPERATOR_ID, "system", "persisted")
-        await service._worker.join()
+        await service.flush()
         # Drop it from the cache and reload from the DB — the restart path, without a
         # second app: `_rehydrate` skips ids already cached.
-        _ = service._cache.pop(old.id)
+        service.evict_cached(old.id)
         await service._rehydrate()
         fresh = await service.notify(OPERATOR_ID, "system", "live")
 

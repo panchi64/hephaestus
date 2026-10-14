@@ -62,7 +62,7 @@ class AttachmentsMixin(StoreCore):
         surviving set is a deliberate superset (DB ∪ warm caches), which can only ever
         spare an image, never purge one still in use. Returns ids regardless of mime — the
         caller filters to images."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         if message_id is not None:
             if message_id not in tree.nodes:
                 return []

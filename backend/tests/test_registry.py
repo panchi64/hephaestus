@@ -357,7 +357,7 @@ async def test_main_context_window_survives_a_stale_chain():
         binding.endpoint_ids = ["a296928be47b4011ba15a9b806fb31e4"]
         session.add(binding)
 
-    await in_session(reg._engine, plant_stale)
+    await in_session(reg.engine, plant_stale)
     assert await reg.main_context_window(OWNER) is None
 
 

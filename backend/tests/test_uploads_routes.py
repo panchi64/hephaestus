@@ -18,8 +18,8 @@ from .test_uploads_extraction import text_pdf
 
 
 async def _await_extraction(app: FastAPI) -> None:
-    await app_state(app, "uploads", UploadStore)._worker.join()
-    await app_state(app, "corpus_uploads", UploadsAdapter)._worker.join()
+    await app_state(app, "uploads", UploadStore).flush()
+    await app_state(app, "corpus_uploads", UploadsAdapter).flush()
 
 
 async def test_upload_extract_list_download_correct_delete():

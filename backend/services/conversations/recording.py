@@ -62,7 +62,7 @@ class RecordingMixin(StoreCore):
             if prompt_id is not None and blocked_reason:
                 self._block_node(conversation_id, prompt_id, blocked_reason)
             return []
-        tree = self._cache_get(conversation_id)
+        tree = self.cache_get(conversation_id)
         if tree is None:
             # Nothing cached: either a brand-new conversation (`create_conversation`
             # seeds an empty tree, so normally this doesn't fire) or one whose id no
@@ -200,7 +200,7 @@ class RecordingMixin(StoreCore):
 
     async def leaf_id(self, conversation_id: str) -> str | None:
         """The active leaf — on a regenerate, the request about to be re-answered."""
-        return (await self._tree(conversation_id)).active_leaf_id
+        return (await self.tree(conversation_id)).active_leaf_id
 
     def _block_node(self, conversation_id: str, node_id: str, reason: str) -> None:
         """Stamp a stop marker on a node that is already recorded, durably.
@@ -226,7 +226,7 @@ class RecordingMixin(StoreCore):
     async def set_pin(self, conversation_id: str, message_id: str, pinned: bool) -> bool:
         """Pin or unpin a turn (by its branch node id). Returns False if unknown.
         Queued behind any in-flight message writes so it lands on a persisted row."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         node = tree.nodes.get(message_id)
         if node is None:
             return False
@@ -257,7 +257,7 @@ class RecordingMixin(StoreCore):
         being streamed, i.e. the newest, so the fallback is unambiguous even with
         older markers still standing further up the thread — honour the intent rather
         than leaving a stop the operator has visibly resolved."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         node = tree.nodes.get(message_id)
         if node is None:
             node = next(

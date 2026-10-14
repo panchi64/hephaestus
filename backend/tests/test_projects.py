@@ -209,7 +209,7 @@ class TestWorkspaceRootsAreMemoised:
         def explode(*_args: object, **_kwargs: object) -> NoReturn:
             raise AssertionError("workspace_roots re-read the catalog on a warm call")
 
-        monkeypatch.setattr(store._vault, "decrypt_str", explode)
+        monkeypatch.setattr(store.vault, "decrypt_str", explode)
         assert await store.workspace_roots("operator") == first
         assert await store.workspace_names("operator") == {pid: "acme" for pid in first}
 
@@ -268,7 +268,7 @@ class TestWorkspaceRootsAreMemoised:
         _ = await store.ensure_for_path("operator", str(tmp_path / "acme"))
         _ = await store.workspace_roots("operator")
 
-        store._vault.lock()
+        store.vault.lock()
 
         with pytest.raises(VaultLocked):
             _ = await store.workspace_roots("operator")
@@ -316,7 +316,7 @@ class TestDeletingAProject:
             )
             session.commit()
 
-        await in_session(store._db, seed)
+        await in_session(store.engine, seed)
         await store.delete("operator", project.id)
 
         def read(session: Session) -> list[str | None]:
@@ -327,7 +327,7 @@ class TestDeletingAProject:
 
         # A deleted id can never be active again, so rows still pointing at it would
         # drop out of `visible = unfiled ∪ active` forever with no way back from the UI.
-        assert await in_session(store._db, read) == [None, None]
+        assert await in_session(store.engine, read) == [None, None]
 
 
 class TestActiveSelection:
@@ -635,7 +635,7 @@ class TestCorpusScopeIsAUnion:
             session.commit()
 
         await in_session(app_state(app, "db_engine", Engine), work)
-        return await app_state(app, "corpus", CorpusIndex)._out_of_scope_source_ids(
+        return await app_state(app, "corpus", CorpusIndex).out_of_scope_source_ids(
             "operator", visible_project_ids(active)
         )
 

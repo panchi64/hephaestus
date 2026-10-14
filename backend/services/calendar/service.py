@@ -134,6 +134,11 @@ class CalendarService:
         # None ⇒ no utility model was wired, and the parse entry points say so.
         self.nl: CalendarNaturalLanguage | None = nl
 
+    @property
+    def engine(self) -> Engine:
+        """The database engine the service reads and writes."""
+        return self._engine
+
     # --- calendars --------------------------------------------------------
 
     async def create_calendar(

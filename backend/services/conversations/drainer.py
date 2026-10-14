@@ -93,7 +93,7 @@ class DrainerMixin(StoreCore):
         if not texts:
             return {}
 
-        owner_id = await self._owner_of(job.conversation_id)
+        owner_id = await self.owner_of(job.conversation_id)
         if owner_id is None:
             return {}
         # Embedding is strictly best-effort: it must never fail or stall a durable

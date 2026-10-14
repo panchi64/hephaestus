@@ -40,9 +40,9 @@ async def test_the_tree_cache_stays_at_its_cap_however_many_threads_are_touched(
     store = await _store(tmp_path, max_cached_conversations=3)
     ids = [await store.create_conversation(OWNER) for _ in range(10)]
 
-    assert len(store._cache) == 3
+    assert len(store.cached_ids) == 3
     # Least-recently-used first: the survivors are the last three created.
-    assert list(store._cache) == ids[-3:]
+    assert store.cached_ids == ids[-3:]
 
 
 async def test_reading_an_evicted_thread_rehydrates_it_and_evicts_the_coldest(tmp_path: Path):
@@ -51,17 +51,17 @@ async def test_reading_an_evicted_thread_rehydrates_it_and_evicts_the_coldest(tm
     try:
         first = await store.create_conversation(OWNER)
         _ = store.record(first, _turn("q", "a"))
-        await store._worker.join()
+        await store.flush()
         _ = await store.create_conversation(OWNER)
         _ = await store.create_conversation(OWNER)
-        assert first not in store._cache  # pushed out by the two newer threads
+        assert first not in store.cached_ids  # pushed out by the two newer threads
 
         # A miss costs one rehydrate and nothing else — the turn is still there.
         history = await store.messages_view(first)
 
         assert [m.content for m in history] == ["q", "a"]
-        assert first in store._cache
-        assert len(store._cache) == 2
+        assert first in store.cached_ids
+        assert len(store.cached_ids) == 2
     finally:
         await store.stop()
 
@@ -77,8 +77,8 @@ async def test_a_thread_with_a_queued_write_is_never_evicted_under_it(tmp_path: 
     for _ in range(5):
         _ = await store.create_conversation(OWNER)
 
-    assert pinned in store._cache
-    assert store._pending[pinned] == 1
+    assert pinned in store.cached_ids
+    assert store.pending_writes(pinned) == 1
 
 
 async def test_the_owner_memo_is_bounded_too(tmp_path: Path):
@@ -88,8 +88,8 @@ async def test_the_owner_memo_is_bounded_too(tmp_path: Path):
     store = await _store(tmp_path, max_cached_conversations=2)
     ids = [await store.create_conversation(OWNER) for _ in range(40)]
 
-    assert len(store._owners) == store._max_memoized_owners == 16
-    assert ids[0] not in store._owners
+    assert len(store.memoized_owner_ids) == store.max_memoized_owners == 16
+    assert ids[0] not in store.memoized_owner_ids
 
     # Pure cache: a miss re-reads the immutable column rather than losing the owner.
-    assert await store._owner_of(ids[0]) == OWNER
+    assert await store.owner_of(ids[0]) == OWNER

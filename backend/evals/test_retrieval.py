@@ -160,7 +160,7 @@ async def conversation_hybrid(
                     ModelResponse(parts=[TextPart(content=answer)], model_name="m"),
                 ],
             )
-    await store._worker.join()  # flush the drainer so rows + vectors land
+    await store.flush()  # flush the drainer so rows + vectors land
     assert title_to_gold  # titles are unique gold anchors
 
     hybrid: dict[str, list[str]] = {}

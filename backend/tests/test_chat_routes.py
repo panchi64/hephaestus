@@ -17,7 +17,7 @@ from ._json import arr, json_body, json_list, obj, s
 
 
 def _stamp_stop_marker(store: ConversationStore, conversation_id: str, message_id: str) -> None:
-    tree = store._cache_get(conversation_id)
+    tree = store.cache_get(conversation_id)
     assert tree is not None
     tree.nodes[message_id].blocked_reason = "cancelled by the operator"
 

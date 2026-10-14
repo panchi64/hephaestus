@@ -91,9 +91,9 @@ async def test_locking_the_vault_drops_the_index():
     _engine, vault, store = await _store()
     _ = await store.remember(OWNER, "the garden gate sticks")
     _ = await store.recall(OWNER, "garden")
-    assert store._index._shards
+    assert store.index.shard_count
     vault.lock()
-    assert not store._index._shards
+    assert not store.index.shard_count
 
 
 async def test_meaning_still_ranks_through_the_index():

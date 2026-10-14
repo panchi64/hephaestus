@@ -135,7 +135,7 @@ async def test_embedding_model_change_is_segregated():
     # query vector (EMB-2) — it can still surface via keyword, not via meaning.
     store = await _setup(FakeEmbedder(model="model-a"))
     _ = await store.remember(OWNER, "I love my cat")
-    store._embedder = FakeEmbedder(model="model-b")  # operator changed the model
+    store.embedder = FakeEmbedder(model="model-b")  # operator changed the model
 
     hits = await store.recall(OWNER, "feline", limit=5)
     # Different space → no dense match, and no token overlap → no recall at all.
@@ -147,7 +147,7 @@ async def test_reembed_heals_a_model_change():
     # reembed lifts every memory into the new space so meaning-recall works again.
     store = await _setup(FakeEmbedder(model="model-a"))
     _ = await store.remember(OWNER, "I love my cat")
-    store._embedder = FakeEmbedder(model="model-b")  # operator changed the model
+    store.embedder = FakeEmbedder(model="model-b")  # operator changed the model
 
     before = await store.recall(OWNER, "feline", limit=5)
     assert all(h.matched_by != "semantic" for h in before)  # segregated

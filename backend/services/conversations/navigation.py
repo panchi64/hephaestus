@@ -61,7 +61,7 @@ class NavigationMixin(StoreCore):
         above it would replay the whole unfolded thread, and after a compaction that is
         the one history certain not to fit. The version set is unaffected either way,
         because :meth:`Tree.siblings` looks through checkpoints."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         node = tree.nodes.get(message_id)
         if node is None or (require_parent and node.parent_id is None):
             return False
@@ -92,7 +92,7 @@ class NavigationMixin(StoreCore):
         written before a compaction, its rewrite below the checkpoint); the set is
         enumerated through checkpoints and each branch replays whatever fold its own
         path carries."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         if message_id not in tree.nodes:
             return False
         siblings = tree.siblings(message_id)
@@ -123,7 +123,7 @@ class NavigationMixin(StoreCore):
         The copy is built in memory and drains through the normal write-behind path, so
         it is sealed on write like everything else.
         """
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         path = tree.active_path()
         ids = [n.id for n in path]
         if message_id not in ids:
@@ -149,7 +149,7 @@ class NavigationMixin(StoreCore):
             agent_name=binding.agent_name,
         )
 
-        forked = self._cache_get(new_id_) or self._cache_put(new_id_, Tree())
+        forked = self.cache_get(new_id_) or self._cache_put(new_id_, Tree())
         rows: list[Row] = []
         parent: str | None = None
         for seq, node in enumerate(copied):
@@ -199,7 +199,7 @@ class NavigationMixin(StoreCore):
         """Rewind the active leaf to the tail of the turn whose branch node is
         ``message_id`` (on the current path), so the thread ends there and the next
         send branches. Returns False if the node isn't on the active path."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         path = tree.active_path()
         ids = [n.id for n in path]
         if message_id not in ids:
@@ -230,7 +230,7 @@ class NavigationMixin(StoreCore):
         skips past it: a checkpoint whose only branch has been deleted covers nothing any
         more, and leaving the leaf parked on it would end the thread on a divider for a
         turn that is gone."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         node = tree.nodes.get(message_id)
         if node is None:
             return False

@@ -136,6 +136,10 @@ class UploadStore:
     async def stop(self) -> None:
         await self._worker.stop()
 
+    async def flush(self) -> None:
+        """Wait until the extraction queue has drained."""
+        await self._worker.join()
+
     async def _requeue_pending(self) -> None:
         """Crash recovery for the extraction lifecycle: the job queue is in-memory, so a
         restart loses any pending work and can strand a row mid-``extracting``. On start,

@@ -30,7 +30,7 @@ from services.corpus import (
     MemoryAdapter,
     record_adapters,
 )
-from services.corpus.chunk_store import _stitch
+from services.corpus.chunk_store import stitch
 from services.memory import MemoryStore
 from services.plugins import PluginStore
 from services.registry import ModelRegistry
@@ -54,6 +54,7 @@ class Platform:
         memory: MemoryStore,
         skills: SkillStore,
         plugins: PluginStore,
+        folder: FolderAdapter,
     ) -> None:
         self.engine: Engine = engine
         self.vault: Vault = vault
@@ -62,6 +63,7 @@ class Platform:
         self.memory: MemoryStore = memory
         self.skills: SkillStore = skills
         self.plugins: PluginStore = plugins
+        self.folder: FolderAdapter = folder
         self.tools: dict[str, Tool[RunDeps]] = platform_toolset().tools
 
     def ctx(self, conversation_id: str | None = "current") -> RunContext[RunDeps]:
@@ -116,7 +118,14 @@ async def platform() -> AsyncIterator[Platform]:
     for adapter in record_adapters(engine, vault):
         index.register(adapter)
     yield Platform(
-        engine, vault, store, index, memory, SkillStore(engine, vault), PluginStore(engine, vault)
+        engine,
+        vault,
+        store,
+        index,
+        memory,
+        SkillStore(engine, vault),
+        PluginStore(engine, vault),
+        folder,
     )
     await store.stop()
 
@@ -249,10 +258,10 @@ async def test_published_plugins_are_searched_by_their_tools(platform: Platform)
 
 async def test_a_file_reads_back_whole(platform: Platform, tmp_path: Path):
     _ = (tmp_path / "notes.txt").write_text(" ".join(f"word{i}" for i in range(1200)))
-    folder = platform.index._folder
+    folder = platform.folder
     await folder.start()
     source = await platform.index.add_folder(OWNER, str(tmp_path))
-    await folder._worker.join()
+    await folder.flush()
     await folder.stop()
     results = await platform.search("word1100", sources=["files"])
     assert results.hits and results.hits[0].source == "files"
@@ -267,4 +276,4 @@ async def test_an_unknown_ref_says_so(platform: Platform):
 
 
 def test_stitching_drops_the_overlap_between_chunks():
-    assert _stitch(["a b c d", "c d e f", "f g"]) == "a b c d e f g"
+    assert stitch(["a b c d", "c d e f", "f g"]) == "a b c d e f g"

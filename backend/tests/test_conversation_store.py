@@ -26,8 +26,8 @@ def _turn(prompt: str, answer: str, model: str) -> list[ModelMessage]:
 
 async def _model_after_cold_read(store: ConversationStore, conversation_id: str) -> str | None:
     """The summary's model with no warm tree to fall back on — the durable value."""
-    await store._worker.join()
-    store._cache.clear()
+    await store.flush()
+    store.evict_cache()
     summary = await store.get_summary(conversation_id, OPERATOR_ID)
     assert summary is not None
     return summary.model

@@ -60,7 +60,8 @@ async def _fresh_store(tmp_path: Path) -> tuple[ConversationStore, Engine]:
 
 def _requests(store: ConversationStore, conversation_id: str) -> list[str]:
     """The text of every operator-prompt node in the tree, on any branch."""
-    tree = store._cache[conversation_id]
+    tree = store.cache_get(conversation_id)
+    assert tree is not None
     return [
         _text(part.content)
         for node in sorted(tree.nodes.values(), key=lambda n: n.seq)
@@ -284,7 +285,7 @@ async def test_a_cancel_before_the_first_token_keeps_the_prompt_and_its_marker(t
 
     # And the marker is durable, not just in the warm tree.
     await store.stop()
-    cold = ConversationStore(db_engine, store._vault)
+    cold = ConversationStore(db_engine, store.vault)
     await cold.start()
     cold_views = await cold.messages_view(conv)
     assert [(v.role, v.content) for v in cold_views] == [("user", "never answered")]

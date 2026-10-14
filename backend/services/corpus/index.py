@@ -51,7 +51,7 @@ class CorpusIndex:
         # the "surface" kind, so keying by kind would drop all but the last.
         self._adapters: list[SourceAdapter] = []
 
-    async def _out_of_scope_source_ids(
+    async def out_of_scope_source_ids(
         self, owner_id: str, visible_projects: tuple[str | None, ...] | None
     ) -> frozenset[str]:
         """Sources belonging to a project the caller may **not** see.
@@ -113,7 +113,7 @@ class CorpusIndex:
         """
         query_vec, query_model = await embed_query(self._embedder, owner_id, query)
         query_tokens = ranking.tokens(query)
-        excluded = await self._out_of_scope_source_ids(owner_id, visible_projects)
+        excluded = await self.out_of_scope_source_ids(owner_id, visible_projects)
 
         if source_ids:
             hits = await self._chunks.retrieve(
@@ -175,7 +175,7 @@ class CorpusIndex:
         surface = self._surface_adapter(source_id)
         if surface is not None:
             return await surface.read(owner_id, ref)
-        if source_id in await self._out_of_scope_source_ids(owner_id, visible_projects):
+        if source_id in await self.out_of_scope_source_ids(owner_id, visible_projects):
             return None
         item = item_of(ref)
         found = await self._chunks.read_item(owner_id, source_id, item)

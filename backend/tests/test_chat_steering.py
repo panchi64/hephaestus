@@ -383,7 +383,8 @@ async def test_steering_on_a_regenerate_never_mutates_the_stored_user_message(tm
     # ...but the stored user message is still exactly what was typed. Read off the
     # store's own in-memory tree nodes, which is the object the library aliased —
     # a re-projection from the persisted blob would hide the mutation.
-    tree = store._cache[conv]
+    tree = store.cache_get(conv)
+    assert tree is not None
     originals = [
         p.content
         for node in tree.nodes.values()

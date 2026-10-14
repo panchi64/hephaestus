@@ -159,6 +159,14 @@ class NotificationService:
             self._rehydrate(), name="notifications-rehydrate"
         )
 
+    async def flush(self) -> None:
+        """Wait until the write-behind queue has drained."""
+        await self._worker.join()
+
+    def evict_cached(self, notification_id: str) -> None:
+        """Drop one notification from the in-memory cache; the database row stays."""
+        _ = self._cache.pop(notification_id)
+
     async def stop(self) -> None:
         await cancel_and_wait(self._rehydrate_task, STOP_TIMEOUT_S)
         await self._deliveries.stop()

@@ -314,8 +314,8 @@ async def test_the_search_exchange_survives_the_store_and_the_next_turn_needs_no
         assert _browse(first[1]) == REVEALED
 
         # The library's typed parts are what the store kept — cold, through the vault.
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
         cold = await store.history(cid)
         assert any(isinstance(p, ToolSearchCallPart) for m in cold for p in m.parts)
         assert any(isinstance(p, ToolSearchReturnPart) for m in cold for p in m.parts)
@@ -335,8 +335,8 @@ async def test_the_operator_message_is_recorded_once_across_a_search_turn():
         store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
         _ = await _turn(app, cid, model=_searcher([]))
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
 
         assert _texts(await store.history(cid)).count("open a page") == 1
         view = await store.messages_view(cid)
@@ -389,8 +389,8 @@ async def test_the_work_log_renders_the_search_as_a_tool_row():
         store = _store(app)
         cid = await store.create_conversation(OPERATOR_ID)
         _ = await _turn(app, cid, model=_searcher([]))
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
 
         view = await store.messages_view(cid)
         tools = view[1].tools
@@ -610,8 +610,8 @@ async def test_the_overflow_fold_keeps_the_tools_the_turn_had_loaded():
         assert _browse(seen[-1]) == REVEALED
         # And the checkpoint riding a delta part did not confuse the turn boundary: the
         # summary and the operator's prompt are each recorded exactly once.
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
         after = _texts(await store.history(cid))
         assert len(after) == len(before) + 3
         assert sum("FOLDED AWAY" in text for text in after) == 1
@@ -631,8 +631,8 @@ async def test_the_carried_reveal_persists_with_the_checkpoint():
             store, cid, reason="manual", **fold_with("so far", categories=_categories())
         )
         assert outcome is not None
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
 
         replayed = await store.model_history(cid)
         assert revealed_tools(replayed) == tuple(sorted(REVEALED))

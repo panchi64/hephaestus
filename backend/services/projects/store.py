@@ -157,6 +157,16 @@ class ProjectStore:
         self._roots: dict[str, dict[str, Path]] = {}
         vault.register_on_lock(self._roots.clear)
 
+    @property
+    def engine(self) -> Engine:
+        """The database engine the catalog lives in."""
+        return self._db
+
+    @property
+    def vault(self) -> Vault:
+        """The vault that seals project paths."""
+        return self._vault
+
     async def _view(self, row: Project) -> ProjectView:
         root = Path(self._vault.decrypt_str(row.root_path_enc))
         return ProjectView(

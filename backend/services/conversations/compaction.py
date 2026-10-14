@@ -62,7 +62,7 @@ class CompactionMixin(StoreCore):
         folding it into the summary would have the model answer the fold. The checkpoint is
         appended under it and the turn's own messages hang off the checkpoint — the branch-point
         shape exactly."""
-        tree = await self._tree(conversation_id)
+        tree = await self.tree(conversation_id)
         leaf = tree.active_leaf_id
         if leaf is None:
             return None

@@ -216,8 +216,8 @@ async def test_an_overflow_folds_the_thread_and_the_retried_request_answers():
         # The persistence index moved with the fold: the tree gains the checkpoint and
         # exactly this turn's two messages — nothing re-recorded, nothing dropped. The
         # prompt went in first, so the checkpoint sits beneath it and the answer follows.
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
         after = _texts(await store.history(cid))
         assert len(after) == before + 3
         assert after[-3] == "next question"
@@ -327,8 +327,8 @@ async def test_a_collapsed_fold_boundary_does_not_re_record_the_history():
         await run.wait()
 
         assert run.status is RunStatus.done
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
         after = _texts(await store.history(cid))
         # The prompt, the checkpoint, the answer — and nothing said twice. The prompt was
         # written down as the turn began, so the checkpoint lands beneath it and the answer

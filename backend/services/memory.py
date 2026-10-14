@@ -110,6 +110,20 @@ class MemoryStore:
         self._index: RecallIndex = RecallIndex(engine, vault)
         self._collection: MemoryCollection = MemoryCollection()
 
+    @property
+    def index(self) -> RecallIndex:
+        """The recall index memories are searched through."""
+        return self._index
+
+    @property
+    def embedder(self) -> Embedder:
+        """The embedder for new memories and queries; assignable when the endpoint changes."""
+        return self._embedder
+
+    @embedder.setter
+    def embedder(self, value: Embedder) -> None:
+        self._embedder = value
+
     # --- write path -------------------------------------------------------
 
     async def remember(self, owner_id: str, content: str, *, pinned: bool = False) -> MemoryView:

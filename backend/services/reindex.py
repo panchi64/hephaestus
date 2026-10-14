@@ -97,12 +97,12 @@ class EmbeddingReindexer:
         # Reflect "running" synchronously so the POST response (and an immediate
         # status poll) shows the just-started run, not the prior terminal state.
         self._status = ReindexStatus(state="running", memories=0, messages=0)
-        self._task = asyncio.create_task(self._run(owner_id))
+        self._task = asyncio.create_task(self.run(owner_id))
 
     async def shutdown(self) -> None:
         await cancel_and_wait(self._task, STOP_TIMEOUT_S)
 
-    async def _run(self, owner_id: str) -> None:
+    async def run(self, owner_id: str) -> None:
         self._status = ReindexStatus(state="running", memories=0, messages=0)
         try:
             spec = await self._registry.resolve_embedding_spec(owner_id)

@@ -102,7 +102,7 @@ async def _record(
     cid = await store.create_conversation(owner, ephemeral=ephemeral)
     for prompt, answer in turns:
         _ = store.record(cid, _turn(prompt, answer))
-    await store._worker.join()  # flush the drainer so the rows (and vectors) land
+    await store.flush()  # flush the drainer so the rows (and vectors) land
     return cid
 
 
@@ -221,7 +221,7 @@ async def test_persisted_text_is_embedded_and_encrypted():
             ModelResponse(parts=[TextPart(content="")], model_name="m"),
         ],
     )
-    await store._worker.join()
+    await store.flush()
 
     with Session(engine) as session:
         rows = session.exec(select(Message).where(Message.conversation_id == cid)).all()
@@ -266,12 +266,12 @@ async def test_backfill_embeds_pending_messages():
     _engine, _vault, store, _search = await _setup(DegradedEmbedder())
     cid = await _record(store, OWNER, ("about a cat", "a fluffy cat"))
 
-    store._embedder = FakeEmbedder()  # operator configured an embedding endpoint
+    store.embedder = FakeEmbedder()  # operator configured an embedding endpoint
     embedded = await store.backfill_embeddings(OWNER)
     assert embedded == 2  # both content-bearing messages
 
     # Now the dense path finds the conversation by meaning, not just keywords.
-    search = ConversationSearch(store._engine, store._vault, FakeEmbedder(), store)
+    search = ConversationSearch(store.engine, store.vault, FakeEmbedder(), store)
     hits = await search.search(OWNER, "feline", limit=5)
     assert hits and hits[0].conversation_id == cid
     assert hits[0].matched_by == "semantic"
@@ -284,8 +284,8 @@ async def test_reindex_heals_a_model_change():
     _engine, _vault, store, search = await _setup(FakeEmbedder(model="model-a"))
     cid = await _record(store, OWNER, ("about pets", "I have a cat"))
 
-    store._embedder = FakeEmbedder(model="model-b")  # operator changed the model
-    search._embedder = FakeEmbedder(model="model-b")
+    store.embedder = FakeEmbedder(model="model-b")  # operator changed the model
+    search.embedder = FakeEmbedder(model="model-b")
     before = await search.search(OWNER, "feline", limit=5)
     assert all(h.matched_by != "semantic" for h in before)  # segregated
 

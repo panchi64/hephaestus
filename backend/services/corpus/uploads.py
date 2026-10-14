@@ -81,6 +81,10 @@ class UploadsAdapter(SourceAdapter):
     async def stop(self) -> None:
         await self._worker.stop()
 
+    async def flush(self) -> None:
+        """Wait until the index queue has drained."""
+        await self._worker.join()
+
     # --- upload lifecycle (called by the UploadStore after extraction) --------
 
     def index_upload(self, owner_id: str, upload_id: str, text: str) -> None:

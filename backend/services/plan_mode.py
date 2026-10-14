@@ -102,6 +102,16 @@ class PlanMode:
         self._conversations: ConversationStore = conversations
         self._tasks: ConversationTasks = tasks
 
+    @property
+    def engine(self) -> Engine:
+        """The database engine the plans live in."""
+        return self._db
+
+    @property
+    def vault(self) -> Vault:
+        """The vault that seals plan text."""
+        return self._vault
+
     # ── the document ────────────────────────────────────────────────────────────────
 
     async def current(self, owner_id: str, conversation_id: str) -> Plan | None:

@@ -113,6 +113,11 @@ class ModelRegistry:
         # serve) is exactly what such a write can move.
         self._implicit_main: dict[str, tuple[list[str], str | None] | None] = {}
 
+    @property
+    def engine(self) -> Engine:
+        """The database engine the endpoints live in."""
+        return self._engine
+
     # --- endpoint catalog -------------------------------------------------
 
     async def list_endpoints(self, owner_id: str) -> list[ModelEndpoint]:

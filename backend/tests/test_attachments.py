@@ -596,7 +596,7 @@ async def test_provision_reprovisioning_the_same_attachment_is_idempotent():
 
 
 async def _drain_adapter(adapter: UploadsAdapter) -> None:
-    await adapter._worker.join()
+    await adapter.flush()
 
 
 async def test_excluded_upload_drops_from_retrieve_and_returns_on_reinclude():
@@ -623,11 +623,11 @@ async def test_set_kb_excluded_flips_flag_and_restamps_chunks():
     await store.start()
     await adapter.start()
     view, _created = await store.create(OWNER, "n.txt", "text/plain", b"zebra facts abound here")
-    await store._worker.join()
-    await adapter._worker.join()
+    await store.flush()
+    await adapter.flush()
 
     _ = await store.set_kb_excluded(OWNER, view.id, True)
-    await adapter._worker.join()
+    await adapter.flush()
 
     refreshed = await store.get(OWNER, view.id)
     assert refreshed.kb_excluded is True
@@ -637,7 +637,7 @@ async def test_set_kb_excluded_flips_flag_and_restamps_chunks():
     assert await adapter.retrieve(OWNER, "zebra", None, None, {"zebra"}, limit=5) == []
 
     _ = await store.set_kb_excluded(OWNER, view.id, False)
-    await adapter._worker.join()
+    await adapter.flush()
     assert await adapter.retrieve(OWNER, "zebra", None, None, {"zebra"}, limit=5)
     await store.stop()
     await adapter.stop()

@@ -49,11 +49,11 @@ async def test_provider_crud_and_api_key_encrypted_at_rest():
     assert created.api_key_enc is not None and created.api_key_enc != "s3cret"
 
     # The plaintext key never lands in the column.
-    with Session(svc._engine) as session:
+    with Session(svc.engine) as session:
         row = session.get(SearchProvider, created.id)
         assert row is not None
         assert "s3cret" not in (row.api_key_enc or "")
-    assert svc._vault.decrypt_str(created.api_key_enc) == "s3cret"
+    assert svc.vault.decrypt_str(created.api_key_enc) == "s3cret"
 
     listed = await svc.list_providers(OWNER)
     assert [p.id for p in listed] == [created.id]

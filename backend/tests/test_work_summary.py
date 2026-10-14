@@ -278,7 +278,7 @@ async def _seeded(store: ConversationStore, *, messages: int, age_minutes: float
     for index in range(messages // 2 + messages % 2):
         history.extend(_turn(f"ask {index}", f"answer {index}"))
     _ = store.record(conversation_id, history[:messages])
-    await store._worker.join()
+    await store.flush()
     _stamp(store, conversation_id, datetime.now(UTC) - timedelta(minutes=age_minutes))
     return conversation_id
 
@@ -298,7 +298,7 @@ def _stamp(
 
     from models.conversation import Conversation
 
-    with Session(store._engine) as session:
+    with Session(store.engine) as session:
         conversation = session.get(Conversation, conversation_id)
         assert conversation is not None
         conversation.updated_at = when
@@ -309,16 +309,21 @@ def _stamp(
 
 
 def _service(
-    store: ConversationStore, model: Model, runs: RunRegistry | None = None
+    store: ConversationStore,
+    model: Model,
+    runs: RunRegistry | None = None,
+    settings_store: SettingsStore | None = None,
 ) -> WorkSummaryService:
-    settings_engine = make_engine("sqlite:///:memory:")
-    init_db(settings_engine)
+    if settings_store is None:
+        settings_engine = make_engine("sqlite:///:memory:")
+        init_db(settings_engine)
+        settings_store = SettingsStore(settings_engine)
     return WorkSummaryService(
         store=store,
-        settings_store=SettingsStore(settings_engine),
+        settings_store=settings_store,
         models=_Registry(model),
         runs=runs or RunRegistry(),
-        vault=store._vault,
+        vault=store.vault,
         settings=Settings(),
         owner_id=OWNER,
         # The real summarizer over a scripted model, so a sweep test exercises the whole
@@ -411,7 +416,7 @@ class TestTheSweep:
         under — the pass returns rather than raising its way through a decrypt."""
         store = await _store(tmp_path)
         _ = await _seeded(store, messages=4, age_minutes=60)
-        store._vault.lock()
+        store.vault.lock()
         model, seen = _replies("never called")
         assert await _service(store, model).sweep() == 0
         assert seen == []
@@ -554,10 +559,13 @@ class TestTheIdleSetting:
         store = await _store(tmp_path)
         _ = await _seeded(store, messages=4, age_minutes=20)
         model, _ = _replies("an account")
-        service = _service(store, model)
-        _ = await set_work_summary_idle_minutes(service._settings_store, OWNER, 60)
+        settings_engine = make_engine("sqlite:///:memory:")
+        init_db(settings_engine)
+        settings_store = SettingsStore(settings_engine)
+        service = _service(store, model, settings_store=settings_store)
+        _ = await set_work_summary_idle_minutes(settings_store, OWNER, 60)
         assert await service.sweep() == 0
-        _ = await set_work_summary_idle_minutes(service._settings_store, OWNER, 10)
+        _ = await set_work_summary_idle_minutes(settings_store, OWNER, 10)
         assert await service.sweep() == 1
 
 

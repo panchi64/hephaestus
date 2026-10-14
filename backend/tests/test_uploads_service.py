@@ -63,8 +63,8 @@ class _LockingExtractor(UploadExtractor):
 
 
 async def _drain(store: UploadStore, adapter: UploadsAdapter) -> None:
-    await store._worker.join()  # extraction completes (and submits the index job)
-    await adapter._worker.join()  # the index job is drained
+    await store.flush()  # extraction completes (and submits the index job)
+    await adapter.flush()  # the index job is drained
 
 
 async def _teardown(store: UploadStore, adapter: UploadsAdapter) -> None:
@@ -165,7 +165,7 @@ async def test_correct_text_reindexes_and_marks_manual():
     await _drain(store, adapter)
 
     _ = await store.correct_text(OWNER, view.id, "beta corrected marker")
-    await adapter._worker.join()
+    await adapter.flush()
     got = await store.get(OWNER, view.id)
     assert got.extracted_text == "beta corrected marker" and got.extractor == "manual"
     assert not await _retrieve(adapter, "alpha")  # stale text dropped
@@ -181,7 +181,7 @@ async def test_delete_drops_chunks():
     view, _ = await store.create(OWNER, "n.txt", "text/plain", b"deletable zebra note")
     await _drain(store, adapter)
     await store.delete(OWNER, view.id)
-    await adapter._worker.join()
+    await adapter.flush()
     assert await chunk_store.count_items(OWNER, "uploads") == 0
     await _teardown(store, adapter)
 

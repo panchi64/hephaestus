@@ -114,12 +114,12 @@ async def test_cache_is_bounded_and_evicted_trees_rehydrate(tmp_path: Path):
     await store.start()
 
     convs = [await store.create_conversation("operator", title=f"t{i}") for i in range(5)]
-    assert len(store._cache) <= 2
+    assert len(store.cached_ids) <= 2
 
     # The evicted ones are gone from memory but still readable.
     for conv in convs:
         assert await store.history(conv) == []
-    assert len(store._cache) <= 2
+    assert len(store.cached_ids) <= 2
     await store.stop()
 
 
@@ -137,8 +137,10 @@ async def test_a_conversation_with_queued_writes_is_never_evicted(tmp_path: Path
     for i in range(5):
         _ = await store.create_conversation("operator", title=f"other{i}")
 
-    assert conv in store._cache
-    assert len(store._cache[conv].nodes) == 1
+    assert conv in store.cached_ids
+    cached = store.cache_get(conv)
+    assert cached is not None
+    assert len(cached.nodes) == 1
 
 
 async def test_store_records_and_rehydrates_from_db(tmp_path: Path):

@@ -122,6 +122,15 @@ class ConversationSearch:
         self._index: RecallIndex = RecallIndex(engine, vault)
         self._collection: MessageCollection = MessageCollection()
 
+    @property
+    def embedder(self) -> Embedder:
+        """The embedder for search queries; assignable when the endpoint changes."""
+        return self._embedder
+
+    @embedder.setter
+    def embedder(self, value: Embedder) -> None:
+        self._embedder = value
+
     async def search(
         self,
         owner_id: str,

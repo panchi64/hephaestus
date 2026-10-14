@@ -224,7 +224,7 @@ async def seed_conversations(store: ConversationStore, corpus: Corpus) -> None:
                     ModelResponse(parts=[TextPart(content=answer)], model_name="m"),
                 ],
             )
-    await store._worker.join()
+    await store.flush()
 
 
 # --- assertions ---------------------------------------------------------------

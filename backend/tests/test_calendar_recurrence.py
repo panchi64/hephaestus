@@ -294,7 +294,7 @@ async def test_content_is_encrypted_at_rest():
 
     from models.calendar import CalendarEvent
 
-    with Session(service._engine) as session:  # noqa: SLF001 — asserting the at-rest shape
+    with Session(service.engine) as session:
         row = session.exec(select(CalendarEvent)).one()
     assert "Divorce" not in row.title_enc
     assert row.starts_at is not None  # structure stays queryable in the clear
@@ -476,7 +476,7 @@ async def test_caldav_credentials_are_sealed_and_readable_back():
 
     from models.calendar import Calendar
 
-    with Session(service._engine) as session:  # noqa: SLF001 — asserting the at-rest shape
+    with Session(service.engine) as session:
         row = session.exec(select(Calendar)).one()
     assert row.caldav_password_enc is not None and "hunter2" not in row.caldav_password_enc
 

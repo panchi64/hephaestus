@@ -187,8 +187,8 @@ async def test_the_replay_view_survives_a_cold_reload():
         assert await _compact(store, cid) is not None
 
         warm = _texts(await store.model_history(cid))
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
         assert _texts(await store.model_history(cid)) == warm
 
 
@@ -209,8 +209,8 @@ async def test_the_persistence_index_still_selects_exactly_the_new_turn():
         all_messages = [*replayed, *_turn("q4", "a4")]
         _ = store.record(cid, all_messages[start:])
 
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
         # The new turn landed once, in order, on the active path — not duplicated and
         # not truncated.
         assert _texts(await store.history(cid))[-2:] == ["q4", "a4"]
@@ -506,8 +506,8 @@ async def test_the_fold_reason_survives_a_cold_read():
         assert warm.compaction_reason == "overflow"
 
         # …and again off the sealed blob, with nothing left in memory to read it from.
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
         cold = next(v for v in await store.messages_view(cid) if v.role == "compaction")
         assert cold.compaction_reason == "overflow"
         # An ordinary turn has no reason to report, on either path.
@@ -581,8 +581,8 @@ async def test_a_checkpoint_stays_out_of_the_listing_search_and_transcript():
         assert after.preview == before.preview  # still the last real message
         assert after.message_count == before.message_count
 
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
         cold = await store.get_summary(cid, OPERATOR_ID)
         assert cold is not None
         assert "DISTINCTIVE" not in (cold.preview or "")
@@ -750,8 +750,8 @@ async def test_the_turn_after_a_compaction_persists_exactly_itself():
         run = await _run_turn(app, cid, policy=build_auto_compact_policy(Settings()))
         assert run.status is RunStatus.done
 
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
         after = _texts(await store.history(cid))
         # +1 checkpoint, +1 user request, +1 response. Nothing re-recorded, nothing dropped.
         assert len(after) == before + 3
@@ -875,8 +875,8 @@ async def test_a_steered_turn_replays_without_losing_the_next_turns_prompt():
         run = await _run_turn(app, cid, policy=build_auto_compact_policy(Settings()))
         assert run.status is RunStatus.done
 
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
         assert _texts(await store.history(cid))[-2:] == ["next question", "the answer"]
 
 

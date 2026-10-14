@@ -79,7 +79,7 @@ async def test_reindex_reports_counts_and_passes_current_model():
     mem, conv, chunks = _Memory(3), _Convos(5), _Chunks(7)
     spec = EndpointSpec(base_url="http://x/v1", model="embed-m")
     reindexer = EmbeddingReindexer(_Registry(spec=spec), mem, conv, chunks)
-    await reindexer._run(OWNER)
+    await reindexer.run(OWNER)
 
     status = reindexer.status()
     assert status.state == "done"
@@ -93,7 +93,7 @@ async def test_reindex_degrades_when_no_embedder():
     reindexer = EmbeddingReindexer(
         _Registry(exc=DegradedCapabilityError("unset")), _Memory(), _Convos(), _Chunks()
     )
-    await reindexer._run(OWNER)
+    await reindexer.run(OWNER)
     assert reindexer.status().state == "degraded"
 
 
@@ -103,5 +103,5 @@ async def test_reindex_degrades_when_endpoint_deleted():
     reindexer = EmbeddingReindexer(
         _Registry(exc=NotFoundError("gone")), _Memory(), _Convos(), _Chunks()
     )
-    await reindexer._run(OWNER)
+    await reindexer.run(OWNER)
     assert reindexer.status().state == "degraded"

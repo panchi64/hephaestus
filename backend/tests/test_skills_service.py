@@ -95,7 +95,7 @@ async def test_delete_takes_the_bundle_with_it():
 
     from core.db import in_session
 
-    assert await in_session(store._engine, work) == 0
+    assert await in_session(store.engine, work) == 0
 
 
 async def test_another_owner_cannot_reach_a_skill():
@@ -282,7 +282,7 @@ async def test_content_is_sealed_at_rest_and_structure_is_not():
 
     from core.db import in_session
 
-    skill, row = await in_session(store._engine, work)
+    skill, row = await in_session(store.engine, work)
     assert "Fill and extract" not in skill.description_enc
     assert "PDF processing" not in skill.body_enc
     assert b"filling" not in row.blob_enc

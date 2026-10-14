@@ -359,8 +359,8 @@ async def test_a_cold_reload_projects_the_same_branched_tree():
         ]
         warm_replay = _texts(await store.model_history(cid))
 
-        await store._worker.join()
-        store._cache.clear()
+        await store.flush()
+        store.evict_cache()
 
         cold = [
             (v.role, v.content, v.version_index, v.version_count)

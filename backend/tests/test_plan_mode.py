@@ -250,7 +250,7 @@ async def test_only_one_plan_can_be_awaiting_an_answer_at_a_time(wired: _Wired):
         with pytest.raises(ApprovalRequired):
             _ = await _call("plan_submit", {"title": "T", "body": body, "steps": ["s"]}, ctx)
 
-    with Session(plans._db) as session:  # noqa: SLF001 - asserting the stored shape
+    with Session(plans.engine) as session:
         rows = session.exec(select(ConversationPlan)).all()
     assert len(rows) == 1
     assert rows[0].revision == 3
@@ -362,7 +362,7 @@ async def test_a_plan_that_could_not_be_stored_is_not_put_to_the_operator(wired:
     """
     plans, tasks, conversations, conversation_id = wired
     ctx, run = _ctx(plans, tasks, conversation_id, "plan")
-    plans._vault.lock()
+    plans.vault.lock()
 
     before = (await conversations.binding(conversation_id)).permission
     result = await _call("plan_submit", {"title": "T", "body": "B", "steps": ["s"]}, ctx)
@@ -384,7 +384,7 @@ async def test_a_locked_vault_does_not_block_the_yes(wired: _Wired):
     ctx, _ = _ctx(plans, tasks, conversation_id, "plan")
     with pytest.raises(ApprovalRequired):
         _ = await _call("plan_submit", {"title": "T", "body": "B", "steps": ["s"]}, ctx)
-    plans._vault.lock()
+    plans.vault.lock()
 
     ctx.tool_call_approved = True
     _ = await _call("plan_submit", {"title": "T", "body": "B", "steps": ["s"]}, ctx)
@@ -406,7 +406,7 @@ async def test_the_plan_is_sealed_at_rest(wired: _Wired):
             ctx,
         )
 
-    with Session(plans._db) as session:  # noqa: SLF001 - asserting the stored bytes
+    with Session(plans.engine) as session:
         row = session.exec(select(ConversationPlan)).one()
     # The plan names the operator's files and restates what they asked for.
     assert "acme" not in row.plan_enc

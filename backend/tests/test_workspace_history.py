@@ -129,7 +129,7 @@ async def test_unchanged_file_shares_one_blob(tmp_path: Path):
     store = await _store(tmp_path)
     _ = await store.capture("operator", "c", run_id="r1", files={"a.py": b"same", "b.py": b"one"})
     _ = await store.capture("operator", "c", run_id="r2", files={"a.py": b"same", "b.py": b"two"})
-    with Session(store._engine) as session:
+    with Session(store.engine) as session:
         rows = session.exec(select(WorkspaceBlob)).all()
     # a.py's content is stored once; b.py's two versions are two blobs → 3 total.
     assert len(rows) == 3
@@ -139,7 +139,7 @@ async def test_unchanged_file_shares_one_blob(tmp_path: Path):
 async def test_manifest_is_encrypted_at_rest(tmp_path: Path):
     store = await _store(tmp_path)
     _ = await store.capture("operator", "c", run_id="r1", files={"secret_dir/private.py": b"x"})
-    with Session(store._engine) as session:
+    with Session(store.engine) as session:
         row = session.exec(select(WorkspaceSnapshot)).one()
     # The file tree (paths/names) is sealed, not stored in the clear.
     assert b"secret_dir" not in row.manifest_enc
@@ -194,7 +194,7 @@ async def test_delete_removes_snapshots_and_only_orphan_blobs(tmp_path: Path):
 
     assert await store.list("operator", "c1") == []
     assert len(await store.list("operator", "c2")) == 1
-    with Session(store._engine) as session:
+    with Session(store.engine) as session:
         shas = {r.sha256 for r in session.exec(select(WorkspaceBlob)).all()}
     assert hashlib.sha256(b"shared").hexdigest() in shas  # still used by c2
     assert hashlib.sha256(b"c1only").hexdigest() not in shas  # orphaned → gone

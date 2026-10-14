@@ -138,7 +138,7 @@ async def test_an_agents_draft_never_fires_until_approved(store: RoutineStore):
     async def notify(_task: ScheduledTaskView) -> None:
         raise AssertionError("an unapproved draft must not notify")
 
-    scheduler = SchedulerService(store._engine, store._vault, executor=executor, notify=notify)
+    scheduler = SchedulerService(store.engine, store.vault, executor=executor, notify=notify)
     assert await scheduler.fire_now(draft.id) is None
 
     approved = await store.approve(OWNER, draft.id)

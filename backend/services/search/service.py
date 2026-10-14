@@ -140,6 +140,16 @@ class SearchService:
         self._timeout_s: float = timeout_s
         self._result_limit: int = result_limit
 
+    @property
+    def engine(self) -> Engine:
+        """The database engine the provider catalog lives in."""
+        return self._engine
+
+    @property
+    def vault(self) -> Vault:
+        """The vault that seals provider keys."""
+        return self._vault
+
     # --- provider catalog -------------------------------------------------
 
     async def list_providers(self, owner_id: str) -> list[SearchProvider]:
