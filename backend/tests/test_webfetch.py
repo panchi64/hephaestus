@@ -13,9 +13,9 @@ from __future__ import annotations
 import asyncio
 import os
 import urllib.parse
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
-from typing import cast
 
 import httpx
 import pytest
@@ -28,7 +28,13 @@ from services.vm.smolvm import SmolvmDriver
 from services.webfetch import BrowserFetcher, FetchedPage, ManagedBrowser
 from services.webfetch.cookies import DomainCookieJar
 from services.webfetch.extract import extract
-from services.webfetch.fetcher import _looks_like_challenge
+from services.webfetch.fetcher import (
+    RenderContext,
+    RenderPage,
+    RenderResponse,
+    WaitUntil,
+    _looks_like_challenge,
+)
 from services.webfetch.throttle import DomainThrottle
 
 OWNER = "operator"
@@ -286,10 +292,6 @@ async def test_fetch_degrades_when_browser_unavailable():
         await fetcher.fetch(OWNER, "http://93.184.216.34/")
 
 
-def _as_browser(fake: object) -> ManagedBrowser:
-    return cast(ManagedBrowser, fake)
-
-
 class _DroppingBrowser:
     """available reports True, but acquiring a context fails — models the browser dropping
     between the availability check and context entry (a TOCTOU disconnect)."""
@@ -297,16 +299,19 @@ class _DroppingBrowser:
     available = True
 
     @asynccontextmanager
-    async def context(self, url=None):
+    async def context(self, url: str | None = None) -> AsyncIterator[RenderContext]:
         raise RuntimeError("browser is not available")
         yield  # pragma: no cover - unreachable
+
+    async def apply_stealth(self, page: RenderPage) -> None:
+        raise AssertionError("unexpected call: apply_stealth")
 
 
 async def test_fetch_maps_browser_dropout_to_webfetch_error():
     # Public IP literal passes the pre-flight and the available-check; context() then raises
     # RuntimeError. It must surface as a recoverable WebFetchError, not an unhandled error
     # the tool can't translate.
-    fetcher = BrowserFetcher(browser=_as_browser(_DroppingBrowser()))
+    fetcher = BrowserFetcher(browser=_DroppingBrowser())
     with pytest.raises(WebFetchError):
         await fetcher.fetch(OWNER, "http://93.184.216.34/")
 
@@ -320,6 +325,12 @@ class _AvailableBrowser:
 
     available = True
 
+    def context(self, url: str | None = None) -> AbstractAsyncContextManager[RenderContext]:
+        raise AssertionError("unexpected call: context")
+
+    async def apply_stealth(self, page: RenderPage) -> None:
+        raise AssertionError("unexpected call: apply_stealth")
+
 
 _BIG_BODY = ("word " * 20_000).strip()  # ~100k chars of predictable text
 
@@ -328,7 +339,7 @@ def _fetcher_with_body(
     monkeypatch, body: str, *, output_max_tokens: int = 4000, distiller=None
 ) -> BrowserFetcher:
     fetcher = BrowserFetcher(
-        browser=_as_browser(_AvailableBrowser()),
+        browser=_AvailableBrowser(),
         output_max_tokens=output_max_tokens,
         distiller=distiller,
     )
@@ -489,20 +500,20 @@ class _SettlePage:
         self._i = 0
         self.waits = 0
 
-    async def wait_for_timeout(self, ms: int):
+    async def wait_for_timeout(self, timeout: float):
         self.waits += 1
 
     async def content(self):
         return "<html><body></body></html>"
 
-    async def evaluate(self, js: str):
+    async def evaluate(self, expression: str):
         text = self._texts[min(self._i, len(self._texts) - 1)]
         self._i += 1
         return text
 
 
 async def test_capture_resnapshots_thin_page_until_content_appears():
-    fetcher = BrowserFetcher(browser=_as_browser(_AvailableBrowser()), render_wait_ms=0)
+    fetcher = BrowserFetcher(browser=_AvailableBrowser(), render_wait_ms=0)
     page = _SettlePage(["thin shell", "RICHBODY " * 6000])  # first snapshot thin, then ~54k
     _final_url, _html, text = await fetcher._capture("http://93.184.216.34/", page)
     assert "RICHBODY" in text  # settled onto the filled-in content
@@ -510,7 +521,7 @@ async def test_capture_resnapshots_thin_page_until_content_appears():
 
 
 async def test_capture_fast_path_skips_settle_waits():
-    fetcher = BrowserFetcher(browser=_as_browser(_AvailableBrowser()), render_wait_ms=0)
+    fetcher = BrowserFetcher(browser=_AvailableBrowser(), render_wait_ms=0)
     page = _SettlePage(["RICHBODY " * 6000])  # already rich and stable on the first snapshot
     _final_url, _html, text = await fetcher._capture("http://93.184.216.34/", page)
     assert "RICHBODY" in text
@@ -547,16 +558,31 @@ class _PdfDownloadBrowser:
     available = True
 
     @asynccontextmanager
-    async def context(self, url=None):
+    async def context(self, url: str | None = None) -> AsyncIterator[_PdfDownloadBrowser]:
         yield self
 
-    async def new_page(self):
+    async def new_page(self) -> _PdfDownloadBrowser:
         return self
 
-    async def apply_stealth(self, page):
+    async def apply_stealth(self, page: RenderPage) -> None:
         return None
 
-    async def goto(self, url, **kwargs):
+    @property
+    def url(self) -> str:
+        raise AssertionError("unexpected call: url")
+
+    async def wait_for_timeout(self, timeout: float) -> None:
+        raise AssertionError("unexpected call: wait_for_timeout")
+
+    async def content(self) -> str:
+        raise AssertionError("unexpected call: content")
+
+    async def evaluate(self, expression: str) -> str:
+        raise AssertionError("unexpected call: evaluate")
+
+    async def goto(
+        self, url: str, *, wait_until: WaitUntil, timeout: float
+    ) -> RenderResponse | None:
         from playwright.async_api import Error as PlaywrightError
 
         raise PlaywrightError("Page.goto: net::ERR_ABORTED; Download is starting")
@@ -567,7 +593,7 @@ async def test_download_error_routes_to_pdf_path(monkeypatch):
         return "Attention Is All You Need — full paper text"
 
     monkeypatch.setattr("services.webfetch.fetcher.fetch_pdf_text", _fake_pdf)
-    fetcher = BrowserFetcher(browser=_as_browser(_PdfDownloadBrowser()))
+    fetcher = BrowserFetcher(browser=_PdfDownloadBrowser())
     page = await fetcher.fetch(OWNER, "http://93.184.216.34/paper.pdf")
     assert "Attention Is All You Need" in page.content
     assert "BEGIN UNTRUSTED CONTENT" in page.content

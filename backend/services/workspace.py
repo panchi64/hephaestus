@@ -35,7 +35,6 @@ from services.projects.worktree import WorktreeBusyError, WorktreeManager
 from services.sandbox import (
     LiveWork,
     SandboxError,
-    SandboxSession,
     SandboxSessionManager,
 )
 from services.sandbox.base import contained_path
@@ -60,6 +59,31 @@ class WorkspaceFiles(Protocol):
     def read_file(self, relpath: str) -> bytes: ...
 
     def write_file(self, relpath: str, content: bytes) -> None: ...
+
+
+class WorkspaceSession(WorkspaceFiles, Protocol):
+    """The slice of a sandbox session that resolving a workspace reads and claims."""
+
+    @property
+    def ephemeral(self) -> bool: ...
+
+    def ensure_workspace(self) -> Path: ...
+
+    def hold(self, holder: LiveWork | None) -> None: ...
+
+    def touch(self) -> None: ...
+
+
+class WorkspaceSessions(Protocol):
+    """The slice of the sandbox manager that resolving a workspace opens sessions through."""
+
+    def existing(self, key: str) -> WorkspaceSession | None: ...
+
+    async def acquire(self, key: str, *, holder: LiveWork | None = None) -> WorkspaceSession: ...
+
+    async def fork(
+        self, parent_key: str, child_key: str, *, holder: LiveWork | None = None
+    ) -> WorkspaceSession: ...
 
 
 class HostFiles:
@@ -112,7 +136,7 @@ class RunWorkspace:
 
 
 async def sandbox_workspace(
-    sessions: SandboxSessionManager, workspace_key: str, *, holder: LiveWork | None = None
+    sessions: WorkspaceSessions, workspace_key: str, *, holder: LiveWork | None = None
 ) -> RunWorkspace:
     """The conversation's sandbox workspace. Raises `SandboxError` when it can't be
     opened (the VM is down, a locked vault, an unreadable seal) — the caller degrades.
@@ -138,12 +162,12 @@ async def sandbox_workspace(
 
 
 async def _delegated_session(
-    sessions: SandboxSessionManager,
+    sessions: WorkspaceSessions,
     parent_key: str,
     child_key: str,
     *,
     holder: LiveWork | None,
-) -> SandboxSession:
+) -> WorkspaceSession:
     """A delegated agent's workspace — forked on first use, reopened on every later one.
 
     ``fork`` is the *event* of taking the copy, and refuses a key it has already forked;

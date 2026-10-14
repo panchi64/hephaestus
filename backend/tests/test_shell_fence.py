@@ -22,7 +22,7 @@ from tools.emit import RunEventEmitted
 from tools.shell import GATED_TOOLS, shell_toolset
 
 from .shell_support import Shell, checkout_ctx, make_repo
-from .vm_fakes import FakeVM, as_platform
+from .vm_fakes import FakeVM
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def repo(tmp_path) -> Path:
 
 def _copies(tmp_path: Path, *, available: bool = True) -> tuple[ProjectCopies, FakeVM]:
     vm = FakeVM(tmp_path / "guest", available=available)
-    return ProjectCopies(as_platform(vm), idle_ttl_s=3600, reap_interval_s=3600), vm
+    return ProjectCopies(vm, idle_ttl_s=3600, reap_interval_s=3600), vm
 
 
 def _shell(repo: Path, tmp_path: Path, *, approved: bool = True) -> tuple[Shell, FakeVM]:

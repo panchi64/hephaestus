@@ -12,17 +12,11 @@ import asyncio
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import cast
 
 from services.vm.driver import ExecResult, VMError
 from services.vm.egress import EgressGateway
-from services.vm.platform import GuestLayout, JobState, PlatformVM
+from services.vm.platform import GuestLayout, JobState
 from services.vm.sync import Changes, Manifest
-
-
-def as_platform(vm: object) -> PlatformVM:
-    """The one place a fake is handed to code that wants the concrete VM class."""
-    return cast(PlatformVM, vm)
 
 
 class FakePreview:
@@ -153,9 +147,27 @@ class FakeVM:
             raise self.fail_with
         self.pushes.append((key, changes))
 
-    async def pull(self, key: str, root: Path, changes: Changes) -> None:
+    async def pull(self, key: str, root: Path, changes: Changes, *, project: bool = False) -> None:
         self.events.append(("pull", key))
         self.pulls.append((key, changes))
+
+    def scratch_path(self, suffix: str = "") -> Path:
+        raise AssertionError("unexpected call: scratch_path")
+
+    async def call(self, argv: list[str], *, timeout_s: float = 120.0) -> ExecResult:
+        raise AssertionError(f"unexpected call: call {argv}")
+
+    async def call_checked(self, argv: list[str], *, what: str) -> str:
+        raise AssertionError(f"unexpected call: call_checked {argv}")
+
+    async def put_path(self, local: Path) -> str:
+        raise AssertionError(f"unexpected call: put_path {local}")
+
+    async def fetch_file(self, guest: str, local: Path, *, max_bytes: int) -> None:
+        raise AssertionError(f"unexpected call: fetch_file {guest}")
+
+    async def read_guest(self, guest: str, *, max_bytes: int) -> str:
+        raise AssertionError(f"unexpected call: read_guest {guest}")
 
     async def wipe(self, key: str) -> None:
         self.events.append(("wipe", key))

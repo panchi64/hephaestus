@@ -14,13 +14,12 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import cast
 
 import pytest
 
 from services.projects.repo import child_branch_for
 from services.projects.worktree import WorktreeManager
-from services.sandbox import LiveWork, SandboxSessionManager
+from services.sandbox import LiveWork
 from services.workspace import RunWorkspace, sandbox_workspace, split_workspace_key
 
 
@@ -153,6 +152,12 @@ class _FakeSession:
         self.root.mkdir(parents=True, exist_ok=True)
         return self.root
 
+    def read_file(self, relpath: str) -> bytes:
+        raise AssertionError(f"unexpected call: read_file {relpath}")
+
+    def write_file(self, relpath: str, content: bytes) -> None:
+        raise AssertionError(f"unexpected call: write_file {relpath}")
+
     def hold(self, holder: LiveWork | None) -> None:
         self.holders.append(holder)
 
@@ -196,8 +201,10 @@ class _FakeSessions:
         return session
 
 
-async def _open(sessions: object, key: str, *, holder: LiveWork | None = None) -> RunWorkspace:
-    return await sandbox_workspace(cast(SandboxSessionManager, sessions), key, holder=holder)
+async def _open(
+    sessions: _FakeSessions, key: str, *, holder: LiveWork | None = None
+) -> RunWorkspace:
+    return await sandbox_workspace(sessions, key, holder=holder)
 
 
 class TestOpeningADelegatedSandbox:

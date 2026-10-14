@@ -29,7 +29,8 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness._output import truncate_tail
 
 from services.vm import VMError
-from services.vm.platform import JobState, PlatformVM
+from services.vm.host import ProjectHost
+from services.vm.platform import JobState
 from services.vm.project import BringOut, ProjectCopies, ProjectCopy
 
 from .shell_runner import BackgroundStatus, ProgressHook, ShellResult, check_command
@@ -116,7 +117,7 @@ class ProjectShell:
 
     async def _follow(
         self,
-        vm: PlatformVM,
+        vm: ProjectHost,
         name: str,
         started: float,
         on_progress: ProgressHook | None,

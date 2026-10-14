@@ -13,12 +13,12 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from .platform import PlatformVM
+from .host import WorkspaceHost
 from .sync import Manifest, diff, scan
 
 
 class GuestWorkspace:
-    def __init__(self, vm: PlatformVM, key: str, root: Path) -> None:
+    def __init__(self, vm: WorkspaceHost, key: str, root: Path) -> None:
         self._vm = vm
         self.key = key
         self.root = root

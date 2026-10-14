@@ -11,8 +11,6 @@ from pathlib import Path
 from services.searxng import ManagedSearxng
 from services.vm.platform import GuestLayout
 
-from .vm_fakes import as_platform
-
 
 class _ServiceVM:
     """Records the calls ManagedSearxng makes; its forwarded port is a local HTTP stub."""
@@ -74,7 +72,7 @@ def _manager(
 ) -> ManagedSearxng:
     return ManagedSearxng(
         enabled=enabled,
-        vm=as_platform(vm) if vm is not None else None,
+        vm=vm,
         data_dir=data_dir or Path(tempfile.mkdtemp()),
         startup_timeout_s=startup_timeout_s,
         external_base_url=external_base_url,

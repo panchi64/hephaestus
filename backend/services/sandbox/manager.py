@@ -37,7 +37,7 @@ from core.concurrency import gather_bounded
 from core.fork import MergeReport
 from core.periodic import PeriodicTask
 from core.vault import Vault
-from services.vm import PlatformVM
+from services.vm.host import SessionHost
 
 from .base import SandboxError, safe_key
 from .fork import fork_marker, orphan_fork_keys
@@ -86,7 +86,7 @@ class SandboxSessionManager:
 
     def __init__(
         self,
-        vm: PlatformVM,
+        vm: SessionHost,
         vault: Vault,
         *,
         egress: EgressPolicy,

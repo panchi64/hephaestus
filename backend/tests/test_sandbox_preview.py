@@ -16,7 +16,7 @@ from services.sandbox.base import SandboxError, safe_key
 from services.vm.driver import VMError
 
 from .conftest import egress_policy
-from .vm_fakes import FakePreview, FakeVM, as_platform
+from .vm_fakes import FakePreview, FakeVM
 
 _EXCLUDES = Settings().sandbox_walk_excludes
 
@@ -36,7 +36,7 @@ def _manager(
     preview_startup_timeout_s: float = 2.0,
 ) -> SandboxSessionManager:
     return SandboxSessionManager(
-        as_platform(vm),
+        vm,
         vault,
         egress=egress_policy(tmp_path),
         data_dir=tmp_path,

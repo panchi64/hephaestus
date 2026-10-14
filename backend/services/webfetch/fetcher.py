@@ -17,8 +17,9 @@ tool layer maps these to a refusal message vs ``ModelRetry``.
 from __future__ import annotations
 
 import asyncio
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 
 import httpx
 from playwright.async_api import Error as PlaywrightError
@@ -30,13 +31,57 @@ from core.ssrf import assert_public_url
 from core.text import tokens_to_chars, truncate_on_boundary
 from core.untrusted import wrap_untrusted
 
-from .browser import ManagedBrowser
 from .distill import WebDistiller
 from .extract import extract
 from .pdf import fetch_pdf_text
 from .throttle import DomainThrottle
 
 WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
+
+
+class RenderResponse(Protocol):
+    """The navigation response a fetch reads its status from."""
+
+    @property
+    def status(self) -> int: ...
+
+
+class SnapshotPage(Protocol):
+    """The slice of a Playwright page a fetch waits on and snapshots."""
+
+    @property
+    def url(self) -> str: ...
+
+    async def wait_for_timeout(self, timeout: float) -> None: ...
+
+    async def content(self) -> str: ...
+
+    async def evaluate(self, expression: str) -> str: ...
+
+
+class RenderPage(SnapshotPage, Protocol):
+    """A snapshot page a fetch also navigates."""
+
+    async def goto(
+        self, url: str, *, wait_until: WaitUntil, timeout: float
+    ) -> RenderResponse | None: ...
+
+
+class RenderContext(Protocol):
+    """The slice of a Playwright browser context a fetch opens its page from."""
+
+    async def new_page(self) -> RenderPage: ...
+
+
+class RenderBrowser(Protocol):
+    """The slice of :class:`ManagedBrowser` a fetch renders through."""
+
+    @property
+    def available(self) -> bool: ...
+
+    def context(self, url: str | None = None) -> AbstractAsyncContextManager[RenderContext]: ...
+
+    async def apply_stealth(self, page: RenderPage) -> None: ...
 
 
 class _DownloadStarted(Exception):
@@ -109,7 +154,7 @@ class BrowserFetcher:
     def __init__(
         self,
         *,
-        browser: ManagedBrowser,
+        browser: RenderBrowser,
         timeout_s: float = 15.0,
         wait_until: WaitUntil = "domcontentloaded",
         render_wait_ms: int = 250,
@@ -260,7 +305,7 @@ class BrowserFetcher:
         # from ballooning the extractor's input. trafilatura/lxml recover from a mid-tag cut.
         return html[: self._max_bytes], (text or "")[: self._max_bytes], final_url
 
-    async def _capture(self, url: str, page) -> tuple[str, str, str]:
+    async def _capture(self, url: str, page: SnapshotPage) -> tuple[str, str, str]:
         """Snapshot the page, and if it reads as a bot-wall interstitial, wait for it to
         clear and re-snapshot — up to ``challenge_waits`` times. A real browser often
         settles a soft challenge on its own within a few seconds; this stops us returning
@@ -302,7 +347,7 @@ class BrowserFetcher:
                 break  # a re-snapshot that won't settle ⇒ keep the prior best-effort capture
         return final_url, html, text
 
-    async def _snapshot(self, url: str, page) -> tuple[str, str, str]:
+    async def _snapshot(self, url: str, page: SnapshotPage) -> tuple[str, str, str]:
         """Settle, then snapshot the final URL + rendered HTML + innerText — bounded by the
         timeout so a page whose JS never quiesces can't hold the fetch open indefinitely
         (content()/evaluate() don't honour the navigation timeout)."""

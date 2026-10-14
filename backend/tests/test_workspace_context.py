@@ -25,7 +25,7 @@ from tools.deps import PromptContextRequest
 from tools.workspace_context import _MAX_ENTRIES, workspace_context
 
 from .conftest import egress_policy
-from .vm_fakes import FakeVM, as_platform
+from .vm_fakes import FakeVM
 
 
 async def _vault(tmp_path):
@@ -42,7 +42,7 @@ async def _caps(
     from core.config import Settings  # noqa: PLC0415 — after the suite's patches
 
     manager = SandboxSessionManager(
-        as_platform(FakeVM(tmp_path / "sandbox" / "work")),
+        FakeVM(tmp_path / "sandbox" / "work"),
         await _vault(tmp_path),
         egress=egress_policy(tmp_path),
         data_dir=tmp_path,

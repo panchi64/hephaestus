@@ -31,7 +31,8 @@ from typing import Protocol
 from core import net
 from core.fork import MergeReport
 from core.vault import Vault
-from services.vm import GuestWorkspace, PlatformVM, VMError
+from services.vm import GuestWorkspace, VMError
+from services.vm.host import SessionHost
 from services.vm.platform import WORKSPACE_PROXY
 
 from .base import SandboxError, SandboxResult, SandboxSpec, contained_path
@@ -106,7 +107,7 @@ class SandboxSession:
         workspace: Path,
         sealed: Path,
         egress_dir: Path,
-        vm: PlatformVM,
+        vm: SessionHost,
         vault: Vault,
         excludes: Iterable[str],
         ephemeral: bool = False,

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from services.vm import PreviewPort
+from services.vm.host import PreviewForward
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ class PreviewHandle:
     host_port: int
     server_port: int
     command: tuple[str, ...]
-    forward: PreviewPort | None = field(default=None, compare=False, repr=False)
+    forward: PreviewForward | None = field(default=None, compare=False, repr=False)
 
     @property
     def path(self) -> str:

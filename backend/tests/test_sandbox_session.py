@@ -34,7 +34,7 @@ from services.vm.driver import VMError
 from services.vm.platform import WORKSPACE_PROXY, PlatformVM
 
 from .conftest import egress_policy
-from .vm_fakes import FakeVM, as_platform
+from .vm_fakes import FakeVM
 from .vm_local import can_confine, local_vm
 
 _EXCLUDES = Settings().sandbox_walk_excludes
@@ -60,7 +60,7 @@ def _manager(
 ) -> SandboxSessionManager:
     vm = vm or _vm(tmp_path)
     return SandboxSessionManager(
-        as_platform(vm) if isinstance(vm, FakeVM) else vm,
+        vm,
         vault,
         egress=egress_policy(tmp_path),
         data_dir=tmp_path,

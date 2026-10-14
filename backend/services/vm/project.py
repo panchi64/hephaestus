@@ -30,7 +30,8 @@ from core.periodic import PeriodicTask
 from services.sandbox.gitenv import git_config_pins
 
 from .driver import VMError
-from .platform import SANDBOX_UID, PlatformVM
+from .host import ProjectHost
+from .platform import SANDBOX_UID
 from .sync import Manifest, diff, scan, scan_names
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ class BringOut:
 
 
 class ProjectWorkspace:
-    def __init__(self, vm: PlatformVM, key: str, root: Path) -> None:
+    def __init__(self, vm: ProjectHost, key: str, root: Path) -> None:
         self._vm = vm
         self.key = key
         self.root = root
@@ -302,7 +303,7 @@ class ProjectCopy:
 class ProjectCopies:
     """The project folders in the VM right now, by folder, each wiped once idle."""
 
-    def __init__(self, vm: PlatformVM, *, idle_ttl_s: float, reap_interval_s: float) -> None:
+    def __init__(self, vm: ProjectHost, *, idle_ttl_s: float, reap_interval_s: float) -> None:
         self._vm = vm
         self._idle_ttl_s = idle_ttl_s
         self._copies: dict[str, ProjectCopy] = {}
@@ -311,7 +312,7 @@ class ProjectCopies:
         )
 
     @property
-    def vm(self) -> PlatformVM:
+    def vm(self) -> ProjectHost:
         return self._vm
 
     def acquire(self, root: Path) -> ProjectCopy:

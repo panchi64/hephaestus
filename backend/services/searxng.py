@@ -25,7 +25,8 @@ from pathlib import Path
 
 from core import net
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
-from services.vm import PlatformVM, VMError
+from services.vm import VMError
+from services.vm.host import ServiceHost
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ class ManagedSearxng:
         self,
         *,
         enabled: bool,
-        vm: PlatformVM | None,
+        vm: ServiceHost | None,
         data_dir: Path,
         startup_timeout_s: float,
         external_base_url: str | None = None,
