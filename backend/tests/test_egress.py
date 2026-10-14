@@ -184,7 +184,7 @@ async def test_a_second_write_replaces_the_file_rather_than_rewriting_it(tmp_pat
         before = os.fstat(reader.fileno())
 
         _ = await policy.allow(CONV, ["example.com"])
-        await policy.materialise(CONV)
+        _ = await policy.materialise(CONV)
         after = path.stat()
 
         assert "example.com" not in reader.read().split()
