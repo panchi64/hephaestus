@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from core.db import init_db, make_engine
@@ -20,21 +21,21 @@ from services.corpus.chunk_store import CorpusChunkStore, content_hash
 from services.corpus.folder import FolderAdapter
 from services.corpus.index import CorpusIndex
 from services.corpus.wrappers import MemoryAdapter
+from services.embeddings import Embedder
 from services.memory import MemoryStore
+from services.registry import ModelRegistry
 
 from .test_memory import DegradedEmbedder, FakeEmbedder
 
 OWNER = "operator"
 
 
-def _index(embedder, chunk_store, folder):
+def _index(embedder: Embedder, chunk_store: CorpusChunkStore, folder: FolderAdapter) -> CorpusIndex:
     """A CorpusIndex without a real registry (stats aren't under test here)."""
-    from services.registry import ModelRegistry
-
     return CorpusIndex(embedder, ModelRegistry.__new__(ModelRegistry), chunk_store, folder)
 
 
-async def _engine_vault(embedder):
+async def _engine_vault() -> tuple[Engine, Vault]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
@@ -47,12 +48,12 @@ async def _engine_vault(embedder):
 
 async def test_chunk_text_and_vector_sealed_at_rest():
     embedder = FakeEmbedder()
-    engine, vault = await _engine_vault(embedder)
+    engine, vault = await _engine_vault()
     store = CorpusChunkStore(engine, vault, embedder)
     from services.chunking import chunk_text
 
-    await store.upsert(OWNER, "folder", "src-1", "/notes/a.txt", chunk_text("the cat is here"))
-    await store.reembed(OWNER, "src-1", current_model="fake-embed")
+    _ = await store.upsert(OWNER, "folder", "src-1", "/notes/a.txt", chunk_text("the cat is here"))
+    _ = await store.reembed(OWNER, "src-1", current_model="fake-embed")
 
     with Session(engine) as session:
         row = session.exec(select(CorpusChunk)).one()
@@ -65,7 +66,9 @@ async def test_chunk_text_and_vector_sealed_at_rest():
 # --- folder adapter: crawl, idempotency, missing path ----------------------
 
 
-async def _folder(tmp: Path, embedder):
+async def _folder(
+    embedder: Embedder,
+) -> tuple[Engine, Vault, CorpusChunkStore, FolderAdapter]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
@@ -76,11 +79,11 @@ async def _folder(tmp: Path, embedder):
 
 
 async def test_folder_crawls_chunks_and_embeds(tmp_path: Path):
-    (tmp_path / "a.txt").write_text("I have a pet cat at home")
-    (tmp_path / "b.md").write_text("My commute uses a car")
-    (tmp_path / "skip.bin").write_text("ignored binary")
+    _ = (tmp_path / "a.txt").write_text("I have a pet cat at home")
+    _ = (tmp_path / "b.md").write_text("My commute uses a car")
+    _ = (tmp_path / "skip.bin").write_text("ignored binary")
 
-    engine, _vault, chunk_store, adapter = await _folder(tmp_path, FakeEmbedder())
+    _engine, _vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
     await adapter._worker.join()  # drain the queued crawl
@@ -92,14 +95,14 @@ async def test_folder_crawls_chunks_and_embeds(tmp_path: Path):
 
 
 async def test_folder_reindex_is_idempotent(tmp_path: Path):
-    (tmp_path / "a.txt").write_text("a stable note about a dog")
-    engine, _vault, chunk_store, adapter = await _folder(tmp_path, FakeEmbedder())
+    _ = (tmp_path / "a.txt").write_text("a stable note about a dog")
+    _engine, _vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
     await adapter._worker.join()
     first = await chunk_store.count(OWNER, source.id)
 
-    await adapter.rebuild(OWNER, source.id)  # re-crawl identical content
+    _ = await adapter.rebuild(OWNER, source.id)  # re-crawl identical content
     await adapter._worker.join()
     await adapter.stop()
     # No dup rows — content hash dedups the unchanged file.
@@ -107,7 +110,7 @@ async def test_folder_reindex_is_idempotent(tmp_path: Path):
 
 
 async def test_missing_path_marks_error_status(tmp_path: Path):
-    engine, _vault, chunk_store, adapter = await _folder(tmp_path, FakeEmbedder())
+    _engine, _vault, _chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path / "does-not-exist"))
     await adapter._worker.join()
@@ -122,26 +125,16 @@ async def test_missing_path_marks_error_status(tmp_path: Path):
 # --- index: fan-out + RRF across sources -----------------------------------
 
 
-async def _memory_store(embedder):
-    engine = make_engine("sqlite:///:memory:")
-    init_db(engine)
-    vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
-    await vault.setup("pw")
-    return MemoryStore(engine, vault, embedder)
-
-
 async def test_retrieve_fuses_folder_and_memory(tmp_path: Path):
-    (tmp_path / "doc.txt").write_text("the feline sleeps all day")
+    _ = (tmp_path / "doc.txt").write_text("the feline sleeps all day")
     embedder = FakeEmbedder()
-    engine, vault, chunk_store, folder = await _folder(tmp_path, embedder)
+    engine, vault, chunk_store, folder = await _folder(embedder)
     await folder.start()
     src = await folder.add_folder(OWNER, str(tmp_path))
     await folder._worker.join()
 
     memory = MemoryStore(engine, vault, embedder)
-    await memory.remember(OWNER, "I drive a car to work")
-
-    from services.registry import ModelRegistry
+    _ = await memory.remember(OWNER, "I drive a car to work")
 
     index = CorpusIndex(embedder, ModelRegistry.__new__(ModelRegistry), chunk_store, folder)
     index.register(folder)
@@ -157,13 +150,11 @@ async def test_retrieve_fuses_folder_and_memory(tmp_path: Path):
 
 
 async def test_retrieve_degrades_to_sparse_without_embeddings(tmp_path: Path):
-    (tmp_path / "doc.txt").write_text("the wifi password is hunter2")
-    engine, vault, chunk_store, folder = await _folder(tmp_path, DegradedEmbedder())
+    _ = (tmp_path / "doc.txt").write_text("the wifi password is hunter2")
+    _engine, _vault, chunk_store, folder = await _folder(DegradedEmbedder())
     await folder.start()
-    await folder.add_folder(OWNER, str(tmp_path))
+    _ = await folder.add_folder(OWNER, str(tmp_path))
     await folder._worker.join()
-
-    from services.registry import ModelRegistry
 
     index = CorpusIndex(
         DegradedEmbedder(), ModelRegistry.__new__(ModelRegistry), chunk_store, folder
@@ -199,15 +190,15 @@ async def test_strong_memory_hit_not_buried_under_folder_hits(tmp_path: Path):
     embedder = FakeEmbedder()
     # Five folder docs that each match "cat" by both meaning and keyword (cosine ~1).
     for i in range(5):
-        (tmp_path / f"doc{i}.txt").write_text("the cat naps in the sun")
-    engine, vault, chunk_store, folder = await _folder(tmp_path, embedder)
+        _ = (tmp_path / f"doc{i}.txt").write_text("the cat naps in the sun")
+    engine, vault, chunk_store, folder = await _folder(embedder)
     await folder.start()
-    await folder.add_folder(OWNER, str(tmp_path))
+    _ = await folder.add_folder(OWNER, str(tmp_path))
     await folder._worker.join()
 
     # One memory that matches "cat" only by meaning (no literal "cat" token).
     memory = MemoryStore(engine, vault, embedder)
-    await memory.remember(OWNER, "a fluffy feline that purrs")
+    _ = await memory.remember(OWNER, "a fluffy feline that purrs")
 
     index = _index(embedder, chunk_store, folder)
     index.register(folder)
@@ -221,18 +212,18 @@ async def test_strong_memory_hit_not_buried_under_folder_hits(tmp_path: Path):
 # --- regression: per-source reindex routing --------------------------------
 
 
-async def test_reindex_unknown_source_raises(tmp_path: Path):
+async def test_reindex_unknown_source_raises():
     embedder = FakeEmbedder()
-    _engine, _vault, chunk_store, folder = await _folder(tmp_path, embedder)
+    _engine, _vault, chunk_store, folder = await _folder(embedder)
     index = _index(embedder, chunk_store, folder)
     index.register(folder)
     with pytest.raises(NotFoundError):
-        await index.reindex(OWNER, "no-such-source")
+        _ = await index.reindex(OWNER, "no-such-source")
 
 
-async def test_reindex_surface_routes_to_its_adapter(tmp_path: Path):
+async def test_reindex_surface_routes_to_its_adapter():
     embedder = FakeEmbedder()
-    engine, vault, chunk_store, folder = await _folder(tmp_path, embedder)
+    engine, vault, chunk_store, folder = await _folder(embedder)
     memory = MemoryStore(engine, vault, embedder)
     index = _index(embedder, chunk_store, folder)
     index.register(folder)
@@ -245,13 +236,13 @@ async def test_reindex_surface_routes_to_its_adapter(tmp_path: Path):
 # --- regression: EMB-2 segregation + heal for corpus chunks ----------------
 
 
-async def test_chunks_segregate_then_reembed_heals_on_model_change(tmp_path: Path):
+async def test_chunks_segregate_then_reembed_heals_on_model_change():
     from services.chunking import chunk_text
 
-    engine, vault, chunk_store, _folder_adapter = await _folder(tmp_path, FakeEmbedder())
+    engine, vault, _chunk_store, _folder_adapter = await _folder(FakeEmbedder())
     store = CorpusChunkStore(engine, vault, FakeEmbedder(model="model-a"))
-    await store.upsert(OWNER, "folder", "src-1", "/n/a.txt", chunk_text("a fluffy feline"))
-    await store.reembed(OWNER, "src-1", current_model="model-a")
+    _ = await store.upsert(OWNER, "folder", "src-1", "/n/a.txt", chunk_text("a fluffy feline"))
+    _ = await store.reembed(OWNER, "src-1", current_model="model-a")
 
     # The operator switched embedding models; query vectors now live in model-b's space.
     batch = await FakeEmbedder(model="model-b").embed(OWNER, ["cat"])
@@ -271,7 +262,7 @@ async def test_chunks_segregate_then_reembed_heals_on_model_change(tmp_path: Pat
 
 
 async def test_folder_index_parks_while_vault_locked(tmp_path: Path):
-    (tmp_path / "a.txt").write_text("a note about a dog")
+    _ = (tmp_path / "a.txt").write_text("a note about a dog")
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
@@ -300,12 +291,12 @@ async def test_folder_index_parks_while_vault_locked(tmp_path: Path):
 
 
 async def test_symlinked_file_outside_tree_is_skipped(tmp_path: Path):
-    (tmp_path / "real.txt").write_text("inside the tree about a cat")
+    _ = (tmp_path / "real.txt").write_text("inside the tree about a cat")
     outside = Path(tempfile.mkdtemp()) / "secret.txt"
-    outside.write_text("outside secret about a dog")
+    _ = outside.write_text("outside secret about a dog")
     os.symlink(outside, tmp_path / "link.txt")  # escapes the indexed tree
 
-    engine, vault, chunk_store, adapter = await _folder(tmp_path, FakeEmbedder())
+    engine, vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
     await adapter._worker.join()
@@ -321,7 +312,7 @@ async def test_symlinked_file_outside_tree_is_skipped(tmp_path: Path):
 # --- regression: a re-crawl reconciles, it does not only insert -------------
 
 
-def _indexed(engine, vault) -> list[tuple[str, str]]:
+def _indexed(engine: Engine, vault: Vault) -> list[tuple[str, str]]:
     """Every chunk currently in the store as (external_ref, decrypted text). A list, not
     a dict: an edited file's old and new slices can share a ref (the offset only moves if
     the edit shifts the text), and collapsing them would hide the very duplication these
@@ -336,18 +327,18 @@ async def test_recrawl_prunes_a_file_deleted_on_disk(tmp_path: Path):
     with no prune pass its chunks outlive it: RAG keeps quoting a file the operator
     deleted (a secrets file stays readable long after `rm`), and the folder's DOCS count
     still claims it."""
-    (tmp_path / "keep.txt").write_text("a stable note about a dog")
+    _ = (tmp_path / "keep.txt").write_text("a stable note about a dog")
     secrets = tmp_path / "secrets.txt"
-    secrets.write_text("the launch code is hunter2")
+    _ = secrets.write_text("the launch code is hunter2")
 
-    engine, vault, chunk_store, adapter = await _folder(tmp_path, FakeEmbedder())
+    engine, vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
     await adapter._worker.join()
     assert await chunk_store.count_items(OWNER, "folder", source.id) == 2
 
     secrets.unlink()
-    await adapter.rebuild(OWNER, source.id)
+    _ = await adapter.rebuild(OWNER, source.id)
     await adapter._worker.join()
     await adapter.stop()
 
@@ -363,16 +354,16 @@ async def test_recrawl_replaces_an_edited_files_chunks(tmp_path: Path):
     versions of the same passage — so recall can answer with the stale one and the
     operator has no way to tell which they got."""
     note = tmp_path / "wifi.txt"
-    note.write_text("the wifi password is hunter2")
+    _ = note.write_text("the wifi password is hunter2")
 
-    engine, vault, chunk_store, adapter = await _folder(tmp_path, FakeEmbedder())
+    engine, vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
     await adapter._worker.join()
     assert await chunk_store.count(OWNER, source.id) == 1
 
-    note.write_text("the wifi password is correcthorse")
-    await adapter.rebuild(OWNER, source.id)
+    _ = note.write_text("the wifi password is correcthorse")
+    _ = await adapter.rebuild(OWNER, source.id)
     await adapter._worker.join()
     await adapter.stop()
 
@@ -383,22 +374,24 @@ async def test_recrawl_replaces_an_edited_files_chunks(tmp_path: Path):
     assert await chunk_store.count_items(OWNER, "folder", source.id) == 1
 
 
-async def test_recrawl_keeps_a_file_it_could_not_read(tmp_path: Path, monkeypatch):
+async def test_recrawl_keeps_a_file_it_could_not_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """A file the crawler can see but cannot open is not a deleted file. Pruning on a
     permission blip would silently empty the index for content that still exists."""
-    (tmp_path / "notes.txt").write_text("the standup is at nine")
+    _ = (tmp_path / "notes.txt").write_text("the standup is at nine")
 
-    engine, _vault, chunk_store, adapter = await _folder(tmp_path, FakeEmbedder())
+    _engine, _vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
     await adapter._worker.join()
     assert await chunk_store.count(OWNER, source.id) == 1
 
-    def _unreadable(path: str) -> str:
+    def _unreadable(_path: str) -> str:
         raise OSError("permission denied")
 
     monkeypatch.setattr(FolderAdapter, "_read", staticmethod(_unreadable))
-    await adapter.rebuild(OWNER, source.id)
+    _ = await adapter.rebuild(OWNER, source.id)
     await adapter._worker.join()
     await adapter.stop()
 
@@ -416,10 +409,10 @@ async def test_two_identical_files_are_both_indexed(tmp_path: Path):
     (tmp_path / "env-a").mkdir()
     (tmp_path / "env-b").mkdir()
     shared = "retries = 3\nendpoint = 'https://example.invalid'"
-    (tmp_path / "env-a" / "config.toml").write_text(shared)
-    (tmp_path / "env-b" / "config.toml").write_text(shared)
+    _ = (tmp_path / "env-a" / "config.toml").write_text(shared)
+    _ = (tmp_path / "env-b" / "config.toml").write_text(shared)
 
-    engine, vault, chunk_store, adapter = await _folder(tmp_path, FakeEmbedder())
+    engine, vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
     await adapter._worker.join()
@@ -432,14 +425,14 @@ async def test_two_identical_files_are_both_indexed(tmp_path: Path):
     assert await chunk_store.count_items(OWNER, "folder", source.id) == 2
 
 
-async def test_dedup_scope_escapes_wildcards_in_a_path(tmp_path: Path):
+async def test_dedup_scope_escapes_wildcards_in_a_path():
     """The per-item scope becomes a LIKE prefix, so it has to escape wildcards. Paths are
     full of `_`, which LIKE reads as "any one character", and `my-notes.txt` alongside
     `my_notes.txt` is an ordinary pair to have. Unescaped, the second one's dedup lookup
     matches the first one's rows and its content is silently never stored. Driven through
     the store directly, since the crawl's file order is the filesystem's to choose."""
     embedder = FakeEmbedder()
-    engine, vault = await _engine_vault(embedder)
+    engine, vault = await _engine_vault()
     store = CorpusChunkStore(engine, vault, embedder)
     from services.chunking import chunk_text
 
@@ -452,16 +445,16 @@ async def test_dedup_scope_escapes_wildcards_in_a_path(tmp_path: Path):
 async def test_identical_files_still_dedup_within_themselves_across_recrawls(tmp_path: Path):
     """The per-file key must not cost idempotency: a second crawl of the same two
     identical files still inserts nothing."""
-    (tmp_path / "a.txt").write_text("the same words in both files")
-    (tmp_path / "b.txt").write_text("the same words in both files")
+    _ = (tmp_path / "a.txt").write_text("the same words in both files")
+    _ = (tmp_path / "b.txt").write_text("the same words in both files")
 
-    engine, _vault, chunk_store, adapter = await _folder(tmp_path, FakeEmbedder())
+    _engine, _vault, chunk_store, adapter = await _folder(FakeEmbedder())
     await adapter.start()
     source = await adapter.add_folder(OWNER, str(tmp_path))
     await adapter._worker.join()
     first = await chunk_store.count(OWNER, source.id)
 
-    await adapter.rebuild(OWNER, source.id)
+    _ = await adapter.rebuild(OWNER, source.id)
     await adapter._worker.join()
     await adapter.stop()
 
