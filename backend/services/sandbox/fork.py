@@ -126,7 +126,7 @@ def merge_workspace(
             continue
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
+            _ = shutil.copy2(path, target)
         except OSError:
             logger.warning("fork: could not merge %s back into %s", rel, parent)
             conflicts.append(rel)

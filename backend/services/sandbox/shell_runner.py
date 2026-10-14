@@ -47,11 +47,11 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Concatenate, Literal
+from typing import IO, ClassVar, Concatenate, Literal
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness._output import truncate_tail
-from pydantic_ai_harness.shell._capability import _DEFAULT_DENIED_COMMANDS
+from pydantic_ai_harness.shell import Shell
 
 from .process import filtered_env, kill_tree, spawn_confined, terminate_tree
 
@@ -72,7 +72,7 @@ _PROGRESS_MAX_CHARS = 200_000
 #: Destructive programs (`rm`, `dd`, `mkfs`, `shutdown`, …) refused by name. Taken from the
 #: harness rather than restated: it is a guardrail against a slip, not a boundary, and two
 #: copies of a guardrail is one copy that stops being updated when the other grows an entry.
-_DENIED_COMMANDS: frozenset[str] = frozenset(_DEFAULT_DENIED_COMMANDS)
+_DENIED_COMMANDS: frozenset[str] = frozenset(Shell().denied_commands)
 
 #: Programs that want a terminal. Here they would not fail — they would hang until the
 #: timeout, spending the turn on nothing.
@@ -165,13 +165,13 @@ def _recoverable[R, **P](
 class _Background:
     """A process `start` left running, and the files its output accumulates in."""
 
-    __slots__ = ("proc", "out_path", "err_path", "finished", "exit_code")
+    __slots__: ClassVar[tuple[str, ...]] = ("proc", "out_path", "err_path", "finished", "exit_code")
 
     def __init__(self, proc: asyncio.subprocess.Process, out_path: str, err_path: str) -> None:
-        self.proc = proc
-        self.out_path = out_path
-        self.err_path = err_path
-        self.finished = False
+        self.proc: asyncio.subprocess.Process = proc
+        self.out_path: str = out_path
+        self.err_path: str = err_path
+        self.finished: bool = False
         self.exit_code: int | None = None
 
 
@@ -187,10 +187,10 @@ class HostShell:
         default_timeout: float,
         max_output_chars: int,
     ) -> None:
-        self._root = root
-        self._cwd = root
-        self._default_timeout = default_timeout
-        self._max_output_chars = max_output_chars
+        self._root: Path = root
+        self._cwd: Path = root
+        self._default_timeout: float = default_timeout
+        self._max_output_chars: int = max_output_chars
         self._background: dict[str, _Background] = {}
 
     @property
@@ -231,7 +231,7 @@ class HostShell:
             )
             task = None if watcher is None else asyncio.create_task(watcher.pump())
             try:
-                await asyncio.wait_for(proc.wait(), timeout=timeout)
+                _ = await asyncio.wait_for(proc.wait(), timeout=timeout)
                 timed_out = False
             except TimeoutError:
                 await terminate_tree(proc)
@@ -244,7 +244,7 @@ class HostShell:
                 # stop it. Not awaited: this coroutine is already being torn down.
                 kill_tree(proc)
                 if task is not None:
-                    task.cancel()
+                    _ = task.cancel()
                 raise
             if watcher is not None and task is not None:
                 # Stopped rather than cancelled, so the last tick reads what the command
@@ -344,7 +344,7 @@ class HostShell:
         its processes were started in sessions of their own, so nothing else reaps them.
         """
         for command_id in list(self._background):
-            await self.stop(command_id)
+            _ = await self.stop(command_id)
 
     async def _spawn(
         self, command: str, out: IO[bytes], err: IO[bytes]
@@ -416,7 +416,7 @@ def check_command(command: str) -> None:
     try:
         # `os.fsencode`, not `str.encode`: the spawn encodes with the filesystem encoding
         # and `surrogateescape`, so plain UTF-8 here would reject commands the OS runs.
-        os.fsencode(command)
+        _ = os.fsencode(command)
     except UnicodeEncodeError as exc:
         raise ModelRetry(
             "The command contains characters that cannot be encoded for the operating system."
@@ -451,12 +451,14 @@ class _StreamTail:
     until the rest of it arrives.
     """
 
-    __slots__ = ("_path", "_offset", "_decoder")
+    __slots__: ClassVar[tuple[str, ...]] = ("_path", "_offset", "_decoder")
 
     def __init__(self, path: str) -> None:
-        self._path = path
-        self._offset = 0
-        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._path: str = path
+        self._offset: int = 0
+        self._decoder: codecs.IncrementalDecoder = codecs.getincrementaldecoder("utf-8")(
+            errors="replace"
+        )
 
     def read(self) -> str:
         """Whatever has been written since the last call, or "" — including on an error.
@@ -466,7 +468,7 @@ class _StreamTail:
         """
         try:
             with open(self._path, "rb") as handle:
-                handle.seek(self._offset)
+                _ = handle.seek(self._offset)
                 chunk = handle.read()
                 self._offset = handle.tell()
         except OSError:
@@ -487,15 +489,22 @@ class _Tail:
     watching it.
     """
 
-    __slots__ = ("_out", "_err", "_started", "_hook", "_stop", "_streamed")
+    __slots__: ClassVar[tuple[str, ...]] = (
+        "_out",
+        "_err",
+        "_started",
+        "_hook",
+        "_stop",
+        "_streamed",
+    )
 
     def __init__(self, out_path: str, err_path: str, *, started: float, hook: ProgressHook):
-        self._out = _StreamTail(out_path)
-        self._err = _StreamTail(err_path)
-        self._started = started
-        self._hook = hook
-        self._stop = asyncio.Event()
-        self._streamed = 0
+        self._out: _StreamTail = _StreamTail(out_path)
+        self._err: _StreamTail = _StreamTail(err_path)
+        self._started: float = started
+        self._hook: ProgressHook = hook
+        self._stop: asyncio.Event = asyncio.Event()
+        self._streamed: int = 0
 
     def stop(self) -> None:
         """Ask the pump to take one last read and return."""
@@ -504,7 +513,7 @@ class _Tail:
     async def pump(self) -> None:
         while True:
             try:
-                await asyncio.wait_for(self._stop.wait(), _PROGRESS_INTERVAL_S)
+                _ = await asyncio.wait_for(self._stop.wait(), _PROGRESS_INTERVAL_S)
             except TimeoutError:
                 await self._tick()
                 continue

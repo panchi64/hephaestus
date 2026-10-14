@@ -112,16 +112,16 @@ class SandboxSession:
         excludes: Iterable[str],
         ephemeral: bool = False,
     ) -> None:
-        self.key = key
-        self.workspace = workspace
+        self.key: str = key
+        self.workspace: Path = workspace
         #: Where this key's pre-existing sealed archive would be, if the installation
         #: ever ran the build that wrote them. Read once and retired — see
         #: :mod:`services.sandbox.legacy_seal`.
-        self.sealed = sealed
+        self.sealed: Path = sealed
         # A fork taken for a delegated agent: a copy of a workspace that still exists
         # under its parent's key. It is deleted where an ordinary session's workspace
         # is kept — see :meth:`shutdown`.
-        self.ephemeral = ephemeral
+        self.ephemeral: bool = ephemeral
         # The parent's files as they stood when this fork was taken, ``{relpath: sha256}``
         # — what :func:`services.sandbox.fork.merge_workspace` decides against. Empty on
         # every session that is not a fork.
@@ -129,18 +129,18 @@ class SandboxSession:
         # This workspace's allowlist directory, owned by the egress policy, which
         # rewrites it whenever the operator approves a domain; the gateway re-reads it,
         # so a grant lands on the next request.
-        self._egress_dir = egress_dir
-        self._vm = vm
-        self._guest = GuestWorkspace(vm, key, workspace)
+        self._egress_dir: Path = egress_dir
+        self._vm: SessionHost = vm
+        self._guest: GuestWorkspace = GuestWorkspace(vm, key, workspace)
         self._credentials: str | None = None
-        self._preview_name = f"preview-{key}"
-        self._vault = vault
+        self._preview_name: str = f"preview-{key}"
+        self._vault: Vault = vault
         # What a walk of this workspace skips — reporting only, never deletion. See
         # :mod:`services.sandbox.walk`.
-        self._walk_excludes = tuple(excludes)
+        self._walk_excludes: tuple[str, ...] = tuple(excludes)
         self._preview: PreviewHandle | None = None
-        self._last_used = time.monotonic()
-        self._lock = asyncio.Lock()
+        self._last_used: float = time.monotonic()
+        self._lock: asyncio.Lock = asyncio.Lock()
         # Guards the multi-step disk transitions on this workspace against each other:
         # materialising it (`_ensure_workspace`, which may still be adopting a
         # sealing-era archive), a fork's walk-and-copy, and the merge back. They are
@@ -151,7 +151,7 @@ class SandboxSession:
         # run on the loop at all; it is uncontended except in exactly that race.
         # Reentrant because `merge_fork` holds it across a materialisation that takes it
         # too.
-        self._disk = threading.RLock()
+        self._disk: threading.RLock = threading.RLock()
         self._holders: list[LiveWork] = []
 
     @property
@@ -269,7 +269,7 @@ class SandboxSession:
         self._ensure_workspace()
         target = contained_path(self.workspace, relpath)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+        _ = target.write_bytes(content)
         self.touch()
 
     async def start_preview(
@@ -406,7 +406,7 @@ class SandboxSession:
                 continue  # NUL byte ⇒ binary (a NUL is valid UTF-8, so the
                 # decode check below wouldn't catch it) — history is text only
             try:
-                data.decode("utf-8")
+                _ = data.decode("utf-8")
             except UnicodeDecodeError:
                 continue  # binary — skipped (history is code + text diffs)
             files[rel] = data

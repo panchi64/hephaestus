@@ -144,12 +144,12 @@ def _claim_scratch(scratch: Path) -> None:
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
         raise HostExecutionError(
             f"the host scratch directory {scratch} is a symlink or not a directory — "
-            "refusing to run an approved command in a path someone else redirected"
+            + "refusing to run an approved command in a path someone else redirected"
         )
     if info.st_uid != os.getuid():
         raise HostExecutionError(
             f"the host scratch directory {scratch} is owned by uid {info.st_uid}, "
-            "not this process — refusing to run an approved command in it"
+            + "not this process — refusing to run an approved command in it"
         )
     if info.st_mode & 0o077:
         # Ours, but wider than it should be — a directory this process created under an
@@ -158,21 +158,25 @@ def _claim_scratch(scratch: Path) -> None:
         os.chmod(scratch, 0o700)
 
 
+def _cached() -> HostConfinement | None:
+    return _resolved
+
+
 async def resolve_confinement(settings: Settings) -> HostConfinement:
     """Configure OS-level confinement for host commands, once per process."""
     global _resolved
-    if _resolved is not None:
-        return _resolved
+    if (cached := _cached()) is not None:
+        return cached
     async with _resolve_lock:
-        if _resolved is not None:  # settled while this call waited for the lock
-            return _resolved
+        if (cached := _cached()) is not None:  # settled while this call waited for the lock
+            return cached
         resolved = await _configure(settings)
         if not resolved.active:
             # Worth one line: an operator who believes their host commands are fenced
             # should not have to read a tool result to discover otherwise.
             logger.warning("host commands are running unconfined: %s", resolved.reason)
         _resolved = resolved
-        return _resolved
+        return resolved
 
 
 async def _configure(settings: Settings) -> HostConfinement:
@@ -202,7 +206,7 @@ async def _configure(settings: Settings) -> HostConfinement:
             return HostConfinement(
                 False,
                 "ripgrep (`rg`) is not installed — sandbox-runtime needs it to resolve "
-                "the filesystem deny rules; install it to fence host commands",
+                + "the filesystem deny rules; install it to fence host commands",
             )
         return HostConfinement(False, "the platform's sandbox dependencies are unavailable")
     deny_read = list(denied_read_paths(settings))

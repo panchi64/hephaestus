@@ -54,11 +54,11 @@ class ProjectShell:
     """One project folder's shell in the VM, shared by the runs working there."""
 
     def __init__(self, root: Path, *, default_timeout: float, max_output_chars: int) -> None:
-        self._root = root
+        self._root: Path = root
         #: The working directory, relative to the project root ("" is the root).
-        self._rel = ""
-        self._default_timeout = default_timeout
-        self._max_output_chars = max_output_chars
+        self._rel: str = ""
+        self._default_timeout: float = default_timeout
+        self._max_output_chars: int = max_output_chars
         self._jobs: dict[str, str] = {}
 
     @property
@@ -101,7 +101,7 @@ class ProjectShell:
             finally:
                 copy.touch()
                 with contextlib.suppress(VMError):
-                    await vm.call(["rm", "-f", cwd_file])
+                    _ = await vm.call(["rm", "-f", cwd_file])
         timed_out = state.exit_code == _TIMEOUT_EXIT
         exit_code = None if timed_out else state.exit_code
         if exit_code == 0:
@@ -174,7 +174,7 @@ class ProjectShell:
         copy = copies.acquire(self._root)
         state = await copies.vm.job(name)
         if not state.running:
-            await self._bring_out(copy)
+            _ = await self._bring_out(copy)
         return self._status(command_id, state, "running" if state.running else "finished")
 
     async def stop(self, copies: ProjectCopies, command_id: str) -> BackgroundStatus | None:
@@ -190,12 +190,12 @@ class ProjectShell:
             await asyncio.sleep(0.1)
             state = await vm.job(name)
         copy.jobs.discard(name)
-        await self._bring_out(copy)
+        _ = await self._bring_out(copy)
         return self._status(command_id, state, "stopped")
 
     async def shutdown(self, copies: ProjectCopies) -> None:
         for command_id in list(self._jobs):
-            await self.stop(copies, command_id)
+            _ = await self.stop(copies, command_id)
 
     async def _bring_out(self, copy: ProjectCopy) -> BringOut:
         async with copy.lock:

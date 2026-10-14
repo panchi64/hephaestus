@@ -97,33 +97,33 @@ class SandboxSessionManager:
         preview_startup_timeout_s: float = 20.0,
         max_sessions: int = 8,
     ) -> None:
-        self._vm = vm
-        self._vault = vault
+        self._vm: SessionHost = vm
+        self._vault: Vault = vault
         # What each workspace may reach. The manager holds it (rather than each session)
         # because writing the file the gateway reads is a *per-key* act that has to happen
         # before that key's first command runs — see `acquire`.
-        self._egress = egress
-        self._work_root = data_dir / "sandbox" / "work"
-        self._sealed_root = data_dir / "sandbox" / "sealed"
-        self._idle_ttl = idle_ttl_s
-        self._excludes = tuple(excludes)
-        self._preview_startup_timeout_s = preview_startup_timeout_s
+        self._egress: EgressPolicy = egress
+        self._work_root: Path = data_dir / "sandbox" / "work"
+        self._sealed_root: Path = data_dir / "sandbox" / "sealed"
+        self._idle_ttl: float = idle_ttl_s
+        self._excludes: tuple[str, ...] = tuple(excludes)
+        self._preview_startup_timeout_s: float = preview_startup_timeout_s
         # How many conversations may hold a guest copy at once. The idle TTL bounds a
         # session in *time*; this bounds the set in *count*, which the TTL alone never does
         # — a dozen threads worked on in rotation all stay inside the window. See
         # `_over_cap`.
-        self._max_sessions = max(1, max_sessions)
+        self._max_sessions: int = max(1, max_sessions)
         self._sessions: dict[str, SandboxSession] = {}
         # Which token names which preview, and which ones we killed — see
         # :mod:`services.sandbox.preview_tokens`. Manipulated under this manager's lock
         # wherever it has to be atomic against the reaper.
-        self._preview_tokens = PreviewTokens()
+        self._preview_tokens: PreviewTokens = PreviewTokens()
         # safe key → set once its (former) session's teardown (a sweep's reap, or
         # a purge) is in flight. A concurrent acquire()/purge() for THIS key waits
         # on it; every other key is unaffected (sandbox-02).
         self._tearing_down: dict[str, asyncio.Event] = {}
-        self._lock = asyncio.Lock()
-        self._reaper = PeriodicTask(
+        self._lock: asyncio.Lock = asyncio.Lock()
+        self._reaper: PeriodicTask = PeriodicTask(
             "sandbox-reaper",
             interval_s=reap_interval_s,
             work=self._sweep,
@@ -207,12 +207,12 @@ class SandboxSessionManager:
                     session.hold(holder)
                     break
             assert other is not None
-            await other.wait()
+            _ = await other.wait()
         if not session.is_warm:
             # The allowlist has to be on disk before the first command can reach the
             # gateway, or it would refuse everything the operator has already allowed. A
             # warm session already has it, and every later grant rewrites the file.
-            await self._egress.materialise(key)
+            _ = await self._egress.materialise(key)
         # Awaited rather than backgrounded, because the caller is about to bring a
         # workspace in: returning before the ones it displaced are actually gone would leave
         # the host over the cap at exactly the moment the cap matters. On a task of the
@@ -281,8 +281,8 @@ class SandboxSessionManager:
         off is what that tombstone is for."""
         async with self._lock:
             for key, session, _event in detached:
-                self._sessions.setdefault(key, session)
-                self._tearing_down.pop(key, None)
+                _ = self._sessions.setdefault(key, session)
+                _ = self._tearing_down.pop(key, None)
         for _key, _session, event in detached:
             event.set()
 
@@ -328,14 +328,14 @@ class SandboxSessionManager:
             finally:
                 if torn_down:
                     async with self._lock:
-                        self._tearing_down.pop(key, None)
+                        _ = self._tearing_down.pop(key, None)
                     event.set()
                 else:
                     # A teardown that did not happen must not lose the session with it —
                     # put it back and let the next idle sweep try again.
                     await self._reattach([(key, session, event)])
 
-        await gather_bounded([down(*item) for item in detached], _TEARDOWN_CONCURRENCY)
+        _ = await gather_bounded([down(*item) for item in detached], _TEARDOWN_CONCURRENCY)
 
     def _new_session(
         self, safe: str, egress_dir: Path, *, ephemeral: bool = False
@@ -509,7 +509,7 @@ class SandboxSessionManager:
                         self._preview_tokens.drop(safe)
                     self._tearing_down[safe] = my_event
                     break
-            await other.wait()
+            _ = await other.wait()
         try:
             if session is not None:
                 await session.discard()
@@ -519,7 +519,7 @@ class SandboxSessionManager:
             # looks that key up again. An ordinary conversation never has one.
             self._egress.unshare(key)
             async with self._lock:
-                self._tearing_down.pop(safe, None)
+                _ = self._tearing_down.pop(safe, None)
             my_event.set()
 
     def _purge_disk(self, safe: str) -> None:
@@ -541,7 +541,7 @@ class SandboxSessionManager:
         # half brought out. Drained *before* taking the lock, which is
         # what each of them needs to release its own tombstone.
         if self._teardowns:
-            await asyncio.wait(self._teardowns, timeout=_SESSION_STOP_TIMEOUT_S)
+            _ = await asyncio.wait(self._teardowns, timeout=_SESSION_STOP_TIMEOUT_S)
         async with self._lock:
             # In parallel and each bounded: serially, N sessions at up to 30s apiece was a
             # shutdown measured in minutes. A session cut off by its cap is left behind
@@ -553,7 +553,7 @@ class SandboxSessionManager:
                 except Exception:  # noqa: BLE001 — tear the rest down regardless
                     logger.warning("sandbox: session teardown did not finish", exc_info=True)
 
-            await asyncio.gather(*(_stop(s) for s in list(self._sessions.values())))
+            _ = await asyncio.gather(*(_stop(s) for s in list(self._sessions.values())))
             self._sessions.clear()
             self._preview_tokens.clear()
 

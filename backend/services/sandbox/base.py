@@ -105,7 +105,7 @@ class SandboxSpec:
 
     command: Sequence[str]
     stdin: str | None = None
-    env: Mapping[str, str] = field(default_factory=dict)
+    env: Mapping[str, str] = field(default_factory=dict[str, str])
     timeout_s: float = 30.0
 
 

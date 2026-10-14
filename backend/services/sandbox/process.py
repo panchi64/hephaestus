@@ -143,10 +143,10 @@ async def terminate_tree(proc: asyncio.subprocess.Process) -> None:
     except OSError:  # already reaped, or no such group
         return
     try:
-        await asyncio.wait_for(proc.wait(), timeout=_GRACE_S)
+        _ = await asyncio.wait_for(proc.wait(), timeout=_GRACE_S)
     except TimeoutError:
         kill_tree(proc)
-        await proc.wait()
+        _ = await proc.wait()
 
 
 def filtered_env() -> dict[str, str]:
@@ -259,7 +259,7 @@ async def run_on_host(
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
     except TimeoutError:
         kill_tree(proc)
-        await proc.wait()
+        _ = await proc.wait()
         return SandboxResult(
             exit_code=124, stdout="", stderr="host command timed out", timed_out=True
         )
