@@ -116,7 +116,7 @@ async def frames(live: LiveBrowser, alive: Callable[[], bool]) -> AsyncIterator[
 
     try:
         while alive():
-            current = live.page
+            current = _current_page(live)
             if current is not page:
                 await _stop(cdp)
                 cdp, page = None, current
@@ -137,6 +137,12 @@ async def frames(live: LiveBrowser, alive: Callable[[], bool]) -> AsyncIterator[
         await _stop(cdp)
         for ack in acks:
             _ = ack.cancel()
+
+
+def _current_page(live: LiveBrowser) -> Page | None:
+    """The session's active page. The harness types it as a structural subset; a real
+    session's page is always the full Playwright page."""
+    return cast("Page | None", live.session.page)
 
 
 async def _new_cdp(page: Page) -> CdpSession:
@@ -177,7 +183,7 @@ def _settled(tasks: set[asyncio.Task[object]]) -> Callable[[asyncio.Task[object]
 
 async def dispatch(live: LiveBrowser, event: ViewInput) -> None:
     """Replay one operator input on the session's current page."""
-    page = live.page
+    page = _current_page(live)
     if page is None:
         return
     live.touch()

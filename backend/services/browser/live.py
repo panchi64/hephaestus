@@ -21,7 +21,7 @@ import os
 import time
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from pathlib import Path
-from typing import Protocol, cast, final, override, runtime_checkable
+from typing import Protocol, final, override, runtime_checkable
 
 from playwright.async_api import Page
 from pydantic_ai_harness.playwright import PlaywrightBrowserSession
@@ -180,12 +180,6 @@ class LiveBrowser:
 
     def idle_seconds(self, now: float) -> float:
         return now - self._last_used
-
-    @property
-    def page(self) -> Page | None:
-        """The session's active page. The harness types it as a structural subset; a
-        real session's page is always the full Playwright page."""
-        return cast("Page | None", self.session.page)
 
     @property
     def page_url(self) -> str:
