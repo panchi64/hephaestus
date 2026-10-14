@@ -14,9 +14,10 @@ from pathlib import Path
 import pytest
 from pydantic_ai import RunContext
 
-from runs import Event, ToolProgress
+from runs import ToolProgress
 from services.egress import EgressPolicy
 from services.vm.project import ProjectCopies
+from tools.emit import RunEventEmitted
 from tools.shell import shell_toolset
 
 from .conftest import egress_policy
@@ -176,7 +177,7 @@ async def test_a_command_past_its_timeout_is_timed_out_with_no_exit_code(repo, c
 
 
 async def test_a_running_commands_output_reaches_the_operators_stream(repo, copies, monkeypatch):
-    frames: list[Event] = []
+    frames: list[RunEventEmitted] = []
 
     async def emit(_self, event):
         frames.append(event)

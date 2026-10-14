@@ -123,6 +123,7 @@ async def test_naming_a_group_reveals_the_whole_group_on_the_next_step():
     steps: list[set[str]] = []
     await _agent(categories, model=_reveal_browse(steps)).run("hi", deps=_deps())
     revealed = {name for name in steps[1] if name.startswith("browse_")}
+    assert "browse_click" in revealed
     assert revealed == {f"browse_{name}" for name in category_names(categories)["browse"]}
     # A reveal is one group, not the end of deferral: the others stay held back.
     assert not [name for name in steps[1] if name.startswith("calendar_")]
@@ -260,9 +261,9 @@ async def test_the_engine_defers_and_reveals_exactly_as_this_stack_does():
     )
     assert not [name for name in steps[0] if name.startswith("browse_")]
     assert "search_tools" in steps[0]
-    assert {name for name in steps[1] if name.startswith("browse_")} == {
-        f"browse_{name}" for name in category_names(categories)["browse"]
-    }
+    revealed = {name for name in steps[1] if name.startswith("browse_")}
+    assert "browse_click" in revealed
+    assert revealed == {f"browse_{name}" for name in category_names(categories)["browse"]}
 
 
 def _defs_model(defs: list[list[ToolDefinition]]):

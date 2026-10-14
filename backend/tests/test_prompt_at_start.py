@@ -18,7 +18,14 @@ import asyncio
 from collections.abc import Sequence
 
 from pydantic_ai import FunctionToolset, ModelRequest, ModelResponse, TextPart, ToolApproved
-from pydantic_ai.messages import UserContent, UserPromptPart
+from pydantic_ai.messages import (
+    RetryPromptPart,
+    SystemPromptPart,
+    ThinkingPart,
+    ToolReturnPart,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import Engine
@@ -427,7 +434,15 @@ async def test_a_fold_never_swallows_the_prompt_being_answered(tmp_path):
         part.content
         for message in plan.messages
         for part in message.parts
-        if isinstance(part, UserPromptPart | TextPart)
+        if isinstance(
+            part,
+            UserPromptPart
+            | TextPart
+            | SystemPromptPart
+            | ToolReturnPart
+            | RetryPromptPart
+            | ThinkingPart,
+        )
     ]
     assert texts == ["earlier", "old"]  # the prompt stays out of the summary
     await store.stop()

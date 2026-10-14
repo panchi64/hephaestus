@@ -344,7 +344,10 @@ def test_the_tail_never_reaches_the_message_it_was_appended_to():
     view = with_tail_context(history, ["per-turn context"])
 
     assert view[-1] is not original
-    assert getattr(original.parts[0], "content", None) == "the ask being regenerated"
+    assert history[-1] is original
+    part = history[-1].parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert part.content == "the ask being regenerated"
 
 
 def test_a_regenerate_puts_the_tail_where_a_fresh_turn_does():

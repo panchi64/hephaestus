@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import cast
 
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
@@ -22,7 +21,6 @@ import routes.chat.submit as chat_routes
 import routes.runs as runs_routes
 from core.db import init_db, make_engine
 from runs import Run, RunStream
-from services.offline import OfflineModeService
 from services.registry import ModelRegistry
 from services.settings_store import DISABLED_TOOLS_KEY, SettingsStore
 from services.tool_policy import (
@@ -259,10 +257,9 @@ class _StubOffline:
         return self._disabled
 
 
-def stub_offline(disabled: frozenset[str]) -> OfflineModeService:
-    """The stub in the shape `effective_disabled_tools` is annotated to take; it reads only
-    `web_tools_disabled`, and the real service needs a live monitor to build."""
-    return cast(OfflineModeService, cast(object, _StubOffline(disabled)))
+def stub_offline(disabled: frozenset[str]) -> _StubOffline:
+    """Offline mode for `effective_disabled_tools`; the real service needs a live monitor."""
+    return _StubOffline(disabled)
 
 
 async def test_operator_and_offline_sets_union_rather_than_overwrite():

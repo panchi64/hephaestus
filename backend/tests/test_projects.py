@@ -15,7 +15,7 @@ kind of failure that looks like a working feature in every other test.
 from __future__ import annotations
 
 import pytest
-from sqlmodel import Session, select
+from sqlmodel import Session, SQLModel, select
 
 from core.db import in_session, init_db, make_engine
 from core.exceptions import InvalidInputError, NotFoundError
@@ -272,11 +272,13 @@ class TestDeletingAProject:
         # class to derive it from. Another scoped entity that forgets to join the tuple
         # would have its rows orphaned on the next project delete, silently and
         # permanently, so the list is checked against the live schema instead.
-        from models._table import Table
+        def descendants(cls: type[SQLModel]) -> set[type[SQLModel]]:
+            direct = set(cls.__subclasses__())
+            return direct.union(*(descendants(sub) for sub in direct))
 
         scoped = {
             cls
-            for cls in Table.__subclasses__()
+            for cls in descendants(SQLModel)
             if getattr(cls, "__tablename__", None) and "project_id" in cls.model_fields
         }
         assert scoped == set(SCOPED_MODELS)

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import override
 
 import pytest
 from pydantic_ai import (
@@ -32,6 +32,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agent.work_summary import _MAX_SUMMARY_LEN, _clean, summarize_work, work_transcript
@@ -41,7 +42,7 @@ from core.vault import Vault
 from runs import RunRegistry
 from services import work_summaries as work_summaries_module
 from services.conversations import ConversationStore
-from services.registry import ModelRegistry
+from services.registry import ModelRegistry, ResolvedModel
 from services.settings_store import (
     WORK_SUMMARY_IDLE_MINUTES_KEY,
     WORK_SUMMARY_IDLE_MINUTES_MAX,
@@ -246,15 +247,21 @@ async def _store(tmp_path) -> ConversationStore:
     return store
 
 
-class _Registry:
-    """The model registry reduced to the one method the sweep calls."""
+class _Registry(ModelRegistry):
+    """The model registry with the one method the sweep calls answering ``model``."""
 
-    def __init__(self, model):
+    def __init__(self, model: Model, vault: Vault) -> None:
+        super().__init__(make_engine("sqlite:///:memory:"), vault)
         self._model = model
 
-    async def resolve_background(self, *, owner_id: str, **_: object):
-        from services.registry import ResolvedModel
-
+    @override
+    async def resolve_background(
+        self,
+        *,
+        owner_id: str,
+        override_endpoint_id: str | None = None,
+        override_model: str | None = None,
+    ) -> ResolvedModel:
         return ResolvedModel(model=self._model, reasoning_off={}, context_window=128_000)
 
 
@@ -305,7 +312,7 @@ def _service(store: ConversationStore, model, runs: RunRegistry | None = None):
     return WorkSummaryService(
         store=store,
         settings_store=SettingsStore(settings_engine),
-        models=cast(ModelRegistry, cast(object, _Registry(model))),
+        models=_Registry(model, store._vault),
         runs=runs or RunRegistry(),
         vault=store._vault,
         settings=Settings(),

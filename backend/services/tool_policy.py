@@ -44,7 +44,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from core.container import ServiceContainer
 from runs.lanes import is_attended
@@ -55,10 +55,13 @@ from services.permissions import (
 )
 from services.settings_store import DISABLED_TOOLS_KEY, SettingsStore
 
-if TYPE_CHECKING:
-    from services.offline import OfflineModeService
-
 logger = logging.getLogger(__name__)
+
+
+class WebToolsGate(Protocol):
+    """What the policy needs from offline mode: the web tools it is withholding right now."""
+
+    def web_tools_disabled(self) -> frozenset[str]: ...
 
 
 def _decode(raw: str | None) -> frozenset[str]:
@@ -266,7 +269,7 @@ async def unavailable_tools(
 
 async def effective_disabled_tools(
     settings: SettingsStore,
-    offline: OfflineModeService,
+    offline: WebToolsGate,
     owner_id: str,
     *,
     vision: bool = True,

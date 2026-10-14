@@ -10,6 +10,8 @@ a reloaded thread and an unattended task must all resolve it against the same pa
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 import pytest
 from pydantic import ValidationError
 
@@ -196,6 +198,10 @@ async def test_tuning_the_gauge_leaves_the_other_preferences_alone():
 # ── The whole chain ──────────────────────────────────────────────────────────────
 
 
+class _ThresholdsArg(TypedDict, total=False):
+    context_thresholds: ContextThresholds
+
+
 async def _level_under(thresholds: ContextThresholds | None) -> tuple[str, float]:
     """Run one real turn and report the level (and fullness) its metrics carry."""
     from pydantic_ai.models.test import TestModel
@@ -203,13 +209,14 @@ async def _level_under(thresholds: ContextThresholds | None) -> tuple[str, float
     from agent import build_chat_orchestrator
     from runs import RunRegistry, RunStatus
 
+    kwargs: _ThresholdsArg = {} if thresholds is None else {"context_thresholds": thresholds}
     # `call_tools=[]` keeps it a plain text turn: the default catalog carries an
     # approval-gated tool that TestModel would otherwise call and park the run on.
     orch = build_chat_orchestrator(
         "hi",
         model=TestModel(custom_output_text="ok", call_tools=[]),
         context_window=100_000,
-        context_thresholds=DEFAULT_CONTEXT_THRESHOLDS if thresholds is None else thresholds,
+        **kwargs,
     )
     run = RunRegistry().submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
