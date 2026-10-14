@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-import json
+from pathlib import Path
 
 import pytest
 from cryptography.exceptions import InvalidTag
 
 from core import crypto
 from core.vault import Vault, VaultError, VaultLocked
+
+from ._json import obj, parse_json
+
+
+def _always_stale(_hash: str) -> bool:
+    return True
 
 
 # --- primitives --------------------------------------------------------------
@@ -23,7 +29,7 @@ def test_aead_rejects_tampering():
     blob = bytearray(crypto.aead_encrypt(key, b"secret"))
     blob[-1] ^= 0x01
     with pytest.raises(InvalidTag):
-        crypto.aead_decrypt(key, bytes(blob))
+        _ = crypto.aead_decrypt(key, bytes(blob))
 
 
 def test_password_hash_and_verify():
@@ -39,7 +45,7 @@ def test_kek_is_deterministic_per_salt():
 
 
 # --- vault -------------------------------------------------------------------
-async def test_setup_then_encrypt_decrypt(tmp_path):
+async def test_setup_then_encrypt_decrypt(tmp_path: Path):
     vault = Vault(tmp_path / "keyfile.json")
     assert not vault.is_initialized
     await vault.setup("operator-pw")
@@ -50,17 +56,17 @@ async def test_setup_then_encrypt_decrypt(tmp_path):
     assert vault.decrypt_str(token) == "private note"
 
 
-async def test_locked_vault_cannot_encrypt(tmp_path):
+async def test_locked_vault_cannot_encrypt(tmp_path: Path):
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
     token = vault.encrypt_str("note")
     vault.lock()
     assert not vault.is_unlocked
     with pytest.raises(VaultLocked):
-        vault.decrypt_str(token)
+        _ = vault.decrypt_str(token)
 
 
-async def test_unlock_round_trip_across_restart(tmp_path):
+async def test_unlock_round_trip_across_restart(tmp_path: Path):
     keyfile = tmp_path / "keyfile.json"
     vault = Vault(keyfile)
     await vault.setup("pw")
@@ -74,7 +80,7 @@ async def test_unlock_round_trip_across_restart(tmp_path):
     assert restarted.decrypt_str(token) == "note"
 
 
-async def test_setup_twice_and_unlock_uninitialized(tmp_path):
+async def test_setup_twice_and_unlock_uninitialized(tmp_path: Path):
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("pw")
     with pytest.raises(VaultError):
@@ -82,11 +88,11 @@ async def test_setup_twice_and_unlock_uninitialized(tmp_path):
 
     fresh = Vault(tmp_path / "other.json")
     with pytest.raises(VaultError):
-        await fresh.unlock("pw")
+        _ = await fresh.unlock("pw")
 
 
 # --- keyfile integrity -------------------------------------------------------
-async def test_keyfile_is_written_atomically_and_owner_only(tmp_path):
+async def test_keyfile_is_written_atomically_and_owner_only(tmp_path: Path):
     # The wrapped DEK has no second copy: a torn write is unrecoverable data loss,
     # and a world-readable one hands out the Argon2 verifier for offline cracking.
     path = tmp_path / "keyfile.json"
@@ -98,30 +104,32 @@ async def test_keyfile_is_written_atomically_and_owner_only(tmp_path):
 
 
 @pytest.mark.parametrize("damage", ["not json at all", "{}", '{"verifier": "only"}'])
-async def test_corrupt_keyfile_raises_vault_error_not_a_bare_crash(tmp_path, damage):
+async def test_corrupt_keyfile_raises_vault_error_not_a_bare_crash(tmp_path: Path, damage: str):
     # A hand-edited or externally-restored keyfile must surface as VaultError, not as
     # a JSONDecodeError/KeyError escaping the login route as a 500.
     path = tmp_path / "keyfile.json"
     vault = Vault(path)
     await vault.setup("pw")
-    path.write_text(damage)
+    _ = path.write_text(damage)
 
     with pytest.raises(VaultError):
-        await Vault(path).unlock("pw")
+        _ = await Vault(path).unlock("pw")
 
 
-async def test_unlock_rehashes_a_verifier_minted_under_weaker_parameters(tmp_path, monkeypatch):
+async def test_unlock_rehashes_a_verifier_minted_under_weaker_parameters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # Raising the work factors is worthless if existing verifiers never move, so a
     # successful unlock re-mints a stale one — leaving the DEK material untouched.
     path = tmp_path / "keyfile.json"
     vault = Vault(path)
     await vault.setup("pw")
-    before = json.loads(path.read_text())
+    before = obj(parse_json(path.read_text()))
 
-    monkeypatch.setattr(crypto, "needs_rehash", lambda _hash: True)
+    monkeypatch.setattr(crypto, "needs_rehash", _always_stale)
     assert await Vault(path).unlock("pw") is True
 
-    after = json.loads(path.read_text())
+    after = obj(parse_json(path.read_text()))
     assert after["verifier"] != before["verifier"]
     # Only the verifier moves: the salt and the wrapped DEK are copied through.
     assert after["kek_salt"] == before["kek_salt"]
@@ -129,15 +137,18 @@ async def test_unlock_rehashes_a_verifier_minted_under_weaker_parameters(tmp_pat
     assert await Vault(path).unlock("pw") is True
 
 
-async def test_a_failing_rehash_never_fails_the_login(tmp_path, monkeypatch):
+async def test_a_failing_rehash_never_fails_the_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     path = tmp_path / "keyfile.json"
     vault = Vault(path)
     await vault.setup("pw")
 
-    monkeypatch.setattr(crypto, "needs_rehash", lambda _hash: True)
-    monkeypatch.setattr(
-        crypto, "hash_password", lambda _pw: (_ for _ in ()).throw(RuntimeError("no entropy"))
-    )
+    def failing_hash(_pw: str) -> str:
+        raise RuntimeError("no entropy")
+
+    monkeypatch.setattr(crypto, "needs_rehash", _always_stale)
+    monkeypatch.setattr(crypto, "hash_password", failing_hash)
     assert await Vault(path).unlock("pw") is True
 
 

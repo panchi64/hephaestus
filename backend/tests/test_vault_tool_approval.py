@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import cast
+
 from pydantic_ai import ToolApproved, ToolDenied
 from pydantic_ai.models.test import TestModel
 
@@ -9,7 +12,7 @@ from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import RunRegistry, RunStatus
+from runs import ApprovalRequired, Run, RunRegistry, RunStatus, ToolCompleted
 from services.secret_vault import SecretVaultService
 from tools.vault import vault_toolset
 
@@ -17,18 +20,18 @@ OWNER = "operator"
 PASSPHRASE = "vault-passphrase"
 
 
-async def _service(tmp_path) -> SecretVaultService:
+async def _service(tmp_path: Path) -> SecretVaultService:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(tmp_path / "keyfile.json")
     await vault.setup("login-password")
     service = SecretVaultService(engine, vault)
     await service.configure(OWNER, PASSPHRASE)
-    await service.create(OWNER, name="Production DB", username="admin", password="s3cret")
+    _ = await service.create(OWNER, name="Production DB", username="admin", password="s3cret")
     return service
 
 
-async def _run_tool(reg: RunRegistry, service, tool: str):
+async def _run_tool(reg: RunRegistry, service: SecretVaultService | None, tool: str) -> Run:
     orch = build_chat_orchestrator(
         "look up the database credential",
         model=TestModel(custom_output_text="done", call_tools=[f"vault_{tool}"]),
@@ -36,16 +39,22 @@ async def _run_tool(reg: RunRegistry, service, tool: str):
         capabilities=ServiceContainer.of(service) if service is not None else ServiceContainer(),
     )
     run = reg.submit(kind="chat", owner_id=OWNER, orchestrator=orch)
-    await run.wait()
+    _ = await run.wait()
     return run
 
 
-async def _resume(reg: RunRegistry, run, service, decision):
+async def _resume(
+    reg: RunRegistry,
+    run: Run,
+    service: SecretVaultService | None,
+    decision: ToolApproved | ToolDenied,
+) -> None:
     """Approve/deny the parked call the way `POST /runs/{id}/approve` does — capabilities
     and all, since a resumed turn re-runs the tool and needs the same handles."""
-    parked: ParkedTurn = run.parked_payload
+    parked = run.parked_payload
+    assert isinstance(parked, ParkedTurn)
     call_id = parked.requests.approvals[0].tool_call_id
-    await reg.resume(
+    _ = await reg.resume(
         run.id,
         build_resume_orchestrator(
             parked,
@@ -55,15 +64,19 @@ async def _resume(reg: RunRegistry, run, service, decision):
             else ServiceContainer(),
         ),
     )
-    await run.wait()
+    _ = await run.wait()
 
 
-def _types(run):
+def _types(run: Run) -> list[str]:
     return [e.body.type for e in run.stream.replay()]
 
 
-def _results(run):
-    return [str(e.body.result) for e in run.stream.replay() if e.body.type == "tool.completed"]
+def _results(run: Run) -> list[str]:
+    return [
+        str(cast(object, e.body.result))
+        for e in run.stream.replay()
+        if isinstance(e.body, ToolCompleted)
+    ]
 
 
 async def test_every_vault_tool_is_statically_approval_gated():
@@ -73,7 +86,7 @@ async def test_every_vault_tool_is_statically_approval_gated():
     assert all(tool.requires_approval for tool in tools.values())
 
 
-async def test_listing_the_vault_parks_the_run(tmp_path):
+async def test_listing_the_vault_parks_the_run(tmp_path: Path):
     service = await _service(tmp_path)
     run = await _run_tool(RunRegistry(), service, "list_entries")
 
@@ -81,13 +94,13 @@ async def test_listing_the_vault_parks_the_run(tmp_path):
     assert "approval.required" in _types(run)
     assert "tool.completed" not in _types(run)  # requested, never executed
 
-    approval = next(e.body for e in run.stream.replay() if e.body.type == "approval.required")
+    approval = next(e.body for e in run.stream.replay() if isinstance(e.body, ApprovalRequired))
     assert "list_entries" in approval.name
     # The operator judges the request itself: the model's stated reason rides along.
     assert "reason" in approval.args
 
 
-async def test_reading_a_credential_parks_and_only_yields_it_once_approved(tmp_path):
+async def test_reading_a_credential_parks_and_only_yields_it_once_approved(tmp_path: Path):
     service = await _service(tmp_path)
     reg = RunRegistry()
     run = await _run_tool(reg, service, "get_entry")
@@ -100,7 +113,7 @@ async def test_reading_a_credential_parks_and_only_yields_it_once_approved(tmp_p
     assert any("No vault entry" in result for result in _results(run))
 
 
-async def test_a_denied_vault_read_never_touches_the_service(tmp_path):
+async def test_a_denied_vault_read_never_touches_the_service(tmp_path: Path):
     service = await _service(tmp_path)
     reg = RunRegistry()
     run = await _run_tool(reg, service, "list_entries")
@@ -111,7 +124,7 @@ async def test_a_denied_vault_read_never_touches_the_service(tmp_path):
     assert all("Production DB" not in result for result in _results(run))
 
 
-async def test_without_the_capability_the_tools_report_it_absent(tmp_path):
+async def test_without_the_capability_the_tools_report_it_absent():
     reg = RunRegistry()
     run = await _run_tool(reg, None, "list_entries")
 
@@ -119,7 +132,7 @@ async def test_without_the_capability_the_tools_report_it_absent(tmp_path):
     assert any("not available" in result for result in _results(run))
 
 
-async def test_an_approved_read_still_meets_the_vaults_own_lock(tmp_path):
+async def test_an_approved_read_still_meets_the_vaults_own_lock(tmp_path: Path):
     service = await _service(tmp_path)
     service.lock(OWNER)
     reg = RunRegistry()
