@@ -24,11 +24,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 
+from pydantic import TypeAdapter
 from pydantic_ai.mcp import MCPToolset
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
@@ -39,10 +39,15 @@ from core.vault import Vault, VaultLocked
 from models._fields import utcnow
 from models.external_tool import McpServer
 from services.external_policy import ExternalPolicyStore, ToolPolicy, tool_slug
+from services.shapes import dict_list, parse_json
 
 from .client import DEFAULT_CONNECT_TIMEOUT_S, TRANSPORTS, build_client
 
 logger = logging.getLogger(__name__)
+
+_STRINGS = TypeAdapter(list[str])
+_ENV = TypeAdapter(dict[str, str])
+_CREDENTIALS = TypeAdapter(dict[str, object])
 
 STATUS_CONNECTED = "connected"
 STATUS_DISCONNECTED = "disconnected"
@@ -94,10 +99,10 @@ class McpRegistry:
         *,
         connect_timeout_s: float = DEFAULT_CONNECT_TIMEOUT_S,
     ) -> None:
-        self._db = db_engine
-        self._vault = vault
-        self._policy = policy
-        self._timeout = connect_timeout_s
+        self._db: Engine = db_engine
+        self._vault: Vault = vault
+        self._policy: ExternalPolicyStore = policy
+        self._timeout: float = connect_timeout_s
 
     @property
     def policy(self) -> ExternalPolicyStore:
@@ -131,7 +136,7 @@ class McpRegistry:
         env: dict[str, str] | None = None,
         url: str | None = None,
         auth_required: bool = False,
-        credentials: dict[str, Any] | None = None,
+        credentials: Mapping[str, object] | None = None,
     ) -> McpServerView:
         """Register a server and immediately try to connect it, so the operator sees the
         discovered tools (or the reason there are none) from the one action (`MCP-1`)."""
@@ -173,7 +178,7 @@ class McpRegistry:
         args: Sequence[str] | None = None,
         env: dict[str, str] | None = None,
         auth_required: bool | None = None,
-        credentials: dict[str, Any] | None = None,
+        credentials: Mapping[str, object] | None = None,
     ) -> McpServerView:
         """Amend a registration (`MCP-3`). ``slug`` is deliberately *not* re-derived from
         a new name — the tools the model and the policy rows already know are keyed by it,
@@ -262,8 +267,8 @@ class McpRegistry:
         """Open the connection just long enough to list what the server exposes."""
         client = build_client(
             row,
-            env=self._open(row.env_enc),
-            credentials=self._open(row.auth_enc),
+            env=self._open(row.env_enc, _ENV),
+            credentials=self._open(row.auth_enc, _CREDENTIALS),
             timeout_s=self._timeout,
         )
         async with asyncio.timeout(self._timeout):
@@ -271,7 +276,7 @@ class McpRegistry:
                 tools = await client.list_tools()
         return [{"name": t.name, "description": (t.description or "").strip()} for t in tools]
 
-    async def live_toolsets(self, owner_id: str) -> list[tuple[McpServerView, MCPToolset[Any]]]:
+    async def live_toolsets(self, owner_id: str) -> list[tuple[McpServerView, MCPToolset[object]]]:
         """The connected, enabled servers as ready-to-compose Pydantic AI toolsets, each
         paired with its view so the caller can map a tool back to its server.
 
@@ -281,15 +286,15 @@ class McpRegistry:
         while a server that has since gone down simply fails to enter and is skipped by
         the caller.
         """
-        pairs: list[tuple[McpServerView, MCPToolset[Any]]] = []
+        pairs: list[tuple[McpServerView, MCPToolset[object]]] = []
         for row in await self._rows(owner_id):
             if not row.enabled or row.status != STATUS_CONNECTED:
                 continue
             try:
                 client = build_client(
                     row,
-                    env=self._open(row.env_enc),
-                    credentials=self._open(row.auth_enc),
+                    env=self._open(row.env_enc, _ENV),
+                    credentials=self._open(row.auth_enc, _CREDENTIALS),
                     timeout_s=self._timeout,
                 )
             except DegradedCapabilityError as exc:
@@ -379,27 +384,26 @@ class McpRegistry:
 
         await in_session(self._db, work)
 
-    def _seal(self, payload: dict[str, Any] | None) -> str | None:
+    def _seal(self, payload: Mapping[str, object] | None) -> str | None:
         """Encrypt a credential/environment map, or clear it when the operator sent an
         empty one."""
         if not payload:
             return None
         return self._vault.encrypt_str(json.dumps(payload))
 
-    def _open(self, sealed: str | None) -> dict[str, Any] | None:
+    def _open[T](self, sealed: str | None, shape: TypeAdapter[T]) -> T | None:
         """Decrypt a sealed map, or ``None`` when there is none — or when the vault is
         locked, in which case the connection is simply attempted unauthenticated and the
         server's own 401 becomes the operator-legible failure."""
         if not sealed:
             return None
         try:
-            parsed = json.loads(self._vault.decrypt_str(sealed))
+            return shape.validate_json(self._vault.decrypt_str(sealed))
         except VaultLocked:
             return None
         except TypeError, ValueError:
             logger.warning("mcp: stored credentials could not be read")
             return None
-        return parsed if isinstance(parsed, dict) else None
 
     def _view(self, row: McpServer, policies: dict[str, ToolPolicy]) -> McpServerView:
         tools = [
@@ -418,10 +422,10 @@ class McpRegistry:
             transport=row.transport,
             url=row.url,
             command=row.command,
-            args=json.loads(row.args_json) if row.args_json else [],
+            args=_STRINGS.validate_json(row.args_json) if row.args_json else [],
             # Names only — the operator needs to see *which* variables are set without
             # their values leaving the vault on a list call.
-            env_keys=sorted(self._open(row.env_enc) or {}),
+            env_keys=sorted(self._open(row.env_enc, _ENV) or {}),
             enabled=row.enabled,
             status=row.status,
             auth_required=row.auth_required,
@@ -437,10 +441,14 @@ class McpRegistry:
 def _discovered(row: McpServer) -> list[dict[str, str]]:
     """The cached tool catalog, defensively decoded."""
     try:
-        parsed = json.loads(row.tools_json or "[]")
+        parsed = parse_json(row.tools_json or "[]")
     except TypeError, ValueError:
         return []
-    return [t for t in parsed if isinstance(t, dict) and "name" in t]
+    return [
+        {key: value for key, value in tool.items() if isinstance(value, str)}
+        for tool in dict_list(parsed)
+        if "name" in tool
+    ]
 
 
 def _reason(exc: Exception) -> str:

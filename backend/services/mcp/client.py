@@ -18,18 +18,14 @@ Two conventions the rest of the track depends on:
 from __future__ import annotations
 
 import base64
-import json
-from typing import Any
+from collections.abc import Mapping
 
-from pydantic_ai.mcp import (
-    MCPToolset,
-    SSETransport,
-    StdioTransport,
-    StreamableHttpTransport,
-)
+from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
+from pydantic_ai.mcp import MCPToolset
 
 from core.exceptions import DegradedCapabilityError
 from models.external_tool import McpServer
+from services.shapes import parse_json
 
 # The transports a server can be registered with. "http" is MCP's Streamable HTTP.
 TRANSPORTS = ("stdio", "sse", "http")
@@ -39,7 +35,7 @@ TRANSPORTS = ("stdio", "sse", "http")
 DEFAULT_CONNECT_TIMEOUT_S = 10.0
 
 
-def auth_headers(credentials: dict[str, Any] | None) -> dict[str, str]:
+def auth_headers(credentials: Mapping[str, object] | None) -> dict[str, str]:
     """Turn stored credentials into the headers an HTTP-transport server is dialled with.
 
     ``bearer`` and ``basic`` use the standard ``Authorization`` forms; ``api_key`` uses
@@ -68,7 +64,7 @@ def parse_args(args_json: str) -> list[str]:
     """The stored argv, defensively — a corrupt column yields no arguments rather than
     taking the whole surface down."""
     try:
-        parsed = json.loads(args_json)
+        parsed = parse_json(args_json)
     except TypeError, ValueError:
         return []
     return [str(a) for a in parsed] if isinstance(parsed, list) else []
@@ -78,9 +74,9 @@ def build_client(
     row: McpServer,
     *,
     env: dict[str, str] | None = None,
-    credentials: dict[str, Any] | None = None,
+    credentials: Mapping[str, object] | None = None,
     timeout_s: float = DEFAULT_CONNECT_TIMEOUT_S,
-) -> MCPToolset[Any]:
+) -> MCPToolset[object]:
     """The Pydantic AI MCP toolset for one registered server.
 
     ``env``/``credentials`` are passed already-decrypted by the caller, so this stays a
