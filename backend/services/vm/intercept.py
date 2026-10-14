@@ -30,7 +30,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 import services.vm.egress as egress
-from services.vm.egress import Secret
+from services.vm.egress import Secret as Secret
 
 _VALIDITY = datetime.timedelta(days=30)
 

@@ -21,13 +21,12 @@ import tarfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
+from core.serde import parse_json
 from services.revisions import Bundle, encode_bundle
 from services.sandbox.session import proxy_env
 from services.vm.driver import VMError
-from services.vm.egress import ALLOW_FILE
-from services.vm.intercept import Secret
+from services.vm.egress import ALLOW_FILE, Secret
 from services.vm.platform import SANDBOX_UID, PlatformVM
 
 from .manifest import PluginManifest, PluginTool
@@ -77,11 +76,11 @@ class CallResult:
 
 class PluginRuntime:
     def __init__(self, vm: PlatformVM, egress_root: Path) -> None:
-        self._vm = vm
-        self._egress_root = egress_root
+        self._vm: PlatformVM = vm
+        self._egress_root: Path = egress_root
         self._installed: dict[str, int] = {}
         self._locks: dict[str, asyncio.Lock] = {}
-        self._trusted_generation = -1
+        self._trusted_generation: int = -1
 
     @property
     def available(self) -> bool:
@@ -92,7 +91,7 @@ class PluginRuntime:
         manifest: PluginManifest,
         files: Bundle,
         tool: PluginTool,
-        args: Mapping[str, Any],
+        args: Mapping[str, object],
         *,
         hosts: Iterable[str],
         secret_values: Mapping[str, SecretValue],
@@ -133,8 +132,10 @@ class PluginRuntime:
         if result.exit_code == 124:
             return CallResult(False, f"{tool.name} took longer than {timeout_s:.0f}s", log)
         try:
-            reply = json.loads(result.stdout.strip().splitlines()[-1])
+            reply = parse_json(result.stdout.strip().splitlines()[-1])
         except IndexError, ValueError:
+            return CallResult(False, f"{tool.name} exited with status {result.exit_code}", log)
+        if not isinstance(reply, dict):
             return CallResult(False, f"{tool.name} exited with status {result.exit_code}", log)
         if not reply.get("ok"):
             return CallResult(False, str(reply.get("error", "the tool failed")), log)
@@ -159,12 +160,12 @@ class PluginRuntime:
             finally:
                 local.unlink(missing_ok=True)
             uid = str(SANDBOX_UID)
-            await self._vm.call_checked(
+            _ = await self._vm.call_checked(
                 [
                     "sh",
                     "-c",
                     'rm -rf "$1" && mkdir -p "$1" && tar -xf "$2" -C "$1" --no-same-owner '
-                    '&& chown -R "$3:$3" "$1"; status=$?; rm -f "$2"; exit $status',
+                    + '&& chown -R "$3:$3" "$1"; status=$?; rm -f "$2"; exit $status',
                     "sh",
                     directory,
                     staged,
@@ -197,7 +198,7 @@ class PluginRuntime:
             if result.exit_code != 0:
                 tail = (result.stderr or result.stdout)[-_LOG_TAIL_CHARS:]
                 raise PluginError(f"installing {manifest.name}'s requirements failed:\n{tail}")
-            await self._vm.call_checked(
+            _ = await self._vm.call_checked(
                 ["sh", "-c", 'chown -R root:root "$1" && chmod -R a+rX,go-w "$1"', "sh", directory],
                 what=f"seal plugin {manifest.name}",
             )
@@ -214,7 +215,7 @@ class PluginRuntime:
         generation = self._vm.generation
         try:
             await self._vm.put_text(_CA_PATH, interceptor.ca_pem)
-            await self._vm.call_checked(["update-ca-certificates"], what="trust the egress CA")
+            _ = await self._vm.call_checked(["update-ca-certificates"], what="trust the egress CA")
         except VMError as exc:
             raise PluginError(str(exc)) from exc
         self._trusted_generation = generation
@@ -222,7 +223,7 @@ class PluginRuntime:
     def _allow(self, key: str, hosts: Iterable[str]) -> Path:
         directory = self._egress_root / key
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / ALLOW_FILE).write_text("".join(f"{host}\n" for host in sorted(set(hosts))))
+        _ = (directory / ALLOW_FILE).write_text("".join(f"{host}\n" for host in sorted(set(hosts))))
         return directory
 
 

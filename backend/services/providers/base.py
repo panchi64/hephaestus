@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    import httpx
     from pydantic_ai.models import Model
     from pydantic_ai.settings import ModelSettings
 
@@ -96,7 +97,7 @@ class Provider(Protocol):
         ...
 
     async def discover(
-        self, base_url: str, api_key: str | None, *, client: object = None
+        self, base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
     ) -> list[str]:
         """The model ids the remote advertises — possibly empty. Raises
         ``DegradedCapabilityError`` when unreachable or unrecognized (the caller
@@ -104,14 +105,21 @@ class Provider(Protocol):
         optional pooled ``httpx.AsyncClient`` to reuse; None ⇒ a transient one."""
         ...
 
-    async def probe(self, base_url: str, api_key: str | None, *, client: object = None) -> None:
+    async def probe(
+        self, base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
+    ) -> None:
         """One lightweight reachability+auth check. Unlike ``discover`` this lets the
         **typed** httpx error propagate so the registry's connection test can tell
         auth from rate-limit from timeout from unreachable."""
         ...
 
     async def context_window(
-        self, base_url: str, api_key: str | None, model: str, *, client: object = None
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> int | None:
         """The context window ``model`` reports, or None when this provider has no way
         to say — which is the common case, not the exception.
@@ -127,7 +135,12 @@ class Provider(Protocol):
         ...
 
     async def model_limits(
-        self, base_url: str, api_key: str | None, model: str, *, client: object = None
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> ModelLimits:
         """Every limit ``model`` reports, in one lookup — what the registry asks.
 

@@ -31,7 +31,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import cast
 
 import yaml
 from jsonschema import Draft202012Validator, SchemaError
@@ -74,7 +74,7 @@ class PluginTool:
     name: str
     description: str
     entry: str
-    parameters: dict[str, Any]
+    parameters: dict[str, object]
     sensitivity: Sensitivity
 
     @property
@@ -144,7 +144,7 @@ def validate_files(files: Mapping[str, bytes]) -> PluginManifest:
             "files", f"a plugin is at most {BUNDLE_MAX_BYTES // 1024} KB of files"
         )
     for path in files:
-        validate_path(path)
+        _ = validate_path(path)
     raw = files.get(MANIFEST_FILE)
     if raw is None:
         raise PluginValidationError("files", f"a plugin needs a {MANIFEST_FILE}")
@@ -225,7 +225,7 @@ def _routines(files: Mapping[str, bytes]) -> tuple[RoutineTemplate, ...]:
             )
             if not template.prompt:
                 raise PluginValidationError("routines", "the body is the routine's prompt")
-            parse_schedule(template.schedule, "UTC")
+            _ = parse_schedule(template.schedule, "UTC")
         except (FrontmatterError, RoutineValidationError, UnicodeDecodeError) as exc:
             raise PluginValidationError("routines", f"{path}: {exc}") from None
         except PluginValidationError as exc:
@@ -234,7 +234,7 @@ def _routines(files: Mapping[str, bytes]) -> tuple[RoutineTemplate, ...]:
     return tuple(templates)
 
 
-def _required(fields: Mapping[str, Any], key: str) -> str:
+def _required(fields: Mapping[str, object], key: str) -> str:
     value = str(fields.get(key) or "").strip()
     if not value:
         raise PluginValidationError("routines", f"needs a {key}")
@@ -257,10 +257,11 @@ def validate_path(path: str) -> str:
 
 def parse_manifest(text: str) -> PluginManifest:
     try:
-        data = yaml.safe_load(text)
+        loaded = cast("object", yaml.safe_load(text))
     except yaml.YAMLError as exc:
         raise PluginValidationError(MANIFEST_FILE, f"is not valid YAML: {exc}") from None
-    if not isinstance(data, dict):
+    data = _as_mapping(loaded)
+    if data is None:
         raise PluginValidationError(MANIFEST_FILE, "must be a mapping")
     unknown = set(data) - {"name", "description", "requirements", "egress", "secrets", "tools"}
     if unknown:
@@ -270,7 +271,7 @@ def parse_manifest(text: str) -> PluginManifest:
     requirements = tuple(_requirement(line) for line in _list(data, "requirements"))
     egress = tuple(sorted({_domain("egress", raw) for raw in _list(data, "egress")}))
     secrets = _secrets(data.get("secrets") or {})
-    raw_tools = _list(data, "tools", items=dict)
+    raw_tools = _table_list(data, "tools")
     if len(raw_tools) > TOOLS_MAX:
         raise PluginValidationError("tools", f"a plugin contributes at most {TOOLS_MAX} tools")
     tools = tuple(_tool(raw) for raw in raw_tools)
@@ -285,7 +286,7 @@ def parse_manifest(text: str) -> PluginManifest:
     return PluginManifest(name, description, requirements, egress, secrets, tools)
 
 
-def _tool(raw: dict[str, Any]) -> PluginTool:
+def _tool(raw: dict[str, object]) -> PluginTool:
     unknown = set(raw) - {"name", "description", "entry", "parameters", "sensitivity"}
     if unknown:
         raise PluginValidationError("tools", f"unknown tool key {sorted(unknown)[0]!r}")
@@ -297,8 +298,8 @@ def _tool(raw: dict[str, Any]) -> PluginTool:
     entry = _text(raw, "entry", field="tools")
     if not _ENTRY.fullmatch(entry):
         raise PluginValidationError("tools", f"{entry!r} is not a `module:function` entry")
-    parameters = raw.get("parameters") or {"type": "object", "properties": {}}
-    if not isinstance(parameters, dict) or parameters.get("type") != "object":
+    parameters = _as_mapping(raw.get("parameters") or {"type": "object", "properties": {}})
+    if parameters is None or parameters.get("type") != "object":
         raise PluginValidationError("tools", f"{name}: parameters must be an object schema")
     try:
         Draft202012Validator.check_schema(parameters)
@@ -314,9 +315,10 @@ def _tool(raw: dict[str, Any]) -> PluginTool:
     )
 
 
-def _secrets(raw: object) -> dict[str, str]:
-    if not isinstance(raw, dict):
+def _secrets(raw_secrets: object) -> dict[str, str]:
+    if not isinstance(raw_secrets, dict):
         raise PluginValidationError("secrets", "secrets map each name to the host it is for")
+    raw = cast("dict[object, object]", raw_secrets)
     secrets: dict[str, str] = {}
     for name, host in raw.items():
         if not isinstance(name, str) or not _SECRET.fullmatch(name):
@@ -353,14 +355,18 @@ def _requirement(raw: object) -> str:
     return line
 
 
-def _text(data: Mapping[str, Any], key: str, *, field: str | None = None) -> str:
+def _as_mapping(value: object) -> dict[str, object] | None:
+    return cast("dict[str, object]", value) if isinstance(value, dict) else None
+
+
+def _text(data: Mapping[str, object], key: str, *, field: str | None = None) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
         raise PluginValidationError(field or key, f"{key} is required")
     return value.strip()
 
 
-def _description(data: Mapping[str, Any], key: str, *, field: str | None = None) -> str:
+def _description(data: Mapping[str, object], key: str, *, field: str | None = None) -> str:
     text = " ".join(_text(data, key, field=field).split())
     if len(text) > DESCRIPTION_MAX_CHARS:
         raise PluginValidationError(
@@ -369,8 +375,18 @@ def _description(data: Mapping[str, Any], key: str, *, field: str | None = None)
     return text
 
 
-def _list(data: Mapping[str, Any], key: str, *, items: type = object) -> list[Any]:
-    value = data.get(key) or []
-    if not isinstance(value, list) or not all(isinstance(item, items) for item in value):
+def _list(data: Mapping[str, object], key: str) -> list[object]:
+    value: object = data.get(key) or []
+    if not isinstance(value, list):
         raise PluginValidationError(key, f"{key} must be a list")
-    return value
+    return cast("list[object]", value)
+
+
+def _table_list(data: Mapping[str, object], key: str) -> list[dict[str, object]]:
+    tables: list[dict[str, object]] = []
+    for item in _list(data, key):
+        table = _as_mapping(item)
+        if table is None:
+            raise PluginValidationError(key, f"{key} must be a list")
+        tables.append(table)
+    return tables

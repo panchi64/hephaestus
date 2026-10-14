@@ -1,11 +1,12 @@
 """Plugins: tools the agent writes in Python, run in the platform VM once published."""
 
+from core.exceptions import PluginValidationError
+
 from .manifest import (
     MANIFEST_FILE,
     PluginManifest,
     PluginSkill,
     PluginTool,
-    PluginValidationError,
     RoutineTemplate,
     parse_manifest,
     validate_files,

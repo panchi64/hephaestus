@@ -8,6 +8,9 @@ family.
 
 from __future__ import annotations
 
+from typing import override
+
+import httpx
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.profiles.openai import OpenAIModelProfile
@@ -16,8 +19,8 @@ from pydantic_ai.settings import ModelSettings
 
 from core.config import get_settings
 from services import llm, reasoning
-from services.llm import EndpointSpec
-from services.providers.base import ModelLimits, ProviderPreset
+from services.endpoint_spec import EndpointSpec
+from services.providers.base import ModelLimits, Provider, ProviderPreset
 
 #: The three OpenAI cache fields. Named as a set so that switching retention off declares
 #: all of them unsupported rather than only the one this adapter would otherwise have sent —
@@ -30,13 +33,13 @@ _CACHE_SETTINGS = (
 )
 
 
-class OpenAICompatProvider:
-    id = "openai-compatible"
-    display_name = "OpenAI-compatible"
+class OpenAICompatProvider(Provider):
+    id: str = "openai-compatible"
+    display_name: str = "OpenAI-compatible"
     # A key is the server's choice, not the protocol's — a local engine ignores auth,
     # a hosted gateway demands it. The operator decides; nothing is validated away.
-    requires_key = False
-    preset = ProviderPreset(
+    requires_key: bool = False
+    preset: ProviderPreset = ProviderPreset(
         default_base_url=None,
         key_hint="sk-… (only if the server requires one)",
         docs_url=None,
@@ -50,6 +53,7 @@ class OpenAICompatProvider:
     # Pydantic AI merge the leading system messages into one at wire-prep — the
     # instructions still come from the live agent, never from history, so nothing
     # about their authority changes. Harmless where multiples were fine.
+    @override
     def build_model(self, spec: EndpointSpec) -> Model:
         # The OpenAI client refuses a None key outright, so a keyless local server
         # gets a placeholder — an auth header the server ignores. The placeholder is
@@ -76,6 +80,7 @@ class OpenAICompatProvider:
         # settings over the model's, so a caller can still override deliberately.
         return OpenAIChatModel(spec.model, provider=provider, profile=profile, settings=settings)
 
+    @override
     def model_settings(self, descriptor: reasoning.ModelDescriptor) -> OpenAIChatModelSettings:
         """Prompt-cache retention, and nothing else — usually not even that.
 
@@ -111,25 +116,44 @@ class OpenAICompatProvider:
 
     # Reached through the module (not from-imports) so a test that monkeypatches
     # `services.llm` still intercepts the adapter's calls.
-    async def discover(self, base_url: str, api_key: str | None, *, client=None) -> list[str]:
+    @override
+    async def discover(
+        self, base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
+    ) -> list[str]:
         return await llm.discover_openai_models(base_url, api_key, client=client)
 
-    async def probe(self, base_url: str, api_key: str | None, *, client=None) -> None:
+    @override
+    async def probe(
+        self, base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
+    ) -> None:
         await llm.probe_openai_endpoint(base_url, api_key, client=client)
 
+    @override
     async def context_window(
-        self, base_url: str, api_key: str | None, model: str, *, client=None
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> int | None:
         return await llm.discover_openai_context_window(base_url, model, api_key, client=client)
 
+    @override
     async def model_limits(
-        self, base_url: str, api_key: str | None, model: str, *, client=None
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> ModelLimits:
         # No output ceiling: this wire treats an absent `max_tokens` as the server's own
         # limit, so there is no library default to replace.
         window, slots = await llm.discover_openai_limits(base_url, model, api_key, client=client)
         return ModelLimits(context_window=window, parallel_slots=slots)
 
+    @override
     def reasoning_off(self, descriptor: reasoning.ModelDescriptor) -> ModelSettings:
         return reasoning.disable_thinking(descriptor)
 

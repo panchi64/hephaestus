@@ -7,15 +7,19 @@ defines them.
 
 from __future__ import annotations
 
+from typing import override
+
 import httpx
+from pydantic import JsonValue
 from pydantic_ai.models import Model
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.google import GoogleProvider as _SdkProvider
 
 from core.exceptions import DegradedCapabilityError
-from services.llm import EndpointSpec
-from services.providers.base import ModelLimits, ProviderPreset
+from core.serde import parse_json
+from services.endpoint_spec import EndpointSpec
+from services.providers.base import ModelLimits, Provider, ProviderPreset
 from services.reasoning import ModelDescriptor
 
 _DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
@@ -29,17 +33,18 @@ def _models_url(base_url: str) -> str:
     return root + "/models"
 
 
-class GoogleNativeProvider:
-    id = "google"
-    display_name = "Google"
-    requires_key = True
-    preset = ProviderPreset(
+class GoogleNativeProvider(Provider):
+    id: str = "google"
+    display_name: str = "Google"
+    requires_key: bool = True
+    preset: ProviderPreset = ProviderPreset(
         default_base_url=_DEFAULT_BASE_URL,
         key_hint="AIza…",
         docs_url="https://aistudio.google.com/apikey",
         vision=True,
     )
 
+    @override
     def build_model(self, spec: EndpointSpec) -> Model:
         base_url = spec.base_url if spec.base_url.rstrip("/") != _DEFAULT_BASE_URL else None
         provider = _SdkProvider(api_key=spec.api_key or "", base_url=base_url)
@@ -56,6 +61,7 @@ class GoogleNativeProvider:
             ),
         )
 
+    @override
     async def discover(
         self, base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
     ) -> list[str]:
@@ -69,20 +75,28 @@ class GoogleNativeProvider:
         if not isinstance(models, list):
             raise DegradedCapabilityError(f"{base_url!r} returned an unrecognized models payload")
         # Gemini names come as "models/<id>" — the stored/served id is the bare one.
-        ids = [
-            row["name"].removeprefix("models/")
-            for row in models
-            if isinstance(row, dict) and isinstance(row.get("name"), str) and row["name"]
-        ]
+        ids: list[str] = []
+        for row in models:
+            if isinstance(row, dict):
+                name = row.get("name")
+                if isinstance(name, str) and name:
+                    ids.append(name.removeprefix("models/"))
         return sorted(dict.fromkeys(i for i in ids if i))
 
+    @override
     async def probe(
         self, base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
     ) -> None:
-        await self._list_models(base_url, api_key, client=client)
+        _ = await self._list_models(base_url, api_key, client=client)
 
+    @override
     async def context_window(
-        self, base_url: str, api_key: str | None, model: str, *, client=None
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> int | None:
         """Gemini states this outright — ``inputTokenLimit`` on each listing entry —
         so no key-guessing is needed here, unlike the OpenAI-wire adapter.
@@ -107,8 +121,14 @@ class GoogleNativeProvider:
                 return limit
         return None
 
+    @override
     async def model_limits(
-        self, base_url: str, api_key: str | None, model: str, *, client=None
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> ModelLimits:
         # The window only: `GoogleModel` leaves an absent output cap off the request, so
         # the server's own limit already applies and there is nothing to replace.
@@ -118,17 +138,18 @@ class GoogleNativeProvider:
 
     async def _list_models(
         self, base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
-    ) -> object:
+    ) -> JsonValue:
         headers = {"x-goog-api-key": api_key} if api_key else {}
         http = client or httpx.AsyncClient(follow_redirects=True)
         try:
             response = await http.get(_models_url(base_url), headers=headers, timeout=_TIMEOUT)
-            response.raise_for_status()
-            return response.json()
+            _ = response.raise_for_status()
+            return parse_json(response.content)
         finally:
             if client is None:
                 await http.aclose()
 
+    @override
     def reasoning_off(self, descriptor: ModelDescriptor) -> GoogleModelSettings:
         # Only the Flash/Lite family accepts a zero thinking budget; Pro enforces a
         # floor and rejects 0, so an unrecognized Gemini is left to think.

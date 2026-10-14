@@ -26,7 +26,7 @@ def _discover() -> dict[str, Provider]:
         if module_info.name.startswith("_") or module_info.name == "base":
             continue
         module = importlib.import_module(f"services.providers.{module_info.name}")
-        provider = getattr(module, "PROVIDER", None)
+        provider: Provider | None = getattr(module, "PROVIDER", None)
         if provider is None:
             continue
         if provider.id in providers:

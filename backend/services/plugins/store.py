@@ -17,7 +17,7 @@ from sqlalchemy import Engine, delete
 from sqlmodel import Session, col, select
 
 from core.db import in_session
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, PluginValidationError
 from core.vault import Vault
 from models.plugin import Plugin, PluginSecret
 from services.agents.definition import AgentDefinition
@@ -26,7 +26,6 @@ from services.revisions import Bundle, RevisionStore, decode_bundle, encode_bund
 from .manifest import (
     PluginManifest,
     PluginSkill,
-    PluginValidationError,
     RoutineTemplate,
     secret_domain,
     validate_files,
@@ -70,14 +69,14 @@ class SecretValue:
 
 
 class PluginStore:
-    revision_kind = "plugin"
+    revision_kind: str = "plugin"
 
     def __init__(
         self, engine: Engine, vault: Vault, revisions: RevisionStore | None = None
     ) -> None:
-        self._engine = engine
-        self._vault = vault
-        self.revisions = revisions
+        self._engine: Engine = engine
+        self._vault: Vault = vault
+        self.revisions: RevisionStore | None = revisions
 
     # --- reads ------------------------------------------------------------------
 
@@ -191,7 +190,7 @@ class PluginStore:
             files = dict(base)
             for path, blob in changes.items():
                 if blob is None:
-                    files.pop(path, None)
+                    _ = files.pop(path, None)
                 else:
                     files[path] = blob
             manifest = validate_files(files)
@@ -249,7 +248,7 @@ class PluginStore:
         def work(session: Session) -> PluginView:
             row = _require(session, owner_id, plugin_id)
             if row.draft_enc is not None:
-                validate_files(self._open(row.draft_enc))
+                _ = validate_files(self._open(row.draft_enc))
                 row.active_enc, row.draft_enc = row.draft_enc, None
             if row.active_enc is None:
                 raise PluginValidationError("draft", "there is nothing to publish")
@@ -357,10 +356,10 @@ class PluginStore:
         await in_session(self._engine, work)
 
     async def delete_secret(self, owner_id: str, plugin_id: str, name: str) -> None:
-        await self.get(owner_id, plugin_id)
+        _ = await self.get(owner_id, plugin_id)
 
         def work(session: Session) -> None:
-            session.exec(
+            _ = session.exec(
                 delete(PluginSecret)
                 .where(col(PluginSecret.plugin_id) == plugin_id)
                 .where(col(PluginSecret.name) == name)
@@ -408,7 +407,7 @@ class PluginStore:
 
 
 def _delete(session: Session, row: Plugin) -> None:
-    session.exec(delete(PluginSecret).where(col(PluginSecret.plugin_id) == row.id))
+    _ = session.exec(delete(PluginSecret).where(col(PluginSecret.plugin_id) == row.id))
     session.delete(row)
 
 

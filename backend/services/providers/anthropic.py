@@ -7,9 +7,11 @@ their native shape) instead of squeezing Claude through an OpenAI-compat gateway
 
 from __future__ import annotations
 
+from typing import override
 from urllib.parse import quote
 
 import httpx
+from pydantic import JsonValue
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.profiles import ModelProfile
@@ -18,8 +20,10 @@ from pydantic_ai.settings import ModelSettings
 
 from core.config import get_settings
 from core.exceptions import DegradedCapabilityError
-from services.llm import EndpointSpec, descriptor_of, positive_int
-from services.providers.base import ModelLimits, ProviderPreset
+from core.serde import parse_json
+from services.endpoint_spec import EndpointSpec
+from services.llm import descriptor_of, positive_int
+from services.providers.base import ModelLimits, Provider, ProviderPreset
 from services.reasoning import ModelDescriptor
 
 _DEFAULT_BASE_URL = "https://api.anthropic.com"
@@ -43,17 +47,18 @@ def _models_url(base_url: str) -> str:
     return root + "/models"
 
 
-class AnthropicNativeProvider:
-    id = "anthropic"
-    display_name = "Anthropic"
-    requires_key = True
-    preset = ProviderPreset(
+class AnthropicNativeProvider(Provider):
+    id: str = "anthropic"
+    display_name: str = "Anthropic"
+    requires_key: bool = True
+    preset: ProviderPreset = ProviderPreset(
         default_base_url=_DEFAULT_BASE_URL,
         key_hint="sk-ant-…",
         docs_url="https://console.anthropic.com/settings/keys",
         vision=True,
     )
 
+    @override
     def build_model(self, spec: EndpointSpec) -> Model:
         provider = _SdkProvider(api_key=spec.api_key, base_url=spec.base_url)
         settings: AnthropicModelSettings = self.model_settings(descriptor_of(spec))
@@ -80,6 +85,7 @@ class AnthropicNativeProvider:
             ),
         )
 
+    @override
     async def discover(
         self, base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
     ) -> list[str]:
@@ -92,26 +98,40 @@ class AnthropicNativeProvider:
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, list):
             raise DegradedCapabilityError(f"{base_url!r} returned an unrecognized models payload")
-        ids = [
-            row["id"]
-            for row in data
-            if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]
-        ]
+        ids: list[str] = []
+        for row in data:
+            if isinstance(row, dict):
+                model_id = row.get("id")
+                if isinstance(model_id, str) and model_id:
+                    ids.append(model_id)
         return sorted(dict.fromkeys(ids))
 
+    @override
     async def probe(
         self, base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
     ) -> None:
-        await self._list_models(base_url, api_key, client=client)
+        _ = await self._list_models(base_url, api_key, client=client)
 
+    @override
     async def context_window(
-        self, base_url: str, api_key: str | None, model: str, *, client=None
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> int | None:
         """The model's ``max_input_tokens``, read off its models-API entry."""
         return (await self.model_limits(base_url, api_key, model, client=client)).context_window
 
+    @override
     async def model_limits(
-        self, base_url: str, api_key: str | None, model: str, *, client=None
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> ModelLimits:
         """Both limits from the model's own ``GET /v1/models/{id}`` entry:
         ``max_input_tokens`` is the context window, ``max_tokens`` the largest output
@@ -139,26 +159,28 @@ class AnthropicNativeProvider:
 
     async def _list_models(
         self, base_url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
-    ) -> object:
+    ) -> JsonValue:
         return await self._get(_models_url(base_url), api_key, client=client)
 
     async def _get(
         self, url: str, api_key: str | None, *, client: httpx.AsyncClient | None = None
-    ) -> object:
+    ) -> JsonValue:
         http = client or httpx.AsyncClient(follow_redirects=True)
         try:
             response = await http.get(url, headers=_headers(api_key), timeout=_TIMEOUT)
-            response.raise_for_status()
-            return response.json()
+            _ = response.raise_for_status()
+            return parse_json(response.content)
         finally:
             if client is None:
                 await http.aclose()
 
+    @override
     def reasoning_off(self, descriptor: ModelDescriptor) -> ModelSettings:
         # Claude's extended thinking is opt-in per request — a background call that
         # asks for nothing gets nothing, so there is no lever to pull here.
         return {}
 
+    @override
     def model_settings(self, descriptor: ModelDescriptor) -> AnthropicModelSettings:
         """Prompt-cache breakpoints on the three prefixes a chat turn repeats verbatim.
 

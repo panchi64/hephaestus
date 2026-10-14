@@ -19,7 +19,7 @@ that wanted it defaulted are both right, and neither is decidable from here.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import cast
 
 import yaml
 
@@ -36,7 +36,7 @@ class FrontmatterError(ValueError):
     """The text does not carry a readable ``---`` YAML block."""
 
 
-def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+def split_frontmatter(text: str) -> tuple[dict[str, object], str]:
     """The frontmatter fields and the body below them.
 
     The leading BOM strip is not defensive decoration: these files are written by hand, on
@@ -53,9 +53,9 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         raise FrontmatterError(f"the {FENCE!r} frontmatter block is never closed")
     body = rest[closing.end() :].lstrip("\r\n").rstrip()
     try:
-        loaded = yaml.safe_load(rest[: closing.start()]) or {}
+        loaded: object = cast("object", yaml.safe_load(rest[: closing.start()])) or {}
     except yaml.YAMLError as exc:
         raise FrontmatterError(f"frontmatter is not valid YAML: {exc}") from None
     if not isinstance(loaded, dict):
         raise FrontmatterError("frontmatter must be a mapping of fields")
-    return loaded, body
+    return cast("dict[str, object]", loaded), body
