@@ -10,66 +10,86 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
+import httpx
+import pytest
+from pydantic import JsonValue
+
 from routes.conversations import _message_versions
+from runs import Run, RunRegistry
 from services.conversation_view import MessageView, ToolView
+from services.conversations import ConversationStore
+from services.registry import ModelRegistry, ResolvedModel
 from services.workspace_history import SnapshotView, format_show_result
 
-from ._helpers import client_app, collect_sse_events, patch_model_resolution
+from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from ._json import arr, json_body, json_list, obj, s
 
 
-async def _start_conversation(client, prompt: str = "say hi") -> str:
+async def _start_conversation(client: httpx.AsyncClient, prompt: str = "say hi") -> str:
     """Run one chat turn and return its conversation id, draining the stream so
     the turn's messages are recorded before we read them back."""
     resp = await client.post("/chat", json={"prompt": prompt})
     assert resp.status_code == 202
-    body = resp.json()
-    await collect_sse_events(client, body["run_id"])
-    return body["conversation_id"]
+    body = json_body(resp)
+    _ = await collect_sse_events(client, s(body["run_id"]))
+    return s(body["conversation_id"])
 
 
-async def test_list_conversations(monkeypatch):
+async def _rows(client: httpx.AsyncClient) -> list[JsonValue]:
+    return json_list(await client.get("/conversations"))
+
+
+async def _first_row(client: httpx.AsyncClient) -> dict[str, JsonValue]:
+    return obj((await _rows(client))[0])
+
+
+async def _detail(client: httpx.AsyncClient, conversation_id: str) -> dict[str, JsonValue]:
+    return json_body(await client.get(f"/conversations/{conversation_id}"))
+
+
+async def test_list_conversations(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch, output_text="hello there")
     async with client_app() as (client, _app):
         conversation_id = await _start_conversation(client)
 
         resp = await client.get("/conversations")
         assert resp.status_code == 200
-        rows = resp.json()
+        rows = json_list(resp)
         assert len(rows) == 1
-        row = rows[0]
+        row = obj(rows[0])
         assert row["id"] == conversation_id
         assert row["message_count"] == 2  # user prompt + assistant answer
         assert row["preview"]  # derived from the latest message text
         assert row["model"] == "test"  # the model the turn ran on (TestModel)
 
 
-async def test_summary_model_survives_a_cold_read(monkeypatch):
+async def test_summary_model_survives_a_cold_read(monkeypatch: pytest.MonkeyPatch):
     """The last-used model is durable: it's recovered from the stored response blob
     after the in-memory tree is evicted, not only while the conversation is warm."""
     patch_model_resolution(monkeypatch, output_text="hello there")
     async with client_app() as (client, app):
         conversation_id = await _start_conversation(client)
-        app.state.conversations._cache.clear()  # force the cold (DB) summary path
+        store = app_state(app, "conversations", ConversationStore)
+        store._cache.clear()  # force the cold (DB) summary path
 
-        store = app.state.conversations
         await store._worker.join()  # let the write-behind drainer settle the model
         store._cache.clear()  # force the cold (DB) summary path
 
-        rows = (await client.get("/conversations")).json()
-        assert rows[0]["id"] == conversation_id
-        assert rows[0]["model"] == "test"
+        rows = await _rows(client)
+        assert obj(rows[0])["id"] == conversation_id
+        assert obj(rows[0])["model"] == "test"
 
 
-async def test_get_conversation_projects_history(monkeypatch):
+async def test_get_conversation_projects_history(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch, output_text="hello there")
     async with client_app() as (client, _app):
         conversation_id = await _start_conversation(client, prompt="say hi")
 
         resp = await client.get(f"/conversations/{conversation_id}")
         assert resp.status_code == 200
-        detail = resp.json()
+        detail = json_body(resp)
         assert detail["id"] == conversation_id
-        messages = detail["messages"]
+        messages = [obj(m) for m in arr(detail["messages"])]
         assert [m["role"] for m in messages] == ["user", "assistant"]
         assert messages[0]["content"] == "say hi"
         assert messages[0]["model"] is None  # user turns carry no model
@@ -84,7 +104,7 @@ async def test_get_unknown_conversation_404():
         assert resp.status_code == 404
 
 
-async def test_detail_reports_an_in_flight_run(monkeypatch):
+async def test_detail_reports_an_in_flight_run(monkeypatch: pytest.MonkeyPatch):
     """A turn still streaming server-side surfaces as ``active_run`` on the cold
     read, so a reattaching client (e.g. a page reload mid-stream) can resume it
     instead of rendering the thread reply-less."""
@@ -93,41 +113,42 @@ async def test_detail_reports_an_in_flight_run(monkeypatch):
         conversation_id = await _start_conversation(client)
 
         # The completed turn left no live run.
-        first = (await client.get(f"/conversations/{conversation_id}")).json()
+        first = await _detail(client, conversation_id)
         assert first["active_run"] is None
 
         # Simulate a fresh turn that's still running for this conversation.
         started, release = asyncio.Event(), asyncio.Event()
 
-        async def orch(run):
+        async def orch(_run: Run) -> None:
             started.set()
-            await release.wait()
+            _ = await release.wait()
 
-        run = app.state.runs.submit(
+        run = app_state(app, "runs", RunRegistry).submit(
             kind="chat",
             owner_id="operator",
             orchestrator=orch,
             conversation_id=conversation_id,
         )
-        await started.wait()
+        _ = await started.wait()
 
-        detail = (await client.get(f"/conversations/{conversation_id}")).json()
-        assert detail["active_run"]["id"] == run.id
+        detail = await _detail(client, conversation_id)
+        active = obj(detail["active_run"])
+        assert active["id"] == run.id
         # The kind rides along so a reattaching client knows whether to seed an
         # assistant turn — a fold is a run that writes none.
-        assert detail["active_run"]["kind"] == "chat"
-        assert detail["active_run"]["status"] == "running"
-        assert isinstance(detail["active_run"]["last_seq"], int)
+        assert active["kind"] == "chat"
+        assert active["status"] == "running"
+        assert isinstance(active["last_seq"], int)
 
         release.set()
         await run.wait()
 
         # Terminal again → the read no longer advertises a live run.
-        after = (await client.get(f"/conversations/{conversation_id}")).json()
+        after = await _detail(client, conversation_id)
         assert after["active_run"] is None
 
 
-async def test_list_reports_which_threads_are_working(monkeypatch):
+async def test_list_reports_which_threads_are_working(monkeypatch: pytest.MonkeyPatch):
     """Each row carries the status of the run driving it, so the thread list can mark
     a working conversation without opening it. Registry-derived: a turn isn't
     persisted until it finishes, so the stored summary alone can't tell."""
@@ -136,32 +157,34 @@ async def test_list_reports_which_threads_are_working(monkeypatch):
         conversation_id = await _start_conversation(client)
 
         # The completed turn left no live run — the row is at rest.
-        assert (await client.get("/conversations")).json()[0]["activity"] is None
+        assert (await _first_row(client))["activity"] is None
 
         started, release = asyncio.Event(), asyncio.Event()
 
-        async def orch(run):
+        async def orch(_run: Run) -> None:
             started.set()
-            await release.wait()
+            _ = await release.wait()
 
-        run = app.state.runs.submit(
+        run = app_state(app, "runs", RunRegistry).submit(
             kind="chat",
             owner_id="operator",
             orchestrator=orch,
             conversation_id=conversation_id,
         )
-        await started.wait()
+        _ = await started.wait()
 
-        assert (await client.get("/conversations")).json()[0]["activity"] == "running"
+        assert (await _first_row(client))["activity"] == "running"
 
         release.set()
         await run.wait()
 
         # Terminal again → the row goes back to rest.
-        assert (await client.get("/conversations")).json()[0]["activity"] is None
+        assert (await _first_row(client))["activity"] is None
 
 
-async def test_list_distinguishes_a_parked_run_from_a_streaming_one(monkeypatch):
+async def test_list_distinguishes_a_parked_run_from_a_streaming_one(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """A run parked on the operator's approval decision reports its own
     ``awaiting_input`` status rather than folding into plain activity — it's a
     "needs YOU" signal, and the list tones it differently."""
@@ -169,10 +192,11 @@ async def test_list_distinguishes_a_parked_run_from_a_streaming_one(monkeypatch)
     async with client_app() as (client, app):
         conversation_id = await _start_conversation(client)
 
-        async def orch(run):
+        async def orch(run: Run) -> None:
             run.park(None)
 
-        run = app.state.runs.submit(
+        runs = app_state(app, "runs", RunRegistry)
+        run = runs.submit(
             kind="chat",
             owner_id="operator",
             orchestrator=orch,
@@ -180,15 +204,17 @@ async def test_list_distinguishes_a_parked_run_from_a_streaming_one(monkeypatch)
         )
         await run.wait()
 
-        rows = (await client.get("/conversations")).json()
-        assert rows[0]["activity"] == "awaiting_input"
+        rows = await _rows(client)
+        assert obj(rows[0])["activity"] == "awaiting_input"
 
         # Parking is non-terminal; decide it out of band so the app tears down clean.
-        assert await app.state.runs.cancel(run.id) is True
-        assert (await client.get("/conversations")).json()[0]["activity"] is None
+        assert await runs.cancel(run.id) is True
+        assert (await _first_row(client))["activity"] is None
 
 
-async def test_a_finished_turn_is_distinguishable_from_a_thread_that_never_ran(monkeypatch):
+async def test_a_finished_turn_is_distinguishable_from_a_thread_that_never_ran(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """`activity` covers the three live statuses only, so a terminal run used to collapse
     to the same null an idle thread reports — done, failed and never-started were one
     row. `last_outcome` is the sibling that separates them."""
@@ -196,26 +222,26 @@ async def test_a_finished_turn_is_distinguishable_from_a_thread_that_never_ran(m
     async with client_app() as (client, _app):
         conversation_id = await _start_conversation(client)
 
-        row = (await client.get("/conversations")).json()[0]
+        row = await _first_row(client)
         assert row["activity"] is None
         assert row["last_outcome"] == "done"
 
         # And on the read of the thread itself, which carries the listing row's shape.
-        detail = (await client.get(f"/conversations/{conversation_id}")).json()
+        detail = await _detail(client, conversation_id)
         assert detail["last_outcome"] == "done"
 
 
-async def test_a_failed_run_says_so_on_the_row(monkeypatch):
+async def test_a_failed_run_says_so_on_the_row(monkeypatch: pytest.MonkeyPatch):
     """The whole point: a thread whose last turn blew up looks different in the rail
     from one sitting quietly, without opening it."""
     patch_model_resolution(monkeypatch, output_text="hello there")
     async with client_app() as (client, app):
         conversation_id = await _start_conversation(client)
 
-        async def orch(_run):
+        async def orch(_run: Run) -> None:
             raise RuntimeError("the turn fell over")
 
-        run = app.state.runs.submit(
+        run = app_state(app, "runs", RunRegistry).submit(
             kind="chat",
             owner_id="operator",
             orchestrator=orch,
@@ -223,12 +249,12 @@ async def test_a_failed_run_says_so_on_the_row(monkeypatch):
         )
         await run.wait()
 
-        row = (await client.get("/conversations")).json()[0]
+        row = await _first_row(client)
         assert row["activity"] is None
         assert row["last_outcome"] == "error"
 
 
-async def test_a_live_run_keeps_the_previous_outcome_beside_it(monkeypatch):
+async def test_a_live_run_keeps_the_previous_outcome_beside_it(monkeypatch: pytest.MonkeyPatch):
     """The two fields answer different questions and are read together: what this thread
     is doing now, and how it last ended. A thread can be running having failed before."""
     patch_model_resolution(monkeypatch, output_text="hello there")
@@ -236,19 +262,19 @@ async def test_a_live_run_keeps_the_previous_outcome_beside_it(monkeypatch):
         conversation_id = await _start_conversation(client)
         started, release = asyncio.Event(), asyncio.Event()
 
-        async def orch(_run):
+        async def orch(_run: Run) -> None:
             started.set()
-            await release.wait()
+            _ = await release.wait()
 
-        run = app.state.runs.submit(
+        run = app_state(app, "runs", RunRegistry).submit(
             kind="chat",
             owner_id="operator",
             orchestrator=orch,
             conversation_id=conversation_id,
         )
-        await started.wait()
+        _ = await started.wait()
 
-        row = (await client.get("/conversations")).json()[0]
+        row = await _first_row(client)
         assert row["activity"] == "running"
         assert row["last_outcome"] == "done"  # the turn that created the thread
 
@@ -256,7 +282,7 @@ async def test_a_live_run_keeps_the_previous_outcome_beside_it(monkeypatch):
         await run.wait()
 
 
-async def test_rename_conversation(monkeypatch):
+async def test_rename_conversation(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch, output_text="hello there")
     async with client_app() as (client, _app):
         conversation_id = await _start_conversation(client)
@@ -265,29 +291,31 @@ async def test_rename_conversation(monkeypatch):
             f"/conversations/{conversation_id}", json={"title": "Migration plan"}
         )
         assert resp.status_code == 200
-        assert resp.json()["title"] == "Migration plan"
+        assert json_body(resp)["title"] == "Migration plan"
 
         detail = await client.get(f"/conversations/{conversation_id}")
-        assert detail.json()["title"] == "Migration plan"
+        assert json_body(detail)["title"] == "Migration plan"
 
 
-async def test_retitle_overwrites_even_an_operator_title(monkeypatch):
+async def test_retitle_overwrites_even_an_operator_title(monkeypatch: pytest.MonkeyPatch):
     # A manual re-title is a deliberate operator action, so unlike the fill-only-if-blank
     # auto-titler it overwrites unconditionally — even a name the operator just set.
     patch_model_resolution(monkeypatch, output_text="Regenerated Name")
     async with client_app() as (client, _app):
         conversation_id = await _start_conversation(client)
-        await client.patch(f"/conversations/{conversation_id}", json={"title": "Operator Name"})
+        _ = await client.patch(f"/conversations/{conversation_id}", json={"title": "Operator Name"})
 
         resp = await client.post(f"/conversations/{conversation_id}/retitle")
         assert resp.status_code == 200
-        assert resp.json()["title"] == "Regenerated Name"
+        assert json_body(resp)["title"] == "Regenerated Name"
 
         detail = await client.get(f"/conversations/{conversation_id}")
-        assert detail.json()["title"] == "Regenerated Name"
+        assert json_body(detail)["title"] == "Regenerated Name"
 
 
-async def test_retitle_resolves_background_with_the_picker_override(monkeypatch):
+async def test_retitle_resolves_background_with_the_picker_override(
+    monkeypatch: pytest.MonkeyPatch,
+):
     # The conversation persists no endpoint, so a manual re-title names the thread with
     # the operator's current pick (like a chat turn) — not a default role they may
     # never have bound. The picked endpoint/model is forwarded to background resolution
@@ -297,12 +325,16 @@ async def test_retitle_resolves_background_with_the_picker_override(monkeypatch)
     async with client_app() as (client, _app):
         conversation_id = await _start_conversation(client)
 
-        from services.registry import ModelRegistry
-
         seen: dict[str, str | None] = {}
         real_resolve = ModelRegistry.resolve_background
 
-        async def spy(self, *, owner_id, override_endpoint_id=None, override_model=None):
+        async def spy(
+            self: ModelRegistry,
+            *,
+            owner_id: str,
+            override_endpoint_id: str | None = None,
+            override_model: str | None = None,
+        ) -> ResolvedModel:
             seen["endpoint_id"] = override_endpoint_id
             seen["model"] = override_model
             return await real_resolve(
@@ -319,7 +351,7 @@ async def test_retitle_resolves_background_with_the_picker_override(monkeypatch)
             json={"endpoint_id": "ep-1", "model": "qwen3"},
         )
         assert resp.status_code == 200
-        assert resp.json()["title"] == "Picked Title"
+        assert json_body(resp)["title"] == "Picked Title"
         assert seen == {"endpoint_id": "ep-1", "model": "qwen3"}
 
 
@@ -335,7 +367,7 @@ async def test_rename_unknown_conversation_404():
         assert resp.status_code == 404
 
 
-async def test_delete_conversation(monkeypatch):
+async def test_delete_conversation(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch, output_text="hello there")
     async with client_app() as (client, _app):
         conversation_id = await _start_conversation(client)
@@ -359,7 +391,7 @@ class _RecordingPurger:
 
     def __init__(self, *, fail: bool = False) -> None:
         self.purged: list[str] = []
-        self._fail = fail
+        self._fail: bool = fail
 
     async def purge(self, key: str) -> None:
         self.purged.append(key)
@@ -367,7 +399,7 @@ class _RecordingPurger:
             raise RuntimeError("teardown blew up")
 
 
-async def test_delete_conversation_purges_its_sandbox(monkeypatch):
+async def test_delete_conversation_purges_its_sandbox(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch, output_text="hi")
     async with client_app() as (client, app):
         conversation_id = await _start_conversation(client)
@@ -378,7 +410,7 @@ async def test_delete_conversation_purges_its_sandbox(monkeypatch):
         assert app.state.sandbox.purged == [conversation_id]
 
 
-async def test_delete_conversation_purges_its_browser(monkeypatch):
+async def test_delete_conversation_purges_its_browser(monkeypatch: pytest.MonkeyPatch):
     # The saved login is the point: it holds the cookies for every site the thread signed
     # into, and it would otherwise outlive the thread the operator deliberately destroyed.
     patch_model_resolution(monkeypatch, output_text="hi")
@@ -391,7 +423,7 @@ async def test_delete_conversation_purges_its_browser(monkeypatch):
         assert app.state.browser_sessions.purged == [conversation_id]
 
 
-async def test_delete_conversation_survives_a_failing_purge(monkeypatch):
+async def test_delete_conversation_survives_a_failing_purge(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch, output_text="hi")
     async with client_app() as (client, app):
         conversation_id = await _start_conversation(client)
@@ -451,7 +483,7 @@ def test_cold_read_skips_view_without_version_id():
     assert _message_versions(message, {}) == []
 
 
-async def test_auto_compact_override_round_trip(monkeypatch):
+async def test_auto_compact_override_round_trip(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, _app):
         cid = await _start_conversation(client)
@@ -467,18 +499,18 @@ async def test_auto_compact_override_round_trip(monkeypatch):
         assert back.json()["override"] is False
 
         # Clear it back to inherit.
-        await client.put(f"/conversations/{cid}/auto-compact", json={"override": None})
+        _ = await client.put(f"/conversations/{cid}/auto-compact", json={"override": None})
         assert (await client.get(f"/conversations/{cid}/auto-compact")).json()["override"] is None
 
 
-async def test_auto_compact_override_unknown_conversation_404(monkeypatch):
+async def test_auto_compact_override_unknown_conversation_404(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, _app):
         resp = await client.get("/conversations/does-not-exist/auto-compact")
         assert resp.status_code == 404
 
 
-async def test_retired_tool_result_compaction_route_is_gone(monkeypatch):
+async def test_retired_tool_result_compaction_route_is_gone(monkeypatch: pytest.MonkeyPatch):
     # Tool-result compaction was removed; its per-thread override went with it. The
     # surviving `/auto-compact` route must not have quietly inherited the old path.
     patch_model_resolution(monkeypatch)
