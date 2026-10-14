@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, TypedDict
 import httpx
 from pydantic_ai.models.test import TestModel
 
+from agent import ParkedTurn
 from app import create_app
 from core.config import Settings
 from runs import EventBody, Run
@@ -280,6 +281,12 @@ def group_running(pgid: int) -> bool:
         if int(group) == pgid and state != "Z":
             return True
     return False
+
+
+def parked_turn(run: Run) -> ParkedTurn:
+    payload = run.parked_payload
+    assert isinstance(payload, ParkedTurn)
+    return payload
 
 
 def run_bodies(run: Run) -> list[EventBody]:

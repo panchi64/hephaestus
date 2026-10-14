@@ -7,20 +7,32 @@ and continues, because what these tests are about is what the tool does once it 
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic_ai import (
     Agent,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
     ToolApproved,
+    ToolDenied,
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
-from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator, stream_agent_run
+from agent import build_chat_orchestrator, build_resume_orchestrator, stream_agent_run
 from core.config import Settings
 from core.container import ServiceContainer
-from runs import Run, RunRegistry, RunStatus, RunStream
+from runs import (
+    ApprovalRequired,
+    Run,
+    RunRegistry,
+    RunStatus,
+    RunStream,
+    ToolCompleted,
+    ToolProgress,
+    ToolStarted,
+)
 from services.egress import EgressPolicy
 from services.sandbox import (
     HostConfinement,
@@ -32,6 +44,8 @@ from services.sandbox import (
 from tools import RunDeps, build_agent_toolsets
 from tools import code as code_module
 from tools.code import code_toolset
+
+from ._helpers import bodies_of, first_body, parked_turn, run_bodies
 
 
 class _CannedSession:
@@ -106,11 +120,13 @@ class FakeEgressPolicy:
         return frozenset(self.allowed)
 
 
-def _bodies(run: Run):
-    return [e.body for e in run.stream.replay()]
+def _execute_description() -> str:
+    description = code_module.code_toolset().tools["execute"].description
+    assert description is not None
+    return description
 
 
-def _one_tool_agent(tool: str) -> Agent:
+def _one_tool_agent(tool: str) -> Agent[RunDeps, DeferredToolRequests | str]:
     return Agent(
         TestModel(call_tools=[tool]),
         deps_type=RunDeps,
@@ -153,11 +169,12 @@ async def _run_one_tool(
     announced: set[str] = set()
     async with agent.iter("go", deps=deps) as agent_run:
         await stream_agent_run(agent_run, run, announced=announced)
+        assert agent_run.result is not None
         output = agent_run.result.output
         messages = agent_run.result.all_messages()
     if not isinstance(output, DeferredToolRequests) or not output.approvals:
         return run
-    approvals = {call.tool_call_id: ToolApproved() for call in output.approvals}
+    approvals: dict[str, ToolApproved | ToolDenied | bool] = {call.tool_call_id: ToolApproved() for call in output.approvals}
     async with agent.iter(
         None,
         deps=deps,
@@ -178,6 +195,7 @@ async def test_sandboxed_execution_is_deferred_before_it_runs():
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     async with agent.iter("go", deps=_one_tool_deps(run, manager)) as agent_run:
         await stream_agent_run(agent_run, run)
+        assert agent_run.result is not None
         output = agent_run.result.output
 
     assert isinstance(output, DeferredToolRequests)
@@ -199,10 +217,10 @@ async def test_execute_code_runs_in_the_conversation_session():
     spec = manager.session.specs[0]
     assert spec.command[:2] == ["python", "-c"]
     # The result reached the model, once the call was approved.
-    completed = next(b for b in _bodies(run) if b.type == "tool.completed")
+    completed = first_body(run, ToolCompleted)
     assert completed.result["stdout"] == "hello from box"
     # Announced once across both passes, not re-announced on the continuation.
-    assert len([b for b in _bodies(run) if b.type == "tool.started"]) == 1
+    assert len(bodies_of(run, ToolStarted)) == 1
 
 
 async def test_cold_session_announces_the_spin_up():
@@ -211,8 +229,9 @@ async def test_cold_session_announces_the_spin_up():
     manager = FakeSessionManager()  # FakeSession.is_warm is False ⇒ cold start
     run = await _run_one_tool("code_execute", sessions=manager)
 
-    progress = [b for b in _bodies(run) if b.type == "tool.progress"]
+    progress = bodies_of(run, ToolProgress)
     assert len(progress) == 1
+    assert progress[0].partial is not None
     assert "sandbox" in progress[0].partial.lower()
 
 
@@ -223,24 +242,27 @@ async def test_cold_session_announces_the_vm_boot_when_the_vm_is_still_starting(
     manager.vm_starting = True
     run = await _run_one_tool("code_execute", sessions=manager)
 
-    progress = [b for b in _bodies(run) if b.type == "tool.progress"]
+    progress = bodies_of(run, ToolProgress)
     assert len(progress) == 1
+    assert progress[0].partial is not None
     assert "vm" in progress[0].partial.lower()
 
 
 async def test_execute_code_fails_closed_without_a_runtime():
     # No sandbox wired in ⇒ the tool reports unavailable and does NOT touch host.
     run = await _run_one_tool("code_execute", sessions=None)
-    completed = next(b for b in _bodies(run) if b.type == "tool.completed")
+    completed = first_body(run, ToolCompleted)
     assert completed.result["ok"] is False
     assert "unavailable" in completed.result["error"].lower()
 
 
 # --- failures feed back to the model (the iterate-fix loop) -------------------
-async def _run_canned(*, result=None, error=None) -> dict:
+async def _run_canned(
+    *, result: SandboxResult | None = None, error: Exception | None = None
+) -> dict[str, Any]:
     manager = _CannedManager(_CannedSession(result=result, error=error))
     run = await _run_one_tool("code_execute", sessions=manager)
-    return next(b for b in _bodies(run) if b.type == "tool.completed").result
+    return first_body(run, ToolCompleted).result
 
 
 async def test_failed_run_feeds_stderr_and_a_hint_back():
@@ -383,7 +405,7 @@ async def test_execute_description_states_the_live_config_caps(monkeypatch):
     )
     monkeypatch.setattr(code_module, "get_settings", lambda: settings)
 
-    description = code_module.code_toolset().tools["execute"].description
+    description = _execute_description()
 
     assert "256m" in description
     assert "0.5" in description
@@ -397,7 +419,7 @@ async def test_execute_describes_a_reachable_machine_and_the_one_way_to_widen_it
     installing are free, and the only thing that has to be asked for is a host off the
     allowlist. A description still offering a `network` flag would send the model looking
     for an argument that no longer exists."""
-    description = code_module.code_toolset().tools["execute"].description
+    description = _execute_description()
 
     assert "code_request_egress" in description
     assert "network=True" not in description
@@ -411,7 +433,7 @@ async def test_execute_points_at_the_file_tools_without_reciting_them():
     naming all six again here bought a second copy of that text on every turn. What the
     model cannot get elsewhere — that those tools reach *this* directory — is one
     sentence."""
-    description = code_module.code_toolset().tools["execute"].description
+    description = _execute_description()
 
     assert "files_*" in description
     for recited in ("files_read_file", "files_edit_file", "files_list_directory"):
@@ -433,7 +455,7 @@ async def test_request_egress_records_and_returns_domains():
     assert len(policy.granted) == 1
     key, domains = policy.granted[0]
     assert key == "conv-1"  # the workspace key, so a fork's grant lands on the fork
-    result = next(b for b in _bodies(run) if b.type == "tool.completed").result
+    result = first_body(run, ToolCompleted).result
     assert result["allowed"] == sorted({"pypi.org", *domains})
 
 
@@ -475,7 +497,7 @@ async def test_a_delegate_is_not_sent_after_tools_it_was_never_offered():
     denied = SandboxResult(exit_code=1, stdout="", stderr="hephaestus-egress: denied")
     manager = _CannedManager(_CannedSession(result=denied))
     child = await _run_one_tool("code_execute", sessions=manager, delegated_approved=True)
-    hint = next(b for b in _bodies(child) if b.type == "tool.completed").result["error"]
+    hint = first_body(child, ToolCompleted).result["error"]
     assert "code_request_egress" not in hint
     assert "report" in hint  # what it does instead
 
@@ -484,7 +506,7 @@ async def test_request_egress_degrades_without_a_policy():
     # Same contract as a missing sandbox runtime: the tool says so and the model adapts.
     run = await _run_one_tool("code_request_egress")
 
-    result = next(b for b in _bodies(run) if b.type == "tool.completed").result
+    result = first_body(run, ToolCompleted).result
     assert result["ok"] is False
     assert "allowlist" in result["error"]
 
@@ -514,7 +536,7 @@ async def test_host_command_output_is_returned_whole():
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
-    parked: ParkedTurn = run.parked_payload
+    parked = parked_turn(run)
     call_id = parked.requests.approvals[0].tool_call_id
     big_echo = "x" * 20_000  # comfortably over what the retired cap would have trimmed
     decision = {
@@ -523,7 +545,7 @@ async def test_host_command_output_is_returned_whole():
     await reg.resume(run.id, build_resume_orchestrator(parked, decision))
     await run.wait()
 
-    completed = next(b for b in _bodies(run) if b.type == "tool.completed")
+    completed = first_body(run, ToolCompleted)
     assert completed.result["stdout"].strip() == big_echo
 
 
@@ -540,11 +562,11 @@ async def test_host_command_parks_with_an_explanation():
 
     # It paused for approval instead of running on the host.
     assert run.status is RunStatus.awaiting_input
-    approval = next(b for b in _bodies(run) if b.type == "approval.required")
+    approval = first_body(run, ApprovalRequired)
     assert "run_host_command" in approval.name
     # The plain-language explanation rides as a distinct field for the operator.
     assert approval.explanation is not None
-    assert "tool.completed" not in [b.type for b in _bodies(run)]
+    assert "tool.completed" not in [b.type for b in run_bodies(run)]
 
 
 async def test_approved_host_command_runs_on_host():
@@ -556,7 +578,7 @@ async def test_approved_host_command_runs_on_host():
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
-    parked: ParkedTurn = run.parked_payload
+    parked = parked_turn(run)
     call_id = parked.requests.approvals[0].tool_call_id
 
     # Approve with safe override args so the host path runs a harmless echo.
@@ -566,7 +588,7 @@ async def test_approved_host_command_runs_on_host():
     await run.wait()
 
     assert run.status is RunStatus.done
-    completed = next(b for b in _bodies(run) if b.type == "tool.completed")
+    completed = first_body(run, ToolCompleted)
     assert "HOSTRAN" in completed.result["stdout"]
 
 
@@ -579,7 +601,7 @@ async def test_the_hatch_is_fenced_with_the_installations_allowlist_not_the_thre
     around every other command running at that moment and outlive this one."""
     egress = FakeEgressPolicy()
     await egress.allow("conv-1", ["files.example.com"])
-    seen: list = []
+    seen: list[HostConfinement | None] = []
 
     async def capture(command, *, confinement=None, **_kwargs):
         seen.append(confinement)
@@ -603,6 +625,7 @@ async def test_the_hatch_is_fenced_with_the_installations_allowlist_not_the_thre
     )
 
     [confinement] = seen
+    assert confinement is not None
     assert set(confinement.allowed_domains) == {"pypi.org"}
     assert confinement.allow_write == ("/tmp",)  # nothing else was disturbed
 
@@ -627,7 +650,7 @@ async def test_an_approved_host_command_runs_in_its_own_scratch_directory(monkey
     )
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     await run.wait()
-    parked: ParkedTurn = run.parked_payload
+    parked = parked_turn(run)
     call_id = parked.requests.approvals[0].tool_call_id
     decision = {
         call_id: ToolApproved(override_args={"command": "cat here.txt", "explanation": "x"})
@@ -635,5 +658,5 @@ async def test_an_approved_host_command_runs_in_its_own_scratch_directory(monkey
     await reg.resume(run.id, build_resume_orchestrator(parked, decision))
     await run.wait()
 
-    completed = next(b for b in _bodies(run) if b.type == "tool.completed")
+    completed = first_body(run, ToolCompleted)
     assert "IN THE SCRATCH DIRECTORY" in completed.result["stdout"]

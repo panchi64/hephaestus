@@ -14,6 +14,8 @@ from services.conversations import ConversationBinding
 from services.notifications import NotificationService
 from tools import RunDeps
 
+from ._helpers import parked_turn
+
 
 def _danger_categories():
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
@@ -61,7 +63,7 @@ async def test_sensitive_tool_parks_for_approval():
 async def test_approved_resume_executes_and_completes():
     reg = RunRegistry()
     run = await _park_a_run(reg)
-    parked: ParkedTurn = run.parked_payload
+    parked = parked_turn(run)
     call_id = parked.requests.approvals[0].tool_call_id
 
     resumed = await reg.resume(run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}))
@@ -80,7 +82,7 @@ async def test_approved_resume_executes_and_completes():
 async def test_denied_resume_completes_without_executing():
     reg = RunRegistry()
     run = await _park_a_run(reg)
-    parked: ParkedTurn = run.parked_payload
+    parked = parked_turn(run)
     call_id = parked.requests.approvals[0].tool_call_id
 
     await reg.resume(run.id, build_resume_orchestrator(parked, {call_id: ToolDenied(message="no")}))
@@ -148,7 +150,7 @@ async def test_grant_short_circuit_resolves_a_dangling_notification(tmp_path):
 
     # Learn the real (namespaced) tool name a park reports, rather than guessing it.
     probe_run = await _park_a_run(RunRegistry())
-    tool_name = probe_run.parked_payload.requests.approvals[0].tool_name
+    tool_name = parked_turn(probe_run).requests.approvals[0].tool_name
 
     service = await _notification_service(tmp_path)
     grants = await granting_store("operator", "c1", tool_name)
@@ -188,12 +190,15 @@ async def test_parked_turn_keeps_parallel_tool_calls_on_resume():
     # through the payload and nothing to go stale in an older one.
     reg = RunRegistry()
     run = await _park_a_run(reg)
-    parked: ParkedTurn = run.parked_payload
+    parked = parked_turn(run)
 
-    assert parked.agent.model_settings["parallel_tool_calls"] is True
+    settings = parked.agent.model_settings
+    assert isinstance(settings, dict)
+    assert settings.get("parallel_tool_calls") is True
 
     call_id = parked.requests.approvals[0].tool_call_id
     resumed = await reg.resume(run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}))
+    assert resumed is not None
     await resumed.wait()
 
     assert resumed.status is RunStatus.done
@@ -255,11 +260,12 @@ async def test_a_parked_call_does_not_hold_back_the_plain_call_beside_it():
     )
     asked = next(i for i, b in enumerate(bodies) if b.type == "approval.required")
     assert completed < asked
-    parked: ParkedTurn = run.parked_payload
+    parked = parked_turn(run)
     assert [c.tool_call_id for c in parked.requests.approvals] == ["gated"]
     assert ran == ["look"]
 
     resumed = await reg.resume(run.id, build_resume_orchestrator(parked, {"gated": ToolApproved()}))
+    assert resumed is not None
     await resumed.wait()
     assert resumed.status is RunStatus.done
     assert ran == ["look", "delete"]
