@@ -47,6 +47,8 @@ from models.subagent import SubagentRecord
 from models.task import ScheduledTask
 from services.settings_store import ACTIVE_PROJECT_KEY, SettingsStore
 
+from .slugs import slug_for
+
 #: Every entity that carries a `project_id`. Written out because there is no shared base
 #: class — each model declares `owner_id` inline too — and because deleting a project has
 #: to unfile *all* of them or the ones it misses vanish from every listing forever.
@@ -102,6 +104,8 @@ class RepoProbe:
 class ProjectView:
     id: str
     name: str
+    #: The project's folder in the agent's home, as `~/projects/<slug>`.
+    slug: str
     root_path: str
     git_initialized: bool
     base_ref: str
@@ -171,6 +175,7 @@ class ProjectStore:
         return ProjectView(
             id=row.id,
             name=row.name,
+            slug=row.slug,
             root_path=str(root),
             git_initialized=row.git_initialized,
             base_ref=row.base_ref,
@@ -209,9 +214,12 @@ class ProjectStore:
         sealed = self._vault.encrypt_str(str(resolved))
 
         def work(session: Session) -> Project:
+            taken = session.exec(select(Project.slug).where(Project.owner_id == owner_id)).all()
+            label = name.strip() or resolved.name
             row = Project(
                 owner_id=owner_id,
-                name=name.strip() or resolved.name,
+                name=label,
+                slug=slug_for(label, set(taken)),
                 root_path_enc=sealed,
             )
             session.add(row)

@@ -41,6 +41,10 @@ class Project(Table, table=True):
     owner_id: str = Field(index=True)
 
     name: str
+    # Where the project sits in the agent's home, as `~/projects/<slug>`. Derived from the
+    # name when the project is created and never changed after, so a path written in a
+    # transcript still names the same folder after a rename. Unique per owner.
+    slug: str = Field(default="", index=True)
     # AEAD ciphertext — a host path is the operator's own content (see the module docstring).
     root_path_enc: str
 

@@ -48,6 +48,9 @@ def _env(tmp: Path, port: int) -> dict[str, str]:
         HEPHAESTUS_SEARXNG_ENABLED="false",
         HEPHAESTUS_WEB_FETCH_ENABLED="false",
         HEPHAESTUS_SANDBOX_ENABLED="false",
+        # Off too: on a machine with QEMU the VM's first start builds an image, and this
+        # test is about stopping the server, not about cancelling a build.
+        HEPHAESTUS_VM_ENABLED="false",
         HEPHAESTUS_OFFLINE_CHECK_ENABLED="false",
     )
     return env
