@@ -16,7 +16,9 @@ the library doesn't know about them; we emit them here and in the engine.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 
 from pydantic_ai import (
@@ -62,7 +64,7 @@ from .emit import (
     OverheadMeasured,
     PrefixWatched,
 )
-from .meta import LoopBreaker
+from .meta import FirstTokenTimeout, LoopBreaker
 
 #: How much of a source's snippet rides the wire. A citation is a *pointer* — the text
 #: that lets the operator recognise the source, not a second copy of it. The full passage
@@ -317,6 +319,7 @@ async def stream_agent_run[DepsT](
     loop_breaker: LoopBreaker | None = None,
     on_step: Callable[[list[ModelMessage]], None] | None = None,
     on_request_node: Callable[[ModelRequestNode[DepsT, object]], None] | None = None,
+    first_token_timeout_s: float | None = None,
 ) -> None:
     """Iterate the AgentRun's graph nodes, emitting our events as they happen.
 
@@ -329,7 +332,9 @@ async def stream_agent_run[DepsT](
     ``on_request_node``, if given, is called with each yielded ``ModelRequestNode``
     *before* it streams — the request isn't in flight yet and hasn't been appended
     to the history, so the callback may still amend ``node.request.parts`` (the
-    engine injects mid-run operator messages here).
+    engine injects mid-run operator messages here). ``first_token_timeout_s`` bounds the
+    silent wait before each request's first streamed part, raising
+    :class:`FirstTokenTimeout`; None leaves that wait to the inactivity watchdog.
 
     Wall-clock is collected into ``run.timer`` as the nodes are walked: this is the
     only place that sees both node boundaries, so it is where the stopwatch belongs,
@@ -344,11 +349,31 @@ async def stream_agent_run[DepsT](
                 on_request_node(node)
             step += 1
             _ = run.emit(StepStarted(index=step))
-            with timer.model_request() as mark_first_token:
-                async with node.stream(agent_run.ctx) as stream:
-                    async for event in stream:
-                        if not on_chassis_event(event, run):
-                            _on_model_event(event, run, mark_first_token)
+            # Until the first part streams, the server is reading the prompt: silent, and
+            # on a local model minutes long for a cold one. The keepalive keeps the
+            # inactivity watchdog from reading that as a stall; the first-token bound is
+            # what stops a server that never answers.
+            waiting = AsyncExitStack()
+            if first_token_timeout_s is not None:
+                await waiting.enter_async_context(run.keepalive())
+            deadline = asyncio.timeout(first_token_timeout_s)
+            try:
+                async with deadline:
+                    with timer.model_request() as mark_first_token:
+                        async with node.stream(agent_run.ctx) as stream:
+                            async for event in stream:
+                                if on_chassis_event(event, run):
+                                    continue
+                                if deadline.when() is not None:
+                                    deadline.reschedule(None)
+                                    await waiting.aclose()
+                                _on_model_event(event, run, mark_first_token)
+            except TimeoutError as exc:
+                if deadline.expired() and first_token_timeout_s is not None:
+                    raise FirstTokenTimeout(first_token_timeout_s) from exc
+                raise
+            finally:
+                await waiting.aclose()
             _ = run.emit(StepCompleted(index=step))
             # The request's non-conversation weight (the brief + the tool schemas) and the
             # brief's named contributors both arrive as capability events at the head of

@@ -56,7 +56,7 @@ from .folding import compact_and_retry
 from .gating import settle_deferred
 from .history import TurnStart
 from .injected import injected_text
-from .meta import LoopBreaker, LoopDetected
+from .meta import FirstTokenTimeout, LoopBreaker, LoopDetected
 from .metrics import turn_metrics
 from .model_errors import (
     CONTEXT_OVERFLOW_AFTER_FOLD_DETAIL,
@@ -288,9 +288,15 @@ async def drive_turn(
                     loop_breaker=loop_breaker,
                     on_step=report_progress,
                     on_request_node=_inject_queued,
+                    first_token_timeout_s=settings.first_token_timeout_s,
                 )
                 result = agent_run.result
                 assert result is not None
+        except FirstTokenTimeout as exc:
+            detail = f"stopped: {exc}"
+            _ = run.emit(LimitNotice(limit="time", message=detail))
+            run.block(detail)
+            return TurnResult(answer=None, messages=_partial_history(), blocked_reason=detail)
         except UsageLimitExceeded as exc:
             # Hit a usage bound — stop and report state, don't error. The *same* sentence
             # is both the toast and the persisted stop marker: a bare "usage limit reached"

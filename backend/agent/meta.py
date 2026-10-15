@@ -54,6 +54,17 @@ class LoopDetected(Exception):
         self.tool_name: str = tool_name
 
 
+class FirstTokenTimeout(Exception):
+    """Raised when a model request streams nothing within its first-token bound."""
+
+    def __init__(self, waited_s: float) -> None:
+        super().__init__(
+            f"the model sent nothing for {waited_s:.0f}s after the request; the server may "
+            + "be stalled, or still reading a very long prompt"
+        )
+        self.waited_s: float = waited_s
+
+
 class LoopBreaker:
     """Counts a turn's identical tool calls **that came back identical**, and trips at a
     repeat threshold.

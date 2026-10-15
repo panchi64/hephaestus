@@ -333,7 +333,12 @@ async def test_wall_clock_timeout_persists_the_partial_turn(tmp_path: Path):
     await cold.stop()
 
 
-async def test_inactivity_timeout_in_setup_window_persists_the_prompt(tmp_path: Path):
+async def test_inactivity_timeout_in_setup_window_persists_the_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # With no first-token bound the wait for a first token is the inactivity clock's again,
+    # which is the stop this test needs in the pre-model window.
+    monkeypatch.setattr(engine, "get_settings", lambda: Settings(first_token_timeout_s=None))
     # The inactivity clock starts at run start and is refreshed only by events. If it
     # trips in the pre-model window — the model never produced a first token — the turn
     # has no response, only the operator's own request. Without the fix, the stop would

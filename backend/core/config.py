@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     # the clock on every frame and never trips it, while spending no extra model requests.
     run_wall_clock_timeout_s: float | None = None
     run_inactivity_timeout_s: float | None = 120.0
+    # How long a model request may stream nothing before its first part. The inactivity
+    # clock is held open meanwhile, because reading a long prompt is silent: about 2s per
+    # 1k new tokens for a 27B model on Apple silicon, so a cold 50k-token thread waits
+    # around 100s. None leaves that wait to the inactivity bound.
+    first_token_timeout_s: float | None = 600.0
     # One tool call's bound. A call holds the inactivity clock open while it runs (a VM
     # bring-up or a build streams nothing), so this is what stops one that wedges.
     tool_call_timeout_s: float | None = 1800.0
