@@ -23,6 +23,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import secrets
 import shlex
 import shutil
@@ -58,6 +59,24 @@ _GUEST_ENV = (
     "HOME=/root",
     "LANG=C.UTF-8",
 )
+#: Where Homebrew puts e2fsprogs, which it installs keg-only: off PATH, so smolvm would
+#: report the tools missing on a machine that has them.
+_KEG_SBINS = (
+    Path("/opt/homebrew/opt/e2fsprogs/sbin"),
+    Path("/usr/local/opt/e2fsprogs/sbin"),
+)
+
+
+def _find_disk_tools() -> None:
+    """Put a keg-only e2fsprogs on PATH when e2fsck is not already there.
+
+    smolvm looks the tools up with ``which`` when it grows a disk, in this process."""
+    if shutil.which("e2fsck") is not None:
+        return
+    for sbin in _KEG_SBINS:
+        if (sbin / "e2fsck").is_file():
+            os.environ["PATH"] = os.pathsep.join([str(sbin), os.environ.get("PATH", "")])
+            return
 
 
 @dataclass(frozen=True)
@@ -170,6 +189,7 @@ class SmolvmDriver:
         self.step = step
 
     def _boot(self) -> None:
+        _find_disk_tools()
         try:
             self._boot_fresh()
         finally:
