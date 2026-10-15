@@ -131,7 +131,9 @@ def web_toolset() -> FunctionToolset[RunDeps]:
             # to move on rather than asked to retry.
             _release(dedupe, claim)
             raise ToolFailed(
-                render_tool_error(f"could not read {url}: {exc}", hints=["pick a different source"])
+                render_tool_error(
+                    f"could not read {url}: {exc}", hints=[exc.hint or "pick a different source"]
+                )
             ) from exc
         except BaseException:
             _release(dedupe, claim)

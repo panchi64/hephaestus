@@ -169,7 +169,7 @@ id = "personal-workout-plan"
 area = "personal"
 requires = ["vm"]
 prompts = ["Make me a 3-day beginner full-body workout plan and save it as workout.md."]
-checks = [{ kind = "file_contains", path = "workout.md", text = ["Day 1", "Day 3"] }]
+checks = [{ kind = "file_contains", path = "workout.md", text = ["Day", "reps"] }]
 rubric = "A sensible beginner plan: three sessions, sets and reps for each exercise, and rest guidance."
 
 [[task]]

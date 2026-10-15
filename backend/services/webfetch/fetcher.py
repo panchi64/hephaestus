@@ -34,6 +34,7 @@ from core.untrusted import wrap_untrusted
 from .distill import WebDistiller
 from .extract import extract
 from .pdf import fetch_pdf_text
+from .status import status_hint
 from .throttle import DomainThrottle
 
 WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
@@ -290,7 +291,10 @@ class BrowserFetcher:
                         raise _DownloadStarted from exc
                     raise WebFetchError(f"could not load {url!r}: {_reason(exc)}") from exc
                 if response is not None and response.status >= 400:
-                    raise WebFetchError(f"{page.url!r} returned HTTP {response.status}")
+                    raise WebFetchError(
+                        f"{page.url!r} returned HTTP {response.status}",
+                        hint=status_hint(response.status),
+                    )
                 final_url, html, text = await self.capture(url, page)
         except WebFetchError:
             raise

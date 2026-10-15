@@ -35,6 +35,7 @@ from core.exceptions import DegradedCapabilityError, WebFetchError
 from runs import Run, RunStream
 from services.search import SearchResults, SearchService
 from services.webfetch import BrowserFetcher, FetchedPage
+from services.webfetch.status import status_hint
 from tools.deps import RunDeps
 from tools.search import web_toolset
 
@@ -61,14 +62,19 @@ class _FakeSearch:
 
 
 class _FakeFetcher:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, status: int | None = None) -> None:
         self.urls: list[tuple[str, int]] = []
         self._fail: bool = fail
+        self._status: int | None = status
 
     async def fetch(
         self, _owner_id: str, url: str, *, offset: int = 0, **_kwargs: object
     ) -> FetchedPage:
         self.urls.append((url, offset))
+        if self._status is not None:
+            raise WebFetchError(
+                f"{url!r} returned HTTP {self._status}", hint=status_hint(self._status)
+            )
         if self._fail:
             raise WebFetchError("the page would not render")
         return FetchedPage(url=url, title="T", content="body")
@@ -198,3 +204,15 @@ class TestFetch:
         with pytest.raises(ToolFailed):
             _ = await _call("fetch", ctx, url="https://example.com/a")
         assert len(fetcher.urls) == 2
+
+    async def test_a_missing_page_says_to_search_rather_than_guess(self):
+        # Measured: a local model reconstructing recipe URLs from memory fetched five
+        # 404s in a row when told only to pick a different source.
+        ctx = _ctx(fetcher=_FakeFetcher(status=404))
+        with pytest.raises(ToolFailed) as missing:
+            _ = await _call("fetch", ctx, url="https://example.com/guessed")
+        assert "web_search" in str(missing.value) and "do not guess" in str(missing.value)
+        ctx = _ctx(fetcher=_FakeFetcher(status=503))
+        with pytest.raises(ToolFailed) as down:
+            _ = await _call("fetch", ctx, url="https://example.com/down")
+        assert "pick a different source" in str(down.value)
