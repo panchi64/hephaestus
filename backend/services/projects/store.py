@@ -324,6 +324,20 @@ class ProjectStore:
         self._roots[owner_id] = roots
         return dict(roots)
 
+    async def slugs(self, owner_id: str) -> dict[str, str]:
+        """Each live project's id mapped to its folder name in the agent's home,
+        ``~/projects/<slug>``. Archived projects are not in the home."""
+
+        def work(session: Session) -> list[tuple[str, str]]:
+            query = (
+                select(Project.id, Project.slug)
+                .where(Project.owner_id == owner_id)
+                .where(col(Project.archived).is_(False))
+            )
+            return list(session.exec(query).all())
+
+        return dict(await in_session(self._db, work))
+
     def _forget(self, owner_id: str) -> None:
         """Drop this owner's memoised roots. Called by every write that can change what
         :meth:`workspace_roots` answers — which includes :meth:`activate`, because the
