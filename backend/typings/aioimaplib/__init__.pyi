@@ -21,6 +21,24 @@ class Error(AioImapException):
 class Abort(Error):
     def __init__(self, reason: str) -> None: ...
 
+class Command:
+    name: str
+    tag: str
+    def __init__(
+        self,
+        name: str,
+        tag: str,
+        *args: str,
+        prefix: str | None = None,
+        untagged_resp_name: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        timeout: float | None = None,
+    ) -> None: ...
+
+class CommandTimeout(AioImapException):
+    command: Command
+    def __init__(self, command: Command) -> None: ...
+
 class IMAP4ClientProtocol(asyncio.Protocol):
     transport: asyncio.BaseTransport | None
     state: str

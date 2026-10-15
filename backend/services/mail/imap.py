@@ -322,7 +322,9 @@ class ImapTransport(MailTransport, WatchableTransport):
         and dropping the cached connection so the next call reconnects."""
         try:
             response = await awaitable
-        except (TimeoutError, OSError, aioimaplib.Abort) as exc:
+        # `uid` and `fetch` time out through aioimaplib's own per-command timer, which raises
+        # `CommandTimeout` rather than `TimeoutError`.
+        except (TimeoutError, OSError, aioimaplib.Abort, aioimaplib.CommandTimeout) as exc:
             # Forgetting the handle is not releasing the connection: the client still owns
             # a socket, a TLS session and a protocol object, and servers drop idle IMAP
             # sessions routinely — so one leak per drop, growing for the life of the

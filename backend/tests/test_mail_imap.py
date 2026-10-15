@@ -208,6 +208,22 @@ async def test_a_dropped_connection_is_retried_on_the_next_call(monkeypatch: pyt
     assert [c for c in client.commands if c[0] == "login"]
 
 
+async def test_a_command_timeout_drops_the_connection(monkeypatch: pytest.MonkeyPatch):
+    class _Stalled(_StubClient):
+        @override
+        async def uid(self, verb: str, *args: str) -> _Response:
+            if verb == "fetch":
+                raise aioimaplib.CommandTimeout(aioimaplib.Command("FETCH", "A1"))
+            return await super().uid(verb, *args)
+
+    client = _Stalled()
+    _install(monkeypatch, client)
+    transport = ImapTransport(_spec())
+    with pytest.raises(MailUnavailableError):
+        _ = await transport.fetch("INBOX", "1")
+    assert client.protocol.transport.closed is True
+
+
 async def test_close_logs_out_and_then_releases_the_socket(monkeypatch: pytest.MonkeyPatch):
     """LOGOUT is a courtesy to the server, not a release on this side — aioimaplib leaves
     the transport open either way, so the socket is closed explicitly after it."""
