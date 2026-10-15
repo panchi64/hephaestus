@@ -63,12 +63,14 @@ The deps object is assembled once per turn by the turn loop (`agent/turn.py`) an
 
 ```python
 # tools/toolsets.py — the entire access policy, as built.
-def build_agent_toolsets(categories=None) -> list[AbstractToolset[RunDeps]]:
-    cats = dict(categories) if categories is not None else default_categories()
+def build_agent_toolsets(categories=None, dormant=(), *, call_timeout_s=None):
+    cats = dict(categories) if categories is not None else core_categories()
     prefixed  = [ts.prefixed(name) for name, ts in cats.items()]   # stable category_tool names
     combined  = CombinedToolset(prefixed)                          # one catalog, all categories
-    return [combined.filtered(_enabled_gate)                       # drop operator-disabled tools
-                    .prepared(_approval_gate)]                     # mark what the level can't run
+    stack = (combined.filtered(_enabled_gate)                      # drop operator-disabled tools
+                     .prepared(_approval_gate)                     # mark what the level can't run
+                     .prepared(_describe))                         # restate in catalog names
+    return [RecoveringToolset(stack, call_timeout_s=call_timeout_s)]  # a raise is a result
 ```
 
 Read as a pipeline, against the README's idealized stack:
@@ -82,6 +84,9 @@ CombinedToolset(builtin + memory + code + … MCP/integrations as they land)
   #                              call to the engine's decision point instead of running it
   #                              (services/permissions). Only ever *adds* a gate: a tool that
   #                              defers on its own account keeps doing so at every level.
+  → RecoveringToolset          #              an unexpected exception becomes a ToolFailed the
+  #                              model reads, worded by core/diagnostics.py; each call holds
+  #                              the run's keepalive under a per-call timeout (D126)
   # no privilege gate          — single operator, no tiers (D14): there is no tier to filter on
   # no relevance pre-filter    — D3: a capable native-tool-call model discerns from the full
   #                              gated catalog; AE-4.2 is trivially met (every tool always present).
