@@ -200,11 +200,25 @@ class PlatformVM:
         self._bring_up_task = asyncio.create_task(self._bring_up(), name="platform-vm")
 
     async def wait_ready(self, timeout_s: float) -> bool:
-        try:
-            _ = await asyncio.wait_for(self._ready.wait(), timeout_s)
-        except TimeoutError:
+        """Wait for the VM, returning early once a bring-up has ended without it.
+
+        A failed bring-up never sets the ready event, so waiting on the event alone would
+        sit out the whole timeout in silence, long enough for the run's inactivity bound
+        to stop the turn before the caller can report the failure.
+        """
+        if self._ready.is_set():
+            return True
+        bring_up = self._bring_up_task
+        if bring_up is None or bring_up.done():
             return False
-        return True
+        ready = asyncio.ensure_future(self._ready.wait())
+        try:
+            _ = await asyncio.wait(
+                {ready, bring_up}, timeout=timeout_s, return_when="FIRST_COMPLETED"
+            )
+        finally:
+            _ = ready.cancel()
+        return self._ready.is_set()
 
     async def stop(self) -> None:
         if self._bring_up_task is not None:
