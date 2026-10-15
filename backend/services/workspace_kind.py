@@ -20,23 +20,11 @@ DEFAULT_WORKSPACE_KIND: WorkspaceKind = "sandbox"
 _KINDS: tuple[WorkspaceKind, ...] = get_args(cast("object", WorkspaceKind.__value__))
 
 #: The tools that belong to only some kinds of workspace. A tool in neither set is offered
-#: everywhere.
-#:
-#: A project folder has exactly one way to run something: the shell, in the directory the
-#: file tools are rooted at. ``code_execute`` there would offer a second filesystem the
-#: model could edit in and never ship from. ``code_request_egress`` widens the sandbox's
-#: own proxy, which a project folder does not have; its shell is fenced on the host
-#: against the installation-wide allowlist.
-_SANDBOX_TOOLS = frozenset({"code_execute", "code_request_egress", "code_run_host_command"})
-_PROJECT_TOOLS = frozenset(
-    {
-        "shell_run_command",
-        "shell_start_command",
-        "shell_check_command",
-        "shell_stop_command",
-        "repo_inventory_agent_context",
-    }
-)
+#: everywhere: every thread has the same home, so the shell and the code tools are in all
+#: of them. The repo inventory reads the thread's own project, which a sandbox thread has
+#: none of.
+_SANDBOX_TOOLS: frozenset[str] = frozenset()
+_PROJECT_TOOLS = frozenset({"repo_inventory_agent_context"})
 WORKSPACE_TOOLS: Mapping[WorkspaceKind, frozenset[str]] = {
     "sandbox": _SANDBOX_TOOLS,
     "checkout": _PROJECT_TOOLS,

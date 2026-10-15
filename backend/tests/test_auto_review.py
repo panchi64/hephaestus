@@ -64,6 +64,9 @@ from routes.deps import app_state
 from runs import Orchestrator, Run, RunRegistry, RunStatus, RunStream
 from services.approval_grants import ApprovalGrantStore, GrantInfo
 from services.conversations import ConversationBinding
+from services.home.backend import Mount
+from services.home.paths import SCRATCH
+from services.home.table import RunHome
 from services.permissions import (
     ActionKind,
     Authorization,
@@ -81,7 +84,6 @@ from services.permissions import (
 )
 from services.permissions.projections import PROJECTIONS
 from services.permissions.reviewer import Reviewer, review_prompt
-from services.workspace import HostFiles, RunWorkspace
 from tools import RunDeps
 from tools.agents import agents_toolset
 from tools.browse import browse_toolset
@@ -562,9 +564,7 @@ class TestWhatEachToolSaysAboutItself:
 
     def test_a_sandbox_program_says_what_it_runs_and_whether_it_can_reach_out(self):
         capability = capability_of("code_execute", {"code": "print(1)"})
-        # `language` was omitted and has a schema default the call will run under — so the
-        # description says what will happen rather than what was typed.
-        assert '"python"' in capability.summary
+        assert "Python program" in capability.summary
         assert capability.detail == "code: print(1)"
         assert capability.sandboxed and not capability.network
 
@@ -1845,54 +1845,55 @@ class TestOneTurnsReviewsAreCapped:
 
 
 class TestWhatTheBatchIsJudgedAgainst:
-    """The directory the command's paths are measured against, and where it comes from.
+    """The home the command's paths are measured against, and where it comes from.
 
     The gate reads it off the run's memo — which the *first* shell command of a turn
-    finds empty, because nothing has opened a workspace yet. So the one call that most
+    finds empty, because nothing has opened the home yet. So the one call that most
     needs a root was judged against none, and the strictest reading (every absolute path
     has left) turned ordinary work into a park.
     """
 
-    def _read(self, path: Path) -> ToolCallPart:
+    def _read(self) -> ToolCallPart:
         return ToolCallPart(
             tool_name="shell_run_command",
-            args={"command": f"cat {path}/notes.md"},
+            args={"command": "cat ~/scratch/notes.md"},
             tool_call_id="c1",
         )
 
-    async def test_the_workspace_is_resolved_rather_than_read_off_an_empty_memo(
+    async def test_the_home_is_resolved_rather_than_read_off_an_empty_memo(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ):
         monkeypatch.setattr(gating, "resolve_reviewer", _resolver(None))
         pretend_fenced(monkeypatch)
         # Nothing resolved: the path cannot be placed, so it escalates — and with no
         # reviewer bound the operator is interrupted for a plain read of their own file.
-        _settled, manual = await _settle("auto", [self._read(tmp_path)])
+        _settled, manual = await _settle("auto", [self._read()])
         assert [call.tool_call_id for call in manual] == ["c1"]
 
-        monkeypatch.setattr(gating, "resolve_run_workspace", _workspace_at(tmp_path))
-        settled, manual = await _settle("auto", [self._read(tmp_path)])
+        monkeypatch.setattr(gating, "resolve_run_home", _home_at(tmp_path))
+        settled, manual = await _settle("auto", [self._read()])
         assert manual == []
         assert isinstance(settled["c1"], ToolApproved)
 
     async def test_it_is_resolved_once_for_the_whole_batch(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ):
-        # Opening a code thread's workspace is a `git worktree add`; every call in the
-        # batch is judged against the same directory anyway.
+        # Opening a thread's home can start a sandbox session or a `git worktree add`;
+        # every call in the batch is judged against the same home anyway.
         opened: list[int] = []
+        at = _home_at(tmp_path)
 
-        async def counting(_deps: RunDeps) -> RunWorkspace:
+        async def counting(deps: RunDeps) -> RunHome:
             opened.append(1)
-            return RunWorkspace(root=tmp_path, kind="sandbox", files=HostFiles(tmp_path))
+            return await at(deps)
 
         monkeypatch.setattr(gating, "resolve_reviewer", _resolver(None))
-        monkeypatch.setattr(gating, "resolve_run_workspace", counting)
+        monkeypatch.setattr(gating, "resolve_run_home", counting)
         pretend_fenced(monkeypatch)
         calls = [
             ToolCallPart(
                 tool_name="shell_run_command",
-                args={"command": f"cat {tmp_path}/{n}.md"},
+                args={"command": f"cat ~/scratch/{n}.md"},
                 tool_call_id=f"c{n}",
             )
             for n in range(3)
@@ -1901,38 +1902,37 @@ class TestWhatTheBatchIsJudgedAgainst:
         assert manual == [] and len(settled) == 3
         assert len(opened) == 1
 
-    async def test_a_batch_that_names_no_path_never_opens_a_workspace(
+    async def test_a_batch_that_names_no_path_never_opens_the_home(
         self, monkeypatch: pytest.MonkeyPatch
     ):
         # Only a command and a file target are placed against a root; a mail send is the
-        # same act wherever the run works. Opening a workspace to learn that is a `git
-        # worktree add` or a container start on the operator's next approval.
+        # same act wherever the run works.
         async def unexpected(_deps: RunDeps) -> NoReturn:
-            raise AssertionError("a batch with no path in it opened a workspace")
+            raise AssertionError("a batch with no path in it opened the home")
 
         monkeypatch.setattr(gating, "resolve_reviewer", _resolver(None))
-        monkeypatch.setattr(gating, "resolve_run_workspace", unexpected)
+        monkeypatch.setattr(gating, "resolve_run_home", unexpected)
         _settled, manual = await _settle("auto", [_call("mail_send", "c1")])
         assert [call.tool_call_id for call in manual] == ["c1"]
 
-    async def test_a_workspace_that_will_not_open_parks_rather_than_ending_the_turn(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    async def test_a_home_that_will_not_open_parks_rather_than_ending_the_turn(
+        self, monkeypatch: pytest.MonkeyPatch
     ):
-        # The workspace this could not open is the one the approved call would have
-        # needed, and the tool will say so in words the model can act on. The judge's job
-        # in the meantime is to answer, strictly — not to abort the operator's turn.
+        # The home this could not open is the one the approved call would have needed,
+        # and the tool will say so in words the model can act on. The judge's job in the
+        # meantime is to answer, strictly — not to abort the operator's turn.
         async def refuses(_deps: RunDeps) -> NoReturn:
             raise RuntimeError("another conversation holds this project")
 
         monkeypatch.setattr(gating, "resolve_reviewer", _resolver(None))
-        monkeypatch.setattr(gating, "resolve_run_workspace", refuses)
-        _settled, manual = await _settle("auto", [self._read(tmp_path)])
+        monkeypatch.setattr(gating, "resolve_run_home", refuses)
+        _settled, manual = await _settle("auto", [self._read()])
         assert [call.tool_call_id for call in manual] == ["c1"]
 
 
-def _workspace_at(root: Path) -> Callable[[RunDeps], Awaitable[RunWorkspace]]:
-    async def resolved(_deps: RunDeps) -> RunWorkspace:
-        return RunWorkspace(root=root, kind="sandbox", files=HostFiles(root))
+def _home_at(scratch: Path) -> Callable[[RunDeps], Awaitable[RunHome]]:
+    async def resolved(_deps: RunDeps) -> RunHome:
+        return RunHome(mounts=(Mount(SCRATCH, scratch, writable=True),), default=SCRATCH, key="t")
 
     return resolved
 

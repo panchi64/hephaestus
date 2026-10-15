@@ -18,7 +18,7 @@ from __future__ import annotations
 import posixpath
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, override
 
 from core.exceptions import InvalidInputError
 
@@ -66,7 +66,13 @@ class HomePath:
 
 
 class HomePathError(InvalidInputError):
-    """A path that names nothing inside a place, worded for the model."""
+    """A path that names nothing inside a place, worded for the model, and rendered with
+    its hint for a reader that passes on only the text."""
+
+    @override
+    def __str__(self) -> str:
+        what = super().__str__()
+        return what if self.hint is None else f"{what}\nhelp: {self.hint}"
 
 
 def _absolute(raw: str, cwd: str) -> str:

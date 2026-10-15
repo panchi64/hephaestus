@@ -21,6 +21,7 @@ from routes import host as host_routes
 from routes import projects as project_routes
 from routes import worktrees as worktree_routes
 from routes.deps import OPERATOR_ID
+from services.home.leases import WriteLeases
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.checkout import CheckoutHolders
 from services.projects.legacy_branches import rename_legacy_branches
@@ -39,10 +40,11 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     # cutting real worktrees into the operator's own home directory.
     worktrees = WorktreeManager(ctx.settings.worktrees_dir)
     checkouts = CheckoutHolders()
+    leases = WriteLeases(ctx.engine, ttl_s=ctx.settings.approval_grant_ttl_s)
     _ = ctx.lifecycle.track("projects.legacy_branches", _rename_branches(store, ctx.vault))
     return FeatureRuntime(
-        services=(store, worktrees, checkouts),
-        capabilities=(store, worktrees, checkouts),
+        services=(store, worktrees, checkouts, leases),
+        capabilities=(store, worktrees, checkouts, leases),
         state={"projects": store, "worktrees": worktrees},
     )
 

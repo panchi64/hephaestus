@@ -43,6 +43,12 @@ class _FakeProjects:
     async def get(self, _owner_id: str, project_id: str) -> _View:
         return _View(str(self._roots[project_id]))
 
+    async def slugs(self, _owner_id: str) -> dict[str, str]:
+        return {project_id: project_id for project_id in self._roots}
+
+    async def workspace_roots(self, _owner_id: str) -> dict[str, Path]:
+        return dict(self._roots)
+
 
 class _FakeSwitch:
     def __init__(self) -> None:
@@ -126,7 +132,7 @@ class TestTheCheckout:
         assert workspace.kind == "checkout"
         assert workspace.root == root
         assert workspace.branch == "main"
-        assert workspace.display("hello.txt") == str(root / "hello.txt")
+        assert workspace.display("hello.txt") == "/home/agent/projects/proj-1/hello.txt"
 
     async def test_staged_files_stay_out_of_the_operators_diff(self, tmp_path: Path):
         root = await _repo(tmp_path / "project")

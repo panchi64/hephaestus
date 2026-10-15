@@ -86,7 +86,12 @@ from .test_tool_policy import stub_offline
 #: fresh request from 36.6k to 46.0k characters at Auto. The library's own rendering — a
 #: full docstring per function — would have cost 23.6k on its own; bare signatures, with the
 #: prose left on the direct definition it repeats, is what brought it to 9.3k.
-CATALOG_CEILING_CHARS = 48_000
+#:
+#: **Raised a fifth time, from 48k, for one environment**: every thread has the shell as
+#: well as the code tools, where a sandbox thread used to have the code tools alone. It
+#: took a fresh request to 51.2k characters at Auto, net of the bash form of `code_execute`
+#: it replaced.
+CATALOG_CEILING_CHARS = 52_000
 
 #: The same for the whole corpus — every dormant group revealed. Deferral moves a group's
 #: cost from every turn to the turns that want it; it does not make the group free, and a
@@ -94,8 +99,8 @@ CATALOG_CEILING_CHARS = 48_000
 #: Raised from 50k, then from 60k, then from 72k, alongside the ceiling above and for the
 #: same reasons; then from 82k for the dormant `agents` group (agents writing agents), and
 #: from 84k for the dormant `routines` group, whose schedule is one compact string rather
-#: than a nested object for that reason.
-CORPUS_CEILING_CHARS = 88_000
+#: than a nested object for that reason; then from 88k for the shell in every thread.
+CORPUS_CEILING_CHARS = 92_000
 
 
 def _dormant_categories() -> tuple[str, ...]:

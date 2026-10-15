@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from services.home.paths import HOME
 from services.projects.checkout import CheckoutHolders
 from services.projects.repo import run_git
 from services.projects.store import ProjectStore
@@ -117,6 +118,9 @@ class RunWorkspace:
     files: WorkspaceFiles
     #: The branch a worktree run is working on; None in a sandbox.
     branch: str | None = None
+    #: Where the agent's home holds this project's folder (``~/projects/<slug>``); None
+    #: in a sandbox.
+    home_path: str | None = None
 
     @property
     def stage_prefix(self) -> str:
@@ -127,11 +131,14 @@ class RunWorkspace:
     def display(self, relpath: str) -> str:
         """The path string the model is given for ``relpath``.
 
-        The one place the sandbox's guest path is translated, so a marker, a tool result
-        and a staged skill can never name the same file three different ways.
+        The one place a workspace path is put in the home's terms, so a marker, a tool
+        result and a staged skill can never name the same file three different ways.
         """
+        rel = relpath.lstrip("/")
         if self.kind == "sandbox":
-            return f"{SANDBOX_MOUNT}/{relpath.lstrip('/')}"
+            return f"{SANDBOX_MOUNT}/{rel}"
+        if self.home_path is not None:
+            return f"{self.home_path}/{rel}"
         return str(self.root / relpath)
 
 
@@ -237,6 +244,7 @@ async def worktree_workspace(
     """
     project = await projects.get(owner_id, project_id)
     root = Path(project.root_path)
+    home_path = await project_home_path(projects, owner_id, project_id)
     if delegation_id is not None:
         state = await worktrees.open_child(
             project_id=project_id,
@@ -250,6 +258,7 @@ async def worktree_workspace(
             kind="worktree",
             files=HostFiles(state.path),
             branch=state.branch,
+            home_path=home_path,
         )
     state = await worktrees.acquire(
         project_id=project_id,
@@ -263,7 +272,14 @@ async def worktree_workspace(
         kind="worktree",
         files=HostFiles(state.path),
         branch=state.branch,
+        home_path=home_path,
     )
+
+
+async def project_home_path(projects: ProjectStore, owner_id: str, project_id: str) -> str | None:
+    """Where the agent's home holds this project, or None when it has no slug."""
+    slug = (await projects.slugs(owner_id)).get(project_id)
+    return f"{HOME}/projects/{slug}" if slug else None
 
 
 def prepare_worktree_workspace(path: Path) -> None:
@@ -328,7 +344,13 @@ async def resolve_workspace(
         prepare_worktree_workspace(root)
         code, out, _ = await run_git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
         branch = out.strip() if code == 0 and out.strip() else None
-        return RunWorkspace(root=root, kind="checkout", files=HostFiles(root), branch=branch)
+        return RunWorkspace(
+            root=root,
+            kind="checkout",
+            files=HostFiles(root),
+            branch=branch,
+            home_path=await project_home_path(projects, owner_id, project_id),
+        )
     if workspace_kind == "worktree":
         # Never fall back to the sandbox. A worktree run that quietly got a sandbox
         # workspace would edit files its shell tools are refused access to, and nothing

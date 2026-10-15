@@ -2,8 +2,9 @@
 
 `services/workspace_kind.py` names each kind's tools as literal strings, because `tools/`
 sits above `services/` and importing the catalog there would invert the dependency order.
-A literal set rots silently: a fifth shell tool missing from it would be offered to sandbox
-chats. So the names are checked against the catalog a real run resolves, both ways.
+A literal set rots silently, so the names are checked against the catalog a real run
+resolves. Every thread has the same home, so the shell and the code tools are offered in
+all of them; only the repo inventory belongs to a project thread.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from pydantic_ai.usage import RunUsage
 from runs import Run, RunStream
 from services.workspace_kind import (
     WORKSPACE_TOOLS,
-    WorkspaceKind,
     workspace_disabled_tools,
     workspace_kind,
 )
@@ -26,8 +26,7 @@ from tools.toolsets import build_agent_toolsets
 from ._helpers import full_tool_categories
 
 OWNER = "operator"
-
-_CATEGORIES: dict[WorkspaceKind, set[str]] = {"sandbox": {"code"}, "worktree": {"shell", "repo"}}
+INVENTORY = "repo_inventory_agent_context"
 
 
 def _catalog() -> list[ToolInfo]:
@@ -40,23 +39,23 @@ class TestTheNamesAreReal:
         for kind, listed in WORKSPACE_TOOLS.items():
             assert listed <= names, f"{kind} names a tool the catalog does not have"
 
-    def test_each_kind_lists_every_tool_its_categories_register(self):
-        for kind, categories in _CATEGORIES.items():
-            registered = {t.name for t in _catalog() if t.category in categories}
-            assert registered == WORKSPACE_TOOLS[kind], f"{kind} has drifted from the catalog"
+    def test_a_project_thread_lists_every_tool_the_repo_category_registers(self):
+        registered = {t.name for t in _catalog() if t.category == "repo"}
+        assert registered == WORKSPACE_TOOLS["worktree"] == WORKSPACE_TOOLS["checkout"]
+        assert WORKSPACE_TOOLS["sandbox"] == frozenset()
 
 
 class TestTheFilter:
-    def test_a_sandbox_hides_the_worktree_tools(self):
-        assert workspace_disabled_tools("sandbox") == WORKSPACE_TOOLS["worktree"]
+    def test_a_sandbox_thread_hides_the_repo_inventory(self):
+        assert workspace_disabled_tools("sandbox") == {INVENTORY}
 
-    def test_a_worktree_hides_the_sandbox_runner(self):
-        assert workspace_disabled_tools("worktree") == WORKSPACE_TOOLS["sandbox"]
+    def test_a_project_thread_hides_nothing(self):
+        assert workspace_disabled_tools("worktree") == frozenset()
 
     def test_an_unknown_value_is_treated_as_a_sandbox(self):
         assert workspace_kind("code") == "sandbox"
         assert workspace_kind(None) == "sandbox"
-        assert workspace_disabled_tools("nonsense") == WORKSPACE_TOOLS["worktree"]
+        assert workspace_disabled_tools("nonsense") == {INVENTORY}
 
 
 async def _offered(kind: str) -> set[str]:
@@ -67,18 +66,17 @@ async def _offered(kind: str) -> set[str]:
 
 
 class TestTheGate:
-    async def test_the_stack_offers_each_kind_its_own_tools(self):
+    async def test_every_thread_has_the_shell_and_the_code_tools(self):
         sandbox = await _offered("sandbox")
         worktree = await _offered("worktree")
-        assert "code_execute" in sandbox and "shell_run_command" not in sandbox
-        assert "shell_run_command" in worktree and "code_execute" not in worktree
-        assert {"memory_recall"} <= sandbox & worktree
+        assert {"code_execute", "shell_run_command", "files_write_file"} <= sandbox & worktree
+        assert INVENTORY in worktree and INVENTORY not in sandbox
 
     async def test_the_gate_follows_the_kind_when_it_moves_mid_run(self):
         run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
         deps = RunDeps(run=run, owner_id=OWNER)
         ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
         stack = build_agent_toolsets(full_tool_categories())[0]
-        assert "shell_run_command" not in await stack.get_tools(ctx)
+        assert INVENTORY not in await stack.get_tools(ctx)
         deps.workspace_kind = "worktree"
-        assert "shell_run_command" in await stack.get_tools(ctx)
+        assert INVENTORY in await stack.get_tools(ctx)

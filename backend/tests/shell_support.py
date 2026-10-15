@@ -19,16 +19,21 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RunUsage
 
+from core.config import Settings
 from core.container import ServiceContainer
+from core.vault import Vault
 from runs import Run, RunStream
 from services.egress import EgressPolicy
 from services.projects import ProjectStore
 from services.projects.checkout import CheckoutHolders
+from services.sandbox import SandboxSessionManager
+from services.vm.host import SessionHost
 from services.vm.project import ProjectCopies
 from services.workspace_kind import WorkspaceKind
 from tools.deps import RunDeps
 
 from ._json import JSON
+from .conftest import egress_policy
 from .vm_local import local_vm
 
 OWNER = "operator"
@@ -58,11 +63,36 @@ class _View:
 
 
 class _Projects:
-    def __init__(self, root: Path) -> None:
+    """One project at ``root``, named ``project`` in the home."""
+
+    def __init__(self, root: Path, project_id: str) -> None:
         self._root: Path = root
+        self._id: str = project_id
 
     async def get(self, _owner_id: str, _project_id: str) -> _View:
         return _View(str(self._root))
+
+    async def slugs(self, _owner_id: str) -> dict[str, str]:
+        return {self._id: "project"}
+
+    async def workspace_roots(self, _owner_id: str) -> dict[str, Path]:
+        return {self._id: self._root}
+
+
+async def scratch_sessions(tmp_path: Path, vm: SessionHost) -> SandboxSessionManager:
+    """A real session manager over ``vm``, for the scratch every shell command has."""
+    vault = Vault(tmp_path / "keyfile.json")
+    await vault.setup("pw")
+    return SandboxSessionManager(
+        vm,
+        vault,
+        egress=egress_policy(tmp_path),
+        data_dir=tmp_path,
+        idle_ttl_s=1800.0,
+        reap_interval_s=60.0,
+        excludes=Settings().sandbox_walk_excludes,
+        max_sessions=8,
+    )
 
 
 @asynccontextmanager
@@ -77,21 +107,42 @@ async def local_copies(tmp_path: Path) -> AsyncGenerator[ProjectCopies]:
         await platform.stop()
 
 
+@asynccontextmanager
+async def local_home(
+    tmp_path: Path,
+) -> AsyncGenerator[tuple[ProjectCopies, SandboxSessionManager]]:
+    """The project copies and the scratch sessions of one VM running on this machine."""
+    platform, _driver = await local_vm(tmp_path)
+    copies = ProjectCopies(platform, idle_ttl_s=3600, reap_interval_s=3600)
+    sessions = await scratch_sessions(tmp_path, platform)
+    try:
+        yield copies, sessions
+    finally:
+        await sessions.stop()
+        await copies.stop()
+        await platform.stop()
+
+
 def checkout_ctx(
     root: Path,
     *,
     copies: ProjectCopies | None = None,
+    sessions: SandboxSessionManager | None = None,
     egress: EgressPolicy | None = None,
     kind: WorkspaceKind = "checkout",
     project_id: str = "proj-1",
+    conversation_id: str = "conv-a",
     approved: bool = True,
 ) -> RunContext[RunDeps]:
-    """A run in the project folder at ``root``, with the given VM and egress policy."""
+    """A run in the project folder at ``root``, with the given VM, scratch sessions and
+    egress policy. The project is ``~/projects/project`` in the run's home."""
     caps = ServiceContainer()
-    caps.add(_Projects(root), as_type=ProjectStore)
+    caps.add(_Projects(root, project_id), as_type=ProjectStore)
     caps.add(CheckoutHolders())
     if copies is not None:
         caps.add(copies, as_type=ProjectCopies)
+    if sessions is not None:
+        caps.add(sessions)
     if egress is not None:
         caps.add(egress, as_type=EgressPolicy)
     run = Run(id="run-1", kind="chat", owner_id=OWNER, stream=RunStream())
@@ -100,7 +151,7 @@ def checkout_ctx(
             run=run,
             owner_id=OWNER,
             caps=caps,
-            conversation_id="conv-a",
+            conversation_id=conversation_id,
             project_id=project_id,
             workspace_kind=kind,
         ),

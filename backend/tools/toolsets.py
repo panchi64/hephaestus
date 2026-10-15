@@ -57,6 +57,7 @@ from .describe import (
     category_names,
     describe,
 )
+from .files import GATED_TOOLS as _FILES_GATED
 from .files import files_toolset
 from .harness_events import own_harness_events
 from .plan import GATED_TOOLS as _PLAN_GATED
@@ -73,7 +74,7 @@ from .tasks import tasks_toolset
 #: manifest; the core ones have no manifest, so they are collected here and seeded into
 #: `app.state.gated_tools` at assembly. A name missing from that union is missing from the
 #: operator's approval-scope vocabulary, which is what makes a grant possible.
-CORE_GATED_TOOLS: frozenset[str] = _SHELL_GATED | _PLAN_GATED
+CORE_GATED_TOOLS: frozenset[str] = _SHELL_GATED | _PLAN_GATED | _FILES_GATED
 
 
 def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:

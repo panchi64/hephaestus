@@ -1,23 +1,20 @@
-"""Code & shell tools — the agent's two execution paths, cleanly split.
+"""Code tools: Python in the agent's own machine, a fenced command on the host, and
+widening what the agent's machine may reach.
 
-``code_execute`` is the default: it runs in the host-isolated sandbox, so being
-contained it carries no host-level risk and the agent computes freely.
-``code_run_host_command`` is the deliberate exception: it runs on the real host, so
-its request must carry a plain-language ``explanation`` the operator can judge
-without reading the command.
+``code_execute`` runs Python in the thread's scratch (``/work``, which is ``~/scratch``),
+contained in the platform VM, so the agent computes freely. Shell commands are the
+``shell`` category's, in every thread.
 
-``code_request_egress`` is the third, and the only one that widens anything: compute
-is free inside the box, but reaching a host the allowlist does not name is an exit,
-so it is asked for by name and approved per call. Nothing else here is gated on the
-network — the walls around a workspace are not the thing worth guarding.
+``code_run_host_command`` runs on the real host under the host fence, so its request
+must carry a plain-language ``explanation`` the operator can judge without reading the
+command.
 
-``code_execute``'s description is the **only** place the model is told what machine
-a run happens on — said where it is deciding whether to call, and nowhere else, so
-a thread with no sandbox is never handed a description of one.
+``code_request_egress`` widens the agent's machine: compute is free inside the box, but
+reaching a host the allowlist does not name is an exit, so it is asked for by name and
+approved per call.
 
-Both stay thin — the execution mechanics live in ``services/sandbox`` (the
-sandboxed path and the host escape hatch). When no sandbox runtime is available
-the sandboxed tool reports the capability is disabled and the model adapts; it
+The execution mechanics live in ``services/sandbox``. When no sandbox runtime is
+available ``code_execute`` reports the capability is disabled and the model adapts; it
 never silently falls back to the host.
 """
 
@@ -25,7 +22,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from typing import Literal
 
 from pydantic_ai import FunctionToolset, RunContext, ToolDefinition
 
@@ -48,12 +44,6 @@ from services.vm import DENIED_MARKER
 
 from .deps import RunDeps
 from .emit import RunEventEmitted
-
-# language → the argv that runs source passed on the command line, inside the box.
-_INTERPRETERS: dict[str, list[str]] = {
-    "python": ["python", "-c"],
-    "bash": ["bash", "-c"],
-}
 
 # Hitting the pids-limit surfaces as a failed fork/thread-create *inside* the process —
 # unlike the OOM killer, there is no distinct signal for it, so this is
@@ -134,33 +124,32 @@ def _failure_hint(
             "The process crashed (exit 139, SIGSEGV) — a fault in the code itself, "
             "not a resource cap."
         )
-    if sandboxed:
-        missing = _MISSING_MODULE.search(stderr)
-        if missing:
-            module = missing.group(1).split(".")[0]
+    missing = _MISSING_MODULE.search(stderr) if sandboxed else None
+    if missing:
+        module = missing.group(1).split(".")[0]
+        return (
+            f"The Python package providing `{module}` is not installed on your machine. "
+            f"Install it first with the shell — `pip install {module}` (or the PyPI "
+            "package that provides that module) with reach `network` — then re-run this "
+            "code unchanged."
+        )
+    if sandboxed and _looks_like_egress_denied(stderr + "\n" + stdout):
+        if delegated:
+            # A delegate has no egress request to make — it is withheld, because there is
+            # nobody in its run to answer one. Sending it after the tool anyway costs it
+            # turns on a name that does not resolve.
             return (
-                f"The Python package providing `{module}` is not installed on your "
-                f"machine. Install it first with a separate call — language='bash', "
-                f"code='pip install {module}' (or the PyPI package that provides that "
-                "module) — then re-run this code unchanged."
+                "That host is not on your egress allowlist, so the connection was refused "
+                "before it left your machine — the code itself is fine. You cannot widen "
+                "it from here: name the host in your report and let the agent that "
+                "delegated to you ask for it."
             )
-        if _looks_like_egress_denied(stderr + "\n" + stdout):
-            if delegated:
-                # A delegate has no egress request to make — it is withheld, because
-                # there is nobody in its run to answer one. Sending it after the tool
-                # anyway costs it turns on a name that does not resolve.
-                return (
-                    "That host is not on your egress allowlist, so the connection was "
-                    "refused before it left your machine — the code itself is fine. You "
-                    "cannot widen it from here: name the host in your report and let the "
-                    "agent that delegated to you ask for it."
-                )
-            return (
-                "That host is not on your egress allowlist, so the connection was "
-                "refused before it left your machine — the code itself is fine. Call "
-                "`code_request_egress(domains=[...], reason=...)` naming the hosts you "
-                "need and why, and once it is approved retry this same code unchanged."
-            )
+        return (
+            "That host is not on your egress allowlist, so the connection was refused "
+            "before it left your machine — the code itself is fine. Call "
+            "`code_request_egress(domains=[...], reason=...)` naming the hosts you need "
+            "and why, and once it is approved retry this same code unchanged."
+        )
     if _looks_like_pid_cap(stderr):
         return (
             f"The process could not create more processes/threads (capped at "
@@ -220,9 +209,10 @@ def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
     worker calling names that do not resolve.
     """
     files = (
-        "Your file tools act on this same working directory"
+        "Your file tools and shell act on this same working directory"
         if delegated
-        else "The `files_*` tools act on this same working directory"
+        else "The `files_*` and `shell_*` tools act on this same working directory, as "
+        + "`~/scratch`"
     )
     ask = (
         "Any other host is refused, and there is nobody here to ask: say in your report "
@@ -233,11 +223,9 @@ def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
         + "unchanged."
     )
     return (
-        "Run `python` (the default `language`) or a `bash` script on your own "
-        "computer — a private Linux machine that is yours alone (it is not the "
-        "operator's host). It runs an Ubuntu userland with `python`, `bash`, `git`, and "
-        "the usual command-line tools on the path.\n\n"
-        "Your working directory is `/work` (where your shell starts), and it persists "
+        "Run a Python program on your own computer — a private Linux machine that is "
+        "yours alone (it is not the operator's host), with an Ubuntu userland.\n\n"
+        "Your working directory is `/work`, and it persists "
         "across calls in this conversation: files you write and packages you install "
         "stay there, so you can run something, hit an error, fix it, and re-run without "
         "starting over. `/tmp` is a RAM disk, so what you put there is charged against "
@@ -248,19 +236,15 @@ def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
         "machine. Keep anything that matters in your working directory. After a long "
         "stretch of inactivity the machine is reclaimed: your files are kept and "
         "restored, but installed packages may need reinstalling.\n\n"
-        f"{files}: use them to read, "
-        "write, edit, search and list it, and use this tool to run things.\n\n"
-        "The package registries and GitHub are already reachable, so fetching from them "
-        f"needs no permission — install as freely as you like. {ask} `pip` is what the "
-        "machine ships with; anything else you want (`uv`, for instance) you install "
-        "with it first — a "
-        "package's command lands in `/work/.local/bin`, which is not on your `PATH`, so "
-        "invoke it by that full path (`/work/.local/bin/uv ...`) or as `python -m "
-        "<pkg>`. System package managers are not an option — `apt` and friends need "
-        "root, which you do not have here, so they fail however you invoke them; when "
-        "you need a tool, reach for the language-level package that provides it. Use "
-        "the machine freely for computation, scripting, and iterating toward a working "
-        "result.\n\n"
+        f"{files}: use them to read, write, edit, search and list it, to run commands "
+        "and to install packages, and use this tool to run Python.\n\n"
+        "The package registries and GitHub are already reachable from this tool, so "
+        f"fetching from them needs no permission. {ask} Packages install under "
+        "`/work/.local` with `pip install` from the shell; a package's command lands in "
+        "`/work/.local/bin`, which is not on your `PATH`, so invoke it by that full path "
+        "or as `python -m <pkg>`. System package managers are not an option — `apt` and "
+        "friends need root, which you do not have here; reach for the language-level "
+        "package instead.\n\n"
         f"It is capped at {settings.sandbox_memory} memory, {settings.sandbox_cpus} "
         f"CPU, and {settings.sandbox_pids_limit} processes/threads — exceeding memory "
         "gets the run killed, exceeding the CPU cap only throttles it (the run keeps "
@@ -307,7 +291,6 @@ def code_toolset() -> FunctionToolset[RunDeps]:
     async def execute(
         ctx: RunContext[RunDeps],
         code: str,
-        language: Literal["python", "bash"] = "python",
         stdin: str | None = None,
         timeout_s: float = 30.0,
     ) -> dict[str, object]:
@@ -324,7 +307,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
                 + "be done, and will not run on the operator's host.",
             }
         spec = SandboxSpec(
-            command=[*_INTERPRETERS[language], code],
+            command=["python", "-c", code],
             stdin=stdin,
             timeout_s=timeout_s,
         )
@@ -360,15 +343,11 @@ def code_toolset() -> FunctionToolset[RunDeps]:
     ) -> ToolDefinition | None:
         """Withhold a tool that has to ask from a delegated run.
 
-        Both tools this guards end in a question, and a delegate has nobody to ask: its
-        work was approved as one act, in a conversation that belongs to its parent.
-        Whether a call pauses is settled from the tool definition *before* the function
-        runs, so a body that answered "report this upwards" would only ever be reached
-        after an operator had already been stopped for it — and a child run has no output
-        type for a deferred call, so the question would end it outright. Withholding is
-        the honest form of the same fact, and the child then does what it would have done
-        anyway: say in its report which host it could not reach, or which change to the
-        operator's own machine it could not make.
+        A delegate has nobody to ask: its work was approved as one act, in a conversation
+        that belongs to its parent, and a child run has no output type for a deferred
+        call, so the question would end it outright. Withheld, the child says in its
+        report which host it could not reach, or which change to the operator's own
+        machine it could not make.
         """
         return None if ctx.deps.delegated_approved else tool_def
 
@@ -427,17 +406,16 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         """Run a command directly on the operator's host machine — their real
         computer, not your own.
 
-        Only for when the host itself must change; prefer ``code_execute`` for
-        anything that does not need the real host. ``explanation`` MUST say what the
-        command does and its effect on the host. It does **not** start in your
-        workspace — your file tools work inside the sandbox, which the host cannot
-        see — but in a scratch directory of its own, so name host paths in full.
+        Only for when the host itself must change; prefer your shell for anything that
+        does not need the real host. ``explanation`` MUST say what the command does and
+        its effect on the host. It does **not** start in your home but in a scratch
+        directory of its own, so name host paths in full.
 
-        The command is normally confined: it cannot read the
-        operator's credentials or this application's own data directory, and it has
-        no network unless a domain was allowlisted. The result says whether the fence
-        was actually applied (``confined``), so a permission error on one of those
-        paths is the fence doing its job rather than something to work around.
+        The command is normally confined: it cannot read the operator's credentials or
+        this application's own data directory, and it has no network unless a domain was
+        allowlisted. The result says whether the fence was actually applied
+        (``confined``), so a permission error on one of those paths is the fence doing its
+        job rather than something to work around.
         """
         del explanation  # Read by the approval card from the call's arguments, not by this body.
         # The installation-wide allowlist, not this conversation's grants: one proxy
@@ -447,10 +425,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         confinement = await resolve_confinement(settings)
         # Not the server process's own directory, which is the application's source tree:
         # a relative path the model wrote would land among this backend's own files, and
-        # `cat .env` would read its keys. `host_scratch_dir` says why it is not the run's
-        # workspace either — the workspace is inside the fence's denied `data_dir`, and
-        # the command does not run in it, which is also why the permission layer measures
-        # a host command's paths against no root at all.
+        # `cat .env` would read its keys. The home is not on the host at all, which is also
+        # why the permission layer measures a host command's paths against no root.
         try:
             result = await run_on_host(
                 command,

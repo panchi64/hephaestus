@@ -25,6 +25,7 @@ from pydantic_ai import RunContext
 from core.container import ServiceContainer
 from runs import Run
 from services.agents.definition import UNRESTRICTED, ToolAccess
+from services.home.table import RunHome
 from services.permissions import (
     DEFAULT_PERMISSION,
     PermissionLevel,
@@ -89,6 +90,8 @@ class RunDeps:
     # Never set by a construction site: it is a per-run cache, not an input, and it lives
     # here so it dies with the run instead of in a module-level dict.
     workspace: RunWorkspace | None = field(default=None, repr=False, compare=False)
+    # This run's home, memoised by `tools/home.py` and replaced when a write lease widens it.
+    home: RunHome | None = field(default=None, repr=False, compare=False)
     # The queries this run has already searched and the pages it has already fetched, so
     # the web tools can refuse a repeat before it costs a round trip. Per-run for the same
     # reason as `workspace` — and deliberately per *run* rather than per conversation:

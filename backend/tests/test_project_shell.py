@@ -1,15 +1,18 @@
-"""The project shell end to end: the `shell` tools, the project sync and the guest scripts.
+"""A project thread's shell end to end: the `shell` tools, the project sync and the guest
+scripts.
 
 Commands run in a platform VM whose guest is this machine (`vm_local`), against a temp git
-repository. What is asserted is what the operator and the model can observe: files and
-commits landing in the host repository, the working directory carried between commands,
-the network a command is (not) given, and background commands.
+repository that is ``~/projects/project`` in the home. What is asserted is what the
+operator and the model can observe: files and commits landing in the host repository, the
+working directory carried between commands, the network a command is (not) given, and
+background commands.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -18,17 +21,24 @@ from pydantic import JsonValue
 from pydantic_ai import RunContext
 
 from runs import ToolProgress
-from services.egress import EgressPolicy
+from services.sandbox import SandboxSessionManager
 from services.vm.project import ProjectCopies
 from tools.emit import RunEventEmitted
 from tools.shell import shell_toolset
 
 from ._json import arr, s
-from .conftest import egress_policy
-from .shell_support import Shell, checkout_ctx, git, local_copies, make_repo
+from .shell_support import Shell, checkout_ctx, git, local_home, make_repo
 from .vm_local import can_confine
 
 pytestmark = pytest.mark.skipif(not can_confine(), reason="needs root and bubblewrap")
+
+PROJECT = "/home/agent/projects/project"
+
+
+@dataclass(frozen=True, slots=True)
+class _Home:
+    copies: ProjectCopies
+    sessions: SandboxSessionManager
 
 
 @pytest.fixture
@@ -37,18 +47,15 @@ def repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-async def copies(tmp_path: Path) -> AsyncIterator[ProjectCopies]:
-    async with local_copies(tmp_path / "vm") as live:
-        yield live
+async def home(tmp_path: Path) -> AsyncIterator[_Home]:
+    async with local_home(tmp_path / "vm") as (copies, sessions):
+        yield _Home(copies, sessions)
 
 
-@pytest.fixture
-def egress(tmp_path: Path) -> EgressPolicy:
-    return egress_policy(tmp_path / "data", ("pypi.org",))
-
-
-def _shell(repo: Path, copies: ProjectCopies, egress: EgressPolicy | None = None) -> Shell:
-    return Shell(shell_toolset(), checkout_ctx(repo, copies=copies, egress=egress))
+def _shell(repo: Path, home: _Home) -> Shell:
+    return Shell(
+        shell_toolset(), checkout_ctx(repo, copies=home.copies, sessions=home.sessions)
+    )
 
 
 async def _call(shell: Shell, name: str, **args: str | int) -> dict[str, JsonValue]:
@@ -57,9 +64,9 @@ async def _call(shell: Shell, name: str, **args: str | int) -> dict[str, JsonVal
 
 
 async def test_a_workspace_command_edits_a_file_and_it_lands_in_the_host_repo(
-    repo: Path, copies: ProjectCopies
+    repo: Path, home: _Home
 ):
-    shell = _shell(repo, copies)
+    shell = _shell(repo, home)
     result = await _call(
         shell, "run_command", command="echo changed > hello.txt && echo new > added.txt"
     )
@@ -70,48 +77,48 @@ async def test_a_workspace_command_edits_a_file_and_it_lands_in_the_host_repo(
 
 
 async def test_a_command_runs_in_the_vm_copy_not_in_the_host_folder(
-    repo: Path, copies: ProjectCopies
+    repo: Path, home: _Home
 ):
-    shell = _shell(repo, copies)
+    shell = _shell(repo, home)
     result = await _call(shell, "run_command", command="pwd; ls")
     stdout = s(result["stdout"])
-    assert stdout.splitlines()[0] == "/work"
+    assert stdout.splitlines()[0] == PROJECT
     assert str(repo) not in stdout
     assert "hello.txt" in stdout
 
 
 async def test_a_cd_into_a_subdirectory_persists_to_the_next_command(
-    repo: Path, copies: ProjectCopies
+    repo: Path, home: _Home
 ):
-    shell = _shell(repo, copies)
+    shell = _shell(repo, home)
     _ = await _call(shell, "run_command", command="mkdir -p sub")
     _ = await _call(shell, "run_command", command="cd sub")
     result = await _call(shell, "run_command", command="pwd")
-    assert s(result["stdout"]).strip() == "/work/sub"
+    assert s(result["stdout"]).strip() == f"{PROJECT}/sub"
     _ = await _call(shell, "run_command", command="echo inside > here.txt")
     assert (repo / "sub" / "here.txt").read_text() == "inside\n"
 
 
-async def test_a_cd_above_the_project_root_does_not_persist(repo: Path, copies: ProjectCopies):
-    shell = _shell(repo, copies)
+async def test_a_cd_above_the_project_root_does_not_persist(repo: Path, home: _Home):
+    shell = _shell(repo, home)
     _ = await _call(shell, "run_command", command="mkdir -p sub")
     _ = await _call(shell, "run_command", command="cd sub")
     _ = await _call(shell, "run_command", command="cd ../..")
     result = await _call(shell, "run_command", command="pwd")
-    assert s(result["stdout"]).strip() == "/work/sub"
+    assert s(result["stdout"]).strip() == f"{PROJECT}/sub"
 
 
-async def test_a_failed_cd_leaves_the_directory_where_it_was(repo: Path, copies: ProjectCopies):
-    shell = _shell(repo, copies)
+async def test_a_failed_cd_leaves_the_directory_where_it_was(repo: Path, home: _Home):
+    shell = _shell(repo, home)
     result = await _call(shell, "run_command", command="cd nowhere-at-all")
     assert result["ok"] is False and result["exit_code"] != 0
-    assert s((await _call(shell, "run_command", command="pwd"))["stdout"]).strip() == "/work"
+    assert s((await _call(shell, "run_command", command="pwd"))["stdout"]).strip() == PROJECT
 
 
 async def test_a_workspace_command_gets_no_proxy_and_cannot_reach_out(
-    repo: Path, copies: ProjectCopies, egress: EgressPolicy
+    repo: Path, home: _Home
 ):
-    shell = _shell(repo, copies, egress)
+    shell = _shell(repo, home)
     env = await _call(shell, "run_command", command="env")
     env_stdout = s(env["stdout"])
     assert "HTTP_PROXY" not in env_stdout and "http_proxy" not in env_stdout
@@ -132,9 +139,9 @@ async def test_a_workspace_command_gets_no_proxy_and_cannot_reach_out(
 
 
 async def test_a_network_command_gets_the_egress_proxy_with_credentials(
-    repo: Path, copies: ProjectCopies, egress: EgressPolicy
+    repo: Path, home: _Home
 ):
-    shell = _shell(repo, copies, egress)
+    shell = _shell(repo, home)
     result = await _call(shell, "run_command", command="env", reach="network")
     env = {
         key: value
@@ -147,16 +154,16 @@ async def test_a_network_command_gets_the_egress_proxy_with_credentials(
 
 
 async def test_a_workspace_command_that_names_a_url_gets_the_network_it_needs(
-    repo: Path, copies: ProjectCopies, egress: EgressPolicy
+    repo: Path, home: _Home
 ):
-    shell = _shell(repo, copies, egress)
+    shell = _shell(repo, home)
     result = await _call(shell, "run_command", command="echo https://example.com; env")
     assert result["reach"] == "workspace" and result["fenced"] is True
     assert "HTTP_PROXY=http://workspace:" in s(result["stdout"])
 
 
-async def test_a_background_command_shows_output_and_is_stopped(repo: Path, copies: ProjectCopies):
-    shell = _shell(repo, copies)
+async def test_a_background_command_shows_output_and_is_stopped(repo: Path, home: _Home):
+    shell = _shell(repo, home)
     started = await _call(shell, "start_command", command="echo up; sleep 60")
     command_id = s(started["command_id"])
     assert started["command"] == "echo up; sleep 60" and started["fenced"] is True
@@ -177,9 +184,9 @@ async def test_a_background_command_shows_output_and_is_stopped(repo: Path, copi
 
 
 async def test_a_finished_background_command_reports_its_exit_and_brings_its_work_back(
-    repo: Path, copies: ProjectCopies
+    repo: Path, home: _Home
 ):
-    shell = _shell(repo, copies)
+    shell = _shell(repo, home)
     started = await _call(shell, "start_command", command="echo made > from-bg.txt; exit 3")
     command_id = s(started["command_id"])
     checked = await _call(shell, "check_command", command_id=command_id)
@@ -194,9 +201,9 @@ async def test_a_finished_background_command_reports_its_exit_and_brings_its_wor
 
 
 async def test_a_command_past_its_timeout_is_timed_out_with_no_exit_code(
-    repo: Path, copies: ProjectCopies
+    repo: Path, home: _Home
 ):
-    shell = _shell(repo, copies)
+    shell = _shell(repo, home)
     result = await _call(
         shell, "run_command", command="echo reached-here; sleep 30", timeout_seconds=2
     )
@@ -206,7 +213,7 @@ async def test_a_command_past_its_timeout_is_timed_out_with_no_exit_code(
 
 
 async def test_a_running_commands_output_reaches_the_operators_stream(
-    repo: Path, copies: ProjectCopies, monkeypatch: pytest.MonkeyPatch
+    repo: Path, home: _Home, monkeypatch: pytest.MonkeyPatch
 ):
     frames: list[RunEventEmitted] = []
 
@@ -215,7 +222,7 @@ async def test_a_running_commands_output_reaches_the_operators_stream(
         return event
 
     monkeypatch.setattr(RunContext, "emit", emit)
-    shell = _shell(repo, copies)
+    shell = _shell(repo, home)
     shell.ctx.tool_call_id = "call-1"
     result = await _call(shell, "run_command", command="echo streaming; sleep 2; echo more")
 
@@ -230,8 +237,8 @@ async def test_a_running_commands_output_reaches_the_operators_stream(
     assert "streaming" in s(result["stdout"]) and "more" in s(result["stdout"])
 
 
-async def test_a_commit_in_the_vm_lands_on_the_host_branch(repo: Path, copies: ProjectCopies):
-    shell = _shell(repo, copies)
+async def test_a_commit_in_the_vm_lands_on_the_host_branch(repo: Path, home: _Home):
+    shell = _shell(repo, home)
     result = await _call(
         shell, "run_command", command="echo more >> hello.txt && git commit -qam 'agent change'"
     )
@@ -240,18 +247,18 @@ async def test_a_commit_in_the_vm_lands_on_the_host_branch(repo: Path, copies: P
     assert git(repo, "status", "--porcelain", "--untracked-files=no") == ""
 
 
-async def test_a_rewritten_branch_stays_in_the_vm_and_is_noted(repo: Path, copies: ProjectCopies):
+async def test_a_rewritten_branch_stays_in_the_vm_and_is_noted(repo: Path, home: _Home):
     before = git(repo, "rev-parse", "HEAD")
-    shell = _shell(repo, copies)
+    shell = _shell(repo, home)
     result = await _call(shell, "run_command", command="git commit -q --amend -m rewritten")
     assert result["ok"] is True
     assert any("rewritten" in s(note) for note in arr(result["notes"]))
     assert git(repo, "rev-parse", "HEAD") == before
 
 
-async def test_work_on_another_branch_is_noted_and_not_landed(repo: Path, copies: ProjectCopies):
+async def test_work_on_another_branch_is_noted_and_not_landed(repo: Path, home: _Home):
     before = git(repo, "rev-parse", "HEAD")
-    shell = _shell(repo, copies)
+    shell = _shell(repo, home)
     result = await _call(
         shell,
         "run_command",
@@ -262,9 +269,9 @@ async def test_work_on_another_branch_is_noted_and_not_landed(repo: Path, copies
 
 
 async def test_a_change_made_on_the_host_reaches_the_next_command(
-    repo: Path, copies: ProjectCopies
+    repo: Path, home: _Home
 ):
-    shell = _shell(repo, copies)
+    shell = _shell(repo, home)
     _ = await _call(shell, "run_command", command="true")
     _ = (repo / "hello.txt").write_text("operator edit\n")
     result = await _call(shell, "run_command", command="cat hello.txt")

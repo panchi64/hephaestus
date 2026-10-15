@@ -689,18 +689,16 @@ class TestTheStructuralStage:
         # the executing tools' schema default would be the chassis writing a declaration
         # the model never made — and it would then be printed to the reviewer and rendered
         # on the operator's review row as if it had.
-        assert declared_reach("code_execute", {"code": "echo hi", "language": "bash"}) is None
-        assert capability_of("code_execute", {"code": "echo hi", "language": "bash"}).reach is None
+        assert declared_reach("code_execute", {"code": "print(1)"}) is None
+        assert capability_of("code_execute", {"code": "print(1)"}).reach is None
         assert capability_of("shell_run_command", {"command": "ls"}).reach == "workspace"
 
-    def test_a_bash_sandbox_command_declares_nothing_and_is_cleared_by_its_container(self):
+    def test_a_sandbox_program_declares_nothing_and_is_cleared_by_its_container(self):
         # `code_execute` has no `reach` argument, so it declares nothing — `declared_reach`
         # answers `None` rather than inventing a declaration the model never made. That is
         # not a refusal here: the call is cleared on the *container*, which bounds it
-        # whatever the command says, so the missing declaration never has to be ruled on.
-        capability = capability_of(
-            "code_execute", {"code": "echo hi", "language": "bash"}, root=ROOT
-        )
+        # whatever the program does, so the missing declaration never has to be ruled on.
+        capability = capability_of("code_execute", {"code": "print(1)"}, root=ROOT)
         assert capability.reach is None and capability.sandboxed
         judgement = judge(capability, fenced=True)
         assert judgement.approved
@@ -844,11 +842,6 @@ class TestTheOtherKindsOfAction:
         capability = capability_of("code_execute", {"code": "print(1)"}, root=ROOT)
         assert capability.kind is ActionKind.OPAQUE
         assert not capability.bounded
-        # ...but the bash form is a command line, and reads like one.
-        assert (
-            capability_of("code_execute", {"code": "ls -la", "language": "bash"}, root=ROOT).kind
-            is ActionKind.SHELL
-        )
 
     def test_widening_the_egress_allowlist_is_never_cleared_here(self):
         # `code_request_egress` carries no command and no path, so it falls through to the

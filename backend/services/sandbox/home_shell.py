@@ -13,6 +13,7 @@ command made as long as it lands somewhere the command could see.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import re
 import secrets
@@ -20,6 +21,7 @@ import time
 from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness._output import truncate_tail
@@ -27,17 +29,28 @@ from pydantic_ai_harness._output import truncate_tail
 from services.home.backend import Mount
 from services.home.paths import HOME, SCRATCH, HomePathError, Place, parse
 from services.vm import VMError
-from services.vm.platform import HomeBind
+from services.vm.platform import HomeBind, JobState
 from services.vm.project import BringOut, ProjectCopies, ProjectCopy
 
 from .jobs import capturing_cwd, follow_job, refuse
 from .session import SandboxSession
-from .shell_runner import ProgressHook, ShellResult
+from .shell_runner import BackgroundStatus, ProgressHook, ShellResult
 
 _TIMEOUT_EXIT = 124
+#: How long a stop waits for the job to report it has ended.
+_STOP_WAIT_S = 5.0
 #: How many projects one command may bring into the VM by naming them.
 _MAX_PROJECTS = 8
 _NAMED_PROJECT = re.compile(r"(?:~|/home/agent)/projects/([a-z0-9][a-z0-9._-]{0,79})")
+
+
+@dataclass(frozen=True, slots=True)
+class _Job:
+    """A background command, and the copies it holds until it ends."""
+
+    name: str
+    session: SandboxSession
+    copies: tuple[ProjectCopy, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,10 +66,13 @@ class HomeResult:
 class HomeShell:
     """One thread's commands, over its sandbox session and the project copies."""
 
-    def __init__(self, *, default_timeout: float, max_output_chars: int) -> None:
-        self._cwd: str = SCRATCH.path
+    def __init__(
+        self, *, default_timeout: float, max_output_chars: int, start: str = SCRATCH.path
+    ) -> None:
+        self._cwd: str = start
         self._default_timeout: float = default_timeout
         self._max_output_chars: int = max_output_chars
+        self._jobs: dict[str, _Job] = {}
 
     @property
     def cwd(self) -> str:
@@ -140,6 +156,94 @@ class HomeShell:
             duration_ms=round((time.monotonic() - started) * 1000),
         )
         return HomeResult(result=result, notes=tuple(notes), cwd=self._cwd)
+
+    async def start(
+        self,
+        session: SandboxSession,
+        copies: ProjectCopies,
+        command: str,
+        *,
+        mounts: Sequence[Mount],
+        env: Mapping[str, str],
+    ) -> str:
+        """Start ``command`` in the background; its places come back when it ends."""
+        refuse(command)
+        held = [(mount, copies.acquire(mount.root)) for mount in self.reached(command, mounts)]
+        command_id = secrets.token_hex(6)
+        name = f"bg-{command_id}"
+        async with AsyncExitStack() as stack:
+            _ = await stack.enter_async_context(session.lock)
+            for _mount, copy in sorted(held, key=lambda pair: pair[1].workspace.key):
+                _ = await stack.enter_async_context(copy.lock)
+            try:
+                await session.bring_in()
+                for _mount, copy in held:
+                    await copy.workspace.bring_in()
+                await copies.vm.start_job(
+                    session.key,
+                    name,
+                    ["bash", "-c", command],
+                    env=env,
+                    workdir=self._cwd,
+                    home=_binds(session.key, held),
+                )
+            except VMError as exc:
+                raise ModelRetry(f"The platform VM could not start the command: {exc}") from exc
+        for _mount, copy in held:
+            copy.jobs.add(name)
+        self._jobs[command_id] = _Job(name, session, tuple(copy for _, copy in held))
+        return command_id
+
+    async def check(self, copies: ProjectCopies, command_id: str) -> BackgroundStatus | None:
+        job = self._jobs.get(command_id)
+        if job is None:
+            return None
+        state = await copies.vm.job(job.name)
+        if not state.running:
+            await self._bring_out(job)
+        return self._status(command_id, state, "running" if state.running else "finished")
+
+    async def stop(self, copies: ProjectCopies, command_id: str) -> BackgroundStatus | None:
+        job = self._jobs.pop(command_id, None)
+        if job is None:
+            return None
+        vm = copies.vm
+        await vm.stop_job(job.name)
+        deadline = time.monotonic() + _STOP_WAIT_S
+        state = await vm.job(job.name)
+        while state.running and time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            state = await vm.job(job.name)
+        for copy in job.copies:
+            copy.jobs.discard(job.name)
+        await self._bring_out(job)
+        return self._status(command_id, state, "stopped")
+
+    async def shutdown(self, copies: ProjectCopies) -> None:
+        for command_id in list(self._jobs):
+            _ = await self.stop(copies, command_id)
+
+    async def _bring_out(self, job: _Job) -> None:
+        async with job.session.lock:
+            await job.session.bring_out()
+        for copy in job.copies:
+            async with copy.lock:
+                copy.touch()
+                _ = await copy.workspace.bring_out()
+
+    def _status(
+        self,
+        command_id: str,
+        state: JobState,
+        status: Literal["running", "finished", "stopped"],
+    ) -> BackgroundStatus:
+        return BackgroundStatus(
+            command_id=command_id,
+            status=status,
+            exit_code=state.exit_code,
+            stdout=truncate_tail(state.stdout, self._max_output_chars),
+            stderr=truncate_tail(state.stderr, self._max_output_chars),
+        )
 
     def change_dir(self, path: str, mounts: Sequence[Mount]) -> str:
         """Move the working directory to ``path``, a folder in a place the thread has."""

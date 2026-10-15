@@ -10,7 +10,7 @@ from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai.workspaces.protocol import WorkspaceBackend, WorkspaceReadOnlyError
 
 from services.home.backend import HomeBackend, Mount
-from services.home.paths import HOME, SCRATCH, HomePathError, Place
+from services.home.paths import HOME, SCRATCH, Place
 
 API = Place("projects", "api")
 WEB = Place("projects", "web")
@@ -126,9 +126,23 @@ async def test_the_homes_own_folders_cannot_be_removed_or_written(tmp_path: Path
         _ = await backend.read_bytes(HOME)
 
 
+async def test_a_path_naming_no_group_lands_in_the_default_place(tmp_path: Path) -> None:
+    scratch, api = tmp_path / "scratch", tmp_path / "api"
+    scratch.mkdir()
+    api.mkdir()
+    mounts = [Mount(SCRATCH, scratch, writable=True), Mount(API, api, writable=True)]
+    await HomeBackend(mounts, key="t").write_bytes("notes.md", b"n")
+    assert (scratch / "notes.md").read_bytes() == b"n"
+    in_project = HomeBackend(mounts, key="t", default=API)
+    await in_project.write_bytes("src/a.py", b"a")
+    assert (api / "src" / "a.py").read_bytes() == b"a"
+    assert await in_project.read_bytes("scratch/notes.md") == b"n"
+    assert (await in_project.stat("src/a.py")).path == f"{HOME}/projects/api/src/a.py"
+
+
 async def test_a_place_the_thread_has_no_mount_for_is_not_there(tmp_path: Path) -> None:
     backend, _scratch, _api, _web = _home(tmp_path)
     with pytest.raises(FileNotFoundError):
         _ = await backend.read_bytes("~/shared/recipes/chili.md")
-    with pytest.raises(HomePathError):
+    with pytest.raises(ValueError, match="outside your home"):
         _ = await backend.read_bytes("/etc/passwd")

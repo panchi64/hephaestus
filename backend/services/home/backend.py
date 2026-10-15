@@ -21,7 +21,7 @@ from pathlib import Path
 from pydantic_ai.workspaces import FileEntry, LocalWorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.protocol import WorkspaceReadOnlyError
 
-from .paths import HOME, HomePath, HomePathError, Place, absolute, parse
+from .paths import HOME, SCRATCH, HomePath, HomePathError, Place, absolute, parse
 
 #: The group folders under the home, in the order a listing shows them.
 _GROUPS = ("scratch", "projects", "worktrees", "shared")
@@ -39,13 +39,23 @@ class Mount:
 class HomeBackend:
     """Implements ``WorkspaceBackend``, ``SupportsFilesystem`` and ``SupportsRealpath``."""
 
-    def __init__(self, mounts: Iterable[Mount], *, key: str, working_dir: str = HOME) -> None:
+    def __init__(
+        self,
+        mounts: Iterable[Mount],
+        *,
+        key: str,
+        working_dir: str = HOME,
+        default: Place = SCRATCH,
+    ) -> None:
+        """``default`` is the place a path lands in when it names no group of the home,
+        so ``notes.md`` from the home is ``~/scratch/notes.md``, or the thread's project."""
         self._mounts: dict[Place, Mount] = {mount.place: mount for mount in mounts}
         self._locals: dict[Place, LocalWorkspaceBackend] = {
             place: LocalWorkspaceBackend(mount.root) for place, mount in self._mounts.items()
         }
         self._ref: WorkspaceRef = WorkspaceRef(provider="hephaestus-home", id=key)
         self._working_dir: str = working_dir
+        self._default: Place = default
 
     @property
     def ref(self) -> WorkspaceRef:
@@ -58,8 +68,17 @@ class HomeBackend:
     async def working_dir(self) -> str:
         return self._working_dir
 
-    def _spell(self, path: str) -> str:
-        return absolute(path, cwd=self._working_dir)
+    def _regroup(self, path: str) -> str:
+        """``path`` moved into the default place when it names no group of the home."""
+        normal = absolute(path, cwd=self._working_dir)
+        if not normal.startswith(f"{HOME}/"):
+            return path
+        head = normal[len(HOME) + 1 :].split("/", 1)[0]
+        return path if head in _GROUPS else self._default.path + normal[len(HOME) :]
+
+    def spell(self, path: str) -> str:
+        """``path`` as the absolute home path an operation on it acts on."""
+        return absolute(self._regroup(path), cwd=self._working_dir)
 
     def _virtual_children(self, path: str) -> list[str] | None:
         """The names in a virtual directory of the home, or None when ``path`` is not one."""
@@ -72,7 +91,11 @@ class HomeBackend:
 
     def _host(self, path: str) -> tuple[Mount, Path, HomePath]:
         """The mount and host path a virtual path names, refusing one outside its mount."""
-        target = parse(path, cwd=self._working_dir)
+        try:
+            target = parse(self._regroup(path), cwd=self._working_dir)
+        except HomePathError as exc:
+            # A `ValueError` is what the file tools hand back to the model to correct.
+            raise ValueError(str(exc)) from exc
         mount = self._mounts.get(target.place)
         if mount is None:
             raise FileNotFoundError(f"there is no {target.place.path} in your home")
@@ -98,13 +121,13 @@ class HomeBackend:
     # --- SupportsFilesystem -------------------------------------------------------------
 
     async def read_bytes(self, path: str) -> bytes:
-        if self._virtual_children(self._spell(path)) is not None:
+        if self._virtual_children(self.spell(path)) is not None:
             raise IsADirectoryError(path)
         mount, host, _ = self._host(path)
         return await self._local(mount).read_bytes(str(host))
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        if self._virtual_children(self._spell(path)) is not None:
+        if self._virtual_children(self.spell(path)) is not None:
             raise IsADirectoryError(path)
         mount, host, target = self._writable(path)
         if not target.rel:
@@ -112,7 +135,7 @@ class HomeBackend:
         await self._local(mount).write_bytes(str(host), data)
 
     async def stat(self, path: str) -> FileEntry:
-        normal = self._spell(path)
+        normal = self.spell(path)
         if self._virtual_children(normal) is not None:
             return FileEntry(name=posixpath.basename(normal), path=normal, is_dir=True, size=None)
         mount, host, target = self._host(path)
@@ -120,7 +143,7 @@ class HomeBackend:
         return FileEntry(name=entry.name, path=target.path, is_dir=entry.is_dir, size=entry.size)
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
-        normal = self._spell(path)
+        normal = self.spell(path)
         children = self._virtual_children(normal)
         if children is not None:
             return [
@@ -140,13 +163,13 @@ class HomeBackend:
         ]
 
     async def make_dir(self, path: str) -> None:
-        if self._virtual_children(self._spell(path)) is not None:
+        if self._virtual_children(self.spell(path)) is not None:
             return
         mount, host, _ = self._writable(path)
         await self._local(mount).make_dir(str(host))
 
     async def remove(self, path: str) -> None:
-        normal = self._spell(path)
+        normal = self.spell(path)
         above_home = normal == "/" or HOME.startswith(normal.rstrip("/") + "/")
         if above_home or self._virtual_children(normal) is not None:
             raise ValueError("cannot remove a folder of the home itself")
@@ -156,11 +179,11 @@ class HomeBackend:
         await self._local(mount).remove(str(host))
 
     async def exists(self, path: str) -> bool:
-        if self._virtual_children(self._spell(path)) is not None:
+        if self._virtual_children(self.spell(path)) is not None:
             return True
         try:
             mount, host, _ = self._host(path)
-        except HomePathError, FileNotFoundError, PermissionError:
+        except ValueError, FileNotFoundError, PermissionError:
             return False
         return await self._local(mount).exists(str(host))
 
@@ -169,13 +192,14 @@ class HomeBackend:
     async def realpath(self, path: str) -> str:
         """The virtual path with its symlinks followed, refusing one that leads out of its
         place (``OSError``, per the protocol)."""
-        normal = self._spell(path)
+        normal = self.spell(path)
         if self._virtual_children(normal) is not None:
             return normal
         try:
             mount, host, target = self._host(path)
-        except (HomePathError, FileNotFoundError, PermissionError) as exc:
-            raise OSError(str(exc)) from exc
+        except (ValueError, FileNotFoundError, PermissionError) as exc:
+            # A `PermissionError` is what the file tools hand back to the model to correct.
+            raise PermissionError(str(exc)) from exc
         root = mount.root.resolve()
         real = Path(os.path.realpath(host))
         rel = real.relative_to(root).as_posix()

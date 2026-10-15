@@ -164,15 +164,16 @@ class Capability:
         return tuple(command.program for command in self.commands)
 
 
-#: Shell-shaped tools, by the argument carrying the command. `code_execute` is here for
-#: its `bash` language only — its `python` program is code, not a command line, and there
-#: is no grammar walk that bounds an interpreter.
+#: Shell-shaped tools, by the argument carrying the command.
 _COMMAND_ARG: dict[str, str] = {
     "shell_run_command": "command",
     "shell_start_command": "command",
     "code_run_host_command": "command",
-    "code_execute": "code",
 }
+
+#: The tool whose argument is a Python program run in the conversation's sandbox. The
+#: sandbox is the fence there, and no grammar walk bounds an interpreter.
+_PROGRAM_TOOL = "code_execute"
 
 #: The one tool whose entire security content is an argument *value*. Everything else here
 #: is described by its argument keys (see :func:`_arg_shape`), because a value may be a
@@ -225,12 +226,6 @@ def measured_against_root(tool: str) -> bool:
     if tool in _HOST_COMMAND_TOOLS:
         return False
     return tool in _COMMAND_ARG or tool in _PATH_ARG
-
-
-#: Shell-shaped tools whose command runs inside the conversation's own sandbox. The
-#: sandbox is the fence there, so nothing about the command has to be understood for the
-#: act to be bounded — see :attr:`Capability.sandboxed`.
-_SANDBOXED_TOOLS = frozenset({"code_execute"})
 
 
 def declared_reach(tool: str, args: Mapping[str, object]) -> Reach | None:
@@ -299,7 +294,6 @@ def shell_capability(
         network=walk.network,
         escapes=walk.escapes,
         reach=reach,
-        sandboxed=tool in _SANDBOXED_TOOLS,
         unbounded=(*walk.unbounded, *unplaced),
     )
 
@@ -314,6 +308,19 @@ def capability_of(
     this module has no rule for is described by its name and the keys of its arguments —
     enough for a reviewer to judge, and never enough for the judge to clear.
     """
+    if tool == _PROGRAM_TOOL:
+        summary, detail = describe(
+            tool, args, fallback="Runs a Python program in the conversation's sandbox"
+        )
+        return Capability(
+            tool=tool,
+            kind=ActionKind.OPAQUE,
+            summary=summary,
+            detail=detail,
+            sandboxed=True,
+            unbounded=("an interpreter's program is not bounded by its arguments",),
+        )
+
     command_arg = _COMMAND_ARG.get(tool)
     if command_arg is not None:
         return _command_capability(tool, args, command_arg, root)
@@ -391,25 +398,6 @@ def _command_capability(
             kind=ActionKind.SHELL,
             summary=f"Runs {tool} with no command given",
             unbounded=("the call carries no command to read",),
-        )
-    if tool == "code_execute" and args.get("language", "python") != "bash":
-        language = args.get("language", "python")
-        summary, detail = describe(
-            tool,
-            # The schema default filled in, for the reason `declared_reach` fills in its
-            # own: an omitted argument is not an absent fact but the value the tool will
-            # run under, and both the review row and the reviewer are describing what is
-            # about to happen rather than what was typed.
-            {**args, "language": language},
-            fallback="Runs a program in the conversation's sandbox",
-        )
-        return Capability(
-            tool=tool,
-            kind=ActionKind.OPAQUE,
-            summary=summary,
-            detail=detail,
-            sandboxed=True,
-            unbounded=("an interpreter's program is not bounded by its arguments",),
         )
     # `network` on the returned capability is the grammar walk's own — a URL named in the
     # command. There is no tool argument left to widen it with: egress is no longer a flag

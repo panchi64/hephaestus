@@ -13,12 +13,18 @@ from typing import cast
 
 import pytest
 from pydantic_ai import ModelRetry, RunContext
+from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 from core.container import ServiceContainer
+from core.db import init_db, make_engine
+from core.vault import Vault
 from runs import Run, RunStream
+from services.home.leases import WriteLeases
+from services.projects.store import ProjectStore
 from services.sandbox import SandboxSessionManager
+from services.settings_store import SettingsStore
 from tools import RunDeps, build_agent_toolsets, harness_events_capability
 from tools.files import files_toolset
 
@@ -50,10 +56,12 @@ class _Manager:
         return self.sessions[key]
 
 
-def _deps(manager: _Manager | None, conversation_id: str) -> tuple[Run, RunDeps]:
+def _deps(
+    manager: _Manager | None, conversation_id: str, extra: ServiceContainer | None = None
+) -> tuple[Run, RunDeps]:
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
-    caps = ServiceContainer()
-    if manager is not None:
+    caps = extra or ServiceContainer()
+    if manager is not None and caps.get_optional(SandboxSessionManager) is None:
         caps.add(manager, as_type=SandboxSessionManager)
     return run, RunDeps(run=run, owner_id="operator", caps=caps, conversation_id=conversation_id)
 
@@ -71,6 +79,9 @@ async def _call(
     *,
     manager: _Manager | None,
     conversation_id: str = "conv-1",
+    caps: ServiceContainer | None = None,
+    approved: bool = False,
+    delegated: bool = False,
 ) -> object:
     """Invoke one file tool with exact arguments through the real gated toolset stack.
 
@@ -78,7 +89,8 @@ async def _call(
     *specific* argument set does, and a `TestModel` synthesizes its own arguments.
     """
     toolset = _TOOLSET
-    _run, deps = _deps(manager, conversation_id)
+    _run, deps = _deps(manager, conversation_id, caps)
+    deps.delegated_approved = delegated
     # Two fields make this stand in for a tool call *inside* a run, both because the harness
     # filesystem tools emit capability events: `emit` refuses a context with no event stream
     # to emit into (a plain list is the shape the library carries), and it refuses an event it
@@ -91,9 +103,78 @@ async def _call(
         _event_stream_buffer=[],
         _capability=harness_events_capability(),
     )
+    ctx.tool_call_approved = approved
     tools = await toolset.get_tools(ctx)
     name = f"files_{tool}"
     return cast(object, await toolset.call_tool(name, args, ctx, tools[name]))
+
+
+async def _with_project(tmp_path: Path) -> tuple[ServiceContainer, Path, WriteLeases]:
+    """Caps holding one registered project, ``~/projects/api``, and the write leases."""
+    engine = make_engine("sqlite:///:memory:")
+    init_db(engine)
+    vault = Vault(tmp_path / "keyfile.json")
+    await vault.setup("pw")
+    projects = ProjectStore(engine, vault, SettingsStore(engine))
+    root = tmp_path / "api"
+    root.mkdir()
+    _ = (root / "README.md").write_text("the api\n")
+    _ = await projects.create("operator", "api", str(root))
+    leases = WriteLeases(engine, ttl_s=3600)
+    caps = ServiceContainer()
+    caps.add(projects)
+    caps.add(leases)
+    return caps, root, leases
+
+
+async def test_a_sandbox_thread_reads_a_project_by_its_home_path(tmp_path: Path):
+    caps, _root, _leases = await _with_project(tmp_path)
+    read = await _call(
+        "read_file", {"path": "~/projects/api/README.md"}, manager=_Manager(tmp_path), caps=caps
+    )
+    assert "the api" in str(read)
+
+
+async def test_a_listing_with_no_folder_named_is_of_the_threads_own_place(tmp_path: Path):
+    caps, _root, _leases = await _with_project(tmp_path)
+    manager = _Manager(tmp_path)
+    _ = await _call("write_file", {"path": "mine.txt", "content": "x"}, manager=manager, caps=caps)
+    listed = str(await _call("list_directory", {}, manager=manager, caps=caps))
+    assert "mine.txt" in listed and "README.md" not in listed
+    home = str(await _call("list_directory", {"path": "~"}, manager=manager, caps=caps))
+    assert "projects" in home and "scratch" in home
+
+
+async def test_a_write_into_a_project_the_thread_may_only_read_asks_first(tmp_path: Path):
+    caps, root, _leases = await _with_project(tmp_path)
+    args: dict[str, object] = {"path": "projects/api/notes.md", "content": "hi"}
+    with pytest.raises(ApprovalRequired):
+        _ = await _call("write_file", args, manager=_Manager(tmp_path), caps=caps)
+    assert not (root / "notes.md").exists()
+
+
+async def test_an_approved_write_leases_the_project_to_the_thread(tmp_path: Path):
+    caps, root, leases = await _with_project(tmp_path)
+    manager = _Manager(tmp_path)
+    args: dict[str, object] = {"path": "projects/api/notes.md", "content": "hi"}
+    _ = await _call("write_file", args, manager=manager, caps=caps, approved=True)
+    assert (root / "notes.md").read_text() == "hi"
+    assert await leases.held("operator", "conv-1") == {"projects/api"}
+    # The next write in a later run of the thread does not ask again.
+    again: dict[str, object] = {"path": "projects/api/more.md", "content": "more"}
+    _ = await _call("write_file", again, manager=manager, caps=caps)
+    assert (root / "more.md").read_text() == "more"
+
+
+async def test_a_delegated_agent_cannot_take_write_access(tmp_path: Path):
+    caps, root, leases = await _with_project(tmp_path)
+    args: dict[str, object] = {"path": "projects/api/notes.md", "content": "hi"}
+    refused = await _call(
+        "write_file", args, manager=_Manager(tmp_path), caps=caps, approved=True, delegated=True
+    )
+    assert "read-only to you" in str(refused)
+    assert not (root / "notes.md").exists()
+    assert await leases.held("operator", "conv-1") == set()
 
 
 async def test_each_conversation_reads_and_writes_its_own_workspace(tmp_path: Path):
