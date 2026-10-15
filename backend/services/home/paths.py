@@ -83,14 +83,19 @@ def _absolute(raw: str, cwd: str) -> str:
     return f"{cwd.rstrip('/')}/{text}"
 
 
+def absolute(raw: str, *, cwd: str = f"{HOME}/scratch") -> str:
+    """``raw`` as a normalised absolute path in the home's spelling, checked for nothing
+    beyond being a path: ``~`` and ``/work`` expanded, a relative path read from ``cwd``."""
+    return posixpath.normpath(_absolute(raw, cwd))
+
+
 def parse(raw: str, *, cwd: str = f"{HOME}/scratch") -> HomePath:
     """The place and in-place path ``raw`` names, read from ``cwd`` when relative.
 
     Refuses a path outside the home, one naming the home or a group folder itself
     (``~``, ``~/projects``), and one whose ``..`` climbs out of the place it starts in.
     """
-    absolute = _absolute(raw, cwd)
-    normal = posixpath.normpath(absolute)
+    normal = absolute(raw, cwd=cwd)
     if normal != HOME and not normal.startswith(HOME + "/"):
         raise HomePathError(f"{raw!r} is outside your home", hint=f"name {_LAYOUT}")
     parts = normal[len(HOME) + 1 :].split("/") if normal != HOME else []
