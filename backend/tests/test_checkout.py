@@ -22,6 +22,7 @@ from services.workspace_kind import WorkspaceKind
 from services.worktree_switch import WorktreeSwitch
 from tools.deps import RunDeps
 from tools.projects import project_toolset
+from tools.repo import repo_instructions
 from tools.workspace import run_workspace
 
 from ._json import JSON, s
@@ -112,6 +113,12 @@ def _ctx(
 
 
 class TestTheCheckout:
+    async def test_its_instruction_file_is_briefed_like_a_worktrees(self, tmp_path: Path):
+        root = await _repo(tmp_path / "project")
+        _ = (root / "CLAUDE.md").write_text("Run the tests with `make check`.\n")
+        brief = await repo_instructions(_ctx(_caps(tmp_path, root), run=_run("run-brief")))
+        assert "make check" in brief
+
     async def test_it_is_the_operators_own_folder_on_its_branch(self, tmp_path: Path):
         root = await _repo(tmp_path / "project")
         workspace = await run_workspace(_ctx(_caps(tmp_path, root)))

@@ -79,7 +79,7 @@ async def repo_instructions(ctx: RunContext[RunDeps]) -> str:
         workspace = await run_workspace(ctx)
     except WorktreeBusyError:
         return ""
-    if workspace is None or workspace.kind != "worktree":
+    if workspace is None or workspace.kind == "sandbox":
         return ""
     return await run_brief(ctx.deps.run.id, workspace.root)
 
