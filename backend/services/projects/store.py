@@ -159,7 +159,6 @@ class ProjectStore:
 
     @property
     def engine(self) -> Engine:
-        """The database engine the catalog lives in."""
         return self._db
 
     @property

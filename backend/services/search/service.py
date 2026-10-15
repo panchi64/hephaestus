@@ -142,7 +142,6 @@ class SearchService:
 
     @property
     def engine(self) -> Engine:
-        """The database engine the provider catalog lives in."""
         return self._engine
 
     @property

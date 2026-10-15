@@ -99,7 +99,6 @@ class StoreCore:
 
     @property
     def engine(self) -> Engine:
-        """The database engine the conversations live in."""
         return self._engine
 
     @property

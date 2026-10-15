@@ -157,7 +157,6 @@ class SandboxSessionManager:
 
     @property
     def preview_tokens(self) -> PreviewTokens:
-        """The preview token index."""
         return self._preview_tokens
 
     @property

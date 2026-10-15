@@ -131,7 +131,6 @@ class RoutineStore:
 
     @property
     def engine(self) -> Engine:
-        """The database engine the routines live in."""
         return self._engine
 
     @property

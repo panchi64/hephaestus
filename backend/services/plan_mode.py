@@ -104,7 +104,6 @@ class PlanMode:
 
     @property
     def engine(self) -> Engine:
-        """The database engine the plans live in."""
         return self._db
 
     @property

@@ -136,7 +136,6 @@ class CalendarService:
 
     @property
     def engine(self) -> Engine:
-        """The database engine the service reads and writes."""
         return self._engine
 
     # --- calendars --------------------------------------------------------

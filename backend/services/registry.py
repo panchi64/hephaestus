@@ -115,7 +115,6 @@ class ModelRegistry:
 
     @property
     def engine(self) -> Engine:
-        """The database engine the endpoints live in."""
         return self._engine
 
     # --- endpoint catalog -------------------------------------------------

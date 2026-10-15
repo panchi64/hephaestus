@@ -131,7 +131,6 @@ class SkillStore:
 
     @property
     def engine(self) -> Engine:
-        """The database engine the skills live in."""
         return self._engine
 
     # ── writes ───────────────────────────────────────────────────────────────────────────
