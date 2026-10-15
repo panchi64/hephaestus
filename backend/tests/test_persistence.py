@@ -591,16 +591,15 @@ async def test_cancel_parked_run_persists_the_parked_turn(tmp_path: Path):
 
 
 async def test_unhandled_exception_persists_the_partial_turn_and_errors(tmp_path: Path):
-    # Anything that escapes `drive_turn` besides its specific bound catches (here: a
-    # tool raising a plain exception) must not silently drop the operator's own prompt
-    # (and whatever the turn had already produced) from persistence — the orchestrator's
+    # Anything that escapes `drive_turn` besides its specific bound catches (here: the
+    # model itself raising; a tool's exception is recovered and never gets this far) must
+    # not silently drop the operator's own prompt from persistence. The orchestrator's
     # broad `except Exception` flushes it, carrying a legible marker, before the
     # registry's own generic handler records the run as `error`.
-    toolset: FunctionToolset[RunDeps] = FunctionToolset()
-
-    @toolset.tool_plain(metadata={"sensitivity": "read"})
-    def boom() -> int:
-        raise RuntimeError("tool exploded")
+    async def explode(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        if messages:
+            raise RuntimeError("model exploded")
+        yield ""
 
     store, db_engine = await _fresh_store(tmp_path)
     await store.start()
@@ -608,9 +607,8 @@ async def test_unhandled_exception_persists_the_partial_turn_and_errors(tmp_path
 
     reg = RunRegistry()
     orch = build_chat_orchestrator(
-        "call the tool",
-        model=TestModel(call_tools=["x_boom"]),
-        categories={"x": toolset},
+        "say something",
+        model=FunctionModel(stream_function=explode),
         store=store,
         conversation_id=conv,
     )

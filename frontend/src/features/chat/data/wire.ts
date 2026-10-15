@@ -92,6 +92,8 @@ export interface ToolCallDTO {
   answers?: ToolCallAnswerDTO[];
   /** The `run_code` call this one was made from, when a script made it. */
   parent_tool_call_id?: string | null;
+  /** The failure was the platform's own fault. Absent from older backends. */
+  platform?: boolean;
 }
 
 /** An inline View chip re-attached to the message that minted it — references the

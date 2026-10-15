@@ -219,7 +219,7 @@ class PluginsToolset(WrapperToolset[RunDeps]):
                     parameters_json_schema=route.tool.parameters,
                     metadata={SENSITIVITY_METADATA_KEY: route.tool.sensitivity.value},
                 ),
-                max_retries=2,
+                max_retries=ctx.max_retries,
                 args_validator=_ANY_ARGS,
             )
         return tools

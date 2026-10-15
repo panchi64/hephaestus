@@ -124,6 +124,9 @@ export interface ToolInvocation {
   result?: string;
   /** Error detail shown when status='error'. */
   error?: string;
+  /** The failure was the platform's own fault, not the call's or the environment's.
+   *  The model was told and carried on; the card marks it so the bug stays visible. */
+  platform?: boolean;
   /** How long the call took. From the run while it is out (`tool.progress` carries the
    *  elapsed seconds), then from the result's own measurement for a tool that reports
    *  one — never a stopwatch started here, which would be timing the stream. */

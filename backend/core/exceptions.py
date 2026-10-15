@@ -14,7 +14,15 @@ from __future__ import annotations
 
 
 class HephaestusError(Exception):
-    """Base for all application errors."""
+    """Base for all application errors.
+
+    ``hint`` is the next step a reader could take, worded for whoever hits the error. A
+    tool failure shows it to the model as the diagnostic's ``help:`` line.
+    """
+
+    def __init__(self, *args: object, hint: str | None = None) -> None:
+        super().__init__(*args)
+        self.hint: str | None = hint
 
 
 class NotFoundError(HephaestusError):

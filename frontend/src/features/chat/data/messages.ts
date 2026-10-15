@@ -100,6 +100,7 @@ export function toTool(dto: ToolCallDTO): ToolInvocation {
         : undefined,
     result: stringifyResult(dto.result),
     error: dto.error ?? undefined,
+    platform: dto.platform || undefined,
     images: toolImages(dto.images),
     // A backgrounded command is still a command run on the operator's machine, and it
     // renders as an ordinary card rather than as a terminal — so this is the only place

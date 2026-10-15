@@ -87,7 +87,7 @@ def web_toolset() -> FunctionToolset[RunDeps]:
             raise
         return results
 
-    @toolset.tool(retries=2)
+    @toolset.tool
     async def fetch(
         ctx: RunContext[RunDeps], url: str, offset: int = 0, goal: str | None = None
     ) -> FetchedPage | str:

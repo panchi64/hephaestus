@@ -146,6 +146,7 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
         if (t) {
           t.status = "error";
           t.error = ev.error;
+          t.platform = ev.platform || undefined;
           t.progress = undefined; // the run is over — drop the spin-up note
         }
       });

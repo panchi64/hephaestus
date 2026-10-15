@@ -26,6 +26,7 @@ from pydantic_ai import (
     DeferredToolRequests,
     RunContext,
 )
+from pydantic_ai.agent import AgentRetries
 from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.models import Model
 from pydantic_ai_harness import WarnOnCacheBusts
@@ -73,6 +74,8 @@ def build_agent(
     instruction_providers: Sequence[InstructionProvider] = (),
     dormant: Mapping[str, str] = NO_DORMANT,
     code_mode: CodeModeLimits | None = None,
+    retries: AgentRetries | None = None,
+    tool_call_timeout_s: float | None = None,
 ) -> TurnAgent:
     # Two prompt seams by durability: SYSTEM_PROMPT (identity/voice) is anchored in
     # history; INSTRUCTIONS (autonomy, tool posture, the treat-external-content-as-
@@ -96,7 +99,10 @@ def build_agent(
         deps_type=RunDeps,
         system_prompt=SYSTEM_PROMPT,
         instructions=INSTRUCTIONS,
-        toolsets=build_agent_toolsets(categories, dormant=tuple(dormant)),
+        toolsets=build_agent_toolsets(
+            categories, dormant=tuple(dormant), call_timeout_s=tool_call_timeout_s
+        ),
+        retries=retries,
         # Parallel tool calling (see `services.llm.TOOL_CALL_SETTINGS`). Declared at
         # construction, not per-run on `agent.iter(...)`: a park stashes this agent on
         # the ParkedTurn, so every resume inherits it with nothing threaded through the

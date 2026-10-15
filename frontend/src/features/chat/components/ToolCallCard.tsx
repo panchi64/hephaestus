@@ -136,7 +136,9 @@ export function ToolCallCard(props: {
                 : `${num(props.tool.elapsedMs / 1000, 2)}S`}
             </Text>
             <Show when={props.tool.status === "error"}>
-              <StatusFlag status="alert">Failed</StatusFlag>
+              <StatusFlag status="alert">
+                {props.tool.platform ? "Platform error" : "Failed"}
+              </StatusFlag>
             </Show>
             {/* Running has no visible word by design — the trunk's light and the
                 glyph's tone carry it, and that is the whole point of thinning the

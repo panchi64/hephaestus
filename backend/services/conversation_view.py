@@ -33,6 +33,7 @@ from pydantic_ai import (
 from pydantic_ai.messages import ModelMessage, ModelRequestPart, ModelResponsePart
 
 from core.compaction_sections import SummarySection, summary_sections
+from core.diagnostics import is_platform_failure
 from core.serde import jsonable
 from core.text import chars_to_tokens
 from services.answers import ASK_USER_TOOL, AnsweredQuestion, parse_answer, questions_of
@@ -121,6 +122,8 @@ class ToolView:
     # The `run_code` call this one was made from, when a script made it; None for a call
     # the model made directly. Rebuilt from that call's result (`_script_calls`).
     parent_tool_call_id: str | None = None
+    #: The failure was the platform's own fault (``core/diagnostics.py``).
+    platform: bool = False
 
 
 def _field(item: object, name: str) -> object:
@@ -169,9 +172,10 @@ def _script_calls(part: ToolReturnPart) -> list[ToolView]:
         if returned is None:
             view.status = "error"
             view.error = "The call raised before it returned."
-        elif _field(returned, "outcome") == "denied":
+        elif _field(returned, "outcome") in ("denied", "failed"):
             view.status = "error"
             view.error = flatten_content(_field(returned, "content"))
+            view.platform = is_platform_failure(view.error)
         else:
             view.status = "ok"
             view.result = jsonable(_field(returned, "content"))
@@ -842,7 +846,13 @@ def project_tree(
                 continue
             # A tool-return request: stitch results into the open assistant turn.
             for part in message.parts:
-                if isinstance(part, ToolReturnPart):
+                if isinstance(part, ToolReturnPart) and part.outcome == "failed":
+                    tool = by_call.get(part.tool_call_id)
+                    if tool is not None:
+                        tool.status = "error"
+                        tool.error = flatten_content(part.content)
+                        tool.platform = is_platform_failure(tool.error)
+                elif isinstance(part, ToolReturnPart):
                     tool = by_call.get(part.tool_call_id)
                     if tool is not None:
                         tool.status = "ok"

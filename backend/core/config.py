@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     # the clock on every frame and never trips it, while spending no extra model requests.
     run_wall_clock_timeout_s: float | None = None
     run_inactivity_timeout_s: float | None = 120.0
+    # One tool call's bound. A call holds the inactivity clock open while it runs (a VM
+    # bring-up or a build streams nothing), so this is what stops one that wedges.
+    tool_call_timeout_s: float | None = 1800.0
     # How long shutdown spends on any one drain — flushing a write-behind queue, waiting
     # for cancelled runs to unwind, closing a browser — before moving on. A stop that
     # waits forever on a stuck job is a Ctrl+C that has to be repeated, and the second one
@@ -111,6 +114,10 @@ class Settings(BaseSettings):
     # tool-call cap. None disables the tool cap.
     agent_request_limit: int = 25
     agent_tool_calls_limit: int | None = None
+    # How many times the model may retry a tool call whose arguments a tool rejected, and
+    # an answer that failed output validation, before the turn fails.
+    agent_tool_retries: int = 3
+    agent_output_retries: int = 2
 
     # `run_code` — the in-process Monty sandbox a model-written script calls tools from
     # (`agent/code_mode.py`). The duration and memory caps are per snippet. The call cap is

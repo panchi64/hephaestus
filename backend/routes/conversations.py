@@ -147,6 +147,8 @@ class ToolCallOut(BaseModel):
     # The `run_code` call this one was made from, when a script made it — the same field
     # the live `tool.*` frames carry, so a reload nests the row where the stream did.
     parent_tool_call_id: str | None = None
+    # Same as `tool.failed`'s: the failure was the platform's own fault.
+    platform: bool = False
 
 
 class ViewVersionRefOut(BaseModel):
@@ -421,6 +423,7 @@ def message_out(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut
                     for a in t.answers
                 ],
                 parent_tool_call_id=t.parent_tool_call_id,
+                platform=t.platform,
             )
             for t in view.tools
         ],

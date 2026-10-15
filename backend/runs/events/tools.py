@@ -57,3 +57,6 @@ class ToolFailed(Body):
     name: str
     error: str
     parent_tool_call_id: str | None = None
+    #: The failure is a fault in the platform rather than the call or the environment,
+    #: so the operator's card marks it. Additive to v1.
+    platform: bool = False

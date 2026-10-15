@@ -231,6 +231,8 @@ export interface ToolFailed extends Base, Nestable {
   tool_call_id: string;
   name: string;
   error: string;
+  /** The failure is the platform's own fault. Absent from older backends. */
+  platform?: boolean;
 }
 
 // --- View (the conversation's one versioned output surface) ----------------

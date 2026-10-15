@@ -37,6 +37,7 @@ from pydantic_ai import (
 )
 
 from core.citations import Citable
+from core.diagnostics import is_platform_failure
 from core.serde import jsonable
 from runs import (
     AnswerDelta,
@@ -150,6 +151,7 @@ def on_chassis_event(event: object, run: Run) -> bool:
                     name=name,
                     error=event.error,
                     parent_tool_call_id=event.parent_tool_call_id,
+                    platform=is_platform_failure(event.error),
                 )
             )
         else:
@@ -285,6 +287,16 @@ def on_tool_event(
                     tool_call_id=part.tool_call_id,
                     name=part.tool_name or "",
                     error=part.model_response(),
+                )
+            )
+        elif part.outcome == "failed":
+            error = str(part.content)
+            _ = run.emit(
+                ToolFailed(
+                    tool_call_id=part.tool_call_id,
+                    name=part.tool_name,
+                    error=error,
+                    platform=is_platform_failure(error),
                 )
             )
         else:

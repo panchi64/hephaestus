@@ -143,6 +143,31 @@ describe("toMessage replays an assistant turn in emission order", () => {
       }
     });
 
+  test("a platform failure keeps its mark across a reload", () => {
+    const tools = (dto: MessageDTO) =>
+      (toMessage(dto).blocks ?? []).flatMap((b) =>
+        b.kind === "tool" ? [b.tool] : [],
+      );
+    const [failed, plain] = tools(
+      turn({
+        tools: [
+          call("c1", {
+            status: "error",
+            error: "error[internal]: x",
+            platform: true,
+          }),
+          call("c2", { status: "error", error: "error: y" }),
+        ],
+        segments: [
+          { kind: "tool", tool_call_id: "c1" },
+          { kind: "tool", tool_call_id: "c2" },
+        ],
+      }),
+    );
+    expect(failed?.platform).toBe(true);
+    expect(plain?.platform).toBeUndefined();
+  });
+
   test("passages and calls interleave as the segments say", () => {
     expect(
       shape(

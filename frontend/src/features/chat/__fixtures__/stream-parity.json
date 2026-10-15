@@ -68,7 +68,8 @@
         "error": null,
         "images": [],
         "answers": [],
-        "parent_tool_call_id": null
+        "parent_tool_call_id": null,
+        "platform": false
       },
       {
         "id": "c2",
@@ -79,7 +80,8 @@
         "error": null,
         "images": [],
         "answers": [],
-        "parent_tool_call_id": null
+        "parent_tool_call_id": null,
+        "platform": false
       }
     ],
     "versions": [],

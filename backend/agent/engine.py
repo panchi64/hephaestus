@@ -135,6 +135,8 @@ def turn_agent(
         instruction_providers=instruction_providers,
         dormant=dormant,
         code_mode=code_mode_limits(settings),
+        retries={"tools": settings.agent_tool_retries, "output": settings.agent_output_retries},
+        tool_call_timeout_s=settings.tool_call_timeout_s,
     )
 
 

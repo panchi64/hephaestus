@@ -61,6 +61,7 @@ from .files import files_toolset
 from .harness_events import own_harness_events
 from .plan import GATED_TOOLS as _PLAN_GATED
 from .plan import plan_toolset
+from .recover import RecoveringToolset
 from .repo import repo_toolset
 from .shell import GATED_TOOLS as _SHELL_GATED
 from .shell import shell_toolset
@@ -180,6 +181,8 @@ def core_categories() -> dict[str, AbstractToolset[RunDeps]]:
 def build_agent_toolsets(
     categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
     dormant: Collection[str] = (),
+    *,
+    call_timeout_s: float | None = None,
 ) -> list[AbstractToolset[RunDeps]]:
     """Compose the gated, namespaced toolset stack handed to the Agent.
 
@@ -194,7 +197,8 @@ def build_agent_toolsets(
     enters the search corpus and cannot be revealed by naming its group; the approval
     gate and the describing pass run outside it too, so a tool that arrives on reveal
     carries the same ``unapproved`` kind and the same rewritten description it would
-    have carried had it never been dormant.
+    have carried had it never been dormant. ``call_timeout_s`` bounds each call
+    (``recover.py``).
     """
     cats = dict(categories) if categories is not None else core_categories()
     deferred = frozenset(dormant)
@@ -229,5 +233,7 @@ def build_agent_toolsets(
     # step needs the one before it: the gate classifies by the `category_tool` name the
     # prefixing produces, there is no point gating a tool the filter already took away,
     # and the rewrite resolves a description's cross-references against those same
-    # namespaced names (`describe.py`).
-    return [combined.filtered(_enabled_gate).prepared(_approval_gate).prepared(_describe)]
+    # namespaced names (`describe.py`). Recovery wraps all of it, so a call that raises is
+    # reported to the model whatever layer it raised in.
+    stack = combined.filtered(_enabled_gate).prepared(_approval_gate).prepared(_describe)
+    return [RecoveringToolset(stack, call_timeout_s=call_timeout_s)]
