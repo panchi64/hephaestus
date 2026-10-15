@@ -1,8 +1,8 @@
 # The task suite. Each [[task]] is one thread; `prompts` are sent in order, each after
 # the previous turn ends. Paths in file checks are relative to the thread's sandbox
 # (`/work`). The seeded workspace has three calendar events this week ("Design review",
-# "Lunch with Sam", "Ship the release") and a memory that the operator is in
-# Europe/Madrid (`devkit/seed/surfaces.py`).
+# "Lunch with Sam", "Ship the release") and a memory that the operator uses uv and bun
+# (`devkit/seed/surfaces.py`). Its timezone memory is not tested: the host clock wins.
 
 # --- build -----------------------------------------------------------------------
 
@@ -149,8 +149,8 @@ rubric = "Confirms a recurring weekday 8am reminder to stretch was set up, or cl
 [[task]]
 id = "admin-memory-recall"
 area = "admin"
-prompts = ["What timezone am I in?"]
-checks = [{ kind = "answer_contains", text = ["Madrid"] }]
+prompts = ["Which package managers do I prefer for Python and for JavaScript?"]
+checks = [{ kind = "answer_contains", text = ["uv", "bun"] }]
 
 [[task]]
 id = "admin-remember-preference"
