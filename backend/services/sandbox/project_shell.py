@@ -29,17 +29,15 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness._output import truncate_tail
 
 from services.vm import VMError
-from services.vm.host import ProjectHost
 from services.vm.platform import JobState
 from services.vm.project import BringOut, ProjectCopies, ProjectCopy
 
-from .shell_runner import BackgroundStatus, ProgressHook, ShellResult, check_command
+from .jobs import capturing_cwd, follow_job, refuse
+from .shell_runner import BackgroundStatus, ProgressHook, ShellResult
 
-_POLL_S = 0.5
 _TIMEOUT_EXIT = 124
 #: How long a stop waits for the job to report it has ended.
 _STOP_WAIT_S = 5.0
-_PROGRESS_MAX_CHARS = 200_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +72,7 @@ class ProjectShell:
         timeout_seconds: float | None = None,
         on_progress: ProgressHook | None = None,
     ) -> ProjectResult:
-        _refuse(command)
+        refuse(command)
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
         copy = copies.acquire(self._root)
         vm = copies.vm
@@ -87,13 +85,13 @@ class ProjectShell:
                 await vm.start_job(
                     copy.workspace.key,
                     name,
-                    ["bash", "-c", _capturing_cwd(command)],
+                    ["bash", "-c", capturing_cwd(command)],
                     env=env,
                     timeout_s=timeout,
                     workdir=self._rel,
                     cwd_file=cwd_file,
                 )
-                state = await self._follow(vm, name, started, on_progress)
+                state = await follow_job(vm, name, started, on_progress)
                 landed = await vm.read_guest(cwd_file, max_bytes=4096)
                 report = await copy.workspace.bring_out()
             except VMError as exc:
@@ -115,43 +113,8 @@ class ProjectShell:
         )
         return ProjectResult(result=result, notes=tuple(report.notes))
 
-    async def _follow(
-        self,
-        vm: ProjectHost,
-        name: str,
-        started: float,
-        on_progress: ProgressHook | None,
-    ) -> JobState:
-        """Poll a job to its end, streaming what it prints, and return all of it."""
-        out: list[str] = []
-        err: list[str] = []
-        out_at = err_at = 0
-        streamed = 0
-        while True:
-            state = await vm.job(name, out_offset=out_at, err_offset=err_at)
-            out.append(state.stdout)
-            err.append(state.stderr)
-            out_at, err_at = state.out_end, state.err_end
-            chunk = state.stdout + state.stderr
-            if on_progress is not None and chunk and streamed < _PROGRESS_MAX_CHARS:
-                with contextlib.suppress(Exception):
-                    await on_progress(
-                        chunk[: _PROGRESS_MAX_CHARS - streamed], time.monotonic() - started
-                    )
-                streamed += len(chunk)
-            if not state.running:
-                return JobState(
-                    running=False,
-                    exit_code=state.exit_code,
-                    stdout="".join(out),
-                    stderr="".join(err),
-                    out_end=out_at,
-                    err_end=err_at,
-                )
-            await asyncio.sleep(_POLL_S)
-
     async def start(self, copies: ProjectCopies, command: str, *, env: Mapping[str, str]) -> str:
-        _refuse(command)
+        refuse(command)
         copy = copies.acquire(self._root)
         command_id = secrets.token_hex(6)
         name = f"bg-{command_id}"
@@ -225,15 +188,3 @@ class ProjectShell:
             rel = posixpath.normpath(landed[len("/work/") :])
             if rel != ".." and not rel.startswith("../"):
                 self._rel = rel
-
-
-def _refuse(command: str) -> None:
-    """The shell's own refusals, as something the model can act on."""
-    try:
-        check_command(command)
-    except PermissionError as exc:
-        raise ModelRetry(str(exc)) from exc
-
-
-def _capturing_cwd(command: str) -> str:
-    return f'{command}\n__heph_ec=$?\npwd > /run/cwd\nexit "$__heph_ec"'

@@ -285,6 +285,28 @@ class SandboxSession:
     def _network_env(self) -> dict[str, str]:
         return proxy_env(self._credentials) if self._credentials else {}
 
+    async def bring_in(self) -> None:
+        """Bring this workspace into the VM, with its egress fence in place, for a command
+        another runner starts there under :attr:`key`. The caller holds :attr:`lock`."""
+        self.touch()
+        self._ensure_workspace()
+        await self._ensure_up()
+
+    async def bring_out(self) -> None:
+        """Bring back what a command changed in the guest copy. The caller holds
+        :attr:`lock`."""
+        try:
+            await self._guest.bring_out()
+        except VMError as exc:
+            raise SandboxError(f"could not bring the work back from the VM: {exc}") from exc
+
+    def command_env(self, *, network: bool) -> dict[str, str]:
+        """The environment a home command runs with: the package-manager defaults, and the
+        egress proxy when it may reach the network. ``HOME`` is left to the confinement,
+        which points it at the home so ``~/projects`` means what the agent was told."""
+        defaults = {name: value for name, value in _ENV_DEFAULTS.items() if name != "HOME"}
+        return {**defaults, **(self._network_env() if network else {})}
+
     def read_file(self, relpath: str) -> bytes:
         """Read a file the agent produced in this session's workspace, whether or not
         the guest holds it. Guards against escape."""

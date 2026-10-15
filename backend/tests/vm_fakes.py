@@ -48,6 +48,8 @@ class FakeVM(SessionHost, ProjectHost):
         self.runs: list[tuple[str, list[str], dict[str, str], str | None]] = []
         #: Each command's home binds, run and background alike, in order.
         self.homes: list[tuple[HomeBind, ...]] = []
+        #: Guest files :meth:`read_guest` answers with, by guest path.
+        self.guest_files: dict[str, str] = {}
         self.pushes: list[tuple[str, Changes]] = []
         self.pulls: list[tuple[str, Changes]] = []
         self.background: dict[str, dict[str, object]] = {}
@@ -210,6 +212,9 @@ class FakeVM(SessionHost, ProjectHost):
 
     @override
     async def call(self, argv: list[str], *, timeout_s: float = 120.0) -> ExecResult:
+        if argv[:2] == ["rm", "-f"]:
+            self.events.append(("rm", " ".join(argv[2:])))
+            return ExecResult(0, "", "")
         raise AssertionError(f"unexpected call: call {argv}")
 
     @override
@@ -226,7 +231,8 @@ class FakeVM(SessionHost, ProjectHost):
 
     @override
     async def read_guest(self, guest: str, *, max_bytes: int) -> str:
-        raise AssertionError(f"unexpected call: read_guest {guest}")
+        """What a command left in a guest file (:attr:`guest_files`), or "" as if missing."""
+        return self.guest_files.get(guest, "")[:max_bytes]
 
     @override
     async def wipe(self, key: str) -> None:
