@@ -48,16 +48,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
 from typing import Literal, cast
 
+from services.permissions.fence import Fence, escapes
 from services.permissions.projections import describe
-from services.permissions.shell_ast import (
-    ShellCommand,
-    escapes_workspace,
-    shell_reach,
-    strip_comments,
-)
+from services.permissions.shell_ast import ShellCommand, shell_reach, strip_comments
 from services.tool_sensitivity import EXTERNAL_PREFIX, Sensitivity, classified, sensitivity_of
 
 #: How far a shell command says it needs to reach, declared by the model on the call and
@@ -263,7 +258,7 @@ def declared_reach(tool: str, args: Mapping[str, object]) -> Reach | None:
 
 
 def shell_capability(
-    tool: str, command: str, *, root: Path | None, reach: Reach | None = DEFAULT_REACH
+    tool: str, command: str, *, root: Fence | None, reach: Reach | None = DEFAULT_REACH
 ) -> Capability:
     """One shell command as a capability — the grammar walk, wrapped in the common shape.
 
@@ -274,7 +269,7 @@ def shell_capability(
     untouched, and the walk above still read the whole thing.
 
     **No root is a fact about the reading, not a permissive default.** Absolute and upward
-    paths already read as escapes without one (``escapes_workspace``), but a bare
+    paths already read as escapes without one (``fence.escapes``), but a bare
     `cat .env` names no directory at all, so nothing escapes and nothing is written — and
     a stage looking only at those fields would clear a command whose working directory
     this process never established. It is recorded as unread instead, which escalates the
@@ -309,7 +304,9 @@ def shell_capability(
     )
 
 
-def capability_of(tool: str, args: Mapping[str, object], *, root: Path | None = None) -> Capability:
+def capability_of(
+    tool: str, args: Mapping[str, object], *, root: Fence | None = None
+) -> Capability:
     """The worst case of one deferred call to ``tool`` with ``args``.
 
     Total: every tool resolves to *something*, because a call that has arrived has to be
@@ -385,7 +382,7 @@ def capability_of(tool: str, args: Mapping[str, object], *, root: Path | None = 
 
 
 def _command_capability(
-    tool: str, args: Mapping[str, object], command_arg: str, root: Path | None
+    tool: str, args: Mapping[str, object], command_arg: str, root: Fence | None
 ) -> Capability:
     command = _text_arg(args, command_arg)
     if command is None:
@@ -422,7 +419,7 @@ def _command_capability(
 
 
 def _file_capability(
-    tool: str, args: Mapping[str, object], path_arg: str, root: Path | None
+    tool: str, args: Mapping[str, object], path_arg: str, root: Fence | None
 ) -> Capability:
     path = _text_arg(args, path_arg)
     if path is None:
@@ -437,7 +434,7 @@ def _file_capability(
         kind=ActionKind.FILE,
         summary=f"Writes to {path}",
         writes=(path,),
-        escapes=(path,) if escapes_workspace(root, path) else (),
+        escapes=(path,) if escapes(root, path, write=True) else (),
     )
 
 

@@ -64,13 +64,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import tree_sitter_bash
 from tree_sitter import Language, Node, Parser
 
+from services.permissions.fence import Fence, escapes
 from services.permissions.shell_flags import attached_value, is_flag
-from services.sandbox.base import SandboxError, contained_path
 
 #: One parser, built once. `tree_sitter.Parser` is a thin handle over an immutable grammar
 #: and parsing is synchronous and CPU-bound; rebuilding it per call would pay the grammar
@@ -189,36 +188,12 @@ class ShellReach:
     unbounded: tuple[str, ...] = field(default_factory=tuple)
 
 
-def escapes_workspace(root: Path | None, raw: str) -> bool:
-    """Whether a path argument could land outside the workspace.
-
-    Home-relative paths are refused outright rather than resolved: `~` is the operator's
-    own directory by definition, so a command naming it is reaching past the workspace
-    whatever the rest of the path says — and resolving it would only turn the question
-    into one about a directory this process may not even share.
-
-    With no known root — a stateless turn, a workspace that never opened — an
-    absolute or upward path is treated as escaping. There is nothing to measure it
-    against, and "we could not tell" has to read the same as "it left".
-    """
-    if raw.startswith("~"):
-        return True
-    path = Path(raw)
-    if root is None:
-        return path.is_absolute() or ".." in path.parts
-    try:
-        _ = contained_path(root, raw, what="path")
-    except SandboxError:
-        return True
-    return False
-
-
-def shell_reach(command: str, *, root: Path | None) -> ShellReach:
+def shell_reach(command: str, *, root: Fence | None) -> ShellReach:
     """What one shell command would reach, read off its syntax.
 
-    ``root`` is the run's workspace directory when it has one — the fence every path
-    argument is measured against. None when the turn has no workspace open, in which case
-    nothing can be placed and every absolute or upward path reads as an escape.
+    ``root`` is what every path argument is measured against: the run's workspace
+    directory or the thread's home. None when the turn has neither, in which case nothing
+    can be placed and every absolute or upward path reads as an escape.
     """
     walk = _Walk(root)
     tree = _PARSER.parse(command.encode())
@@ -401,8 +376,8 @@ class _Walk:
     describing and start refusing at any depth.
     """
 
-    def __init__(self, root: Path | None) -> None:
-        self._root: Path | None = root
+    def __init__(self, root: Fence | None) -> None:
+        self._root: Fence | None = root
         self.commands: list[ShellCommand] = []
         self.reads: list[str] = []
         self.writes: list[str] = []
@@ -648,7 +623,7 @@ class _Walk:
 
     def _path(self, raw: str, into: list[str]) -> None:
         into.append(raw)
-        if escapes_workspace(self._root, raw):
+        if escapes(self._root, raw):
             self.escapes.append(raw)
 
 
