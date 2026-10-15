@@ -17,7 +17,7 @@ from typing import final, override
 from services.vm.driver import ExecResult, VMError
 from services.vm.egress import EgressGateway
 from services.vm.host import ProjectHost, SessionHost
-from services.vm.platform import GuestLayout, JobState
+from services.vm.platform import GuestLayout, HomeBind, JobState
 from services.vm.sync import Changes, Manifest
 
 
@@ -46,6 +46,8 @@ class FakeVM(SessionHost, ProjectHost):
         self.events: list[tuple[str, str]] = []
         #: Each command's ``(key, argv, env, stdin)``.
         self.runs: list[tuple[str, list[str], dict[str, str], str | None]] = []
+        #: Each command's home binds, run and background alike, in order.
+        self.homes: list[tuple[HomeBind, ...]] = []
         self.pushes: list[tuple[str, Changes]] = []
         self.pulls: list[tuple[str, Changes]] = []
         self.background: dict[str, dict[str, object]] = {}
@@ -105,8 +107,10 @@ class FakeVM(SessionHost, ProjectHost):
         timeout_s: float,
         stdin: str | None = None,
         workdir: str = "",
+        home: Sequence[HomeBind] = (),
     ) -> ExecResult:
         self.events.append(("run", key))
+        self.homes.append(tuple(home))
         self.runs.append((key, list(argv), dict(env), stdin))
         if self.fail_with is not None:
             raise self.fail_with
@@ -144,8 +148,10 @@ class FakeVM(SessionHost, ProjectHost):
         workdir: str = "",
         publish: int = 0,
         cwd_file: str = "",
+        home: Sequence[HomeBind] = (),
     ) -> None:
         self.events.append(("start_job", name))
+        self.homes.append(tuple(home))
         if self.fail_with is not None:
             raise self.fail_with
         self.background[name] = {
@@ -153,6 +159,7 @@ class FakeVM(SessionHost, ProjectHost):
             "argv": list(argv),
             "env": dict(env),
             "publish": publish,
+            "workdir": workdir,
             "running": self.alive_after_start,
         }
 

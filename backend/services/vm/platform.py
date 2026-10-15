@@ -52,6 +52,28 @@ WORKSPACE_PROXY = "127.0.0.1:3128"
 SANDBOX_UID = 1100
 
 
+#: Where a command sees the agent's home (`vm/guest/confine.py`).
+GUEST_HOME = "/home/agent"
+
+
+@dataclass(frozen=True, slots=True)
+class HomeBind:
+    """One guest copy bound into the agent's home: workspace ``key`` at
+    ``/home/agent/<dest>``, writable or read-only."""
+
+    key: str
+    dest: str
+    writable: bool
+
+    @property
+    def flag(self) -> str:
+        return f"{self.key}:{self.dest}:{'rw' if self.writable else 'ro'}"
+
+
+def home_flags(home: Sequence[HomeBind]) -> list[str]:
+    return [flag for bind in home for flag in ("--home-bind", bind.flag)]
+
+
 @dataclass(frozen=True)
 class GuestLayout:
     """Where things live in the guest. Only tests move them."""
@@ -384,9 +406,11 @@ class PlatformVM:
         workdir: str = "",
         plugin: str = "",
         plugin_writable: bool = False,
+        home: Sequence[HomeBind] = (),
     ) -> ExecResult:
         """Run the agent's command confined to workspace ``key``, with plugin version
-        ``plugin`` (``name/digest``) at ``/plugin`` when given. Exit 124 is a timeout."""
+        ``plugin`` (``name/digest``) at ``/plugin`` when given and the guest copies in
+        ``home`` laid out under ``/home/agent``. Exit 124 is a timeout."""
         self._require()
         stdin_path = ""
         if stdin is not None:
@@ -409,6 +433,7 @@ class PlatformVM:
                     *(["--workdir", workdir] if workdir else []),
                     *(["--plugin", plugin] if plugin else []),
                     *(["--plugin-writable"] if plugin_writable else []),
+                    *home_flags(home),
                     *self.limits.flags(),
                     *_env_flags(env),
                     "--",
@@ -431,9 +456,11 @@ class PlatformVM:
         workdir: str = "",
         publish: int = 0,
         cwd_file: str = "",
+        home: Sequence[HomeBind] = (),
     ) -> None:
         """Start the agent's command as a named background job confined to workspace
-        ``key``; read it with :meth:`job` and end it with :meth:`stop_job`."""
+        ``key``, with ``home`` as :meth:`run` takes it; read it with :meth:`job` and end
+        it with :meth:`stop_job`."""
         self._require()
         _ = await self._admin(
             [
@@ -452,6 +479,7 @@ class PlatformVM:
                 *(["--workdir", workdir] if workdir else []),
                 *(["--publish", str(publish)] if publish else []),
                 *(["--cwd-file", cwd_file] if cwd_file else []),
+                *home_flags(home),
                 *self.limits.flags(),
                 *_env_flags(env),
                 "--",

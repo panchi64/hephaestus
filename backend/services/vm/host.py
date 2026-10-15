@@ -8,7 +8,7 @@ from typing import Protocol
 
 from .driver import ExecResult
 from .egress import EgressGateway
-from .platform import GuestLayout, JobState
+from .platform import GuestLayout, HomeBind, JobState
 from .sync import Changes, Manifest
 
 
@@ -63,6 +63,7 @@ class JobHost(WorkspaceHost, Protocol):
         workdir: str = "",
         publish: int = 0,
         cwd_file: str = "",
+        home: Sequence[HomeBind] = (),
     ) -> None: ...
 
     async def stop_job(self, name: str) -> None: ...
@@ -82,6 +83,7 @@ class SessionHost(JobHost, Protocol):
         timeout_s: float,
         stdin: str | None = None,
         workdir: str = "",
+        home: Sequence[HomeBind] = (),
     ) -> ExecResult: ...
 
     async def open_preview(self, key: str) -> PreviewForward: ...
