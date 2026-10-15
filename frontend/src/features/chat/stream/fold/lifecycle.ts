@@ -35,7 +35,13 @@ export function foldLifecycle(ev: RunEvent, c: FoldContext): boolean {
       return true;
     case "limit.notice":
       // A bound on the turn. "verify" is a transient "re-attempting…" progress note,
-      // not a stop — leave it silent. The rest stopped the run, so surface why.
+      // not a stop — leave it silent. "continue" says the turn went on past a bound by
+      // itself, which the operator should know about but not be alarmed by. The rest
+      // stopped the run, so surface why.
+      if (announce && ev.limit === "continue") {
+        toast.info(ev.message);
+        return true;
+      }
       //
       // "context" gets a sentence of our own on the end, and it is the only limit
       // that does: the backend's message says what the model refused and what the

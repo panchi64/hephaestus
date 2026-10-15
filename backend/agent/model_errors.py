@@ -17,8 +17,14 @@ consulted where the provider has already told us the answer.
 
 from __future__ import annotations
 
+import httpx
 from pydantic import JsonValue, TypeAdapter, ValidationError
-from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.exceptions import (
+    IncompleteToolCall,
+    ModelAPIError,
+    ModelHTTPError,
+    UsageLimitExceeded,
+)
 
 from runs import Run
 
@@ -71,6 +77,15 @@ def provider_error_code(exc: ModelHTTPError) -> str | None:
         return None
     code = error.get("code") or error.get("type")
     return code.lower() if isinstance(code, str) else None
+
+
+def is_transient(exc: Exception) -> bool:
+    """Whether sending the same request again could succeed: the server was overloaded or
+    rate-limited, the connection dropped, or the stream was cut short. A refusal of the
+    request itself (bad model, bad auth, a malformed prompt) would only fail again."""
+    if isinstance(exc, ModelHTTPError):
+        return exc.status_code == 429 or exc.status_code >= 500
+    return isinstance(exc, ModelAPIError | httpx.TransportError | IncompleteToolCall)
 
 
 def is_context_overflow(exc: ModelHTTPError) -> bool:

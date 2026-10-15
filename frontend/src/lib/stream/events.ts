@@ -666,7 +666,9 @@ export interface LimitNotice extends Base {
     | "loop"
     | "verify"
     | "context"
-    | "search";
+    | "search"
+    /** Not a stop: the turn carried on past a bound by itself (auto-continue). */
+    | "continue";
   message: string;
   /** The stop marker this notice announces, when the bound also blocked the turn — the
    *  same string the turn persists as its `blocked_reason`. Two context stops share one

@@ -25,6 +25,7 @@ from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 
+import httpx
 from pydantic_ai import (
     AgentRun,
     DeferredToolRequests,
@@ -32,12 +33,14 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelRequestNode,
+    ModelResponse,
     RunUsage,
+    ToolReturnPart,
     UsageLimitExceeded,
     UsageLimits,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import IncompleteToolCall, ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import UserContent
 from pydantic_ai.tools import DeferredToolApprovalResult
 
@@ -63,6 +66,7 @@ from .model_errors import (
     CONTEXT_OVERFLOW_DETAIL,
     context_limit_message,
     is_context_overflow,
+    is_transient,
     model_load_hint,
     usage_limit_kind,
     usage_limit_message,
@@ -139,6 +143,33 @@ def turn_deps(
         turn_start=turn_start,
         review_budget=review_budget,
     )
+
+
+#: The wait before each resend of a request a transient model error cut short.
+TRANSIENT_BACKOFF_S = (2.0, 8.0)
+
+
+def _successful_calls(messages: Sequence[ModelMessage]) -> int:
+    """Tool calls in ``messages`` that returned without failing: the turn's progress."""
+    return sum(
+        1
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == "success"
+    )
+
+
+def _resume_point(messages: list[ModelMessage]) -> list[ModelMessage] | None:
+    """The history to resume a stopped turn from, ending in the request to send again.
+
+    A stream cut mid-answer leaves its partial response at the tail; dropping it re-sends
+    the request that produced it. None when there is no request to resume from.
+    """
+    history = messages[:-1] if messages and isinstance(messages[-1], ModelResponse) else messages
+    if not history or not isinstance(history[-1], ModelRequest):
+        return None
+    return history
 
 
 async def drive_turn(
@@ -264,6 +295,13 @@ async def drive_turn(
     # for a reason folding cannot reach (one enormous tool result, an attachment that
     # doesn't fit), and re-folding would strip the thread's memory for nothing.
     compacted = False
+    # Auto-continue: how many times this turn has gone on past the request limit, and the
+    # successful tool calls it had made when it last did, so an extension is granted only
+    # to a turn that got something done with the one before. Transient model errors have a
+    # budget of their own.
+    extensions = 0
+    progress_mark = _successful_calls(message_history or [])
+    transient_retries = 0
 
     while True:
         # Same cooperative-cancel check as `report_progress`, at the turn-segment
@@ -298,6 +336,34 @@ async def drive_turn(
             run.block(detail)
             return TurnResult(answer=None, messages=_partial_history(), blocked_reason=detail)
         except UsageLimitExceeded as exc:
+            partial = _partial_history()
+            done = _successful_calls(partial)
+            resume = _resume_point(partial)
+            if (
+                usage_limit_kind(exc) == "steps"
+                and extensions < settings.auto_continue_max
+                and done > progress_mark
+                and resume is not None
+            ):
+                extensions += 1
+                progress_mark = done
+                _ = run.emit(
+                    LimitNotice(
+                        limit="continue",
+                        message=(
+                            f"Kept going past the step limit ({extensions} of "
+                            + f"{settings.auto_continue_max} extensions)"
+                        ),
+                    )
+                )
+                limits = UsageLimits(
+                    request_limit=(limits.request_limit or resolved_limit) + resolved_limit,
+                    tool_calls_limit=limits.tool_calls_limit,
+                )
+                prompt = None
+                message_history = resume
+                deferred_results = None
+                continue
             # Hit a usage bound — stop and report state, don't error. The *same* sentence
             # is both the toast and the persisted stop marker: a bare "usage limit reached"
             # reads as a provider rate limit (the operator's first guess, and the wrong
@@ -321,14 +387,14 @@ async def drive_turn(
                 messages=_partial_history(),
                 blocked_reason=detail,
             )
-        except ModelHTTPError as exc:
+        except (ModelAPIError, httpx.TransportError, IncompleteToolCall) as exc:
             # Context-window overflow. The request that overran is still the tail of the
             # partial history and would replay on every later turn, so this cannot simply
             # be reported: fold the thread once and re-send the same request against the
             # summary. If there is nothing to fold, folding is refused here, or the retry
             # overruns again, it is a definitive ceiling — stop and name it, rather than
             # papering over it by silently dropping content.
-            if is_context_overflow(exc):
+            if isinstance(exc, ModelHTTPError) and is_context_overflow(exc):
                 rebuilt = (
                     None
                     if compacted or correcting or compaction is None or turn_start is None
@@ -371,12 +437,33 @@ async def drive_turn(
                     messages=_partial_history(),
                     blocked_reason=detail,
                 )
-            # Rewrite a model-couldn't-load error into something the operator can act
-            # on; let every other HTTP error propagate with its own detail.
-            hint = model_load_hint(exc)
-            if hint is None:
+            # Rewrite a model-couldn't-load error into something the operator can act on.
+            hint = model_load_hint(exc) if isinstance(exc, ModelHTTPError) else None
+            if hint is not None:
+                raise ModelLoadError(hint) from exc
+            # A dropped connection, an overloaded server or a stream cut short is worth
+            # sending again from the last complete request, a couple of times, before
+            # the error propagates with its own detail.
+            resume = _resume_point(_partial_history()) if is_transient(exc) else None
+            if resume is None or transient_retries >= settings.auto_continue_transient_max:
                 raise
-            raise ModelLoadError(hint) from exc
+            transient_retries += 1
+            _ = run.emit(
+                LimitNotice(
+                    limit="continue",
+                    message=(
+                        f"The model connection failed ({type(exc).__name__}); retrying "
+                        + f"({transient_retries} of {settings.auto_continue_transient_max})"
+                    ),
+                )
+            )
+            await asyncio.sleep(
+                TRANSIENT_BACKOFF_S[min(transient_retries, len(TRANSIENT_BACKOFF_S)) - 1]
+            )
+            prompt = None
+            message_history = resume
+            deferred_results = None
+            continue
 
         output = result.output
         messages = result.all_messages()

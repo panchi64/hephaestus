@@ -117,8 +117,15 @@ class Settings(BaseSettings):
 
     # Agent bounds: max model requests per turn and optional per-turn
     # tool-call cap. None disables the tool cap.
-    agent_request_limit: int = 25
+    agent_request_limit: int = 60
     agent_tool_calls_limit: int | None = None
+    # How many more times a turn may carry on by itself after reaching the request limit,
+    # each granting another `agent_request_limit` requests. Only a turn whose last
+    # stretch completed a tool call gets one; a loop or no progress still stops it.
+    auto_continue_max: int = 3
+    # How many times a turn re-sends a request a transient model error cut short (a
+    # dropped connection, a 5xx or 429, a stream that ended mid-call).
+    auto_continue_transient_max: int = 2
     # How many times the model may retry a tool call whose arguments a tool rejected, and
     # an answer that failed output validation, before the turn fails.
     agent_tool_retries: int = 3
