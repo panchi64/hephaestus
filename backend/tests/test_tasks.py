@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from pydantic_ai import RunContext
+from pydantic_ai import DeferredToolRequests, ModelRetry, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
@@ -26,7 +26,7 @@ from models.task_list import ConversationTaskList
 from runs import EventBody, Run, RunStream, TasksUpdated
 from services.task_list import ConversationTasks, ConversationTaskStore
 from tools import RunDeps, build_agent_toolsets, harness_events_capability
-from tools.tasks import tasks_toolset
+from tools.tasks import remind_of_open_tasks, tasks_toolset
 
 OWNER = "operator"
 
@@ -273,3 +273,38 @@ def test_the_rename_map_is_a_bijection_over_the_allowlist():
     assert set(DESCRIPTIONS) == set(UPSTREAM.values())
     assert len(LOCAL) == len(UPSTREAM)
     assert {LOCAL[upstream] for upstream in UPSTREAM.values()} == set(UPSTREAM)
+
+
+async def test_an_answer_with_steps_still_open_is_sent_back_once(tasks: ConversationTasks):
+    items = _items("read the file", "fix the bug")
+    items[0] = items[0].model_copy(update={"status": TaskStatus.completed})
+    await _store(tasks).set_items(items)
+    _, ctx = await _toolset_ctx(tasks, "conv-1")
+
+    with pytest.raises(ModelRetry) as caught:
+        _ = await remind_of_open_tasks(ctx, "All done!")
+    assert "fix the bug (pending)" in caught.value.message
+    assert "read the file" not in caught.value.message
+    # Once per turn: the answer the model gives next stands, whatever it says.
+    assert await remind_of_open_tasks(ctx, "Could not fix the bug.") == "Could not fix the bug."
+
+
+async def test_an_answer_with_every_step_settled_stands(tasks: ConversationTasks):
+    items = [
+        item.model_copy(update={"status": status})
+        for item, status in zip(
+            _items("read the file", "fix the bug"),
+            (TaskStatus.completed, TaskStatus.cancelled),
+            strict=True,
+        )
+    ]
+    await _store(tasks).set_items(items)
+    _, ctx = await _toolset_ctx(tasks, "conv-1")
+    assert await remind_of_open_tasks(ctx, "Done.") == "Done."
+
+
+async def test_a_turn_parking_on_a_question_is_not_held_to_its_list(tasks: ConversationTasks):
+    await _store(tasks).set_items(_items("ask the operator"))
+    _, ctx = await _toolset_ctx(tasks, "conv-1")
+    parked = DeferredToolRequests()
+    assert await remind_of_open_tasks(ctx, parked) is parked

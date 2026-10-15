@@ -38,10 +38,11 @@ from collections import OrderedDict
 from dataclasses import replace
 from typing import cast, override
 
-from pydantic_ai import AbstractToolset, RunContext, Tool, ToolsetTool
-from pydantic_ai_harness.planning import InMemoryPlanStore, Planning
+from pydantic_ai import AbstractToolset, ModelRetry, RunContext, Tool, ToolsetTool
+from pydantic_ai_harness.planning import InMemoryPlanStore, Planning, TaskStatus
 from pydantic_ai_harness.planning import PlanStore as TaskStoreProtocol
 
+from core.diagnostics import render_tool_error
 from services.task_list import ConversationTasks, ConversationTaskStore, render_tasks
 
 from .deps import PromptContextRequest, RunDeps
@@ -218,6 +219,40 @@ def tasks_toolset() -> AbstractToolset[RunDeps]:
     # The template's store is never read or written: only `call_tool` acts, and it always
     # rebinds first. It exists to carry the tool definitions.
     return ConversationTaskToolset(_planning_toolset(InMemoryPlanStore()))
+
+
+_OPEN = frozenset({TaskStatus.pending, TaskStatus.in_progress})
+
+
+async def remind_of_open_tasks[OutputT](ctx: RunContext[RunDeps], output: OutputT) -> OutputT:
+    """Send a final answer back, once a turn, while the task list still has open steps.
+
+    A model that writes a list and then answers before working through it has declared
+    victory early, and the list is the one record of what it said it would do. Once per
+    turn, so a step that cannot be done ends up named in the answer rather than looping.
+    """
+    if not isinstance(output, str) or ctx.deps.open_tasks_reminded:
+        return output
+    tasks = ctx.deps.caps.get_optional(ConversationTasks)
+    conversation_id = ctx.deps.conversation_id
+    if tasks is None or conversation_id is None:
+        return output
+    items = await tasks.items(ctx.deps.run.owner_id, conversation_id)
+    still_open = [item for item in items if item.status in _OPEN]
+    if not still_open:
+        return output
+    ctx.deps.open_tasks_reminded = True
+    steps = "; ".join(f"{item.content} ({item.status.value})" for item in still_open)
+    raise ModelRetry(
+        render_tool_error(
+            f"your task list still has open steps: {steps}",
+            hints=[
+                "finish them, then answer",
+                "or mark each completed or cancelled with tasks_update_statuses and say "
+                + "in your answer why it is not done",
+            ],
+        )
+    )
 
 
 async def tasks_context(req: PromptContextRequest) -> str:

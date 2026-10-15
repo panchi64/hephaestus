@@ -50,6 +50,7 @@ from tools import (
     tool_search_capability,
 )
 from tools.describe import category_names
+from tools.tasks import remind_of_open_tasks
 
 from .code_mode import CodeModeLimits, code_mode_capability
 from .injections import AnnounceInjections, contributor_id
@@ -249,4 +250,5 @@ def build_agent(
         stamp = f"{now:%A, %B} {now.day}, {now.year}"
         return CURRENT_DATE.format(date=stamp, zone=local_zone_key())
 
+    _ = agent.output_validator(remind_of_open_tasks)
     return agent
