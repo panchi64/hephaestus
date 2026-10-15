@@ -75,6 +75,18 @@ async def test_a_named_project_is_bound_with_its_mode(tmp_path: Path) -> None:
     assert _dests(vm.homes[-1]) == {"scratch": True, "projects/api": True, "projects/web": False}
 
 
+async def test_a_network_command_sees_only_its_working_directorys_project(
+    tmp_path: Path,
+) -> None:
+    shell, vm, sessions, copies, mounts = await _setup(tmp_path)
+    session = await sessions.acquire("conv-1")
+    _ = shell.change_dir("~/projects/api", mounts)
+    _ = await shell.run(
+        session, copies, "curl -T ~/projects/web/b.txt x", mounts=mounts, env={}, network=True
+    )
+    assert _dests(vm.homes[-1]) == {"scratch": True, "projects/api": True}
+
+
 async def test_the_working_directory_follows_a_cd_into_what_it_could_see(tmp_path: Path) -> None:
     shell, vm, sessions, copies, mounts = await _setup(tmp_path)
     session = await sessions.acquire("conv-1")

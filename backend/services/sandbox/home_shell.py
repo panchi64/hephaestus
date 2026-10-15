@@ -78,14 +78,22 @@ class HomeShell:
     def cwd(self) -> str:
         return self._cwd
 
-    def reached(self, command: str, mounts: Sequence[Mount]) -> list[Mount]:
+    def reached(
+        self, command: str, mounts: Sequence[Mount], *, network: bool = False
+    ) -> list[Mount]:
         """The project mounts a command sees: its working directory's, then each it names,
-        up to a cap. Scratch is always there and is not listed."""
+        up to a cap. Scratch is always there and is not listed.
+
+        A command with the network sees only its working directory's project, so what it
+        can send out is what it was started to work on.
+        """
         by_name = {m.place.name: m for m in mounts if m.place.kind == "projects"}
         wanted: list[str] = []
         here = _place_of(self._cwd)
         if here is not None and here.kind == "projects":
             wanted.append(here.name)
+        if network:
+            return [by_name[name] for name in wanted if name in by_name]
         for match in _NAMED_PROJECT.finditer(command):
             name: str = match.group(1)
             if name not in wanted:
@@ -100,12 +108,13 @@ class HomeShell:
         *,
         mounts: Sequence[Mount],
         env: Mapping[str, str],
+        network: bool = False,
         timeout_seconds: float | None = None,
         on_progress: ProgressHook | None = None,
     ) -> HomeResult:
         refuse(command)
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
-        projects = self.reached(command, mounts)
+        projects = self.reached(command, mounts, network=network)
         vm = copies.vm
         name = f"run-{secrets.token_hex(6)}"
         cwd_file = f"{vm.layout.xfer}/{name}.cwd"
@@ -165,10 +174,12 @@ class HomeShell:
         *,
         mounts: Sequence[Mount],
         env: Mapping[str, str],
+        network: bool = False,
     ) -> str:
         """Start ``command`` in the background; its places come back when it ends."""
         refuse(command)
-        held = [(mount, copies.acquire(mount.root)) for mount in self.reached(command, mounts)]
+        reached = self.reached(command, mounts, network=network)
+        held = [(mount, copies.acquire(mount.root)) for mount in reached]
         command_id = secrets.token_hex(6)
         name = f"bg-{command_id}"
         async with AsyncExitStack() as stack:

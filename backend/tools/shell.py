@@ -359,6 +359,7 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
             command,
             mounts=state.home.mounts,
             env=state.session.command_env(network=bound.network),
+            network=bound.network,
             timeout_seconds=timeout_seconds,
             on_progress=_progress_hook(ctx),
         )
@@ -394,6 +395,7 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
                 command,
                 mounts=state.home.mounts,
                 env=state.session.command_env(network=bound.network),
+                network=bound.network,
             )
         else:
             command_id = await shell.host_at(_host_root(state.home, cwd)).start(command)
