@@ -109,7 +109,24 @@ To use a real model instead, name one before `up` — the stub is then not start
 export HEPH_DEV_CHAT_BASE_URL=http://127.0.0.1:1234/v1
 export HEPH_DEV_CHAT_MODEL=your-model
 export HEPH_DEV_CHAT_KEY=…          # optional; a local engine usually needs none
+export HEPH_DEV_EMBED_MODEL=…       # optional; an embedding model on the same server
 ```
+
+An instance already seeded against the stub keeps its bindings until `up --reseed`.
+
+## Measuring task success
+
+`evals/tasks/` runs real tasks through a live dev instance and records how each one ended:
+
+```bash
+uv run python dev_instance.py up --detach --with-vm --reseed   # with HEPH_DEV_CHAT_* set
+uv run python -m evals.tasks.runner                  # or --only build-primes admin-routine
+```
+
+Each task is a new thread at the default permission level. Parked approvals are answered
+by the task's policy, and questions are answered with "use your best judgement". Results
+go to `evals/tasks/results/<label>.jsonl`, with a markdown summary of outcomes and causes
+beside it. Tasks that need the VM are skipped without `--with-vm`.
 
 ## The platform VM, and why it is off
 

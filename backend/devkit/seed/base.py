@@ -79,10 +79,13 @@ async def _endpoint_id(ctx: SeedContext) -> str:
 async def seed_model(ctx: SeedContext) -> str:
     endpoint_id = await _endpoint_id(ctx)
     model = live.endpoint()["model"] if live.configured() else MODEL_ID
+    embed = (live.embed_model() if live.configured() else None) or model
     for role in ROLES:
         bound = await ctx.client.put(
-            f"/models/roles/{role}", json={"endpoint_ids": [endpoint_id], "model": model}
+            f"/models/roles/{role}",
+            json={"endpoint_ids": [endpoint_id], "model": embed if role == "embedding" else model},
         )
         _ = bound.raise_for_status()
     where = "a real endpoint (HEPH_DEV_CHAT_*)" if live.configured() else "the stub"
-    return f"{model} on {where}, bound to {', '.join(ROLES)}"
+    embedding = f", embeddings on {embed}" if embed != model else ""
+    return f"{model} on {where}, bound to {', '.join(ROLES)}{embedding}"
