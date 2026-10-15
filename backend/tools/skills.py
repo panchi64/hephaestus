@@ -35,6 +35,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
+from core.diagnostics import render_tool_error, suggest
 from core.exceptions import NotFoundError, SkillSpanError, SkillValidationError
 from prompts.agent import (
     SKILL_CATALOG,
@@ -188,8 +189,17 @@ def skills_toolset() -> FunctionToolset[RunDeps]:
         the skill expects to use: it neither restricts you nor grants you anything."""
         resolved = await _resolve(ctx, name)
         if resolved is None:
-            available = ", ".join(e.name for e in await skill_catalog(ctx)) or "none yet"
-            raise ModelRetry(f"No skill named {name!r}. Available skills: {available}.")
+            names = [e.name for e in await skill_catalog(ctx)]
+            close = suggest(name, names)
+            raise ModelRetry(
+                render_tool_error(
+                    f"no skill named {name!r}",
+                    hints=[
+                        *([close] if close else []),
+                        f"available skills: {', '.join(names) or 'none yet'}",
+                    ],
+                )
+            )
         skill = resolved.skill
 
         result: dict[str, object] = {

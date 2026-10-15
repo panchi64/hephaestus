@@ -6,12 +6,10 @@ Two verbs reached through ``RunDeps``: ``search`` over
 to Markdown). No logic here — it lives in the services. The results are typed dataclasses
 Pydantic AI serializes for the model, already untrusted-wrapped by the service.
 
-Failure handling leans on the engine: a *recoverable* fetch failure (a blocked or
-unreadable URL) raises :class:`ModelRetry`, so Pydantic AI feeds the reason back
-and the model tries a different source — bounded by the tool's retry budget. A
-*missing* capability (web not wired, or no provider configured) returns a plain
-message instead, the same graceful-degradation shape as the memory tools — a retry
-can't fix it.
+An unreadable URL raises ``ToolFailed``: the model reads why and picks another source,
+and since the same fetch would fail again it spends no retry budget. A blocked address
+and a missing capability (web not wired, or no provider configured) return the same
+diagnostic text as a plain result, the graceful-degradation shape of the memory tools.
 
 **A repeat is refused before it costs anything.** A thread that reads widely — a research
 thread most of all — loops: it re-asks a search it already ran, or re-fetches a page whose
@@ -33,8 +31,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic_ai import FunctionToolset, ModelRetry, RunContext
+from pydantic_ai import FunctionToolset, RunContext, ToolFailed
 
+from core.diagnostics import render_tool_error
 from core.exceptions import DegradedCapabilityError, SSRFError, WebFetchError
 from services.search import DedupeSets, SearchResults, SearchService
 from services.webfetch import BrowserFetcher, FetchedPage
@@ -102,7 +101,10 @@ def web_toolset() -> FunctionToolset[RunDeps]:
         If a URL can't be fetched you will be told why — pick a different source."""
         svc = ctx.deps.caps.get_optional(BrowserFetcher)
         if svc is None:
-            return "Web fetch is unavailable."
+            return render_tool_error(
+                "web fetch is unavailable in this deployment",
+                hints=["answer from search results and what you know, and say so"],
+            )
         dedupe = ctx.deps.web_dedupe
         # `offset` is how a truncated page is continued, so a paging call is a different
         # read of the same URL rather than a repeat of one — and takes no key at all.
@@ -120,11 +122,17 @@ def web_toolset() -> FunctionToolset[RunDeps]:
             # A refused target is a hard boundary, not a "try again" — tell the model
             # plainly so it moves on instead of probing variants of a blocked address.
             _release(dedupe, claim)
-            return f"Refused: {exc}"
+            return render_tool_error(
+                f"refused to fetch {url}: {exc}",
+                hints=["this address is blocked; do not try variants of it, use another source"],
+            )
         except WebFetchError as exc:
-            # Recoverable: the page couldn't be read — let the model pick another source.
+            # Terminal for this URL: the same fetch would fail again, so the model is told
+            # to move on rather than asked to retry.
             _release(dedupe, claim)
-            raise ModelRetry(str(exc)) from exc
+            raise ToolFailed(
+                render_tool_error(f"could not read {url}: {exc}", hints=["pick a different source"])
+            ) from exc
         except BaseException:
             _release(dedupe, claim)
             raise

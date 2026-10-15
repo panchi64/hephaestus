@@ -521,8 +521,17 @@ class SandboxSession:
         """Pipe the workspace into the guest, with this session's egress credentials
         granted first, so no command runs before its fence is in place."""
         if not self._vm.available and not await self._vm.wait_ready(_VM_WAIT_S):
+            if self._vm.failure:
+                raise SandboxError(
+                    f"the platform VM is unavailable: {self._vm.failure}",
+                    hint=(
+                        "carry on without running code where you can, and tell the "
+                        + "operator the VM needs fixing for the rest"
+                    ),
+                )
             raise SandboxError(
-                self._vm.failure or "the platform VM is still starting; try again shortly"
+                "the platform VM is still starting",
+                hint="do the steps that need no code first, then try this again",
             )
         if self._credentials is None:
             self._credentials = self._vm.gateway.grant(self._egress_dir)

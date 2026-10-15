@@ -26,7 +26,7 @@ import asyncio
 from typing import cast
 
 import pytest
-from pydantic_ai import ModelRetry, RunContext
+from pydantic_ai import RunContext, ToolFailed
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -193,8 +193,8 @@ class TestFetch:
     async def test_an_unreadable_page_stays_fetchable(self):
         fetcher = _FakeFetcher(fail=True)
         ctx = _ctx(fetcher=fetcher)
-        with pytest.raises(ModelRetry):
+        with pytest.raises(ToolFailed):
             _ = await _call("fetch", ctx, url="https://example.com/a")
-        with pytest.raises(ModelRetry):
+        with pytest.raises(ToolFailed):
             _ = await _call("fetch", ctx, url="https://example.com/a")
         assert len(fetcher.urls) == 2

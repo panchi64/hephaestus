@@ -23,6 +23,7 @@ import secrets
 
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
+from core.diagnostics import render_tool_error
 from core.exceptions import NotFoundError
 from core.untrusted import untrusted_fence, untrusted_preamble, wrap_untrusted
 from services.mail import MailError, MailService, MessageDetail, MessageView
@@ -93,6 +94,12 @@ def _detail_text(detail: MessageDetail) -> str:
     if detail.quoted_text:
         lines += ["", "[this message quoted earlier correspondence, omitted here]"]
     return "\n".join(lines)
+
+
+def _no_such_message(exc: NotFoundError) -> ModelRetry:
+    return ModelRetry(
+        render_tool_error(str(exc), hints=["call mail_list_messages for the valid message ids"])
+    )
 
 
 def mail_toolset() -> FunctionToolset[RunDeps]:
@@ -207,7 +214,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
                 body=body,
             )
         except NotFoundError as exc:
-            raise ModelRetry(str(exc)) from exc
+            raise _no_such_message(exc) from exc
         except MailError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "draft_id": draft.id, "saved": True, "sent": False}
@@ -262,7 +269,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         try:
             sent_id = await service.reply(ctx.deps.owner_id, message_id, body, reply_all=reply_all)
         except NotFoundError as exc:
-            raise ModelRetry(str(exc)) from exc
+            raise _no_such_message(exc) from exc
         except MailError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "sent": True, "message_id": sent_id}
@@ -281,7 +288,7 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
         try:
             await service.set_flags(ctx.deps.owner_id, message_id, seen=seen, flagged=flagged)
         except NotFoundError as exc:
-            raise ModelRetry(str(exc)) from exc
+            raise _no_such_message(exc) from exc
         except MailError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}

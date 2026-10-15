@@ -30,6 +30,7 @@ from typing import Literal
 from pydantic_ai import FunctionToolset, RunContext, ToolDefinition
 
 from core.config import Settings, get_settings
+from core.diagnostics import render_tool_error
 from core.exceptions import InvalidInputError
 from runs import ToolProgress
 from services.egress import EgressPolicy
@@ -346,9 +347,12 @@ def code_toolset() -> FunctionToolset[RunDeps]:
                 )
             result = await session.run(spec)
         except SandboxError as exc:
-            # Any sandbox/infra failure comes back as something the model can act
-            # on — it never escapes to crash the run.
-            return {"ok": False, "error": f"Your computer could not run the code: {exc}"}
+            error = render_tool_error(
+                "the code did not run",
+                cause=str(exc),
+                hints=[exc.hint] if exc.hint else [],
+            )
+            return {"ok": False, "error": error}
         return _exec_result(result, settings, sandboxed=True, delegated=ctx.deps.delegated_approved)
 
     async def _only_where_there_is_someone_to_ask(

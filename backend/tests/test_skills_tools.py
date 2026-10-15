@@ -163,7 +163,7 @@ async def test_open_refuses_a_draft_the_same_way_as_an_unknown_name():
 
     with pytest.raises(ModelRetry) as caught:
         _ = await _invoke("open", _ctx(skill_deps(skills=store)), "secret-draft")
-    assert "secret-draft" not in str(caught.value).split("Available skills:")[1]
+    assert "secret-draft" not in str(caught.value).split("available skills:")[1]
     assert "release-notes" in str(caught.value)
 
 

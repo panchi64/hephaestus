@@ -18,6 +18,7 @@ from pydantic_ai import FunctionToolset, ModelRetry, RunContext, Tool
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
+from core.diagnostics import render_tool_error
 from services.agents import (
     AgentDefinition,
     AgentNameError,
@@ -178,7 +179,12 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         try:
             view = await launcher.read(ctx.deps.owner_id, ctx.deps.conversation_id or "", name)
         except SubagentUnavailableError as exc:
-            raise ModelRetry(str(exc)) from exc
+            raise ModelRetry(
+                render_tool_error(
+                    f"could not read {name!r}: {exc}",
+                    hints=["call agents_list_agents for the names in your tree"],
+                )
+            ) from exc
         return _read_out(view)
 
     @toolset.tool(name="stop")

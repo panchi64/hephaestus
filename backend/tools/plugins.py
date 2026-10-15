@@ -24,6 +24,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 from pydantic_core import SchemaValidator, core_schema
 
+from core.diagnostics import render_tool_error
 from core.untrusted import wrap_untrusted
 from services.egress import EgressPolicy
 from services.plugins import (
@@ -46,7 +47,10 @@ from .describe import registered_tools
 GATED_TOOLS: frozenset[str] = frozenset({"plugins_test"})
 
 _UNAVAILABLE = "Plugins cannot be written in this deployment."
-_NO_VM = "Plugins run in the platform VM, which is not running right now."
+_NO_VM = render_tool_error(
+    "plugins run in the platform VM, which is not running right now",
+    hints=["carry on without this plugin, and tell the operator if the task needs it"],
+)
 _READ_MAX_CHARS = 200_000
 _ANY_ARGS = SchemaValidator(core_schema.any_schema())
 
