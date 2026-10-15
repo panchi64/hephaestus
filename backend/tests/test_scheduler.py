@@ -145,6 +145,18 @@ async def _settled_runs(
         await asyncio.sleep(0.01)
 
 
+async def _stamped(engine: Engine, task_id: str, *, timeout: float = 5.0) -> ScheduledTask:
+    """``task_id`` once its last-run stamp has landed, which the scheduler writes *after*
+    finalizing the run row, so a settled run does not yet imply it."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while (task := _get_task(engine, task_id)).last_run_at is None:
+        if loop.time() >= deadline:
+            raise AssertionError(f"{task_id} was never stamped with its last run")
+        await asyncio.sleep(0.01)
+    return task
+
+
 async def _never_notify(_view: ScheduledTaskView) -> None:
     raise AssertionError("notify must not be called for an agent task")
 
@@ -190,7 +202,7 @@ async def test_once_agent_task_fires_records_the_run_and_self_disables(tmp_path:
         assert runs[0].summary_enc is not None
         assert vault.decrypt_str(runs[0].summary_enc) == "did it"
 
-        task = _get_task(engine, task_id)
+        task = await _stamped(engine, task_id)
         assert task.enabled is False  # a spent "once" self-disables
         assert task.next_run_at is None
         assert task.last_run_at is not None
@@ -773,7 +785,7 @@ async def test_running_a_one_off_by_hand_keeps_its_scheduled_moment(tmp_path: Pa
     try:
         _ = await scheduler.fire_now(task_id)
         _ = await _settled_runs(engine, task_id)
-        task = _get_task(engine, task_id)
+        task = await _stamped(engine, task_id)
         assert task.enabled and as_utc(task.next_run_at) == later
         assert task.last_run_at is not None
     finally:
