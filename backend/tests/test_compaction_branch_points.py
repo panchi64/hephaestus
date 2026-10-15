@@ -17,12 +17,13 @@ that only holds in memory is a shape that breaks on the operator's next page loa
 
 from __future__ import annotations
 
+from typing import cast
+
 from fastapi import FastAPI
 from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     UserPromptPart,
 )
@@ -60,10 +61,10 @@ def _texts(messages: list[ModelMessage]) -> list[str]:
     texts: list[str] = []
     for message in messages:
         for part in message.parts:
-            if isinstance(part, UserPromptPart | TextPart | SystemPromptPart) and isinstance(
-                part.content, str
-            ):
-                texts.append(part.content)
+            # Every part kind that carries text, so a leaked tool return shows up too.
+            content = cast(object, getattr(part, "content", None))
+            if isinstance(content, str):
+                texts.append(content)
     return texts
 
 

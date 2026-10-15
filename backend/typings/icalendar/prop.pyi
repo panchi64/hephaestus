@@ -1,11 +1,11 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Self
 
-class Parameters(dict[str, str]): ...
+class _Parameters(dict[str, str]): ...
 
 class vDDDTypes:
-    dt: date | datetime | timedelta
-    params: Parameters
+    dt: date | datetime | time | timedelta | tuple[datetime, datetime] | tuple[datetime, timedelta]
+    params: _Parameters
     def to_ical(self) -> bytes: ...
 
 class vText(str):

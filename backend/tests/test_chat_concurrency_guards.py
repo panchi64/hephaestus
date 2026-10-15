@@ -290,7 +290,7 @@ def _patch_hanging_resolve(
     """Model *resolution* (not the answer stream) hangs on ``gate`` until released —
     unlike ``patch_hanging_model`` (which hangs the streamed answer, long after a
     regenerate/edit has already repositioned the active leaf and submitted), this hangs
-    inside ``_resolve_models`` itself, the real `await` a second near-simultaneous
+    inside ``resolve_models`` itself, the real `await` a second near-simultaneous
     regenerate/edit could otherwise slip through during. ``entered`` fires once the
     first caller is parked here, so a test can assert a second request is rejected
     without ever reaching (or needing to release) this gate."""
@@ -338,7 +338,7 @@ async def test_concurrent_regenerates_only_one_proceeds_past_model_resolve(
                 json={"conversation_id": conv_id, "message_id": assistant["id"]},
             )
         )
-        _ = await entered.wait()  # the first request is now parked inside `_resolve_models`
+        _ = await entered.wait()  # the first request is now parked inside `resolve_models`
 
         # A second regenerate while the first still holds the claim (mid-resolve, no
         # run registered yet) — must be rejected immediately, without ever reaching

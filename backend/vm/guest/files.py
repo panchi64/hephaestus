@@ -41,9 +41,21 @@ def manifest(root: str) -> int:
     return 0
 
 
+def _listing(path: str) -> list[str]:
+    """The relative paths the host wrote to ``path``."""
+    with open(path, encoding="utf-8") as handle:
+        loaded = cast(object, json.load(handle))
+    if not isinstance(loaded, list):
+        raise ValueError(f"{path}: expected a JSON list of paths")
+    items = cast("list[object]", loaded)
+    names = [item for item in items if isinstance(item, str)]
+    if len(names) != len(items):
+        raise ValueError(f"{path}: expected a JSON list of paths")
+    return names
+
+
 def pack(root: str, listing: str, out: str) -> int:
-    with open(listing, encoding="utf-8") as handle:
-        names = cast("list[str]", json.load(handle))
+    names = _listing(listing)
     with tarfile.open(out, "w", format=tarfile.PAX_FORMAT) as archive:
         for name in names:
             full = os.path.join(root, name)
@@ -60,8 +72,7 @@ def _remove(path: str) -> None:
 
 
 def unpack(root: str, archive_path: str, listing: str, uid: str) -> int:
-    with open(listing, encoding="utf-8") as handle:
-        gone = cast("list[str]", json.load(handle))
+    gone = _listing(listing)
     for name in sorted(gone, key=len, reverse=True):
         _remove(os.path.join(root, name))
     owner = int(uid)

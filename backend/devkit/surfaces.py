@@ -13,6 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, JsonValue
 
+from core.serde import parse_json
 from devkit import repo
 from devkit.instance import DevInstance
 
@@ -99,9 +100,12 @@ def write_launch_json(instance: DevInstance, config_name: str, root: Path) -> Pa
     configurations: list[object] = [launch_entry(instance, config_name)]
     if path.is_file():
         try:
-            existing = _LaunchFile.model_validate_json(path.read_text())
+            parsed = parse_json(path.read_text())
         except OSError, ValueError:
-            existing = _LaunchFile()
+            parsed = {}
+        # Valid JSON of the wrong shape raises instead of being overwritten: it holds the
+        # operator's other configurations.
+        existing = _LaunchFile.model_validate(parsed)
         # Anything the operator added stays. Only the entry carrying our name is ours to
         # rewrite, and it has to be rewritten because it holds a port that can move.
         configurations += [

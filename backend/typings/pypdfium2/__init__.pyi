@@ -3,16 +3,16 @@ from typing import BinaryIO
 
 from PIL.Image import Image
 
-class AutoCloseable:
+class _AutoCloseable:
     def close(self, _by_parent: bool = False) -> bool: ...
 
-class PdfBitmap(AutoCloseable):
+class PdfBitmap(_AutoCloseable):
     def to_pil(self) -> Image: ...
 
-class PdfTextPage(AutoCloseable):
+class PdfTextPage(_AutoCloseable):
     def get_text_range(self, index: int = 0, count: int = -1, errors: str = "ignore") -> str: ...
 
-class PdfPage(AutoCloseable):
+class PdfPage(_AutoCloseable):
     def get_textpage(self) -> PdfTextPage: ...
     def render(
         self,
@@ -23,7 +23,7 @@ class PdfPage(AutoCloseable):
         fill_to_stroke: bool = False,
     ) -> PdfBitmap: ...
 
-class PdfDocument(AutoCloseable):
+class PdfDocument(_AutoCloseable):
     def __init__(
         self,
         input: str | Path | bytes | BinaryIO,

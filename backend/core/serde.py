@@ -22,7 +22,9 @@ _JSON = TypeAdapter(JsonValue)
 
 def parse_json(text: str | bytes) -> JsonValue:
     """The JSON document in ``text``; malformed input raises ``ValueError``."""
-    return _JSON.validate_json(text)
+    # `json.loads` only builds JSON values, and it accepts what `validate_json` refuses:
+    # a BOM, UTF-16 bytes, a lone surrogate escape, deep nesting.
+    return cast("JsonValue", json.loads(text))
 
 
 def to_json(value: object) -> JsonValue:

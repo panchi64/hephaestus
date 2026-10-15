@@ -488,7 +488,7 @@ async def test_model_discovery_degrades_when_provider_has_no_models_api(
         assert json_body(resp) == {"models": [], "supported": False}
 
 
-def testextract_model_ids_handles_provider_shapes():
+def test_extract_model_ids_handles_provider_shapes():
     from services.llm import extract_model_ids
 
     # OpenAI / Anthropic: {"data": [{"id": …}]}

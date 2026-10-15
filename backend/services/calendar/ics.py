@@ -237,7 +237,7 @@ def _to_component(event: EventView) -> IEvent:
 
 def _moment(prop: object) -> date | datetime:
     """The date or date-time a ``DTSTART``/``DTEND``/``EXDATE`` value carries."""
-    if not isinstance(prop, vDDDTypes) or isinstance(prop.dt, timedelta):
+    if not isinstance(prop, vDDDTypes) or not isinstance(prop.dt, date):
         raise TypeError("expected a date or date-time property")
     return prop.dt
 
@@ -328,7 +328,10 @@ def _exdates(component: IEvent, all_day: bool) -> list[str]:
         if not isinstance(group, vDDDLists):
             continue
         for value in group.dts:
-            stamps.append(_instant(_moment(value), all_day).isoformat())
+            # RFC 5545 allows only DATE or DATE-TIME here; an exporter's PERIOD value is
+            # dropped on its own rather than costing the whole event.
+            if isinstance(value.dt, date):
+                stamps.append(_instant(value.dt, all_day).isoformat())
     return stamps
 
 

@@ -15,11 +15,11 @@ real answer.
 from __future__ import annotations
 
 import asyncio
-import json
 import urllib.parse
-from typing import cast
 
 import httpx
+
+from core.serde import parse_json
 
 _POLL_INTERVAL_S = 0.25
 
@@ -34,11 +34,15 @@ async def discover_cdp_ws(host_port: int, timeout_s: float) -> str | None:
             try:
                 resp = await client.get(f"http://127.0.0.1:{host_port}/json/version", timeout=2.0)
                 if resp.status_code == 200:
-                    raw = cast("dict[str, str]", json.loads(resp.text))["webSocketDebuggerUrl"]
-                    parts = urllib.parse.urlsplit(raw)
-                    return urllib.parse.urlunsplit(
-                        (parts.scheme, f"127.0.0.1:{host_port}", parts.path, "", "")
+                    document = parse_json(resp.text)
+                    raw = (
+                        document.get("webSocketDebuggerUrl") if isinstance(document, dict) else None
                     )
+                    if isinstance(raw, str):
+                        parts = urllib.parse.urlsplit(raw)
+                        return urllib.parse.urlunsplit(
+                            (parts.scheme, f"127.0.0.1:{host_port}", parts.path, "", "")
+                        )
             except httpx.HTTPError, KeyError, ValueError:
                 pass
             await asyncio.sleep(_POLL_INTERVAL_S)

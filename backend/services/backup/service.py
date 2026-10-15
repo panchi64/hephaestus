@@ -447,7 +447,9 @@ class BackupService:
         values: dict[str, object] = {}
         for column in entity.model.__table__.columns:
             value: object = getattr(row, column.name, None)
-            if column.name.endswith("_enc") and isinstance(value, str | bytes):
+            if column.name.endswith("_enc") and value is not None:
+                if not isinstance(value, str | bytes):
+                    raise TypeError(f"{entity.name}.{column.name} does not hold sealed text")
                 value = self._unseal(value)
             values[column.name] = value
         return values
@@ -468,7 +470,9 @@ class BackupService:
             if column.name not in values:
                 continue
             value = _from_json(values[column.name], _column_kind(column))
-            if column.name.endswith("_enc") and isinstance(value, str | bytes):
+            if column.name.endswith("_enc") and value is not None:
+                if not isinstance(value, str | bytes):
+                    raise BackupPayloadError(f"{entity.name}.{column.name} is not sealable text")
                 value = self._seal(value)
             built[column.name] = value
         return entity.model(**built)

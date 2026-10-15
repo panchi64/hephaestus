@@ -101,7 +101,7 @@ class TestTheBinding:
             binding = await _conversations(app).binding(s(json_body(created)["conversation_id"]))
             assert binding.workspace_kind == "sandbox"
 
-    async def test_a_plain_thread_files_itself_under_the_activecreate_project(
+    async def test_a_plain_thread_files_itself_under_the_active_project(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         async with client_app() as (client, app):

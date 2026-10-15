@@ -23,11 +23,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import TypeAdapter
-
+from core.serde import parse_json
 from devkit import ports
-
-_GROUPS = TypeAdapter(dict[str, int])
 
 #: Where a running instance records the process groups it started, so a later, unrelated
 #: command can stop them. Process *groups* rather than pids: both services spawn (the
@@ -202,9 +199,17 @@ def _read_groups(path: Path) -> dict[str, int]:
     the leftover it describes.
     """
     try:
-        return _GROUPS.validate_json(path.read_text())
+        groups = parse_json(path.read_text())
     except OSError, ValueError:
         return {}
+    if not isinstance(groups, dict):
+        return {}
+    # One bad entry is skipped, so the rest can still be stopped.
+    return {
+        name: group
+        for name, group in groups.items()
+        if isinstance(group, int) and not isinstance(group, bool)
+    }
 
 
 def _group_alive(group: int) -> bool:

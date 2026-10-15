@@ -43,7 +43,7 @@ import asyncio
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 type Lane = Literal["interactive", "routine", "background", "linked"]
 
@@ -142,7 +142,13 @@ class LaneLimits:
     def for_lane(self, lane: Lane) -> int:
         """How many slots this lane may hold at once: of the ceiling's, except for the
         routine lane's own."""
-        slots = max(1, int(cast("int", getattr(self, lane))))
+        sizes: dict[Lane, int] = {
+            "interactive": self.interactive,
+            "routine": self.routine,
+            "background": self.background,
+            "linked": self.linked,
+        }
+        slots = max(1, sizes[lane])
         return slots if lane == "routine" else min(self.ceiling, slots)
 
 

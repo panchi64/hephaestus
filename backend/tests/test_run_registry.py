@@ -648,7 +648,7 @@ async def test_shutdown_cancels_live_runs_so_their_waiters_settle():
 # --- duration formatting: exact minutes, no silent rounding --------------------------
 
 
-def testadj_duration_reports_a_fractional_bound_exactly():
+def test_adj_duration_reports_a_fractional_bound_exactly():
     from runs.registry import adj_duration
 
     assert adj_duration(1800) == "30-minute"
@@ -660,7 +660,7 @@ def testadj_duration_reports_a_fractional_bound_exactly():
     assert adj_duration(90) == "1.5-minute"
 
 
-def testcount_duration_reports_a_fractional_bound_exactly():
+def test_count_duration_reports_a_fractional_bound_exactly():
     from runs.registry import count_duration
 
     assert count_duration(120) == "2 minutes"

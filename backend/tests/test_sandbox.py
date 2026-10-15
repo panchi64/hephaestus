@@ -224,6 +224,10 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(
     def update_config(new_config: SandboxRuntimeConfig) -> None:
         replaced.append(new_config)
 
+    async def initialize(runtime_config: SandboxRuntimeConfig, *_args: object) -> None:
+        # The runtime's other writer of the installed configuration.
+        replaced.append(runtime_config)
+
     async def wrap(
         command: str, *, custom_config: SandboxRuntimeConfig | None = None, **_kwargs: object
     ) -> str:
@@ -235,6 +239,7 @@ async def test_confining_one_command_leaves_what_every_other_one_reaches_alone(
     monkeypatch.setattr(SandboxManager, "wrap_with_sandbox", wrap)
     monkeypatch.setattr(SandboxManager, "get_config", get_config)
     monkeypatch.setattr(SandboxManager, "update_config", update_config)
+    monkeypatch.setattr(SandboxManager, "initialize", initialize)
 
     _ = await confine(
         "curl https://files.example.com",

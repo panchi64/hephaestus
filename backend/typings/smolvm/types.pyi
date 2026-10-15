@@ -19,7 +19,7 @@ class InternetSettings(BaseModel):
     allowed_domains: tuple[str, ...] = ("*",)
     allowed_http_methods: tuple[str, ...] = ("*",)
 
-class VMConfig(BaseModel):
+class VMConfig(BaseModel, frozen=True, extra="forbid"):
     vm_id: str = Field(default_factory=str)
     vcpu_count: int = 2
     memory: int = 512
