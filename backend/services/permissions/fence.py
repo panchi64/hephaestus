@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import posixpath
 from dataclasses import dataclass
 from pathlib import Path
 
-from services.home.paths import HOME, HomePathError, Place, parse
+from services.home.paths import HOME, SCRATCH, HomePathError, Place, parse, projects_named
 from services.sandbox.base import SandboxError, contained_path
 
 
@@ -19,11 +20,39 @@ class HomeFence:
     cwd: str = f"{HOME}/scratch"
 
     def holds(self, raw: str, *, write: bool) -> bool:
+        if not write and _job_private(raw):
+            return True
         try:
             place = parse(raw, cwd=self.cwd).place
         except HomePathError:
             return False
         return place in (self.writable if write else self.places)
+
+    def scratch_only(self, command: str) -> bool:
+        """Whether ``command`` would see the thread's scratch and nothing else of the home:
+        it stands in scratch and names no project (`services/sandbox/home_shell.py`)."""
+        try:
+            here = parse(self.cwd).place
+        except HomePathError:
+            return False
+        return here == SCRATCH and not projects_named(command)
+
+
+#: Folders each shell command gets a fresh, empty tmpfs of, dropped when it ends
+#: (`vm/guest/confine.py`), and the streams every process has.
+_JOB_PRIVATE = ("/tmp", "/dev/shm")
+_STREAMS = frozenset({"/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr"})
+
+
+def _job_private(raw: str) -> bool:
+    """Whether a path is the command's own: nothing outside it reads or keeps it."""
+    text = raw.strip()
+    if not text.startswith("/") or "\0" in text:
+        return False
+    normal = posixpath.normpath(text)
+    if normal in _STREAMS:
+        return True
+    return any(normal == root or normal.startswith(f"{root}/") for root in _JOB_PRIVATE)
 
 
 type Fence = Path | HomeFence

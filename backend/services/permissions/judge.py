@@ -137,10 +137,13 @@ def judge(capability: Capability, *, fenced: bool) -> Judgement:
         # and no rule about arguments took part in, and the row should not let that pass
         # for the same kind of answer a command gets.
         return Judgement(True, "classified read, cleared at Auto with no review", tier="read")
-    if capability.sandboxed and not capability.network:
+    if capability.sandboxed and not capability.network and (
+        fenced or capability.kind is not ActionKind.SHELL
+    ):
         # The sandbox is the fence: no host filesystem, no egress, and outputs that come
         # back explicitly. Reading the program would add nothing, which is why this is the
-        # one branch that clears something the extraction could not bound.
+        # one branch that clears something the extraction could not bound. A shell command
+        # is held there only by the VM, so it needs the fence up.
         return Judgement(True, "runs offline in the conversation's own sandbox", tier="sandbox")
     if capability.unbounded:
         return Judgement(False, capability.unbounded[0])

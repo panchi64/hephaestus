@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal, cast
 
-from services.permissions.fence import Fence, escapes
+from services.permissions.fence import Fence, HomeFence, escapes
 from services.permissions.projections import describe
 from services.permissions.shell_ast import ShellCommand, shell_reach, strip_comments
 from services.tool_sensitivity import EXTERNAL_PREFIX, Sensitivity, classified, sensitivity_of
@@ -283,6 +283,14 @@ def shell_capability(
     root = None if on_the_host else root
     walk = shell_reach(command, root=root)
     unplaced = () if root is not None else (_UNPLACED_ON_THE_HOST if on_the_host else _UNPLACED,)
+    # A command with no network that sees only the thread's scratch is held by the VM as
+    # a sandboxed program is, so it is bounded without its syntax being read.
+    in_scratch = (
+        isinstance(root, HomeFence)
+        and reach == "workspace"
+        and not walk.network
+        and root.scratch_only(command)
+    )
     return Capability(
         tool=tool,
         kind=ActionKind.SHELL,
@@ -294,6 +302,7 @@ def shell_capability(
         network=walk.network,
         escapes=walk.escapes,
         reach=reach,
+        sandboxed=in_scratch,
         unbounded=(*walk.unbounded, *unplaced),
     )
 

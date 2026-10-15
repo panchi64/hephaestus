@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import re
 import secrets
 import time
 from collections.abc import Mapping, Sequence
@@ -27,7 +26,7 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness._output import truncate_tail
 
 from services.home.backend import Mount
-from services.home.paths import HOME, SCRATCH, HomePathError, Place, parse
+from services.home.paths import HOME, SCRATCH, HomePathError, Place, parse, projects_named
 from services.vm import VMError
 from services.vm.platform import HomeBind, JobState
 from services.vm.project import BringOut, ProjectCopies, ProjectCopy
@@ -41,7 +40,6 @@ _TIMEOUT_EXIT = 124
 _STOP_WAIT_S = 5.0
 #: How many projects one command may bring into the VM by naming them.
 _MAX_PROJECTS = 8
-_NAMED_PROJECT = re.compile(r"(?:~|/home/agent)/projects/([a-z0-9][a-z0-9._-]{0,79})")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,12 +90,8 @@ class HomeShell:
         here = _place_of(self._cwd)
         if here is not None and here.kind == "projects":
             wanted.append(here.name)
-        if network:
-            return [by_name[name] for name in wanted if name in by_name]
-        for match in _NAMED_PROJECT.finditer(command):
-            name: str = match.group(1)
-            if name not in wanted:
-                wanted.append(name)
+        if not network:
+            wanted += [name for name in projects_named(command) if name not in wanted]
         return [by_name[name] for name in wanted if name in by_name][:_MAX_PROJECTS]
 
     async def run(

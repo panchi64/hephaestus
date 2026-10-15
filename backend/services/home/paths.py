@@ -34,6 +34,17 @@ _NAMED: dict[str, PlaceKind] = {
 _LAYOUT = "a path under ~/scratch, ~/projects/<name>, ~/worktrees/<name> or ~/shared/<name>"
 #: A named place's name, as the guest accepts it after its group (`vm/guest/confine.py`).
 _NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
+_NAMED_PROJECT = re.compile(r"(?:~|/home/agent)/projects/([a-z0-9][a-z0-9._-]{0,79})")
+
+
+def projects_named(text: str) -> list[str]:
+    """The projects a command line names by home path, in order, each once."""
+    names: list[str] = []
+    for match in _NAMED_PROJECT.finditer(text):
+        name: str = match.group(1)
+        if name not in names:
+            names.append(name)
+    return names
 
 
 @dataclass(frozen=True, slots=True)
