@@ -17,12 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from services.conversations import ConversationStore
+from routes.deps import app_state
 from services.projects.diffstat import file_changes
 from services.projects.repo import branch_for
 from services.projects.worktree import WorktreeManager
 
-from ._helpers import app_state, client_app, patch_model_resolution
+from ._helpers import client_app, patch_model_resolution
 from ._json import json_body, s
 
 
@@ -215,10 +215,8 @@ class TestTheRouteCarriesIt:
             patch_model_resolution(monkeypatch)
             created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
             conversation_id = s(json_body(created)["conversation_id"])
-            assert await app_state(app, "conversations", ConversationStore).open_worktree(
-                conversation_id
-            )
-            state = await app_state(app, "worktrees", WorktreeManager).acquire(
+            assert await app_state(app).conversations.open_worktree(conversation_id)
+            state = await app_state(app).worktrees.acquire(
                 project_id=s(project["id"]),
                 root=root,
                 base_ref=s(project["baseRef"]),
@@ -257,9 +255,7 @@ class TestTheRouteCarriesIt:
             created = await client.post("/chat", json={"prompt": "hi", "project_id": project["id"]})
 
             conversation_id = s(json_body(created)["conversation_id"])
-            assert await app_state(app, "conversations", ConversationStore).open_worktree(
-                conversation_id
-            )
+            assert await app_state(app).conversations.open_worktree(conversation_id)
             body = json_body(await client.get(f"/worktrees/{conversation_id}"))
 
             assert body["files"] == []

@@ -11,9 +11,10 @@ import pytest
 
 from core.db import init_db, make_engine
 from core.vault import Vault
+from routes.deps import app_state
 from services.workspace_history import WorkspaceHistoryStore
 
-from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, obj, s
 
 
@@ -35,7 +36,7 @@ async def test_set_keeper_204_and_reflected_in_conversation_detail(
     patch_model_resolution(monkeypatch, output_text="hi")
     async with client_app() as (client, app):
         conv = await _start_conversation(client)
-        snap = await app_state(app, "workspace_history", WorkspaceHistoryStore).capture(
+        snap = await app_state(app).workspace_history.capture(
             "operator", conv, run_id="r1", files={"a.py": b"x"}
         )
         # Not yet a keeper.
@@ -51,7 +52,7 @@ async def test_unset_keeper(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch, output_text="hi")
     async with client_app() as (client, app):
         conv = await _start_conversation(client)
-        snap = await app_state(app, "workspace_history", WorkspaceHistoryStore).capture(
+        snap = await app_state(app).workspace_history.capture(
             "operator", conv, run_id="r1", files={"a.py": b"x"}
         )
         _ = await client.post(f"/views/snapshots/{snap.id}/keeper", json={"keeper": True})

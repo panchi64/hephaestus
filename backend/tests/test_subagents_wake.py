@@ -32,19 +32,21 @@ from agent import turn as turn_module
 from agent.injected import injected_text
 from harness.manifests._subagent_wake import SubagentWake
 from routes.chat import compose_turn
-from runs import QueuedMessage, Run, RunRegistry, RunStatus, RunStream
+from routes.deps import app_state
+from runs import QueuedMessage, Run, RunStatus, RunStream
 from runs.events import MessageSource
-from services.conversations import ConversationStore
-from tests._helpers import app_state, client_app, patch_model_resolution
+from tests._helpers import client_app, patch_model_resolution
 from tests._json import json_body, s
 
 
 def _wake(app: FastAPI) -> SubagentWake:
-    return app_state(app, "subagent_wake", SubagentWake)
+    wake = cast(object, app.state.subagent_wake)
+    assert isinstance(wake, SubagentWake)
+    return wake
 
 
 def _run_of(app: FastAPI, run_id: str) -> Run:
-    run = app_state(app, "runs", RunRegistry).get(run_id)
+    run = app_state(app).runs.get(run_id)
     assert run is not None
     return run
 
@@ -83,7 +85,7 @@ def _prompt(call: dict[str, object]) -> str:
 
 async def _drain(app: FastAPI) -> None:
     """Let every run the test started finish, so nothing is torn down mid-turn."""
-    for run in app_state(app, "runs", RunRegistry).list():
+    for run in app_state(app).runs.list():
         if run.task is not None:
             _ = await asyncio.gather(run.task, return_exceptions=True)
 
@@ -97,7 +99,7 @@ async def _settled(app: FastAPI) -> None:
     rather than the code: in production nothing appends to that queue except the wake
     itself, under its own per-thread lock.
     """
-    pending = list(cast(set[asyncio.Task[None]], app_state(app, "run_terminal_tasks", set)))
+    pending = list(app_state(app).run_terminal_tasks)
     if pending:
         _ = await asyncio.gather(*pending, return_exceptions=True)
 
@@ -136,9 +138,7 @@ class TestItNeverInterrupts:
             # Queued before the turn's first request, the report rides that request
             # alongside the prompt (which was already on record) and is recorded behind
             # it as a node of its own — the answer to both follows, whole.
-            turns = await app_state(app, "conversations", ConversationStore).messages_view(
-                s(created["conversation_id"])
-            )
+            turns = await app_state(app).conversations.messages_view(s(created["conversation_id"]))
             assert [t.role for t in turns][:3] == ["user", "subagent", "assistant"]
 
     def test_every_road_a_queued_message_takes_is_framed_the_same_way(self):

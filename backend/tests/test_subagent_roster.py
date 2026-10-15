@@ -21,9 +21,7 @@ with a checkout and nobody approved it.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
 
 import pytest
 from pydantic_ai import FunctionToolset, RunContext
@@ -32,6 +30,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RunUsage
 
 from core.config import Settings
+from routes.deps import app_state
 from runs import Run, RunStream
 from services.agents import (
     BUILTIN,
@@ -47,7 +46,7 @@ from tools.catalog import tool_catalog
 from tools.delegation import ProjectRoster
 from tools.deps import RunDeps
 
-from ._helpers import app_state, client_app, full_tool_categories
+from ._helpers import client_app, full_tool_categories
 
 
 def _agents_roster() -> ProjectRoster:
@@ -366,9 +365,7 @@ class TestWhatTheModelActuallySees:
 
     async def test_the_app_the_operator_runs_has_the_rewrite_in_its_stack(self):
         async with client_app() as (_client, app):
-            category = cast(Mapping[str, object], app_state(app, "tool_categories", Mapping))[
-                "agents"
-            ]
+            category = app_state(app).tool_categories["agents"]
             # Built through the manifest rather than by this test: a wrapper that only
             # exists when the test constructs it is a wrapper no run ever passes through.
             assert hasattr(category, "wrapped")

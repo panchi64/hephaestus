@@ -6,27 +6,25 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import cast
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from pydantic import JsonValue
 from pydantic_ai.models.test import TestModel
-from sqlalchemy import Engine
 from sqlmodel import Session, select
 
 from agent import ParkedTurn
 from core.db import in_session
 from models.task import ScheduledTask, TaskRun
-from runs import Orchestrator, Run, RunRegistry
+from routes.deps import app_state
+from runs import Orchestrator, Run
 from services.approval_grants import ApprovalGrantStore
 from services.notifications import NotificationService
 from services.registry import ModelRegistry
 from services.scheduler import ScheduledTaskView, SchedulerService, TaskRunResult
 
 from ._helpers import (
-    app_state,
     client_app,
     patch_model_resolution,
     register_stub_provider,
@@ -91,15 +89,15 @@ def parked_call_id(run: Run) -> str:
 
 
 def _scheduler(app: FastAPI) -> SchedulerService:
-    return app_state(app, "scheduler", SchedulerService)
+    return app_state(app).scheduler
 
 
 def _notifications(app: FastAPI) -> NotificationService:
-    return app_state(app, "notifications", NotificationService)
+    return app_state(app).notifications
 
 
 def _grants(app: FastAPI) -> ApprovalGrantStore:
-    return app_state(app, "approval_grants", ApprovalGrantStore)
+    return app_state(app).approval_grants
 
 
 # --- CRUD + validation -------------------------------------------------------------
@@ -436,7 +434,7 @@ async def test_delete_task_cascades_its_runs():
         def work(session: Session) -> list[TaskRun]:
             return list(session.exec(select(TaskRun).where(TaskRun.task_id == task_id)).all())
 
-        remaining = await in_session(app_state(app, "db_engine", Engine), work)
+        remaining = await in_session(app_state(app).db_engine, work)
         assert remaining == []
 
 
@@ -505,7 +503,7 @@ async def test_a_webhook_token_cannot_fire_another_owners_task(monkeypatch: pyte
             row.owner_id = "somebody-else"
             session.add(row)
 
-        await in_session(app_state(app, "db_engine", Engine), reassign)
+        await in_session(app_state(app).db_engine, reassign)
 
         # 404, exactly as an unknown token does — no way to tell the two apart.
         assert (await client.post(f"/tasks/hooks/{token}")).status_code == 404
@@ -514,7 +512,7 @@ async def test_a_webhook_token_cannot_fire_another_owners_task(monkeypatch: pyte
         def runs(session: Session) -> list[TaskRun]:
             return list(session.exec(select(TaskRun).where(TaskRun.task_id == task_id)).all())
 
-        assert await in_session(app_state(app, "db_engine", Engine), runs) == []
+        assert await in_session(app_state(app).db_engine, runs) == []
 
 
 async def test_run_now_refuses_a_disabled_task():
@@ -575,10 +573,10 @@ def _install_sensitive_tool(monkeypatch: pytest.MonkeyPatch) -> None:
 async def _await_parked_task_run(app: FastAPI, *, timeout: float = 2.0) -> Run:
     loop_budget = int(timeout / 0.01)
     for _ in range(loop_budget):
-        waiters = cast(dict[str, asyncio.Future[Run]], app_state(app, "task_run_waiters", dict))
+        waiters = app_state(app).task_run_waiters
         if waiters:
             run_id = next(iter(waiters))
-            run = app_state(app, "runs", RunRegistry).get(run_id)
+            run = app_state(app).runs.get(run_id)
             if run is not None and run.status == "awaiting_input":
                 return run
         await asyncio.sleep(0.01)

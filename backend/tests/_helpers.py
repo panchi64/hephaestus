@@ -23,7 +23,8 @@ from pydantic_ai.toolsets import AbstractToolset
 from agent import ParkedTurn
 from app import create_app
 from core.config import Settings
-from runs import EventBody, Run, RunRegistry
+from routes.deps import app_state
+from runs import EventBody, Run
 from services.providers.base import ModelLimits, Provider, ProviderPreset
 from services.providers.openai_compat import PROVIDER as OPENAI_COMPAT
 from services.reasoning import ModelDescriptor
@@ -240,21 +241,12 @@ async def granting_store(
     return store
 
 
-def app_state[T](app: FastAPI, name: str, kind: type[T]) -> T:
-    """``app.state.<name>``, checked to be a ``kind`` — Starlette types every attribute ``Any``."""
-    state: dict[str, dict[str, object]] = vars(app.state)
-    value = state["_state"][name]
-    assert isinstance(value, kind), f"app.state.{name} is {type(value).__name__}"
-    return value
-
-
 def swap_tool_catalog(app: FastAPI, categories: Mapping[str, AbstractToolset[RunDeps]]) -> None:
     """Replace the booted app's assembled tool catalog **in place**. The mapping is one
     shared object — the chat route, the approval-resume path, and the scheduler's
     executor all hold the same dict the app assembled — so mutating its contents (not
     rebinding `app.state.tool_categories`) is what reaches every path."""
-    state: dict[str, dict[str, dict[str, AbstractToolset[RunDeps]]]] = vars(app.state)
-    current = state["_state"]["tool_categories"]
+    current = app_state(app).tool_categories
     current.clear()
     current.update(categories)
 
@@ -361,7 +353,7 @@ async def await_parked(app: FastAPI, run_id: str) -> Run:
     Polls with a real sleep, not a bare yield: under full-suite load the background run
     needs wall-clock time to park, and 100 ``sleep(0)`` yields can starve before it does.
     """
-    runs = app_state(app, "runs", RunRegistry)
+    runs = app_state(app).runs
     for _ in range(200):
         run = runs.get(run_id)
         if run is not None and run.status == "awaiting_input":

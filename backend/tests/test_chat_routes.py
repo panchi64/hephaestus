@@ -10,9 +10,10 @@ from fastapi import HTTPException
 from pydantic import JsonValue
 
 from core.config import get_settings
+from routes.deps import app_state
 from services.conversations import ConversationStore
 
-from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, json_list, obj, s
 
 
@@ -290,7 +291,7 @@ async def test_continue_turn_retires_the_stop_marker(monkeypatch: pytest.MonkeyP
         conv = s(first["conversation_id"])
         _ = await collect_sse_events(client, s(first["run_id"]))
 
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         stopped = (await store.messages_view(conv))[-1]
         # Stamp a marker the way a bound-stopped run would, then continue that turn.
         _stamp_stop_marker(store, conv, stopped.id)
@@ -321,7 +322,7 @@ async def test_a_rejected_send_leaves_the_stop_marker_alone(monkeypatch: pytest.
         conv = s(first["conversation_id"])
         _ = await collect_sse_events(client, s(first["run_id"]))
 
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         stopped = (await store.messages_view(conv))[-1]
         _stamp_stop_marker(store, conv, stopped.id)
 
@@ -347,7 +348,7 @@ async def test_a_turn_that_fails_to_submit_leaves_the_stop_marker_alone(
         conv = s(first["conversation_id"])
         _ = await collect_sse_events(client, s(first["run_id"]))
 
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         stopped = (await store.messages_view(conv))[-1]
         _stamp_stop_marker(store, conv, stopped.id)
 
@@ -412,5 +413,5 @@ async def test_a_new_thread_stores_the_agent_it_runs(monkeypatch: pytest.MonkeyP
         )
         assert again.status_code == 202
         _ = await collect_sse_events(client, s(json_body(again)["run_id"]))
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         assert (await store.binding(conversation_id)).agent_name is None

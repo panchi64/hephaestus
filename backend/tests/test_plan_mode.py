@@ -426,7 +426,9 @@ async def test_the_two_backfills_are_reachable_and_shaped_as_the_panel_reads_the
     change: the task list moved to `/tasks` so the plan could have `/plan`, and a build
     where only one of them moved answers 404 on the other.
     """
-    from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+    from routes.deps import app_state
+
+    from ._helpers import client_app, collect_sse_events, patch_model_resolution
     from ._json import json_body, json_list, obj, parse_json, s
 
     patch_model_resolution(monkeypatch, output_text="hello")
@@ -440,14 +442,14 @@ async def test_the_two_backfills_are_reachable_and_shaped_as_the_panel_reads_the
         plan_response = await client.get(f"/conversations/{conversation_id}/plan")
         assert parse_json(plan_response.content) is None
 
-        _ = await app_state(app, "plan_mode", PlanMode).submit(
+        _ = await app_state(app).plan_mode.submit(
             "operator",
             conversation_id,
             title="Rewrite the parser",
             body="## Why\nIt is slow.",
             steps=["read it", "change it"],
         )
-        _ = await app_state(app, "conversation_tasks", ConversationTasks).seed(
+        _ = await app_state(app).conversation_tasks.seed(
             "operator", conversation_id, ["read it", "change it"]
         )
 

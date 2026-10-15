@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import cast
 
 import httpx
 import pytest
@@ -12,15 +11,13 @@ from pydantic import JsonValue
 from pydantic_ai import FunctionToolset
 from pydantic_ai.models.test import TestModel
 
-from runs import Orchestrator, Run, RunRegistry
-from services.approval_grants import ApprovalGrantStore
+from routes.deps import app_state
+from runs import Orchestrator, Run
 from services.notification_view import NotificationView
-from services.notifications import NotificationService
 from services.registry import ModelRegistry
 from tools import RunDeps
 
 from ._helpers import (
-    app_state,
     await_parked,
     client_app,
     collect_sse_events,
@@ -116,7 +113,7 @@ async def test_approve_resumes_under_the_operators_bounds(monkeypatch: pytest.Mo
         run = await await_parked(app, run_id)
 
         seen: dict[str, object] = {}
-        runs = app_state(app, "runs", RunRegistry)
+        runs = app_state(app).runs
         real_resume = runs.resume
 
         async def spy(rid: str, orchestrator: Orchestrator, **kwargs: float | None) -> Run | None:
@@ -146,9 +143,7 @@ async def test_approve_rejects_unknown_and_unparked():
         async def orch(_run: Run) -> None:
             return None
 
-        run = app_state(app, "runs", RunRegistry).submit(
-            kind="chat", owner_id="operator", orchestrator=orch
-        )
+        run = app_state(app).runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
         await run.wait()
         resp = await client.post(f"/runs/{run.id}/approve", json={"decisions": []})
         assert resp.status_code == 409
@@ -180,9 +175,7 @@ async def test_approve_with_conversation_scope_records_grant(monkeypatch: pytest
         # The grant is recorded and visible on the conversation's grants surface. The tool
         # runs no command, so it is the whole-tool scope — an empty prefix.
         assert conv_id is not None
-        granted = await app_state(app, "approval_grants", ApprovalGrantStore).list(
-            "operator", conv_id
-        )
+        granted = await app_state(app).approval_grants.list("operator", conv_id)
         assert (approval.tool_name, ()) in {(g.tool_name, g.command_prefix) for g in granted}
         listed = await _grants(client, conv_id)
         assert any(
@@ -432,10 +425,7 @@ async def test_egress_request_never_records_a_conversation_grant(
 
         # Nothing standing, on either surface the operator or the engine reads.
         assert conv_id is not None
-        assert (
-            await app_state(app, "approval_grants", ApprovalGrantStore).list("operator", conv_id)
-            == []
-        )
+        assert await app_state(app).approval_grants.list("operator", conv_id) == []
         assert await _grants(client, conv_id) == []
 
 
@@ -455,7 +445,7 @@ async def test_failed_resume_rolls_back_the_recorded_grant(monkeypatch: pytest.M
         ) -> Run | None:
             return None
 
-        monkeypatch.setattr(app_state(app, "runs", RunRegistry), "resume", fail_resume)
+        monkeypatch.setattr(app_state(app).runs, "resume", fail_resume)
         resp = await client.post(
             f"/runs/{run_id}/approve",
             json={
@@ -470,9 +460,7 @@ async def test_failed_resume_rolls_back_the_recorded_grant(monkeypatch: pytest.M
         )
         assert resp.status_code == 409
         assert conv_id is not None
-        granted = await app_state(app, "approval_grants", ApprovalGrantStore).list(
-            "operator", conv_id
-        )
+        granted = await app_state(app).approval_grants.list("operator", conv_id)
         assert approval.tool_name not in {g.tool_name for g in granted}
 
 
@@ -493,7 +481,7 @@ async def test_a_failed_resume_leaves_a_grant_that_was_already_there(
         approval = parked_turn(run).requests.approvals[0]
         conv_id = run.conversation_id
         assert conv_id is not None
-        grants = app_state(app, "approval_grants", ApprovalGrantStore)
+        grants = app_state(app).approval_grants
         # Standing before this card was ever opened.
         _ = await grants.grant("operator", conv_id, approval.tool_name)
 
@@ -502,7 +490,7 @@ async def test_a_failed_resume_leaves_a_grant_that_was_already_there(
         ) -> Run | None:
             return None
 
-        monkeypatch.setattr(app_state(app, "runs", RunRegistry), "resume", fail_resume)
+        monkeypatch.setattr(app_state(app).runs, "resume", fail_resume)
         resp = await client.post(
             f"/runs/{run_id}/approve",
             json={
@@ -537,9 +525,7 @@ async def test_approve_rejects_decision_mismatch(monkeypatch: pytest.MonkeyPatch
 
 
 async def _run_notifications(app: FastAPI, run_id: str) -> list[NotificationView]:
-    items, _ = await app_state(app, "notifications", NotificationService).list_notifications(
-        "operator", limit=100
-    )
+    items, _ = await app_state(app).notifications.list_notifications("operator", limit=100)
     return [n for n in items if n.run_id == run_id]
 
 
@@ -548,7 +534,7 @@ async def _drain_terminal_notify_tasks(app: FastAPI) -> None:
     adds its task to `run_terminal_tasks` synchronously before the registry's own
     cancel/`run.wait()` call can return, so it's already registered by the time a
     caller reaches here — one `gather` is enough to settle it."""
-    pending = list(cast(set[asyncio.Task[None]], app_state(app, "run_terminal_tasks", set)))
+    pending = list(app_state(app).run_terminal_tasks)
     if pending:
         _ = await asyncio.gather(*pending, return_exceptions=True)
 
@@ -605,7 +591,7 @@ async def test_cancel_while_parked_resolves_the_approval_needed_notification(
         run_id = await _chat(client, "delete it")
         _ = await await_parked(app, run_id)
 
-        assert await app_state(app, "runs", RunRegistry).cancel(run_id) is True
+        assert await app_state(app).runs.cancel(run_id) is True
         await _drain_terminal_notify_tasks(app)
 
         notifs = await _run_notifications(app, run_id)

@@ -14,9 +14,10 @@ from fastapi import FastAPI
 
 from app import create_app
 from core.config import Settings
+from routes.deps import app_state
 from services.workspace_reset import reset_workspace
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import arr, json_body
 
 
@@ -38,7 +39,7 @@ def _settings(data_dir: Path) -> Settings:
 
 
 def _db_intact(app: FastAPI) -> bool:
-    return app_state(app, "workspace_db_intact", bool)
+    return app_state(app).workspace_db_intact
 
 
 async def test_a_missing_database_is_noticed_at_boot(tmp_path: Path):
@@ -108,7 +109,7 @@ async def test_reset_refuses_while_the_vault_is_unlocked():
 async def test_reset_removes_the_key_and_lands_on_first_run():
     async with client_app(auth_enabled=True, passphrase=None) as (client, app):
         _ = await client.post("/setup", json={"password": "correct horse"})
-        keyfile = app_state(app, "settings", Settings).data_dir / "keyfile.json"
+        keyfile = app_state(app).settings.data_dir / "keyfile.json"
         assert keyfile.exists()
 
         _ = await client.post("/auth/lock")

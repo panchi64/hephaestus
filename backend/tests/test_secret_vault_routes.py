@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import httpx
 
-from services.secret_vault import SecretVaultService
-from tests._helpers import app_state, client_app
+from routes.deps import app_state
+from tests._helpers import client_app
 from tests._json import json_body, json_list, obj, s
 
 PASSPHRASE = "vault-passphrase"
@@ -115,7 +115,7 @@ async def test_unknown_entry_is_404():
 async def test_the_service_is_one_singleton_across_requests():
     async with client_app() as (client, app):
         await _unlocked(client)
-        first = app_state(app, "secret_vault", SecretVaultService)
+        first = app_state(app).secret_vault
         _ = await client.get("/vault/entries")
         # A per-request instance would have thrown the unlock away between the two calls.
-        assert app_state(app, "secret_vault", SecretVaultService) is first
+        assert app_state(app).secret_vault is first

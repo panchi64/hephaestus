@@ -32,16 +32,16 @@ from pydantic_ai.usage import RequestUsage
 from agent import build_chat_orchestrator
 from agent.summarize import build_auto_compact_policy
 from core.config import Settings
-from routes.deps import OPERATOR_ID
-from runs import RunRegistry, RunStatus
+from routes.deps import OPERATOR_ID, app_state
+from runs import RunStatus
 from services.conversation_view import MessageView
 from services.conversations import ConversationStore
 
-from ._helpers import app_state, client_app, fold_aware_model, run_bodies
+from ._helpers import client_app, fold_aware_model, run_bodies
 
 
 def _conversations(app: FastAPI) -> ConversationStore:
-    return app_state(app, "conversations", ConversationStore)
+    return app_state(app).conversations
 
 
 def _turn(prompt: str, answer: str, input_tokens: int = 0) -> list[ModelMessage]:
@@ -133,9 +133,7 @@ async def test_a_regenerate_at_the_threshold_folds_and_answers_the_same_request(
             context_window=10_000,
             auto_compact=build_auto_compact_policy(Settings()),
         )
-        run = app_state(app, "runs", RunRegistry).submit(
-            kind="chat", owner_id=OPERATOR_ID, orchestrator=orch
-        )
+        run = app_state(app).runs.submit(kind="chat", owner_id=OPERATOR_ID, orchestrator=orch)
         await run.wait()
         assert run.status is RunStatus.done
 

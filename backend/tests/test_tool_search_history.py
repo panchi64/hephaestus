@@ -62,12 +62,12 @@ from agent.history import (
     split_injected_requests,
 )
 from agent.summarize import AutoCompactPolicy, compact_conversation
-from routes.deps import OPERATOR_ID
-from runs import Run, RunRegistry, RunStatus, TurnOverhead
+from routes.deps import OPERATOR_ID, app_state
+from runs import Run, RunStatus, TurnOverhead
 from services.conversations import ConversationStore
 from tools import RunDeps
 
-from ._helpers import app_state, client_app, fold_with, is_fold_request
+from ._helpers import client_app, fold_with, is_fold_request
 from ._json import arr, obj, parse_json, s
 
 #: The dormant group under test. One plain tool and one that needs approval, so the same
@@ -210,7 +210,7 @@ def _discovered(result: object) -> set[str]:
 
 
 def _store(app: FastAPI) -> ConversationStore:
-    return app_state(app, "conversations", ConversationStore)
+    return app_state(app).conversations
 
 
 def _run(
@@ -232,9 +232,7 @@ def _run(
         context_window=context_window,
         auto_compact=auto_compact,
     )
-    return app_state(app, "runs", RunRegistry).submit(
-        kind="chat", owner_id=OPERATOR_ID, orchestrator=orch
-    )
+    return app_state(app).runs.submit(kind="chat", owner_id=OPERATOR_ID, orchestrator=orch)
 
 
 async def _turn(
@@ -510,7 +508,7 @@ async def test_a_reveal_before_a_park_is_still_in_effect_after_the_resume():
         assert set(revealed_tools(parked.message_history)) == REVEALED
         call_id = parked.requests.approvals[0].tool_call_id
 
-        _ = await app_state(app, "runs", RunRegistry).resume(
+        _ = await app_state(app).runs.resume(
             run.id, build_resume_orchestrator(parked, {call_id: ToolApproved()}, store=store)
         )
         _ = await run.wait()

@@ -22,12 +22,13 @@ from pydantic_ai import FunctionToolset, ModelMessage, ModelRequest, ModelRespon
 from pydantic_ai.messages import TextPart, UserPromptPart
 from pydantic_ai.usage import RequestUsage
 
+from routes.deps import app_state
 from runs import TurnOverhead
 from services.context_budget import compose
 from services.conversations import ConversationStore
 from services.registry import ModelRegistry
 
-from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, n, obj, s
 
 
@@ -486,7 +487,7 @@ async def test_a_turn_leaves_its_measurement_on_its_own_thread(monkeypatch: pyte
         created = json_body(await client.post("/chat", json={"prompt": "hello"}))
         _ = await collect_sse_events(client, s(created["run_id"]))
         conversation_id = s(created["conversation_id"])
-        conversations = app_state(app, "conversations", ConversationStore)
+        conversations = app_state(app).conversations
 
         overhead = await conversations.get_overhead(conversation_id)
         assert overhead is not None, "a completed turn must leave its overhead behind"
@@ -526,7 +527,7 @@ async def test_a_reopened_thread_reports_the_breakdown_without_another_turn(
     monkeypatch.setattr(ModelRegistry, "main_context_window", main_context_window)
 
     async with client_app() as (client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         conversation_id = await store.create_conversation("operator")
         # A settled turn carrying real provider usage — the stub model reports none, and
         # a thread with no measured footprint has no gauge to break down at all.
@@ -585,7 +586,7 @@ async def test_a_reopened_thread_whose_endpoint_reported_no_usage_still_reads(
     monkeypatch.setattr(ModelRegistry, "main_context_window", main_context_window)
 
     async with client_app() as (client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         conversation_id = await store.create_conversation("operator")
         overhead = Overhead(system=4_000, tools=60_000)
         _ = store.record(

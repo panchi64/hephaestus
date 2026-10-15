@@ -19,6 +19,7 @@ import pytest
 from fastapi import FastAPI
 
 from core.exceptions import CommandValidationError
+from routes.deps import app_state
 from services.commands import CommandRegistry
 from services.commands.definitions import (
     CommandFileError,
@@ -28,7 +29,7 @@ from services.commands.definitions import (
 from services.commands.registry import merge
 from services.commands.store import CommandStore
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import arr, json_body, json_list, obj
 from ._json import s as string
 
@@ -40,11 +41,11 @@ def _write(root: Path, relpath: str, text: str) -> None:
 
 
 def _store(app: FastAPI) -> CommandStore:
-    return app_state(app, "command_store", CommandStore)
+    return app_state(app).command_store
 
 
 def _registry(app: FastAPI) -> CommandRegistry:
-    return app_state(app, "commands", CommandRegistry)
+    return app_state(app).commands
 
 
 class TestWorkflowStore:

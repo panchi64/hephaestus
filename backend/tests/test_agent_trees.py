@@ -3,19 +3,22 @@ a spawned agent as a thread of its own."""
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 from fastapi import FastAPI
 
 from agent.injected import injected_text
 from harness.manifests._subagent_wake import SubagentWake
+from routes.deps import app_state
 from runs import RunRegistry
 from runs.events import now_utc
 from runs.run import QueuedMessage
-from services.agents import AgentDefinition, AgentStore, builtin_roster, lower_of
+from services.agents import AgentDefinition, builtin_roster, lower_of
 from services.conversations import ConversationStore
 from services.subagents import LaunchedSubagent, SubagentParent, SubagentUnavailableError
 from services.subagents.report import message_body, message_envelope
-from tests._helpers import app_state, client_app, patch_model_resolution
+from tests._helpers import client_app, patch_model_resolution
 from tests._json import arr, json_body, obj, parse_json
 from tests.test_subagents_launch import launcher_of, records_of, settle_run
 
@@ -23,11 +26,11 @@ EXPLORER = builtin_roster()["explorer"]
 
 
 def _conversations(app: FastAPI) -> ConversationStore:
-    return app_state(app, "conversations", ConversationStore)
+    return app_state(app).conversations
 
 
 def _runs(app: FastAPI) -> RunRegistry:
-    return app_state(app, "runs", RunRegistry)
+    return app_state(app).runs
 
 
 async def _root(app: FastAPI) -> str:
@@ -44,9 +47,7 @@ async def _lead(app: FastAPI, *, max_depth: int | None = None) -> AgentDefinitio
         "max_depth": max_depth,
         "permission_ceiling": "plan",
     }
-    return await app_state(app, "agent_store", AgentStore).create(
-        "operator", values, published=True
-    )
+    return await app_state(app).agent_store.create("operator", values, published=True)
 
 
 async def _spawn(
@@ -62,7 +63,9 @@ async def _spawn(
 
 
 def _wake(app: FastAPI) -> SubagentWake:
-    return app_state(app, "subagent_wake", SubagentWake)
+    wake = cast(object, app.state.subagent_wake)
+    assert isinstance(wake, SubagentWake)
+    return wake
 
 
 async def _settle_thread(app: FastAPI, conversation_id: str) -> None:

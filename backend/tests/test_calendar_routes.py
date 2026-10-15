@@ -10,16 +10,15 @@ from pydantic_ai import ModelMessage, ModelResponse, RunContext, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from sqlalchemy import Engine
 
 from core.container import ServiceContainer
-from core.vault import Vault
+from routes.deps import app_state
 from runs import Run, RunStream
 from services.calendar import CalendarService
 from tools import RunDeps
 from tools.calendar import calendar_toolset
 
-from ._helpers import app_state, client_app, register_stub_provider, stub_resolution
+from ._helpers import client_app, register_stub_provider, stub_resolution
 from ._json import JSON, arr, json_body, obj, s
 
 
@@ -390,7 +389,7 @@ async def _call(deps: RunDeps, name: str, **kwargs: str) -> JsonValue:
 async def _service_deps(app: FastAPI) -> tuple[str, CalendarService]:
     from routes.deps import OPERATOR_ID
 
-    service = CalendarService(app_state(app, "db_engine", Engine), app_state(app, "vault", Vault))
+    service = CalendarService(app_state(app).db_engine, app_state(app).vault)
     return OPERATOR_ID, service
 
 

@@ -15,13 +15,12 @@ from sqlmodel import Session, SQLModel, col, select
 
 from app import backfill_sealed_columns
 from core.db import in_session
-from core.vault import Vault
 from models.conversation import Conversation
 from models.corpus import CorpusSource
-from routes.deps import OPERATOR_ID
+from routes.deps import OPERATOR_ID, app_state
 from services.conversations import ConversationStore
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import json_body, json_list, obj, s
 
 
@@ -58,7 +57,7 @@ async def _title(store: ConversationStore, conversation_id: str) -> str | None:
 
 async def test_a_conversation_title_round_trips_sealed():
     async with client_app() as (client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         await store.set_title(cid, "Quarterly board deck notes")
 
@@ -68,7 +67,7 @@ async def test_a_conversation_title_round_trips_sealed():
         assert any(obj(c)["title"] == "Quarterly board deck notes" for c in listed)
 
         # …and nothing readable is on the row.
-        row = await _row(app_state(app, "db_engine", Engine), Conversation, cid)
+        row = await _row(app_state(app).db_engine, Conversation, cid)
         assert row.title is None
         assert row.title_enc is not None
         assert "board" not in row.title_enc
@@ -77,9 +76,9 @@ async def test_a_conversation_title_round_trips_sealed():
 async def test_an_untitled_conversation_stores_no_ciphertext():
     # None is "no title", not "the empty title" — it must not become a sealed blank.
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
-        row = await _row(app_state(app, "db_engine", Engine), Conversation, cid)
+        row = await _row(app_state(app).db_engine, Conversation, cid)
         assert row.title_enc is None
         assert row.title is None
         assert await _title(store, cid) is None
@@ -92,7 +91,7 @@ async def test_a_corpus_folder_path_round_trips_sealed():
         assert json_body(created)["label"] == "/Users/op/clients"
 
         source_id = s(json_body(created)["id"])
-        row = await _row(app_state(app, "db_engine", Engine), CorpusSource, source_id)
+        row = await _row(app_state(app).db_engine, CorpusSource, source_id)
         assert row.path is None
         assert row.path_enc is not None
         assert "clients" not in row.path_enc
@@ -109,30 +108,30 @@ async def test_a_legacy_cleartext_title_reads_correctly_before_the_backfill():
     """A half-migrated DB — the sealed column exists but this row predates it. The
     operator must see their thread's real name, not a blank or a garbled one."""
     async with client_app() as (client, app):
-        cid = await _write_legacy_conversation(app_state(app, "db_engine", Engine), "Old thread")
+        cid = await _write_legacy_conversation(app_state(app).db_engine, "Old thread")
 
-        assert await _title(app_state(app, "conversations", ConversationStore), cid) == "Old thread"
+        assert await _title(app_state(app).conversations, cid) == "Old thread"
         listed = json_list(await client.get("/conversations"))
         assert any(obj(c)["id"] == cid and obj(c)["title"] == "Old thread" for c in listed)
 
 
 async def test_the_backfill_seals_a_legacy_title_and_it_still_reads():
     async with client_app() as (_client, app):
-        engine = app_state(app, "db_engine", Engine)
+        engine = app_state(app).db_engine
         cid = await _write_legacy_conversation(engine, "Old thread")
 
-        await backfill_sealed_columns(engine, app_state(app, "vault", Vault))
+        await backfill_sealed_columns(engine, app_state(app).vault)
 
         row = await _row(engine, Conversation, cid)
         assert row.title is None  # the plaintext is gone, not merely ignored
         assert row.title_enc is not None
         # And the same name comes back out.
-        assert await _title(app_state(app, "conversations", ConversationStore), cid) == "Old thread"
+        assert await _title(app_state(app).conversations, cid) == "Old thread"
 
 
 async def test_the_backfill_seals_a_legacy_corpus_path():
     async with client_app() as (client, app):
-        engine = app_state(app, "db_engine", Engine)
+        engine = app_state(app).db_engine
 
         def write(session: Session) -> str:
             row = CorpusSource(owner_id=OPERATOR_ID, path="/srv/notes", status="indexed")
@@ -147,7 +146,7 @@ async def test_the_backfill_seals_a_legacy_corpus_path():
             for src in json_list(await client.get("/corpus/sources"))
         )
 
-        await backfill_sealed_columns(engine, app_state(app, "vault", Vault))
+        await backfill_sealed_columns(engine, app_state(app).vault)
 
         row = await _row(engine, CorpusSource, source_id)
         assert row.path is None
@@ -161,9 +160,9 @@ async def test_the_backfill_seals_a_legacy_corpus_path():
 
 async def test_the_backfill_is_idempotent_and_leaves_sealed_rows_alone():
     async with client_app() as (_client, app):
-        engine = app_state(app, "db_engine", Engine)
-        vault = app_state(app, "vault", Vault)
-        store = app_state(app, "conversations", ConversationStore)
+        engine = app_state(app).db_engine
+        vault = app_state(app).vault
+        store = app_state(app).conversations
         sealed_id = await store.create_conversation(OPERATOR_ID)
         await store.set_title(sealed_id, "Already sealed")
         before = (await _row(engine, Conversation, sealed_id)).title_enc
@@ -181,21 +180,19 @@ async def test_auto_titling_does_not_clobber_a_legacy_cleartext_name():
     # `set_title_if_absent` must judge "already named" on the effective title, or a
     # pre-encryption thread would silently get re-titled the first time it is used.
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
-        cid = await _write_legacy_conversation(
-            app_state(app, "db_engine", Engine), "Named by the operator"
-        )
+        store = app_state(app).conversations
+        cid = await _write_legacy_conversation(app_state(app).db_engine, "Named by the operator")
         assert await store.set_title_if_absent(cid, "A fresh auto-title") is False
         assert await _title(store, cid) == "Named by the operator"
 
 
 async def test_auto_titling_fills_and_seals_an_unnamed_thread():
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         assert await store.set_title_if_absent(cid, "A fresh auto-title") is True
 
-        row = await _row(app_state(app, "db_engine", Engine), Conversation, cid)
+        row = await _row(app_state(app).db_engine, Conversation, cid)
         assert row.title is None
         assert row.title_enc is not None
         assert await _title(store, cid) == "A fresh auto-title"
@@ -204,13 +201,13 @@ async def test_auto_titling_fills_and_seals_an_unnamed_thread():
 async def test_no_cleartext_titles_remain_after_a_boot_with_a_mixed_database():
     """The end state the requirement asks for: nothing readable left in the column."""
     async with client_app() as (_client, app):
-        engine = app_state(app, "db_engine", Engine)
-        store = app_state(app, "conversations", ConversationStore)
+        engine = app_state(app).db_engine
+        store = app_state(app).conversations
         for name in ("one", "two", "three"):
             _ = await _write_legacy_conversation(engine, name)
         await store.set_title(await store.create_conversation(OPERATOR_ID), "four")
 
-        await backfill_sealed_columns(engine, app_state(app, "vault", Vault))
+        await backfill_sealed_columns(engine, app_state(app).vault)
 
         def remaining(session: Session) -> list[str | None]:
             rows = session.exec(

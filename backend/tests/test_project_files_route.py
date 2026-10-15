@@ -15,12 +15,12 @@ from pathlib import Path
 import httpx
 import pytest
 
+from routes.deps import app_state
 from services.projects.listing import list_files
 from services.projects.tree import worktree_root
-from services.projects.worktree import WorktreeManager
 from services.sandbox.base import contained_file
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import arr, json_body, obj, s
 
 
@@ -159,7 +159,7 @@ class TestRoute:
             _ = await client.get(f"/projects/{pid}/files?conversation_id=c1")
             # Acquiring the project's single checkout as a side effect of typing a
             # character would take it from whatever else holds it.
-            worktrees = app_state(app, "worktrees", WorktreeManager)
+            worktrees = app_state(app).worktrees
             assert worktrees.holder(pid) is None
             assert not worktrees.path_for(pid).exists()
 
@@ -242,7 +242,7 @@ class TestReadRoute:
             _ = await client.get(f"/projects/{pid}/file?path=README.md&conversation_id=c1")
             # Same rule the listing keeps, and for the same reason: opening a file must
             # not take the project's single checkout from whatever holds it.
-            worktrees = app_state(app, "worktrees", WorktreeManager)
+            worktrees = app_state(app).worktrees
             assert worktrees.holder(pid) is None
             assert not worktrees.path_for(pid).exists()
 

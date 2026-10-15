@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
+from typing import TYPE_CHECKING, cast
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -25,7 +25,7 @@ from core.container import ServiceContainer
 from core.exceptions import NotFoundError
 from core.ratelimit import RateLimiter
 from core.vault import Vault
-from runs import ConversationBusyError, RunRegistry
+from runs import ConversationBusyError, Run, RunRegistry
 from services.agents import AgentCatalog, AgentStore
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
@@ -37,7 +37,8 @@ from services.commands import CommandRegistry
 from services.commands.store import CommandStore
 from services.conversation_search import ConversationSearch
 from services.conversations import ConversationStore
-from services.corpus import CorpusIndex
+from services.corpus import CorpusChunkStore, CorpusIndex, FolderAdapter
+from services.corpus.uploads import UploadsAdapter
 from services.credential_store import CredentialStore
 from services.egress import EgressPolicy
 from services.external_tools import ExternalTools
@@ -68,6 +69,7 @@ from services.tool_policy import CategoryAvailability, effective_disabled_tools
 from services.uploads import UploadStore
 from services.vm import PlatformVM
 from services.webfetch import BrowserFetcher, ManagedBrowser
+from services.work_summaries import WorkSummaryService
 from services.workspace_history import WorkspaceHistoryStore
 
 if TYPE_CHECKING:
@@ -79,102 +81,114 @@ if TYPE_CHECKING:
 OPERATOR_ID = "operator"
 
 
-class AppState(TypedDict):
-    """What ``app.py`` hangs on ``app.state``; Starlette types every attribute ``Any``."""
+class AppState(State):
+    """``app.state`` as ``create_app`` builds it, with each attribute's type.
 
-    runs: RunRegistry
-    capabilities: ServiceContainer
-    tool_categories: Mapping[str, AbstractToolset[RunDeps]]
-    gated_tools: frozenset[str]
-    category_availability: tuple[CategoryAvailability, ...]
-    dormant_categories: tuple[DormantCategory, ...]
-    dormant_summaries: dict[str, str]
-    instruction_providers: tuple[InstructionProvider, ...]
-    prompt_context_providers: tuple[PromptContextProvider, ...]
-    conversations: ConversationStore
-    conversation_search: ConversationSearch
-    corpus: CorpusIndex
-    models: ModelRegistry
-    memory: MemoryStore
-    notifications: NotificationService
-    conversation_tasks: ConversationTasks
-    plan_mode: PlanMode
-    approval_grants: ApprovalGrantStore
-    egress: EgressPolicy
-    skills: SkillStore
-    platform_skills: PlatformSkills
-    agents: AgentCatalog
-    agent_store: AgentStore
-    plugins: PluginStore
-    commands: CommandRegistry
-    command_store: CommandStore
-    uploads: UploadStore
-    upload_rate_limiter: RateLimiter
-    embedding_reindexer: EmbeddingReindexer
-    search: SearchService
-    fetcher: BrowserFetcher
-    browser: ManagedBrowser
-    searxng: ManagedSearxng
-    offline: OfflineModeService
-    artifacts: ArtifactStore
-    workspace_history: WorkspaceHistoryStore
-    sandbox: SandboxSessionManager | None
-    browser_sessions: NotRequired[BrowserSessionManager | None]
-    projects: ProjectStore
-    worktrees: WorktreeManager
-    settings_store: SettingsStore
-    credentials: CredentialStore
-    vault: Vault
-    auth_manager: AuthManager
-    workspace_db_intact: bool
-    db_engine: Engine
-    scheduler: SchedulerService
-    routines: RoutineStore
-    schedule_parser: ScheduleNaturalLanguage
-    mail: MailService
-    calendar: CalendarService
-    external: ExternalTools
-    secret_vault: SecretVaultService
-    backup: BackupService
-    api_tokens: ApiTokenStore
-    run_terminal_tasks: set[asyncio.Task[None]]
-    settings: Settings
-    api_scope_table: ScopeTable
-    preview_client: httpx.AsyncClient
-    web_client: httpx.AsyncClient
-    feature_manifests: tuple[FeatureManifest, ...]
-    network_tools: frozenset[str]
-    vm: NotRequired[PlatformVM | None]
-    subagent_records: NotRequired[SubagentStore | None]
+    The bare ``self.x: T`` declarations below assign nothing: ``State`` keeps values in its
+    own dict, and a class-level default would shadow the stored one."""
+
+    def __init__(self) -> None:
+        super().__init__({"vm": None, "subagent_records": None, "browser_sessions": None})
+        self.runs: RunRegistry
+        self.capabilities: ServiceContainer
+        self.tool_categories: dict[str, AbstractToolset[RunDeps]]
+        self.gated_tools: frozenset[str]
+        self.category_availability: tuple[CategoryAvailability, ...]
+        self.dormant_categories: tuple[DormantCategory, ...]
+        self.dormant_summaries: dict[str, str]
+        self.instruction_providers: tuple[InstructionProvider, ...]
+        self.prompt_context_providers: tuple[PromptContextProvider, ...]
+        self.conversations: ConversationStore
+        self.conversation_search: ConversationSearch
+        self.corpus: CorpusIndex
+        self.models: ModelRegistry
+        self.memory: MemoryStore
+        self.notifications: NotificationService
+        self.conversation_tasks: ConversationTasks
+        self.plan_mode: PlanMode
+        self.approval_grants: ApprovalGrantStore
+        self.egress: EgressPolicy
+        self.skills: SkillStore
+        self.platform_skills: PlatformSkills
+        self.agents: AgentCatalog
+        self.agent_store: AgentStore
+        self.plugins: PluginStore
+        self.commands: CommandRegistry
+        self.command_store: CommandStore
+        self.uploads: UploadStore
+        self.upload_rate_limiter: RateLimiter
+        self.embedding_reindexer: EmbeddingReindexer
+        self.search: SearchService
+        self.fetcher: BrowserFetcher
+        self.browser: ManagedBrowser
+        self.searxng: ManagedSearxng
+        self.offline: OfflineModeService
+        self.artifacts: ArtifactStore
+        self.workspace_history: WorkspaceHistoryStore
+        self.sandbox: SandboxSessionManager | None
+        self.browser_sessions: BrowserSessionManager | None
+        self.projects: ProjectStore
+        self.worktrees: WorktreeManager
+        self.settings_store: SettingsStore
+        self.credentials: CredentialStore
+        self.vault: Vault
+        self.auth_manager: AuthManager
+        self.workspace_db_intact: bool
+        self.db_engine: Engine
+        self.scheduler: SchedulerService
+        self.routines: RoutineStore
+        self.schedule_parser: ScheduleNaturalLanguage
+        self.mail: MailService
+        self.calendar: CalendarService
+        self.external: ExternalTools
+        self.secret_vault: SecretVaultService
+        self.backup: BackupService
+        self.api_tokens: ApiTokenStore | None
+        self.run_terminal_tasks: set[asyncio.Task[None]]
+        self.settings: Settings
+        self.api_scope_table: ScopeTable
+        self.preview_client: httpx.AsyncClient
+        self.web_client: httpx.AsyncClient
+        self.feature_manifests: tuple[FeatureManifest, ...]
+        self.network_tools: frozenset[str]
+        self.vm: PlatformVM | None
+        self.subagent_records: SubagentStore | None
+        self.discovery_client: httpx.AsyncClient
+        self.work_summaries: WorkSummaryService
+        self.corpus_uploads: UploadsAdapter
+        self.corpus_folder: FolderAdapter
+        self.corpus_chunk_store: CorpusChunkStore
+        self.task_run_waiters: dict[str, asyncio.Future[Run]]
 
 
-def app_state(source: FastAPI | Request | WebSocket) -> State:
-    if isinstance(source, FastAPI):
-        return source.state
-    return cast(FastAPI, source.app).state
-
-
-def state_of(source: FastAPI | Request | WebSocket) -> AppState:
-    return cast(AppState, vars(app_state(source))["_state"])
+def app_state(source: FastAPI | Request | WebSocket) -> AppState:
+    """The typed ``app.state`` of the app behind a request, socket or the app itself."""
+    app = source if isinstance(source, FastAPI) else cast(object, source.app)
+    if not isinstance(app, FastAPI):
+        raise RuntimeError("request is not served by a FastAPI app")
+    state = app.state
+    if not isinstance(state, AppState):
+        raise RuntimeError("app.state was not built by create_app")
+    return state
 
 
 def vm(request: Request) -> PlatformVM | None:
     """The platform VM, or None when this deployment never built one."""
-    return state_of(request).get("vm")
+    return app_state(request).vm
 
 
 def web_client(request: Request) -> httpx.AsyncClient:
     """The shared outbound client for fetching operator-supplied URLs (SSRF-gated by the caller)."""
-    return state_of(request)["web_client"]
+    return app_state(request).web_client
 
 
 def subagent_records(request: Request) -> SubagentStore | None:
     """The sub-agent register, or None when sub-agents are not wired in this deployment."""
-    return state_of(request).get("subagent_records")
+    return app_state(request).subagent_records
 
 
 def registry(request: Request) -> RunRegistry:
-    return state_of(request)["runs"]
+    return app_state(request).runs
 
 
 def capabilities(request: Request) -> ServiceContainer:
@@ -182,31 +196,31 @@ def capabilities(request: Request) -> ServiceContainer:
     startup from every feature manifest's `capabilities` export. Every run path
     (live chat, approval resume, the scheduler's executor) hands this same bag to
     the engine, so the capability set can never diverge between them."""
-    return state_of(request)["capabilities"]
+    return app_state(request).capabilities
 
 
 def tool_categories(request: Request) -> Mapping[str, AbstractToolset[RunDeps]]:
     """The assembled tool-category mapping (core + every enabled manifest's
     `toolsets` export) — what the agent runs against and the catalog routes list."""
-    return state_of(request)["tool_categories"]
+    return app_state(request).tool_categories
 
 
 def gated_tools(request: Request) -> frozenset[str]:
     """The union of the manifests' conditionally-gated tool names — the call-time
     `ApprovalRequired` raisers the approval-scope vocabulary must carry."""
-    return state_of(request)["gated_tools"]
+    return app_state(request).gated_tools
 
 
 def category_availability(request: Request) -> tuple[CategoryAvailability, ...]:
     """The manifests' availability checks, resolved against the categories they register
     — the seventh axis of the disabled set, asked of the live services on every turn."""
-    return state_of(request)["category_availability"]
+    return app_state(request).category_availability
 
 
 def dormant_categories(request: Request) -> tuple[DormantCategory, ...]:
     """The manifests' dormant-category declarations (category + one-line summary) — the
     groups whose schemas the agent loads for itself, and the index it is shown."""
-    return state_of(request)["dormant_categories"]
+    return app_state(request).dormant_categories
 
 
 def dormant_category_names(request: Request) -> frozenset[str]:
@@ -224,18 +238,18 @@ def dormant_summaries(request: Request) -> dict[str, str]:
     `routes/` sits above `harness/` and cannot reach the helper, and the comprehension is
     exactly the one every composer of this seam would otherwise write slightly differently.
     """
-    return state_of(request)["dormant_summaries"]
+    return app_state(request).dormant_summaries
 
 
 def instruction_providers(request: Request) -> tuple[InstructionProvider, ...]:
     """The manifests' dynamic instruction providers, registered on every agent."""
-    return state_of(request)["instruction_providers"]
+    return app_state(request).instruction_providers
 
 
 def prompt_context_providers(request: Request) -> tuple[PromptContextProvider, ...]:
     """The manifests' per-turn prompt-context providers, appended to the tail of every
     turn's user prompt (never persisted) — the cache-friendly home for volatile context."""
-    return state_of(request)["prompt_context_providers"]
+    return app_state(request).prompt_context_providers
 
 
 CONVERSATION_BUSY_DETAIL = "A response is already in progress in this conversation"
@@ -265,71 +279,71 @@ def release_conversation(request: Request, conversation_id: str) -> None:
 
 
 def store(request: Request) -> ConversationStore:
-    return state_of(request)["conversations"]
+    return app_state(request).conversations
 
 
 def conversation_search(request: Request) -> ConversationSearch:
-    return state_of(request)["conversation_search"]
+    return app_state(request).conversation_search
 
 
 def corpus(request: Request) -> CorpusIndex:
-    return state_of(request)["corpus"]
+    return app_state(request).corpus
 
 
 def models(request: Request) -> ModelRegistry:
-    return state_of(request)["models"]
+    return app_state(request).models
 
 
 def memory(request: Request) -> MemoryStore:
-    return state_of(request)["memory"]
+    return app_state(request).memory
 
 
 def notifications(request: Request) -> NotificationService:
-    return state_of(request)["notifications"]
+    return app_state(request).notifications
 
 
 def conversation_tasks(request: Request) -> ConversationTasks:
-    return state_of(request)["conversation_tasks"]
+    return app_state(request).conversation_tasks
 
 
 def plan_mode(request: Request) -> PlanMode:
-    return state_of(request)["plan_mode"]
+    return app_state(request).plan_mode
 
 
 def approval_grants(request: Request) -> ApprovalGrantStore:
-    return state_of(request)["approval_grants"]
+    return app_state(request).approval_grants
 
 
 def egress(request: Request) -> EgressPolicy:
-    return state_of(request)["egress"]
+    return app_state(request).egress
 
 
 def skills(request: Request) -> SkillStore:
-    return state_of(request)["skills"]
+    return app_state(request).skills
 
 
 def platform_skills(request: Request) -> PlatformSkills:
-    return state_of(request)["platform_skills"]
+    return app_state(request).platform_skills
 
 
 def agents(request: Request) -> AgentCatalog:
-    return state_of(request)["agents"]
+    return app_state(request).agents
 
 
 def agent_store(request: Request) -> AgentStore:
-    return state_of(request)["agent_store"]
+    return app_state(request).agent_store
 
 
 def plugins(request: Request) -> PluginStore:
-    return state_of(request)["plugins"]
+    return app_state(request).plugins
 
 
 def commands(request: Request) -> CommandRegistry:
-    return state_of(request)["commands"]
+    return app_state(request).commands
 
 
 def command_store(request: Request) -> CommandStore:
-    return state_of(request)["command_store"]
+    return app_state(request).command_store
 
 
 async def composer_tree(
@@ -370,35 +384,35 @@ async def composer_root(
 
 
 def uploads(request: Request) -> UploadStore:
-    return state_of(request)["uploads"]
+    return app_state(request).uploads
 
 
 def upload_rate_limiter(request: Request) -> RateLimiter:
-    return state_of(request)["upload_rate_limiter"]
+    return app_state(request).upload_rate_limiter
 
 
 def embedding_reindexer(request: Request) -> EmbeddingReindexer:
-    return state_of(request)["embedding_reindexer"]
+    return app_state(request).embedding_reindexer
 
 
 def search(request: Request) -> SearchService:
-    return state_of(request)["search"]
+    return app_state(request).search
 
 
 def fetcher(request: Request) -> BrowserFetcher:
-    return state_of(request)["fetcher"]
+    return app_state(request).fetcher
 
 
 def browser(request: Request) -> ManagedBrowser:
-    return state_of(request)["browser"]
+    return app_state(request).browser
 
 
 def searxng(request: Request) -> ManagedSearxng:
-    return state_of(request)["searxng"]
+    return app_state(request).searxng
 
 
 def offline(request: Request) -> OfflineModeService:
-    return state_of(request)["offline"]
+    return app_state(request).offline
 
 
 async def disabled_tools(
@@ -429,11 +443,11 @@ async def disabled_tools(
 
 
 def artifacts(request: Request) -> ArtifactStore:
-    return state_of(request)["artifacts"]
+    return app_state(request).artifacts
 
 
 def workspace_history(request: Request) -> WorkspaceHistoryStore:
-    return state_of(request)["workspace_history"]
+    return app_state(request).workspace_history
 
 
 def sandbox_sessions(request_or_ws: Request | WebSocket) -> SandboxSessionManager | None:
@@ -444,21 +458,21 @@ def sandbox_sessions(request_or_ws: Request | WebSocket) -> SandboxSessionManage
     from both a request handler and a socket handler, and the two share no base class
     that carries ``app``.
     """
-    return state_of(request_or_ws)["sandbox"]
+    return app_state(request_or_ws).sandbox
 
 
 def browser_sessions(request: Request) -> BrowserSessionManager | None:
     """The per-conversation browser manager, or None when browser control isn't wired
     (the feature is off, or its manifest never assembled)."""
-    return state_of(request).get("browser_sessions")
+    return app_state(request).browser_sessions
 
 
 def projects(request: Request) -> ProjectStore:
-    return state_of(request)["projects"]
+    return app_state(request).projects
 
 
 def worktrees(request: Request) -> WorktreeManager:
-    return state_of(request)["worktrees"]
+    return app_state(request).worktrees
 
 
 #: What ``X-Heph-Project`` must be to mean "show me everything, unscoped". A literal
@@ -501,19 +515,19 @@ async def active_project(request: Request) -> str | None:
 
 
 def settings_store(request: Request) -> SettingsStore:
-    return state_of(request)["settings_store"]
+    return app_state(request).settings_store
 
 
 def credentials(request: Request) -> CredentialStore:
-    return state_of(request)["credentials"]
+    return app_state(request).credentials
 
 
 def vault(request: Request) -> Vault:
-    return state_of(request)["vault"]
+    return app_state(request).vault
 
 
 def auth_manager(request: Request) -> AuthManager:
-    return state_of(request)["auth_manager"]
+    return app_state(request).auth_manager
 
 
 def workspace_db_intact(request: Request) -> bool:
@@ -524,40 +538,40 @@ def workspace_db_intact(request: Request) -> bool:
     before the schema is created (see `app.py`); `/setup` sets it back to true, since
     the workspace it just created *is* in this database.
     """
-    return bool(state_of(request)["workspace_db_intact"])
+    return app_state(request).workspace_db_intact
 
 
 def mark_workspace_db_intact(request: Request) -> None:
-    state_of(request)["workspace_db_intact"] = True
+    app_state(request).workspace_db_intact = True
 
 
 def db_engine(request: Request) -> Engine:
     """The raw DB engine — for the surfaces (like `routes/tasks.py`) that don't yet
     have a dedicated service and read/write their own SQLModel rows directly."""
-    return state_of(request)["db_engine"]
+    return app_state(request).db_engine
 
 
 def scheduler(request: Request) -> SchedulerService:
-    return state_of(request)["scheduler"]
+    return app_state(request).scheduler
 
 
 def routines(request: Request) -> RoutineStore:
-    return state_of(request)["routines"]
+    return app_state(request).routines
 
 
 def schedule_parser(request: Request) -> ScheduleNaturalLanguage:
-    return state_of(request)["schedule_parser"]
+    return app_state(request).schedule_parser
 
 
 def mail(request: Request) -> MailService:
     """The mail capability (`EMAIL-1..5`) — accounts, the sync loop, the inbox cache,
     triage and drafts. Its background worker is started and stopped with the app."""
-    return state_of(request)["mail"]
+    return app_state(request).mail
 
 
 def calendar(request: Request) -> CalendarService:
     """The calendar capability (`CAL-1..3`), including natural-language entry as `.nl`."""
-    return state_of(request)["calendar"]
+    return app_state(request).calendar
 
 
 def external(request: Request) -> ExternalTools:
@@ -569,7 +583,7 @@ def external(request: Request) -> ExternalTools:
     both the REST surfaces and the agent, which is what makes a server registered a moment
     ago visible to the very next run.
     """
-    return state_of(request)["external"]
+    return app_state(request).external
 
 
 def mcp(request: Request) -> McpRegistry:
@@ -586,12 +600,12 @@ def secret_vault(request: Request) -> SecretVaultService:
     """The operator's secrets manager (`VAULT-*`). Distinct from `vault()` above, which is
     the at-rest key custody. One instance per process — its whole point is holding a single
     in-memory unlock state, which a per-request instance would throw away."""
-    return state_of(request)["secret_vault"]
+    return app_state(request).secret_vault
 
 
 def backup(request: Request) -> BackupService:
     """Encrypted export/import (`BACKUP-*`)."""
-    return state_of(request)["backup"]
+    return app_state(request).backup
 
 
 def api_tokens(request: Request) -> ApiTokenStore:
@@ -602,26 +616,29 @@ def api_tokens(request: Request) -> ApiTokenStore:
     it has to, since it runs before any route reaches this module — so a revoke through
     the route invalidates exactly what the gate trusts, rather than the two keeping
     separate verification caches."""
-    return state_of(request)["api_tokens"]
+    tokens = app_state(request).api_tokens
+    if tokens is None:
+        raise RuntimeError("the API token store is not wired yet")
+    return tokens
 
 
 def run_terminal_tasks(request: Request) -> set[asyncio.Task[None]]:
     """The shared bucket of in-flight terminal-transition background tasks — anything
     that spawns one adds it here so shutdown can drain it alongside the notification
     surface's own, rather than tearing the DB engine/vault down from under it."""
-    return state_of(request)["run_terminal_tasks"]
+    return app_state(request).run_terminal_tasks
 
 
 def settings(request: Request) -> Settings:
     """The process's resolved configuration."""
-    return state_of(request)["settings"]
+    return app_state(request).settings
 
 
 def api_scope_table(request: Request) -> ScopeTable:
     """The scope catalog the `/tokens` surface lists and the auth gate enforces."""
-    return state_of(request)["api_scope_table"]
+    return app_state(request).api_scope_table
 
 
 def preview_client(request: Request) -> httpx.AsyncClient:
     """The pooled outbound client the preview proxy forwards through."""
-    return state_of(request)["preview_client"]
+    return app_state(request).preview_client

@@ -29,11 +29,11 @@ from core.vault import Vault, VaultLocked
 from models.conversation import Conversation
 from models.corpus import CorpusSource
 from models.task import ScheduledTask
-from services.corpus import CorpusIndex
+from routes.deps import app_state
 from services.projects import ProjectStore, project_clause, visible_project_ids
 from services.projects.store import SCOPED_MODELS
 from services.settings_store import SettingsStore
-from tests._helpers import app_state, client_app
+from tests._helpers import client_app
 from tests._json import arr, json_body, json_list, obj, s
 
 
@@ -466,7 +466,7 @@ class TestRoutes:
                 )
                 session.commit()
 
-            await in_session(app_state(app, "db_engine", Engine), seed)
+            await in_session(app_state(app).db_engine, seed)
 
             listing = await client.get("/conversations", headers={"X-Heph-Project": "all"})
             row = next(obj(c) for c in json_list(listing) if obj(c)["id"] == "c-code")
@@ -479,7 +479,7 @@ class TestRoutes:
         async with client_app() as (_client, app):
             # Registered as an ordinary category, so it appears in the operator's
             # tool settings and can be toggled like every other tool.
-            assert "project" in app_state(app, "tool_categories", dict)
+            assert "project" in app_state(app).tool_categories
 
 
 class TestScopedSurfaces:
@@ -501,7 +501,7 @@ class TestScopedSurfaces:
             session.add(Conversation(id="c-b", owner_id="operator", project_id="proj-b"))
             session.commit()
 
-        await in_session(app_state(app, "db_engine", Engine), work)
+        await in_session(app_state(app).db_engine, work)
 
     @staticmethod
     async def _listed(client: httpx.AsyncClient, header: str | None) -> list[str]:
@@ -555,7 +555,7 @@ class TestCreationStampsTheScope:
             row = session.get(model_cls, row_id)
             return None if row is None else row.project_id
 
-        return await in_session(app_state(app, "db_engine", Engine), work)
+        return await in_session(app_state(app).db_engine, work)
 
     async def test_a_task_is_filed(self, tmp_path: Path):
         async with client_app() as (client, app):
@@ -634,8 +634,8 @@ class TestCorpusScopeIsAUnion:
             )
             session.commit()
 
-        await in_session(app_state(app, "db_engine", Engine), work)
-        return await app_state(app, "corpus", CorpusIndex).out_of_scope_source_ids(
+        await in_session(app_state(app).db_engine, work)
+        return await app_state(app).corpus.out_of_scope_source_ids(
             "operator", visible_project_ids(active)
         )
 

@@ -9,9 +9,9 @@ from pathlib import Path
 import httpx
 from pydantic import JsonValue
 
-from services.corpus.index import CorpusIndex
+from routes.deps import app_state
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import json_body, json_list, n, obj, s
 
 
@@ -97,7 +97,7 @@ async def test_agent_corpus_tool_retrieves_indexed_folder_content():
             # global recall is AE-3.8-gated; grant it so the TestModel's source-less
             # retrieve auto-approves inline and drives through to the live index.
             grants = await granting_store("operator", "c", "corpus_retrieve")
-            corpus = app_state(app, "corpus", CorpusIndex)
+            corpus = app_state(app).corpus
             orch = build_chat_orchestrator(
                 "look something up",
                 model=TestModel(custom_output_text="done"),

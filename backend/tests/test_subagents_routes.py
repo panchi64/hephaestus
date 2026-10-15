@@ -10,30 +10,27 @@ carries the ids that reach them, and the list is what survives a restart.
 from __future__ import annotations
 
 import asyncio
-from typing import cast
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from pydantic import JsonValue
 
-from core.container import ServiceContainer
-from runs import RunRegistry
+from routes.deps import app_state
 from services.agents import builtin_roster
 from services.subagents import LaunchedSubagent, SubagentLauncher
-from services.task_list import ConversationTasks
-from tests._helpers import app_state, client_app, patch_model_resolution
+from tests._helpers import client_app, patch_model_resolution
 from tests._json import arr, json_body, obj
 
 EXPLORER = builtin_roster()["explorer"]
 
 
 def _terminal_tasks(app: FastAPI) -> list[asyncio.Task[None]]:
-    return list(cast(set[asyncio.Task[None]], app_state(app, "run_terminal_tasks", set)))
+    return list(app_state(app).run_terminal_tasks)
 
 
 async def _settle(app: FastAPI, run_id: str) -> None:
-    run = app_state(app, "runs", RunRegistry).get(run_id)
+    run = app_state(app).runs.get(run_id)
     assert run is not None
     if run.task is not None:
         await run.task
@@ -50,7 +47,7 @@ async def _settle(app: FastAPI, run_id: str) -> None:
 async def _launch(
     app: FastAPI, conversation_id: str, task: str, handle: str = "the-explorer"
 ) -> LaunchedSubagent:
-    launcher = app_state(app, "capabilities", ServiceContainer).get_optional(SubagentLauncher)
+    launcher = app_state(app).capabilities.get_optional(SubagentLauncher)
     assert launcher is not None
     from services.subagents import SubagentParent
 
@@ -162,7 +159,7 @@ async def test_a_card_carries_the_task_list_the_subagent_wrote_for_itself(
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="found it in parser.py")
         started = await _launch(app, "parent-1", "find the parser", "parser-finder")
-        _ = await app_state(app, "conversation_tasks", ConversationTasks).seed(
+        _ = await app_state(app).conversation_tasks.seed(
             "operator", started.conversation_id, ["read parser.py", "check the callers"]
         )
 

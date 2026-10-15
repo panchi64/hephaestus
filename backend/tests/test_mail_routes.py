@@ -9,10 +9,11 @@ import httpx
 from fastapi import FastAPI
 from pydantic import JsonValue
 
+from routes.deps import app_state
 from services.mail.models import MailBody
-from services.mail.service import AccountView, MailService
+from services.mail.service import AccountView
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import json_body, json_list, obj, parse_json, s
 from .mail_fakes import FakeTransport, install_transport, sample_header
 
@@ -21,7 +22,7 @@ async def _connected(
     app: FastAPI, *, subject: str = "Quarterly report", text: str = "The report is attached.\n"
 ) -> tuple[AccountView, FakeTransport]:
     """An account with a fake transport already wired, so nothing touches a network."""
-    mail = app_state(app, "mail", MailService)
+    mail = app_state(app).mail
     account = await mail.create_account(
         "operator", name="Personal", address="operator@example.com", password="hunter2"
     )

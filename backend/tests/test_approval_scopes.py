@@ -12,12 +12,12 @@ from __future__ import annotations
 import json
 
 from pydantic import JsonValue
-from sqlalchemy import Engine
 
 from core.db import in_session
 from models.external_tool import McpServer
+from routes.deps import app_state
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import json_body, json_list, obj, s
 
 
@@ -107,7 +107,7 @@ async def test_external_tools_appear_as_scopes_and_validate():
         # lock that keeps this write from interleaving with a background drainer's
         # (a raw session's BEGIN can land inside another thread's open transaction).
         await in_session(
-            app_state(app, "db_engine", Engine),
+            app_state(app).db_engine,
             lambda session: session.add(
                 McpServer(
                     owner_id="operator",

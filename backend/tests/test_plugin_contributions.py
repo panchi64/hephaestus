@@ -13,6 +13,7 @@ from pydantic_ai.usage import RunUsage
 
 from core.container import ServiceContainer
 from core.exceptions import PluginValidationError
+from routes.deps import app_state
 from runs import Run, RunStream
 from services.agents import AgentCatalog
 from services.plugins import PluginStore, validate_files
@@ -22,7 +23,7 @@ from tools.deps import RunDeps
 from tools.skills import skill_catalog
 
 from ._agent_helpers import make_stores
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import arr, json_body, obj
 from ._plugin_helpers import OWNER, make_store
 from ._plugin_helpers import make_stores as make_plugin_stores
@@ -201,7 +202,7 @@ def test_a_broken_routine_template_names_its_path(broken: str):
 
 async def test_a_published_plugins_templates_are_listed_for_the_operator():
     async with client_app() as (client, app):
-        plugins = app_state(app, "plugins", PluginStore)
+        plugins = app_state(app).plugins
         await _published(plugins, _files(**{"routines/weekly.md": ROUTINE.encode()}))
         [item] = arr(json_body(await client.get("/tasks/templates"))["items"])
         template = obj(item)

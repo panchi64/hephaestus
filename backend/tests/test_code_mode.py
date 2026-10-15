@@ -14,11 +14,10 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from runs import RunRegistry
+from routes.deps import app_state
 from runs.run import TERMINAL_STATUSES
 from services.conversations import ConversationStore
-from services.projects import WorktreeManager
-from tests._helpers import app_state, client_app, patch_model_resolution
+from tests._helpers import client_app, patch_model_resolution
 from tests._json import json_body, s
 
 
@@ -44,7 +43,7 @@ async def _repo(root: Path) -> Path:
 async def _settled(app: FastAPI, run_id: str) -> None:
     """Wait for the turn's run to finish. A live run holds the conversation claim, so a
     delete against it answers 409 for a reason that has nothing to do with branches."""
-    runs = app_state(app, "runs", RunRegistry)
+    runs = app_state(app).runs
     for _ in range(400):
         run = runs.get(run_id)
         if run is None or run.status in TERMINAL_STATUSES:
@@ -64,7 +63,7 @@ async def create_project(
 
 
 def _conversations(app: FastAPI) -> ConversationStore:
-    return app_state(app, "conversations", ConversationStore)
+    return app_state(app).conversations
 
 
 class TestTheBinding:
@@ -185,7 +184,7 @@ class TestDeletingAThread:
         # **No commit** — the agent has no `git commit`, so this is the state every real
         # session is in when the operator opens the diff. Committing here by hand is what
         # made an earlier version of these tests pass against inert code.
-        state = await app_state(app, "worktrees", WorktreeManager).acquire(
+        state = await app_state(app).worktrees.acquire(
             project_id=project["id"],
             root=Path(project["rootPath"]),
             base_ref=project["baseRef"],

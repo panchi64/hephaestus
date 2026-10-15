@@ -15,6 +15,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from routes.deps import app_state
+
 from ._helpers import client_app
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -32,7 +34,7 @@ def _resolves_to(monkeypatch: pytest.MonkeyPatch, ip: str) -> None:
 
 def _serve(app: FastAPI, handler: Callable[[httpx.Request], httpx.Response]) -> None:
     """Swap the web feature's outbound client for a mocked transport."""
-    app.state.web_client = httpx.AsyncClient(
+    app_state(app).web_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler), follow_redirects=False
     )
 

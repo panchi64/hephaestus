@@ -31,13 +31,13 @@ from agent.meta import Verdict
 from core.config import Settings
 from core.db import init_db, make_engine
 from core.vault import Vault
+from routes.deps import app_state
 from runs import Run, RunEnded, RunRegistry, RunStatus
 from services.conversations import ConversationStore
 from services.conversations.projection import project
 from tools import RunDeps
 
 from ._helpers import (
-    app_state,
     client_app,
     collect_sse_events,
     register_stub_provider,
@@ -884,7 +884,7 @@ async def test_chat_route_returns_conversation_and_continues(monkeypatch: pytest
         assert json_body(second)["conversation_id"] == conv_id
         _ = await collect_sse_events(client, s(json_body(second)["run_id"]))
 
-        history = await app_state(app, "conversations", ConversationStore).history(conv_id)
+        history = await app_state(app).conversations.history(conv_id)
 
     assert len(history) >= 4  # two turns, both persisted to the same conversation
 

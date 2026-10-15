@@ -9,17 +9,16 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from core.ratelimit import RateLimiter
-from services.corpus.uploads import UploadsAdapter
-from services.uploads import UploadStore
+from routes.deps import app_state
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import json_body, json_list, obj, s
 from .test_uploads_extraction import text_pdf
 
 
 async def _await_extraction(app: FastAPI) -> None:
-    await app_state(app, "uploads", UploadStore).flush()
-    await app_state(app, "corpus_uploads", UploadsAdapter).flush()
+    await app_state(app).uploads.flush()
+    await app_state(app).corpus_uploads.flush()
 
 
 async def test_upload_extract_list_download_correct_delete():
@@ -82,7 +81,7 @@ async def test_empty_file_rejected():
 async def test_rate_limited_returns_429():
     async with client_app() as (client, app):
         # A 1-token bucket that never refills ⇒ the second upload is throttled.
-        app.state.upload_rate_limiter = RateLimiter(rate_per_second=0.0, burst=1)
+        app_state(app).upload_rate_limiter = RateLimiter(rate_per_second=0.0, burst=1)
         ok = await client.post("/uploads", files={"file": ("a.txt", b"one", "text/plain")})
         throttled = await client.post("/uploads", files={"file": ("b.txt", b"two", "text/plain")})
         assert ok.status_code == 201 and throttled.status_code == 429

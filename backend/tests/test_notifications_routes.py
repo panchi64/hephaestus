@@ -10,10 +10,10 @@ from itertools import count as _count
 import pytest
 from pydantic import JsonValue
 
-from routes.deps import OPERATOR_ID
+from routes.deps import OPERATOR_ID, app_state
 from services.notifications import NotificationService
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import arr, json_body, n, obj, parse_json, s
 
 
@@ -71,7 +71,7 @@ def _titles(body: dict[str, JsonValue]) -> list[str]:
 async def test_list_pagination_unread_filter_and_unread_count(monkeypatch: pytest.MonkeyPatch):
     _ticking_clock(monkeypatch)
     async with client_app() as (client, app):
-        service = app_state(app, "notifications", NotificationService)
+        service = app_state(app).notifications
         views = [await service.notify(OPERATOR_ID, "system", f"n{i}") for i in range(3)]
         _ = await service.mark_read(OPERATOR_ID, [views[0].id])
 
@@ -97,7 +97,7 @@ async def test_list_spans_rehydrated_and_live_notifications(monkeypatch: pytest.
     filters across both, and must not 500 on a naive/aware comparison."""
     _ticking_clock(monkeypatch)
     async with client_app() as (client, app):
-        service = app_state(app, "notifications", NotificationService)
+        service = app_state(app).notifications
         old = await service.notify(OPERATOR_ID, "system", "persisted")
         await service.flush()
         # Drop it from the cache and reload from the DB — the restart path, without a
@@ -119,7 +119,7 @@ async def test_list_spans_rehydrated_and_live_notifications(monkeypatch: pytest.
 
 async def test_notification_out_is_camel_case():
     async with client_app() as (client, app):
-        _ = await app_state(app, "notifications", NotificationService).notify(
+        _ = await app_state(app).notifications.notify(
             OPERATOR_ID,
             "approval_needed",
             "t",
@@ -151,9 +151,7 @@ async def test_notification_out_is_camel_case():
 
 async def test_mark_read_route_updates_and_reports_count():
     async with client_app() as (client, app):
-        view = await app_state(app, "notifications", NotificationService).notify(
-            OPERATOR_ID, "system", "a"
-        )
+        view = await app_state(app).notifications.notify(OPERATOR_ID, "system", "a")
 
         resp = await client.post("/notifications/read", json={"ids": [view.id]})
         assert json_body(resp) == {"updated": 1}
@@ -164,7 +162,7 @@ async def test_mark_read_route_updates_and_reports_count():
 
 async def test_mark_all_read_route():
     async with client_app() as (client, app):
-        service = app_state(app, "notifications", NotificationService)
+        service = app_state(app).notifications
         _ = await service.notify(OPERATOR_ID, "system", "a")
         _ = await service.notify(OPERATOR_ID, "system", "b")
 
@@ -180,7 +178,7 @@ async def test_mark_all_read_route():
 
 async def test_stream_delivers_created_then_replays_after_reconnect():
     async with client_app() as (_client, app):
-        service = app_state(app, "notifications", NotificationService)
+        service = app_state(app).notifications
         _ = await service.notify(OPERATOR_ID, "system", "a")
         _ = await service.notify(OPERATOR_ID, "system", "b")
 

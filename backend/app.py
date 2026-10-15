@@ -49,7 +49,7 @@ from routes import (
     tools,
     vm,
 )
-from routes.deps import OPERATOR_ID, state_of
+from routes.deps import OPERATOR_ID, AppState, app_state
 from runs import LaneLimits, PrefixLedger, RunRegistry
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
@@ -125,7 +125,7 @@ async def lifespan(app: FastAPI):
     write-behind drainer). Shutdown flushes pending writes. Capability handles
     (``services/``) wire in here as they land.
     """
-    settings = state_of(app)["settings"]
+    settings = app_state(app).settings
     # Owns every background start/stop below: a unit registers at its construction
     # point and shutdown unwinds in reverse registration order — the `finally` block
     # is one call, not a hand-maintained mirror of this sequence. Something that must
@@ -159,7 +159,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     so the caller's single ``stop_all`` unwinds the whole graph — including a partially
     built one, when a build raises part-way through.
     """
-    assembled = state_of(app)
+    state = app_state(app)
     # Typed capability handles. Core wiring adds what it builds; each feature
     # manifest's build resolves its cross-feature dependencies here and adds what
     # it hands back — never by importing another feature's wiring.
@@ -169,14 +169,14 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # `capabilities` export (plus the core-owned handles below). Every run path
     # hands this same bag to the engine.
     agent_capabilities = ServiceContainer()
-    app.state.capabilities = agent_capabilities
-    app.state.auth_manager = AuthManager()
+    state.capabilities = agent_capabilities
+    state.auth_manager = AuthManager()
     # Inbound scoped API tokens (`AUTH-4`). Wired below with the engine, but named here
     # because the auth gate runs on every request — including ones that arrive before the
     # lifespan finishes — and reads it straight off `app.state`. Absent would mean "no
     # second authentication method"; an explicit None says the same thing without the
     # gate having to distinguish "not wired yet" from "deliberately not offered".
-    app.state.api_tokens = None
+    state.api_tokens = None
 
     # The registry's injected terminal-transition point — features contribute hooks
     # (waiter resolution, notification policy) without `runs/` importing `services/`
@@ -184,9 +184,9 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # stay reachable as `app.state.run_terminal_tasks` so shutdown drains them and a
     # test can await "every pending notify has settled" deterministically.
     run_terminal = RunTerminalDispatcher()
-    app.state.run_terminal_tasks = run_terminal.tasks
+    state.run_terminal_tasks = run_terminal.tasks
 
-    app.state.runs = RunRegistry(
+    state.runs = RunRegistry(
         lanes=LaneLimits(
             interactive=settings.run_max_concurrency,
             routine=settings.run_routine_concurrency,
@@ -215,20 +215,20 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # together are what `/auth/status` reports as `db_missing`. An explicit `db_url` counts
     # as intact: we make no claim about a database whose path we don't own.
     db_path = None if settings.db_url else settings.data_dir / "app.db"
-    app.state.workspace_db_intact = db_path.exists() if db_path else True
+    state.workspace_db_intact = db_path.exists() if db_path else True
     engine = make_engine(url)
     init_db(engine)
-    app.state.db_engine = engine
+    state.db_engine = engine
     # The one instance both the auth gate and the `/tokens` routes use — a token revoked
     # through the route has to invalidate exactly what the gate trusts, which two stores
     # with two verification caches wouldn't do.
-    app.state.api_tokens = ApiTokenStore(engine, assembled["api_scope_table"])
+    state.api_tokens = ApiTokenStore(engine, state.api_scope_table)
 
     # The at-rest encryption vault. A passphrase (auth-disabled path) sets it up
     # or unlocks it at boot; otherwise it stays locked until the operator unlocks
     # via login/setup.
     vault = Vault(settings.data_dir / "keyfile.json")
-    app.state.vault = vault
+    state.vault = vault
     if settings.unlock_passphrase:
         if vault.is_initialized:
             _ = await vault.unlock(settings.unlock_passphrase)
@@ -238,7 +238,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # Pooled outbound client for provider model discovery (the chat model picker).
     # Connection-reused across endpoints; follows redirects (some providers 30x).
     discovery_client = httpx.AsyncClient(follow_redirects=True)
-    app.state.discovery_client = discovery_client
+    state.discovery_client = discovery_client
     lifecycle.on_stop("discovery-client", discovery_client.aclose)
     # Host-command confinement configures itself lazily on the first approved host command
     # and starts proxy listeners doing so. Registered here so they stop with the app —
@@ -248,40 +248,38 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # stopped after the runs (which kill their own commands), so it only catches strays.
     lifecycle.on_stop("host-process-groups", stop_all_groups)
     # The model registry — role→endpoint resolution + the endpoint catalog.
-    registry = ModelRegistry(
-        engine, vault, http_client=discovery_client, gate=app.state.runs.endpoints
-    )
-    app.state.models = registry
+    registry = ModelRegistry(engine, vault, http_client=discovery_client, gate=state.runs.endpoints)
+    state.models = registry
     # One embedder over the registry's embedding role, shared by long-term memory and
     # cross-chat search; degrades to keyword recall when no embedding endpoint is set.
     embedder = RegistryEmbedder(registry)
     # The conversation store — in-memory working tree + write-behind persistence. It
     # embeds each persisted turn (best-effort) so conversations are semantically
     # searchable across chats. Built after the registry so it can share the embedder.
-    app.state.conversations = ConversationStore(engine, vault, embedder)
+    state.conversations = ConversationStore(engine, vault, embedder)
     await lifecycle.start(
         "conversations",
-        start=app.state.conversations.start,
-        stop=app.state.conversations.stop,
+        start=state.conversations.start,
+        stop=state.conversations.stop,
     )
     # Outbound service credentials — the operator's API keys for third-party services,
     # sealed with the vault.
-    app.state.credentials = CredentialStore(engine, vault)
+    state.credentials = CredentialStore(engine, vault)
     # Owner-scoped app preferences. Built here — earlier than the capabilities that read
     # it below — because the notification channels resolve their own configuration from
     # it, and they are composed with the attention surface a few lines down.
-    app.state.settings_store = SettingsStore(engine)
+    state.settings_store = SettingsStore(engine)
     # What a request weighs besides the conversation, per mode — so a reloaded thread can
     # still break its context down. Deliberately in memory rather than in the database:
     # it describes the current tool/brief configuration, not the thread's history.
     # Conversation-scoped tool auto-approval grants — part of the approval posture,
     # so it stays core beside the run substrate the approvals park on.
-    app.state.approval_grants = ApprovalGrantStore(engine, settings.approval_grant_ttl_s)
+    state.approval_grants = ApprovalGrantStore(engine, settings.approval_grant_ttl_s)
     # The one egress allowlist both fences read — the VM's egress gateway and the
     # OS-level confinement. Beside the approval grants because it is the same posture seen
     # from the other side: that store remembers which *tools* may run without asking, this
     # one which *domains* they may reach once running.
-    app.state.egress = EgressPolicy(engine, settings.data_dir, settings.egress_allowed_domains)
+    state.egress = EgressPolicy(engine, settings.data_dir, settings.egress_allowed_domains)
     # Seal the columns that predate their own encryption: the migration that added
     # the sealed column ran before unlock with no key, so the healing happens here
     # once unlocked (XC-SEC-3).
@@ -310,7 +308,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         enabled=settings.vm_enabled,
         transfer_max_bytes=settings.vm_transfer_max_bytes,
     )
-    app.state.vm = platform_vm
+    state.vm = platform_vm
     await lifecycle.start("platform-vm", start=platform_vm.start, stop=platform_vm.stop)
     # The execution sandbox: a per-conversation session manager over the VM that keeps a
     # workspace in it while the conversation runs code and reaps it when idle.
@@ -318,7 +316,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         SandboxSessionManager(
             platform_vm,
             vault,
-            egress=app.state.egress,
+            egress=state.egress,
             data_dir=settings.data_dir,
             idle_ttl_s=settings.sandbox_session_idle_ttl_s,
             reap_interval_s=settings.sandbox_session_reap_interval_s,
@@ -329,7 +327,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         if settings.sandbox_enabled and settings.vm_enabled
         else None
     )
-    app.state.sandbox = sandbox_manager
+    state.sandbox = sandbox_manager
     if sandbox_manager is not None:
         await lifecycle.start("sandbox", start=sandbox_manager.start, stop=sandbox_manager.stop)
     else:
@@ -354,11 +352,11 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # thread has been idle a while and shown when the operator comes back to it. Beside the
     # sandbox reaper because it is the same kind of unit (a periodic job over
     # `core/periodic.py`), and after the store and registry it reads from.
-    app.state.work_summaries = WorkSummaryService(
-        store=app.state.conversations,
-        settings_store=app.state.settings_store,
+    state.work_summaries = WorkSummaryService(
+        store=state.conversations,
+        settings_store=state.settings_store,
         models=registry,
-        runs=app.state.runs,
+        runs=state.runs,
         vault=vault,
         settings=settings,
         owner_id=OPERATOR_ID,
@@ -368,25 +366,25 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     )
     await lifecycle.start(
         "work-summaries",
-        start=app.state.work_summaries.start,
-        stop=app.state.work_summaries.stop,
+        start=state.work_summaries.start,
+        stop=state.work_summaries.stop,
     )
 
     # Transitional: capabilities still hand-wired above register on the container so
     # converted manifests can resolve them. Each of these lines moves into its own
     # feature's manifest (its `services` return) as that feature converts.
     for handle in (
-        app.state.auth_manager,
+        state.auth_manager,
         run_terminal,
-        app.state.runs,
-        app.state.models,
+        state.runs,
+        state.models,
         embedder,
-        app.state.conversations,
-        app.state.credentials,
-        app.state.settings_store,
-        app.state.approval_grants,
-        app.state.egress,
-        app.state.api_tokens,
+        state.conversations,
+        state.credentials,
+        state.settings_store,
+        state.approval_grants,
+        state.egress,
+        state.api_tokens,
         platform_vm,
     ):
         container.add(handle)
@@ -398,32 +396,32 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # The core-owned agent-facing handles: the engine consults grants at the deferred
     # split, and the sandbox backs code execution. Everything else reaches the bag
     # through its own manifest's `capabilities` export.
-    agent_capabilities.add(app.state.approval_grants)
+    agent_capabilities.add(state.approval_grants)
     # ...and the egress policy beside it: the tool that asks for a domain is an agent tool,
     # and the fences that read the allowlist wrap the agent's own execution.
-    agent_capabilities.add(app.state.egress)
+    agent_capabilities.add(state.egress)
     # Delegation resolves the `utility` model for its sub-agents through the same
     # `resolve_background` rule titling and verification use, so a delegate is cheap by
     # construction rather than by a second policy.
-    agent_capabilities.add(app.state.models)
+    agent_capabilities.add(state.models)
     # The agent's task list: core-owned like the sandbox, because the `tasks` category is a
     # core category rather than a feature manifest's.
-    app.state.conversation_tasks = ConversationTasks(engine, vault)
-    container.add(app.state.conversation_tasks)
-    agent_capabilities.add(app.state.conversation_tasks)
+    state.conversation_tasks = ConversationTasks(engine, vault)
+    container.add(state.conversation_tasks)
+    agent_capabilities.add(state.conversation_tasks)
     # Plan mode. It is handed the conversation store and the task list rather than the
     # tools reaching for either: approving a plan moves the
     # thread's permission level and seeds its tasks, and this is the only seam through which
     # a tool may do either. The whole `ConversationStore` deliberately stays out of the
     # agent's capability bag — a tool that could read every thread is not a capability
     # anything here needs.
-    app.state.plan_mode = PlanMode(
-        engine, vault, conversations=app.state.conversations, tasks=app.state.conversation_tasks
+    state.plan_mode = PlanMode(
+        engine, vault, conversations=state.conversations, tasks=state.conversation_tasks
     )
-    container.add(app.state.plan_mode)
-    agent_capabilities.add(app.state.plan_mode)
+    container.add(state.plan_mode)
+    agent_capabilities.add(state.plan_mode)
     # Opening a worktree moves a thread's workspace, through the same narrow seam.
-    agent_capabilities.add(WorktreeSwitch(app.state.conversations))
+    agent_capabilities.add(WorktreeSwitch(state.conversations))
     # The prefix-cache diagnostic's cross-turn memory: the last request fingerprint each
     # conversation sent, so the first request of a turn can say what moved in the head since
     # the previous one. In the agent bag rather than on `app.state` because the capability
@@ -443,14 +441,14 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         lifecycle=lifecycle,
         services=container,
         capabilities=agent_capabilities,
-        tool_categories=assembled["tool_categories"],
-        instruction_providers=assembled["instruction_providers"],
-        prompt_context_providers=assembled["prompt_context_providers"],
-        network_tools=assembled["network_tools"],
-        dormant_categories=assembled["dormant_categories"],
-        category_availability=assembled["category_availability"],
+        tool_categories=state.tool_categories,
+        instruction_providers=state.instruction_providers,
+        prompt_context_providers=state.prompt_context_providers,
+        network_tools=state.network_tools,
+        dormant_categories=state.dormant_categories,
+        category_availability=state.category_availability,
     )
-    for manifest in assembled["feature_manifests"]:
+    for manifest in state.feature_manifests:
         if manifest.enabled is not None and not manifest.enabled(settings):
             continue
         if manifest.build is None:
@@ -468,7 +466,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
             else:
                 agent_capabilities.add(capability)
         for name, value in runtime.state.items():
-            setattr(app.state, name, value)
+            setattr(state, name, value)
         for sync_hook in runtime.run_terminal_sync:
             run_terminal.add_sync(sync_hook)
         for hook in runtime.run_terminal:
@@ -479,18 +477,20 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # — and given their own pre-cancel flush — while those are still running. Without
     # this a turn in flight at shutdown submits onto an already-stopped write-behind
     # drainer, which discards it with no error.
-    lifecycle.on_stop("runs", partial(app.state.runs.shutdown, settings.shutdown_drain_timeout_s))
+    lifecycle.on_stop("runs", partial(state.runs.shutdown, settings.shutdown_drain_timeout_s))
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="Hephaestus", version=settings.version, lifespan=lifespan)
-    app.state.settings = settings  # the lifespan reads this (tests inject it)
+    app.state = AppState()
+    state = app_state(app)
+    state.settings = settings  # the lifespan reads this (tests inject it)
     # Discovered once per app: routers register below (before the lifespan runs);
     # the lifespan runs each enabled manifest's build in the same order.
-    app.state.feature_manifests = discover_manifests()
+    state.feature_manifests = discover_manifests()
     enabled_manifests = [
-        m for m in app.state.feature_manifests if m.enabled is None or m.enabled(settings)
+        m for m in state.feature_manifests if m.enabled is None or m.enabled(settings)
     ]
 
     # The inbound-token scope table: core's own claims plus every enabled feature's.
@@ -499,7 +499,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     scope_table = ScopeTable(
         [*CORE_CLAIMS, *(claim for m in enabled_manifests for claim in m.api_scopes)]
     )
-    app.state.api_scope_table = scope_table
+    state.api_scope_table = scope_table
     public_prefixes = tuple(prefix for m in enabled_manifests for prefix in m.public_prefixes)
 
     # The agent's tool catalog: the core categories plus every enabled manifest's
@@ -580,17 +580,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         for category, check in availability_claims
     )
-    app.state.tool_categories = tool_categories
-    app.state.gated_tools = frozenset(gated_tools)
-    app.state.category_availability = category_availability
-    app.state.dormant_categories = tuple(dormant_categories)
+    state.tool_categories = tool_categories
+    state.gated_tools = frozenset(gated_tools)
+    state.category_availability = category_availability
+    state.dormant_categories = tuple(dormant_categories)
     # The composed shape, derived once here rather than by each composer that bridges
     # assembly's list and the turn's mapping — `routes/` cannot reach `harness/` to spell
     # it, and a hand-spelled comprehension is how the two halves of the seam drift.
-    app.state.dormant_summaries = DormantCategory.summaries(dormant_categories)
-    app.state.network_tools = frozenset(network_tools)
-    app.state.instruction_providers = tuple(instruction_providers)
-    app.state.prompt_context_providers = tuple(prompt_context_providers)
+    state.dormant_summaries = DormantCategory.summaries(dormant_categories)
+    state.network_tools = frozenset(network_tools)
+    state.instruction_providers = tuple(instruction_providers)
+    state.prompt_context_providers = tuple(prompt_context_providers)
 
     # Domain errors answered at the transport boundary, per `core.http_errors`. This is
     # what `core.exceptions` has always said happens here: a route that doesn't catch a

@@ -60,6 +60,7 @@ from core.db import init_db, make_engine
 from models._fields import utcnow
 from prompts.compaction import COMPACT_PREAMBLE
 from prompts.utility import REVIEW_INSTRUCTIONS
+from routes.deps import app_state
 from runs import Orchestrator, Run, RunRegistry, RunStatus, RunStream
 from services.approval_grants import ApprovalGrantStore, GrantInfo
 from services.conversations import ConversationBinding
@@ -92,7 +93,7 @@ from tools.rebound import ReboundToolset
 from tools.skills import skills_toolset
 from tools.vault import vault_toolset
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._helpers import run_bodies as _bodies
 from ._json import JSON, obj
 
@@ -2026,9 +2027,7 @@ async def _park_a_run(app: FastAPI, parked: ParkedTurn) -> str:
     async def orchestrator(run: Run) -> None:
         run.park(parked)
 
-    run = app_state(app, "runs", RunRegistry).submit(
-        kind="chat", owner_id="operator", orchestrator=orchestrator
-    )
+    run = app_state(app).runs.submit(kind="chat", owner_id="operator", orchestrator=orchestrator)
     await run.wait()
     assert run.status is RunStatus.awaiting_input
     return run.id
@@ -2119,7 +2118,7 @@ class TestTheOperatorsAnswerCarriesTheRestForward:
                 tool_call_id="c2",
             )
             pending = _call("mail_send", "c3")
-            _ = await app_state(app, "approval_grants", ApprovalGrantStore).grant(
+            _ = await app_state(app).approval_grants.grant(
                 OWNER, CONV, "shell_run_command", ("uv", "run", "pytest")
             )
             run_id = await _park_a_run(
@@ -2156,7 +2155,7 @@ class TestTheOperatorsAnswerCarriesTheRestForward:
             pending = _call("mail_send", "c2")
             # What is left after the operator revoked the whole-tool chip: a standing yes
             # to this one command, which covers the call but never cleared it.
-            _ = await app_state(app, "approval_grants", ApprovalGrantStore).grant(
+            _ = await app_state(app).approval_grants.grant(
                 OWNER, CONV, "shell_run_command", ("uv", "run", "pytest")
             )
             run_id = await _park_a_run(
@@ -2189,7 +2188,7 @@ class TestTheOperatorsAnswerCarriesTheRestForward:
             )
             pending = _call("mail_send", "c2")
             # The whole-tool chip is gone; the command one the operator also gave remains.
-            _ = await app_state(app, "approval_grants", ApprovalGrantStore).grant(
+            _ = await app_state(app).approval_grants.grant(
                 OWNER, CONV, "shell_run_command", ("uv", "run", "pytest")
             )
             run_id = await _park_a_run(
@@ -2215,7 +2214,7 @@ class TestTheOperatorsAnswerCarriesTheRestForward:
                 tool_call_id="c1",
             )
             pending = _call("mail_send", "c2")
-            _ = await app_state(app, "approval_grants", ApprovalGrantStore).grant(
+            _ = await app_state(app).approval_grants.grant(
                 OWNER, CONV, "shell_run_command", (), True
             )
             run_id = await _park_a_run(

@@ -37,7 +37,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 
 from agent import stream_agent_run
-from runs import QuestionOption, QuestionSpec, Run, RunRegistry, RunStream
+from routes.deps import app_state
+from runs import QuestionOption, QuestionSpec, Run, RunStream
 from services.answers import (
     ASK_USER_TOOL,
     AnswerError,
@@ -45,14 +46,12 @@ from services.answers import (
     questions_of,
     render_answer,
 )
-from services.conversations import ConversationStore
 from services.registry import ModelRegistry
 from services.tool_policy import lane_disabled_tools
 from tools import RunDeps, build_agent_toolsets
 from tools.builtin import NO_OPERATOR, builtin_toolset
 
 from ._helpers import (
-    app_state,
     await_parked,
     client_app,
     collect_sse_events,
@@ -388,7 +387,7 @@ async def _chat(client: httpx.AsyncClient, prompt: str) -> str:
 
 
 def _run(app: FastAPI, run_id: str) -> Run:
-    run = app_state(app, "runs", RunRegistry).get(run_id)
+    run = app_state(app).runs.get(run_id)
     assert run is not None
     return run
 
@@ -474,7 +473,7 @@ async def test_the_answers_payload_agrees_warm_and_cold(monkeypatch: pytest.Monk
 
         # …and again with nothing left in memory to read it from: the sealed blob holds
         # the call and its result, and the projection takes the same answer back out.
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         await store.flush()
         store.evict_cache()
         detail = json_body(await client.get(f"/conversations/{conversation_id}"))

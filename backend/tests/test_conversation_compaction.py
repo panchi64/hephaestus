@@ -60,14 +60,13 @@ from agent.summarize import (
 from agent.turn import turn_deps
 from core.config import Settings, get_settings
 from prompts.compaction import COMPACT_PREAMBLE
-from routes.deps import OPERATOR_ID
-from runs import Run, RunRegistry, RunStatus, RunStream, TurnOverhead
-from services.conversation_search import ConversationSearch
+from routes.deps import OPERATOR_ID, app_state
+from runs import Run, RunStatus, RunStream, TurnOverhead
 from services.conversation_view import estimate_tokens, project_tree
 from services.conversations import ConversationStore
 from services.registry import ModelRegistry, ResolvedModel
 
-from ._helpers import app_state, client_app, fold_aware_model, fold_with, patch_model_resolution
+from ._helpers import client_app, fold_aware_model, fold_with, patch_model_resolution
 from ._json import arr, json_body, n, obj, s
 
 
@@ -111,7 +110,7 @@ async def test_a_fold_covers_the_whole_thread_and_the_replay_is_the_summary_alon
     model's replay is the summary alone — and the *full* history is untouched, since three
     callers depend on it."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -140,7 +139,7 @@ async def test_a_single_turn_thread_folds_whole():
     """One prompt the model answered by filling the window is the thread that most needs
     a fold."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         _ = store.record(cid, _turn("q0", "a0"))
 
@@ -153,7 +152,7 @@ async def test_a_second_compaction_absorbs_the_first():
     original turns a second time, which would defeat the point of the first pass, and never
     the older summary re-exposed as a plain turn."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(2):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -170,7 +169,7 @@ async def test_a_second_compaction_absorbs_the_first():
 
 async def test_model_history_is_unchanged_without_a_checkpoint():
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         _ = store.record(cid, _turn("q", "a"))
         assert _texts(await store.model_history(cid)) == _texts(await store.history(cid))
@@ -180,7 +179,7 @@ async def test_the_replay_view_survives_a_cold_reload():
     """`compacted`/`compacted_through` must rehydrate from the DB, or a restart would
     silently replay the whole folded history again."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -197,7 +196,7 @@ async def test_the_persistence_index_still_selects_exactly_the_new_turn():
     `all_messages()` at. The replay view reorders the tree, so this is the assertion
     that reordering never broke the arithmetic."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -222,7 +221,7 @@ async def test_the_persistence_index_still_selects_exactly_the_new_turn():
 
 async def test_nothing_to_compact_only_when_nothing_follows_the_checkpoint():
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         assert await store.compaction_plan(cid) is None
         _ = store.record(cid, _turn("q0", "a0"))
@@ -237,7 +236,7 @@ async def test_compaction_folds_while_the_leaf_is_a_branch_point():
     checkpoint, and the version set reads through it (see
     `tests/test_compaction_branch_points.py` for the full branch behaviour)."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -259,7 +258,7 @@ async def test_record_compaction_refuses_a_stale_plan():
     """Summarizing takes seconds, and the conversation claim blocks runs but not a version
     switch — so the leaf is re-checked at record time and a moved one drops the summary."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -410,7 +409,7 @@ async def test_summarize_history_fails_when_only_reasoning_came_back():
 
 async def test_compact_conversation_end_to_end():
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -434,7 +433,7 @@ async def test_the_outcome_reports_what_the_fold_cost():
     """The divider says "N messages folded, ~X → ~Y" — so the backend has to measure both
     ends. Coarse `estimate_tokens` figures, the same proxy the trigger measures with."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i} {'padding ' * 200}", f"a{i} {'padding ' * 200}"))
@@ -459,7 +458,7 @@ async def test_the_cold_read_divider_reports_the_same_figures_as_the_event():
     it from the projection. Both compute the numbers the same way, so they must agree —
     the figure must not change under the operator when they refresh the page."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i} {'padding ' * 200}", f"a{i} {'padding ' * 200}"))
@@ -488,7 +487,7 @@ async def test_the_fold_reason_survives_a_cold_read():
     so the assertion that matters is that it comes back after the in-memory tree is gone —
     a reload must name the same cause the operator watched arrive."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -534,7 +533,7 @@ async def test_a_second_folds_stats_cover_only_what_it_folded():
     """A second compaction stands in for the first summary plus what followed it — not the
     original turns all over again. Its divider must say so, on both paths."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(2):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -569,7 +568,7 @@ async def test_a_checkpoint_stays_out_of_the_listing_search_and_transcript():
     right after a compaction), must not inflate the message count, must not be recalled by
     cross-chat search, and must not read back as something the assistant said."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -587,7 +586,7 @@ async def test_a_checkpoint_stays_out_of_the_listing_search_and_transcript():
         assert cold is not None
         assert "DISTINCTIVE" not in (cold.preview or "")
 
-        search = app_state(app, "conversation_search", ConversationSearch)
+        search = app_state(app).conversation_search
         hits = await search.search(OPERATOR_ID, "DISTINCTIVE SUMMARY", limit=10)
         assert all("DISTINCTIVE" not in hit.snippet for hit in hits)
 
@@ -601,7 +600,7 @@ async def test_the_divider_renders_above_the_request_a_branch_point_fold_left_st
     under the reseated request but shown where the fold happened, or it would claim to
     have folded the request still waiting on its answer."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -640,21 +639,19 @@ async def _run_turn(app: FastAPI, cid: str, *, policy: AutoCompactPolicy) -> Run
         # The summary is written by the turn's own model, so one model answers both.
         model=fold_aware_model(answer="the answer", summary="FOLDED AWAY"),
         categories={},
-        store=app_state(app, "conversations", ConversationStore),
+        store=app_state(app).conversations,
         conversation_id=cid,
         context_window=10_000,
         auto_compact=policy,
     )
-    run = app_state(app, "runs", RunRegistry).submit(
-        kind="chat", owner_id=OPERATOR_ID, orchestrator=orch
-    )
+    run = app_state(app).runs.submit(kind="chat", owner_id=OPERATOR_ID, orchestrator=orch)
     await run.wait()
     return run
 
 
 async def test_a_full_thread_compacts_before_the_turn_and_announces_it():
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(3):
             _ = store.record(cid, _loaded_turn(f"q{i}", f"a{i}", 100))
@@ -691,7 +688,7 @@ async def test_a_store_failure_during_compaction_does_not_take_the_turn_down(
     """Compaction is an optimization. If the store fails mid-fold the turn must still
     answer on the full history — the run's own context stop is the real backstop."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(3):
             _ = store.record(cid, _loaded_turn(f"q{i}", f"a{i}", 100))
@@ -708,7 +705,7 @@ async def test_a_store_failure_during_compaction_does_not_take_the_turn_down(
 
 async def test_a_thread_below_the_threshold_is_left_alone():
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _loaded_turn(f"q{i}", f"a{i}", 100))  # 1% of the window
@@ -725,7 +722,7 @@ async def test_a_thread_below_the_threshold_is_left_alone():
 
 async def test_a_disabled_policy_never_compacts_however_full():
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(3):
             _ = store.record(cid, _loaded_turn(f"q{i}", f"a{i}", 100))
@@ -740,7 +737,7 @@ async def test_the_turn_after_a_compaction_persists_exactly_itself():
     """The engine's `start = len(model_history)` slice, exercised through the real
     orchestrator: the compacted turn must add its own two messages to the tree and no more."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(3):
             _ = store.record(cid, _loaded_turn(f"q{i}", f"a{i}", 100))
@@ -763,7 +760,7 @@ async def test_the_plans_anchor_names_the_rendered_turn_the_divider_follows():
     nodes and renders as one bubble. The anchor must be the id that bubble carries, or the
     divider would land somewhere a reload disagrees with."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -860,7 +857,7 @@ async def test_a_steered_turn_replays_without_losing_the_next_turns_prompt():
     inside `all_messages()` and the next turn persisted one message short — losing the
     operator's own prompt."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         _ = store.record(
             cid,
@@ -924,9 +921,7 @@ async def test_an_out_of_range_threshold_is_rejected(threshold: float):
 
 async def test_the_per_conversation_override_round_trips():
     async with client_app() as (client, app):
-        cid = await app_state(app, "conversations", ConversationStore).create_conversation(
-            OPERATOR_ID
-        )
+        cid = await app_state(app).conversations.create_conversation(OPERATOR_ID)
         resp = await client.get(f"/conversations/{cid}/auto-compact")
         assert resp.json() == {"override": None, "effective": True}
 
@@ -942,7 +937,7 @@ async def test_the_override_is_scoped_to_one_thread():
     """The per-thread switch is exactly that — turning folding off in one conversation
     must not reach into another, which still inherits the operator's default."""
     async with client_app() as (client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         muted = await store.create_conversation(OPERATOR_ID)
         other = await store.create_conversation(OPERATOR_ID)
         _ = await client.put(f"/conversations/{muted}/auto-compact", json={"override": False})
@@ -962,7 +957,7 @@ async def _fold_now(client: httpx.AsyncClient, app: FastAPI, cid: str) -> Run:
     that never started."""
     resp = await client.post(f"/conversations/{cid}/compact")
     assert resp.status_code == 202, resp.text
-    run = app_state(app, "runs", RunRegistry).get(s(json_body(resp)["run_id"]))
+    run = app_state(app).runs.get(s(json_body(resp)["run_id"]))
     assert run is not None
     if run.task is not None:
         await run.task
@@ -997,7 +992,7 @@ async def test_manual_compact_folds_and_announces_itself(monkeypatch: pytest.Mon
     which this trigger ignores entirely."""
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="a hand-made summary")
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -1022,9 +1017,7 @@ async def test_manual_compact_blocks_when_there_is_nothing_to_fold(monkeypatch: 
     # nothing has been said — here, an empty thread.
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch)
-        cid = await app_state(app, "conversations", ConversationStore).create_conversation(
-            OPERATOR_ID
-        )
+        cid = await app_state(app).conversations.create_conversation(OPERATOR_ID)
         run = await _fold_now(client, app, cid)
         assert run.status is RunStatus.blocked
         assert "compaction.started" not in _emitted(run)
@@ -1035,7 +1028,7 @@ async def test_manual_compact_folds_a_single_turn_thread(monkeypatch: pytest.Mon
     window is exactly the moment the operator most needs to fold."""
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch)
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         _ = store.record(cid, _turn("q0", "a0"))
 
@@ -1053,7 +1046,7 @@ async def test_a_fold_that_had_something_to_fold_and_failed_says_so(
     it must have announced the fold first, since it got far enough to try."""
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="")
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -1073,10 +1066,8 @@ async def test_manual_compact_409s_on_a_busy_conversation(monkeypatch: pytest.Mo
     is what the claim (and not the live-run check) is what covers."""
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch)
-        cid = await app_state(app, "conversations", ConversationStore).create_conversation(
-            OPERATOR_ID
-        )
-        runs = app_state(app, "runs", RunRegistry)
+        cid = await app_state(app).conversations.create_conversation(OPERATOR_ID)
+        runs = app_state(app).runs
         runs.claim(cid, OPERATOR_ID)
         try:
             assert (await client.post(f"/conversations/{cid}/compact")).status_code == 409
@@ -1106,7 +1097,7 @@ async def test_manual_compact_is_written_by_the_threads_main_model(monkeypatch: 
 
     monkeypatch.setattr(ModelRegistry, "resolve_detailed", resolve_detailed)
     async with client_app() as (client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         _ = store.record(cid, _turn("q0", "a0"))
 
@@ -1141,7 +1132,7 @@ async def test_a_manual_fold_and_an_automatic_one_are_the_same_fold(
     asserting on it would pass whatever the two paths did."""
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="what happened so far")
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
 
         async def _thread() -> str:
             cid = await store.create_conversation(OPERATOR_ID)
@@ -1162,9 +1153,7 @@ async def test_a_manual_fold_and_an_automatic_one_are_the_same_fold(
         # A bare Run rather than a submitted one: `fold` only needs something to emit
         # onto, and a submitted run closes its stream the moment its orchestrator returns.
         run = Run(id="fold-auto", kind="compaction", owner_id=OPERATOR_ID, stream=RunStream())
-        main = await app_state(app, "models", ModelRegistry).resolve_detailed(
-            "main", owner_id=OPERATOR_ID
-        )
+        main = await app_state(app).models.resolve_detailed("main", owner_id=OPERATOR_ID)
         ctx = build_compaction_context(
             store=store,
             conversation_id=by_threshold,
@@ -1208,7 +1197,7 @@ async def test_the_fold_streams_the_summary_as_it_is_written(monkeypatch: pytest
     stripped, anchored, fenced version and a delta is the raw working."""
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="the story so far")
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -1236,7 +1225,7 @@ async def test_a_fold_that_does_not_land_closes_the_compacting_section(
     had. The failure frame is what ends it, and carries the cause."""
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="")
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}", f"a{i}"))
@@ -1262,7 +1251,7 @@ async def test_a_fold_that_raises_also_emits_compaction_failed(monkeypatch: pyte
     monkeypatch.setattr(folding, "compact_conversation", boom)
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch)
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         _ = store.record(cid, _turn("q0", "a0"))
 
@@ -1287,7 +1276,7 @@ async def test_a_manual_fold_leaves_the_run_with_real_metrics_and_a_matching_rel
     monkeypatch.setattr(ModelRegistry, "main_context_window", window)
     async with client_app() as (client, app):
         patch_model_resolution(monkeypatch, output_text="a hand-made summary")
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}" * 400, f"a{i}" * 400))
@@ -1319,7 +1308,7 @@ async def test_a_reload_measures_the_replay_not_the_transcript_on_the_estimate_p
 
     monkeypatch.setattr(ModelRegistry, "main_context_window", window)
     async with client_app() as (client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(4):
             _ = store.record(cid, _turn(f"q{i}" * 400, f"a{i}" * 400))
@@ -1360,7 +1349,7 @@ async def test_a_reload_after_a_fold_ignores_usage_reported_before_it(
         ]
 
     async with client_app() as (client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         for i in range(3):
             _ = store.record(cid, reported(f"q{i}", f"a{i}", 90_000))

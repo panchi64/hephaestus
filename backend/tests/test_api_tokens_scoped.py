@@ -9,14 +9,13 @@ from __future__ import annotations
 import httpx
 from fastapi import FastAPI
 from pydantic import JsonValue
-from sqlalchemy import Engine
 from sqlmodel import Session, select
 
-from core.api_scopes import ScopeTable
 from core.db import in_session
 from models.api_token import ApiToken
+from routes.deps import app_state
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import arr, json_body, obj, parse_json, s
 
 
@@ -34,7 +33,7 @@ async def _stored(app: FastAPI) -> list[ApiToken]:
     def work(session: Session) -> list[ApiToken]:
         return list(session.exec(select(ApiToken)).all())
 
-    return await in_session(app_state(app, "db_engine", Engine), work)
+    return await in_session(app_state(app).db_engine, work)
 
 
 async def test_issue_returns_the_token_once_and_stores_only_a_hash():
@@ -74,7 +73,7 @@ async def test_scopes_catalog_never_covers_credential_or_host_surfaces():
     # operator's secrets, or drive a backup. The table is per-app, assembled from
     # core claims + every enabled manifest's — so this asserts the real one.
     async with client_app() as (_client, app):
-        table = app_state(app, "api_scope_table", ScopeTable)
+        table = app_state(app).api_scope_table
         for path in ("/tokens", "/tokens/abc", "/credentials", "/vault", "/backup"):
             assert table.scope_for_path(path) is None
         # Opening a native dialog on the operator's machine — and reading back whatever

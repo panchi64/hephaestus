@@ -6,10 +6,10 @@ import asyncio
 
 import pytest
 
-from runs import AnswerDelta, Run, RunRegistry
-from services.conversations import ConversationStore
+from routes.deps import app_state
+from runs import AnswerDelta, Run
 
-from ._helpers import app_state, client_app, collect_sse_events
+from ._helpers import client_app, collect_sse_events
 from ._json import json_body, json_list, n, obj, s
 
 
@@ -19,9 +19,7 @@ async def test_stream_delivers_full_event_record():
         async def orch(run: Run) -> None:
             _ = run.emit(AnswerDelta(text="hello"))
 
-        run = app_state(app, "runs", RunRegistry).submit(
-            kind="chat", owner_id="operator", orchestrator=orch
-        )
+        run = app_state(app).runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
         events = await collect_sse_events(client, run.id)
 
     types = [e["type"] for e in events]
@@ -38,9 +36,7 @@ async def test_resume_replays_only_missed_events():
             _ = run.emit(AnswerDelta(text="a"))
             _ = run.emit(AnswerDelta(text="b"))
 
-        run = app_state(app, "runs", RunRegistry).submit(
-            kind="chat", owner_id="operator", orchestrator=orch
-        )
+        run = app_state(app).runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
         await run.wait()
         events = await collect_sse_events(client, run.id, last_event_id=2)
 
@@ -55,9 +51,7 @@ async def test_cancel_endpoint():
             _ = run.emit(AnswerDelta(text="working"))
             _ = await asyncio.Event().wait()
 
-        run = app_state(app, "runs", RunRegistry).submit(
-            kind="agent", owner_id="operator", orchestrator=orch
-        )
+        run = app_state(app).runs.submit(kind="agent", owner_id="operator", orchestrator=orch)
         await asyncio.sleep(0)
 
         resp = await client.post(f"/runs/{run.id}/cancel")
@@ -74,9 +68,7 @@ async def test_cancel_terminal_run_conflicts():
         async def orch(_run: Run) -> None:
             return None
 
-        run = app_state(app, "runs", RunRegistry).submit(
-            kind="chat", owner_id="operator", orchestrator=orch
-        )
+        run = app_state(app).runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
         await run.wait()
         resp = await client.post(f"/runs/{run.id}/cancel")
         assert resp.status_code == 409
@@ -89,9 +81,7 @@ async def test_withdraw_queued_message_matrix():
         async def orch(_run: Run) -> None:
             _ = await gate.wait()
 
-        run = app_state(app, "runs", RunRegistry).submit(
-            kind="chat", owner_id="operator", orchestrator=orch
-        )
+        run = app_state(app).runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
         await asyncio.sleep(0)
         message = run.enqueue_message("wait, also")
 
@@ -125,9 +115,7 @@ async def test_edit_queued_message_matrix():
         async def orch(_run: Run) -> None:
             _ = await gate.wait()
 
-        run = app_state(app, "runs", RunRegistry).submit(
-            kind="chat", owner_id="operator", orchestrator=orch
-        )
+        run = app_state(app).runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
         await asyncio.sleep(0)
         message = run.enqueue_message("first draft")
 
@@ -172,9 +160,7 @@ async def test_hold_queued_message_matrix():
         async def orch(_run: Run) -> None:
             _ = await gate.wait()
 
-        run = app_state(app, "runs", RunRegistry).submit(
-            kind="chat", owner_id="operator", orchestrator=orch
-        )
+        run = app_state(app).runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
         await asyncio.sleep(0)
         message = run.enqueue_message("still writing this")
 
@@ -221,7 +207,7 @@ async def test_hold_queued_message_matrix():
 
 async def test_list_runs_active_only_by_default():
     async with client_app() as (client, app):
-        runs = app_state(app, "runs", RunRegistry)
+        runs = app_state(app).runs
 
         async def blocked(run: Run) -> None:
             _ = run.emit(AnswerDelta(text="working"))
@@ -252,7 +238,7 @@ async def test_list_runs_empty():
 
 async def test_list_runs_enriches_with_conversation_id_and_title():
     async with client_app() as (client, app):
-        conversations = app_state(app, "conversations", ConversationStore)
+        conversations = app_state(app).conversations
         conv_id = await conversations.create_conversation("operator")
         await conversations.set_title(conv_id, "Weekend plans")
         started, release = asyncio.Event(), asyncio.Event()
@@ -261,7 +247,7 @@ async def test_list_runs_enriches_with_conversation_id_and_title():
             started.set()
             _ = await release.wait()
 
-        run = app_state(app, "runs", RunRegistry).submit(
+        run = app_state(app).runs.submit(
             kind="chat", owner_id="operator", orchestrator=orch, conversation_id=conv_id
         )
         _ = await started.wait()
@@ -287,7 +273,7 @@ async def test_listing_many_runs_reads_titles_once_and_still_matches_them_up(
     # still get *its own* title, and an untitled thread must stay null rather than
     # borrowing a neighbour's.
     async with client_app() as (client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         titled: list[tuple[str, str]] = []
         for name in ("Weekend plans", "Tax return", "Bike repair"):
             conv_id = await store.create_conversation("operator")
@@ -306,7 +292,7 @@ async def test_listing_many_runs_reads_titles_once_and_still_matches_them_up(
         for conv_id in [c for c, _ in titled] + [untitled]:
             started.append(asyncio.Event())
             runs.append(
-                app_state(app, "runs", RunRegistry).submit(
+                app_state(app).runs.submit(
                     kind="chat", owner_id="operator", orchestrator=orch, conversation_id=conv_id
                 )
             )
@@ -339,9 +325,7 @@ async def test_get_run_conversation_fields_are_null_without_a_conversation():
         async def orch(_run: Run) -> None:
             return None
 
-        run = app_state(app, "runs", RunRegistry).submit(
-            kind="chat", owner_id="operator", orchestrator=orch
-        )
+        run = app_state(app).runs.submit(kind="chat", owner_id="operator", orchestrator=orch)
         await run.wait()
 
         body = json_body(await client.get(f"/runs/{run.id}"))

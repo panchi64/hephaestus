@@ -18,11 +18,10 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import RunRegistry
+from routes.deps import app_state
 from runs.run import TERMINAL_STATUSES
 from services.conversations import ConversationStore
-from services.projects.worktree import WorktreeManager
-from tests._helpers import app_state, client_app, patch_model_resolution
+from tests._helpers import client_app, patch_model_resolution
 from tests._json import arr, json_body, obj, s
 
 OWNER = "operator"
@@ -166,7 +165,7 @@ async def _repo(root: Path) -> Path:
 
 
 async def _settled(app: FastAPI, run_id: str) -> None:
-    runs = app_state(app, "runs", RunRegistry)
+    runs = app_state(app).runs
     for _ in range(400):
         run = runs.get(run_id)
         if run is None or run.status in TERMINAL_STATUSES:
@@ -220,11 +219,11 @@ class TestTheRoute:
             )
             await _settled(app, s(created["run_id"]))
             source = s(created["conversation_id"])
-            assert await app_state(app, "conversations", ConversationStore).open_worktree(source)
+            assert await app_state(app).conversations.open_worktree(source)
 
             # The source does some work. It does **not** commit — the agent has no
             # `git commit`; reading the branch is what snapshots it.
-            state = await app_state(app, "worktrees", WorktreeManager).acquire(
+            state = await app_state(app).worktrees.acquire(
                 project_id=s(project["id"]),
                 root=root,
                 base_ref="main",

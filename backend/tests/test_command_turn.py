@@ -14,9 +14,9 @@ import httpx
 import pytest
 from pydantic import JsonValue
 
-from services.conversations import ConversationStore
+from routes.deps import app_state
 
-from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, obj, s
 
 
@@ -157,9 +157,7 @@ class TestRerunningTheTurn:
                 json={"conversation_id": conversation_id, "message_id": assistant["id"]},
             )
             _ = await collect_sse_events(client, s(json_body(resp)["run_id"]))
-            replay = await app_state(app, "conversations", ConversationStore).model_history(
-                conversation_id
-            )
+            replay = await app_state(app).conversations.model_history(conversation_id)
 
         # The point of stamping the invocation rather than the block: after a regenerate
         # the thread still holds one copy of the operator's typed text and no copy of the
@@ -250,9 +248,7 @@ class TestRerunningTheTurn:
         patch_model_resolution(monkeypatch)
         async with client_app() as (client, app):
             _events, conversation_id = await _turn(client, "say hi")
-            stamps = await app_state(app, "conversations", ConversationStore).turn_stamps(
-                conversation_id
-            )
+            stamps = await app_state(app).conversations.turn_stamps(conversation_id)
         # The overwhelmingly common case, and the one a defensive read has to get right:
         # every turn recorded before any of this existed reads as "no command".
         assert stamps.command is None

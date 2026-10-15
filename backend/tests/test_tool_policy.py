@@ -25,12 +25,10 @@ import harness.manifests.tasks as tasks_manifest
 import routes.chat.submit as chat_routes
 import routes.runs as runs_routes
 from agent import build_resume_orchestrator
-from core.container import ServiceContainer
 from core.db import init_db, make_engine
-from harness.manifest import DormantCategory
 from routes.chat.turn import compose_turn
-from runs import Run, RunRegistry, RunStream
-from services.offline import OfflineModeService
+from routes.deps import app_state
+from runs import Run, RunStream
 from services.registry import ModelRegistry
 from services.settings_store import DISABLED_TOOLS_KEY, SettingsStore
 from services.tool_policy import (
@@ -50,7 +48,6 @@ from tools import RunDeps, build_agent_toolsets
 from tools.catalog import tool_catalog
 
 from ._helpers import (
-    app_state,
     client_app,
     full_tool_categories,
     patch_model_resolution,
@@ -72,15 +69,15 @@ def make_store() -> SettingsStore:
 
 
 def _registered(app: FastAPI) -> dict[str, AbstractToolset[RunDeps]]:
-    return cast(dict[str, AbstractToolset[RunDeps]], app_state(app, "tool_categories", dict))
+    return app_state(app).tool_categories
 
 
 def _gated(app: FastAPI) -> frozenset[str]:
-    return cast(frozenset[str], app_state(app, "gated_tools", frozenset))
+    return app_state(app).gated_tools
 
 
 def _availability(app: FastAPI) -> tuple[CategoryAvailability, ...]:
-    return cast(tuple[CategoryAvailability, ...], app_state(app, "category_availability", tuple))
+    return app_state(app).category_availability
 
 
 async def agent_visible(disabled: frozenset[str], kind: WorkspaceKind = "sandbox") -> set[str]:
@@ -338,7 +335,7 @@ async def test_the_dormant_groups_name_categories_the_catalog_really_has():
     # *category*, so a rename leaves the boot check satisfied by a group that no longer
     # holds the tools the index is advertising.
     async with client_app() as (_, app):
-        dormant = cast(tuple[DormantCategory, ...], app_state(app, "dormant_categories", tuple))
+        dormant = app_state(app).dormant_categories
         for entry in dormant:
             assert any(name.startswith(f"{entry.category}_") for name in _PINNED_CATALOG)
 
@@ -356,16 +353,14 @@ async def _unconfigured(app: FastAPI) -> frozenset[str]:
     no calendar, no secrets vault. The availability axis withholds those categories exactly
     as the operator's own switch does, so a test about two named tools subtracts them the
     way it subtracts the vision set rather than restating fourteen names."""
-    return await unavailable_tools(
-        _availability(app), app_state(app, "capabilities", ServiceContainer), OWNER
-    )
+    return await unavailable_tools(_availability(app), app_state(app).capabilities, OWNER)
 
 
 def _force_offline(monkeypatch: pytest.MonkeyPatch, app: FastAPI, *names: str) -> None:
     """Pin the live offline service's automatic set without swapping the service out —
     the lifespan still owns its shutdown."""
     monkeypatch.setattr(
-        app_state(app, "offline", OfflineModeService),
+        app_state(app).offline,
         "web_tools_disabled",
         lambda: frozenset(names),
     )
@@ -488,7 +483,7 @@ def _danger_categories():
 
 async def _await_parked(app: FastAPI, run_id: str) -> Run:
     for _ in range(200):
-        run = app_state(app, "runs", RunRegistry).get(run_id)
+        run = app_state(app).runs.get(run_id)
         if run is not None and run.status == "awaiting_input":
             return run
         await asyncio.sleep(0.01)

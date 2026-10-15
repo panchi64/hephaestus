@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from routes.deps import OPERATOR_ID
+from routes.deps import OPERATOR_ID, app_state
 from services.conversations import ConversationStore
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 
 
 def _turn(prompt: str, answer: str, model: str) -> list[ModelMessage]:
@@ -35,7 +35,7 @@ async def _model_after_cold_read(store: ConversationStore, conversation_id: str)
 
 async def test_last_used_model_tracks_the_active_branch_across_a_version_switch():
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
 
         # First answer ran on model-a.
@@ -61,7 +61,7 @@ async def test_ephemeral_conversations_are_hidden_from_the_listing_but_readable(
     """A compare pane's scratch thread is a real conversation — addressable and
     resumable by id — but it must not surface in the list or the count."""
     async with client_app() as (_client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
 
         normal = await store.create_conversation(OPERATOR_ID)
         scratch = await store.create_conversation(OPERATOR_ID, ephemeral=True)

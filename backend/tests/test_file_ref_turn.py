@@ -14,8 +14,8 @@ import httpx
 import pytest
 from pydantic import JsonValue
 
-from services.conversations import ConversationStore
-from tests._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from routes.deps import app_state
+from tests._helpers import client_app, collect_sse_events, patch_model_resolution
 from tests._json import arr, json_body, obj, s
 from tests.test_code_mode import create_project
 
@@ -167,9 +167,7 @@ class TestWhatIsWrittenDown:
             # What the *model* would be handed, asked of the store directly. A regenerate
             # re-runs from history with no fresh prompt, so the only way the marker can be
             # in that replay is if it persisted with the turn.
-            replay = await app_state(app, "conversations", ConversationStore).model_history(
-                conversation_id
-            )
+            replay = await app_state(app).conversations.model_history(conversation_id)
 
         assert any("files_read_file" in str(m) for m in replay)
         # And the chip survives too — it is stamped on the user request, which a

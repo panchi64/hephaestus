@@ -26,13 +26,14 @@ from pydantic_ai.usage import RunUsage
 
 from agent.factory import build_agent
 from harness.manifest import DormantCategory
+from routes.deps import app_state
 from runs import Run, RunStream
 from tools import RunDeps, build_agent_toolsets
 from tools.catalog import tool_catalog
 from tools.describe import category_names
 from tools.tool_search import dormant_index_instructions, tool_search_capability
 
-from ._helpers import app_state, client_app, full_tool_categories
+from ._helpers import client_app, full_tool_categories
 from ._json import json_list, obj, parse_json, s
 
 OWNER = "operator"
@@ -58,11 +59,11 @@ def _deps(disabled: frozenset[str] | None = None) -> RunDeps:
 
 
 def _dormant(app: FastAPI) -> tuple[DormantCategory, ...]:
-    return cast(tuple[DormantCategory, ...], app_state(app, "dormant_categories", tuple))
+    return app_state(app).dormant_categories
 
 
 def _registered(app: FastAPI) -> dict[str, AbstractToolset[RunDeps]]:
-    return cast(dict[str, AbstractToolset[RunDeps]], app_state(app, "tool_categories", dict))
+    return app_state(app).tool_categories
 
 
 def _tool_names_of(toolset: object) -> frozenset[str]:

@@ -20,12 +20,10 @@ from pydantic import JsonValue
 from pydantic_ai import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from routes.deps import OPERATOR_ID
-from runs import RunRegistry
+from routes.deps import OPERATOR_ID, app_state
 from services.registry import ModelRegistry
 
 from ._helpers import (
-    app_state,
     await_parked,
     client_app,
     patch_model_resolution,
@@ -38,7 +36,7 @@ from .test_approval_routes import danger_categories, install_sensitive_tool
 
 
 async def _wait(app: FastAPI, run_id: str) -> None:
-    run = app_state(app, "runs", RunRegistry).get(run_id)
+    run = app_state(app).runs.get(run_id)
     assert run is not None
     await run.wait()
 
@@ -107,7 +105,7 @@ async def test_second_chat_post_queues_into_live_run(monkeypatch: pytest.MonkeyP
         # `last_seq` does advance — queueing emits `message.queued` on its stream).
         after = await client.get(f"/conversations/{conv_id}")
         assert json_body(before)["messages"] == json_body(after)["messages"]
-        live = app_state(app, "runs", RunRegistry).active_run_for(conv_id, OPERATOR_ID)
+        live = app_state(app).runs.active_run_for(conv_id, OPERATOR_ID)
         assert live is not None and live.id == first_body["run_id"]
 
         hang.set()
@@ -141,7 +139,7 @@ async def test_attachment_send_still_rejected_while_run_live(monkeypatch: pytest
         assert second.status_code == 409
         assert "already in progress" in s(json_body(second)["detail"])
         # Nothing was queued into the run either.
-        live = app_state(app, "runs", RunRegistry).get(s(first["run_id"]))
+        live = app_state(app).runs.get(s(first["run_id"]))
         assert live is not None and live.pending_messages == []
 
         hang.set()

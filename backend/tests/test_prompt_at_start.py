@@ -41,12 +41,12 @@ from agent.history import TurnStart, after_recorded_prompt
 from agent.turn import TurnResult
 from core.db import init_db, make_engine
 from core.vault import Vault
-from routes.deps import OPERATOR_ID
+from routes.deps import OPERATOR_ID, app_state
 from runs import Run, RunRegistry, RunStatus, RunStream
 from services.conversations import ConversationStore
 from tools import RunDeps
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import arr, json_body, obj
 
 
@@ -121,7 +121,7 @@ def _submit(
 
 async def test_the_prompt_is_on_record_and_named_while_the_run_is_in_flight():
     async with client_app() as (client, app):
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         cid = await store.create_conversation(OPERATOR_ID)
         reached, release = asyncio.Event(), asyncio.Event()
 
@@ -134,7 +134,7 @@ async def test_the_prompt_is_on_record_and_named_while_the_run_is_in_flight():
             "hello", model=FunctionModel(stream_function=stream), categories={},
             store=store, conversation_id=cid,
         )  # fmt: skip
-        run = app_state(app, "runs", RunRegistry).submit(
+        run = app_state(app).runs.submit(
             kind="chat", owner_id=OPERATOR_ID, orchestrator=orch, conversation_id=cid
         )
         _ = await asyncio.wait_for(reached.wait(), 5)

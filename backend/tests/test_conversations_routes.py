@@ -15,13 +15,13 @@ import pytest
 from pydantic import JsonValue
 
 from routes.conversations import message_versions
-from runs import Run, RunRegistry
+from routes.deps import app_state
+from runs import Run
 from services.conversation_view import MessageView, ToolView
-from services.conversations import ConversationStore
 from services.registry import ModelRegistry, ResolvedModel
 from services.workspace_history import SnapshotView, format_show_result
 
-from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, json_list, obj, s
 
 
@@ -69,7 +69,7 @@ async def test_summary_model_survives_a_cold_read(monkeypatch: pytest.MonkeyPatc
     patch_model_resolution(monkeypatch, output_text="hello there")
     async with client_app() as (client, app):
         conversation_id = await _start_conversation(client)
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         store.evict_cache()  # force the cold (DB) summary path
 
         await store.flush()  # let the write-behind drainer settle the model
@@ -123,7 +123,7 @@ async def test_detail_reports_an_in_flight_run(monkeypatch: pytest.MonkeyPatch):
             started.set()
             _ = await release.wait()
 
-        run = app_state(app, "runs", RunRegistry).submit(
+        run = app_state(app).runs.submit(
             kind="chat",
             owner_id="operator",
             orchestrator=orch,
@@ -165,7 +165,7 @@ async def test_list_reports_which_threads_are_working(monkeypatch: pytest.Monkey
             started.set()
             _ = await release.wait()
 
-        run = app_state(app, "runs", RunRegistry).submit(
+        run = app_state(app).runs.submit(
             kind="chat",
             owner_id="operator",
             orchestrator=orch,
@@ -195,7 +195,7 @@ async def test_list_distinguishes_a_parked_run_from_a_streaming_one(
         async def orch(run: Run) -> None:
             run.park(None)
 
-        runs = app_state(app, "runs", RunRegistry)
+        runs = app_state(app).runs
         run = runs.submit(
             kind="chat",
             owner_id="operator",
@@ -241,7 +241,7 @@ async def test_a_failed_run_says_so_on_the_row(monkeypatch: pytest.MonkeyPatch):
         async def orch(_run: Run) -> None:
             raise RuntimeError("the turn fell over")
 
-        run = app_state(app, "runs", RunRegistry).submit(
+        run = app_state(app).runs.submit(
             kind="chat",
             owner_id="operator",
             orchestrator=orch,
@@ -266,7 +266,7 @@ async def test_a_live_run_keeps_the_previous_outcome_beside_it(monkeypatch: pyte
             started.set()
             _ = await release.wait()
 
-        run = app_state(app, "runs", RunRegistry).submit(
+        run = app_state(app).runs.submit(
             kind="chat",
             owner_id="operator",
             orchestrator=orch,

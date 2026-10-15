@@ -30,6 +30,7 @@ from pydantic_ai.usage import RunUsage
 from agent import build_chat_orchestrator
 from core.db import init_db, make_engine
 from core.vault import Vault
+from routes.deps import app_state
 from runs import Run, RunRegistry, RunStatus, RunStream
 from services.conversations import ConversationBinding, ConversationStore
 from services.permissions import (
@@ -61,7 +62,6 @@ from services.workspace_kind import WORKSPACE_TOOLS
 from tools import RunDeps, build_agent_toolsets
 
 from ._helpers import (
-    app_state,
     client_app,
     collect_sse_events,
     full_tool_categories,
@@ -512,7 +512,7 @@ class TestTheLiveControl:
             assert json_body(detail)["permission_level"] == "manual"
 
             hang.set()
-            first_run = app_state(app, "runs", RunRegistry).get(s(json_body(first)["run_id"]))
+            first_run = app_state(app).runs.get(s(json_body(first)["run_id"]))
             assert first_run is not None
             await first_run.wait()
 
@@ -543,7 +543,7 @@ class TestTheLiveControl:
             assert json_body(detail)["permission_level"] == "manual"
 
             hang.set()
-            first_run = app_state(app, "runs", RunRegistry).get(s(json_body(first)["run_id"]))
+            first_run = app_state(app).runs.get(s(json_body(first)["run_id"]))
             assert first_run is not None
             await first_run.wait()
 

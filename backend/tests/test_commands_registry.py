@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from routes.deps import app_state
 from services.commands import CommandRegistry, CommandSource, expand
 from services.commands.registry import LAUNCH_TOOL, merge
 from services.commands.spec import CommandSpec
 from services.permissions import PERMISSION_LADDER
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import arr, json_body, obj, s
 
 
@@ -28,7 +29,7 @@ def _spec(
 
 
 def _registry(app: FastAPI) -> CommandRegistry:
-    return app_state(app, "commands", CommandRegistry)
+    return app_state(app).commands
 
 
 class TestPrecedence:

@@ -16,10 +16,11 @@ from core.db import init_db, make_engine
 from core.exceptions import NotFoundError
 from core.vault import Vault
 from models.workspace_history import WorkspaceBlob, WorkspaceSnapshot
+from routes.deps import app_state
 from services.sandbox import SandboxSessionManager
 from services.workspace_history import WorkspaceHistoryStore
 
-from ._helpers import app_state, client_app, collect_sse_events, patch_model_resolution
+from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, json_list, obj, s
 from .conftest import egress_policy
 from .vm_fakes import FakeVM
@@ -220,7 +221,7 @@ async def test_collect_text_files_skips_excluded_and_binary(tmp_path: Path):
 
 # --- REST surface ------------------------------------------------------------
 def _history(app: FastAPI) -> WorkspaceHistoryStore:
-    return app_state(app, "workspace_history", WorkspaceHistoryStore)
+    return app_state(app).workspace_history
 
 
 async def test_snapshot_routes_list_files_content_and_diff():

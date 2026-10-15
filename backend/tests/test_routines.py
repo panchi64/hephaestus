@@ -24,9 +24,9 @@ from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.exceptions import InvalidInputError, RoutineValidationError
 from core.vault import Vault
+from routes.deps import app_state
 from runs import Run, RunStream
 from services.agents import AgentCatalog
-from services.conversations import ConversationStore
 from services.routines import (
     RoutineStore,
     Schedule,
@@ -41,7 +41,7 @@ from tools.deps import RunDeps
 from tools.routines import routines_toolset
 
 from ._agent_helpers import make_stores as make_agent_stores
-from ._helpers import app_state, client_app, patch_model_resolution
+from ._helpers import client_app, patch_model_resolution
 from ._json import arr, json_body, obj, s
 
 OWNER = "operator"
@@ -285,7 +285,7 @@ def _routine_body(**more: object) -> dict[str, object]:
 
 async def test_an_agents_draft_is_approved_by_the_operator():
     async with client_app() as (client, app):
-        draft = await app_state(app, "routines", RoutineStore).create(
+        draft = await app_state(app).routines.create(
             OWNER,
             _values(pre_authorized=("not_a_tool",)),
             approved=False,
@@ -310,7 +310,7 @@ async def test_every_run_gets_a_fresh_thread_told_how_the_last_ended(
         second = await _run_and_wait(client, s(created["id"]))
 
         assert first["conversationId"] != second["conversationId"]
-        store = app_state(app, "conversations", ConversationStore)
+        store = app_state(app).conversations
         binding = await store.binding(s(second["conversationId"]))
         assert binding is not None and binding.agent_name == "researcher"
         turns = await store.messages_view(s(second["conversationId"]))
@@ -339,9 +339,7 @@ async def test_a_schedule_phrase_is_read_without_saving_anything(
         async def parse(_phrase: str, *, timezone: str, **_kwargs: object) -> Schedule:
             return Schedule(type="cron", cron="0 9 * * 1-5", timezone=timezone)
 
-        monkeypatch.setattr(
-            app_state(app, "schedule_parser", ScheduleNaturalLanguage), "parse", parse
-        )
+        monkeypatch.setattr(app_state(app).schedule_parser, "parse", parse)
         response = await client.post(
             "/tasks/parse-schedule", json={"phrase": "weekdays at 9", "timezone": "UTC"}
         )

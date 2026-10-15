@@ -7,9 +7,10 @@ from pathlib import Path
 
 from core.db import init_db, make_engine
 from core.vault import Vault
+from routes.deps import app_state
 from services.artifacts import ArtifactStore, guess_content_type
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 
 
 async def _store(tmp_path: Path) -> ArtifactStore:
@@ -116,7 +117,7 @@ async def test_legacy_cleartext_rows_still_read_until_the_backfill_seals_them(tm
 # --- REST surface ------------------------------------------------------------
 async def test_content_route_serves_inert_with_sandbox_headers():
     async with client_app() as (client, app):
-        view = await app_state(app, "artifacts", ArtifactStore).publish(
+        view = await app_state(app).artifacts.publish(
             "operator", "conv-1", filename="r.html", content=b"<b>x</b>", title="R"
         )
         resp = await client.get(f"/views/{view.id}/content")

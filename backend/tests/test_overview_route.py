@@ -4,13 +4,9 @@ from __future__ import annotations
 
 from pydantic import JsonValue
 
-from services.conversations import ConversationStore
-from services.memory import MemoryStore
-from services.notifications import NotificationService
-from services.registry import ModelRegistry
-from services.search import SearchService
+from routes.deps import app_state
 
-from ._helpers import app_state, client_app
+from ._helpers import client_app
 from ._json import arr, json_body, obj, s
 
 
@@ -53,7 +49,7 @@ async def test_overview_empty_workspace():
 
 async def test_overview_web_search_nominal_once_a_provider_is_enabled():
     async with client_app() as (client, app):
-        _ = await app_state(app, "search", SearchService).create_provider(
+        _ = await app_state(app).search.create_provider(
             "operator", name="searx", base_url="http://searx.local", enabled=True
         )
         body = json_body(await client.get("/overview"))
@@ -67,7 +63,7 @@ async def test_overview_chat_model_nominal_with_a_tool_calling_endpoint():
     """A native-tool-calling endpoint is the precondition for chat — no `main`
     role binding required (the picker chooses the live model)."""
     async with client_app() as (client, app):
-        _ = await app_state(app, "models", ModelRegistry).create_endpoint(
+        _ = await app_state(app).models.create_endpoint(
             "operator",
             name="Local",
             base_url="http://localhost:1234/v1",
@@ -89,7 +85,7 @@ async def test_overview_chat_model_alert_when_no_endpoint_is_tool_calling():
     """Endpoints exist but none drive tools — chat can't run, so the capability is
     a critical alert distinct from the no-provider-at-all case."""
     async with client_app() as (client, app):
-        _ = await app_state(app, "models", ModelRegistry).create_endpoint(
+        _ = await app_state(app).models.create_endpoint(
             "operator",
             name="Embed-only",
             base_url="http://localhost:1234/v1",
@@ -109,7 +105,7 @@ async def test_overview_chat_model_alert_when_only_endpoint_is_disabled():
     """Disabling the sole chat endpoint flips the critical capability to alert — a
     disabled endpoint is skipped by resolution, so it can't back chat."""
     async with client_app() as (client, app):
-        models = app_state(app, "models", ModelRegistry)
+        models = app_state(app).models
         ep = await models.create_endpoint(
             "operator",
             name="Local",
@@ -128,10 +124,10 @@ async def test_overview_chat_model_alert_when_only_endpoint_is_disabled():
 
 async def test_overview_counts_memories_and_conversations():
     async with client_app() as (client, app):
-        memory = app_state(app, "memory", MemoryStore)
+        memory = app_state(app).memory
         _ = await memory.remember("operator", "the operator prefers dark mode")
         _ = await memory.remember("operator", "the operator's name is Frank")
-        conversations = app_state(app, "conversations", ConversationStore)
+        conversations = app_state(app).conversations
         _ = await conversations.create_conversation("operator")
         _ = await conversations.create_conversation("operator")
         _ = await conversations.create_conversation("operator")
@@ -147,7 +143,7 @@ async def test_overview_omits_notification_channel_rows_when_none_are_wired():
     app wires both by default, so this drops them to prove the rows follow the channels
     rather than being hard-coded into the aggregate."""
     async with client_app() as (client, app):
-        app_state(app, "notifications", NotificationService).channels = []
+        app_state(app).notifications.channels = []
         body = json_body(await client.get("/overview"))
     caps = _capabilities(body)
     assert "email" not in caps

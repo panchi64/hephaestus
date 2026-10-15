@@ -24,43 +24,42 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import cast
 from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from pydantic import TypeAdapter
 
-from core.container import ServiceContainer
 from routes.chat import compose_turn
-from runs import RunRegistry
+from routes.deps import app_state
 from services.agents import AgentDefinition, builtin_roster
-from services.conversations import ConversationStore
-from services.settings_store import SettingsStore, set_subagent_limit
+from services.settings_store import set_subagent_limit
 from services.subagent_store import SubagentStore
 from services.subagents import (
     SubagentLauncher,
     SubagentParent,
     SubagentUnavailableError,
 )
-from tests._helpers import app_state, client_app, patch_model_resolution
+from tests._helpers import client_app, patch_model_resolution
 
 EXPLORER = builtin_roster()["explorer"]
 WORKER = builtin_roster()["worker"]
 
 
 def launcher_of(app: FastAPI) -> SubagentLauncher:
-    launcher = app_state(app, "capabilities", ServiceContainer).get_optional(SubagentLauncher)
+    launcher = app_state(app).capabilities.get_optional(SubagentLauncher)
     assert launcher is not None, "the subagents manifest did not export its implementation"
     return launcher
 
 
 def records_of(app: FastAPI) -> SubagentStore:
-    return app_state(app, "subagent_records", SubagentStore)
+    records = app_state(app).subagent_records
+    assert records is not None
+    return records
 
 
 def _terminal_tasks(app: FastAPI) -> list[asyncio.Task[None]]:
-    return list(cast(set[asyncio.Task[None]], app_state(app, "run_terminal_tasks", set)))
+    return list(app_state(app).run_terminal_tasks)
 
 
 async def settle_run(app: FastAPI, run_id: str) -> None:
@@ -70,7 +69,7 @@ async def settle_run(app: FastAPI, run_id: str) -> None:
     — which settles the sub-agent's row — still in flight. A test that read the register
     there would be racing it.
     """
-    run = app_state(app, "runs", RunRegistry).get(run_id)
+    run = app_state(app).runs.get(run_id)
     assert run is not None
     if run.task is not None:
         await run.task
@@ -98,7 +97,7 @@ class TestLaunching:
 
             # THE assertion. A tool that awaited this would spend its whole turn here,
             # which is exactly what the blocking delegation did.
-            assert app_state(app, "runs", RunRegistry).get(started.run_id) is not None
+            assert app_state(app).runs.get(started.run_id) is not None
             await settle_run(app, started.run_id)
 
     async def test_the_task_is_what_names_the_thread(self, monkeypatch: pytest.MonkeyPatch):
@@ -109,7 +108,7 @@ class TestLaunching:
             )
             await settle_run(app, started.run_id)
 
-            summary = await app_state(app, "conversations", ConversationStore).get_summary(
+            summary = await app_state(app).conversations.get_summary(
                 started.conversation_id, "operator"
             )
             # Nobody wrote this thread's opening message, so without the task in its name
@@ -125,15 +124,11 @@ class TestLaunching:
             )
             await settle_run(app, started.run_id)
 
-            listed = await app_state(app, "conversations", ConversationStore).list_conversations(
-                "operator"
-            )
+            listed = await app_state(app).conversations.list_conversations("operator")
             assert started.conversation_id not in {c.id for c in listed}
             # Hidden from the listing, and still a whole conversation — which is what the
             # panel opens when a card is expanded, and what keeps the transcript.
-            turns = await app_state(app, "conversations", ConversationStore).messages_view(
-                started.conversation_id
-            )
+            turns = await app_state(app).conversations.messages_view(started.conversation_id)
             assert [t.role for t in turns] == ["user", "assistant"]
 
     async def test_an_empty_task_is_refused(self, monkeypatch: pytest.MonkeyPatch):
@@ -159,9 +154,7 @@ class TestWhatItMayDo:
             )
             await settle_run(app, started.run_id)
 
-            binding = await app_state(app, "conversations", ConversationStore).binding(
-                started.conversation_id
-            )
+            binding = await app_state(app).conversations.binding(started.conversation_id)
             # Otherwise one approved launch buys a standing level the operator never chose.
             assert binding.permission == "manual"
 
@@ -380,7 +373,7 @@ class TestItsHandle:
             )
             await settle_run(app, started.run_id)
 
-            summary = await app_state(app, "conversations", ConversationStore).get_summary(
+            summary = await app_state(app).conversations.get_summary(
                 started.conversation_id, "operator"
             )
             assert summary is not None
@@ -472,9 +465,7 @@ class TestTheCap:
     ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            _ = await set_subagent_limit(
-                app_state(app, "settings_store", SettingsStore), "operator", 1
-            )
+            _ = await set_subagent_limit(app_state(app).settings_store, "operator", 1)
             first = await launcher_of(app).launch(
                 "operator", EXPLORER, "look here", handle="here-looker"
             )
@@ -492,9 +483,7 @@ class TestTheCap:
     async def test_a_finished_subagent_gives_its_slot_back(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            _ = await set_subagent_limit(
-                app_state(app, "settings_store", SettingsStore), "operator", 1
-            )
+            _ = await set_subagent_limit(app_state(app).settings_store, "operator", 1)
             first = await launcher_of(app).launch(
                 "operator", EXPLORER, "look here", handle="here-looker"
             )
@@ -512,9 +501,7 @@ class TestTheCap:
     ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            _ = await set_subagent_limit(
-                app_state(app, "settings_store", SettingsStore), "operator", 1
-            )
+            _ = await set_subagent_limit(app_state(app).settings_store, "operator", 1)
             first = await launcher_of(app).launch(
                 "operator",
                 EXPLORER,

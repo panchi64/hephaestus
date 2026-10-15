@@ -14,23 +14,18 @@ function alone would pass while any of those three came apart.
 
 from __future__ import annotations
 
-from typing import cast
-
 import pytest
 from fastapi import FastAPI
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 
 from core.container import ServiceContainer
-from core.vault import Vault
+from routes.deps import app_state
 from runs import Run, RunStream
 from services.calendar import CalendarService
 from services.mail import MailService
-from services.offline import OfflineModeService
 from services.secret_vault import SecretVaultService
-from services.settings_store import SettingsStore
 from services.tool_policy import (
     CategoryAvailability,
     effective_disabled_tools,
@@ -41,7 +36,7 @@ from tools.catalog import tool_catalog
 from tools.describe import category_names
 from tools.tool_search import dormant_index_instructions
 
-from ._helpers import app_state, client_app, full_tool_categories
+from ._helpers import client_app, full_tool_categories
 
 OWNER = "operator"
 
@@ -58,7 +53,7 @@ def _ctx(disabled: frozenset[str]) -> RunContext[RunDeps]:
 
 
 def _availability(app: FastAPI) -> tuple[CategoryAvailability, ...]:
-    return cast(tuple[CategoryAvailability, ...], app_state(app, "category_availability", tuple))
+    return app_state(app).category_availability
 
 
 def _tools(app: FastAPI, category: str) -> frozenset[str]:
@@ -68,15 +63,15 @@ def _tools(app: FastAPI, category: str) -> frozenset[str]:
 
 
 def _caps(app: FastAPI) -> ServiceContainer:
-    return app_state(app, "capabilities", ServiceContainer)
+    return app_state(app).capabilities
 
 
 async def _withheld(app: FastAPI) -> frozenset[str]:
     """What the app's own disabled set holds for a turn with nothing else against it —
     every other axis at its permissive default, so what is left is this one."""
     return await effective_disabled_tools(
-        app_state(app, "settings_store", SettingsStore),
-        app_state(app, "offline", OfflineModeService),
+        app_state(app).settings_store,
+        app_state(app).offline,
         OWNER,
         availability=_availability(app),
         caps=_caps(app),
@@ -103,9 +98,7 @@ async def test_each_check_resolves_to_the_real_tools_of_its_category():
     """A check whose name set were empty would pass every other assertion here while
     withholding nothing at all, so the resolution is pinned against the live catalog."""
     async with client_app() as (_, app):
-        categories = cast(
-            dict[str, AbstractToolset[RunDeps]], app_state(app, "tool_categories", dict)
-        )
+        categories = app_state(app).tool_categories
         catalog = tool_catalog(categories)
         for entry in _availability(app):
             registered = {i.name for i in catalog if i.category == entry.category}
@@ -167,7 +160,7 @@ async def test_a_locked_vault_still_answers_for_mail_and_calendar():
     async with client_app() as (_, app):
         await _connect_mailbox(app)
         _ = await _caps(app).get(CalendarService).create_calendar(OWNER, "Work")
-        app_state(app, "vault", Vault).lock()
+        app_state(app).vault.lock()
         withheld = await _withheld(app)
         assert not (_tools(app, "mail") & withheld)
         assert not (_tools(app, "calendar") & withheld)
