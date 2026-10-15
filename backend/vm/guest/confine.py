@@ -9,6 +9,12 @@ share one cgroup, capped at its memory, CPU and process limits as far as the gue
 controllers allow. A plugin's call also sees that plugin version's directory at
 ``/plugin``, read-only except while its packages install.
 
+``--home-bind KEY:DEST:MODE`` (repeatable) lays out the agent's home at ``/home/agent``:
+the guest copy of workspace ``KEY`` bound at ``DEST`` under it, read-only unless ``MODE``
+is ``rw``. ``DEST`` is ``scratch`` or ``projects/``, ``worktrees/`` or ``shared/`` and one
+name, nothing else. With any home bind, ``HOME`` is the home and the working directory may
+be anywhere in it; ``--key`` still names the scratch workspace, bound at ``/work`` too.
+
 ``run`` waits and exits with the command's status (124 on a timeout); ``start`` runs it
 as a named background job, whose output, process and exit status are files under
 ``run/hephaestus/jobs`` that ``stop`` and ``alive`` act on and the host reads.
@@ -29,6 +35,8 @@ import sys
 
 _KEY = re.compile(r"^[A-Za-z0-9_.-]{1,200}$")
 _PLUGIN = re.compile(r"^[a-z][a-z0-9_]{0,39}/[0-9a-f]{16,64}$")
+_HOME = "/home/agent"
+_DEST = re.compile(r"^(scratch|(projects|worktrees|shared)/[a-z0-9][a-z0-9._-]{0,79})$")
 _PATH = "/usr/local/bin:/usr/bin:/bin"
 _CA_STORE = "/etc/ssl/certs/ca-certificates.crt"
 _TIMEOUT_EXIT = 124
@@ -55,11 +63,42 @@ class _Args(argparse.Namespace):
     cwd_file: str = ""
     plugin: str = ""
     plugin_writable: bool = False
+    dry_run: bool = False
 
     def __init__(self) -> None:
         super().__init__()
         self.env: list[str] = []
         self.argv: list[str] = []
+        self.home_bind: list[str] = []
+
+
+def _home_binds(args: _Args) -> list[tuple[str, str, bool]]:
+    """Each ``--home-bind`` as ``(key, dest, writable)``, refusing any that is malformed or
+    names a destination twice."""
+    binds: list[tuple[str, str, bool]] = []
+    for spec in args.home_bind:
+        key, _, rest = spec.partition(":")
+        dest, _, mode = rest.partition(":")
+        if not _KEY.match(key) or not _DEST.match(dest) or mode not in ("ro", "rw"):
+            raise SystemExit(f"not a home bind: {spec!r}")
+        binds.append((key, dest, mode == "rw"))
+    dests = [dest for _, dest, _ in binds]
+    if len(set(dests)) != len(dests):
+        raise SystemExit("a home destination is bound twice")
+    return binds
+
+
+def _workdir(args: _Args, homed: bool) -> str:
+    """The command's working directory: relative to ``/work``, or absolute inside it or,
+    when there is a home, inside the home."""
+    roots = ("/work", _HOME) if homed else ("/work",)
+    if os.path.isabs(args.workdir):
+        workdir = os.path.normpath(args.workdir)
+    else:
+        workdir = os.path.normpath(os.path.join("/work", args.workdir or "."))
+    if not any(workdir == root or workdir.startswith(root + "/") for root in roots):
+        raise SystemExit("workdir escapes the workspace")
+    return workdir
 
 
 def _layout(root: str) -> dict[str, str]:
@@ -76,9 +115,8 @@ def _layout(root: str) -> dict[str, str]:
 
 def _bwrap(args: _Args, paths: dict[str, str]) -> list[str]:
     workspace = os.path.join(paths["work"], args.key)
-    workdir = os.path.normpath(os.path.join("/work", args.workdir or "."))
-    if workdir != "/work" and not workdir.startswith("/work/"):
-        raise SystemExit("workdir escapes the workspace")
+    binds = _home_binds(args)
+    workdir = _workdir(args, homed=bool(binds))
     argv = [
         "bwrap",
         # Every namespace but the user one, set up as root: no user namespace means this
@@ -134,6 +172,14 @@ def _bwrap(args: _Args, paths: dict[str, str]) -> list[str]:
         workspace,
         "/work",
     ]
+    if binds:
+        # A fresh home on every command, so nothing written outside the bound folders
+        # (a stray dotfile, a cache) outlives it. World-writable because the sandbox
+        # user is the only one in here, and its tools expect to write under $HOME.
+        argv += ["--perms", "1777", "--tmpfs", _HOME]
+        for key, dest, writable in binds:
+            source = os.path.join(paths["work"], key)
+            argv += ["--bind" if writable else "--ro-bind", source, f"{_HOME}/{dest}"]
     if args.publish:
         preview = os.path.join(paths["previews"], args.key)
         argv += ["--bind", preview, "/run/preview"]
@@ -144,7 +190,7 @@ def _bwrap(args: _Args, paths: dict[str, str]) -> list[str]:
         argv += [bind, _plugin_dir(args, paths), "/plugin"]
     env = {
         "PATH": _PATH,
-        "HOME": "/work",
+        "HOME": _HOME if binds else "/work",
         "LANG": "C.UTF-8",
         "TMPDIR": "/tmp",
         # The system store, which holds any extra CA the image was built to trust;
@@ -196,6 +242,10 @@ def _prepare(args: _Args, paths: dict[str, str]) -> None:
     os.makedirs(workspace, exist_ok=True)
     os.chown(workspace, args.uid, args.uid)
     os.chmod(workspace, 0o700)
+    for key, _dest, _writable in _home_binds(args):
+        source = os.path.join(paths["work"], key)
+        os.makedirs(source, exist_ok=True)
+        os.chown(source, args.uid, args.uid)
     if args.plugin and args.plugin_writable:
         plugin = _plugin_dir(args, paths)
         os.makedirs(plugin, exist_ok=True)
@@ -447,6 +497,9 @@ def main() -> int:
     _ = parser.add_argument("--cwd-file", default="")
     _ = parser.add_argument("--plugin", default="")
     _ = parser.add_argument("--plugin-writable", action="store_true")
+    _ = parser.add_argument("--home-bind", action="append", default=[])
+    # Print the confinement `run` would apply, as JSON, without running anything.
+    _ = parser.add_argument("--dry-run", action="store_true")
     own, command = _split(sys.argv[1:])
     args = parser.parse_args(own, namespace=_Args())
     args.argv = command
@@ -455,6 +508,9 @@ def main() -> int:
     if (args.action != "run" or args.name) and not _KEY.match(args.name):
         parser.error("start, stop and alive need a valid --name")
     paths = _layout(args.root)
+    if args.dry_run:
+        json.dump(_bwrap(args, paths), sys.stdout)
+        return 0
     actions = {"run": run, "start": start, "stop": stop, "alive": alive, "output": output}
     return actions[args.action](args, paths)
 
