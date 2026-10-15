@@ -13,15 +13,17 @@ environment-dependent without testing more of our own code.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import cast, override
 
 import pytest
-from playwright.async_api import Browser
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.playwright import PlaywrightBrowserSession, PlaywrightBrowserToolset
+from pydantic_ai_harness.playwright import _toolset as harness_toolset
 
 from core.container import ServiceContainer
 from runs import Run, RunStream
@@ -391,19 +393,39 @@ async def test_stop_tears_every_session_down():
     assert _fake(live).exited
 
 
-async def test_teardown_leaves_the_shared_window_alone():
+async def test_teardown_leaves_the_shared_window_alone(monkeypatch: pytest.MonkeyPatch):
     # The window belongs to the host browser and other conversations — and the operator —
     # are still in it; a session that merely attached must never close it.
-    session = ControlledBrowserSession(cdp_url="http://127.0.0.1:9222")
+    attached: list[str] = []
     closed: list[bool] = []
 
     class _Handle:
         async def close(self) -> None:
             closed.append(True)
 
-    session._browser = cast(Browser, cast(object, _Handle()))  # noqa: SLF001 — the handle teardown would close
-    await session.__aexit__(None, None, None)
+        async def new_context(self, **_options: object) -> object:
+            # The harness holds the handle from here on, so teardown would close it.
+            raise RuntimeError("no context")
 
+    class _Chromium:
+        async def connect_over_cdp(self, endpoint: str, **_options: object) -> _Handle:
+            attached.append(endpoint)
+            return _Handle()
+
+    class _Driver:
+        chromium: _Chromium = _Chromium()
+
+    @asynccontextmanager
+    async def fake_playwright() -> AsyncGenerator[_Driver]:
+        yield _Driver()
+
+    monkeypatch.setattr(harness_toolset, "async_playwright", fake_playwright)
+    session = ControlledBrowserSession(cdp_url="http://127.0.0.1:9222")
+    async with session:
+        with pytest.raises(RuntimeError, match="no context"):
+            _ = await session.ensure_page()
+
+    assert attached == ["http://127.0.0.1:9222"]
     assert closed == []
 
 

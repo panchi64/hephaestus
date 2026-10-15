@@ -12,6 +12,7 @@ directly — while the same call made directly still parks.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Mapping
 
 from pydantic import JsonValue, TypeAdapter
@@ -27,10 +28,8 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, To
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.code_mode._toolset import _RunCodeTool
 
 from agent import stream_agent_run
 from agent.code_mode import (
@@ -88,10 +87,12 @@ def _wrapped(categories: Mapping[str, AbstractToolset[RunDeps]]) -> AbstractTool
     return wrapper
 
 
-def _callable(tools: dict[str, ToolsetTool[RunDeps]]) -> dict[str, ToolDefinition]:
-    run_code = tools[RUN_CODE]
-    assert isinstance(run_code, _RunCodeTool)
-    return run_code.callable_defs
+_SIGNATURE = re.compile(r"^(?:async )?def (\w+)\(", re.MULTILINE)
+
+
+def _callable(tools: dict[str, ToolsetTool[RunDeps]]) -> set[str]:
+    """What a script may call: the functions ``run_code``'s description declares."""
+    return set(_SIGNATURE.findall(tools[RUN_CODE].tool_def.description or ""))
 
 
 async def _script_catalog(

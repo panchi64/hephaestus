@@ -4,6 +4,7 @@ backfills the legacy name-prefix inference into a real ``provider`` column."""
 from __future__ import annotations
 
 import pytest
+from pydantic import JsonValue, TypeAdapter
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -17,6 +18,8 @@ from tests.test_registry import make_registry, resolve_model
 
 from ._helpers import client_app
 from ._json import json_body, json_list, obj, s
+
+_WIRE_MESSAGES = TypeAdapter(list[dict[str, JsonValue]])
 
 OWNER = "operator"
 
@@ -52,17 +55,19 @@ def test_build_model_dispatches_to_the_native_classes():
         assert isinstance(llm.build_model(spec), model_cls), provider_id
 
 
-async def test_openai_wire_carries_one_leading_system_message():
+async def test_openai_wire_carries_one_leading_system_message(monkeypatch: pytest.MonkeyPatch):
     """The standing prompt and the per-turn instructions both ride the OpenAI wire as
     system messages at the head. Hosted APIs take two; a self-hosted server hands the list
     to the model's own chat template, and the Qwen family's raises "System message must be
     at the beginning." on the second — so the adapter merges them into one. Asserted on
-    the mapped wire messages (the library's private mapper) because the profile flag
-    alone wouldn't catch the day the library renames or re-scopes it."""
-    from pydantic_ai import ModelRequest, SystemPromptPart, UserPromptPart
+    the messages the SDK is handed, because the profile flag alone wouldn't catch the day
+    the library renames or re-scopes it."""
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+    from pydantic_ai import ModelMessage, ModelRequest, SystemPromptPart, UserPromptPart
     from pydantic_ai.models import ModelRequestParameters
 
-    history = [
+    history: list[ModelMessage] = [
         ModelRequest(
             parts=[SystemPromptPart(content="IDENTITY"), UserPromptPart(content="hi")],
             instructions="RULES",
@@ -76,7 +81,22 @@ async def test_openai_wire_carries_one_leading_system_message():
     )
     model = llm.build_model(spec)
     assert isinstance(model, OpenAIChatModel)
-    mapped = await model._map_messages(history, ModelRequestParameters())
+    sent: list[list[dict[str, JsonValue]]] = []
+
+    async def create(**kwargs: object) -> ChatCompletion:
+        sent.append(_WIRE_MESSAGES.validate_python(kwargs["messages"]))
+        reply = ChatCompletionMessage(role="assistant", content="ok")
+        return ChatCompletion(
+            id="c1",
+            object="chat.completion",
+            created=0,
+            model=spec.model,
+            choices=[Choice(index=0, finish_reason="stop", message=reply)],
+        )
+
+    monkeypatch.setattr(model.client.chat.completions, "create", create)
+    _ = await model.request(history, None, ModelRequestParameters())
+    [mapped] = sent
     assert [m["role"] for m in mapped] == ["system", "user"]
     assert mapped[0].get("content") == "IDENTITY\n\nRULES"
 
