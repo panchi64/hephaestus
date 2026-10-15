@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from services.commands import Invocation
 from services.permissions import PermissionLevel
-from services.settings_store import WORK_SUMMARY_IDLE_MINUTES_MAX
+from services.settings_store import AUTO_CONTINUE_MAX_CEILING, WORK_SUMMARY_IDLE_MINUTES_MAX
 
 
 class CommandInvocation(BaseModel):
@@ -157,6 +157,13 @@ class ChatSettings(BaseModel):
     # ``ge=1``, not ``ge=0``: a turn allowed zero model requests could never produce an
     # answer, so 0 is a nonsensical value to accept rather than merely a minimal one.
     agent_request_limit: int | None = Field(default=None, ge=1)
+    # How many times a turn still making progress carries on past that limit by itself.
+    # 0 stops at the limit every time.
+    auto_continue_max: int | None = Field(default=None, ge=0, le=AUTO_CONTINUE_MAX_CEILING)
+    # How long a turn waits for the model's first token, in seconds: the silent stretch
+    # while a local model reads a long prompt. A deploy-level ``None`` leaves that wait to
+    # the inactivity watchdog.
+    first_token_timeout_s: float | None = Field(default=None, gt=0)
     # The inactivity watchdog's bound in seconds: how long a run may go without emitting
     # an event before it is stopped. ``gt=0`` (a 0 bound would stop every turn
     # immediately); the config default applies when the operator hasn't set one, and a

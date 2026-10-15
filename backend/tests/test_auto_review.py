@@ -65,7 +65,7 @@ from runs import Orchestrator, Run, RunRegistry, RunStatus, RunStream
 from services.approval_grants import ApprovalGrantStore, GrantInfo
 from services.conversations import ConversationBinding
 from services.home.backend import Mount
-from services.home.paths import SCRATCH
+from services.home.paths import HOME, SCRATCH, Place
 from services.home.table import RunHome
 from services.permissions import (
     ActionKind,
@@ -84,6 +84,8 @@ from services.permissions import (
 )
 from services.permissions.projections import PROJECTIONS
 from services.permissions.reviewer import Reviewer, review_prompt
+from services.sandbox.thread_shells import ThreadShells
+from services.vm.project import ProjectCopies
 from tools import RunDeps
 from tools.agents import agents_toolset
 from tools.browse import browse_toolset
@@ -98,6 +100,7 @@ from tools.vault import vault_toolset
 from ._helpers import client_app
 from ._helpers import run_bodies as _bodies
 from ._json import JSON, obj
+from .vm_fakes import FakeVM
 
 #: A workspace root, because a command is judged against the directory it runs in and a
 #: command with none is read as unplaced — the deterministic stage clears neither.
@@ -1928,6 +1931,52 @@ class TestWhatTheBatchIsJudgedAgainst:
         monkeypatch.setattr(gating, "resolve_run_home", refuses)
         _settled, manual = await _settle("auto", [self._read()])
         assert [call.tool_call_id for call in manual] == ["c1"]
+
+
+async def test_a_command_is_judged_from_where_the_shell_stands(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    # A thread whose last turn left its shell in a project starts the next run there. Read
+    # from scratch instead, a subshell in the project is cleared as a scratch-only command.
+    api = Place("projects", "api")
+
+    async def home(_deps: RunDeps) -> RunHome:
+        return RunHome(
+            mounts=(Mount(SCRATCH, tmp_path, writable=True), Mount(api, tmp_path, writable=True)),
+            default=SCRATCH,
+            key="conv-1",
+        )
+
+    monkeypatch.setattr(gating, "resolve_run_home", home)
+    monkeypatch.setattr(gating, "resolve_reviewer", _resolver(None))
+    pretend_fenced(monkeypatch)
+    shells = ThreadShells(
+        ProjectCopies(FakeVM(tmp_path / "vm"), idle_ttl_s=60.0, reap_interval_s=60.0),
+        default_timeout=1.0,
+        max_output_chars=1,
+    )
+    call = ToolCallPart(
+        tool_name="shell_run_command", args={"command": "(rm -rf src)"}, tool_call_id="c1"
+    )
+    caps = ServiceContainer()
+    caps.add(shells)
+    run = Run(id="r1", kind="chat", owner_id=OWNER, stream=RunStream())
+
+    async def settle() -> list[ToolCallPart]:
+        _settled, manual = await gating.settle_deferred(
+            run,
+            [call],
+            caps=ServiceContainer(),
+            conversation_id=CONV,
+            deps=RunDeps(run=run, owner_id=OWNER, caps=caps, workspace_key="conv-1"),
+            messages=[],
+            permission="auto",
+        )
+        return manual
+
+    assert await settle() == []
+    _ = shells.get("conv-1", start=f"{HOME}/projects/api")
+    assert [c.tool_call_id for c in await settle()] == ["c1"]
 
 
 def _home_at(scratch: Path) -> Callable[[RunDeps], Awaitable[RunHome]]:

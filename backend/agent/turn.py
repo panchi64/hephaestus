@@ -40,14 +40,14 @@ from pydantic_ai import (
     UsageLimits,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import IncompleteToolCall, ModelAPIError, ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import UserContent
 from pydantic_ai.tools import DeferredToolApprovalResult
 
 from core.config import Settings
 from core.container import ServiceContainer
 from core.exceptions import ModelLoadError
-from runs import LimitNotice, Run
+from runs import AnswerRetracted, LimitNotice, Run
 from services.conversations import ConversationBinding, ConversationStore
 from services.notifications import NotificationService
 from services.permissions import ReviewBudget
@@ -387,7 +387,7 @@ async def drive_turn(
                 messages=_partial_history(),
                 blocked_reason=detail,
             )
-        except (ModelAPIError, httpx.TransportError, IncompleteToolCall) as exc:
+        except (ModelAPIError, httpx.TransportError) as exc:
             # Context-window overflow. The request that overran is still the tail of the
             # partial history and would replay on every later turn, so this cannot simply
             # be reported: fold the thread once and re-send the same request against the
@@ -448,6 +448,13 @@ async def drive_turn(
             if resume is None or transient_retries >= settings.auto_continue_transient_max:
                 raise
             transient_retries += 1
+            if run.step_text_chars or run.step_thinking_chars:
+                _ = run.emit(
+                    AnswerRetracted(
+                        text_chars=run.step_text_chars, thinking_chars=run.step_thinking_chars
+                    )
+                )
+                run.step_text_chars = run.step_thinking_chars = 0
             _ = run.emit(
                 LimitNotice(
                     limit="continue",

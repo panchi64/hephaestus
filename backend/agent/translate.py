@@ -212,6 +212,22 @@ def _emit_result(
         _ = run.emit(citation)
 
 
+def _answer(run: Run, text: str) -> None:
+    run.answer_started = True  # pins the endpoint past this point (AE-5.3)
+    run.step_text_chars += len(text)
+    _ = run.emit(AnswerDelta(text=text))
+
+
+def _thinking(run: Run, text: str) -> None:
+    run.step_thinking_chars += len(text)
+    _ = run.emit(ThinkingDelta(text=text))
+
+
+def _settle_step(run: Run) -> None:
+    run.step_text_chars = 0
+    run.step_thinking_chars = 0
+
+
 def _on_model_event(event: object, run: Run, mark_first_token: Callable[[], None]) -> None:
     """``mark_first_token`` is called for the first output of **any** kind and only
     counts once (see ``TurnTimer.model_request``).
@@ -231,17 +247,15 @@ def _on_model_event(event: object, run: Run, mark_first_token: Callable[[], None
     if isinstance(event, PartStartEvent):
         part = event.part
         if isinstance(part, TextPart) and part.content:
-            run.answer_started = True  # pins the endpoint past this point (AE-5.3)
-            _ = run.emit(AnswerDelta(text=part.content))
+            _answer(run, part.content)
         elif isinstance(part, ThinkingPart) and part.content:
-            _ = run.emit(ThinkingDelta(text=part.content))
+            _thinking(run, part.content)
     elif isinstance(event, PartDeltaEvent):
         delta = event.delta
         if isinstance(delta, TextPartDelta) and delta.content_delta:
-            run.answer_started = True  # pins the endpoint past this point (AE-5.3)
-            _ = run.emit(AnswerDelta(text=delta.content_delta))
+            _answer(run, delta.content_delta)
         elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
-            _ = run.emit(ThinkingDelta(text=delta.content_delta))
+            _thinking(run, delta.content_delta)
     # PartEndEvent / FinalResultEvent carry no domain signal we surface — tool
     # execution is reported from the CallToolsNode.
 
@@ -348,6 +362,7 @@ async def stream_agent_run[DepsT](
             if on_request_node is not None:
                 on_request_node(node)
             step += 1
+            _settle_step(run)
             _ = run.emit(StepStarted(index=step))
             # Until the first part streams, the server is reading the prompt: silent, and
             # on a local model minutes long for a cold one. The keepalive keeps the
@@ -374,6 +389,7 @@ async def stream_agent_run[DepsT](
                 raise
             finally:
                 await waiting.aclose()
+            _settle_step(run)
             _ = run.emit(StepCompleted(index=step))
             # The request's non-conversation weight (the brief + the tool schemas) and the
             # brief's named contributors both arrive as capability events at the head of

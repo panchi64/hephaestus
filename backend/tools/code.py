@@ -209,9 +209,9 @@ def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
     worker calling names that do not resolve.
     """
     files = (
-        "Your file tools and shell act on this same working directory"
+        "Your file tools and shell reach this same working directory as `~/scratch`"
         if delegated
-        else "The `files_*` and `shell_*` tools act on this same working directory, as "
+        else "The `files_*` and `shell_*` tools reach this same working directory as "
         + "`~/scratch`"
     )
     ask = (
@@ -237,7 +237,11 @@ def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
         "stretch of inactivity the machine is reclaimed: your files are kept and "
         "restored, but installed packages may need reinstalling.\n\n"
         f"{files}: use them to read, write, edit, search and list it, to run commands "
-        "and to install packages, and use this tool to run Python.\n\n"
+        "and to install packages, and use this tool to run Python. A relative path in "
+        "those tools lands in the conversation's own place, which in a project is the "
+        "project rather than `~/scratch`, and this tool cannot see `~/projects` at all: "
+        "work on a project's files with the shell, or copy what the program needs into "
+        "`~/scratch` first.\n\n"
         "The package registries and GitHub are already reachable from this tool, so "
         f"fetching from them needs no permission. {ask} Packages install under "
         "`/work/.local` with `pip install` from the shell; a package's command lands in "

@@ -199,6 +199,11 @@ class HostShell:
         inside it an earlier `cd` left the session."""
         return self._cwd
 
+    @property
+    def busy(self) -> bool:
+        """Whether a background process it started may still be running."""
+        return bool(self._background)
+
     @_recoverable
     async def run(
         self,

@@ -29,11 +29,13 @@ directory would be exactly the kind of surprise this feature exists to avoid.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import ColumnElement, Engine, or_, update
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from core.db import in_session
@@ -48,6 +50,9 @@ from models.task import ScheduledTask
 from services.settings_store import ACTIVE_PROJECT_KEY, SettingsStore
 
 from .slugs import slug_for
+
+#: How many times a registration picks a slug before a clash is reported.
+_SLUG_ATTEMPTS = 3
 
 #: Every entity that carries a `project_id`. Written out because there is no shared base
 #: class — each model declares `owner_id` inline too — and because deleting a project has
@@ -160,6 +165,9 @@ class ProjectStore:
         # failing to decrypt rather than by serving what it read while unlocked.
         self._roots: dict[str, dict[str, Path]] = {}
         vault.register_on_lock(self._roots.clear)
+        # owner → {project id: slug}, cleared by the same writes; a run's home reads it on
+        # every resolution.
+        self._slugs: dict[str, dict[str, str]] = {}
 
     @property
     def engine(self) -> Engine:
@@ -227,7 +235,14 @@ class ProjectStore:
             session.refresh(row)
             return row
 
-        created = await in_session(self._db, work)
+        # Two registrations can read the same taken slugs; the unique constraint refuses
+        # the second, which then picks again.
+        for _ in range(_SLUG_ATTEMPTS - 1):
+            with contextlib.suppress(IntegrityError):
+                created = await in_session(self._db, work)
+                break
+        else:
+            created = await in_session(self._db, work)
         self._forget(owner_id)
         return await self._view(created)
 
@@ -327,6 +342,9 @@ class ProjectStore:
     async def slugs(self, owner_id: str) -> dict[str, str]:
         """Each live project's id mapped to its folder name in the agent's home,
         ``~/projects/<slug>``. Archived projects are not in the home."""
+        cached = self._slugs.get(owner_id)
+        if cached is not None:
+            return dict(cached)
 
         def work(session: Session) -> list[tuple[str, str]]:
             query = (
@@ -336,13 +354,17 @@ class ProjectStore:
             )
             return list(session.exec(query).all())
 
-        return dict(await in_session(self._db, work))
+        slugs = dict(await in_session(self._db, work))
+        self._slugs[owner_id] = slugs
+        return dict(slugs)
 
     def _forget(self, owner_id: str) -> None:
-        """Drop this owner's memoised roots. Called by every write that can change what
-        :meth:`workspace_roots` answers — which includes :meth:`activate`, because the
-        map's *order* is part of the answer and touching ``last_opened_at`` reorders it."""
+        """Drop this owner's memoised roots and slugs. Called by every write that can change
+        what :meth:`workspace_roots` or :meth:`slugs` answers — which includes
+        :meth:`activate`, because the roots' *order* is part of the answer and touching
+        ``last_opened_at`` reorders it."""
         _ = self._roots.pop(owner_id, None)
+        _ = self._slugs.pop(owner_id, None)
 
     async def workspace_names(self, owner_id: str) -> dict[str, str]:
         """Each project id mapped to the **basename** of its directory.

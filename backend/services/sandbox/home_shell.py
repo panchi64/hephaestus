@@ -17,7 +17,8 @@ import asyncio
 import contextlib
 import secrets
 import time
-from collections.abc import Mapping, Sequence
+from collections import OrderedDict
+from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Literal
@@ -28,9 +29,11 @@ from pydantic_ai_harness._output import truncate_tail
 from services.home.backend import Mount
 from services.home.paths import HOME, SCRATCH, HomePathError, Place, parse, projects_named
 from services.vm import VMError
+from services.vm.host import JobHost
 from services.vm.platform import HomeBind, JobState
 from services.vm.project import BringOut, ProjectCopies, ProjectCopy
 
+from .base import SandboxError
 from .jobs import capturing_cwd, follow_job, refuse
 from .session import SandboxSession
 from .shell_runner import BackgroundStatus, ProgressHook, ShellResult
@@ -40,6 +43,8 @@ _TIMEOUT_EXIT = 124
 _STOP_WAIT_S = 5.0
 #: How many projects one command may bring into the VM by naming them.
 _MAX_PROJECTS = 8
+#: How many finished background commands a later check can still read back.
+_MAX_FINISHED = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,10 +76,16 @@ class HomeShell:
         self._default_timeout: float = default_timeout
         self._max_output_chars: int = max_output_chars
         self._jobs: dict[str, _Job] = {}
+        self._finished: OrderedDict[str, BackgroundStatus] = OrderedDict()
 
     @property
     def cwd(self) -> str:
         return self._cwd
+
+    @property
+    def busy(self) -> bool:
+        """Whether a background command it started may still be running."""
+        return bool(self._jobs)
 
     def reached(
         self, command: str, mounts: Sequence[Mount], *, network: bool = False
@@ -101,11 +112,12 @@ class HomeShell:
         command: str,
         *,
         mounts: Sequence[Mount],
-        env: Mapping[str, str],
         network: bool = False,
         timeout_seconds: float | None = None,
         on_progress: ProgressHook | None = None,
     ) -> HomeResult:
+        """Run ``command`` to its end. Cancelled, it stops the job and still brings back
+        what the command changed, so nothing keeps writing a copy no lock holds."""
         refuse(command)
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
         projects = self.reached(command, mounts, network=network)
@@ -128,13 +140,18 @@ class HomeShell:
                     session.key,
                     name,
                     ["bash", "-c", capturing_cwd(command)],
-                    env=env,
+                    # Read after the bring-in, which is what grants the egress credentials.
+                    env=session.command_env(network=network),
                     timeout_s=timeout,
                     workdir=self._cwd,
                     cwd_file=cwd_file,
                     home=_binds(session.key, held),
                 )
-                state = await follow_job(vm, name, started, on_progress)
+                try:
+                    state = await follow_job(vm, name, started, on_progress)
+                except asyncio.CancelledError:
+                    await _abandon(vm, name, session, [copy for _, copy in held])
+                    raise
                 landed = await vm.read_guest(cwd_file, max_bytes=4096)
                 await session.bring_out()
                 for _mount, copy in held:
@@ -167,7 +184,6 @@ class HomeShell:
         command: str,
         *,
         mounts: Sequence[Mount],
-        env: Mapping[str, str],
         network: bool = False,
     ) -> str:
         """Start ``command`` in the background; its places come back when it ends."""
@@ -188,7 +204,7 @@ class HomeShell:
                     session.key,
                     name,
                     ["bash", "-c", command],
-                    env=env,
+                    env=session.command_env(network=network),
                     workdir=self._cwd,
                     home=_binds(session.key, held),
                 )
@@ -200,18 +216,20 @@ class HomeShell:
         return command_id
 
     async def check(self, copies: ProjectCopies, command_id: str) -> BackgroundStatus | None:
+        """A background command as it stands. One that has ended is brought back once
+        and retired, and later checks read its final status."""
         job = self._jobs.get(command_id)
         if job is None:
-            return None
+            return self._finished.get(command_id)
         state = await copies.vm.job(job.name)
-        if not state.running:
-            await self._bring_out(job)
-        return self._status(command_id, state, "running" if state.running else "finished")
+        if state.running:
+            return self._status(command_id, state, "running")
+        return await self._retire(command_id, job, state, "finished")
 
     async def stop(self, copies: ProjectCopies, command_id: str) -> BackgroundStatus | None:
-        job = self._jobs.pop(command_id, None)
+        job = self._jobs.get(command_id)
         if job is None:
-            return None
+            return self._finished.get(command_id)
         vm = copies.vm
         await vm.stop_job(job.name)
         deadline = time.monotonic() + _STOP_WAIT_S
@@ -219,22 +237,33 @@ class HomeShell:
         while state.running and time.monotonic() < deadline:
             await asyncio.sleep(0.1)
             state = await vm.job(job.name)
-        for copy in job.copies:
-            copy.jobs.discard(job.name)
-        await self._bring_out(job)
-        return self._status(command_id, state, "stopped")
+        return await self._retire(command_id, job, state, "stopped")
 
     async def shutdown(self, copies: ProjectCopies) -> None:
         for command_id in list(self._jobs):
             _ = await self.stop(copies, command_id)
 
-    async def _bring_out(self, job: _Job) -> None:
+    async def _retire(
+        self,
+        command_id: str,
+        job: _Job,
+        state: JobState,
+        status: Literal["finished", "stopped"],
+    ) -> BackgroundStatus:
+        _ = self._jobs.pop(command_id, None)
+        for copy in job.copies:
+            copy.jobs.discard(job.name)
         async with job.session.lock:
             await job.session.bring_out()
         for copy in job.copies:
             async with copy.lock:
                 copy.touch()
                 _ = await copy.workspace.bring_out()
+        final = self._status(command_id, state, status)
+        self._finished[command_id] = final
+        while len(self._finished) > _MAX_FINISHED:
+            _ = self._finished.popitem(last=False)
+        return final
 
     def _status(
         self,
@@ -250,16 +279,6 @@ class HomeShell:
             stderr=truncate_tail(state.stderr, self._max_output_chars),
         )
 
-    def change_dir(self, path: str, mounts: Sequence[Mount]) -> str:
-        """Move the working directory to ``path``, a folder in a place the thread has."""
-        target = parse(path, cwd=self._cwd)
-        if target.place != SCRATCH and target.place not in {m.place for m in mounts}:
-            raise HomePathError(
-                f"there is no {target.place.path} in your home", hint="list ~/projects"
-            )
-        self._cwd = target.path
-        return self._cwd
-
     def _follow_cd(self, landed: str, bound: Sequence[Place]) -> None:
         """Keep a ``cd`` the command made, when it ended inside something it could see."""
         landed = landed.strip()
@@ -271,6 +290,20 @@ class HomeShell:
             return
         if target.place == SCRATCH or target.place in bound:
             self._cwd = target.path
+
+
+async def _abandon(
+    vm: JobHost, name: str, session: SandboxSession, copies: Sequence[ProjectCopy]
+) -> None:
+    """Stop a job whose caller gave up on it, and bring back what it had changed. The
+    caller holds the locks."""
+    with contextlib.suppress(VMError):
+        await vm.stop_job(name)
+    with contextlib.suppress(SandboxError):
+        await session.bring_out()
+    for copy in copies:
+        with contextlib.suppress(VMError):
+            _ = await copy.workspace.bring_out()
 
 
 def _binds(scratch_key: str, held: Sequence[tuple[Mount, ProjectCopy]]) -> list[HomeBind]:

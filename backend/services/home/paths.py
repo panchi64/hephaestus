@@ -18,7 +18,7 @@ from __future__ import annotations
 import posixpath
 import re
 from dataclasses import dataclass
-from typing import Literal, override
+from typing import Literal
 
 from core.exceptions import InvalidInputError
 
@@ -77,13 +77,7 @@ class HomePath:
 
 
 class HomePathError(InvalidInputError):
-    """A path that names nothing inside a place, worded for the model, and rendered with
-    its hint for a reader that passes on only the text."""
-
-    @override
-    def __str__(self) -> str:
-        what = super().__str__()
-        return what if self.hint is None else f"{what}\nhelp: {self.hint}"
+    """A path that names nothing inside a place, worded for the model."""
 
 
 def _absolute(raw: str, cwd: str) -> str:
@@ -98,6 +92,27 @@ def _absolute(raw: str, cwd: str) -> str:
     if text.startswith("/"):
         return text
     return f"{cwd.rstrip('/')}/{text}"
+
+
+def climbs_out(raw: str, *, cwd: str) -> HomePathError | None:
+    """Why ``raw`` is refused when its ``..`` leaves the place it starts in, else None. A
+    climb out and back in is still a climb out."""
+    started = _place_named_by(_absolute(raw, cwd))
+    if started is None:
+        return None
+    normal = absolute(raw, cwd=cwd)
+    if normal == started.path or normal.startswith(f"{started.path}/"):
+        return None
+    try:
+        landed = _place_named_by(normal)
+    except HomePathError:
+        landed = None
+    return HomePathError(
+        f"{raw!r} climbs out of {started.path}",
+        hint=f"name the other folder directly, as {landed.path}"
+        if landed is not None
+        else f"name {_LAYOUT}",
+    )
 
 
 def absolute(raw: str, *, cwd: str = f"{HOME}/scratch") -> str:
@@ -119,14 +134,9 @@ def parse(raw: str, *, cwd: str = f"{HOME}/scratch") -> HomePath:
     place = _place_of(raw, parts)
     depth = 1 if place.kind == "scratch" else 2
     rel = "/".join(parts[depth:])
-    # A `..` that climbs out of the place and back in is still a climb out: compare the
-    # place the raw text starts in with the place it ends in.
-    started = _place_named_by(_absolute(raw, cwd))
-    if started is not None and started != place:
-        raise HomePathError(
-            f"{raw!r} climbs out of {started.path}",
-            hint=f"name the other folder directly, as {place.path}",
-        )
+    climb = climbs_out(raw, cwd=cwd)
+    if climb is not None:
+        raise climb
     return HomePath(place, rel)
 
 

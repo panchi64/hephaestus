@@ -107,6 +107,7 @@ def project_toolset() -> FunctionToolset[RunDeps]:
             return "Worktrees are unavailable in this deployment."
         deps.workspace_kind = "worktree"
         deps.workspace = None
+        deps.home = None
         try:
             workspace = await run_workspace(ctx)
         except WorktreeBusyError as exc:

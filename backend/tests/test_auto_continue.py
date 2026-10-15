@@ -21,7 +21,7 @@ import agent.engine as engine
 import agent.turn as turn
 from agent import build_chat_orchestrator
 from core.config import Settings
-from runs import LimitNotice, RunRegistry, RunStatus
+from runs import AnswerRetracted, LimitNotice, RunRegistry, RunStatus
 from tools import RunDeps
 
 from ._helpers import bodies_of
@@ -126,6 +126,30 @@ async def test_an_overloaded_server_is_asked_again(monkeypatch: pytest.MonkeyPat
     run = await _run(_fails_first(503), _work_toolset())
     assert run.status is RunStatus.done
     assert [n.limit for n in bodies_of(run, LimitNotice)] == ["continue"]
+
+
+async def test_a_retried_answer_takes_back_what_the_cut_stream_showed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The live bubble otherwise shows the first half and then the whole answer after it.
+    _settings(monkeypatch, Settings(auto_continue_transient_max=2))
+    monkeypatch.setattr(turn, "TRANSIENT_BACKOFF_S", (0.0,))
+    attempts = 0
+
+    async def stream_fn(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            yield "half an ans"
+            raise ModelHTTPError(status_code=502, model_name="m", body="stream cut")
+        yield "the full answer"
+
+    run = await _run(FunctionModel(stream_function=stream_fn), _work_toolset())
+    assert run.status is RunStatus.done
+    [retracted] = bodies_of(run, AnswerRetracted)
+    assert (retracted.text_chars, retracted.thinking_chars) == (len("half an ans"), 0)
 
 
 async def test_a_refused_request_is_not_sent_again(monkeypatch: pytest.MonkeyPatch) -> None:

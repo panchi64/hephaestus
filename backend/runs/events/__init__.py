@@ -46,6 +46,7 @@ from .conversation import (
 )
 from .lifecycle import (
     AnswerDelta,
+    AnswerRetracted,
     LimitNotice,
     RunEnded,
     RunError,
@@ -91,6 +92,7 @@ from .view import (
 
 __all__ = [
     "AnswerDelta",
+    "AnswerRetracted",
     "AnsweredQuestionOut",
     "ApprovalRequired",
     "CitationAdded",

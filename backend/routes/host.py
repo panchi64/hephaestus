@@ -104,7 +104,7 @@ async def _searchable_roots(request: Request) -> list[Path]:
 async def _home_project(request: Request, path: str) -> tuple[list[Path], str] | None:
     """The folders and in-project path a path in the agent's home names, when it names a
     registered project (``~/projects/<slug>/…``); None for anything else. The project's
-    worktree comes first, as in :func:`_searchable_roots`."""
+    own folder comes first, because that is what ``~/projects/<slug>`` is mounted on."""
     try:
         target = parse(absolute(path, cwd=HOME))
     except HomePathError:
@@ -120,7 +120,7 @@ async def _home_project(request: Request, path: str) -> tuple[list[Path], str] |
     if root is None:
         return None
     worktree = deps.worktrees(request).path_for(project_id)
-    return ([worktree] if worktree.is_dir() else []) + [root], target.rel
+    return [root, *([worktree] if worktree.is_dir() else [])], target.rel
 
 
 @router.post("/open", response_model=OpenResult)

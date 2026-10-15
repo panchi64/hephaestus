@@ -10,8 +10,9 @@ from fastapi import HTTPException
 from pydantic import JsonValue
 
 from core.config import get_settings
-from routes.deps import app_state
+from routes.deps import OPERATOR_ID, app_state
 from services.conversations import ConversationStore
+from services.settings_store import TurnTuning
 
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, json_list, obj, s
@@ -195,6 +196,26 @@ async def test_inactivity_timeout_round_trip():
 
         again = await _settings(client)
         assert again["inactivity_timeout_s"] == 300
+
+
+async def test_the_first_token_wait_and_auto_continue_reach_the_turn():
+    async with client_app() as (client, app):
+        got = await _settings(client)
+        assert got["first_token_timeout_s"] == get_settings().first_token_timeout_s
+        assert got["auto_continue_max"] == get_settings().auto_continue_max
+
+        body = {"first_token_timeout_s": 900, "auto_continue_max": 0}
+        put = await client.put("/chat/settings", json=body)
+        assert put.status_code == 200
+        assert (json_body(put)["first_token_timeout_s"], json_body(put)["auto_continue_max"]) == (
+            900,
+            0,
+        )
+        tuned = await TurnTuning(app_state(app).settings_store).apply(get_settings(), OPERATOR_ID)
+        assert (tuned.first_token_timeout_s, tuned.auto_continue_max) == (900, 0)
+
+        for bad in ({"auto_continue_max": -1}, {"auto_continue_max": 21}):
+            assert (await client.put("/chat/settings", json=bad)).status_code == 422
 
 
 async def test_wall_clock_timeout_is_absent_until_the_operator_sets_one():

@@ -75,6 +75,7 @@ from services.conversations import (
     ConversationBinding,
     ConversationStore,
 )
+from services.settings_store import TurnTuning
 from services.tool_policy import vision_disabled_tools
 from services.uploads import UploadStore
 from tools import (
@@ -113,6 +114,13 @@ from .turn import NO_CAPS, drive_turn, turn_deps
 from .verify import should_verify, verify_and_correct
 
 logger = logging.getLogger(__name__)
+
+
+async def _tuned(capabilities: ServiceContainer, owner_id: str) -> Settings:
+    """The config, with the operator's own bounds on how a turn waits and carries on."""
+    settings = get_settings()
+    tuning = capabilities.get_optional(TurnTuning)
+    return settings if tuning is None else await tuning.apply(settings, owner_id)
 
 
 def turn_agent(
@@ -319,7 +327,7 @@ def build_chat_orchestrator(
     """
 
     async def orchestrate(run: Run) -> None:
-        settings = get_settings()
+        settings = await _tuned(capabilities, run.owner_id)
         run.context_window = context_window
         run.context_thresholds = context_thresholds
         # The gauge's fold mark comes off the *same* policy object the trigger reads, so
@@ -650,7 +658,7 @@ def build_resume_orchestrator(
     """
 
     async def orchestrate(run: Run) -> None:
-        settings = get_settings()
+        settings = await _tuned(capabilities, run.owner_id)
         # `calls` carries values rather than verdicts — Pydantic AI wraps each one in a
         # `ToolReturn`, so the operator's answer lands in history as that call's own
         # result and the model reads it exactly as it would any other tool's.

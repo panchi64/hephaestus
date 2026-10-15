@@ -181,6 +181,7 @@ class ConversationTaskToolset(AbstractToolset[RunDeps]):
         tool: ToolsetTool[RunDeps],
     ) -> object:
         bound, store = self._for(ctx)
+        ctx.deps.tasks_touched = True
         # The store is cached with the toolset, but the run it emits on is per turn — point
         # it at the live one, or the second turn's updates stream onto a dead run.
         if isinstance(store, ConversationTaskStore):
@@ -229,9 +230,12 @@ async def remind_of_open_tasks[OutputT](ctx: RunContext[RunDeps], output: Output
 
     A model that writes a list and then answers before working through it has declared
     victory early, and the list is the one record of what it said it would do. Once per
-    turn, so a step that cannot be done ends up named in the answer rather than looping.
+    turn, so a step that cannot be done ends up named in the answer rather than looping,
+    and only in a run that worked on the list: one left open by earlier work is not what
+    a later, unrelated question was about.
     """
-    if not isinstance(output, str) or ctx.deps.open_tasks_reminded:
+    deps = ctx.deps
+    if not isinstance(output, str) or deps.open_tasks_reminded or not deps.tasks_touched:
         return output
     tasks = ctx.deps.caps.get_optional(ConversationTasks)
     conversation_id = ctx.deps.conversation_id

@@ -22,11 +22,13 @@ from typing import cast, override
 from pydantic import JsonValue
 from pydantic_ai import ApprovalRequired, CallDeferred, ModelRetry, RunContext, ToolFailed
 from pydantic_ai.exceptions import (
-    AgentRunError,
+    RunCancelled,
     SkipToolExecution,
     SkipToolValidation,
+    SuspendedResponseExpired,
     ToolFailedError,
     ToolRetryError,
+    UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
@@ -41,7 +43,9 @@ logger = logging.getLogger(__name__)
 #: Raised on purpose to steer the run: deferrals, retries, terminal failures already
 #: worded for the model, and the library's own run-level stops. ``UserError`` is the
 #: library refusing how it was wired, a bug that would fail every call alike, so it stays
-#: fatal rather than becoming something the model is asked to work around.
+#: fatal rather than becoming something the model is asked to work around. A model error
+#: raised inside a tool is a sub-model's (a reviewer, a distiller), not the chat model's,
+#: so it is contained like any other failure.
 _PASS_THROUGH = (
     ApprovalRequired,
     CallDeferred,
@@ -51,7 +55,9 @@ _PASS_THROUGH = (
     ToolRetryError,
     SkipToolExecution,
     SkipToolValidation,
-    AgentRunError,
+    RunCancelled,
+    SuspendedResponseExpired,
+    UsageLimitExceeded,
     UserError,
 )
 
@@ -79,6 +85,19 @@ def describe_failure(name: str, error: Exception) -> str:
     )
 
 
+#: Headroom past a call's own timeout for the tool to stop its work and report.
+_OWN_TIMEOUT_MARGIN_S = 60.0
+
+
+def _call_limit(default: float | None, tool_args: dict[str, JsonValue]) -> float | None:
+    """The bound on one call: the default, or longer when the call asked for a longer
+    ``timeout_seconds`` of its own, so the tool ends its work before this cancels it."""
+    own = tool_args.get("timeout_seconds")
+    if default is None or isinstance(own, bool) or not isinstance(own, int | float):
+        return default
+    return max(default, float(own) + _OWN_TIMEOUT_MARGIN_S)
+
+
 @dataclass
 class RecoveringToolset(WrapperToolset[RunDeps]):
     #: Upper bound on one call, keepalive included; None leaves calls unbounded.
@@ -92,7 +111,8 @@ class RecoveringToolset(WrapperToolset[RunDeps]):
         ctx: RunContext[RunDeps],
         tool: ToolsetTool[RunDeps],
     ) -> object:
-        deadline = asyncio.timeout(self.call_timeout_s)
+        limit = _call_limit(self.call_timeout_s, tool_args)
+        deadline = asyncio.timeout(limit)
         try:
             async with ctx.deps.run.keepalive(), deadline:
                 return cast(object, await self.wrapped.call_tool(name, tool_args, ctx, tool))
@@ -102,7 +122,7 @@ class RecoveringToolset(WrapperToolset[RunDeps]):
             if isinstance(exc, TimeoutError) and deadline.expired():
                 raise ToolFailed(
                     render_tool_error(
-                        f"{name} was stopped after {self.call_timeout_s or 0:.0f}s unfinished",
+                        f"{name} was stopped after {limit or 0:.0f}s unfinished",
                         hints=["split the work into smaller calls, or run it in the background"],
                     )
                 ) from exc
@@ -111,3 +131,17 @@ class RecoveringToolset(WrapperToolset[RunDeps]):
             else:
                 logger.exception("tool %s raised", name)
             raise ToolFailed(describe_failure(name, exc)) from exc
+
+
+@dataclass
+class TolerantTools(WrapperToolset[RunDeps]):
+    """One category whose tool listing may fail (an MCP server that went down) without
+    ending the run: it offers no tools for that step instead."""
+
+    @override
+    async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
+        try:
+            return await self.wrapped.get_tools(ctx)
+        except Exception:
+            logger.warning("toolset %s could not list its tools", self.wrapped.id, exc_info=True)
+            return {}

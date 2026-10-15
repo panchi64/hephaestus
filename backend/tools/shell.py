@@ -9,7 +9,8 @@ one place that turns what the model *said* into where a command runs.
 The thread's scratch is always there; a project is brought in when the working directory
 is in it or the command names it, and what the command changed is brought back after. A
 project the thread may only read is mounted read-only. The working directory persists per
-thread and starts in the thread's own place: its project, or its scratch.
+thread (``services/sandbox/thread_shells.py``) and starts in the thread's own place: its
+project, or its scratch.
 
 **The executing tools take a `reach`.** The model states how far a command needs to go,
 and this file holds it to that:
@@ -37,46 +38,40 @@ new piece of output goes out as `tool.progress`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, override
+from typing import Literal
 
-from pydantic_ai import AbstractToolset, FunctionToolset, RunContext
+from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 
+from core.diagnostics import render_tool_error
 from runs import ToolProgress
 from services.home.paths import HomePathError, parse
 from services.home.table import RunHome
 from services.permissions import Reach, capability_of
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import SandboxSessionManager
-from services.sandbox.home_shell import HomeShell
 from services.sandbox.host import host_scratch_dir
 from services.sandbox.session import SandboxSession
-from services.sandbox.shell_runner import (
-    BackgroundStatus,
-    HostShell,
-    ProgressHook,
-    ShellResult,
-)
+from services.sandbox.shell_runner import BackgroundStatus, ProgressHook, ShellResult
+from services.sandbox.thread_shells import ThreadShell, ThreadShells
 from services.vm import DENIED_MARKER
 from services.vm.project import ProjectCopies
 
 from .deps import RunDeps
 from .emit import RunEventEmitted
 from .home import resolve_run_home
-from .rebound import ReboundToolset
 from .workspace import unavailable
 
 #: Long enough for a real build or test suite; short enough that a hung command doesn't
 #: hold the turn open indefinitely. The agent can pass its own timeout per call, and any
 #: genuinely long-running thing belongs in `start_command`.
-_TIMEOUT_S = 300.0
+SHELL_TIMEOUT_S = 300.0
 
 #: Effectively no cap: a pathological command's output is caught by the run's own
 #: context-overflow stop, which says so out loud rather than silently dropping the middle.
-_MAX_OUTPUT_CHARS = 2_000_000
+SHELL_MAX_OUTPUT_CHARS = 2_000_000
 
 #: The two tools that execute something new. `check_command` and `stop_command` act on a
 #: process that was already approved into existence, so re-asking would be noise.
@@ -91,12 +86,16 @@ GATED_TOOLS = frozenset(f"shell_{name}" for name in EXECUTING_TOOLS)
 #: is keyed on the namespaced name and this file only ever sees the bare one.
 _NAMESPACE = "shell_"
 
-_NO_VM = (
-    "error: shell commands are unavailable: the platform VM they run in is not running "
-    "({reason})\n"
-    "help: tell the operator; until it is back, work by reading and editing files with the "
-    "files tools, and say plainly what you could not verify"
-)
+
+def _no_vm(reason: str) -> str:
+    return render_tool_error(
+        f"shell commands are unavailable: the platform VM they run in is not running ({reason})",
+        hints=[
+            "tell the operator; until it is back, work by reading and editing files with "
+            + "the files tools, and say plainly what you could not verify"
+        ],
+    )
+
 
 #: How long the first command of a session waits for a VM that is still starting.
 _VM_WAIT_S = 120.0
@@ -248,27 +247,6 @@ def _unknown_command(command_id: str) -> dict[str, object]:
     }
 
 
-@dataclass
-class ThreadShell:
-    """One thread's shells: its home shell in the VM, and a host shell per host folder."""
-
-    home: HomeShell
-    hosts: dict[Path, HostShell] = field(default_factory=dict)
-
-    def host_at(self, root: Path) -> HostShell:
-        shell = self.hosts.get(root)
-        if shell is None:
-            shell = HostShell(root, default_timeout=_TIMEOUT_S, max_output_chars=_MAX_OUTPUT_CHARS)
-            self.hosts[root] = shell
-        return shell
-
-    async def shutdown(self, copies: ProjectCopies | None) -> None:
-        if copies is not None:
-            await self.home.shutdown(copies)
-        for host in self.hosts.values():
-            await host.shutdown()
-
-
 def _host_root(home: RunHome, cwd: str) -> Path:
     """Where a host command starts: the host folder of the project the working directory
     is in, else the host scratch directory."""
@@ -287,16 +265,19 @@ class _Ready:
     home: RunHome
     session: SandboxSession
     copies: ProjectCopies
+    shell: ThreadShell
 
 
-async def _ready(ctx: RunContext[RunDeps]) -> _Ready | str:
-    """The run's home, its scratch session and the VM's copies, or why there are none."""
+async def _ready(ctx: RunContext[RunDeps], name: str) -> _Ready | str:
+    """The run's home, its scratch session, the VM's copies and the thread's shell, or why
+    there are none. An executing call asks for approval once all of those are there."""
     copies = ctx.deps.caps.get_optional(ProjectCopies)
-    if copies is None:
-        return _NO_VM.format(reason="it is disabled")
+    shells = ctx.deps.caps.get_optional(ThreadShells)
+    if copies is None or shells is None:
+        return _no_vm("it is disabled")
     vm = copies.vm
     if not vm.available and not await vm.wait_ready(_VM_WAIT_S):
-        return _NO_VM.format(reason=vm.failure or "it is still starting")
+        return _no_vm(vm.failure or "it is still starting")
     try:
         home = await resolve_run_home(ctx.deps)
     except WorktreeBusyError as exc:
@@ -305,18 +286,17 @@ async def _ready(ctx: RunContext[RunDeps]) -> _Ready | str:
     session = sessions.existing(ctx.deps.workspace_key) if sessions is not None else None
     if home is None or session is None:
         return unavailable(ctx.deps)
-    return _Ready(home=home, session=session, copies=copies)
+    approved = ctx.tool_call_approved or ctx.deps.delegated_approved
+    if name in EXECUTING_TOOLS and not approved:
+        raise ApprovalRequired()
+    shell = shells.get(ctx.deps.workspace_key, start=home.default.path)
+    return _Ready(home=home, session=session, copies=copies, shell=shell)
 
 
-def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
-    """The four tools, over one thread's shells."""
+def shell_toolset() -> FunctionToolset[RunDeps]:
+    """The `shell` category, built once at app assembly. Each thread's working directory
+    and background commands live in the app's :class:`ThreadShells`."""
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
-
-    async def ready(ctx: RunContext[RunDeps]) -> _Ready:
-        state = await _ready(ctx)
-        if isinstance(state, str):  # pragma: no cover — `resolve` refuses this first
-            raise RuntimeError(state)
-        return state
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
     async def run_command(
@@ -324,7 +304,7 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
         command: str,
         reach: Reach = "workspace",
         timeout_seconds: float | None = None,
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | str:
         """Execute a shell command in your home and return its output.
 
         It starts in the working directory the last command left (`cwd` in each result).
@@ -344,10 +324,13 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
             `duration_ms`, the `cwd` the next command starts in, the `reach` you declared,
             whether it ran `fenced` in the VM, and any `notes` from bringing its work back.
         """
-        state = await ready(ctx)
+        state = await _ready(ctx, "run_command")
+        if isinstance(state, str):
+            return state
+        shell = state.shell
         cwd = shell.home.cwd
         bound = boundary("run_command", command, reach, state.home, cwd)
-        timeout = timeout_seconds if timeout_seconds is not None else _TIMEOUT_S
+        timeout = timeout_seconds if timeout_seconds is not None else SHELL_TIMEOUT_S
         if not bound.fenced:
             result = await shell.host_at(_host_root(state.home, cwd)).run(
                 command, timeout_seconds=timeout_seconds, on_progress=_progress_hook(ctx)
@@ -358,19 +341,16 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
             state.copies,
             command,
             mounts=state.home.mounts,
-            env=state.session.command_env(network=bound.network),
             network=bound.network,
             timeout_seconds=timeout_seconds,
             on_progress=_progress_hook(ctx),
         )
-        if ctx.deps.home is not None:
-            ctx.deps.home = replace(ctx.deps.home, cwd=done.cwd)
         return _run_payload(done.result, bound, timeout, cwd=done.cwd, notes=done.notes)
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
     async def start_command(
         ctx: RunContext[RunDeps], command: str, reach: Reach = "workspace"
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | str:
         """Start a long-running command in the background (e.g. a server or watcher).
 
         Callers MUST call `stop_command(command_id)` when done to terminate the
@@ -385,7 +365,10 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
             `command_id` for later check/stop calls, the `command` itself, and the same
             `reach` / `fenced` pair every executing call carries.
         """
-        state = await ready(ctx)
+        state = await _ready(ctx, "start_command")
+        if isinstance(state, str):
+            return state
+        shell = state.shell
         cwd = shell.home.cwd
         bound = boundary("start_command", command, reach, state.home, cwd)
         if bound.fenced:
@@ -394,7 +377,6 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
                 state.copies,
                 command,
                 mounts=state.home.mounts,
-                env=state.session.command_env(network=bound.network),
                 network=bound.network,
             )
         else:
@@ -403,8 +385,11 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
 
     async def _find(
         ctx: RunContext[RunDeps], command_id: str, *, stop: bool
-    ) -> dict[str, object]:
-        state = await ready(ctx)
+    ) -> dict[str, object] | str:
+        state = await _ready(ctx, "stop_command" if stop else "check_command")
+        if isinstance(state, str):
+            return state
+        shell = state.shell
         act = shell.home.stop if stop else shell.home.check
         status = await act(state.copies, command_id)
         for host in shell.hosts.values():
@@ -413,7 +398,9 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
         return _unknown_command(command_id) if status is None else _background_payload(status)
 
     @toolset.tool
-    async def check_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object]:
+    async def check_command(
+        ctx: RunContext[RunDeps], command_id: str
+    ) -> dict[str, object] | str:
         """Check the status and recent output of a background command.
 
         Args:
@@ -426,7 +413,7 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
         return await _find(ctx, command_id, stop=False)
 
     @toolset.tool
-    async def stop_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object]:
+    async def stop_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object] | str:
         """Stop a background command and return its final output.
 
         Args:
@@ -439,45 +426,3 @@ def _tools_for(shell: ThreadShell) -> FunctionToolset[RunDeps]:
         return await _find(ctx, command_id, stop=True)
 
     return toolset
-
-
-class _HomeShellToolset(ReboundToolset):
-    """The shell, bound per thread so its working directory and processes persist."""
-
-    def __init__(
-        self, template: AbstractToolset[RunDeps], build: Callable[[str], ThreadShell]
-    ) -> None:
-        super().__init__("shell", template)
-        self._build: Callable[[str], ThreadShell] = build
-
-    @override
-    async def bind(self, name: str, ctx: RunContext[RunDeps]) -> AbstractToolset[RunDeps] | str:
-        state = await _ready(ctx)
-        if isinstance(state, str):
-            return state
-        approved = ctx.tool_call_approved or ctx.deps.delegated_approved
-        if name in EXECUTING_TOOLS and not approved:
-            raise ApprovalRequired()
-        start = state.home.default.path
-        return self.cached(ctx.deps.workspace_key, lambda: _tools_for(self._build(start)))
-
-
-def shell_toolset(*, shells: list[ThreadShell] | None = None) -> AbstractToolset[RunDeps]:
-    """The `shell` category, built once per turn and bound per thread.
-
-    ``shells`` collects every thread shell this toolset builds, for the one caller that
-    owns their lifetime: a run whose scratch is taken away when it ends (an isolated
-    sub-agent's fork) has to have what it left running reaped with it.
-    """
-
-    def build(start: str) -> ThreadShell:
-        shell = ThreadShell(
-            home=HomeShell(
-                default_timeout=_TIMEOUT_S, max_output_chars=_MAX_OUTPUT_CHARS, start=start
-            )
-        )
-        if shells is not None:
-            shells.append(shell)
-        return shell
-
-    return _HomeShellToolset(_tools_for(build("/home/agent/scratch")), build)

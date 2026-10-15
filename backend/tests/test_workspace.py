@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import cast, final
 
 import pytest
-from pydantic_ai import AbstractToolset, ModelRetry, RunContext
+from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -32,6 +32,7 @@ from runs import Run, RunStream
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.checkout import CheckoutHolders
 from services.sandbox import SandboxError, SandboxSessionManager
+from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
 from services.workspace import (
     SANDBOX_MOUNT,
@@ -42,11 +43,11 @@ from services.workspace import (
 )
 from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
 from tools.deps import RunDeps
-from tools.shell import ThreadShell, shell_toolset
+from tools.shell import shell_toolset
 from tools.workspace import run_workspace
 
 from ._json import arr, obj, parse_json
-from .shell_support import Shell, checkout_ctx, local_home, make_repo
+from .shell_support import Shell, checkout_ctx, local_home, make_repo, thread_shells
 from .vm_local import can_confine
 
 OWNER = "operator"
@@ -345,10 +346,9 @@ class TestShellRunsInTheVm:
         copies: ProjectCopies,
         *,
         kind: WorkspaceKind = "checkout",
-        shells: list[ThreadShell] | None = None,
+        shells: ThreadShells | None = None,
         project: str = "proj-1",
         conversation: str = "conv-a",
-        toolset: AbstractToolset[RunDeps] | None = None,
     ) -> tuple[Path, Shell]:
         root = tmp_path / project
         if not root.exists():
@@ -362,8 +362,9 @@ class TestShellRunsInTheVm:
             kind=kind,
             project_id=project,
             conversation_id=conversation,
+            shells=shells,
         )
-        return root, Shell(toolset or shell_toolset(shells=shells), ctx)
+        return root, Shell(shell_toolset(), ctx)
 
     @pytest.mark.parametrize("kind", ["checkout", "worktree"])
     async def test_a_refused_command_is_a_retry_not_a_dead_run(
@@ -418,32 +419,30 @@ class TestShellRunsInTheVm:
         # What a command ends in is what the shell persists, so it adopts it only while it
         # is still somewhere the command could see — otherwise a `cd` out would leave every
         # later relative path judged against a directory the command is no longer in.
-        shells: list[ThreadShell] = []
+        shells = thread_shells(copies)
         _root, shell = await self._shell(tmp_path, copies, shells=shells)
         _ = await _raw(shell, "run_command", command="mkdir -p sub && cd sub")
-        bound = shells[-1]  # shells[0] is the template's
-        assert bound.home.cwd == f"{PROJECT}/sub"  # ...a `cd` inside the project is kept
+        assert shells.cwd("conv-a") == f"{PROJECT}/sub"  # ...a `cd` inside the project is kept
         _ = await _raw(shell, "run_command", command="cd /tmp")
-        assert bound.home.cwd == f"{PROJECT}/sub"  # ...and one out is not
+        assert shells.cwd("conv-a") == f"{PROJECT}/sub"  # ...and one out is not
 
     async def test_two_threads_do_not_share_a_shell(self, tmp_path: Path, copies: ProjectCopies):
         # Each thread keeps its own working directory, compared to where it should be,
-        # because two shells both left at the template's would also "not share" state.
-        shells: list[ThreadShell] = []
-        toolset = shell_toolset(shells=shells)
-        _, a = await self._shell(tmp_path, copies, conversation="conv-a", toolset=toolset)
-        _, b = await self._shell(tmp_path, copies, conversation="conv-b", toolset=toolset)
+        # because two shells both left where they started would also "not share" state.
+        shells = thread_shells(copies)
+        _, a = await self._shell(tmp_path, copies, conversation="conv-a", shells=shells)
+        _, b = await self._shell(tmp_path, copies, conversation="conv-b", shells=shells)
         _ = await _raw(a, "run_command", command="mkdir -p sub && cd sub")
         assert str((await _call(b, "run_command", command="pwd"))["stdout"]).strip() == PROJECT
         assert str((await _call(a, "run_command", command="pwd"))["stdout"]).strip() == (
             f"{PROJECT}/sub"
         )
-        assert {shell.home.cwd for shell in shells[1:]} == {f"{PROJECT}/sub", PROJECT}
+        assert (shells.cwd("conv-a"), shells.cwd("conv-b")) == (f"{PROJECT}/sub", PROJECT)
 
-    async def test_a_shell_handed_back_by_a_finished_run_is_reaped(
+    async def test_a_closed_shell_stops_what_it_left_running(
         self, tmp_path: Path, copies: ProjectCopies
     ):
-        shells: list[ThreadShell] = []
+        shells = thread_shells(copies)
         _root, shell = await self._shell(tmp_path, copies, shells=shells)
         vm_job = (await _call(shell, "start_command", command="sleep 60"))["command_id"]
         host_job = (await _call(shell, "start_command", command="sleep 60", reach="host"))[
@@ -451,7 +450,7 @@ class TestShellRunsInTheVm:
         ]
         assert (await _call(shell, "check_command", command_id=vm_job))["status"] == "running"
 
-        await shells[-1].shutdown(copies)
+        await shells.close("conv-a")
 
         for command_id in (vm_job, host_job):
             gone = await _call(shell, "check_command", command_id=command_id)

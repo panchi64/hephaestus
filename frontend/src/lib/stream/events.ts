@@ -193,6 +193,13 @@ export interface AnswerDelta extends Base {
   type: "answer.delta";
   text: string;
 }
+/** The trailing text and reasoning streamed for a model request that failed and is being
+ *  sent again; the retry streams its own. */
+export interface AnswerRetracted extends Base {
+  type: "answer.retracted";
+  text_chars: number;
+  thinking_chars: number;
+}
 
 // --- Tools -----------------------------------------------------------------
 /** The field every lifecycle frame of a tool call carries when the call was made from
@@ -703,6 +710,7 @@ export type RunEvent =
   | StepCompleted
   | ThinkingDelta
   | AnswerDelta
+  | AnswerRetracted
   | ToolStarted
   | ToolProgress
   | ToolCompleted

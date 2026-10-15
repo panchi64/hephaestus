@@ -20,15 +20,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import ClassVar
 
-from sqlmodel import Field
+from sqlmodel import Field, UniqueConstraint
 
 from models._backup import BackupSpec
 from models._fields import new_id, utcnow
-from models._table import Table
+from models._table import Table, TableArgs
 
 
 class Project(Table, table=True):
     __tablename__: ClassVar[str] = "projects"
+    __table_args__: ClassVar[TableArgs] = (
+        UniqueConstraint("owner_id", "slug", name="uq_projects_owner_slug"),
+    )
     # The operator's own configuration, so it belongs in an export. Keyed on the path:
     # the same directory *is* the same project, and the importer compares decrypted
     # values, so a re-seal on another host still matches. A restored path may not exist
@@ -43,7 +46,7 @@ class Project(Table, table=True):
     name: str
     # Where the project sits in the agent's home, as `~/projects/<slug>`. Derived from the
     # name when the project is created and never changed after, so a path written in a
-    # transcript still names the same folder after a rename. Unique per owner.
+    # transcript still names the same folder after a rename.
     slug: str = Field(default="", index=True)
     # AEAD ciphertext — a host path is the operator's own content (see the module docstring).
     root_path_enc: str

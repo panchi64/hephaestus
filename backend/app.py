@@ -64,8 +64,9 @@ from services.sandbox import (
     shutdown_confinement,
     stop_all_groups,
 )
+from services.sandbox.thread_shells import ThreadShells
 from services.sealing import seal_legacy_column
-from services.settings_store import SettingsStore
+from services.settings_store import SettingsStore, TurnTuning
 from services.task_list import ConversationTasks
 from services.tool_policy import AvailabilityCheck, CategoryAvailability
 from services.vm import PlatformVM
@@ -82,6 +83,7 @@ from tools import (
 )
 from tools.describe import category_names
 from tools.repo import repo_instructions
+from tools.shell import SHELL_MAX_OUTPUT_CHARS, SHELL_TIMEOUT_S
 from tools.tasks import tasks_context
 from tools.workspace_context import workspace_context
 
@@ -347,6 +349,18 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         await lifecycle.start(
             "project-copies", start=project_copies.start, stop=project_copies.stop
         )
+    # Each thread's shell: where its next command starts and what it left running.
+    thread_shells = (
+        ThreadShells(
+            project_copies,
+            default_timeout=SHELL_TIMEOUT_S,
+            max_output_chars=SHELL_MAX_OUTPUT_CHARS,
+        )
+        if project_copies is not None
+        else None
+    )
+    if thread_shells is not None:
+        lifecycle.on_stop("thread-shells", thread_shells.stop)
 
     # The deferred work-summary sweep — what the agent did in a thread, written once the
     # thread has been idle a while and shown when the operator comes back to it. Beside the
@@ -393,6 +407,8 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         agent_capabilities.add(sandbox_manager)
     if project_copies is not None:
         agent_capabilities.add(project_copies)
+    if thread_shells is not None:
+        agent_capabilities.add(thread_shells)
     # The core-owned agent-facing handles: the engine consults grants at the deferred
     # split, and the sandbox backs code execution. Everything else reaches the bag
     # through its own manifest's `capabilities` export.
@@ -404,6 +420,9 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # `resolve_background` rule titling and verification use, so a delegate is cheap by
     # construction rather than by a second policy.
     agent_capabilities.add(state.models)
+    # How long a turn waits for a first token and how far it carries on past its step
+    # limit: the operator's own, read per turn by the engine.
+    agent_capabilities.add(TurnTuning(state.settings_store))
     # The agent's task list: core-owned like the sandbox, because the `tasks` category is a
     # core category rather than a feature manifest's.
     state.conversation_tasks = ConversationTasks(engine, vault)

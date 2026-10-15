@@ -31,13 +31,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel
 from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.toolsets import AbstractToolset
 
 from agent import build_chat_orchestrator
-from agent.meta import make_utility_agent
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
@@ -47,6 +45,7 @@ from evals.dataset import (
     conversation_corpus,
     memory_corpus,
 )
+from evals.judge import judge_answer
 from evals.live import EnvEmbedder
 from runs import RunRegistry, RunStatus
 from runs.events import AnswerDelta, ToolStarted
@@ -109,21 +108,6 @@ async def _run_turn(
 # --- scoring ------------------------------------------------------------------
 
 
-class _JudgeScore(BaseModel):
-    """A 0–2 score for how well an answer used the operator's own context."""
-
-    score: int  # 0 = no use / wrong, 1 = partial, 2 = clearly used the stored fact
-    reason: str = ""
-
-
-_JUDGE_INSTRUCTIONS = (
-    "You grade whether an assistant answer used the operator's own stored context to "
-    "answer a personal question. Score 0 if it gave a generic answer, refused, or got "
-    "the fact wrong; 1 if it partially used the stored fact; 2 if it clearly and "
-    "correctly used it. Judge only against the rubric you are given."
-)
-
-
 @dataclass
 class ConsumerScores:
     consumer: str
@@ -165,9 +149,7 @@ class ConsumerScores:
 
 
 async def _judge(model: Model, q: EndToEndQuestion, answer: str) -> int:
-    agent = make_utility_agent(model, output_type=_JudgeScore, instructions=_JUDGE_INSTRUCTIONS)
-    result = await agent.run(f"Question: {q.question}\nRubric: {q.rubric}\nAnswer:\n{answer}")
-    return max(0, min(2, result.output.score))
+    return await judge_answer(model, asked=q.question, rubric=q.rubric, answer=answer)
 
 
 async def score_consumer(

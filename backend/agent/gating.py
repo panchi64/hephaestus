@@ -80,6 +80,7 @@ from services.permissions import (
 )
 from services.permissions.fence import Fence
 from services.registry import ModelRegistry
+from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
 from tools.deps import RunDeps
 from tools.home import resolve_run_home
@@ -363,7 +364,10 @@ async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Fence | 
     except Exception:  # noqa: BLE001 — a judge that raises would abort the operator's turn
         logger.info("auto review: no home to judge against", exc_info=True)
         return None
-    return home.fence() if home is not None else None
+    if home is None:
+        return None
+    shells = deps.caps.get_optional(ThreadShells)
+    return home.fence(shells.cwd(deps.workspace_key) if shells is not None else None)
 
 
 async def resolve_reviewer(caps: ServiceContainer, owner_id: str) -> Reviewer | None:

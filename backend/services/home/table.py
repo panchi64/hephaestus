@@ -16,13 +16,11 @@ from .paths import SCRATCH, HomePathError, Place, parse
 
 @dataclass(frozen=True)
 class RunHome:
-    """One run's home: its mounts, the place a path naming no group lands in, and where
-    its shell stands, which is what the judge reads a command's relative paths from."""
+    """One run's home: its mounts, and the place a path naming no group lands in."""
 
     mounts: tuple[Mount, ...]
     default: Place
     key: str
-    cwd: str = ""
     backend: HomeBackend = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -50,11 +48,12 @@ class RunHome:
         return replace(self, mounts=mounts)
 
     def fence(self, cwd: str | None = None) -> HomeFence:
-        """The home as the permission judge measures a path against it."""
+        """The home as the permission judge measures a path against it, from where the
+        thread's shell stands (its default place before its first command)."""
         return HomeFence(
             places=frozenset(m.place for m in self.mounts),
             writable=frozenset(m.place for m in self.mounts if m.writable),
-            cwd=cwd or self.cwd or self.default.path,
+            cwd=cwd or self.default.path,
         )
 
 

@@ -21,6 +21,8 @@ from pathlib import Path
 from pydantic_ai.workspaces import FileEntry, LocalWorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.protocol import WorkspaceReadOnlyError
 
+from core.diagnostics import render_tool_error
+
 from .paths import HOME, SCRATCH, HomePath, HomePathError, Place, absolute, parse
 
 #: The group folders under the home, in the order a listing shows them.
@@ -95,7 +97,8 @@ class HomeBackend:
             target = parse(self._regroup(path), cwd=self._working_dir)
         except HomePathError as exc:
             # A `ValueError` is what the file tools hand back to the model to correct.
-            raise ValueError(str(exc)) from exc
+            hints = [exc.hint] if exc.hint else []
+            raise ValueError(render_tool_error(str(exc), hints=hints)) from exc
         mount = self._mounts.get(target.place)
         if mount is None:
             raise FileNotFoundError(f"there is no {target.place.path} in your home")

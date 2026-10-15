@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
 
-from core.config import get_settings
+from core.config import Settings, get_settings
 from core.db import in_session
 from models._fields import utcnow
 from models.app_setting import AppSetting
@@ -66,6 +66,16 @@ INACTIVITY_TIMEOUT_KEY = "chat.inactivity_timeout_s"
 # operator turned it off, which must not fall back to the config default.
 WALL_CLOCK_TIMEOUT_KEY = "chat.wall_clock_timeout_s"
 _DISABLED = ""
+
+# How long a turn waits for a model's first streamed token (`first_token_timeout_s`): a
+# local model reading a long cold prompt is silent for minutes, and how many depends on the
+# operator's hardware.
+FIRST_TOKEN_TIMEOUT_KEY = "chat.first_token_timeout_s"
+
+# How many times a turn that is still making progress carries on past its step limit by
+# itself (`auto_continue_max`). 0 stops at the limit every time.
+AUTO_CONTINUE_MAX_KEY = "chat.auto_continue_max"
+AUTO_CONTINUE_MAX_CEILING = 20
 
 # How many sub-agents may be running for the operator at once (services/subagents/). Unset
 # means no cap, which is the default and the honest one: the model launches these to *save*
@@ -250,6 +260,46 @@ async def set_wall_clock_timeout(
     the two before calling this."""
     await store.set(owner_id, WALL_CLOCK_TIMEOUT_KEY, _DISABLED if value is None else str(value))
     return value
+
+
+async def get_first_token_timeout(store: SettingsStore, owner_id: str) -> float | None:
+    """The operator's first-token wait in seconds, else the config default (which a deploy
+    may set to None, leaving that wait to the inactivity watchdog)."""
+    raw = await store.get(owner_id, FIRST_TOKEN_TIMEOUT_KEY)
+    return _positive_float_or(raw, get_settings().first_token_timeout_s)
+
+
+async def set_first_token_timeout(store: SettingsStore, owner_id: str, value: float) -> float:
+    await store.set(owner_id, FIRST_TOKEN_TIMEOUT_KEY, str(value))
+    return value
+
+
+async def get_auto_continue_max(store: SettingsStore, owner_id: str) -> int:
+    """How many times a turn carries on past its step limit, else the config default."""
+    raw = await store.get(owner_id, AUTO_CONTINUE_MAX_KEY)
+    default = get_settings().auto_continue_max
+    return _bounded_int_or(raw, default, maximum=AUTO_CONTINUE_MAX_CEILING)
+
+
+async def set_auto_continue_max(store: SettingsStore, owner_id: str, value: int) -> int:
+    await store.set(owner_id, AUTO_CONTINUE_MAX_KEY, str(value))
+    return value
+
+
+class TurnTuning:
+    """The operator's bounds on how a turn waits and carries on, as the engine applies
+    them; the one slice of the settings store a run reads."""
+
+    def __init__(self, store: SettingsStore) -> None:
+        self._store: SettingsStore = store
+
+    async def apply(self, settings: Settings, owner_id: str) -> Settings:
+        return settings.model_copy(
+            update={
+                "first_token_timeout_s": await get_first_token_timeout(self._store, owner_id),
+                "auto_continue_max": await get_auto_continue_max(self._store, owner_id),
+            }
+        )
 
 
 def _int_or(raw: str | None, default: int) -> int:

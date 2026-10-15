@@ -14,7 +14,7 @@ import { refreshSessions } from "../../data/sessions";
 import { revealTitle } from "../../data/titleReveals";
 import { ENGAGEMENT_ORDER, permissionLevel } from "../../model";
 import type { Citation } from "../../model";
-import { appendDelta, nextId } from "../patch";
+import { appendDelta, nextId, retractDelta } from "../patch";
 import type { FoldContext } from "./types";
 
 /** Fold one content or conversation-scoped event; false when it is not in this family. */
@@ -27,6 +27,12 @@ export function foldMeta(ev: RunEvent, c: FoldContext): boolean {
       return true;
     case "answer.delta":
       patchById(assistantId, (m) => appendDelta(m, "text", ev.text));
+      return true;
+    case "answer.retracted":
+      patchById(assistantId, (m) => {
+        retractDelta(m, "text", ev.text_chars);
+        retractDelta(m, "thinking", ev.thinking_chars);
+      });
       return true;
     case "context.injected":
       // A block the chassis put in front of the model. It lands on the rail in the

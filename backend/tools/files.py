@@ -17,12 +17,13 @@ from dataclasses import replace
 from typing import override
 
 from pydantic_ai import AbstractToolset, RunContext, ToolsetTool
-from pydantic_ai.exceptions import ApprovalRequired
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness import FileSystem
 
 from core.config import get_settings
-from services.home.paths import HOME, absolute
+from core.diagnostics import render_tool_error
+from services.home.paths import HOME, absolute, climbs_out
 from services.projects.worktree import WorktreeBusyError
 
 from .deps import RunDeps
@@ -40,11 +41,15 @@ GATED_TOOLS = frozenset(f"files_{name}" for name in WRITE_TOOLS)
 _WALKS = frozenset({"list_directory", "search_files", "find_files"})
 _HERE = frozenset({"", ".", "./"})
 
-_DELEGATE_READ_ONLY = (
-    "error: {place} is read-only to you\n"
-    "help: a delegated agent cannot be given new write access; write in ~/scratch and "
-    "report the change for the agent that delegated to you to make"
-)
+
+def _delegate_read_only(place: str) -> str:
+    return render_tool_error(
+        f"{place} is read-only to you",
+        hints=[
+            "a delegated agent cannot be given new write access; write in ~/scratch and "
+            + "report the change for the agent that delegated to you to make"
+        ],
+    )
 
 
 class _HomeFiles(ReboundToolset):
@@ -80,23 +85,39 @@ class _HomeFiles(ReboundToolset):
 async def _in_home_terms(
     ctx: RunContext[RunDeps], name: str, tool_args: dict[str, object]
 ) -> dict[str, object]:
-    """The call's ``path`` as the home reads it.
+    """The call's ``path`` as the absolute home path it names.
 
-    ``~`` is expanded here because the workspace joins a relative path onto its working
-    directory, which would read ``~`` as a folder name. A listing or search with no folder
-    named walks the thread's own place, not every project in the home.
+    Spelled out here because the harness checks a path against ``~`` before the home sees
+    it, reading ``~`` as a folder name and ``/work`` as outside it. A relative path is
+    read from the thread's own place, so ``projects/x`` in a project is that project's own
+    folder, and a listing or search with no folder named walks that place.
     """
     path = tool_args.get("path")
-    if isinstance(path, str) and path.strip().startswith("~"):
-        return {**tool_args, "path": absolute(path, cwd=HOME)}
-    if name in _WALKS and (path is None or (isinstance(path, str) and path.strip() in _HERE)):
-        try:
-            home = await resolve_run_home(ctx.deps)
-        except WorktreeBusyError:
-            return tool_args
-        if home is not None:
-            return {**tool_args, "path": home.default.path}
-    return tool_args
+    if path is not None and not isinstance(path, str):
+        return tool_args
+    text = (path or "").strip()
+    if text.startswith(("~", "/")):
+        return {**tool_args, "path": _spelled(text, cwd=HOME)}
+    if not text and name not in _WALKS:
+        return tool_args
+    try:
+        home = await resolve_run_home(ctx.deps)
+    except WorktreeBusyError:
+        return tool_args
+    if home is None:
+        return tool_args
+    if text in _HERE:
+        return {**tool_args, "path": home.default.path}
+    return {**tool_args, "path": _spelled(text, cwd=home.default.path)}
+
+
+def _spelled(text: str, *, cwd: str) -> str:
+    """``text`` as an absolute home path; one whose ``..`` leaves its place is sent back."""
+    climb = climbs_out(text, cwd=cwd)
+    if climb is not None:
+        hints = [climb.hint] if climb.hint else []
+        raise ModelRetry(render_tool_error(str(climb), hints=hints))
+    return absolute(text, cwd=cwd)
 
 
 async def _clear_write(ctx: RunContext[RunDeps], path: str) -> str | None:
@@ -111,7 +132,7 @@ async def _clear_write(ctx: RunContext[RunDeps], path: str) -> str | None:
     if place is None or home.writable(place):
         return None
     if ctx.deps.delegated_approved:
-        return _DELEGATE_READ_ONLY.format(place=place.path)
+        return _delegate_read_only(place.path)
     if not ctx.tool_call_approved:
         raise ApprovalRequired()
     _ = await lease(ctx.deps, home, place)

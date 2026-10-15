@@ -167,6 +167,10 @@ class Run:
     # the orchestrator refuses to re-drive a turn onto another endpoint once it
     # is set (FallbackModel only falls back pre-stream; this guards the rest).
     answer_started: bool = False
+    # Answer and reasoning characters streamed for the model request in flight, which a
+    # retry of that request has to take back off the operator's screen.
+    step_text_chars: int = 0
+    step_thinking_chars: int = 0
     # Opaque continuation payload for a parked run (set by the orchestrator
     # layer when awaiting approval). The substrate never interprets it.
     parked_payload: object | None = None

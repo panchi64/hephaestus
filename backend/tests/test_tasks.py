@@ -280,6 +280,7 @@ async def test_an_answer_with_steps_still_open_is_sent_back_once(tasks: Conversa
     items[0] = items[0].model_copy(update={"status": TaskStatus.completed})
     await _store(tasks).set_items(items)
     _, ctx = await _toolset_ctx(tasks, "conv-1")
+    ctx.deps.tasks_touched = True
 
     with pytest.raises(ModelRetry) as caught:
         _ = await remind_of_open_tasks(ctx, "All done!")
@@ -287,6 +288,18 @@ async def test_an_answer_with_steps_still_open_is_sent_back_once(tasks: Conversa
     assert "read the file" not in caught.value.message
     # Once per turn: the answer the model gives next stands, whatever it says.
     assert await remind_of_open_tasks(ctx, "Could not fix the bug.") == "Could not fix the bug."
+
+
+async def test_a_run_that_never_used_the_list_is_not_held_to_it(tasks: ConversationTasks):
+    # A list left open by earlier work is not what a later, unrelated question was about.
+    await _store(tasks).set_items(_items("deploy to staging"))
+    toolset, ctx = await _toolset_ctx(tasks, "conv-1")
+    assert await remind_of_open_tasks(ctx, "It is 9pm in Tokyo.") == "It is 9pm in Tokyo."
+    tools = await toolset.get_tools(ctx)
+    read = cast(object, await toolset.call_tool("tasks_read", {}, ctx, tools["tasks_read"]))
+    assert "deploy to staging" in str(read)
+    with pytest.raises(ModelRetry):
+        _ = await remind_of_open_tasks(ctx, "Done.")
 
 
 async def test_an_answer_with_every_step_settled_stands(tasks: ConversationTasks):

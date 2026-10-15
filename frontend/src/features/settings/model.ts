@@ -123,6 +123,13 @@ export interface ChatSettings {
   contextWarnThreshold: number;
   contextAlertThreshold: number;
   agentRequestLimit: number;
+  /** How many times a turn still making progress carries on past `agentRequestLimit`
+   *  by itself; 0 stops at the limit every time. */
+  autoContinueMax: number;
+  /** How long (seconds) a turn waits for the model's first token while it reads the
+   *  prompt — minutes on a local model with a long cold thread. `null` when the deploy
+   *  leaves that wait to the inactivity watchdog. */
+  firstTokenTimeoutS: number | null;
   inactivityTimeoutS: number;
   wallClockTimeoutS: number | null;
   subagentMaxConcurrent: number | null;

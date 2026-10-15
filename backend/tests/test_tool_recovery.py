@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from typing import override
 
-from pydantic_ai import Agent, DeferredToolRequests, ModelRetry
+from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 
 from agent import stream_agent_run
 from core.diagnostics import is_platform_failure, render_tool_error, suggest
@@ -44,7 +46,24 @@ def _boom_toolset() -> FunctionToolset[RunDeps]:
     async def picky() -> str:
         raise ModelRetry("pass a smaller window")
 
+    @toolset.tool_plain
+    async def distill() -> str:
+        raise ModelHTTPError(400, "utility", body="context length exceeded")
+
+    @toolset.tool_plain
+    async def build(timeout_seconds: float) -> str:
+        await asyncio.sleep(0.1)
+        return f"built within {timeout_seconds}s"
+
     return toolset
+
+
+class _Down(FunctionToolset[RunDeps]):
+    """A category whose server went away: listing its tools fails."""
+
+    @override
+    async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:
+        raise ConnectionError("the MCP server is gone")
 
 
 def _results(messages: list[ModelMessage]) -> list[ToolReturnPart | RetryPromptPart]:
@@ -57,25 +76,30 @@ def _results(messages: list[ModelMessage]) -> list[ToolReturnPart | RetryPromptP
     ]
 
 
-def _calls_then_answers(tool: str):
+def _calls_then_answers(tool: str, args: dict[str, object]):
     async def stream_fn(
         messages: list[ModelMessage], _info: AgentInfo
     ) -> AsyncIterator[str | DeltaToolCalls]:
         if _results(messages):
             yield "carried on"
         else:
-            yield {0: DeltaToolCall(name=tool, json_args=json.dumps({}))}
+            yield {0: DeltaToolCall(name=tool, json_args=json.dumps(args))}
 
     return stream_fn
 
 
 async def _drive(
-    tool: str, *, call_timeout_s: float | None = None
+    tool: str,
+    *,
+    call_timeout_s: float | None = None,
+    args: dict[str, object] | None = None,
+    extra: dict[str, FunctionToolset[RunDeps]] | None = None,
 ) -> tuple[str, list[ModelMessage], Run]:
+    categories = {"boom": _boom_toolset(), **(extra or {})}
     agent = Agent(
-        FunctionModel(stream_function=_calls_then_answers(tool)),
+        FunctionModel(stream_function=_calls_then_answers(tool, args or {})),
         deps_type=RunDeps,
-        toolsets=build_agent_toolsets({"boom": _boom_toolset()}, call_timeout_s=call_timeout_s),
+        toolsets=build_agent_toolsets(categories, call_timeout_s=call_timeout_s),
         output_type=[str, DeferredToolRequests],
     )
     run = Run(id="r1", kind="chat", owner_id=OWNER, stream=RunStream())
@@ -127,6 +151,29 @@ async def test_a_call_past_its_timeout_is_stopped_and_reported() -> None:
     assert answer == "carried on"
     [result] = _results(messages)
     assert "boom_stall was stopped after 0s unfinished" in str(result.content)
+
+
+async def test_a_sub_models_error_inside_a_tool_is_contained() -> None:
+    # A utility model refusing a distill is not the chat model overflowing its window, and
+    # read as one it would fold the operator's thread for nothing.
+    answer, messages, _ = await _drive("boom_distill")
+    assert answer == "carried on"
+    [result] = _results(messages)
+    assert "context length exceeded" in str(result.content)
+
+
+async def test_a_call_asking_for_longer_is_given_it() -> None:
+    answer, messages, _ = await _drive(
+        "boom_build", call_timeout_s=0.05, args={"timeout_seconds": 1.0}
+    )
+    assert answer == "carried on"
+    [result] = _results(messages)
+    assert "built within 1.0s" in str(result.content)
+
+
+async def test_a_category_that_cannot_list_its_tools_does_not_end_the_run() -> None:
+    answer, _, _ = await _drive("boom_explode", extra={"down": _Down()})
+    assert answer == "carried on"
 
 
 async def test_a_retry_request_still_goes_back_as_a_retry() -> None:

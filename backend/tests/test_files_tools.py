@@ -145,9 +145,35 @@ async def test_a_listing_with_no_folder_named_is_of_the_threads_own_place(tmp_pa
     assert "projects" in home and "scratch" in home
 
 
+async def test_the_scratch_alias_names_the_same_file(tmp_path: Path):
+    # `/work/...` is how the code tool and a sandbox workspace name scratch, so a path one
+    # tool hands back has to be one the file tools take.
+    caps, _root, _leases = await _with_project(tmp_path)
+    manager = _Manager(tmp_path)
+    args: dict[str, object] = {"path": "/work/report.md", "content": "ok"}
+    _ = await _call("write_file", args, manager=manager, caps=caps)
+    read = await _call("read_file", {"path": "~/scratch/report.md"}, manager=manager, caps=caps)
+    assert "ok" in str(read)
+
+
+async def test_a_relative_path_is_inside_the_threads_own_place(tmp_path: Path):
+    # A folder of the thread's own named like a group of the home is still its own folder.
+    caps, _root, _leases = await _with_project(tmp_path)
+    manager = _Manager(tmp_path)
+    _ = await _call("create_directory", {"path": "projects/api"}, manager=manager, caps=caps)
+    args: dict[str, object] = {"path": "projects/api/x.md", "content": "mine"}
+    _ = await _call("write_file", args, manager=manager, caps=caps)
+    read = await _call(
+        "read_file", {"path": "~/scratch/projects/api/x.md"}, manager=manager, caps=caps
+    )
+    assert "mine" in str(read)
+    with pytest.raises(ModelRetry, match="climbs out"):
+        _ = await _call("read_file", {"path": "../projects/api/README.md"}, manager=manager)
+
+
 async def test_a_write_into_a_project_the_thread_may_only_read_asks_first(tmp_path: Path):
     caps, root, _leases = await _with_project(tmp_path)
-    args: dict[str, object] = {"path": "projects/api/notes.md", "content": "hi"}
+    args: dict[str, object] = {"path": "~/projects/api/notes.md", "content": "hi"}
     with pytest.raises(ApprovalRequired):
         _ = await _call("write_file", args, manager=_Manager(tmp_path), caps=caps)
     assert not (root / "notes.md").exists()
@@ -156,19 +182,19 @@ async def test_a_write_into_a_project_the_thread_may_only_read_asks_first(tmp_pa
 async def test_an_approved_write_leases_the_project_to_the_thread(tmp_path: Path):
     caps, root, leases = await _with_project(tmp_path)
     manager = _Manager(tmp_path)
-    args: dict[str, object] = {"path": "projects/api/notes.md", "content": "hi"}
+    args: dict[str, object] = {"path": "~/projects/api/notes.md", "content": "hi"}
     _ = await _call("write_file", args, manager=manager, caps=caps, approved=True)
     assert (root / "notes.md").read_text() == "hi"
     assert await leases.held("operator", "conv-1") == {"projects/api"}
     # The next write in a later run of the thread does not ask again.
-    again: dict[str, object] = {"path": "projects/api/more.md", "content": "more"}
+    again: dict[str, object] = {"path": "~/projects/api/more.md", "content": "more"}
     _ = await _call("write_file", again, manager=manager, caps=caps)
     assert (root / "more.md").read_text() == "more"
 
 
 async def test_a_delegated_agent_cannot_take_write_access(tmp_path: Path):
     caps, root, leases = await _with_project(tmp_path)
-    args: dict[str, object] = {"path": "projects/api/notes.md", "content": "hi"}
+    args: dict[str, object] = {"path": "~/projects/api/notes.md", "content": "hi"}
     refused = await _call(
         "write_file", args, manager=_Manager(tmp_path), caps=caps, approved=True, delegated=True
     )

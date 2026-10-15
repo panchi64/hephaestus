@@ -27,10 +27,12 @@ from services.egress import EgressPolicy
 from services.projects import ProjectStore
 from services.projects.checkout import CheckoutHolders
 from services.sandbox import SandboxSessionManager
+from services.sandbox.thread_shells import ThreadShells
 from services.vm.host import SessionHost
 from services.vm.project import ProjectCopies
 from services.workspace_kind import WorkspaceKind
 from tools.deps import RunDeps
+from tools.shell import SHELL_MAX_OUTPUT_CHARS, SHELL_TIMEOUT_S
 
 from ._json import JSON
 from .conftest import egress_policy
@@ -123,6 +125,12 @@ async def local_home(
         await platform.stop()
 
 
+def thread_shells(copies: ProjectCopies) -> ThreadShells:
+    return ThreadShells(
+        copies, default_timeout=SHELL_TIMEOUT_S, max_output_chars=SHELL_MAX_OUTPUT_CHARS
+    )
+
+
 def checkout_ctx(
     root: Path,
     *,
@@ -133,14 +141,17 @@ def checkout_ctx(
     project_id: str = "proj-1",
     conversation_id: str = "conv-a",
     approved: bool = True,
+    shells: ThreadShells | None = None,
 ) -> RunContext[RunDeps]:
     """A run in the project folder at ``root``, with the given VM, scratch sessions and
-    egress policy. The project is ``~/projects/project`` in the run's home."""
+    egress policy. The project is ``~/projects/project`` in the run's home. Runs that pass
+    one ``shells`` share the app's thread shells, as two threads in one process do."""
     caps = ServiceContainer()
     caps.add(_Projects(root, project_id), as_type=ProjectStore)
     caps.add(CheckoutHolders())
     if copies is not None:
         caps.add(copies, as_type=ProjectCopies)
+        caps.add(shells or thread_shells(copies))
     if sessions is not None:
         caps.add(sessions)
     if egress is not None:

@@ -69,6 +69,15 @@ class AnswerDelta(Body):
     text: str
 
 
+class AnswerRetracted(Body):
+    """The last ``text_chars`` of answer and ``thinking_chars`` of reasoning streamed were
+    from a model request that failed and is being sent again; they are not the answer."""
+
+    type: Literal["answer.retracted"] = "answer.retracted"
+    text_chars: int
+    thinking_chars: int
+
+
 class LimitNotice(Body):
     type: Literal["limit.notice"] = "limit.notice"
     # "steps" | "tool_calls" | "tokens" | "time" | "loop" | "verify" | "context" | "search"

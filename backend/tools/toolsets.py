@@ -62,7 +62,7 @@ from .files import files_toolset
 from .harness_events import own_harness_events
 from .plan import GATED_TOOLS as _PLAN_GATED
 from .plan import plan_toolset
-from .recover import RecoveringToolset
+from .recover import RecoveringToolset, TolerantTools
 from .repo import repo_toolset
 from .shell import GATED_TOOLS as _SHELL_GATED
 from .shell import shell_toolset
@@ -204,7 +204,9 @@ def build_agent_toolsets(
     cats = dict(categories) if categories is not None else core_categories()
     deferred = frozenset(dormant)
     prefixed = [
-        toolset.prefixed(name).defer_loading() if name in deferred else toolset.prefixed(name)
+        TolerantTools(toolset).prefixed(name).defer_loading()
+        if name in deferred
+        else TolerantTools(toolset).prefixed(name)
         for name, toolset in cats.items()
     ]
     combined = CombinedToolset(prefixed)

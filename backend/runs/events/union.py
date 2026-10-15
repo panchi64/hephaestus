@@ -27,6 +27,7 @@ from .conversation import (
 )
 from .lifecycle import (
     AnswerDelta,
+    AnswerRetracted,
     LimitNotice,
     RunEnded,
     RunError,
@@ -67,6 +68,7 @@ EventBody = Annotated[
     | StepCompleted
     | ThinkingDelta
     | AnswerDelta
+    | AnswerRetracted
     | ToolStarted
     | ToolProgress
     | ToolCompleted

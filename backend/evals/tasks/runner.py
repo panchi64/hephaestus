@@ -103,15 +103,18 @@ async def _run_turn(
                 turn.record.detail = f"{body.kind}: {body.message}"
 
     async def _settle() -> None:
-        # Let the rest of the batch arrive before answering it as one.
-        await asyncio.sleep(0.5)
-        pending_approvals = approvals.copy()
-        pending_questions = dict(questions)
-        approvals.clear()
-        questions.clear()
-        await client.settle(
-            run_id, pending_approvals, pending_questions, approve=task.approve == "all"
-        )
+        # Until nothing is waiting: a resumed run can park again before the answer to the
+        # last batch returns, and no new settle starts while this one runs.
+        while approvals or questions:
+            # Let the rest of the batch arrive before answering it as one.
+            await asyncio.sleep(0.5)
+            pending_approvals = approvals.copy()
+            pending_questions = dict(questions)
+            approvals.clear()
+            questions.clear()
+            await client.settle(
+                run_id, pending_approvals, pending_questions, approve=task.approve == "all"
+            )
 
     try:
         await asyncio.wait_for(follow(), timeout=task.timeout_s)

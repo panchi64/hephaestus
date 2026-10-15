@@ -44,6 +44,7 @@ from services.conversations import ConversationStore
 from services.offline import OfflineModeService
 from services.projects import ProjectStore, WorktreeManager
 from services.registry import ModelRegistry
+from services.sandbox.thread_shells import ThreadShells
 from services.settings_store import (
     SettingsStore,
     get_agent_request_limit_override,
@@ -208,6 +209,10 @@ class SubagentWake:
         """
         if row.workspace_policy != "isolated" or not row.workspace_key:
             return None
+        # What it left running writes into the copy being landed, so it stops first.
+        shells = self._ctx.capabilities.get_optional(ThreadShells)
+        if shells is not None:
+            await shells.close(row.workspace_key)
         parent_key, _, _ = row.workspace_key.partition(DELEGATION_SEP)
         fork = reopen_fork(
             self._ctx.capabilities,
