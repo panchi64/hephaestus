@@ -33,12 +33,13 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.settings import ModelSettings
 
 from core.exceptions import DegradedCapabilityError
+from core.serde import parse_json
 from runs import EndpointGate
 from services import reasoning
 from services.endpoint_spec import EndpointSpec
 from services.gated_model import EndpointGatedModel
 from services.providers import get_provider
-from services.shapes import as_dict, as_list, parse_json
+from services.shapes import as_dict, as_list
 
 logger = logging.getLogger(__name__)
 

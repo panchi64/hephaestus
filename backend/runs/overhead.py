@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from pydantic import JsonValue
 
-from core.serde import as_int, to_json
+from core.serde import coerce_int, to_json
 
 
 def _rows(value: JsonValue) -> list[dict[str, JsonValue]]:
@@ -122,17 +122,17 @@ class TurnOverhead:
             return None
         try:
             overhead = cls(
-                system=as_int(raw["system"]),
-                tools=as_int(raw["tools"]),
+                system=coerce_int(raw["system"]),
+                tools=coerce_int(raw["tools"]),
                 blocks=tuple(
-                    BriefBlock(id=str(b["id"]), chars=as_int(b["chars"]))
+                    BriefBlock(id=str(b["id"]), chars=coerce_int(b["chars"]))
                     for b in _rows(raw.get("blocks"))
                 ),
                 groups=tuple(
                     ToolGroupOverhead(
                         category=str(g["category"]),
-                        tools=as_int(g["tools"]),
-                        chars=as_int(g["chars"]),
+                        tools=coerce_int(g["tools"]),
+                        chars=coerce_int(g["chars"]),
                     )
                     for g in _rows(raw.get("groups"))
                 ),

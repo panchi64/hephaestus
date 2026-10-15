@@ -35,11 +35,12 @@ from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import DegradedCapabilityError, InvalidInputError, NotFoundError
+from core.serde import parse_json
 from core.vault import Vault, VaultLocked
 from models._fields import utcnow
 from models.external_tool import McpServer
 from services.external_policy import ExternalPolicyStore, ToolPolicy, tool_slug
-from services.shapes import dict_list, parse_json
+from services.shapes import dict_list
 
 from .client import DEFAULT_CONNECT_TIMEOUT_S, TRANSPORTS, build_client
 

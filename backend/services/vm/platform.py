@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
-from core.serde import as_int, parse_json
+from core.serde import coerce_int, parse_json
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 
 from .driver import ExecResult, VMDriver, VMError
@@ -480,8 +480,8 @@ class PlatformVM:
                 exit_code=exit_code if isinstance(exit_code, int) else None,
                 stdout=str(raw["out"]),
                 stderr=str(raw["err"]),
-                out_end=as_int(raw["out_end"]),
-                err_end=as_int(raw["err_end"]),
+                out_end=coerce_int(raw["out_end"]),
+                err_end=coerce_int(raw["err_end"]),
             )
         except (ValueError, KeyError, TypeError) as exc:
             raise VMError(f"could not read job {name!r} in the platform VM") from exc

@@ -24,8 +24,8 @@ from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHt
 from pydantic_ai.mcp import MCPToolset
 
 from core.exceptions import DegradedCapabilityError
+from core.serde import parse_json
 from models.external_tool import McpServer
-from services.shapes import parse_json
 
 # The transports a server can be registered with. "http" is MCP's Streamable HTTP.
 TRANSPORTS = ("stdio", "sse", "http")

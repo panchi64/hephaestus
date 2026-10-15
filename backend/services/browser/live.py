@@ -26,7 +26,8 @@ from typing import Protocol, final, override, runtime_checkable
 from playwright.async_api import Page
 from pydantic_ai_harness.playwright import PlaywrightBrowserSession
 
-from services.shapes import as_dict, dict_list, parse_json
+from core.serde import parse_json
+from services.shapes import as_dict, dict_list
 
 logger = logging.getLogger(__name__)
 

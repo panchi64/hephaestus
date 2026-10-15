@@ -15,7 +15,8 @@ from collections.abc import Mapping
 
 import httpx
 
-from services.shapes import as_dict, parse_json
+from core.serde import parse_json
+from services.shapes import as_dict
 
 from .errors import MailAuthError, MailError, MailUnavailableError
 from .models import AccountSpec

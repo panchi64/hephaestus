@@ -46,9 +46,10 @@ from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.exceptions import HephaestusError
+from core.serde import parse_json
 from core.vault import Vault
 from services.settings_store import SettingsStore
-from services.shapes import as_dict, as_list, dict_list, parse_json
+from services.shapes import as_dict, as_list, dict_list
 
 from .envelope import open_envelope, seal
 from .manifest import BackupEntity, BackupModel, discover_entities, sections

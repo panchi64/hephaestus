@@ -5,12 +5,11 @@ from __future__ import annotations
 import httpx
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
+from core.serde import parse_json
+
+__all__ = ["JSON", "arr", "b", "dump", "json_body", "json_list", "n", "obj", "parse_json", "s"]
+
 JSON = TypeAdapter(JsonValue)
-
-
-def parse_json(text: str | bytes) -> JsonValue:
-    """The JSON document in ``text``."""
-    return JSON.validate_json(text)
 
 
 def obj(v: JsonValue) -> dict[str, JsonValue]:

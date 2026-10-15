@@ -21,8 +21,9 @@ from typing import override
 import httpx
 
 from core.exceptions import SSRFError
+from core.serde import parse_json
 from core.ssrf import assert_public_url
-from services.shapes import as_dict, as_int, as_list, as_str, dict_list, parse_json
+from services.shapes import as_dict, as_int, as_list, as_str, dict_list
 
 from .errors import MailAuthError, MailError, MailUnavailableError
 from .models import (

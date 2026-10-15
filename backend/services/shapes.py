@@ -10,15 +10,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import cast
 
-from pydantic import JsonValue, TypeAdapter
-
-_JSON = TypeAdapter(JsonValue)
-
-
-def parse_json(text: str | bytes) -> JsonValue:
-    """The JSON document in ``text``. Raises ``ValueError`` when it is not valid JSON."""
-    return _JSON.validate_json(text)
-
 
 def as_dict(value: object) -> dict[str, object] | None:
     """``value`` when it is a dict, else None."""

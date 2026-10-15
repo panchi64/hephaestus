@@ -38,11 +38,12 @@ from sqlalchemy import Engine
 from sqlmodel import Session
 
 from core.db import in_session
+from core.serde import parse_json
 from core.vault import Vault, VaultLocked
 from models._fields import utcnow
 from models.mail import AUTH_OAUTH, MailAccount
 from services.credential_store import CredentialStore
-from services.shapes import as_dict, as_number, as_str, parse_json
+from services.shapes import as_dict, as_number, as_str
 
 from .errors import MailAuthError, MailUnavailableError
 

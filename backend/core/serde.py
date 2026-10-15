@@ -30,7 +30,7 @@ def to_json(value: object) -> JsonValue:
     return _JSON.validate_python(value)
 
 
-def as_int(value: JsonValue) -> int:
+def coerce_int(value: JsonValue) -> int:
     """``int(value)``; raises ``TypeError`` for null, arrays and objects."""
     if isinstance(value, bool | int | float | str):
         return int(value)

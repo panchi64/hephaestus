@@ -22,7 +22,7 @@ from typing import IO
 
 from pydantic import JsonValue
 
-from core.serde import as_int
+from core.serde import coerce_int
 
 from .driver import VMError
 
@@ -76,7 +76,7 @@ def scan_names(root: Path, names: set[str]) -> Manifest:
 
 def parse_manifest(raw: dict[str, JsonValue]) -> Manifest:
     return {
-        str(name): (str(entry[0]), as_int(entry[1]), as_int(entry[2]))
+        str(name): (str(entry[0]), coerce_int(entry[1]), coerce_int(entry[2]))
         for name, entry in raw.items()
         if isinstance(entry, list) and len(entry) == 3
     }
