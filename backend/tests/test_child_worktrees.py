@@ -25,6 +25,7 @@ from services.projects.worktree import WorktreeManager
 from services.settings_store import SettingsStore
 from services.subagents import (
     ChildWorktree,
+    FiledReport,
     LaunchedSubagent,
     Recipient,
     SubagentLauncher,
@@ -70,6 +71,12 @@ class _Launcher(SubagentLauncher):
 
     @override
     async def message(self, owner_id: str, conversation_id: str, to: str, text: str) -> str:
+        raise NotImplementedError
+
+    @override
+    async def file_report(
+        self, owner_id: str, conversation_id: str, run_id: str, report: FiledReport
+    ) -> str:
         raise NotImplementedError
 
     @override

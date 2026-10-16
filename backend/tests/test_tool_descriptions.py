@@ -54,7 +54,8 @@ async def _offered() -> dict[str, ToolDefinition]:
     engine gives the Agent — not a re-derivation, so what is asserted below is what the
     model reads."""
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
-    deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=frozenset())
+    # As a spawned thread, the one kind of run that is offered `subagent_report` as well.
+    deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=frozenset(), reports_to_parent=True)
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
     tools = await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx)
     return {name: tool.tool_def for name, tool in tools.items()}

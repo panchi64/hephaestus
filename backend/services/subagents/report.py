@@ -69,6 +69,15 @@ MESSAGE_CLOSE = "</agent-message>"
 #: this — a model that thanked them for the finding would be the first sign it had gone
 #: wrong — and stripped back out before the transcript shows the report.
 _REPORT_PREAMBLE = (
+    "From the forge, not from the operator: a sub-agent you launched has reported back, and "
+    "the operator has not seen this report and is not waiting on a reply to it. Its first "
+    "line says whether the work is done, blocked or failed. Carry on with whatever it "
+    "unblocks, and tell the operator what matters."
+)
+
+#: The preamble reports were written with before they carried a status. Still read, so
+#: older transcripts render them as reports.
+_LEGACY_REPORT_PREAMBLE = (
     "A sub-agent you launched has finished and reported back. This is its report, not a "
     "message from the operator — they have not seen it and are not waiting on a reply to "
     "it. Carry on with whatever it unblocks, and tell them what matters."
@@ -100,6 +109,7 @@ _MESSAGE_PREAMBLE = (
 )
 
 _REPORT_HEADER = _header(REPORT_OPEN, _REPORT_PREAMBLE)
+_LEGACY_REPORT_HEADER = _header(REPORT_OPEN, _LEGACY_REPORT_PREAMBLE)
 _DIRECTION_HEADER = _header(DIRECTION_OPEN, _DIRECTION_PREAMBLE)
 _MESSAGE_HEADER = _header(MESSAGE_OPEN, _MESSAGE_PREAMBLE)
 
@@ -124,7 +134,8 @@ def report_envelope(text: str) -> str:
 
 def report_body(text: str) -> str | None:
     """The report inside an envelope, or ``None`` when this is not one."""
-    return _unwrap(_REPORT_HEADER, REPORT_CLOSE, text)
+    body = _unwrap(_REPORT_HEADER, REPORT_CLOSE, text)
+    return body if body is not None else _unwrap(_LEGACY_REPORT_HEADER, REPORT_CLOSE, text)
 
 
 def direction_body(text: str) -> str | None:

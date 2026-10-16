@@ -22,6 +22,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from services.agents.definition import AgentDefinition
 
@@ -147,6 +148,18 @@ class Recipient:
     upward: bool
 
 
+#: How a spawned agent says its work ended: finished, waiting on its parent, or given up.
+ReportStatus = Literal["done", "blocked", "failed"]
+
+
+@dataclass(frozen=True)
+class FiledReport:
+    """What a spawned agent handed back with ``subagent_report``."""
+
+    status: ReportStatus
+    text: str
+
+
 #: How the thread at the top of a tree is named to the agents in it.
 ROOT_HANDLE = "main"
 
@@ -198,6 +211,16 @@ class SubagentLauncher(ABC):
         delivered by waking it. Returns the recipient's handle.
 
         Raises :class:`SubagentUnavailableError` when nothing in the tree answers to ``to``.
+        """
+
+    @abstractmethod
+    async def file_report(
+        self, owner_id: str, conversation_id: str, run_id: str, report: FiledReport
+    ) -> str:
+        """Hold ``report`` as what the run ``run_id`` of the agent of ``conversation_id``
+        hands back when it ends. Returns the handle of the agent it reaches.
+
+        Raises :class:`SubagentUnavailableError` when no agent spawned that thread.
         """
 
     @abstractmethod

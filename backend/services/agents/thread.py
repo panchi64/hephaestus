@@ -19,6 +19,7 @@ from services.conversations import ConversationBinding
 from services.permissions import permission_level, stricter_permission
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.tree import thread_tree
+from services.subagents.briefing import brief_for, policy_of
 
 #: The tools that hand work to another agent, withheld from one that may not delegate.
 DELEGATION_TOOLS: frozenset[str] = frozenset({"agents_spawn"})
@@ -65,8 +66,19 @@ def as_thread(agent: AgentDefinition, binding: ConversationBinding) -> ThreadAge
             binding, tools=agent.tools, permission=permission, permission_ceiling=ceiling
         ),
         withheld=frozenset() if agent.can_delegate else DELEGATION_TOOLS,
-        instructions=(_brief(agent.instructions),) if agent.instructions else (),
+        instructions=_instructions(agent, binding),
     )
+
+
+def _instructions(
+    agent: AgentDefinition, binding: ConversationBinding
+) -> tuple[InstructionProvider, ...]:
+    """The agent's brief. A spawned thread gets the whole standing brief its first turn had,
+    on every later turn too, since nothing about being a sub-agent wears off."""
+    if binding.spawned:
+        text = brief_for(agent.instructions, policy_of(binding.workspace_key), agent.agent_class)
+        return (_brief(text),)
+    return (_brief(agent.instructions),) if agent.instructions else ()
 
 
 def may_delegate(agent: AgentDefinition, depth: int, limit: int) -> bool:

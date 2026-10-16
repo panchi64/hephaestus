@@ -161,9 +161,16 @@ class TestClasses:
 class TestWhatTheModelSees:
     def test_a_report_names_the_handle_callsign_and_class(self):
         text = report_text(
-            "migrate-schema", "worker", "done", None, None, callsign="BRAX", agent_class="tripodes"
+            "done",
+            "migrate-schema",
+            "worker",
+            "done",
+            None,
+            None,
+            callsign="BRAX",
+            agent_class="tripodes",
         )
-        assert text.startswith("Sub-agent `migrate-schema` (BRAX · Tripodes, worker) finished.")
+        assert text.startswith("`migrate-schema` (BRAX · Tripodes, worker): done.")
 
     def test_a_designation_without_a_callsign_is_empty(self):
         assert designation("", "tripodes") == ""

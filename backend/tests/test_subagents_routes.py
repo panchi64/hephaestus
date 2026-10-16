@@ -107,7 +107,7 @@ async def test_a_finished_subagent_stays_on_the_list_with_what_it_reported(
     monkeypatch: pytest.MonkeyPatch,
 ):
     async with client_app() as (client, app):
-        patch_model_resolution(monkeypatch, output_text="found it in parser.py")
+        patch_model_resolution(monkeypatch, call_tools=["subagent_report"])
         _ = await _launch(app, "parent-1", "find the parser")
 
         card = await _first_card(client)
@@ -115,8 +115,25 @@ async def test_a_finished_subagent_stays_on_the_list_with_what_it_reported(
         # Kept for the life of the thread. The operator's reason for looking is usually
         # that something went wrong, which is exactly when the card is no longer live.
         assert card["status"] == "done"
-        assert card["summary"] == "found it in parser.py"
+        assert card["summary"]
+        assert card["error"] is None
         assert card["ended_at"] is not None
+
+
+async def test_a_subagent_that_never_reports_is_settled_as_failed_with_its_last_answer(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async with client_app() as (client, app):
+        patch_model_resolution(monkeypatch, output_text="found it in parser.py")
+        _ = await _launch(app, "parent-1", "find the parser")
+
+        card = await _first_card(client)
+
+        # Failed, not done, with its last answer kept. The exact error is pinned by the wake
+        # tests: `TestModel` answers the reminder with an empty response rather than text.
+        assert card["status"] == "failed"
+        assert card["error"]
+        assert card["summary"] == "found it in parser.py"
 
 
 async def test_the_list_is_newest_first(monkeypatch: pytest.MonkeyPatch):

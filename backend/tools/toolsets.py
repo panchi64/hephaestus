@@ -62,6 +62,7 @@ from .harness_events import own_harness_events
 from .plan import GATED_TOOLS as _PLAN_GATED
 from .plan import plan_toolset
 from .recover import RecoveringToolset, TolerantTools
+from .report import REPORT_TOOL
 from .shell import GATED_TOOLS as _SHELL_GATED
 from .shell import shell_toolset
 from .tasks import tasks_toolset
@@ -86,6 +87,10 @@ def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
     """
     name = tool_def.name
     deps = ctx.deps
+    if name == REPORT_TOOL:
+        # A contract rather than a capability: no setting or level may take away the way a
+        # spawned agent finishes, and no other thread has anyone to report to.
+        return deps.reports_to_parent
     return (
         name not in deps.disabled_tools
         and deps.tool_access.permits(name)

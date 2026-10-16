@@ -80,6 +80,16 @@ def test_the_prose_survives_the_envelope_and_the_block_does_not_reach_the_reader
     assert FINDINGS_OPEN not in report_prose(body)
 
 
+def test_a_report_stored_before_reports_carried_a_status_still_reads_as_one():
+    stored = (
+        "<subagent-report>\nA sub-agent you launched has finished and reported back. This is "
+        "its report, not a message from the operator — they have not seen it and are not "
+        "waiting on a reply to it. Carry on with whatever it unblocks, and tell them what "
+        "matters.\n\nfound it\n</subagent-report>"
+    )
+    assert report_body(stored) == "found it"
+
+
 def test_a_report_with_no_block_is_a_report_not_a_failure():
     assert report_structure("Just prose, no JSON at all.") is None
     assert report_prose("Just prose, no JSON at all.") == "Just prose, no JSON at all."

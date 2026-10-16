@@ -155,6 +155,7 @@ class MetadataMixin(StoreCore):
                 permission=permission_level(conversation.permission_level),
                 agent_name=conversation.agent_name,
                 workspace_key=conversation.workspace_key or "",
+                spawned=conversation.parent_id is not None,
             )
 
         return await in_session(self._engine, work)

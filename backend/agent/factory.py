@@ -35,8 +35,10 @@ from core.timezone import local_zone_key
 from prompts.agent import (
     CURRENT_DATE,
     INSTRUCTIONS,
+    SPAWNED_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
 )
+from services.conversations import ConversationBinding
 from services.llm import TOOL_CALL_SETTINGS
 from services.permissions import permission_spec
 from tools import (
@@ -49,6 +51,7 @@ from tools import (
     tool_search_capability,
 )
 from tools.describe import category_names
+from tools.report import require_report
 from tools.tasks import remind_of_open_tasks
 
 from .code_mode import CodeModeLimits, code_mode_capability
@@ -64,9 +67,16 @@ NO_DORMANT: Mapping[str, str] = MappingProxyType({})
 type TurnAgent = Agent[RunDeps, DeferredToolRequests | str]
 
 
+def system_prompt_for(binding: ConversationBinding) -> str:
+    """The head a thread runs under: Talos's, or a spawned agent's. Fixed for the life of a
+    thread, since whether another agent spawned it never changes."""
+    return SPAWNED_SYSTEM_PROMPT if binding.spawned else SYSTEM_PROMPT
+
+
 def build_agent(
     model: Model,
     *,
+    system_prompt: str = SYSTEM_PROMPT,
     categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
     instruction_providers: Sequence[InstructionProvider] = (),
     dormant: Mapping[str, str] = NO_DORMANT,
@@ -94,7 +104,7 @@ def build_agent(
     agent = Agent(
         model,
         deps_type=RunDeps,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         instructions=INSTRUCTIONS,
         toolsets=build_agent_toolsets(
             categories, dormant=tuple(dormant), call_timeout_s=tool_call_timeout_s
@@ -242,4 +252,5 @@ def build_agent(
         return CURRENT_DATE.format(date=stamp, zone=local_zone_key())
 
     _ = agent.output_validator(remind_of_open_tasks)
+    _ = agent.output_validator(require_report)
     return agent

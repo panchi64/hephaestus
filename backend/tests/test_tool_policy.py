@@ -89,7 +89,8 @@ async def agent_visible(disabled: frozenset[str]) -> set[str]:
     them. Which of them a given request actually carries, and the library-owned
     ``search_tools`` that reveals the rest, are ``test_tool_search.py``'s subject."""
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
-    deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled)
+    # As a spawned thread, the one kind of run that is offered `subagent_report` as well.
+    deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled, reports_to_parent=True)
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
     return set(await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx))
 
@@ -119,6 +120,7 @@ _PINNED_CATALOG = {
     "agents_spawn",
     "agents_stop",
     "agents_write",
+    "subagent_report",
     "attachments_provision",
     "browse_click",
     "browse_console_messages",

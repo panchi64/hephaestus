@@ -107,6 +107,13 @@ class RunDeps:
     open_tasks_reminded: bool = field(default=False, repr=False, compare=False)
     # Set once this run has called a task-list tool; only such a run is held to the list.
     tasks_touched: bool = field(default=False, repr=False, compare=False)
+    # Whether another agent spawned this thread, so it is offered `subagent_report` and owes
+    # its parent a report (`tools/report.py`).
+    reports_to_parent: bool = False
+    # Set once this run has filed its report, and once it has been sent back for ending
+    # without one, so the reminder is given once and the next answer stands.
+    reported: bool = field(default=False, repr=False, compare=False)
+    report_reminded: bool = field(default=False, repr=False, compare=False)
     # The projects and worktrees whose instruction files this run has handed over
     # (`tools/briefing.py`).
     briefed: set[Place] = field(default_factory=set[Place], repr=False, compare=False)

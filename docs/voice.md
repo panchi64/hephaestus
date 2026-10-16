@@ -185,12 +185,14 @@ Across every model on the platform:
 
 **Lineage, in one line.** Each sub-agent knows it is an automaton of the forge, of its class, launched by Talos or by another agent, and that its report is the only thing that survives it. Nothing more of the myth.
 
-**Every sub-agent ends by calling back.** Its final action is an explicit report to the agent that launched it, carrying a status:
+**Every sub-agent ends by calling back.** Its final action is `subagent_report`, a tool only spawned threads are offered, carrying a status:
 - **done**: the task is finished; the report holds the result.
 - **blocked**: it needs something it cannot get (a decision, an approval, access, a missing input). The report says exactly what, and what it will do once it has it.
 - **failed**: it could not do the task. The report says what was tried, the actual error, and what it would try next.
 
-No sub-agent goes quiet. One that stalls, loops or runs out of budget without calling back is reported to its parent as failed by the platform, with the reason, so nothing is left idle.
+No sub-agent goes quiet. One that ends a turn without calling back is sent back once; one that still doesn't, or that stalls, loops or runs out of budget, is reported to its parent as failed by the platform, with the reason, so nothing is left idle. A report that would wake a tree past its unattended-turn ceiling is held, not dropped: the operator is told once, and it goes out with their next message.
+
+A spawned thread runs under its own system prompt rather than Talos's: the forge, a line saying it is not Talos and speaks only through its report, and the house rules. Its class, the report contract and its workspace come in its brief, on every turn.
 
 **A report is:**
 1. The answer or outcome, first.

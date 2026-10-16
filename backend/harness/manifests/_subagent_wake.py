@@ -16,7 +16,14 @@ carrying both rather than two racing turns.
 
 **One wake budget per tree.** Agents waking each other need no human, so a tree may take
 :data:`WAKE_CHAIN_LIMIT` turns unattended before wakes stop; the operator sending anything
-into the tree clears it.
+into the tree clears it. A delivery that would have woken a thread past the ceiling is
+held, the operator is told once, and everything held goes out when they next send a turn
+into the tree, so no report is lost to the rail.
+
+**Every report says how the work ended.** A spawned agent files one with
+``subagent_report`` (``tools/report.py``), held here by run until that run ends. An
+unattended turn that ends without one is reported as failed, so the parent always hears
+which of done, blocked or failed it is dealing with.
 """
 
 from __future__ import annotations
@@ -24,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
+from dataclasses import dataclass
 
 from agent.summarize import resolve_auto_compact_policy
 from core.exceptions import NotFoundError
@@ -38,12 +46,13 @@ from routes.chat import (
 )
 from runs import Run, RunRegistry, RunStatus
 from runs.events import MessageSource
-from runs.lanes import CHAT_TURN_KINDS
+from runs.lanes import CHAT_TURN_KINDS, is_attended
 from services.agents import AgentCatalog, lower_of
 from services.agents.thread import DELEGATION_TOOLS, may_delegate, resolve_thread_agent
 from services.conversations import ConversationStore
 from services.home.paths import Place
 from services.home.table import child_worktree_name
+from services.notifications import NotificationService
 from services.offline import OfflineModeService
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.repo import WorktreeError, branch_for, child_branch_for
@@ -55,6 +64,7 @@ from services.settings_store import (
     get_context_thresholds,
 )
 from services.subagent_store import SubagentStore
+from services.subagents import FiledReport
 from services.subagents.callsigns import designation
 from services.subagents.report import message_envelope, report_envelope
 from services.tool_policy import effective_disabled_tools
@@ -78,6 +88,30 @@ WAKE_CHAIN_LIMIT = 25
 #: How many thread→root mappings are remembered for clearing the budget synchronously.
 _ROOTS_CACHED = 512
 
+#: How many filed reports wait for their run to end. One per running sub-agent at most.
+_FILED_CACHED = 256
+
+#: What an unattended turn that ended without filing a report is settled with.
+NO_REPORT = "it ended without reporting"
+
+
+@dataclass(frozen=True)
+class _Held:
+    """A delivery the wake budget kept from waking its thread."""
+
+    owner_id: str
+    conversation_id: str
+    text: str
+    source: MessageSource
+    sender: str | None
+
+
+@dataclass(frozen=True)
+class _Outcome:
+    status: str
+    summary: str | None
+    error: str | None
+
 
 class SubagentWake:
     """Delivers reports and messages between the agents of a delegation tree."""
@@ -100,6 +134,17 @@ class SubagentWake:
         # rather than a fact about the conversation.
         self._chain: OrderedDict[str, int] = OrderedDict()
         self._roots: OrderedDict[str, str] = OrderedDict()
+        # Reports filed by runs still going, by run id, and deliveries the budget held back,
+        # by tree root. In memory like the runs themselves, which a restart ends anyway.
+        self._filed: OrderedDict[str, FiledReport] = OrderedDict()
+        self._held: dict[str, list[_Held]] = {}
+
+    def file(self, run_id: str, report: FiledReport) -> None:
+        """Hold a spawned agent's report until its run ends. A second one replaces it."""
+        self._filed[run_id] = report
+        self._filed.move_to_end(run_id)
+        while len(self._filed) > _FILED_CACHED:
+            _ = self._filed.popitem(last=False)
 
     def remember_root(self, conversation_id: str, root: str) -> None:
         """Note which tree a spawned agent's thread belongs to."""
@@ -143,6 +188,8 @@ class SubagentWake:
         try:
             await self._report(run)
             await self._rescue(run)
+            if run.kind == "chat" and run.conversation_id:
+                await self._release(await self._root_of(run.conversation_id))
         except Exception:
             # Never let this escape: it runs as a background task, and a feature that
             # failed to deliver one report must not take the dispatcher's other hooks or
@@ -159,14 +206,15 @@ class SubagentWake:
         row = await self._records.by_child(run.conversation_id)
         if row is None or row.owner_id != run.owner_id:
             return  # an ordinary thread, not one of ours
-        summary, error = await self._outcome(run, row.child_conversation_id)
+        outcome = await self._outcome(run, row.child_conversation_id)
+        summary = outcome.summary
         parked = await self._park(row)
         try:
             await self._records.settle(
                 row.id,
-                status=status_of(run),
+                status=outcome.status,
                 summary=None if summary is None else _joined(summary, parked),
-                error=error,
+                error=outcome.error,
                 context_used=(getattr(run.metrics, "context_used", None) if run.metrics else None),
                 context_window=run.context_window,
             )
@@ -184,28 +232,37 @@ class SubagentWake:
             row.owner_id,
             row.parent_conversation_id,
             report_text(
+                outcome.status,
                 row.handle or row.spec_name,
                 row.spec_name,
                 summary,
-                error,
+                outcome.error,
                 parked,
                 callsign=row.callsign,
                 agent_class=row.agent_class,
             ),
         )
 
-    async def _outcome(self, run: Run, conversation_id: str) -> tuple[str | None, str | None]:
-        """What the sub-agent has to say for itself: its report, or why there isn't one.
+    async def _outcome(self, run: Run, conversation_id: str) -> _Outcome:
+        """How the sub-agent's turn ended, and what it has to say for itself.
 
-        A sub-agent that errored or was stopped still did work, and its transcript still
-        holds it — so its last answer is handed over beside the failure rather than
-        thrown away. The alternative tells the parent nothing it can act on.
+        A filed report decides it, unless the agent was stopped. Without one, a sub-agent
+        that errored, was stopped, or ended an unattended turn without reporting still did
+        work, and its transcript still holds it, so its last answer is handed over beside
+        the failure rather than thrown away.
         """
+        filed = self._filed.pop(run.id, None)
+        if filed is not None and run.status is not RunStatus.cancelled:
+            return _Outcome(filed.status, filed.text, None)
         answer = await self._latest_answer(conversation_id)
         if run.status is RunStatus.done:
-            return answer or "(it finished without reporting anything)", None
+            if is_attended(run.kind):
+                # The operator was talking to it in its own thread, so its answer is the
+                # report they meant to send up.
+                return _Outcome("done", answer or "(it answered with nothing)", None)
+            return _Outcome("failed", answer, NO_REPORT)
         reason = run.error or run.detail or run.status.value
-        return answer, f"The sub-agent did not finish: {reason}"
+        return _Outcome(status_of(run), answer, f"it did not finish: {reason}")
 
     async def _latest_answer(self, conversation_id: str) -> str | None:
         try:
@@ -287,12 +344,7 @@ class SubagentWake:
         root = await self._root_of(conversation_id)
         spent = self._chain.get(root, 0)
         if spent >= WAKE_CHAIN_LIMIT:
-            logger.warning(
-                "subagents: the tree under %s has taken %s turns unattended; not waking %s",
-                root,
-                spent,
-                conversation_id,
-            )
+            await self._hold(root, _Held(owner_id, conversation_id, text, source, sender))
             return
         try:
             applied = await resolve_thread_agent(
@@ -377,6 +429,59 @@ class SubagentWake:
         while len(self._chain) > 64:
             _ = self._chain.popitem(last=False)
 
+    # -- the budget's held deliveries ------------------------------------------------
+
+    async def _hold(self, root: str, held: _Held) -> None:
+        """Keep a delivery the budget refused, telling the operator the first time a tree
+        stops so they know it is waiting on them."""
+        waiting = self._held.setdefault(root, [])
+        waiting.append(held)
+        logger.warning(
+            "subagents: the tree under %s took %s turns unattended; holding a delivery to %s",
+            root,
+            WAKE_CHAIN_LIMIT,
+            held.conversation_id,
+        )
+        if len(waiting) > 1:
+            return
+        notifications = self._ctx.capabilities.get_optional(NotificationService)
+        if notifications is None:
+            return
+        try:
+            _ = await notifications.notify(
+                held.owner_id,
+                "system",
+                "Agents paused for you",
+                body=(
+                    f"The agents of this thread took {WAKE_CHAIN_LIMIT} turns without you. "
+                    + "Their reports are held; send anything in this thread to release them."
+                ),
+                conversation_id=root,
+            )
+        except Exception:
+            logger.exception("subagents: could not say the tree under %s paused", root)
+
+    async def _release(self, root: str) -> None:
+        """Deliver what the budget held for this tree, now the operator has cleared it."""
+        held = self._held.pop(root, [])
+        reports: dict[str, list[_Held]] = {}
+        for each in held:
+            if each.source == "subagent":
+                reports.setdefault(each.conversation_id, []).append(each)
+            else:
+                _ = await self.deliver(
+                    each.owner_id,
+                    each.conversation_id,
+                    each.text,
+                    source=each.source,
+                    sender=each.sender,
+                )
+        # Reports bound for one thread go together, so they land as one turn.
+        for conversation_id, batch in reports.items():
+            _ = await self.deliver(
+                batch[0].owner_id, conversation_id, "\n\n".join(each.text for each in batch)
+            )
+
     # -- the delivery that nearly got dropped ---------------------------------------
 
     async def _rescue(self, run: Run) -> None:
@@ -451,7 +556,23 @@ def parked_note(handle: str, path: str, branch: str, changed: MergeReport) -> st
     )
 
 
+def _recovery(status: str, handle: str) -> list[str]:
+    """What the parent can do next, for a report that did not end in finished work."""
+    if status == "blocked":
+        return [
+            f"answer it with `agents_message` to `{handle}`; it picks up where it stopped",
+            f"or `agents_stop` `{handle}` and take the work back",
+        ]
+    if status == "failed":
+        return [
+            "spawn a fresh agent with a narrower brief that avoids what broke",
+            "or take the work back and do it yourself",
+        ]
+    return []
+
+
 def report_text(
+    status: str,
     handle: str,
     spec_name: str,
     summary: str | None,
@@ -461,7 +582,8 @@ def report_text(
     callsign: str = "",
     agent_class: str = "",
 ) -> str:
-    """A sub-agent's hand-back, as the launching model reads it.
+    """A sub-agent's hand-back, as the launching model reads it: who, how it ended, what
+    went wrong, its report, where its work is, and what to do next.
 
     Named by its **handle**, because a thread with three sub-agents out gets three of these
     and the spec alone does not tell them apart. Its callsign and class follow, since the
@@ -471,12 +593,15 @@ def report_text(
     extras = [name for name in (designation(callsign, agent_class),) if name]
     if spec_name != handle:
         extras.append(spec_name)
-    named = f"Sub-agent `{handle}`" + (f" ({', '.join(extras)})" if extras else "")
-    parts = [f"{named} finished."]
+    named = f"`{handle}`" + (f" ({', '.join(extras)})" if extras else "")
+    parts = [f"{named}: {status}."]
     if error:
-        parts.append(error)
+        parts.append(f"error: {error}")
     if summary:
         parts.append(summary)
     if parked:
         parts.append(parked)
+    hints = _recovery(status, handle)
+    if hints:
+        parts.append("\n".join(f"  help: {hint}" for hint in hints))
     return "\n\n".join(parts)

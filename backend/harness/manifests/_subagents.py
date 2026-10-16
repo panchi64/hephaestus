@@ -62,6 +62,7 @@ from services.subagents.launcher import (
     PARENT_ADDRESS,
     ROOT_HANDLE,
     ChildWorktree,
+    FiledReport,
     LaunchedSubagent,
     Recipient,
     SubagentLauncher,
@@ -265,7 +266,7 @@ class ConversationSubagents(SubagentLauncher):
             dormant=DormantCategory.summaries(self._ctx.dormant_categories),
             instruction_providers=(
                 *self._ctx.instruction_providers,
-                _briefing(brief_for(agent.instructions, policy)),
+                _briefing(brief_for(agent.instructions, policy, agent.agent_class)),
             ),
             prompt_context_providers=self._ctx.prompt_context_providers,
             registry=self._runs,
@@ -504,6 +505,19 @@ class ConversationSubagents(SubagentLauncher):
                 + "if the work still needs doing."
             )
         return found.label
+
+    @override
+    async def file_report(
+        self, owner_id: str, conversation_id: str, run_id: str, report: FiledReport
+    ) -> str:
+        position = await self._position(owner_id, conversation_id)
+        if position.record is None:
+            raise SubagentUnavailableError(
+                "No agent spawned this thread, so there is nobody to report to."
+            )
+        self._wake.file(run_id, report)
+        parent = await self._records.by_child(position.record.parent_conversation_id)
+        return parent.handle if parent is not None else ROOT_HANDLE
 
     @override
     async def read(self, owner_id: str, conversation_id: str, handle: str) -> SubagentView:

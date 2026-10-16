@@ -152,6 +152,9 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # Reading transcripts the operator can open themselves reaches nothing.
             "agents_list",
             "agents_read",
+            # A spawned agent handing back its report. It ends the agent's own work and
+            # reaches nothing past the agent that spawned it.
+            "subagent_report",
             "tasks_read",
             # Retrieval over the network. The operator's machine and every service on it
             # are exactly as they were afterwards.

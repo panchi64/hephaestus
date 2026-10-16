@@ -43,6 +43,8 @@ class ConversationBinding:
     permission_ceiling: PermissionLevel | None = None
     #: The workspace its turns work in. Empty is the thread's own.
     workspace_key: str = ""
+    #: Whether another agent spawned this thread, which then owes that agent a report.
+    spawned: bool = False
 
 
 @dataclass(frozen=True)

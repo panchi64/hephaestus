@@ -87,7 +87,7 @@ from tools import (
 
 from .code_mode import code_mode_limits
 from .compaction_context import build_compaction_context
-from .factory import NO_DORMANT, TurnAgent, build_agent
+from .factory import NO_DORMANT, TurnAgent, build_agent, system_prompt_for
 from .finalize import (
     finalize,
     flush_recorder,
@@ -130,6 +130,7 @@ def turn_agent(
     dormant: Mapping[str, str] = NO_DORMANT,
     instruction_providers: Sequence[InstructionProvider] = (),
     settings: Settings,
+    binding: ConversationBinding = DEFAULT_BINDING,
 ) -> TurnAgent:
     """The agent a chat turn runs on — and the one its compaction summary is written on.
 
@@ -139,6 +140,7 @@ def turn_agent(
     fold composes its agent here too, rather than a lookalike that could drift."""
     return build_agent(
         model,
+        system_prompt=system_prompt_for(binding),
         categories=categories,
         instruction_providers=instruction_providers,
         dormant=dormant,
@@ -189,6 +191,7 @@ async def fold_now(
         instruction_providers=instruction_providers,
         dormant=dormant,
         settings=settings,
+        binding=binding,
     )
     ctx = build_compaction_context(
         store=store,
@@ -345,6 +348,7 @@ def build_chat_orchestrator(
             instruction_providers=instruction_providers,
             dormant=dormant,
             settings=settings,
+            binding=binding,
         )
         announced: set[str] = set()
 
