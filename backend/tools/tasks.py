@@ -52,8 +52,8 @@ from .harness_events import attributable
 # Rendered above the list at the tail of the turn. Short and fixed: the block's *content*
 # changes constantly, so anything static about it belongs here rather than in the churn.
 _PREAMBLE = (
-    "Your current task list for this conversation. Keep it accurate as you work — "
-    "mark a task in_progress when you start it and completed when it is done."
+    "Your task list for this conversation, as the operator sees it. Keep it current: mark "
+    "a task `in_progress` when you start it and `completed` when it is done."
 )
 
 
@@ -78,15 +78,43 @@ LOCAL = {upstream: local for local, upstream in UPSTREAM.items()}
 
 DESCRIPTIONS = {
     "write_plan": (
-        "Create or replace the whole task list. Pass every step each time, including the "
-        "unchanged and the finished, and keep exactly one in_progress. Call it first for "
-        "multi-step work."
+        "Creates or replaces your task list for this conversation: the checklist the "
+        "operator watches beside the chat while you work. Use it for any work of three or "
+        "more steps, and call it before you start the first one so the operator sees the "
+        "shape of the work up front. Skip it for a single action or a quick answer, where "
+        "a list is noise.\n\n"
+        "Pass the whole list on every call, unchanged and finished tasks included, because "
+        "the call replaces what was there. Keep exactly one task `in_progress`: the one "
+        "you are doing now. Give each task a short `id` of your own (`migrate`, "
+        "`backfill`) so `tasks_update_statuses` can name it later; an omitted id is "
+        "generated, and only `tasks_read` shows it.\n\n"
+        "Call it again when the work changes shape: a step you discover goes in, and one "
+        "that turns out unnecessary is marked `cancelled` rather than dropped, so the "
+        "operator sees it was considered. For ordinary progress, use "
+        "`tasks_update_statuses` instead of rewriting the list.\n\n"
+        "This is not the plan from plan mode. That is a document the operator approves; "
+        "on approval its steps become this list.\n\n"
+        "Returns the list as stored, with a progress line."
     ),
     "update_task_statuses": (
-        "Change one or more steps' status by id. Entries apply in order, so complete a "
-        "prerequisite before starting its dependent."
+        "Changes the status of one or more tasks by `id`, without rewriting the list. "
+        "Call it as you move through the work: in one call, mark the task you just "
+        "finished `completed` and the next one `in_progress`, so the list the operator "
+        "watches never lags behind you.\n\n"
+        "Mark a task `completed` only when it is done, not while its tests fail or part of "
+        "it is missing. Mark one you decided against `cancelled`, and say why in your "
+        "reply. Before you give your final answer, every task should be `completed` or "
+        "`cancelled`; an answer that leaves one open is sent back once so you can finish "
+        "it or explain it.\n\n"
+        "Entries apply in order, so list a completion before the start that follows it. "
+        "The batch is checked as a unit: if any `id` is unknown, nothing changes and the "
+        "errors come back."
     ),
-    "read_plan": "The current list — every step's id, content and status, and a progress line.",
+    "read_plan": (
+        "Returns your task list with each task's `id`, status and content, and a progress "
+        "line. The list is already at the end of your context each turn, without ids, so "
+        "call this only when you need the id of a task you did not name yourself."
+    ),
 }
 
 
@@ -252,8 +280,8 @@ async def remind_of_open_tasks[OutputT](ctx: RunContext[RunDeps], output: Output
             f"your task list still has open steps: {steps}",
             hints=[
                 "finish them, then answer",
-                "or mark each completed or cancelled with tasks_update_statuses and say "
-                + "in your answer why it is not done",
+                "or mark each one `completed` or `cancelled` with `tasks_update_statuses` "
+                + "and say in your answer why it is not done",
             ],
         )
     )

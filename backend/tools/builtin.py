@@ -36,21 +36,39 @@ NO_OPERATOR = (
 class AskOption(BaseModel):
     """One offered answer."""
 
-    label: str = Field(description="The answer itself, as the operator will see it.")
+    label: str = Field(
+        description="The answer itself, a few words the operator can pick at a glance."
+    )
     description: str | None = Field(
         default=None,
-        description="One short line on what choosing this would mean. Omit when the label says it.",
+        description=(
+            "One short line on what choosing this means: the consequence or the tradeoff. "
+            "On the option you recommend, say that it is your recommendation and why. "
+            "Omit when the label says it all."
+        ),
     )
 
 
 class Question(BaseModel):
     """One question, with the answers offered for it."""
 
-    question: str = Field(description="The question, in plain language.")
-    options: list[AskOption] = Field(min_length=2, max_length=4)
+    question: str = Field(
+        description=(
+            "The question in plain language, ending in a question mark. Give the context "
+            "the operator needs to answer it, since they may not have followed your work."
+        )
+    )
+    options: list[AskOption] = Field(
+        min_length=2,
+        max_length=4,
+        description=(
+            "Two to four concrete answers, the one you recommend first. Leave out an "
+            '"Other" option: the operator can always write their own answer.'
+        ),
+    )
     multi_select: bool = Field(
         default=False,
-        description="True when several options may be chosen together.",
+        description="True when several options can be chosen together, not as alternatives.",
     )
 
 
@@ -59,8 +77,13 @@ def builtin_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool_plain
     def now() -> str:
-        """Return the current date and time on the operator's own clock, ISO 8601 with its
-        offset from UTC (e.g. 2026-03-14T09:41:07+01:00)."""
+        """Returns the current date and time on the operator's clock, in ISO 8601 with the
+        offset from UTC (`2026-03-14T09:41:07+01:00`).
+
+        Your context carries the date but not the time, so call this when the time of
+        day matters: a deadline today, "this morning", how long ago something happened,
+        or a timestamp to pass to another tool.
+        """
         return datetime.now().astimezone().isoformat()
 
     @toolset.tool
@@ -68,20 +91,29 @@ def builtin_toolset() -> FunctionToolset[RunDeps]:
         ctx: RunContext[RunDeps],
         questions: Annotated[list[Question], Field(min_length=1, max_length=4)],
     ) -> str:
-        """Ask the operator to decide something, and wait for their answer.
+        """Asks the operator one to four questions as a card they answer by clicking, and
+        pauses the turn until they do. The turn resumes with their answers, and nothing
+        you have worked out so far is lost.
 
-        The turn pauses here and resumes with their reply, so nothing you have worked out
-        so far is lost — this costs far less than guessing and being wrong.
+        Use it when the answer changes what you do next and only the operator can give
+        it: a preference, a tradeoff, a reading of an ambiguous request, a choice between
+        approaches that are each valid. Asking costs far less than guessing wrong and
+        redoing the work. Never ask what the code, the files or your tools can tell you;
+        find that out yourself first, so the question you ask is the one that is left.
 
-        The operator can always write an answer of their own instead of choosing one of
-        your options, so offer the choices you think most likely rather than trying to
-        cover every case.
+        Put every open decision into one call, up to four questions answered together,
+        rather than asking one per turn. Ask through this tool rather than in your reply,
+        because a question written in prose ends your turn with nothing for the operator
+        to click. Don't repeat in text what the card already asks.
 
-        Ask only what only they can answer: a preference, a tradeoff, a decision that
-        turns on what they want. Anything the code, the files or the tools can tell you,
-        find out yourself.
+        Give each question two to four concrete options, the one you recommend first,
+        with a one-line `description` where the consequence is not obvious from the
+        label. The operator can always write their own answer, so offer the likeliest
+        choices rather than trying to cover every case.
 
-        Ask everything you need in ONE call — up to four questions, answered together.
+        Returns each question with the option or options chosen and anything the operator
+        wrote. In a run nobody is watching, it returns at once and tells you to decide
+        for yourself.
         """
         del questions  # Carried to the operator by the deferral, not read by this body.
         # Guard before deferring: an unattended run has nobody to park on.

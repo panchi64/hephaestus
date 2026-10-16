@@ -92,9 +92,9 @@ _UNOFFERED_PROPERTIES: Mapping[str, frozenset[str]] = {"browse": frozenset({"tim
 #: a retry on a field that is decoration.
 NARRATION_ARG = "narration"
 NARRATION_TEXT = (
-    "One short sentence, present tense, addressed to the operator, saying why you are "
-    'making *this* call right now — not what the tool does. E.g. "Checking whether the '
-    'migration already ran before I add another."'
+    "One short sentence to the operator, in the present tense, on why you are making this "
+    "call now. The tool's name and arguments already show what it does, so give the "
+    'reason: "Checking whether the migration already ran before I add another."'
 )
 NARRATION_PROPERTY: Mapping[str, JsonValue] = MappingProxyType(
     {"type": "string", "description": NARRATION_TEXT}
@@ -105,17 +105,36 @@ NARRATION_PROPERTY: Mapping[str, JsonValue] = MappingProxyType(
 _SUBTASK_PROPERTIES: frozenset[str] = frozenset({"parent_id", "depends_on"})
 _SUBTASK_STATUS = "blocked"
 
-#: Replacement prose for the library's own schema definitions, whose docstrings carry
-#: rendered ``Attributes:`` blocks that duplicate the per-property descriptions beside
-#: them and sentences about the flag that would turn subtasks on.
+#: Replacement prose for the library's own schema text. Its definitions carry rendered
+#: ``Attributes:`` blocks and sentences about the subtasks flag, and its properties say
+#: "plan" and point at ``read_plan``, a name this catalog never offers.
 _PLAN_DEF_TEXT: Mapping[str, str] = {
     "PlanItem": "One task in the list.",
     "TaskStatus": "Lifecycle status of a task.",
     "PlanStatusUpdate": "One status change in the batch.",
 }
 _PLAN_PROPERTY_TEXT: Mapping[tuple[str, str], str] = {
-    ("PlanItem", "status"): "Current status of this task.",
+    ("PlanItem", "id"): (
+        "A short id of your own, such as `migrate`, that `tasks_update_statuses` names the "
+        "task by. Auto-generated if omitted."
+    ),
+    ("PlanItem", "content"): (
+        'The task in imperative form, as the operator reads it: "Add the database migration".'
+    ),
+    ("PlanItem", "status"): "Current status of this task. Exactly one task is `in_progress`.",
+    ("PlanItem", "active_form"): (
+        'The task in the present continuous, shown while it runs: "Adding the database '
+        'migration".'
+    ),
+    ("PlanStatusUpdate", "task_id"): (
+        "The task's `id`, as you gave it in `tasks_write` or as `tasks_read` shows it."
+    ),
     ("PlanStatusUpdate", "status"): "New status.",
+}
+#: The same, for the task-list tools' top-level arguments.
+_TASK_ARG_TEXT: Mapping[str, str] = {
+    "items": "The complete ordered list, unchanged and finished tasks included.",
+    "updates": "The status changes, applied in order.",
 }
 
 
@@ -300,6 +319,10 @@ SUBTASKS_LEAKED = frozenset({"tasks_write", "tasks_update_statuses"})
 
 def _strip_subtasks(schema: dict[str, JsonValue]) -> None:
     """Edit one already-copied task-list schema in place."""
+    if isinstance(arguments := schema.get("properties"), dict):
+        for argument, argument_schema in arguments.items():
+            if isinstance(argument_schema, dict) and (text := _TASK_ARG_TEXT.get(argument)):
+                argument_schema["description"] = text
     defs = schema.get("$defs")
     if not isinstance(defs, dict):
         return
