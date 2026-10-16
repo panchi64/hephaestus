@@ -22,6 +22,7 @@ import logging
 import os
 import secrets
 import time
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -49,6 +50,12 @@ class BringOut:
     files: int = 0
     commits_landed: bool = False
     notes: list[str] = field(default_factory=list)
+    #: The paths written or removed in the host folder, relative to it.
+    paths: list[str] = field(default_factory=list)
+
+
+#: Called with the paths a bring-out is about to write or remove, before it does.
+type BeforePull = Callable[[Sequence[str]], Awaitable[None]]
 
 
 class ProjectWorkspace:
@@ -91,13 +98,16 @@ class ProjectWorkspace:
         self._host = host_now
         self._generation = self._vm.generation
 
-    async def bring_out(self) -> BringOut:
+    async def bring_out(self, before_pull: BeforePull | None = None) -> BringOut:
         report = BringOut()
         if not self.is_in:
             return report
         guest_now = await self._guest_manifest()
         changes = diff(guest_now, self._guest)
         if changes:
+            report.paths = sorted({*changes.changed, *changes.gone})
+            if before_pull is not None:
+                await before_pull(report.paths)
             await self._vm.pull(self.key, self.root, changes, project=True)
             report.files = len(changes.changed) + len(changes.gone)
         self._guest = guest_now

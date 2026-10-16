@@ -14,14 +14,6 @@ import type {
  *  types from one place. */
 export type { CompactionReason };
 
-/** Where a thread does its work: `sandbox` is the thread's own workspace in the platform VM, `checkout` is
- *  the project's own folder on the operator's machine (on the branch they have checked
- *  out), and `worktree` is an isolated git worktree of that repository. A project thread
- *  starts in the checkout and the agent may move it to a worktree mid-conversation,
- *  never back — so this is read off the backend's current answer, never held from
- *  creation. */
-export type WorkspaceKind = "sandbox" | "checkout" | "worktree";
-
 /** The context-window state, derived and emitted by the backend (live over the
  *  run stream, or reconstructed on conversation load). Purely a carrier — the
  *  UI renders it, it does not compute it. */
@@ -767,13 +759,9 @@ export interface ChatSummary {
    *  two can be set at once (a thread that finished and has already been sent to
    *  again). See `ChatOutcome` for why absence says nothing. */
   lastOutcome?: ChatOutcome;
-  /** Where the thread works right now. It can change under the operator — the agent
-   *  moves a thread into a worktree mid-conversation — so every reader takes it from the
-   *  latest listing. */
-  workspaceKind: WorkspaceKind;
-  /** The **basename** of the directory a checkout or worktree thread works in. Absent
-   *  for a sandbox thread, and for one whose project has since been deleted. Never a path:
-   *  the backend resolves it and the full path stays there. */
+  /** The **basename** of the directory of the project the thread is filed under. Absent
+   *  for an unfiled thread, and for one whose project has since been deleted. Never a
+   *  path: the backend resolves it and the full path stays there. */
   workspace?: string;
   /** The project the thread is scoped to — what the rail files it under, whether or not
    *  it has a worktree yet. The rail lists every directory the operator works in,

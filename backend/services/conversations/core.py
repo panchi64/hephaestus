@@ -15,11 +15,10 @@ from core.db import in_session
 from core.vault import Vault
 from core.worker import WriteBehindWorker
 from models.conversation import Conversation, Message
+from models.thread_worktree import ThreadWorktree
 from services.embeddings import Embedder
 from services.permissions import DEFAULT_PERMISSION, permission_level
 from services.sealing import open_sealed
-from services.workspace_kind import DEFAULT_WORKSPACE_KIND
-from services.workspace_kind import workspace_kind as normalise_workspace_kind
 
 from .projection import MESSAGE
 from .records import ConversationBinding, ConversationSummaryView
@@ -195,15 +194,13 @@ class StoreCore:
         ephemeral: bool = False,
         *,
         project_id: str | None = None,
-        workspace_kind: str = DEFAULT_WORKSPACE_KIND,
         permission: str | None = None,
         agent_name: str | None = None,
         parent_id: str | None = None,
         workspace_key: str | None = None,
     ) -> str:
         """Start a thread. ``project_id`` files it (null is unfiled, which is visible
-        under every scope). ``workspace_kind`` is where its file work happens; only a fork
-        of a worktree thread starts in one (see `models/conversation.py`).
+        under every scope) and lets it write that project.
 
         ``permission`` is the level it *starts* at and moves freely afterwards; absent, the
         default level applies. ``agent_name`` is the agent it runs; absent, the default.
@@ -216,7 +213,6 @@ class StoreCore:
                 title_enc=self._seal_title(title),
                 ephemeral=ephemeral,
                 project_id=project_id,
-                workspace_kind=normalise_workspace_kind(workspace_kind),
                 agent_name=agent_name,
                 parent_id=parent_id,
                 workspace_key=workspace_key or None,
@@ -325,6 +321,9 @@ class StoreCore:
             # without ordering children before parents for the self-referential FK.
             defer_fk(session)
             _ = session.exec(delete(Message).where(col(Message.conversation_id) == conversation_id))
+            _ = session.exec(
+                delete(ThreadWorktree).where(col(ThreadWorktree.conversation_id) == conversation_id)
+            )
             if conversation is not None:
                 session.delete(conversation)
 

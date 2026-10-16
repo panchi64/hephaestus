@@ -25,8 +25,7 @@ kinds of reach, not degrees of danger:
   later approval can take back, which is why it is its own class and not an external read.
 
 **Why the names are written out.** ``tools/`` sits above ``services/`` in the dependency
-order, so walking the live catalog from here would invert it — the same constraint
-``services/workspace_kind.py`` works under. The literal is not left to rot:
+order, so walking the live catalog from here would invert it. The literal is not left to rot:
 ``tests/test_tool_sensitivity.py`` pins it against the catalog a real run resolves, in both
 directions, so a renamed tool fails a test rather than silently losing its class.
 
@@ -143,7 +142,6 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "plugins_read",
             "project_active",
             "project_list",
-            "repo_inventory_agent_context",
             "routines_list",
             # Reading the status and output of a command someone else started. Starting
             # and stopping one are execution; asking what it printed is not.

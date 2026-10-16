@@ -73,60 +73,79 @@ class OpenFork:
     discard: Callable[[], Awaitable[None]]
 
 
-def reopen_fork(
-    caps: ServiceContainer,
-    *,
-    kind: str,
-    target: ForkTarget,
-) -> OpenFork | None:
-    """Handles for landing a fork somebody else took, or None when its manager is absent.
+def reopen_fork(caps: ServiceContainer, *, target: ForkTarget) -> OpenFork | None:
+    """Handles for landing a fork somebody else took, or None when it took nothing.
 
-    ``kind`` is the workspace kind the fork was taken in — stored when it was taken, not
-    guessed from the mode here, because this runs after everything that knew is gone.
+    A delegated agent working apart forks its parent's scratch, and its parent's worktree
+    too when the parent has one; each copy that exists is landed, and the reports are
+    read as one.
     """
-    if kind == "worktree":
-        projects = caps.get_optional(ProjectStore)
-        worktrees = caps.get_optional(WorktreeManager)
-        if (
-            projects is None
-            or worktrees is None
-            or not target.project_id
-            or target.conversation_id is None
-        ):
-            return None
+    forks = [fork for fork in (_scratch_fork(caps, target), _worktree_fork(caps, target)) if fork]
+    if not forks:
+        return None
 
-        project_id = target.project_id
-        conversation_id = target.conversation_id
+    async def merge() -> MergeReport:
+        reports = [await fork.merge() for fork in forks]
+        return MergeReport(
+            merged=all(report.merged for report in reports),
+            files=[name for report in reports for name in report.files],
+            conflicts=[name for report in reports for name in report.conflicts],
+            deleted=[name for report in reports for name in report.deleted],
+        )
 
-        async def root() -> Path:
-            project = await projects.get(target.owner_id, project_id)
-            return Path(project.root_path)
+    async def discard() -> None:
+        for fork in forks:
+            await fork.discard()
 
-        async def merge_worktree() -> MergeReport:
-            return await worktrees.merge_back(
-                project_id=project_id,
-                root=await root(),
-                conversation_id=conversation_id,
-                delegation_id=target.delegation_id,
-            )
+    return OpenFork(merge=merge, discard=discard)
 
-        async def discard_worktree() -> None:
-            await worktrees.discard_child(
-                project_id=project_id,
-                root=await root(),
-                conversation_id=conversation_id,
-                delegation_id=target.delegation_id,
-            )
 
-        return OpenFork(merge=merge_worktree, discard=discard_worktree)
-
+def _scratch_fork(caps: ServiceContainer, target: ForkTarget) -> OpenFork | None:
     sessions = caps.get_optional(SandboxSessionManager)
-    if sessions is None:
+    if sessions is None or sessions.existing(target.child_key) is None:
         return None
     return OpenFork(
         merge=lambda: sessions.merge_back(target.child_key, target.parent_key),
         discard=lambda: sessions.purge(target.child_key),
     )
+
+
+def _worktree_fork(caps: ServiceContainer, target: ForkTarget) -> OpenFork | None:
+    projects = caps.get_optional(ProjectStore)
+    worktrees = caps.get_optional(WorktreeManager)
+    if (
+        projects is None
+        or worktrees is None
+        or not target.project_id
+        or target.conversation_id is None
+    ):
+        return None
+    project_id = target.project_id
+    conversation_id = target.conversation_id
+    if not worktrees.fork_path(project_id, conversation_id, target.delegation_id).exists():
+        return None
+
+    async def root() -> Path:
+        project = await projects.get(target.owner_id, project_id)
+        return Path(project.root_path)
+
+    async def merge_worktree() -> MergeReport:
+        return await worktrees.merge_back(
+            project_id=project_id,
+            root=await root(),
+            conversation_id=conversation_id,
+            delegation_id=target.delegation_id,
+        )
+
+    async def discard_worktree() -> None:
+        await worktrees.discard_child(
+            project_id=project_id,
+            root=await root(),
+            conversation_id=conversation_id,
+            delegation_id=target.delegation_id,
+        )
+
+    return OpenFork(merge=merge_worktree, discard=discard_worktree)
 
 
 def merge_summary(report: MergeReport) -> str:

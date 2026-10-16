@@ -60,7 +60,6 @@ class SubagentStore:
         workspace_policy: str,
         workspace_key: str | None,
         delegation_id: str | None,
-        workspace_kind: str | None = None,
         project_id: str | None = None,
     ) -> None:
         """Open a row for a sub-agent that has just been submitted.
@@ -84,7 +83,6 @@ class SubagentStore:
             workspace_policy=workspace_policy,
             workspace_key=workspace_key,
             delegation_id=delegation_id,
-            workspace_kind=workspace_kind,
             project_id=project_id,
         )
 

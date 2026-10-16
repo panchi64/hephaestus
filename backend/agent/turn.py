@@ -124,7 +124,8 @@ def turn_deps(
         # binding by the caller, never from a live request — switching the active project
         # must not change what an already-running thread is doing.
         project_id=binding.project_id,
-        workspace_kind=binding.workspace_kind,
+        worktree=binding.worktree,
+        leases_from=binding.leases_from,
         # And how far it may go on its own. The toolset stack reads this to mark the tools
         # that reach past it, so the level is enforced before a call runs rather than
         # apologised for afterwards.

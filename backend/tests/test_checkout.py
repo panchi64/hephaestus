@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -13,16 +12,14 @@ from pydantic_ai.usage import RunUsage
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import Run, RunStatus, RunStream
+from runs import Run, RunStream
 from services.conversations import ConversationStore
 from services.projects import ProjectStore, WorktreeManager
-from services.projects.checkout import CheckoutBusyError, CheckoutHolders
 from services.workspace import WORKTREE_SCRATCH
-from services.workspace_kind import WorkspaceKind
 from services.worktree_switch import WorktreeSwitch
 from tools.deps import RunDeps
+from tools.home import resolve_run_home
 from tools.projects import project_toolset
-from tools.repo import repo_instructions
 from tools.workspace import run_workspace
 
 from ._json import JSON, s
@@ -84,7 +81,6 @@ def _caps(tmp_path: Path, root: Path, switch: _FakeSwitch | None = None) -> Serv
     caps = ServiceContainer()
     caps.add(_FakeProjects({"proj-1": root}), as_type=ProjectStore)
     caps.add(WorktreeManager(tmp_path / "worktrees"), as_type=WorktreeManager)
-    caps.add(CheckoutHolders())
     if switch is not None:
         caps.add(switch, as_type=WorktreeSwitch)
     return caps
@@ -100,7 +96,7 @@ def _ctx(
     run: Run | None = None,
     conversation_id: str = "conv-a",
     project_id: str | None = "proj-1",
-    workspace_kind: WorkspaceKind = "checkout",
+    worktree: bool = False,
     workspace_key: str = "",
 ) -> RunContext[RunDeps]:
     return RunContext(
@@ -110,7 +106,7 @@ def _ctx(
             caps=caps,
             conversation_id=conversation_id,
             project_id=project_id,
-            workspace_kind=workspace_kind,
+            worktree=worktree,
             workspace_key=workspace_key,
         ),
         model=TestModel(),
@@ -119,12 +115,6 @@ def _ctx(
 
 
 class TestTheCheckout:
-    async def test_its_instruction_file_is_briefed_like_a_worktrees(self, tmp_path: Path):
-        root = await _repo(tmp_path / "project")
-        _ = (root / "CLAUDE.md").write_text("Run the tests with `make check`.\n")
-        brief = await repo_instructions(_ctx(_caps(tmp_path, root), run=_run("run-brief")))
-        assert "make check" in brief
-
     async def test_it_is_the_operators_own_folder_on_its_branch(self, tmp_path: Path):
         root = await _repo(tmp_path / "project")
         workspace = await run_workspace(_ctx(_caps(tmp_path, root)))
@@ -141,32 +131,13 @@ class TestTheCheckout:
         workspace.files.write_file(f"{workspace.stage_prefix}attachments/a.txt", b"hi")
         assert WORKTREE_SCRATCH not in await _git(root, "status", "--porcelain")
 
-    async def test_a_second_conversation_is_refused_while_the_first_is_working(
-        self, tmp_path: Path
-    ):
+    async def test_two_threads_work_in_one_folder_at_once(self, tmp_path: Path):
+        # Writes are fenced by leases and serialised per copy, not by one holder.
         root = await _repo(tmp_path / "project")
         caps = _caps(tmp_path, root)
-        first = _run("run-1")
-        assert await run_workspace(_ctx(caps, run=first)) is not None
-        with pytest.raises(CheckoutBusyError):
-            _ = await run_workspace(_ctx(caps, run=_run("run-2"), conversation_id="conv-b"))
-
-    async def test_the_hold_ends_with_the_run_that_took_it(self, tmp_path: Path):
-        root = await _repo(tmp_path / "project")
-        caps = _caps(tmp_path, root)
-        first = _run("run-1")
-        _ = await run_workspace(_ctx(caps, run=first))
-        first.status = RunStatus.done
+        first = await run_workspace(_ctx(caps, run=_run("run-1")))
         other = await run_workspace(_ctx(caps, run=_run("run-2"), conversation_id="conv-b"))
-        assert other is not None and other.root == root
-
-    async def test_a_delegated_run_shares_its_parents_hold(self, tmp_path: Path):
-        root = await _repo(tmp_path / "project")
-        caps = _caps(tmp_path, root)
-        _ = await run_workspace(_ctx(caps, run=_run("run-1")))
-        child = _ctx(caps, run=_run("run-2"), conversation_id="child", workspace_key="conv-a")
-        workspace = await run_workspace(child)
-        assert workspace is not None and workspace.root == root
+        assert first is not None and other is not None and other.root == first.root == root
 
 
 async def _open_worktree(ctx: RunContext[RunDeps]) -> str:
@@ -180,31 +151,37 @@ async def _open_worktree(ctx: RunContext[RunDeps]) -> str:
 
 
 class TestOpeningAWorktree:
-    async def test_it_moves_the_run_onto_its_own_branch_mid_turn(self, tmp_path: Path):
+    async def test_it_gives_the_run_a_branch_of_its_own_mid_turn(self, tmp_path: Path):
         root = await _repo(tmp_path / "project")
         switch = _FakeSwitch()
         ctx = _ctx(_caps(tmp_path, root, switch))
-        before = await run_workspace(ctx)
-        assert before is not None and before.kind == "checkout"
+        before = await resolve_run_home(ctx.deps)
+        assert before is not None and before.default.path == "/home/agent/projects/proj-1"
 
         result = await _open_worktree(ctx)
 
         assert switch.opened == ["conv-a"]
-        assert ctx.deps.workspace_kind == "worktree"
+        assert ctx.deps.worktree
         after = await run_workspace(ctx)
         assert after is not None
         assert after.kind == "worktree"
         assert after.root != root
         assert after.branch == "heph/conv-a"
-        assert "heph/conv-a" in result
+        assert "heph/conv-a" in result and "/home/agent/worktrees/proj-1" in result
+        home = await resolve_run_home(ctx.deps)
+        assert home is not None
+        # Relative paths land in the worktree, and the operator's folder is theirs again.
+        assert home.default.path == "/home/agent/worktrees/proj-1"
+        checkout = home.place_of("~/projects/proj-1/hello.txt")
+        assert checkout is not None and not home.writable(checkout)
 
-    async def test_an_unfiled_chat_has_nothing_to_check_out(self, tmp_path: Path):
+    async def test_an_unfiled_chat_has_nothing_to_open(self, tmp_path: Path):
         root = await _repo(tmp_path / "project")
         switch = _FakeSwitch()
-        ctx = _ctx(_caps(tmp_path, root, switch), project_id=None, workspace_kind="sandbox")
-        assert "not bound to a project" in await _open_worktree(ctx)
+        ctx = _ctx(_caps(tmp_path, root, switch), project_id=None)
+        assert "not filed under a project" in await _open_worktree(ctx)
         assert switch.opened == []
-        assert ctx.deps.workspace_kind == "sandbox"
+        assert not ctx.deps.worktree
 
     async def test_a_delegated_agent_cannot_move_its_parents_workspace(self, tmp_path: Path):
         root = await _repo(tmp_path / "project")
@@ -216,12 +193,12 @@ class TestOpeningAWorktree:
     async def test_a_worktree_chat_is_told_so(self, tmp_path: Path):
         root = await _repo(tmp_path / "project")
         switch = _FakeSwitch()
-        ctx = _ctx(_caps(tmp_path, root, switch), workspace_kind="worktree")
+        ctx = _ctx(_caps(tmp_path, root, switch), worktree=True)
         assert "already" in await _open_worktree(ctx)
         assert switch.opened == []
 
 
-class TestTheStoreRemembersTheMove:
+class TestTheStoredBinding:
     async def _store(self, tmp_path: Path) -> ConversationStore:
         engine = make_engine("sqlite:///:memory:")
         init_db(engine)
@@ -229,19 +206,39 @@ class TestTheStoreRemembersTheMove:
         await vault.setup("pw")
         return ConversationStore(engine, vault)
 
-    async def test_a_project_thread_moves_to_a_worktree_and_stays(self, tmp_path: Path):
+    async def test_a_thread_keeps_its_worktree_until_it_is_closed(self, tmp_path: Path):
         store = await self._store(tmp_path)
-        conversation_id = await store.create_conversation(
-            OWNER, project_id="p1", workspace_kind="checkout"
-        )
-        assert (await store.binding(conversation_id)).workspace_kind == "checkout"
+        conversation_id = await store.create_conversation(OWNER, project_id="p1")
+        assert not (await store.binding(conversation_id)).worktree
         assert await store.open_worktree(conversation_id)
         binding = await store.binding(conversation_id)
-        assert binding.workspace_kind == "worktree"
-        assert binding.project_id == "p1"
+        assert binding.worktree and binding.project_id == "p1"
+        await store.close_worktree(conversation_id)
+        assert not (await store.binding(conversation_id)).worktree
 
-    async def test_an_unfiled_thread_cannot_move(self, tmp_path: Path):
+    async def test_an_unfiled_thread_has_no_worktree_to_open(self, tmp_path: Path):
         store = await self._store(tmp_path)
         conversation_id = await store.create_conversation(OWNER)
         assert not await store.open_worktree(conversation_id)
-        assert (await store.binding(conversation_id)).workspace_kind == "sandbox"
+        assert not (await store.binding(conversation_id)).worktree
+
+    async def test_a_spawned_agent_works_in_its_parents_worktree_and_leases(
+        self, tmp_path: Path
+    ):
+        store = await self._store(tmp_path)
+        parent = await store.create_conversation(OWNER, project_id="p1")
+        _ = await store.open_worktree(parent)
+
+        async def child(key: str) -> tuple[bool, str | None]:
+            conversation_id = await store.create_conversation(
+                OWNER, project_id="p1", parent_id=parent, workspace_key=key
+            )
+            binding = await store.binding(conversation_id)
+            return binding.worktree, binding.leases_from
+
+        # Sharing its parent's files, it works under the parent's leases; working apart, in
+        # a fork or a workspace of its own, under none.
+        assert await child(parent) == (True, parent)
+        assert await child(f"{parent}/s-1") == (True, "")
+        assert await child("") == (False, "")
+        assert (await store.binding(parent)).leases_from is None

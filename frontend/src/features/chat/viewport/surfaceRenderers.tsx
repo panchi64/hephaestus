@@ -25,7 +25,7 @@ import { SubagentsSurface } from "../components/SubagentsSurface";
 import { BrowserSurface } from "../components/BrowserSurface";
 import { CommandsSurface } from "../components/CommandsSurface";
 import { SourcesSurface } from "../components/SourcesSurface";
-import { DiffSurface } from "../components/DiffSurface";
+import { ChangesSurface } from "../components/ChangesSurface";
 import { FilesSurface } from "../components/FilesSurface";
 import { PlanSurface, planStatusOf } from "../components/PlanSurface";
 import { TasksSurface } from "../components/TasksSurface";
@@ -69,9 +69,11 @@ export const SURFACE_RENDERERS: Record<
   ),
   commands: (ctx) => <CommandsSurface commands={ctx.viewport.commands} />,
   diff: (ctx) => (
-    <DiffSurface
+    <ChangesSurface
+      conversationId={ctx.viewport.conversationId}
+      changes={ctx.viewport.changes}
       branch={ctx.viewport.branch}
-      onChanged={ctx.viewport.refetchBranch}
+      onChanged={ctx.viewport.refetchChanges}
       fontStep={ctx.viewport.state().fontStep}
       softWrap={ctx.viewport.state().softWrap}
     />

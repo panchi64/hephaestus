@@ -105,13 +105,8 @@ class SubagentRecord(Table, table=True):
     workspace_policy: str = Field(default="shared")
     workspace_key: str | None = Field(default=None)
     delegation_id: str | None = Field(default=None)
-    #: ``sandbox`` or ``worktree`` — which manager owns the copy, and therefore how it is
-    #: merged and discarded. Stored rather than re-derived from the mode at merge time: the
-    #: merge happens after the launching run is gone, and a thread's mode is immutable but
-    #: the code that maps one to a workspace kind is not.
-    workspace_kind: str | None = Field(default=None)
-    #: The project a worktree fork belongs to. Here for the same reason the kind is: the
-    #: merge runs from a terminal hook, long after the binding that knew this is gone.
+    #: The project a worktree fork belongs to: the merge runs from a terminal hook, long
+    #: after the binding that knew this is gone.
     project_id: str | None = Field(default=None)
     #: The child's own context footprint, written when it settles. The *live* figure comes
     #: off the running Run's metrics; this is what a card shows for a sub-agent that

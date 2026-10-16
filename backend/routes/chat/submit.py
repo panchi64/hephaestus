@@ -26,6 +26,7 @@ from services.settings_store import (
     get_inactivity_timeout,
     get_wall_clock_timeout,
 )
+from services.workspace import place_kind
 from tools import InstructionProvider, RunDeps
 
 
@@ -93,7 +94,7 @@ async def _command_context(
     spec = await deps.commands(request).resolve(
         OPERATOR_ID,
         command.name,
-        workspace_kind=binding.workspace_kind,
+        place=place_kind(binding.project_id, binding.worktree),
         has_conversation=True,
         disabled_tools=disabled_tools,
         # The same tree the picker listed from, resolved the same way — a project's own

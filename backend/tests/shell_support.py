@@ -25,12 +25,10 @@ from core.vault import Vault
 from runs import Run, RunStream
 from services.egress import EgressPolicy
 from services.projects import ProjectStore
-from services.projects.checkout import CheckoutHolders
 from services.sandbox import SandboxSessionManager
 from services.sandbox.thread_shells import ThreadShells
 from services.vm.host import SessionHost
 from services.vm.project import ProjectCopies
-from services.workspace_kind import WorkspaceKind
 from tools.deps import RunDeps
 from tools.shell import SHELL_MAX_OUTPUT_CHARS, SHELL_TIMEOUT_S
 
@@ -137,7 +135,7 @@ def checkout_ctx(
     copies: ProjectCopies | None = None,
     sessions: SandboxSessionManager | None = None,
     egress: EgressPolicy | None = None,
-    kind: WorkspaceKind = "checkout",
+    worktree: bool = False,
     project_id: str = "proj-1",
     conversation_id: str = "conv-a",
     approved: bool = True,
@@ -148,7 +146,6 @@ def checkout_ctx(
     one ``shells`` share the app's thread shells, as two threads in one process do."""
     caps = ServiceContainer()
     caps.add(_Projects(root, project_id), as_type=ProjectStore)
-    caps.add(CheckoutHolders())
     if copies is not None:
         caps.add(copies, as_type=ProjectCopies)
         caps.add(shells or thread_shells(copies))
@@ -164,7 +161,7 @@ def checkout_ctx(
             caps=caps,
             conversation_id=conversation_id,
             project_id=project_id,
-            workspace_kind=kind,
+            worktree=worktree,
         ),
         model=TestModel(),
         usage=RunUsage(),

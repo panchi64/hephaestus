@@ -19,7 +19,6 @@ from services.conversations import ConversationBinding
 from services.permissions import permission_level, stricter_permission
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.tree import thread_tree
-from services.workspace_kind import is_project_folder
 
 #: The tools that hand work to another agent, withheld from one that may not delegate.
 DELEGATION_TOOLS: frozenset[str] = frozenset({"agents_spawn"})
@@ -93,8 +92,6 @@ async def _project_root(
 ) -> Path | None:
     if projects is None or binding.project_id is None:
         return None
-    if not is_project_folder(binding.workspace_kind):
-        return None
     try:
         project = await projects.get(owner_id, binding.project_id)
     except NotFoundError:
@@ -103,5 +100,5 @@ async def _project_root(
     if worktrees is None:
         return root
     return await thread_tree(
-        root, worktrees.path_for(binding.project_id), binding.workspace_kind, conversation_id
+        root, worktrees.path_for(binding.project_id), binding.worktree, conversation_id
     )

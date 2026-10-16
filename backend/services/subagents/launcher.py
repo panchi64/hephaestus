@@ -49,8 +49,9 @@ class SubagentParent:
     conversation_id: str | None = None
     #: The project the parent is filed under, inherited so a child works on the same code.
     project_id: str | None = None
-    #: Where the parent works, which a sub-agent sharing or forking its files inherits.
-    workspace_kind: str | None = None
+    #: Whether the parent works in a worktree, which a sub-agent sharing or forking its
+    #: files works in too.
+    worktree: bool = False
     #: How much rope the *parent* has. A sub-agent runs at the stricter of this and what
     #: its spec asks for, so one approved launch cannot buy a level the operator never
     #: chose. None means the caller had no level to hand over and the default stands.

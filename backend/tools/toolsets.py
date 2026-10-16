@@ -45,7 +45,6 @@ from pydantic_ai import AbstractToolset, CombinedToolset, RunContext, ToolDefini
 from services.permissions import beyond_scope
 from services.tool_policy import permission_disabled_tools
 from services.tool_sensitivity import declared_sensitivity
-from services.workspace_kind import workspace_disabled_tools
 
 from .builtin import builtin_toolset
 from .code import code_toolset
@@ -63,7 +62,6 @@ from .harness_events import own_harness_events
 from .plan import GATED_TOOLS as _PLAN_GATED
 from .plan import plan_toolset
 from .recover import RecoveringToolset, TolerantTools
-from .repo import repo_toolset
 from .shell import GATED_TOOLS as _SHELL_GATED
 from .shell import shell_toolset
 from .tasks import tasks_toolset
@@ -82,10 +80,9 @@ def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
 
     ``disabled_tools`` is the union of everything settled for the whole turn
     (``services/tool_policy.py``), and ``tool_access`` is what the run's agent is offered at
-    all. The **level** and the **workspace kind** can both move
-    inside a turn (``tools/plan.py`` narrows and widens the level; ``project_open_worktree``
-    moves the workspace), so they are read live on every request rather than folded into
-    that union, where they could be added and never correctly taken back out.
+    all. The **level** can move inside a turn (``tools/plan.py`` narrows and widens it), so
+    it is read live on every request rather than folded into that union, where it could be
+    added and never correctly taken back out.
     """
     name = tool_def.name
     deps = ctx.deps
@@ -93,7 +90,6 @@ def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
         name not in deps.disabled_tools
         and deps.tool_access.permits(name)
         and name not in permission_disabled_tools(deps.permission)
-        and name not in workspace_disabled_tools(deps.workspace_kind)
     )
 
 
@@ -171,11 +167,7 @@ def core_categories() -> dict[str, AbstractToolset[RunDeps]]:
         # every level, `plan` the written document a Plan-level turn submits for approval.
         "tasks": tasks_toolset(),
         "plan": plan_toolset(),
-        # The worktree's two categories. Registered unconditionally like every other and
-        # withheld live from sandbox runs (`services/workspace_kind.py`) — one catalog, so
-        # the operator's settings list and the agent's real stack cannot diverge.
         "shell": shell_toolset(),
-        "repo": repo_toolset(),
     }
 
 

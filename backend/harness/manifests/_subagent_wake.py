@@ -216,7 +216,6 @@ class SubagentWake:
         parent_key, _, _ = row.workspace_key.partition(DELEGATION_SEP)
         fork = reopen_fork(
             self._ctx.capabilities,
-            kind=row.workspace_kind or "sandbox",
             target=ForkTarget(
                 parent_key=parent_key,
                 child_key=row.workspace_key,

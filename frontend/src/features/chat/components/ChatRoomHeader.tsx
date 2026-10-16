@@ -8,7 +8,7 @@ import {
   TypewriterText,
   type MenuItem,
 } from "~/ui";
-import { REVEAL_SPEED_MS } from "../data";
+import { REVEAL_SPEED_MS, pendingCount } from "../data";
 import type { ChatViewport } from "../useChatViewport";
 import type { BranchState } from "../data";
 import { BranchChip } from "./BranchChip";
@@ -128,6 +128,21 @@ export function ChatRoomHeader(props: ChatRoomHeaderProps): JSX.Element {
           branch={props.branch}
           onOpen={() => props.viewport.toggleSurface("diff")}
         />
+        {/* Files the thread changed in the operator's own project folders and has not
+            been told to put back — already in their working copy, which is why it is
+            worth a control of its own. */}
+        <Show when={pendingCount(props.viewport.changes())}>
+          {(count) => (
+            <Button
+              variant="ghost"
+              leading="edit"
+              onClick={() => props.viewport.toggleSurface("diff")}
+              aria-label={`Review ${count()} file${count() === 1 ? "" : "s"} this conversation changed in your projects`}
+            >
+              {count()} CHANGED
+            </Button>
+          )}
+        </Show>
         {/* One button per surface that has anything to show — the eye toggle
             grown up. It could only ever say "the panel", which was enough while
             the panel held one thing and a guess once it holds several. */}

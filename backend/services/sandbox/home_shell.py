@@ -1,11 +1,11 @@
 """One thread's shell in the platform VM, run in the agent's home.
 
-A command sees the thread's scratch at ``~/scratch`` (and ``/work``) and the projects it
-reaches at ``~/projects/<slug>``: the project its working directory is in, and any it names
-by path. Each crosses into the VM as it does today, the scratch as the sandbox session's
-guest copy and a project as its git-aware copy (``services/vm/project.py``), and what a
-command changed in each is brought back after it. A project the thread may not write is
-bound read-only, which the guest kernel enforces.
+A command sees the thread's scratch at ``~/scratch`` (and ``/work``) and the projects and
+worktrees it reaches at ``~/projects/<slug>`` and ``~/worktrees/<slug>``: the one its
+working directory is in, and any it names by path. The scratch crosses into the VM as the
+sandbox session's guest copy and a project as its git-aware copy
+(``services/vm/project.py``), and what a command changed in each is brought back after it.
+A project the thread may not write is bound read-only, which the guest kernel enforces.
 
 The working directory persists between commands as a home path, and follows a ``cd`` the
 command made as long as it lands somewhere the command could see.
@@ -27,11 +27,12 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness._output import truncate_tail
 
 from services.home.backend import Mount
-from services.home.paths import HOME, SCRATCH, HomePathError, Place, parse, projects_named
+from services.home.changes import ChangeLog
+from services.home.paths import HOME, SCRATCH, HomePathError, Place, parse, places_named
 from services.vm import VMError
 from services.vm.host import JobHost
 from services.vm.platform import HomeBind, JobState
-from services.vm.project import BringOut, ProjectCopies, ProjectCopy
+from services.vm.project import ProjectCopies, ProjectCopy
 
 from .base import SandboxError
 from .jobs import capturing_cwd, follow_job, refuse
@@ -53,7 +54,8 @@ class _Job:
 
     name: str
     session: SandboxSession
-    copies: tuple[ProjectCopy, ...]
+    held: tuple[tuple[Mount, ProjectCopy], ...]
+    changes: ChangeLog | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,20 +92,20 @@ class HomeShell:
     def reached(
         self, command: str, mounts: Sequence[Mount], *, network: bool = False
     ) -> list[Mount]:
-        """The project mounts a command sees: its working directory's, then each it names,
-        up to a cap. Scratch is always there and is not listed.
+        """The project and worktree mounts a command sees: its working directory's, then
+        each it names, up to a cap. Scratch is always there and is not listed.
 
-        A command with the network sees only its working directory's project, so what it
-        can send out is what it was started to work on.
+        A command with the network sees only its working directory's, so what it can send
+        out is what it was started to work on.
         """
-        by_name = {m.place.name: m for m in mounts if m.place.kind == "projects"}
-        wanted: list[str] = []
+        by_place = {m.place: m for m in mounts if m.place != SCRATCH}
+        wanted: list[Place] = []
         here = _place_of(self._cwd)
-        if here is not None and here.kind == "projects":
-            wanted.append(here.name)
+        if here is not None and here != SCRATCH:
+            wanted.append(here)
         if not network:
-            wanted += [name for name in projects_named(command) if name not in wanted]
-        return [by_name[name] for name in wanted if name in by_name][:_MAX_PROJECTS]
+            wanted += [place for place in places_named(command) if place not in wanted]
+        return [by_place[place] for place in wanted if place in by_place][:_MAX_PROJECTS]
 
     async def run(
         self,
@@ -115,9 +117,11 @@ class HomeShell:
         network: bool = False,
         timeout_seconds: float | None = None,
         on_progress: ProgressHook | None = None,
+        changes: ChangeLog | None = None,
     ) -> HomeResult:
         """Run ``command`` to its end. Cancelled, it stops the job and still brings back
-        what the command changed, so nothing keeps writing a copy no lock holds."""
+        what the command changed, so nothing keeps writing a copy no lock holds.
+        ``changes`` records what it changes in the operator's own project folders."""
         refuse(command)
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
         projects = self.reached(command, mounts, network=network)
@@ -150,13 +154,12 @@ class HomeShell:
                 try:
                     state = await follow_job(vm, name, started, on_progress)
                 except asyncio.CancelledError:
-                    await _abandon(vm, name, session, [copy for _, copy in held])
+                    await _abandon(vm, name, session, held, changes)
                     raise
                 landed = await vm.read_guest(cwd_file, max_bytes=4096)
                 await session.bring_out()
-                for _mount, copy in held:
-                    report: BringOut = await copy.workspace.bring_out()
-                    notes += report.notes
+                for mount, copy in held:
+                    notes += await _bring_back(mount, copy, changes)
             except VMError as exc:
                 raise ModelRetry(f"The platform VM could not run the command: {exc}") from exc
             finally:
@@ -185,6 +188,7 @@ class HomeShell:
         *,
         mounts: Sequence[Mount],
         network: bool = False,
+        changes: ChangeLog | None = None,
     ) -> str:
         """Start ``command`` in the background; its places come back when it ends."""
         refuse(command)
@@ -212,7 +216,7 @@ class HomeShell:
                 raise ModelRetry(f"The platform VM could not start the command: {exc}") from exc
         for _mount, copy in held:
             copy.jobs.add(name)
-        self._jobs[command_id] = _Job(name, session, tuple(copy for _, copy in held))
+        self._jobs[command_id] = _Job(name, session, tuple(held), changes)
         return command_id
 
     async def check(self, copies: ProjectCopies, command_id: str) -> BackgroundStatus | None:
@@ -251,14 +255,14 @@ class HomeShell:
         status: Literal["finished", "stopped"],
     ) -> BackgroundStatus:
         _ = self._jobs.pop(command_id, None)
-        for copy in job.copies:
+        for _mount, copy in job.held:
             copy.jobs.discard(job.name)
         async with job.session.lock:
             await job.session.bring_out()
-        for copy in job.copies:
+        for mount, copy in job.held:
             async with copy.lock:
                 copy.touch()
-                _ = await copy.workspace.bring_out()
+                _ = await _bring_back(mount, copy, job.changes)
         final = self._status(command_id, state, status)
         self._finished[command_id] = final
         while len(self._finished) > _MAX_FINISHED:
@@ -292,8 +296,26 @@ class HomeShell:
             self._cwd = target.path
 
 
+async def _bring_back(mount: Mount, copy: ProjectCopy, changes: ChangeLog | None) -> list[str]:
+    """Bring a project's changes out of the VM, recording any to the operator's own
+    folder first. Returns the notes for the agent. The caller holds the copy's lock."""
+    if changes is None or not changes.records(mount):
+        return (await copy.workspace.bring_out()).notes
+
+    async def before(paths: Sequence[str]) -> None:
+        await changes.before(mount, paths)
+
+    report = await copy.workspace.bring_out(before)
+    await changes.after(mount, report.paths)
+    return report.notes
+
+
 async def _abandon(
-    vm: JobHost, name: str, session: SandboxSession, copies: Sequence[ProjectCopy]
+    vm: JobHost,
+    name: str,
+    session: SandboxSession,
+    held: Sequence[tuple[Mount, ProjectCopy]],
+    changes: ChangeLog | None,
 ) -> None:
     """Stop a job whose caller gave up on it, and bring back what it had changed. The
     caller holds the locks."""
@@ -301,9 +323,9 @@ async def _abandon(
         await vm.stop_job(name)
     with contextlib.suppress(SandboxError):
         await session.bring_out()
-    for copy in copies:
+    for mount, copy in held:
         with contextlib.suppress(VMError):
-            _ = await copy.workspace.bring_out()
+            _ = await _bring_back(mount, copy, changes)
 
 
 def _binds(scratch_key: str, held: Sequence[tuple[Mount, ProjectCopy]]) -> list[HomeBind]:
@@ -312,7 +334,7 @@ def _binds(scratch_key: str, held: Sequence[tuple[Mount, ProjectCopy]]) -> list[
         *(
             HomeBind(
                 key=copy.workspace.key,
-                dest=f"projects/{mount.place.name}",
+                dest=f"{mount.place.kind}/{mount.place.name}",
                 writable=mount.writable,
             )
             for mount, copy in held

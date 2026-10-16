@@ -75,6 +75,17 @@ export {
 } from "./branch";
 
 export {
+  fetchChangeDiff,
+  fetchChanges,
+  pendingCount,
+  revertChanges,
+  type ChangedFile,
+  type ProjectChanges,
+  type RevertReport,
+  type ThreadChanges,
+} from "./changes";
+
+export {
   fetchSubagents,
   isLive,
   openSubagentThread,

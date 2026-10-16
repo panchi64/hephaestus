@@ -20,7 +20,9 @@ and this file holds it to that:
   domains the operator has allowed (``services/egress.py``);
 - `host` runs on the operator's machine itself, unfenced, for a command that has to act
   on that machine — which is what the approver was shown. It starts in the host folder of
-  the project the working directory is in, else in the host scratch directory.
+  the project the working directory is in, else in the host scratch directory. What it
+  changes there is not recorded for revert (``services/home/changes.py``): it writes the
+  folder directly rather than coming back through the VM.
 
 The same declaration is what the permission layer rules on
 (``services/permissions/judge.py``), so what a command was cleared for and where it runs
@@ -47,7 +49,7 @@ from pydantic_ai.exceptions import ApprovalRequired
 
 from core.diagnostics import render_tool_error
 from runs import ToolProgress
-from services.home.paths import HomePathError, parse
+from services.home.paths import HomePathError, Place, parse
 from services.home.table import RunHome
 from services.permissions import Reach, capability_of
 from services.projects.worktree import WorktreeBusyError
@@ -59,9 +61,10 @@ from services.sandbox.thread_shells import ThreadShell, ThreadShells
 from services.vm import DENIED_MARKER
 from services.vm.project import ProjectCopies
 
+from .briefing import with_brief_payload
 from .deps import RunDeps
 from .emit import RunEventEmitted
-from .home import resolve_run_home
+from .home import change_log, resolve_run_home
 from .workspace import unavailable
 
 #: Long enough for a real build or test suite; short enough that a hung command doesn't
@@ -248,16 +251,28 @@ def _unknown_command(command_id: str) -> dict[str, object]:
 
 
 def _host_root(home: RunHome, cwd: str) -> Path:
-    """Where a host command starts: the host folder of the project the working directory
-    is in, else the host scratch directory."""
+    """Where a host command starts: the host folder of the project or worktree the
+    working directory is in, else the host scratch directory."""
     try:
         target = parse(cwd)
     except HomePathError:
         return host_scratch_dir()
     mount = home.mount(target.place)
-    if mount is None or target.place.kind != "projects":
+    if mount is None or target.place.kind not in ("projects", "worktrees"):
         return host_scratch_dir()
     return mount.root / target.rel if target.rel else mount.root
+
+
+def _touched(state: _Ready, command: str, bound: _Boundary, cwd: str) -> list[Place]:
+    """The projects and worktrees a command works in: the ones the VM binds for it, or the
+    one a host command starts in."""
+    if bound.fenced:
+        reached = state.shell.home.reached(command, state.home.mounts, network=bound.network)
+        return [mount.place for mount in reached]
+    try:
+        return [parse(cwd).place]
+    except HomePathError:
+        return []
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,22 +345,26 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
         shell = state.shell
         cwd = shell.home.cwd
         bound = boundary("run_command", command, reach, state.home, cwd)
+        touched = _touched(state, command, bound, cwd)
         timeout = timeout_seconds if timeout_seconds is not None else SHELL_TIMEOUT_S
         if not bound.fenced:
             result = await shell.host_at(_host_root(state.home, cwd)).run(
                 command, timeout_seconds=timeout_seconds, on_progress=_progress_hook(ctx)
             )
-            return _run_payload(result, bound, timeout, cwd=cwd)
-        done = await shell.home.run(
-            state.session,
-            state.copies,
-            command,
-            mounts=state.home.mounts,
-            network=bound.network,
-            timeout_seconds=timeout_seconds,
-            on_progress=_progress_hook(ctx),
-        )
-        return _run_payload(done.result, bound, timeout, cwd=done.cwd, notes=done.notes)
+            payload = _run_payload(result, bound, timeout, cwd=cwd)
+        else:
+            done = await shell.home.run(
+                state.session,
+                state.copies,
+                command,
+                mounts=state.home.mounts,
+                network=bound.network,
+                timeout_seconds=timeout_seconds,
+                on_progress=_progress_hook(ctx),
+                changes=change_log(ctx.deps),
+            )
+            payload = _run_payload(done.result, bound, timeout, cwd=done.cwd, notes=done.notes)
+        return await with_brief_payload(ctx, state.home, touched, payload)
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
     async def start_command(
@@ -371,6 +390,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
         shell = state.shell
         cwd = shell.home.cwd
         bound = boundary("start_command", command, reach, state.home, cwd)
+        touched = _touched(state, command, bound, cwd)
         if bound.fenced:
             command_id = await shell.home.start(
                 state.session,
@@ -378,10 +398,17 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
                 command,
                 mounts=state.home.mounts,
                 network=bound.network,
+                changes=change_log(ctx.deps),
             )
         else:
             command_id = await shell.host_at(_host_root(state.home, cwd)).start(command)
-        return {"ok": True, "command_id": command_id, "command": command, **_boundary_fields(bound)}
+        payload: dict[str, object] = {
+            "ok": True,
+            "command_id": command_id,
+            "command": command,
+            **_boundary_fields(bound),
+        }
+        return await with_brief_payload(ctx, state.home, touched, payload)
 
     async def _find(
         ctx: RunContext[RunDeps], command_id: str, *, stop: bool

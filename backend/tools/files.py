@@ -8,7 +8,10 @@ as written; a path naming no folder of the home lands in the thread's own place,
 project or else its scratch.
 
 A write into a project the thread may only read asks the operator first, and an approval
-leases that project to the thread, so the next write there does not ask again.
+leases that project to the thread, so the next write there does not ask again. A write
+to the operator's own folder of a project is recorded so they can put the file back
+(``services/home/changes.py``), and the first result in a project carries its instruction
+files (``tools/briefing.py``).
 """
 
 from __future__ import annotations
@@ -24,10 +27,12 @@ from pydantic_ai_harness import FileSystem
 from core.config import get_settings
 from core.diagnostics import render_tool_error
 from services.home.paths import HOME, absolute, climbs_out
+from services.home.table import RunHome
 from services.projects.worktree import WorktreeBusyError
 
+from .briefing import with_brief
 from .deps import RunDeps
-from .home import lease, resolve_run_home
+from .home import change_log, lease, may_lease, resolve_run_home
 from .rebound import ReboundToolset
 from .workspace import unavailable
 
@@ -37,9 +42,15 @@ WRITE_TOOLS = frozenset({"write_file", "edit_file", "create_directory"})
 #: The same, namespaced: the conditionally gated names this category contributes.
 GATED_TOOLS = frozenset(f"files_{name}" for name in WRITE_TOOLS)
 
+#: The writes that change a file's content, which a revert can put back.
+_FILE_WRITES = frozenset({"write_file", "edit_file"})
+
 #: The tools that walk a folder, and the spellings that name no folder in particular.
 _WALKS = frozenset({"list_directory", "search_files", "find_files"})
 _HERE = frozenset({"", ".", "./"})
+
+#: The home's group folders a relative path may name by dropping its `~/`.
+_GROUPS = frozenset({"projects", "worktrees", "shared"})
 
 
 def _delegate_read_only(place: str) -> str:
@@ -79,7 +90,20 @@ class _HomeFiles(ReboundToolset):
             refusal = await _clear_write(ctx, path)
             if refusal is not None:
                 return refusal
-        return await super().call_tool(name, tool_args, ctx, tool)
+        try:
+            home = await resolve_run_home(ctx.deps)
+        except WorktreeBusyError:
+            home = None
+        located = home.locate(path) if home is not None and isinstance(path, str) else None
+        log = change_log(ctx.deps) if name in _FILE_WRITES and located is not None else None
+        if log is not None and located is not None:
+            await log.before(located[0], [located[1]])
+        result = await super().call_tool(name, tool_args, ctx, tool)
+        if log is not None and located is not None:
+            await log.after(located[0], [located[1]])
+        if home is None or located is None:
+            return result
+        return await with_brief(ctx, home, [located[0].place], result)
 
 
 async def _in_home_terms(
@@ -90,7 +114,8 @@ async def _in_home_terms(
     Spelled out here because the harness checks a path against ``~`` before the home sees
     it, reading ``~`` as a folder name and ``/work`` as outside it. A relative path is
     read from the thread's own place, so ``projects/x`` in a project is that project's own
-    folder, and a listing or search with no folder named walks that place.
+    folder, unless nothing is there and it names a place of the home: models drop the
+    ``~/``. A listing or search with no folder named walks the thread's own place.
     """
     path = tool_args.get("path")
     if path is not None and not isinstance(path, str):
@@ -108,7 +133,21 @@ async def _in_home_terms(
         return tool_args
     if text in _HERE:
         return {**tool_args, "path": home.default.path}
-    return {**tool_args, "path": _spelled(text, cwd=home.default.path)}
+    own = _spelled(text, cwd=home.default.path)
+    head = text.split("/", 1)[0]
+    at_home = absolute(text, cwd=HOME)
+    if (
+        head in _GROUPS
+        and not _exists(home, f"{home.default.path}/{head}")
+        and home.locate(at_home) is not None
+    ):
+        return {**tool_args, "path": at_home}
+    return {**tool_args, "path": own}
+
+
+def _exists(home: RunHome, path: str) -> bool:
+    located = home.locate(path)
+    return located is not None and (located[0].root / located[1]).exists()
 
 
 def _spelled(text: str, *, cwd: str) -> str:
@@ -131,7 +170,7 @@ async def _clear_write(ctx: RunContext[RunDeps], path: str) -> str | None:
     place = home.place_of(path)
     if place is None or home.writable(place):
         return None
-    if ctx.deps.delegated_approved:
+    if not may_lease(ctx.deps):
         return _delegate_read_only(place.path)
     if not ctx.tool_call_approved:
         raise ApprovalRequired()

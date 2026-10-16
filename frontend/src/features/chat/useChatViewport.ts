@@ -40,7 +40,7 @@ import type {
   PlanDocument,
   ViewSnapshotRef,
 } from "./model";
-import type { BranchState, Subagent } from "./data";
+import type { BranchState, Subagent, ThreadChanges } from "./data";
 import type { TaskItem } from "~/lib/stream/events";
 import {
   emptyLayout,
@@ -88,7 +88,10 @@ export interface ViewportSource {
   tasks: Accessor<TaskItem[]>;
   plan: Accessor<PlanDocument | null>;
   branch: () => BranchState | null | undefined;
-  refetchBranch: () => void;
+  /** What the thread changed in the operator's own project folders. */
+  changes: () => ThreadChanges | null | undefined;
+  /** Re-read the changes and the branch, after the operator acts on either. */
+  refetchChanges: () => void;
   /** The sub-agents this thread has launched, for the Sub-agents surface. */
   subagents: Accessor<Subagent[]>;
   /** Re-read them — after the operator answers one that was waiting on them. */
@@ -112,9 +115,10 @@ export interface ChatViewport {
   /** The plan it is working to, for the Plan surface — which reads it and nothing else;
    *  a submitted plan is answered in the dock with every other approval. */
   plan: Accessor<PlanDocument | null>;
-  /** The thread's branch, for the Diff surface. */
+  /** The thread's branch and its changes to project folders, for the Changes surface. */
   branch: () => BranchState | null | undefined;
-  refetchBranch: () => void;
+  changes: () => ThreadChanges | null | undefined;
+  refetchChanges: () => void;
   /** The sub-agents this thread has launched, for the Sub-agents surface. */
   subagents: Accessor<Subagent[]>;
   /** Re-read them — after the operator answers one that was waiting on them. */
@@ -229,6 +233,7 @@ export function useChatViewport(
     tasks: source.tasks,
     plan: source.plan,
     branch: source.branch,
+    changes: source.changes,
     subagents: source.subagents,
     commands,
     sources: sourceInventory,
@@ -602,7 +607,8 @@ export function useChatViewport(
     tasks: source.tasks,
     plan: source.plan,
     branch: source.branch,
-    refetchBranch: source.refetchBranch,
+    changes: source.changes,
+    refetchChanges: source.refetchChanges,
     subagents: source.subagents,
     refetchSubagents: source.refetchSubagents,
     commands,

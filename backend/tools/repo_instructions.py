@@ -1,11 +1,10 @@
-"""How much of a project's own `CLAUDE.md`/`AGENTS.md` reaches the prompt head.
+"""How much of a project's own `CLAUDE.md`/`AGENTS.md` reaches the agent.
 
-These files land in the standing brief — cache-stable, re-sent every turn, ahead of the
-conversation — which is exactly what makes them worth loading and exactly what makes an
-unbudgeted load dangerous. A repository whose instruction file has grown to a couple of
-hundred kilobytes (they do; they accrete) silently spends the whole window before the
-model has read a single message, and the only visible symptom is that long threads start
-compacting early. The capability that loads them has no cap of its own, so the cap lives
+These files ride a tool result into the conversation (``tools/briefing.py``) and stay in
+its history until a compaction folds them, which is what makes an unbudgeted load
+dangerous: a repository whose instruction file has grown to a couple of hundred kilobytes
+(they do; they accrete) silently spends the window, and the only visible symptom is that
+long threads start compacting early. The loader has no cap of its own, so the cap lives
 here, on our side of the seam.
 
 **Whole files are dropped before any file is cut.** Discovery hands them back
@@ -41,12 +40,8 @@ from pydantic_ai_harness.repo_context._loader import (
 #: default, restated because the budget is applied over the same discovery.
 INSTRUCTION_FILENAMES = ("CLAUDE.md", "AGENTS.md")
 
-#: How many bytes of instruction files may reach the brief. 16KB is roughly 4k tokens —
-#: an eighth of a 32k window spent before the first message, and generous for the thing it
-#: describes (how to work in this repository), which is the shape a budget should have:
-#: invisible to every reasonable file, decisive against the one that has stopped being
-#: reasonable. It is charged on *every* request of every turn, so a budget that merely
-#: looks small against a large window is still the wrong size.
+#: How many bytes of one project's instruction files may ride a brief: roughly 4k tokens,
+#: re-sent with the history on every request until a fold.
 INSTRUCTIONS_BYTE_BUDGET = 16 * 1024
 
 #: What replaces the cut tail. Addressed to the model, because the model is who has to
@@ -99,8 +94,8 @@ def within_budget(files: list[ContextFile], budget: int) -> list[ContextFile]:
 async def repo_instruction_text(root: Path, *, budget: int = INSTRUCTIONS_BYTE_BUDGET) -> str:
     """The project's instruction files, budgeted and rendered, or ``""`` when it has none.
 
-    ``home_dir=None``: the walk-up is deliberately not taken (see ``tools/repo.py``), so
-    what is discovered here is what the worktree root itself carries.
+    No walk-up past ``root``: above a project is the operator's own home directory, so
+    what is discovered here is what the project root itself carries.
     """
     workspace = Workspace(LocalWorkspaceBackend(root))
     files = await discover_instruction_files(workspace, root, None, INSTRUCTION_FILENAMES)

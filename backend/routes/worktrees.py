@@ -92,7 +92,7 @@ class MergedOut(CamelModel):
 async def _resolve(request: Request, conversation_id: str) -> tuple[ProjectView, Path]:
     """The thread's project and its root path, or a 4xx explaining which half is missing."""
     binding = await deps.store(request).binding(conversation_id)
-    if binding.workspace_kind != "worktree" or not binding.project_id:
+    if not binding.worktree or not binding.project_id:
         raise HTTPException(status_code=404, detail="not a worktree conversation")
     try:
         project = await deps.projects(request).get(OPERATOR_ID, binding.project_id)
@@ -162,6 +162,8 @@ async def merge_branch(request: Request, conversation_id: str) -> MergedOut:
         # message or ours about git, and both are the operator's to resolve — handing the
         # text back verbatim beats paraphrasing it into something less actionable.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # Merged, the thread goes on working in the operator's own folder.
+    await deps.store(request).close_worktree(conversation_id)
     return MergedOut(merged=True, detail=detail.strip())
 
 
@@ -171,3 +173,4 @@ async def discard_branch(request: Request, conversation_id: str) -> None:
     await deps.worktrees(request).discard(
         root, project_id=project.id, conversation_id=conversation_id
     )
+    await deps.store(request).close_worktree(conversation_id)

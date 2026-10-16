@@ -1,7 +1,8 @@
-"""The byte budget on a project's own instruction files.
+"""A project's own instruction files: the byte budget on them, and handing them over the
+first time a thread touches the project.
 
-What is pinned is the *order of sacrifice*: broad files go whole before the specific one
-is cut at all, and a cut lands on a line boundary with a marker the model can read. A
+What the budget pins is the *order of sacrifice*: broad files go whole before the specific
+one is cut at all, and a cut lands on a line boundary with a marker the model can read. A
 budget that truncated whichever file it reached first would be arithmetically correct and
 practically useless — it would take the sentences the agent is standing in front of and
 keep the ones about the monorepo.
@@ -11,14 +12,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic_ai import RunContext
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.repo_context._loader import ContextFile
 
-from tools.repo import MAX_BRIEFS, briefs, run_brief
+from runs import Run, RunStream
+from services.home.backend import Mount
+from services.home.paths import SCRATCH, Place
+from services.home.table import RunHome
+from tools.briefing import BRIEF_KEY, with_brief, with_brief_payload
+from tools.deps import RunDeps
 from tools.repo_instructions import (
     INSTRUCTIONS_BYTE_BUDGET,
     repo_instruction_text,
     within_budget,
 )
+
+API = Place("projects", "api")
 
 
 def _file(name: str, content: str) -> ContextFile:
@@ -63,10 +75,10 @@ async def test_a_repos_own_file_is_rendered_whole_when_it_is_a_sane_size(tmp_pat
     text = await repo_instruction_text(tmp_path)
 
     assert "uv run pytest" in text
-    assert 'path="CLAUDE.md"' in text  # labelled relative to the worktree root
+    assert 'path="CLAUDE.md"' in text  # labelled relative to the project root
 
 
-async def test_an_oversized_file_cannot_swallow_the_prompt_head(tmp_path: Path):
+async def test_an_oversized_file_cannot_swallow_the_window(tmp_path: Path):
     _ = (tmp_path / "CLAUDE.md").write_text("x" * (INSTRUCTIONS_BYTE_BUDGET * 3))
 
     text = await repo_instruction_text(tmp_path)
@@ -76,61 +88,65 @@ async def test_an_oversized_file_cannot_swallow_the_prompt_head(tmp_path: Path):
     assert len(text.encode("utf-8")) < INSTRUCTIONS_BYTE_BUDGET + 1_000
 
 
-# --- the brief is built once per run, not once per model request ----------------------
-
-
-async def test_a_runs_brief_is_read_from_disk_once_however_many_requests_it_makes(
-    tmp_path: Path,
-):
-    """The provider re-resolves on every model request and a turn makes up to
-    `agent_request_limit` of them — twenty-five walks of the worktree, twenty-five SHA256
-    passes and twenty-five budget encodes, for content the module calls static per
-    project. Worse, an agent that edited the project's own `CLAUDE.md` mid-turn would
-    rewrite the prompt head under itself and invalidate the whole turn's prefix cache."""
-    _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
-    first = await run_brief("run-1", tmp_path)
-
-    _ = (tmp_path / "CLAUDE.md").write_text("Something else entirely.\n")
-
-    assert await run_brief("run-1", tmp_path) == first
-    assert "uv run pytest" in first
-
-
-async def test_the_next_turn_reads_the_file_again(tmp_path: Path):
-    # A turn boundary is the one place the file may legitimately have changed since it
-    # was read — the agent's own edit landed, or the operator's did.
-    _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
-    _ = await run_brief("run-1", tmp_path)
-
-    _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `just test`.\n")
-
-    assert "just test" in await run_brief("run-2", tmp_path)
-
-
-async def test_the_memo_does_not_grow_with_every_run_the_process_ever_serves(tmp_path: Path):
-    _ = (tmp_path / "CLAUDE.md").write_text("Keep it short.\n")
-    for n in range(MAX_BRIEFS * 3):
-        _ = await run_brief(f"run-{n}", tmp_path)
-    assert len(briefs) <= MAX_BRIEFS
-
-
-# --- what the brief costs, and what it points at --------------------------------------
-
-
 def test_the_budget_is_sized_against_a_small_window_not_a_large_one():
-    """The brief is re-sent on every model request of every turn, so what it costs is
-    measured against the smallest window the app runs against, not the largest. 16KB is
-    roughly 4k tokens — an eighth of a 32k window spent before the first message."""
+    """The brief is re-sent with the history on every later request until a fold, so what
+    it costs is measured against the smallest window the app runs against."""
     assert INSTRUCTIONS_BYTE_BUDGET == 16 * 1024
 
 
-async def test_the_brief_names_the_inventory_tool_the_way_it_is_offered(tmp_path: Path):
-    """The harness writes its own un-namespaced function name into the hint; the catalog
-    offers the tool namespaced. A brief that points at `inventory_agent_context` sends the
-    model to call a tool that is not there."""
-    _ = (tmp_path / "CLAUDE.md").write_text("Run the tests with `uv run pytest`.\n")
+# --- handed over on the first touch ---------------------------------------------------
 
-    brief = await run_brief("run-inventory", tmp_path)
 
-    assert "repo_inventory_agent_context" in brief
-    assert "`inventory_agent_context`" not in brief
+def _home(project: Path, scratch: Path) -> RunHome:
+    return RunHome(
+        mounts=(Mount(SCRATCH, scratch, writable=True), Mount(API, project, writable=True)),
+        default=SCRATCH,
+        key="conv-1",
+    )
+
+
+def _ctx(messages: list[ModelMessage] | None = None) -> RunContext[RunDeps]:
+    run = Run(id="r1", kind="chat", owner_id="operator", stream=RunStream())
+    return RunContext(
+        deps=RunDeps(run=run, owner_id="operator", conversation_id="conv-1"),
+        model=TestModel(),
+        usage=RunUsage(),
+        messages=messages or [],
+    )
+
+
+async def test_the_first_result_in_a_project_carries_its_instructions(tmp_path: Path):
+    project = tmp_path / "api"
+    project.mkdir()
+    _ = (project / "CLAUDE.md").write_text("Run the tests with `make check`.\n")
+    home = _home(project, tmp_path / "scratch")
+    ctx = _ctx()
+
+    first = await with_brief(ctx, home, [API], "file contents")
+    assert isinstance(first, str) and "make check" in first and "~/projects/api" in first
+    # Once a run, however many calls it makes there.
+    assert await with_brief(ctx, home, [API], "again") == "again"
+    # A scratch result carries nothing.
+    assert await with_brief(_ctx(), home, [SCRATCH], "x") == "x"
+
+
+async def test_a_brief_still_in_the_history_is_not_handed_over_again(tmp_path: Path):
+    project = tmp_path / "api"
+    project.mkdir()
+    _ = (project / "CLAUDE.md").write_text("Run the tests with `make check`.\n")
+    home = _home(project, tmp_path / "scratch")
+    delivered = await with_brief_payload(_ctx(), home, [API], {"ok": True})
+    brief = delivered[BRIEF_KEY]
+    replayed: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name="shell_run_command", content=delivered, tool_call_id="c")
+            ]
+        )
+    ]
+
+    # A later run of the same thread replays the brief, so it is not given twice; once a
+    # fold has taken it out of the history, the next touch hands it over again.
+    assert await with_brief_payload(_ctx(replayed), home, [API], {"ok": True}) == {"ok": True}
+    again = await with_brief_payload(_ctx(), home, [API], {"ok": True})
+    assert again[BRIEF_KEY] == brief

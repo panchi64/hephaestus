@@ -11,7 +11,6 @@ from sqlmodel import Session, col, select
 from core.db import in_session
 from models.conversation import Conversation, Message
 from services.projects import project_clause
-from services.workspace_kind import workspace_kind
 
 from .core import StoreCore
 from .paths import active_path_model
@@ -93,7 +92,6 @@ class ListingMixin(StoreCore):
             preview=preview[:140] if preview else None,
             work_summary=self._open_work_summary(conversation),
             model=model,
-            workspace_kind=workspace_kind(conversation.workspace_kind),
             project_id=conversation.project_id,
             agent_name=conversation.agent_name,
             parent_id=conversation.parent_id,

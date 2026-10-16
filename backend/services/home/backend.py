@@ -36,6 +36,8 @@ class Mount:
     place: Place
     root: Path
     writable: bool
+    #: The registered project a project or worktree place is of; None for scratch.
+    project_id: str | None = None
 
 
 class HomeBackend:

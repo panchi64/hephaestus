@@ -40,7 +40,7 @@ from services.agents import (
     project_agents,
 )
 from services.skills import SkillStore
-from services.workspace_kind import is_project_folder
+from services.workspace import PlaceKind
 
 from .actions import BUILTIN_ACTIONS, NEEDS_CONVERSATION
 from .definitions import project_specs as project_command_specs
@@ -87,7 +87,7 @@ class CommandRegistry:
         self,
         owner_id: str,
         *,
-        workspace_kind: str,
+        place: PlaceKind,
         has_conversation: bool,
         disabled_tools: Iterable[str] = (),
         root: Path | None = None,
@@ -108,19 +108,19 @@ class CommandRegistry:
         # above skills and workflows, both tier 1, for that to remain true.
         specs: list[CommandSpec] = [
             *_actions(has_conversation=has_conversation),
-            *_agent_specs(await self._roster(owner_id, root, workspace_kind), withheld=withheld),
+            *_agent_specs(await self._roster(owner_id, root, place), withheld=withheld),
             *await self._skill_specs(owner_id),
             *await self._commands.specs(owner_id),
             *(project_command_specs(root) if root is not None else ()),
         ]
-        return merge([spec for spec in specs if _offered_in(spec, workspace_kind)])
+        return merge([spec for spec in specs if _offered_in(spec, place)])
 
     async def resolve(
         self,
         owner_id: str,
         name: str,
         *,
-        workspace_kind: str,
+        place: PlaceKind,
         has_conversation: bool,
         disabled_tools: Iterable[str] = (),
         root: Path | None = None,
@@ -134,7 +134,7 @@ class CommandRegistry:
         """
         entries = await self.catalog(
             owner_id,
-            workspace_kind=workspace_kind,
+            place=place,
             has_conversation=has_conversation,
             disabled_tools=disabled_tools,
             root=root,
@@ -148,12 +148,12 @@ class CommandRegistry:
         return None
 
     async def _roster(
-        self, owner_id: str, root: Path | None, workspace_kind: str
+        self, owner_id: str, root: Path | None, place: PlaceKind
     ) -> dict[str, AgentDefinition]:
         """The agents a launch from this thread could reach — the same catalog
         ``tools/project_agents.run_roster`` resolves, so the picker never offers a name the
-        launch would not find. A project's files count only in a project folder."""
-        project_root = root if root is not None and is_project_folder(workspace_kind) else None
+        launch would not find. A project's files count only in a thread filed under it."""
+        project_root = root if root is not None and place != "sandbox" else None
         if self._agents is None:
             declared = project_agents(project_root) if project_root is not None else ()
             return delegable(merged_roster(BUILTIN, declared))
@@ -227,8 +227,8 @@ def _agent_command(agent: AgentDefinition) -> CommandSpec:
     )
 
 
-def _offered_in(spec: CommandSpec, workspace_kind: str) -> bool:
-    return not spec.workspaces or workspace_kind in spec.workspaces
+def _offered_in(spec: CommandSpec, place: PlaceKind) -> bool:
+    return not spec.workspaces or place in spec.workspaces
 
 
 def merge(specs: Sequence[CommandSpec]) -> tuple[CatalogEntry, ...]:

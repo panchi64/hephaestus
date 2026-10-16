@@ -12,21 +12,25 @@ from pydantic_ai import ModelMessage
 from services.agents.definition import UNRESTRICTED, ToolAccess
 from services.commands.spec import Invocation
 from services.permissions import DEFAULT_PERMISSION, PermissionLevel
-from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
 
 
 @dataclass(frozen=True)
 class ConversationBinding:
-    """How a thread works: where its file work happens, and how far the model may go on
+    """How a thread works: the project it is filed under, and how far the model may go on
     its own.
 
     Read as one record because the parts are only meaningful together: a worktree with no
-    project is nonsense, and a run that resolved its workspace from the conversation but
+    project is nonsense, and a run that resolved its project from the conversation but
     its permission level from somewhere else would be two threads wearing one name.
     """
 
-    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     project_id: str | None = None
+    #: Whether the thread works on its project in a worktree of its own.
+    worktree: bool = False
+    #: Whose write leases the thread works under, and only reads: a spawned agent sharing
+    #: its parent's files holds the parent's, one working apart holds none (``""``). None
+    #: is the thread's own, which it may add to.
+    leases_from: str | None = None
     permission: PermissionLevel = DEFAULT_PERMISSION
     #: The agent the thread runs, by name. None is the default agent.
     agent_name: str | None = None
@@ -98,9 +102,6 @@ class ConversationSummaryView:
     # The model the conversation last ran on (the most recent response's
     # model_name). None for a conversation with no answer yet.
     model: str | None = None
-    # Where its file work happens. On the listing so the rail can mark worktree threads
-    # without opening each one.
-    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     # The project the thread is filed under, or None for an unfiled thread. The id, not the
     # path — the route resolves it to a directory basename, which is the only part of a
     # host path a listing should ever carry.

@@ -6,12 +6,7 @@
  * touches a store, a resource or the network.
  */
 
-import type {
-  ActiveRun,
-  ChatSummary,
-  ConversationStats,
-  WorkspaceKind,
-} from "../model";
+import type { ActiveRun, ChatSummary, ConversationStats } from "../model";
 import type {
   ActiveRunDTO,
   ConversationSummaryDTO,
@@ -75,11 +70,6 @@ export function deriveTitle(dto: ConversationSummaryDTO): string {
   return "Untitled conversation";
 }
 
-/** An absent or unrecognised kind reads as the sandbox, which reaches the least. */
-function toWorkspaceKind(raw: string | null | undefined): WorkspaceKind {
-  return raw === "worktree" || raw === "checkout" ? raw : "sandbox";
-}
-
 export function toSummary(dto: ConversationSummaryDTO): ChatSummary {
   return {
     id: dto.id,
@@ -92,7 +82,6 @@ export function toSummary(dto: ConversationSummaryDTO): ChatSummary {
     model: dto.model ?? undefined,
     activity: dto.activity ?? undefined,
     lastOutcome: dto.last_outcome ?? undefined,
-    workspaceKind: toWorkspaceKind(dto.workspace_kind),
     workspace: dto.workspace ?? undefined,
     projectId: dto.project_id ?? undefined,
     agentName: dto.agent_name ?? undefined,

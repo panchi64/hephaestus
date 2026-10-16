@@ -51,12 +51,10 @@ export interface ConversationSummaryDTO {
    *  `activity` above, not a replacement — both can be set at once, and `activity` is
    *  the one that wins while it is. */
   last_outcome?: ChatOutcome | null;
-  /** Where the thread works (`sandbox`, `checkout` or `worktree`), the basename of the
-   *  directory a checkout or worktree thread works in, and the project the thread is scoped to. All on the
-   *  *listing* because the rail files threads under their project. The id is what it
-   *  files *by* — the rail lists every directory, not only the ones holding threads, and
-   *  two of them can share a basename. */
-  workspace_kind?: string | null;
+  /** The basename of the directory of the project the thread is filed under, and that
+   *  project's id. Both on the *listing* because the rail files threads under their
+   *  project. The id is what it files *by* — the rail lists every directory, not only the
+   *  ones holding threads, and two of them can share a basename. */
   workspace?: string | null;
   project_id?: string | null;
   /** The custom agent the thread runs as; null is the default agent. */

@@ -82,7 +82,6 @@ from tools import (
     core_categories,
 )
 from tools.describe import category_names
-from tools.repo import repo_instructions
 from tools.shell import SHELL_MAX_OUTPUT_CHARS, SHELL_TIMEOUT_S
 from tools.tasks import tasks_context
 from tools.workspace_context import workspace_context
@@ -548,10 +547,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # registers, because availability is a fact about the service rather than about one
     # group of verbs over it.
     availability_claims: list[tuple[str, AvailabilityCheck]] = []
-    # `repo_instructions` is core, not a manifest's, for the same reason the task-list
-    # reminder below is: the categories it belongs to ship with the harness core ones. It
-    # returns "" outside a worktree mode, so a sandbox thread pays nothing for it.
-    instruction_providers: list[InstructionProvider] = [repo_instructions]
+    instruction_providers: list[InstructionProvider] = []
     # The task-list reminder and the workspace listing are core, not a manifest's: the
     # `tasks` and `files` categories ship with the harness core categories, so their tail
     # context has to be seeded here alongside them.

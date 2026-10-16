@@ -33,7 +33,6 @@ from pathlib import Path
 from services.sandbox import SandboxSessionManager
 from services.sandbox.walk import excluded, walk_files
 from services.workspace import SANDBOX_MOUNT
-from services.workspace_kind import is_project_folder
 
 from .deps import PromptContextRequest
 
@@ -44,13 +43,13 @@ from .deps import PromptContextRequest
 # written and writes it again, which is the exact failure this block exists to prevent.
 # So the second wording is used whenever anything was capped or pruned.
 _PREAMBLE_WHOLE = (
-    "Files already in your workspace, read from disk just now. This is the whole of it "
+    "Files already in your scratch, read from disk just now. This is the whole of it "
     "— work you did earlier in this conversation is here, including work from before "
     "anything you can still see in the history above. Read a file before assuming what "
     "is in it, and do not rebuild something that is already listed."
 )
 _PREAMBLE_PARTIAL = (
-    "Files already in your workspace, read from disk just now. This is a sample, not "
+    "Files already in your scratch, read from disk just now. This is a sample, not "
     "the whole of it — work you did earlier in this conversation is here, including "
     "work from before anything you can still see in the history above. List a "
     "directory before concluding a file is missing, and do not rebuild something that "
@@ -157,19 +156,14 @@ def _also_present(root: Path, excludes: tuple[str, ...]) -> str:
 
 
 async def workspace_context(req: PromptContextRequest) -> str:
-    """This conversation's files, for the tail of this turn's prompt.
+    """This conversation's scratch files, for the tail of this turn's prompt.
 
-    Empty — no block at all — in the three cases where it would be noise: a thread whose
-    workspace is a real checkout, one that has never put a file anywhere, and one whose
-    sandbox is unavailable. That is the same discipline `tasks_context` follows for an
-    empty task list: a heading over nothing is a heading the model has to read.
+    Empty — no block at all — in the two cases where it would be noise: a thread that has
+    never put a file in its scratch, and one whose sandbox is unavailable. That is the
+    same discipline `tasks_context` follows for an empty task list: a heading over nothing
+    is a heading the model has to read. A project is never listed: it is the operator's
+    repository, with git to say what is in it.
     """
-    # A worktree is the operator's own repository, with git in it and `repo_instructions`
-    # already describing it. Listing thousands of tracked files every turn would be the
-    # expensive half of this idea with none of the benefit — the agent there has never
-    # been the one who does not know what is on disk.
-    if is_project_folder(req.workspace_kind):
-        return ""
     sessions = req.caps.get_optional(SandboxSessionManager)
     if sessions is None:
         return ""

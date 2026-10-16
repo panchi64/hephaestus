@@ -1,9 +1,8 @@
 """Tool sensitivity classes, and the read-only catalog they make possible.
 
 `services/tool_sensitivity.py` names every tool as a literal string, because `tools/` sits
-above `services/` and importing the catalog there would invert the dependency order — the
-same constraint `services/workspace_kind.py` works under, and the same tripwire: the literal is
-checked against the catalog a real run resolves, in both directions. The direction that
+above `services/` and importing the catalog there would invert the dependency order. The
+literal is checked against the catalog a real run resolves, in both directions. The direction that
 actually rots is the second one. A tool added without a class would keep running under a
 level that was supposed to withhold it, and nothing else in the system would notice.
 
@@ -93,7 +92,6 @@ class TestTheClassesAgreeWithTheExistingMarkings:
         # in, not by its own class.
         assert sensitivity_of("shell_run_command") is Sensitivity.HOST_EXEC
         assert sensitivity_of("code_execute") is Sensitivity.HOST_EXEC
-        assert sensitivity_of("repo_inventory_agent_context") is Sensitivity.READ
 
     def test_stopping_a_process_is_not_starting_one(self):
         # `shell_stop_command` executes nothing new: it kills a process an already-approved

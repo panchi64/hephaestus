@@ -25,6 +25,7 @@ from pydantic_ai import RunContext
 from core.container import ServiceContainer
 from runs import Run
 from services.agents.definition import UNRESTRICTED, ToolAccess
+from services.home.paths import Place
 from services.home.table import RunHome
 from services.permissions import (
     DEFAULT_PERMISSION,
@@ -34,7 +35,6 @@ from services.permissions import (
 )
 from services.search import DedupeSets
 from services.workspace import RunWorkspace
-from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
 
 
 def default_workspace_key(conversation_id: str | None, run: Run | None) -> str:
@@ -76,9 +76,11 @@ class RunDeps:
     # *conversation's* stored binding, never from the live request — switching the
     # active project must not change what an already-running thread is doing.
     project_id: str | None = None
-    # Where this run's file work happens. Mutable: `project_open_worktree` moves a chat
-    # from its sandbox to a worktree mid-turn, and the enabled gate reads it live.
-    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
+    # Whether this run works on its project in a worktree of its own. Mutable:
+    # `project_open_worktree` opens one mid-turn.
+    worktree: bool = False
+    # Whose write leases this run works under (`ConversationBinding.leases_from`).
+    leases_from: str | None = None
     # How far this run may go before it has to ask: "plan", "manual", "edit", "auto" or
     # "yolo" — the last of which is the operator saying it never has to.
     # Here because a tool is offered and executed inside a Run,
@@ -102,6 +104,9 @@ class RunDeps:
     open_tasks_reminded: bool = field(default=False, repr=False, compare=False)
     # Set once this run has called a task-list tool; only such a run is held to the list.
     tasks_touched: bool = field(default=False, repr=False, compare=False)
+    # The projects and worktrees whose instruction files this run has handed over
+    # (`tools/briefing.py`).
+    briefed: set[Place] = field(default_factory=set[Place], repr=False, compare=False)
     # The key everything about this run's workspace hangs off: its sandbox session,
     # its preview, its staged artifacts. The conversation when there is one, else the
     # run (a stateless turn). A real field rather than a derived property because a
@@ -154,8 +159,9 @@ class PromptContextRequest:
     caps: ServiceContainer
     owner_id: str
     conversation_id: str | None
-    workspace_kind: WorkspaceKind
     project_id: str | None
+    #: Whether the turn works on its project in a worktree of its own.
+    worktree: bool
     #: This run's workspace key — a delegation's own, where it has one, so a sub-agent
     #: is described its fork rather than its parent's files.
     workspace_key: str

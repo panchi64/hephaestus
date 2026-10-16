@@ -24,7 +24,7 @@ import {
 } from "./surfaceSources";
 import type { HostCommand, PlanDocument, PlanStatus } from "../model";
 import type { TaskItem } from "~/lib/stream/events";
-import type { BranchState } from "../data";
+import type { BranchState, ThreadChanges } from "../data";
 import type { ViewItem } from "./viewItems";
 import { buildInventory } from "./sourceItems";
 
@@ -63,6 +63,7 @@ const sources = (over: Partial<SurfaceDeps> = {}) =>
     tasks: () => [],
     plan: () => null,
     branch: () => null,
+    changes: () => null,
     subagents: () => [],
     commands: () => [],
     sources: () => buildInventory([]),
@@ -121,13 +122,20 @@ describe("availability", () => {
     );
   });
 
-  test("the diff waits on a branch, which most threads never have", () => {
+  test("the changes wait on a branch or a changed project, which most threads never have", () => {
     expect(sources({ branch: () => null }).diff.available()).toBe(false);
     expect(
       sources({
         branch: () => ({ branch: "x" }) as BranchState,
       }).diff.available(),
     ).toBe(true);
+    const changed: ThreadChanges = {
+      worktree: false,
+      projects: [
+        { projectId: "p", name: "api", homePath: "~/projects/api", files: [] },
+      ],
+    };
+    expect(sources({ changes: () => changed }).diff.available()).toBe(true);
   });
 
   test("files need a worktree, not a captured snapshot", () => {

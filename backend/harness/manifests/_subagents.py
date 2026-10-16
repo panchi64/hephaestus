@@ -39,7 +39,7 @@ from services.agents import (
 )
 from services.agents.definition import WorkspacePolicy
 from services.agents.thread import DELEGATION_TOOLS, may_delegate, resolve_thread_agent
-from services.conversations import ConversationBinding, ConversationStore
+from services.conversations import ConversationStore
 from services.offline import OfflineModeService
 from services.permissions import DEFAULT_PERMISSION, permission_level, stricter_permission
 from services.projects import ProjectStore, WorktreeManager
@@ -65,7 +65,6 @@ from services.subagents.launcher import (
 from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
 from services.workspace import DELEGATION_SEP
-from services.workspace_kind import workspace_kind
 from tools import InstructionProvider, RunDeps
 
 from ._subagent_wake import SubagentWake
@@ -220,35 +219,26 @@ class ConversationSubagents(SubagentLauncher):
             policy = "own"
         workspace_key = _workspace_key(base, policy, delegation_id)
 
-        parent_kind = workspace_kind(parent.workspace_kind)
-        if policy == "isolated" and parent_kind == "checkout":
-            raise SubagentUnavailableError(
-                "This conversation works directly in the project's folder, which cannot "
-                + "be copied for an agent. Call `project_open_worktree` first, or spawn "
-                + "it without isolation."
-            )
-        child_kind = "sandbox" if policy == "own" else parent_kind
-        binding = ConversationBinding(
-            workspace_kind=child_kind,
-            project_id=parent.project_id,
-            permission=permission,
-            agent_name=agent.name,
-            tools=agent.tools,
-            permission_ceiling=permission,
-            workspace_key=workspace_key,
-        )
         thread = parent.conversation_id or ""
         conversation_id = await self._conversations.create_conversation(
             owner_id,
             title=_title_for(handle, task),
             project_id=parent.project_id,
-            workspace_kind=child_kind,
             permission=permission,
             agent_name=agent.name,
             parent_id=thread or None,
             workspace_key=workspace_key,
             # Hidden from the session list until the operator opens it.
             ephemeral=True,
+        )
+        # Read back the way every later turn of it reads it, so the worktree and leases
+        # it works under are one rule (`ConversationBinding.leases_from`).
+        stored = await self._conversations.binding(conversation_id)
+        binding = replace(
+            stored,
+            permission=permission,
+            tools=agent.tools,
+            permission_ceiling=permission,
         )
         root = position.root or thread
         self._wake.remember_root(conversation_id, root)
@@ -304,8 +294,7 @@ class ConversationSubagents(SubagentLauncher):
             workspace_key=workspace_key,
             delegation_id=delegation_id if policy == "isolated" else None,
             # Stored: the fork is landed from a terminal hook, long after the binding that
-            # knew these is out of reach.
-            workspace_kind=child_kind,
+            # knew it is out of reach.
             project_id=parent.project_id,
         )
         return LaunchedSubagent(

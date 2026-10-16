@@ -30,7 +30,6 @@ from pydantic_ai.usage import RunUsage
 from core.container import ServiceContainer
 from runs import Run, RunStream
 from services.projects import ProjectStore, WorktreeManager
-from services.projects.checkout import CheckoutHolders
 from services.sandbox import SandboxError, SandboxSessionManager
 from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
@@ -41,7 +40,6 @@ from services.workspace import (
     RunWorkspace,
     resolve_workspace,
 )
-from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
 from tools.deps import RunDeps
 from tools.shell import shell_toolset
 from tools.workspace import run_workspace
@@ -138,7 +136,6 @@ def _caps(tmp_path: Path, roots: dict[str, Path] | None = None) -> ServiceContai
     if roots is not None:
         caps.add(_FakeProjects(roots), as_type=ProjectStore)
         caps.add(WorktreeManager(tmp_path / "worktrees"), as_type=WorktreeManager)
-        caps.add(CheckoutHolders())
     return caps
 
 
@@ -148,7 +145,7 @@ def _ctx(
     run_id: str = "run-1",
     conversation_id: str | None = None,
     project_id: str | None = None,
-    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND,
+    worktree: bool = False,
 ) -> RunContext[RunDeps]:
     run = Run(id=run_id, kind="chat", owner_id=OWNER, stream=RunStream())
     return RunContext(
@@ -158,7 +155,7 @@ def _ctx(
             caps=caps,
             conversation_id=conversation_id,
             project_id=project_id,
-            workspace_kind=workspace_kind,
+            worktree=worktree,
         ),
         model=TestModel(),
         usage=RunUsage(),
@@ -242,7 +239,7 @@ class TestWorktree:
             conversation_id=conversation_id,
             run_id=run_id,
             project_id="proj-1",
-            workspace_kind="worktree",
+            worktree=True,
         )
 
     async def test_resolves_the_projects_worktree_not_the_operators_tree(self, tmp_path: Path):
@@ -255,14 +252,14 @@ class TestWorktree:
         assert workspace.root != root
         assert (workspace.root / "hello.txt").read_text() == "original\n"
 
-    async def test_the_model_is_told_the_projects_path_in_its_home(self, tmp_path: Path):
+    async def test_the_model_is_told_the_worktrees_path_in_its_home(self, tmp_path: Path):
         _root, ctx = await self._ctx(tmp_path)
         workspace = await run_workspace(ctx)
         assert workspace is not None
-        # The project's folder in the home, which the file tools and the shell both name
+        # The worktree's folder in the home, which the file tools and the shell both name
         # it by — never the host path neither of them can open, nor the scratch's `/work`.
         shown = workspace.display("src/main.py")
-        assert shown == "/home/agent/projects/proj-1/src/main.py"
+        assert shown == "/home/agent/worktrees/proj-1/src/main.py"
         assert not shown.startswith(SANDBOX_MOUNT)
 
     async def test_staged_files_land_inside_the_worktree_and_out_of_the_diff(self, tmp_path: Path):
@@ -278,20 +275,13 @@ class TestWorktree:
         assert code == 0
         assert WORKTREE_SCRATCH not in out
 
-    async def test_a_worktree_without_a_project_has_no_workspace_not_a_sandbox(
+    async def test_a_worktree_of_a_missing_project_has_no_workspace_not_a_sandbox(
         self, tmp_path: Path
     ):
         # Falling back to the sandbox would be the worst answer: the agent would edit
-        # files in a container while its shell tools are refused, and nothing would say
-        # why. a worktree thread always has a project, so if one does not it degrades
-        # visibly.
+        # files in a container it believes is the worktree, and nothing would say why.
         caps = _caps(tmp_path, {})
-        bare = _ctx(caps, conversation_id="c", workspace_kind="worktree")
-        assert await run_workspace(bare) is None
-        # ...and likewise when the project id names nothing.
-        ctx = _ctx(
-            caps, conversation_id="c", workspace_kind="worktree", project_id="gone", run_id="r2"
-        )
+        ctx = _ctx(caps, conversation_id="c", worktree=True, project_id="gone", run_id="r2")
         assert await run_workspace(ctx) is None
 
 
@@ -313,7 +303,7 @@ async def _status(cwd: Path) -> tuple[int, str]:
 
 async def test_the_declaration_is_offered_to_the_model_with_the_workspace_default(tmp_path: Path):
     caps = _caps(tmp_path, {"proj-1": tmp_path})
-    ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", workspace_kind="worktree")
+    ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", worktree=True)
     tool = (await shell_toolset().get_tools(ctx))["run_command"]
     schema = obj(parse_json(json.dumps(tool.tool_def.parameters_json_schema)))
     reach = obj(obj(schema["properties"])["reach"])
@@ -345,7 +335,7 @@ class TestShellRunsInTheVm:
         tmp_path: Path,
         copies: ProjectCopies,
         *,
-        kind: WorkspaceKind = "checkout",
+        worktree: bool = False,
         shells: ThreadShells | None = None,
         project: str = "proj-1",
         conversation: str = "conv-a",
@@ -359,20 +349,20 @@ class TestShellRunsInTheVm:
             root,
             copies=copies,
             sessions=sessions,
-            kind=kind,
+            worktree=worktree,
             project_id=project,
             conversation_id=conversation,
             shells=shells,
         )
         return root, Shell(shell_toolset(), ctx)
 
-    @pytest.mark.parametrize("kind", ["checkout", "worktree"])
+    @pytest.mark.parametrize("worktree", [False, True])
     async def test_a_refused_command_is_a_retry_not_a_dead_run(
-        self, tmp_path: Path, copies: ProjectCopies, kind: WorkspaceKind
+        self, tmp_path: Path, copies: ProjectCopies, worktree: bool
     ):
         """What the model can act on — a refused command — comes back as `ModelRetry`, so
         the turn continues and the agent tries something else."""
-        _root, shell = await self._shell(tmp_path, copies, kind=kind)
+        _root, shell = await self._shell(tmp_path, copies, worktree=worktree)
 
         with pytest.raises(ModelRetry):
             _ = await _call(shell, "run_command", command="rm -rf /")
@@ -481,8 +471,8 @@ class TestResolveWorkspace:
     async def test_no_handles_at_all_is_no_workspace(self):
         assert (
             await resolve_workspace(
-                workspace_kind="sandbox",
                 project_id=None,
+                worktree=False,
                 conversation_id="c",
                 workspace_key="c",
                 owner_id=OWNER,

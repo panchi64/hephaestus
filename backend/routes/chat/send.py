@@ -126,12 +126,11 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated:
     else:
         # A thread files itself under whatever the request scope resolved: the explicit
         # `project_id` when the client sent one, else the operator's active project, else
-        # unfiled. Filed under a project, it works in that project's folder; a throwaway
-        # compare pane stays in a sandbox of its own.
+        # unfiled. Filed under a project, it may write that project's folder; a throwaway
+        # compare pane is filed under nothing, so it writes only its own scratch.
         project_id = body.project_id or await deps.active_project(request)
         binding = ConversationBinding(
-            workspace_kind="checkout" if project_id and not body.ephemeral else "sandbox",
-            project_id=project_id,
+            project_id=None if body.ephemeral else project_id,
             agent_name=agent_name,
         )
     applied = await thread_agent(request, binding, body.conversation_id)
@@ -148,7 +147,6 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated:
         conversation_id = await store.create_conversation(
             OPERATOR_ID,
             ephemeral=body.ephemeral,
-            workspace_kind=binding.workspace_kind,
             permission=body.permission_level,
             project_id=binding.project_id,
             agent_name=agent_name,

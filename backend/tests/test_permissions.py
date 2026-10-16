@@ -58,7 +58,6 @@ from services.tool_sensitivity import (
     declared_sensitivity,
     sensitivity_of,
 )
-from services.workspace_kind import WORKSPACE_TOOLS
 from tools import RunDeps, build_agent_toolsets
 
 from ._helpers import (
@@ -318,7 +317,7 @@ async def _resolved_kinds(permission: PermissionLevel) -> dict[str, str]:
         run=run,
         owner_id=OWNER,
         permission=permission,
-        workspace_kind="checkout",
+        project_id="proj-1",
         # Plan's catalog narrowing is `tool_policy`'s half and is tested there; apply it
         # here too so this resolves the stack a Plan run really resolves.
         disabled_tools=permission_disabled_tools(permission),
@@ -409,10 +408,10 @@ class TestTheThreadRemembers:
         await vault.setup("pw")
         return ConversationStore(engine, vault)
 
-    async def test_a_fresh_thread_starts_at_the_default_in_every_workspace(self, tmp_path: Path):
+    async def test_a_fresh_thread_starts_at_the_default_filed_or_not(self, tmp_path: Path):
         store = await self._store(tmp_path)
-        for kind in WORKSPACE_TOOLS:
-            conversation_id = await store.create_conversation(OWNER, workspace_kind=kind)
+        for project_id in (None, "p1"):
+            conversation_id = await store.create_conversation(OWNER, project_id=project_id)
             binding = await store.binding(conversation_id)
             assert binding.permission == DEFAULT_PERMISSION
 
@@ -423,13 +422,12 @@ class TestTheThreadRemembers:
 
     async def test_the_level_moves_and_the_rest_of_the_binding_does_not(self, tmp_path: Path):
         store = await self._store(tmp_path)
-        conversation_id = await store.create_conversation(
-            OWNER, workspace_kind="worktree", project_id="p1"
-        )
+        conversation_id = await store.create_conversation(OWNER, project_id="p1")
+        _ = await store.open_worktree(conversation_id)
         assert await store.set_permission_level(conversation_id, "manual") == "manual"
         binding = await store.binding(conversation_id)
         assert binding.permission == "manual"
-        assert binding.workspace_kind == "worktree"
+        assert binding.worktree
         assert binding.project_id == "p1"
 
     async def test_a_corrupt_stored_level_reads_as_the_strictest(self, tmp_path: Path):

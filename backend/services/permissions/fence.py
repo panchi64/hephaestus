@@ -6,7 +6,7 @@ import posixpath
 from dataclasses import dataclass
 from pathlib import Path
 
-from services.home.paths import HOME, SCRATCH, HomePathError, Place, parse, projects_named
+from services.home.paths import HOME, SCRATCH, HomePathError, Place, parse, places_named
 from services.sandbox.base import SandboxError, contained_path
 
 
@@ -30,12 +30,13 @@ class HomeFence:
 
     def scratch_only(self, command: str) -> bool:
         """Whether ``command`` would see the thread's scratch and nothing else of the home:
-        it stands in scratch and names no project (`services/sandbox/home_shell.py`)."""
+        it stands in scratch and names no project or worktree
+        (`services/sandbox/home_shell.py`)."""
         try:
             here = parse(self.cwd).place
         except HomePathError:
             return False
-        return here == SCRATCH and not projects_named(command)
+        return here == SCRATCH and not places_named(command)
 
 
 #: Folders each shell command gets a fresh, empty tmpfs of, dropped when it ends

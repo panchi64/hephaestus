@@ -83,7 +83,7 @@ class TestTheBinding:
             conversation_id = s(json_body(created)["conversation_id"])
 
             binding = await _conversations(app).binding(conversation_id)
-            assert binding.workspace_kind == "checkout"
+            assert not binding.worktree
             assert binding.project_id == project["id"]
 
     async def test_an_ephemeral_thread_never_works_in_the_projects_folder(
@@ -98,7 +98,7 @@ class TestTheBinding:
             )
             assert created.status_code == 202, created.text
             binding = await _conversations(app).binding(s(json_body(created)["conversation_id"]))
-            assert binding.workspace_kind == "sandbox"
+            assert binding.project_id is None
 
     async def test_a_plain_thread_files_itself_under_the_active_project(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -112,7 +112,6 @@ class TestTheBinding:
 
             binding = await _conversations(app).binding(conversation_id)
             assert binding.project_id == project["id"]
-            assert binding.workspace_kind == "checkout"
 
     async def test_a_thread_with_no_project_works_in_its_sandbox(
         self, monkeypatch: pytest.MonkeyPatch
@@ -121,8 +120,7 @@ class TestTheBinding:
             patch_model_resolution(monkeypatch)
             created = await client.post("/chat", json={"prompt": "hi"})
             binding = await _conversations(app).binding(s(json_body(created)["conversation_id"]))
-            assert binding.workspace_kind == "sandbox"
-            assert binding.project_id is None
+            assert binding.project_id is None and not binding.worktree
 
 
 class TestTheBranchSurface:

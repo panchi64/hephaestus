@@ -37,6 +37,7 @@ from services.conversations import (
     conversation_totals,
     last_request_usage,
 )
+from services.home.changes import ThreadChanges
 from services.permissions import DEFAULT_PERMISSION
 from services.settings_store import (
     get_auto_compact,
@@ -45,7 +46,6 @@ from services.settings_store import (
 )
 from services.task_list import tasks_payload
 from services.workspace_history import SnapshotView, snapshot_id_from_result
-from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +94,6 @@ class ConversationSummary(BaseModel):
     # is in memory and bounded, so a restart, or enough traffic to age the run out,
     # leaves this null. Null means "nothing known", never "nothing happened".
     last_outcome: str | None = None
-    # Where its file work happens: "sandbox", "checkout" or "worktree". On the listing so
-    # the rail can mark worktree threads without opening each one.
-    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     # The agent the thread runs, by name. Null is the default agent.
     agent_name: str | None = None
     # The thread that spawned this one, for an agent's thread the operator opened.
@@ -372,7 +369,6 @@ def _summary(
         model=view.model,
         activity=activity,
         last_outcome=last_outcome,
-        workspace_kind=view.workspace_kind,
         agent_name=view.agent_name,
         parent_id=view.parent_id,
         workspace=(workspaces or {}).get(view.project_id or ""),
@@ -760,7 +756,7 @@ async def _settle_code_branch(request: Request, conversation_id: str, *, discard
     the delete. Only a real, countable diff stops it.
     """
     binding = await deps.store(request).binding(conversation_id)
-    if binding.workspace_kind != "worktree" or not binding.project_id:
+    if not binding.worktree or not binding.project_id:
         return
     try:
         project = await deps.projects(request).get(OPERATOR_ID, binding.project_id)
@@ -826,6 +822,11 @@ async def delete_conversation(
         # restate what was asked for, so neither must outlive the thread.
         await deps.conversation_tasks(request).delete_for_conversation(OPERATOR_ID, conversation_id)
         await deps.plan_mode(request).delete_for_conversation(OPERATOR_ID, conversation_id)
+        # The originals of the project files it changed are the operator's content too;
+        # without the thread there is nothing to revert from.
+        changes = deps.capabilities(request).get_optional(ThreadChanges)
+        if changes is not None:
+            await changes.delete_for_conversation(OPERATOR_ID, conversation_id)
         # And the sub-agents it launched. Unlike everything else here they are not merely
         # stored state: a live one is a *running* model, spending the operator's money on
         # work for a thread that no longer exists and holding a slot against the cap, with
@@ -986,8 +987,13 @@ async def _branch_the_fork(request: Request, source_id: str, forked_id: str) -> 
     what forking is supposed to preserve. Best-effort: a source that never cut a branch
     leaves the fork to create one normally on its first code turn.
     """
-    binding = await deps.store(request).binding(forked_id)
-    if binding.workspace_kind != "worktree" or not binding.project_id:
+    store = deps.store(request)
+    source = await store.binding(source_id)
+    if not source.worktree or not source.project_id:
+        return
+    _ = await store.open_worktree(forked_id)
+    binding = await store.binding(forked_id)
+    if not binding.project_id:
         return
     try:
         project = await deps.projects(request).get(OPERATOR_ID, binding.project_id)

@@ -26,7 +26,6 @@ from services.agents import (
 )
 from services.projects import ProjectStore, WorktreeManager
 from services.projects.tree import thread_tree
-from services.workspace_kind import is_project_folder
 
 from .deps import RunDeps
 
@@ -64,7 +63,7 @@ async def _resolve(ctx: RunContext[RunDeps]) -> dict[str, AgentDefinition]:
 async def project_tree(ctx: RunContext[RunDeps]) -> Path | None:
     """The project tree this run works in, without resolving (and so holding) it."""
     deps = ctx.deps
-    if not is_project_folder(deps.workspace_kind) or deps.project_id is None:
+    if deps.project_id is None:
         return None
     if deps.workspace is not None:
         return deps.workspace.root
@@ -80,5 +79,5 @@ async def project_tree(ctx: RunContext[RunDeps]) -> Path | None:
     if worktrees is None:
         return root
     return await thread_tree(
-        root, worktrees.path_for(deps.project_id), deps.workspace_kind, deps.conversation_id
+        root, worktrees.path_for(deps.project_id), deps.worktree, deps.conversation_id
     )

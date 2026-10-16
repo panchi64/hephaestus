@@ -17,13 +17,14 @@ from pathlib import Path
 from core.api_scopes import ScopeClaim
 from core.vault import Vault
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
+from routes import changes as change_routes
 from routes import host as host_routes
 from routes import projects as project_routes
 from routes import worktrees as worktree_routes
 from routes.deps import OPERATOR_ID
+from services.home.changes import ThreadChanges
 from services.home.leases import WriteLeases
 from services.projects import ProjectStore, WorktreeManager
-from services.projects.checkout import CheckoutHolders
 from services.projects.legacy_branches import rename_legacy_branches
 from services.settings_store import SettingsStore
 from tools.projects import project_toolset
@@ -39,12 +40,12 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     # app's are a throwaway temp dir), and reading the process-global here had every test
     # cutting real worktrees into the operator's own home directory.
     worktrees = WorktreeManager(ctx.settings.worktrees_dir)
-    checkouts = CheckoutHolders()
     leases = WriteLeases(ctx.engine, ttl_s=ctx.settings.approval_grant_ttl_s)
+    changes = ThreadChanges(ctx.engine, ctx.vault)
     _ = ctx.lifecycle.track("projects.legacy_branches", _rename_branches(store, ctx.vault))
     return FeatureRuntime(
-        services=(store, worktrees, checkouts, leases),
-        capabilities=(store, worktrees, checkouts, leases),
+        services=(store, worktrees, leases, changes),
+        capabilities=(store, worktrees, leases, changes),
         state={"projects": store, "worktrees": worktrees},
     )
 
@@ -58,7 +59,12 @@ async def _rename_branches(store: ProjectStore, vault: Vault) -> None:
 
 MANIFEST = FeatureManifest(
     name="projects",
-    routers=(project_routes.router, worktree_routes.router, host_routes.router),
+    routers=(
+        project_routes.router,
+        worktree_routes.router,
+        host_routes.router,
+        change_routes.router,
+    ),
     # `/host` is deliberately unclaimed: opening a native dialog on the operator's
     # machine — reading back an arbitrary absolute path, or launching an application on
     # one — is not something an inbound token should be able to do, so it stays denied

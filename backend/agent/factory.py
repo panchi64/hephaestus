@@ -37,7 +37,6 @@ from prompts.agent import (
     INSTRUCTIONS,
     SYSTEM_PROMPT,
 )
-from prompts.workspace import CHECKOUT_WORKSPACE, WORKTREE_WORKSPACE
 from services.llm import TOOL_CALL_SETTINGS
 from services.permissions import permission_spec
 from tools import (
@@ -63,9 +62,6 @@ from .prefix_watch import WatchPrefix, watch_prefix_enabled
 NO_DORMANT: Mapping[str, str] = MappingProxyType({})
 
 type TurnAgent = Agent[RunDeps, DeferredToolRequests | str]
-
-
-_WORKSPACE_POSTURE = {"checkout": CHECKOUT_WORKSPACE, "worktree": WORKTREE_WORKSPACE}
 
 
 def build_agent(
@@ -200,11 +196,6 @@ def build_agent(
     # operator has switched a group off entirely), which is why it is unconditional.
     dormant_index = dormant_index_instructions(dormant, names_by_category)
     _ = agent.instructions(name=contributor_id(dormant_index))(dormant_index)
-
-    @agent.instructions(name="workspace_posture")
-    def _workspace_posture(ctx: RunContext[RunDeps]) -> str:
-        """What is true only in the operator's own files; "" in a sandbox."""
-        return _WORKSPACE_POSTURE.get(ctx.deps.workspace_kind, "")
 
     @agent.instructions(name="level")
     def _level_posture(ctx: RunContext[RunDeps]) -> str:

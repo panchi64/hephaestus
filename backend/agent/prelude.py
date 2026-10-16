@@ -38,7 +38,6 @@ from services.commands.spec import Invocation
 from services.conversation_view import estimate_tokens
 from services.conversations import ConversationBinding, ConversationStore
 from services.projects import ProjectStore, WorktreeManager
-from services.projects.checkout import CheckoutHolders
 from services.sandbox import SandboxSessionManager
 from services.uploads import UploadStore
 from services.workspace import resolve_workspace
@@ -256,15 +255,14 @@ async def prepare_turn(
     workspace = None
     if prompt is not None and (attachment_ids or file_refs):
         workspace = await resolve_workspace(
-            workspace_kind=binding.workspace_kind,
             project_id=binding.project_id,
+            worktree=binding.worktree,
             conversation_id=conversation_id,
             workspace_key=workspace_key or default_workspace_key(conversation_id, run),
             owner_id=run.owner_id,
             sessions=caps.get_optional(SandboxSessionManager),
             projects=caps.get_optional(ProjectStore),
             worktrees=caps.get_optional(WorktreeManager),
-            checkouts=caps.get_optional(CheckoutHolders),
             holder=run,
         )
 
@@ -324,8 +322,8 @@ async def prepare_turn(
         caps=caps,
         owner_id=run.owner_id,
         conversation_id=conversation_id,
-        workspace_kind=binding.workspace_kind,
         project_id=binding.project_id,
+        worktree=binding.worktree,
         # The same derivation the file tools use, for the reason `default_workspace_key`
         # exists: a delegated run must be described its own fork, not its parent's files.
         workspace_key=workspace_key or default_workspace_key(conversation_id, run),

@@ -58,7 +58,7 @@ import { createBrowserState } from "../browserState";
 import { createConversationActions } from "../conversationActions";
 import { registerChatRoomKeymap } from "../chatRoomKeymap";
 import { useChatViewport } from "../useChatViewport";
-import { createBranchState } from "../branchState";
+import { createThreadChanges } from "../branchState";
 import { createSubagentsState } from "../subagentsState";
 import { createTranscriptFollow } from "../transcriptScroll";
 import { createRenameConversation } from "../components/RenameConversationModal";
@@ -250,15 +250,17 @@ export function ChatRoomScreen(): JSX.Element {
     refreshSessions();
   });
 
-  // A worktree thread's branch, read once for everyone who shows it: the header's chip and
-  // the Diff surface are two views of one fetch, and two resources over the same
-  // endpoint would disagree for as long as either was in flight. Re-reads when a turn
-  // settles, since that is when the agent has just changed something.
-  const branch = createBranchState(
-    currentId,
-    () => (stream.sending() ? 0 : 1),
-    () => currentSummary()?.workspaceKind,
+  // What the thread changed in the operator's project folders and on its worktree's
+  // branch, read once each for everyone who shows them. Re-read when a turn settles,
+  // since that is when the agent has just changed something.
+  const threadChanges = createThreadChanges(currentId, () =>
+    stream.sending() ? 0 : 1,
   );
+  const branch = threadChanges.branch;
+  const refetchChanges = (): void => {
+    threadChanges.changes.refetch();
+    branch.refetch();
+  };
 
   // The thread's sub-agents. Re-read when a turn settles for the same reason as the
   // branch — that is the moment a launch has most likely just happened — and it keeps
@@ -275,7 +277,8 @@ export function ChatRoomScreen(): JSX.Element {
     ...stream,
     browser,
     branch: branch.latest,
-    refetchBranch: branch.refetch,
+    changes: threadChanges.changes.latest,
+    refetchChanges,
     subagents: subagents.latest,
     refetchSubagents: subagents.refetch,
   });

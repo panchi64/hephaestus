@@ -1,14 +1,14 @@
-"""One answer to "where does this run's file work happen".
+"""One answer to "which folder is this run's own place".
 
-The file tools, `code_execute` or the shell, attachment staging and the skills bundler all
-act on one resolved value, so the agent never edits a file it cannot run:
+Attachment staging, the skills bundler, the project's agents and commands and the
+thread's home all read one resolved value:
 
-    workspace "sandbox"  → the conversation's own workspace, at ``/work`` in the VM
-    workspace "checkout" → the project's own folder, on the host, on its current branch
-    workspace "worktree" → the project's git worktree, on the host, by absolute path
+    "sandbox"  → the conversation's scratch, at ``/work`` in the VM
+    "checkout" → the project the thread is filed under, on the host, on its current branch
+    "worktree" → the thread's own git worktree of that project, on the host
 
-Which of the two a run gets is the conversation's ``workspace_kind``
-(``services/workspace_kind.py``).
+Which one a run gets follows from its binding: a worktree if the thread opened one, else
+the project it is filed under, else its scratch.
 
 :class:`RunWorkspace` carries both halves — the host directory to act on, and
 :meth:`RunWorkspace.display`, the path *string the model is told*. Those differ in a
@@ -26,10 +26,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from services.home.paths import HOME
-from services.projects.checkout import CheckoutHolders
 from services.projects.repo import run_git
 from services.projects.store import ProjectStore
 from services.projects.worktree import WorktreeBusyError, WorktreeManager
@@ -39,9 +38,18 @@ from services.sandbox import (
     SandboxSessionManager,
 )
 from services.sandbox.base import contained_path
-from services.workspace_kind import WorkspaceKind
 
 logger = logging.getLogger(__name__)
+
+#: What a run's own place is (see the module note).
+type PlaceKind = Literal["sandbox", "checkout", "worktree"]
+
+
+def place_kind(project_id: str | None, worktree: bool) -> PlaceKind:
+    """What a thread's own place is, from its binding."""
+    if project_id is None:
+        return "sandbox"
+    return "worktree" if worktree else "checkout"
 
 #: Where a conversation's sandbox workspace appears inside the VM. The model is
 #: told this, never the host path — the host path means nothing in the guest.
@@ -114,12 +122,12 @@ class RunWorkspace:
     """This run's workspace: the host directory, and how a path in it is named aloud."""
 
     root: Path
-    kind: WorkspaceKind
+    kind: PlaceKind
     files: WorkspaceFiles
     #: The branch a worktree run is working on; None in a sandbox.
     branch: str | None = None
-    #: Where the agent's home holds this project's folder (``~/projects/<slug>``); None
-    #: in a sandbox.
+    #: Where the agent's home holds this folder (``~/projects/<slug>`` or
+    #: ``~/worktrees/<slug>``); None in a sandbox.
     home_path: str | None = None
 
     @property
@@ -244,7 +252,7 @@ async def worktree_workspace(
     """
     project = await projects.get(owner_id, project_id)
     root = Path(project.root_path)
-    home_path = await project_home_path(projects, owner_id, project_id)
+    home_path = await project_home_path(projects, owner_id, project_id, group="worktrees")
     if delegation_id is not None:
         state = await worktrees.open_child(
             project_id=project_id,
@@ -276,10 +284,17 @@ async def worktree_workspace(
     )
 
 
-async def project_home_path(projects: ProjectStore, owner_id: str, project_id: str) -> str | None:
-    """Where the agent's home holds this project, or None when it has no slug."""
+async def project_home_path(
+    projects: ProjectStore,
+    owner_id: str,
+    project_id: str,
+    *,
+    group: Literal["projects", "worktrees"] = "projects",
+) -> str | None:
+    """Where the agent's home holds this project, or a thread's worktree of it, or None
+    when it has no slug."""
     slug = (await projects.slugs(owner_id)).get(project_id)
-    return f"{HOME}/projects/{slug}" if slug else None
+    return f"{HOME}/{group}/{slug}" if slug else None
 
 
 def prepare_worktree_workspace(path: Path) -> None:
@@ -306,32 +321,31 @@ def prepare_worktree_workspace(path: Path) -> None:
 
 async def resolve_workspace(
     *,
-    workspace_kind: str,
     project_id: str | None,
+    worktree: bool,
     conversation_id: str | None,
     workspace_key: str,
     owner_id: str,
     sessions: SandboxSessionManager | None,
     projects: ProjectStore | None,
     worktrees: WorktreeManager | None,
-    checkouts: CheckoutHolders | None = None,
     holder: LiveWork | None = None,
 ) -> RunWorkspace | None:
-    """This run's workspace, or None when there isn't one.
+    """This run's own place, or None when there isn't one: its worktree, else the project
+    it is filed under, else its scratch.
 
     Takes explicit handles rather than a `RunContext` because it is called from both
     sides of a turn: from inside a run (through `tools/workspace.py`) and at composition
     time, before the run exists, to stage attachments. One resolution, two entry points.
 
     Returns None rather than raising, for the two shapes of "no workspace" the callers
-    already handle: a project workspace without the pieces it needs, and a sandbox that
-    will not open. A busy worktree or checkout is *not* one of those — that is a real
-    conflict the operator has to see, so `WorktreeBusyError` propagates.
+    already handle: a project without the pieces it needs, and a sandbox that will not
+    open. A busy worktree is *not* one of those — that is a real conflict the operator has
+    to see, so `WorktreeBusyError` propagates.
     """
-    if workspace_kind == "checkout":
-        if projects is None or checkouts is None or not project_id or not conversation_id:
+    if project_id and not worktree:
+        if projects is None:
             return None
-        owner_conversation, _ = split_workspace_key(workspace_key)
         try:
             project = await projects.get(owner_id, project_id)
         except Exception:
@@ -340,7 +354,6 @@ async def resolve_workspace(
         root = Path(project.root_path)
         if not root.is_dir():
             return None
-        await checkouts.acquire(project_id, owner_conversation or conversation_id, holder)
         prepare_worktree_workspace(root)
         code, out, _ = await run_git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
         branch = out.strip() if code == 0 and out.strip() else None
@@ -351,12 +364,12 @@ async def resolve_workspace(
             branch=branch,
             home_path=await project_home_path(projects, owner_id, project_id),
         )
-    if workspace_kind == "worktree":
+    if project_id and worktree:
         # Never fall back to the sandbox. A worktree run that quietly got a sandbox
         # workspace would edit files its shell tools are refused access to, and nothing
         # would say why — the failure the one-workspace rule exists to prevent. No
         # worktree means no workspace, and the tool layer says so in words.
-        if projects is None or worktrees is None or not project_id or not conversation_id:
+        if projects is None or worktrees is None or not conversation_id:
             return None
         # Which checkout, read off the workspace key rather than off the conversation.
         # For every ordinary run the two say the same thing (a run's key *is* its

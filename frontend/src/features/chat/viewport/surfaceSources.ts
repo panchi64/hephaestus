@@ -21,7 +21,7 @@
 import type { HostCommand, PlanDocument } from "../model";
 import type { TaskItem } from "~/lib/stream/events";
 import type { Subagent } from "../data";
-import type { BranchState } from "../data";
+import type { BranchState, ThreadChanges } from "../data";
 import type { SourceInventory } from "./sourceItems";
 import { SURFACE_IDS, type SurfaceId } from "./surfaces";
 import type { ViewItem } from "./viewItems";
@@ -63,6 +63,7 @@ export interface SurfaceDeps {
   tasks: () => TaskItem[];
   plan: () => PlanDocument | null;
   branch: () => BranchState | null | undefined;
+  changes: () => ThreadChanges | null | undefined;
   subagents: () => Subagent[];
   commands: () => HostCommand[];
   /** Every source the thread has read, already folded. Derived from the transcript
@@ -136,10 +137,11 @@ export function createSurfaceSources(
       arrival: () => "announce",
       claimKey: () => "",
     },
-    // Only a code thread has a branch at all; the fetch answers 404 for every other
-    // kind, which is the ordinary case rather than a failure.
+    // A thread with a worktree branch, or with changes in the operator's own project
+    // folders; every other thread has nothing to review, which is the ordinary case.
     diff: {
-      available: () => Boolean(deps.branch()),
+      available: () =>
+        Boolean(deps.branch()) || (deps.changes()?.projects.length ?? 0) > 0,
       // Changes accumulate for the whole length of a code thread. A panel that opened
       // itself every time the agent touched a file is a panel the operator learns to
       // close reflexively.

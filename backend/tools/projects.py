@@ -2,8 +2,9 @@
 
 Two read-only tools answer questions the model would otherwise guess at: *what projects
 exist* and *which one is this conversation in*. The third, ``open_worktree``, is the
-agent's own call to move a project chat off the operator's folder onto a branch of its
-own. Creating or binding a project is the operator's act, so there is no tool for it.
+agent's own call to open a worktree of its project, a branch of its own beside the
+operator's folder. Creating or binding a project is the operator's act, so there is no
+tool for it.
 
 The active project comes from ``ctx.deps.project_id``, which the chat layer resolves from
 the **conversation's** binding rather than the live request: a run must keep reporting the
@@ -68,11 +69,11 @@ def project_toolset() -> FunctionToolset[RunDeps]:
         if store is None:
             return {"available": False, "detail": _UNAVAILABLE}
         if ctx.deps.project_id is None:
-            return {"available": True, "project": None, "workspace": ctx.deps.workspace_kind}
+            return {"available": True, "project": None, "worktree": False}
         view = await store.get(ctx.deps.owner_id, ctx.deps.project_id)
         return {
             "available": True,
-            "workspace": ctx.deps.workspace_kind,
+            "worktree": ctx.deps.worktree,
             "project": {
                 "id": view.id,
                 "name": view.name,
@@ -85,38 +86,41 @@ def project_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool(name="open_worktree")
     async def open_worktree(ctx: RunContext[RunDeps]) -> str:
-        """Move this conversation from the project's own folder onto a git worktree: a
-        separate checkout on a branch of its own, which reaches the operator's folder only
+        """Open a git worktree of this conversation's project: a separate checkout on a
+        branch of its own, at `~/worktrees/<name>`, which reaches the operator's folder only
         when they merge it.
 
         Use it before work that should stay apart from their working copy: a risky or
         sprawling change, or one that would collide with what they are doing. Small edits
-        belong in their folder. The move is permanent for this conversation, and the
-        worktree branches from the project's base ref, so uncommitted changes in their
-        folder (including edits you made there) do not come with you.
+        belong in their folder. From then on relative paths land in the worktree and their
+        folder is read-only to you. The worktree branches from the project's base ref, so
+        uncommitted changes in their folder (including edits you made there) do not come
+        with you.
         """
         deps = ctx.deps
-        if deps.workspace_kind == "worktree":
+        if deps.worktree:
             return "This conversation already works in a worktree."
         if deps.project_id is None or deps.conversation_id is None:
-            return "This conversation is not bound to a project, so there is nothing to check out."
+            return "This conversation is not filed under a project, so there is nothing to open."
         if deps.workspace_key != deps.conversation_id:
             return "A delegated agent works in its parent's workspace and cannot move it."
         switch = deps.caps.get_optional(WorktreeSwitch)
         if switch is None or not await switch.open(deps.conversation_id):
             return "Worktrees are unavailable in this deployment."
-        deps.workspace_kind = "worktree"
+        deps.worktree = True
         deps.workspace = None
         deps.home = None
         try:
             workspace = await run_workspace(ctx)
         except WorktreeBusyError as exc:
-            return f"Recorded the move, but the worktree is busy: {exc}"
+            return f"Recorded the worktree, but it is busy: {exc}"
         if workspace is None:
             return unavailable(deps)
+        where = workspace.display("").rstrip("/")
         return (
-            f"Now working in a worktree on branch `{workspace.branch}` at {workspace.root}. "
-            "The shell and file tools act there from your next step."
+            f"Opened a worktree on branch `{workspace.branch}` at {where}. Relative paths in "
+            "the shell and file tools land there from your next step; `cd` there to run "
+            "commands in it."
         )
 
     return toolset

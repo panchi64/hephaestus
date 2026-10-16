@@ -33,11 +33,17 @@ class RunHome:
 
     def place_of(self, path: str) -> Place | None:
         """The mounted place a file tool's path lands in, or None when it names none."""
+        located = self.locate(path)
+        return located[0].place if located is not None else None
+
+    def locate(self, path: str) -> tuple[Mount, str] | None:
+        """The mount a file tool's path lands in and the path inside it, or None."""
         try:
-            place = parse(self.backend.spell(path)).place
+            target = parse(self.backend.spell(path))
         except HomePathError:
             return None
-        return place if self.mount(place) is not None else None
+        mount = self.mount(target.place)
+        return (mount, target.rel) if mount is not None else None
 
     def writable(self, place: Place) -> bool:
         mount = self.mount(place)
@@ -60,19 +66,21 @@ class RunHome:
 async def thread_mounts(
     *,
     owner_id: str,
-    conversation_id: str | None,
     scratch: Path | None,
     projects: ProjectStore | None,
     leases: WriteLeases | None,
+    lease_holder: str | None,
     filed_project_id: str | None = None,
-    filed_root: Path | None = None,
+    filed_writable: bool = False,
+    worktree_root: Path | None = None,
 ) -> list[Mount]:
-    """The thread's scratch, writable, then every registered project.
+    """The thread's scratch, writable, then every registered project, and the thread's
+    worktree of its filed project at ``~/worktrees/<slug>``.
 
-    A project is writable to a thread that holds a lease on it, or that was started in it:
-    starting a thread in a project is the operator saying the agent works there, which is
-    what a project thread has always meant. ``filed_root`` stands in for the filed
-    project's own folder, for a thread that works in a worktree of it.
+    A project is writable to a thread whose ``lease_holder`` holds a lease on it, and the
+    filed project when ``filed_writable`` says so: starting a thread in a project is the
+    operator saying the agent works there. The worktree is the thread's own branch, so it
+    is always writable.
     """
     mounts = [] if scratch is None else [Mount(SCRATCH, scratch, writable=True)]
     if projects is None:
@@ -80,8 +88,8 @@ async def thread_mounts(
     slugs = await projects.slugs(owner_id)
     roots = await projects.workspace_roots(owner_id)
     held = (
-        await leases.held(owner_id, conversation_id)
-        if leases is not None and conversation_id
+        await leases.held(owner_id, lease_holder)
+        if leases is not None and lease_holder
         else set[str]()
     )
     for project_id, slug in sorted(slugs.items(), key=lambda item: item[1]):
@@ -90,14 +98,21 @@ async def thread_mounts(
             continue
         place = Place("projects", slug)
         filed = project_id == filed_project_id
-        writable = filed or place_key(place) in held
-        mounts.append(Mount(place, filed_root if filed and filed_root else root, writable))
+        writable = (filed and filed_writable) or place_key(place) in held
+        mounts.append(Mount(place, root, writable, project_id=project_id))
+        if filed and worktree_root is not None:
+            mounts.append(
+                Mount(Place("worktrees", slug), worktree_root, writable=True, project_id=project_id)
+            )
     return mounts
 
 
-def default_place(mounts: Sequence[Mount], filed: Place | None) -> Place | None:
-    """Where a path naming no group lands: the thread's project, else its scratch."""
+def default_place(mounts: Sequence[Mount], filed_slug: str | None) -> Place | None:
+    """Where a path naming no group lands: the thread's worktree, else the project it is
+    filed under, else its scratch."""
     places = {m.place for m in mounts}
-    if filed is not None and filed in places:
-        return filed
+    if filed_slug:
+        for place in (Place("worktrees", filed_slug), Place("projects", filed_slug)):
+            if place in places:
+                return place
     return SCRATCH if SCRATCH in places else None

@@ -35,27 +35,22 @@ class Conversation(Table, table=True):
     id: str = Field(default_factory=new_id, primary_key=True)
     owner_id: str = Field(index=True)
     # The project this belongs to, or null for **unfiled** — visible in every scope,
-    # not orphaned. See models/project.py for the one scope rule.
+    # not orphaned. See models/project.py for the one scope rule. A filed thread may write
+    # its project, which relative paths in its tools land in.
     project_id: str | None = Field(default=None, index=True)
-    # Where its file work happens: "sandbox", "checkout" or "worktree"
-    # (`services/workspace_kind.py`). A plain string so a restored backup or a row from
-    # another build still loads; an unrecognised value reads as the sandbox. Moves one way
-    # only, checkout to worktree, when the agent opens one: a worktree thread owns a
-    # branch, and moving it back would strand that branch.
-    workspace_kind: str = Field(default="sandbox")
     # The agent this thread runs (`services/agents`), by name. Null is the default agent.
     # A name that no longer resolves runs the default agent too.
     agent_name: str | None = Field(default=None)
     # How much rope the model gets in this thread — "plan", "manual", "edit", "auto" or
     # "yolo".
     # What each permits is the permission registry's answer (`services/permissions`); the
-    # column stores only the name, as a plain string for the same reason as `workspace_kind`.
+    # column stores only the name, as a plain string so a row from another build still loads.
     # **This moves freely.** It is the operator's live control over a thread
     # already in flight: a Plan thread that produced a plan is raised to Edit and carries
     # on in place, and a thread that is about to touch something delicate is dropped to
     # Manual mid-conversation. Nothing structural hangs off it — no branch, no workspace —
     # so re-pointing it strands nothing. Policy, not user content, so it stays in the
-    # clear like `model`/`workspace_kind`/`ephemeral`.
+    # clear like `model`/`ephemeral`.
     # **The Python default only** — deliberately not a `server_default` change, so no
     # migration re-points a thread the operator already set. Existing rows keep whatever
     # they were stored with; a row written from here on starts where a fresh thread starts.
@@ -135,7 +130,7 @@ class Conversation(Table, table=True):
     # provider's own number, and every figure derived from this renders with a `~`.
     #
     # Slugs and character counts — structural metadata, not user content — so it stays in
-    # the clear like `model`/`workspace_kind`/`ephemeral`. Null until the thread's first turn.
+    # the clear like `model`/`ephemeral`. Null until the thread's first turn.
     context_overhead: dict[str, object] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )

@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import ColumnElement, Engine, or_, update
+from sqlalchemy import ColumnElement, Engine, delete, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
@@ -47,6 +47,8 @@ from models.corpus import CorpusSource
 from models.project import Project
 from models.subagent import SubagentRecord
 from models.task import ScheduledTask
+from models.thread_change import ThreadChange
+from models.thread_worktree import ThreadWorktree
 from services.settings_store import ACTIVE_PROJECT_KEY, SettingsStore
 
 from .slugs import slug_for
@@ -426,6 +428,10 @@ class ProjectStore:
                     .where(col(model_cls.project_id) == row.id)
                     .values(project_id=None)
                 )
+            # A worktree of a project that no longer exists is nothing a thread can work in,
+            # and a change to its folder is nothing anyone can put back from here.
+            for gone in (ThreadWorktree, ThreadChange):
+                _ = session.exec(delete(gone).where(col(gone.project_id) == row.id))
             stored = session.get(Project, row.id)
             if stored is not None:
                 session.delete(stored)

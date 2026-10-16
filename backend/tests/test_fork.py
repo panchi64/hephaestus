@@ -126,20 +126,16 @@ class TestTheCopy:
 
 
 class TestTheBinding:
-    async def test_the_fork_inherits_project_and_workspace_kind(self, tmp_path: Path):
+    async def test_the_fork_inherits_the_project(self, tmp_path: Path):
         store = await _store(tmp_path)
-        source = await store.create_conversation(
-            OWNER, title="T", project_id="proj-1", workspace_kind="worktree"
-        )
+        source = await store.create_conversation(OWNER, title="T", project_id="proj-1")
         _ = store.record(source, [_user("q"), _assistant("a")])
         tree = await store.tree(source)
 
         forked = await store.fork(source, tree.active_path()[0].id, OWNER)
         assert forked is not None
-        binding = await store.binding(forked)
-        # A worktree fork that came back as a sandbox thread would silently drop the operator
-        # into a different workspace with the same transcript.
-        assert (binding.workspace_kind, binding.project_id) == ("worktree", "proj-1")
+        # The worktree is the route's to cut, from the source's branch (`_branch_the_fork`).
+        assert (await store.binding(forked)).project_id == "proj-1"
 
 
 # --- over HTTP, and the code fork's branch --------------------------------------------

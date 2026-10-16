@@ -102,14 +102,14 @@ async def _searchable_roots(request: Request) -> list[Path]:
 
 
 async def _home_project(request: Request, path: str) -> tuple[list[Path], str] | None:
-    """The folders and in-project path a path in the agent's home names, when it names a
-    registered project (``~/projects/<slug>/…``); None for anything else. The project's
-    own folder comes first, because that is what ``~/projects/<slug>`` is mounted on."""
+    """The folder and in-project path a path in the agent's home names, when it names a
+    registered project (``~/projects/<slug>/…``, its own folder) or a worktree of one
+    (``~/worktrees/<slug>/…``); None for anything else."""
     try:
         target = parse(absolute(path, cwd=HOME))
     except HomePathError:
         return None
-    if target.place.kind != "projects" or not target.rel:
+    if target.place.kind not in ("projects", "worktrees") or not target.rel:
         return None
     projects = deps.projects(request)
     slugs = await projects.slugs(OPERATOR_ID)
@@ -119,8 +119,10 @@ async def _home_project(request: Request, path: str) -> tuple[list[Path], str] |
     root = (await projects.workspace_roots(OPERATOR_ID)).get(project_id)
     if root is None:
         return None
+    if target.place.kind == "projects":
+        return [root], target.rel
     worktree = deps.worktrees(request).path_for(project_id)
-    return [root, *([worktree] if worktree.is_dir() else [])], target.rel
+    return ([worktree] if worktree.is_dir() else []), target.rel
 
 
 @router.post("/open", response_model=OpenResult)
