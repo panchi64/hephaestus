@@ -90,9 +90,9 @@ def _fenced_regions(rendered: str) -> tuple[list[str], list[str]]:
     fenced: list[str] = []
     inside = False
     for line in rendered.splitlines():
-        if line.startswith("[BEGIN UNTRUSTED CONTENT "):
+        if line.startswith('<untrusted id="'):
             inside = True
-        elif line.startswith("[END UNTRUSTED CONTENT "):
+        elif line.startswith('</untrusted id="'):
             inside = False
         else:
             (fenced if inside else clear).append(line)
@@ -145,9 +145,9 @@ class TestTheTranscript:
         model has no reason to respect."""
         rendered = work_transcript(_turn("go", "done"))
         first, _, rest = rendered.partition("\n")
-        nonce = first.split("tagged ")[1].split(".")[0].strip()
-        assert f"[BEGIN UNTRUSTED CONTENT {nonce}]" in rest
-        assert f"[END UNTRUSTED CONTENT {nonce}]" in rest
+        nonce = first.split('id="')[1].split('"')[0]
+        assert f'<untrusted id="{nonce}">' in rest
+        assert f'</untrusted id="{nonce}">' in rest
 
     def test_a_tool_call_carries_its_namespaced_name_and_its_narration(self):
         """Narration is the model's own one-sentence reason for the call, and it is the
@@ -226,7 +226,7 @@ class TestTheModelCall:
         model, seen = _replies("Rewrote the parser and got the suite green.")
         summary = await summarize_work(model, _turn("fix the parser", "Rewrote it."))
         assert summary == "Rewrote the parser and got the suite green."
-        assert "UNTRUSTED CONTENT" in seen[0]
+        assert "<untrusted id=" in seen[0]
 
     async def test_a_model_failure_degrades_to_none(self):
         """Best-effort: the band is a convenience, and a dead endpoint must not surface as

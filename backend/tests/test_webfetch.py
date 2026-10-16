@@ -392,10 +392,8 @@ async def test_fetch_caps_output_and_appends_truncation_note(monkeypatch: pytest
     assert len(expected_capped) <= cap
     assert expected_capped in page.content
     # The notice is trusted (outside the fence) — it must come *after* the END marker.
-    assert "[END UNTRUSTED CONTENT" in page.content
-    assert page.content.index("[Fetched content truncated") > page.content.index(
-        "[END UNTRUSTED CONTENT"
-    )
+    assert '</untrusted id="' in page.content
+    assert page.content.index("[Fetched content truncated") > page.content.index('</untrusted id="')
     assert f"characters 0-{end} of {len(_BIG_BODY)}" in page.content
     assert f"offset={end}" in page.content
 
@@ -458,7 +456,7 @@ async def test_fetch_distills_when_goal_given_and_body_over_cap(monkeypatch: pyt
     page = await fetcher.fetch(OWNER, "http://93.184.216.34/", goal="RAV4 prices")
     assert distiller.calls == 1
     assert "DISTILLED — RAV4 trim price: $38,795" in page.content
-    assert "BEGIN UNTRUSTED CONTENT" in page.content  # still untrusted-fenced
+    assert '<untrusted id="' in page.content  # still untrusted-fenced
     assert "distillation focused on: RAV4 prices" in page.content
     assert "Fetched content truncated" not in page.content  # distilled, not truncated
 
@@ -650,7 +648,7 @@ async def test_download_error_routes_to_pdf_path(monkeypatch: pytest.MonkeyPatch
     fetcher = BrowserFetcher(browser=_PdfDownloadBrowser())
     page = await fetcher.fetch(OWNER, "http://93.184.216.34/paper.pdf")
     assert "Attention Is All You Need" in page.content
-    assert "BEGIN UNTRUSTED CONTENT" in page.content
+    assert '<untrusted id="' in page.content
 
 
 async def test_fetch_pdf_text_follows_redirect_recheck(monkeypatch: pytest.MonkeyPatch):
@@ -836,7 +834,7 @@ async def test_vm_browser_renders_js_extracts_and_is_stealthed(
         # The content only exists after the script runs — proves we render, not just GET.
         assert "Dynamic Heading" in page.content
         assert "real rendered content here" in page.content
-        assert "BEGIN UNTRUSTED CONTENT" in page.content
+        assert '<untrusted id="' in page.content
 
         # 2) The browser presents as a normal user's Chrome, not an automated headless one.
         async with browser.context() as ctx:
