@@ -31,7 +31,7 @@ import { PlanSurface, planStatusOf } from "../components/PlanSurface";
 import { TasksSurface } from "../components/TasksSurface";
 import { ViewportPanel } from "../components/ViewportPanel";
 import { taskSummary } from "../components/TaskRows";
-import { isLive } from "../data";
+import { countLabel, rosterCounts } from "../subagentRoster";
 import { flattenGroups, groupTasks } from "../taskGroups";
 import { failedCount } from "./commandItems";
 import type { ChatViewport } from "../useChatViewport";
@@ -169,19 +169,13 @@ export const SURFACE_META: Partial<
     );
   },
   agents: (ctx) => {
-    // The count decides the wording as well as supplying the number: a thread with
-    // nothing in the pane has neither "0 working" nor "0 done" to say, and says nothing.
-    // One pass over the list rather than the three the same figures read back as.
-    const count = createMemo(() => {
-      const all = ctx.viewport.subagents();
-      return { total: all.length, working: all.filter(isLive).length };
-    });
+    const label = createMemo(() =>
+      countLabel(rosterCounts(ctx.viewport.subagents())),
+    );
     return (
-      <Show when={count().total > 0}>
+      <Show when={label()}>
         <Text variant="micro" tone="dim">
-          {count().working > 0
-            ? `${count().working} working`
-            : `${count().total} done`}
+          {label()}
         </Text>
       </Show>
     );
