@@ -55,8 +55,9 @@ from services.settings_store import (
     get_context_thresholds,
     get_subagent_limit,
 )
-from services.subagent_store import SubagentStore
+from services.subagent_store import LIVE_STATUSES, SubagentStore
 from services.subagents.briefing import brief_for
+from services.subagents.callsigns import allocate, fold, resolve
 from services.subagents.launcher import (
     PARENT_ADDRESS,
     ROOT_HANDLE,
@@ -118,9 +119,9 @@ class ConversationSubagents(SubagentLauncher):
         self._offline: OfflineModeService = ctx.services.get(OfflineModeService)
         self._uploads: UploadStore = ctx.services.get(UploadStore)
         self._agents: AgentCatalog = ctx.services.get(AgentCatalog)
-        #: Handles chosen but not yet recorded, as (owner, root, handle). A launch picks its
-        #: name before a whole turn is composed and records it after, so concurrent
-        #: launches in one step consult these as well as the register.
+        #: Handles and folded callsigns chosen but not yet recorded, as (owner, root, name).
+        #: A launch picks its names before a whole turn is composed and records them after,
+        #: so concurrent launches in one step consult these as well as the register.
         self._reserved: set[tuple[str, str, str]] = set()
         self._reserve_lock: asyncio.Lock = asyncio.Lock()
 
@@ -145,13 +146,14 @@ class ConversationSubagents(SubagentLauncher):
         position = await self._position(owner_id, thread)
         await self._check_depth(owner_id, thread, position)
         await self._check_capacity(owner_id, position.root)
-        handle = await self._handle_for(owner_id, position.root, handle, agent)
+        handle, callsign = await self._names_for(owner_id, position.root, handle, agent)
         try:
             return await self._launch(
                 owner_id,
                 agent,
                 task,
                 handle=handle,
+                callsign=callsign,
                 parent=parent,
                 position=position,
                 worktree=worktree,
@@ -159,6 +161,7 @@ class ConversationSubagents(SubagentLauncher):
         finally:
             async with self._reserve_lock:
                 self._reserved.discard((owner_id, position.root, handle))
+                self._reserved.discard((owner_id, position.root, fold(callsign)))
 
     async def _launch(
         self,
@@ -167,6 +170,7 @@ class ConversationSubagents(SubagentLauncher):
         task: str,
         *,
         handle: str,
+        callsign: str,
         parent: SubagentParent,
         position: _Position,
         worktree: bool,
@@ -231,7 +235,7 @@ class ConversationSubagents(SubagentLauncher):
         thread = parent.conversation_id or ""
         conversation_id = await self._conversations.create_conversation(
             owner_id,
-            title=_title_for(handle, task),
+            title=_title_for(callsign, handle, task),
             project_id=parent.project_id,
             permission=permission,
             agent_name=agent.name,
@@ -298,6 +302,8 @@ class ConversationSubagents(SubagentLauncher):
             parent_run_id=parent.run_id,
             spec_name=agent.name,
             handle=handle,
+            agent_class=agent.agent_class,
+            callsign=callsign,
             task=task,
             workspace_policy=policy,
             workspace_key=workspace_key,
@@ -311,6 +317,8 @@ class ConversationSubagents(SubagentLauncher):
             run_id=created.run_id,
             name=agent.name,
             handle=handle,
+            callsign=callsign,
+            agent_class=agent.agent_class,
             task=task,
         )
 
@@ -340,32 +348,43 @@ class ConversationSubagents(SubagentLauncher):
         )
         return applied.agent
 
-    async def _handle_for(
+    async def _names_for(
         self, owner_id: str, root: str, requested: str, agent: AgentDefinition
-    ) -> str:
-        """The name this agent will answer to: normalised, unique in its tree, and claimed
-        before this returns, so concurrent launches cannot both take it. Suffixed rather
-        than refused on a clash — ``explorer-2`` is legible, and a failed launch costs a
-        retry."""
+    ) -> tuple[str, str]:
+        """The handle and callsign this agent will answer to, unique in its tree and claimed
+        before this returns, so concurrent launches cannot both take them. A handle is
+        suffixed rather than refused on a clash — ``explorer-2`` is legible, and a failed
+        launch costs a retry. Handles and callsigns share one namespace, so a reference
+        never fits one agent's handle and another's callsign."""
         try:
             base = normalize_agent_name(requested) if requested.strip() else agent.name
         except AgentNameError as exc:
             raise SubagentUnavailableError(str(exc)) from exc
         async with self._reserve_lock:
-            taken = await self._records.handles_in_tree(root, owner_id)
-            taken |= _RESERVED_HANDLES
-            taken |= {
-                handle
-                for owner, tree, handle in self._reserved
-                if owner == owner_id and tree == root
+            rows = await self._records.tree(root, owner_id)
+            reserved = {
+                name for owner, tree, name in self._reserved if owner == owner_id and tree == root
             }
-            chosen = base
+            handles = {fold(row.handle) for row in rows if row.handle}
+            callsigns = {fold(row.callsign) for row in rows if row.callsign}
+            live = {
+                fold(row.callsign)
+                for row in rows
+                if row.callsign and row.status in LIVE_STATUSES
+            }
+            taken = handles | callsigns | reserved | _RESERVED_HANDLES
+            handle = base
             suffix = 2
-            while chosen in taken:
-                chosen = f"{base}-{suffix}"
+            while handle in taken:
+                handle = f"{base}-{suffix}"
                 suffix += 1
-            self._reserved.add((owner_id, root, chosen))
-            return chosen
+            callsign = allocate(
+                agent.agent_class, live | handles | reserved | {handle}, avoid=callsigns
+            )
+            self._reserved.add((owner_id, root, handle))
+            if callsign:
+                self._reserved.add((owner_id, root, fold(callsign)))
+            return handle, callsign
 
     async def _check_capacity(self, owner_id: str, root: str) -> None:
         """Refuse a launch that would put this tree over the operator's cap. An agent parked
@@ -607,16 +626,9 @@ class ConversationSubagents(SubagentLauncher):
             current = await self._records.by_child(current.parent_conversation_id)
         return False
 
-    async def _resolve(self, owner_id: str, root: str, handle: str) -> SubagentRecord:
-        """The agent of this tree called ``handle``, or a refusal naming it back."""
-        address = _address(handle)
-        row = await self._records.by_handle(root, address, owner_id)
-        if row is None:
-            raise SubagentUnavailableError(
-                f"Nothing in your delegation tree is called {handle!r}. `agents_list` has "
-                + "every agent in it."
-            )
-        return row
+    async def _resolve(self, owner_id: str, root: str, reference: str) -> SubagentRecord:
+        """The agent of this tree a handle or callsign names, or a refusal naming it back."""
+        return resolve(reference, await self._records.tree(root, owner_id))
 
     def _live_view(self, row: SubagentRecord) -> SubagentView:
         """A stored row, corrected by the agent's running turn if it has one."""
@@ -672,10 +684,10 @@ def _briefing(text: str) -> InstructionProvider:
     return provider
 
 
-def _title_for(handle: str, task: str) -> str:
-    """The agent's thread name: its handle and its task on one line."""
+def _title_for(callsign: str, handle: str, task: str) -> str:
+    """The agent's thread name, ``CALLSIGN · handle: task`` on one line."""
     folded = " ".join(task.split())
-    title = f"{handle}: {folded}"
+    title = f"{callsign} · {handle}: {folded}" if callsign else f"{handle}: {folded}"
     if len(title) <= _TITLE_MAX_CHARS:
         return title
     return title[: _TITLE_MAX_CHARS - 1] + "…"

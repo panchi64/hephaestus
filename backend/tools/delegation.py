@@ -33,6 +33,7 @@ from services.subagents import (
     SubagentUnavailableError,
     SubagentView,
 )
+from services.subagents.callsigns import class_display
 from tools.child_worktrees import discard_child, merge_child, worktree_paths
 from tools.deps import RunDeps
 from tools.describe import registered_tools
@@ -116,6 +117,8 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         return {
             "spawned": True,
             "name": started.handle,
+            "callsign": started.callsign,
+            "class": class_display(started.agent_class),
             "agent_name": started.name,
             "detail": "Running on its own; its report will reach you." + renamed,
         }
@@ -125,8 +128,8 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
 
     @toolset.tool(name="message")
     async def message(ctx: RunContext[RunDeps], to: str, text: str) -> dict[str, object]:
-        """Send a message to another agent of your delegation tree: a handle from
-        `agents_list`, `parent` for the agent that spawned you, or `main` for the thread at
+        """Send a message to another agent of your delegation tree: a handle or callsign
+        from `agents_list`, `parent` for the agent that spawned you, or `main` for the thread at
         the top. It reaches a running agent at its next step and wakes an idle one; you are
         not waiting on a reply, which arrives as a message of its own if one comes."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
@@ -168,6 +171,8 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
             "agents": [
                 {
                     "name": view.handle,
+                    "callsign": view.callsign,
+                    "class": class_display(view.agent_class),
                     "agent_name": view.name,
                     "parent": handles.get(view.parent_conversation_id, ROOT_HANDLE),
                     "task": view.task,
@@ -188,12 +193,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         try:
             view = await launcher.read(ctx.deps.owner_id, ctx.deps.conversation_id or "", name)
         except SubagentUnavailableError as exc:
-            raise ModelRetry(
-                render_tool_error(
-                    f"could not read {name!r}: {exc}",
-                    hints=["call agents_list for the names in your tree"],
-                )
-            ) from exc
+            raise ModelRetry(f"could not read {name!r}:\n{exc}") from exc
         return {**_read_out(view), **(await worktree_paths(ctx)).get(view.handle, {})}
 
     @toolset.tool(name="stop")
@@ -251,6 +251,8 @@ def _read_out(view: SubagentView) -> dict[str, object]:
     return {
         "available": True,
         "name": view.handle,
+        "callsign": view.callsign,
+        "class": class_display(view.agent_class),
         "agent_name": view.name,
         "status": view.status,
         "report": view.summary,

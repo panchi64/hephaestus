@@ -212,12 +212,12 @@ class ConversationSearch:
         lines: list[str] = []
         for view in views:
             # A compaction checkpoint is chassis bookkeeping, not something either party
-            # said — reading it back as "Assistant" would put words in the model's mouth.
+            # said — reading it back as Talos's would put words in the model's mouth.
             if view.role == "compaction":
                 continue
             content = view.content.strip()
             if content:
-                label = "User" if view.role == "user" else "Assistant"
+                label = "User" if view.role == "user" else "Talos"
                 lines.append(f"{label}: {content}")
         return ChatTranscript(
             conversation_id=conversation_id, title=summary.title, text="\n\n".join(lines)

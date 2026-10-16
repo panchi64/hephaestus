@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
+from prompts.voice import CLASSES
 from services.agents.definition import DEFAULT_AGENT, AgentDefinition, ToolAccess
 from services.subagents.report import FINDINGS_INSTRUCTION
 
@@ -114,6 +115,7 @@ BUILTIN: tuple[AgentDefinition, ...] = (
     AgentDefinition(
         name=DEFAULT_AGENT,
         description="the general-purpose agent every chat starts with",
+        agent_class="talos",
         can_delegate=True,
         delegable=False,
     ),
@@ -123,6 +125,7 @@ BUILTIN: tuple[AgentDefinition, ...] = (
             "searches and reads the workspace and reports back with concrete paths and "
             "quoted evidence, changing nothing"
         ),
+        agent_class="kourai",
         instructions=_EXPLORER_BRIEF,
         # Read-only by absence rather than by asking: at this level a mutating tool is
         # never offered, which is the only form of read-only that survives a model
@@ -139,6 +142,7 @@ BUILTIN: tuple[AgentDefinition, ...] = (
             "reads work already done — a change, a file, a design — and reports what is "
             "wrong with it, worst first, changing nothing"
         ),
+        agent_class="khryseos",
         instructions=_REVIEWER_BRIEF,
         # Read-only the same way the explorer is: by never being offered a tool that
         # changes anything, which is the only form of it that survives a model deciding
@@ -155,6 +159,7 @@ BUILTIN: tuple[AgentDefinition, ...] = (
             "runs the project's tests (or a command you name) and reports what failed and "
             "why, quoting the output — it does not fix anything"
         ),
+        agent_class="argyreos",
         instructions=_TEST_RUNNER_BRIEF,
         # Not read-only: running the suite is the job, and a level that withholds
         # execution would leave it reporting on tests it never ran.
@@ -171,6 +176,7 @@ BUILTIN: tuple[AgentDefinition, ...] = (
             "exactly what to change and how to check it, because you cannot correct a "
             "worker while it runs"
         ),
+        agent_class="tripodes",
         instructions=_WORKER_BRIEF,
         # Shared like everything else by default — a worker the launching thread is waiting
         # on should just do the work where the work is. The launch call asks for
@@ -183,6 +189,7 @@ BUILTIN: tuple[AgentDefinition, ...] = (
             "reads the open web on one question and reports what it found with its "
             "sources — for a topic worth several searches, not a single lookup"
         ),
+        agent_class="kourai",
         instructions=_RESEARCHER_BRIEF,
         # Read-only by absence: reading the web is the entire job, and a level at which a
         # mutating tool is never offered is what keeps the launch itself ungated.
@@ -230,7 +237,8 @@ def describe_roster(roster: Mapping[str, AgentDefinition]) -> str:
     builtin = [name for name, agent in roster.items() if agent.source == "builtin"]
     others = sorted(name for name, agent in roster.items() if agent.source != "builtin")
     lines = [
-        f"`{name}` — {roster[name].description}." for name in [*builtin, *others[:ROSTER_LISTED]]
+        f"`{name}` ({CLASSES[roster[name].agent_class].display}) — {roster[name].description}."
+        for name in [*builtin, *others[:ROSTER_LISTED]]
     ]
     if len(others) > ROSTER_LISTED:
         more = (

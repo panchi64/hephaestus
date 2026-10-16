@@ -28,9 +28,11 @@ from models.agent import Agent
 from models.conversation import Conversation
 from services.agents.definition import (
     DEFAULT_AGENT,
+    DEFAULT_CLASS,
     WORKSPACE_POLICIES,
     AgentDefinition,
     ToolAccess,
+    class_key,
     workspace_policy,
 )
 from services.agents.files import (
@@ -56,6 +58,7 @@ EDITABLE: frozenset[str] = frozenset(
     {
         "name",
         "description",
+        "agent_class",
         "instructions",
         "endpoint_id",
         "model",
@@ -73,6 +76,7 @@ EDITABLE: frozenset[str] = frozenset(
 class _Columns(TypedDict):
     name: str
     description_enc: str
+    agent_class: str
     instructions_enc: str
     endpoint_id: str | None
     model: str | None
@@ -239,6 +243,7 @@ class AgentStore:
         return {
             "name": agent.name,
             "description_enc": self._vault.encrypt_str(agent.description),
+            "agent_class": agent.agent_class,
             "instructions_enc": self._vault.encrypt_str(agent.instructions),
             "endpoint_id": agent.endpoint_id,
             "model": agent.model,
@@ -261,6 +266,7 @@ class AgentStore:
             id=row.id,
             name=row.name,
             description=self._vault.decrypt_str(row.description_enc),
+            agent_class=class_key(row.agent_class) or DEFAULT_CLASS,
             instructions=self._vault.decrypt_str(row.instructions_enc),
             endpoint_id=row.endpoint_id,
             model=row.model,
@@ -291,7 +297,13 @@ def _apply(agent: AgentDefinition, values: Mapping[str, object]) -> AgentDefinit
     if unknown:
         raise AgentValidationError(sorted(unknown)[0], "not a field an agent can set")
     known = {f.name for f in fields(AgentDefinition)}
-    return replace(agent, **{key: value for key, value in values.items() if key in known})
+    changes = {key: value for key, value in values.items() if key in known}
+    if "agent_class" in changes:
+        key = class_key(str(changes["agent_class"] or ""))
+        if key is None:
+            raise AgentValidationError("agent_class", "not an agent class")
+        changes["agent_class"] = key
+    return replace(agent, **changes)
 
 
 def _validated(agent: AgentDefinition) -> AgentDefinition:

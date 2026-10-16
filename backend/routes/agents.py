@@ -34,6 +34,7 @@ class AgentOut(BaseModel):
     id: str
     name: str
     description: str
+    agent_class: str
     instructions: str
     endpoint_id: str | None
     model: str | None
@@ -58,6 +59,7 @@ class AgentOut(BaseModel):
 class AgentWrite(BaseModel):
     name: str | None = None
     description: str | None = None
+    agent_class: str | None = None
     instructions: str | None = None
     endpoint_id: str | None = None
     model: str | None = None
@@ -235,6 +237,7 @@ def _out(agent: AgentDefinition, *, active: bool) -> AgentOut:
         id=agent.id or f"{agent.source}:{agent.name}",
         name=agent.name,
         description=agent.description,
+        agent_class=agent.agent_class,
         instructions=agent.instructions,
         endpoint_id=agent.endpoint_id,
         model=agent.model,

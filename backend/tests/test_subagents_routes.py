@@ -98,6 +98,9 @@ async def test_each_card_carries_the_ids_its_other_links_need(monkeypatch: pytes
         # And the name the agent itself uses. Without it a panel showing three `explorer`
         # cards cannot be matched to the three pieces of work the agent said it split into.
         assert card["handle"] == "parser-finder"
+        # And the names the operator knows it by.
+        assert card["callsign"] == started.callsign
+        assert card["agent_class"] == "Kourai"
 
 
 async def test_a_finished_subagent_stays_on_the_list_with_what_it_reported(

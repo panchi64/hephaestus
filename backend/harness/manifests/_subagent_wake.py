@@ -55,6 +55,7 @@ from services.settings_store import (
     get_context_thresholds,
 )
 from services.subagent_store import SubagentStore
+from services.subagents.callsigns import designation
 from services.subagents.report import message_envelope, report_envelope
 from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
@@ -182,7 +183,15 @@ class SubagentWake:
         _ = await self.deliver(
             row.owner_id,
             row.parent_conversation_id,
-            report_text(row.handle or row.spec_name, row.spec_name, summary, error, parked),
+            report_text(
+                row.handle or row.spec_name,
+                row.spec_name,
+                summary,
+                error,
+                parked,
+                callsign=row.callsign,
+                agent_class=row.agent_class,
+            ),
         )
 
     async def _outcome(self, run: Run, conversation_id: str) -> tuple[str | None, str | None]:
@@ -448,22 +457,21 @@ def report_text(
     summary: str | None,
     error: str | None,
     parked: str | None,
+    *,
+    callsign: str = "",
+    agent_class: str = "",
 ) -> str:
     """A sub-agent's hand-back, as the launching model reads it.
 
     Named by its **handle**, because a thread with three sub-agents out gets three of these
-    and the spec alone does not tell them apart: "Sub-agent `explorer` finished" three times
-    over says nothing about which piece of work just came back, and the report that follows
-    is the only thing left to guess from.
-
-    The spec rides along in parentheses so the model can still see what kind of worker this
-    was — but only when it differs from the handle, since ``explorer (explorer)`` is noise
-    in the first line of every report a sub-agent launched without a handle of its own ever
-    sends, which is every row the migration backfilled.
+    and the spec alone does not tell them apart. Its callsign and class follow, since the
+    operator may refer to it by either; the spec rides along only when it differs from the
+    handle, since ``explorer (explorer)`` is noise.
     """
-    named = f"Sub-agent `{handle}`"
+    extras = [name for name in (designation(callsign, agent_class),) if name]
     if spec_name != handle:
-        named += f" ({spec_name})"
+        extras.append(spec_name)
+    named = f"Sub-agent `{handle}`" + (f" ({', '.join(extras)})" if extras else "")
     parts = [f"{named} finished."]
     if error:
         parts.append(error)

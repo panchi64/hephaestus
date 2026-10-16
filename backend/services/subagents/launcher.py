@@ -77,6 +77,9 @@ class LaunchedSubagent:
     #: hand it a name that addresses the *first* one.
     handle: str
     task: str
+    #: The operator's name for it, and its class's key. Empty for a class with no pool.
+    callsign: str = ""
+    agent_class: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,9 @@ class SubagentView:
     task: str
     #: ``running`` | ``blocked`` | ``done`` | ``failed`` | ``cancelled``.
     status: str
+    #: The operator's name for it, and its class's key. Empty on rows from before either.
+    callsign: str = ""
+    agent_class: str = ""
     #: The thread that spawned it, and how far below the tree's root it runs.
     parent_conversation_id: str = ""
     depth: int = 1
