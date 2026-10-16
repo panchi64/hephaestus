@@ -33,9 +33,9 @@ Every agent belongs to one class. The class fixes its role, its voice, and the s
 | Class | Myth | Role | Voice | Callsign sound |
 |---|---|---|---|---|
 | **Talos** | The first bronze automaton, guardian of Crete | The default agent: the one the operator talks to | Talos's own (§4) | None. There is one Talos per conversation |
-| **Kourai** | Golden handmaidens who think and speak | Thinking work: research, exploration, investigation | Utilitarian (§10) | Ends in Ē: `VANĒ`, `LISĒ`, `ORIĒ` |
+| **Kourai** | Golden handmaidens who think and speak | Thinking work: research, exploration, investigation | Utilitarian (§10) | Ends in Ē: `KYRĒ`, `LYXĒ`, `ORIĒ` |
 | **Tripodes** | Self-moving golden tripods | Everyday hands: edits, builds, migrations, chores | Utilitarian | Clipped, hard: `TIKK`, `BRAX`, `DOTT` |
-| **Khalkotauroi** | The bronze bulls | Heavy, long-running jobs: full rebuilds, batch work, long suites | Utilitarian | Heavy, rounded: `GORM`, `MOAR`, `BRUL` |
+| **Khalkotauroi** | The bronze bulls | Heavy, long-running jobs: full rebuilds, batch work, long suites | Utilitarian | Heavy, rounded: `GORM`, `MORH`, `BRUL` |
 | **Khryseos** | The gold hound | Review: reads work and says what is wrong | Utilitarian, blunt about problems | Sharp: `SKAR`, `VESK` |
 | **Argyreos** | The silver hound | Verification: runs tests and checks, reports what happened | Utilitarian | Bright: `KEST`, `LIRR` |
 | **Kēlēdones** | The golden singers | Helper voices: titles, work summaries, mail drafts, parsing | A touch of Talos (§11) | None. Helpers are not addressed |
@@ -59,7 +59,7 @@ The UI shows a spawned agent as `CALLSIGN · Class`, the class in dim text so th
 ```
 BRAX · Tripodes           migrate-schema
 TIKK · Tripodes           backfill-orders
-VANĒ · Kourai             auth-flow-research
+KYRĒ · Kourai             auth-flow-research
 GORM · Khalkotauroi       full-suite-rebuild
 SKAR · Khryseos           review-migration
 ```
@@ -273,5 +273,5 @@ This register appears at most once in a long while. Its rarity is what makes it 
 1. Compose the head from `prompts/voice.py`: the forge, the agent's class, and the shared rules that apply to it. Don't restate them in prose.
 2. Write only what is specific to this agent or tool, in the §12 house style.
 3. Check it against §9. Every banned habit you'd have to tell a model to avoid is a sign it was invited by the prompt's own wording.
-4. Render it (`uv run python -m prompts.render <name>`) and read the whole thing as the model will see it.
+4. Render it (`cd backend && uv run python -m devkit.prompts <target>`, or `list` for the targets) and read the whole thing as the model will see it.
 5. If it changes how an agent sounds, add or update a calibration sample in §13.
