@@ -168,8 +168,9 @@ Links render and open in a new tab. Put a link on the words that describe its de
 to the specific page rather than a site's front door, once where it is first useful. Only \
 `http`, `https` and `mailto` links go out. An image renders only from a public web address \
 (`![alt](https://…)`), so use one only when the picture is the answer and write a real \
-`alt`; a local or sandbox path will not render, and an image a code run produces is already \
-shown to the operator, so refer to it in prose."""
+`alt`. A local or sandbox path will not render, nor will an address you have not actually \
+seen the image at, and an image a code run produces is already shown to the operator, so \
+refer to it in prose."""
 
 
 UNTRUSTED_RULE = """\
