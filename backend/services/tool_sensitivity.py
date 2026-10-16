@@ -185,6 +185,10 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # Stopping agents this thread spawned. Nothing new runs; the reach is that of
             # the spawn that was already allowed.
             "agents_stop",
+            # Landing or dropping a spawned agent's worktree: a write to the project this
+            # thread works in, the same reach as writing those files itself.
+            "agents_merge",
+            "agents_discard",
             # A plugin an agent writes is a draft: it runs only through `plugins_test`.
             "plugins_write",
             # A routine an agent drafts never fires until the operator approves it;
@@ -223,9 +227,8 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "agents_spawn",
             # A message can point another agent at any work its own catalog covers, and is
             # acted on after the sending turn has ended — the same statement as the spawn.
-            # Reachable at every level all the same (`permissions.COORDINATION_TOOLS`): the
-            # tool asks only when the message reaches an agent that can write from anywhere
-            # but below it.
+            # Both are reachable at every level all the same (`permissions.COORDINATION_TOOLS`):
+            # a spawned agent runs at its spawner's level, so each of its acts is held there.
             "agents_message",
             # Starts a routine's agent turn, with its pre-authorizations, after this one.
             "routines_run_now",

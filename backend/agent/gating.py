@@ -367,7 +367,10 @@ async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Fence | 
     if home is None:
         return None
     shells = deps.caps.get_optional(ThreadShells)
-    return home.fence(shells.cwd(deps.workspace_key) if shells is not None else None)
+    cwd = shells.cwd(deps.workspace_key) if shells is not None else None
+    # A working directory in a place the home no longer holds is where the shell will not
+    # start (`HomeShell.stand_within`).
+    return home.fence(cwd if cwd is not None and home.place_of(cwd) is not None else None)
 
 
 async def resolve_reviewer(caps: ServiceContainer, owner_id: str) -> Reviewer | None:

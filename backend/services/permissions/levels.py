@@ -60,10 +60,10 @@ Two sets are exempt in the other direction, here rather than at a call site beca
 halves of the enforcement need them. The model's own task list and the tools that move a
 thread in and out of plan mode are reachable at every level (:data:`PLANNING_TOOLS`), since
 a read-only turn whose only possible ending is a submitted plan cannot be made to ask
-permission to reach the tool that submits one. And messaging within a delegation tree is
-reachable at every level (:data:`COORDINATION_TOOLS`), since a read-only agent sent to look
-into something has to be able to say what it found before it finishes; the tool gates
-itself on where the message goes.
+permission to reach the tool that submits one. And spawning and messaging within a
+delegation tree are reachable at every level (:data:`COORDINATION_TOOLS`), since a spawned
+agent works at its spawner's level and a read-only one has to be able to say what it found
+before it finishes.
 """
 
 from __future__ import annotations
@@ -312,12 +312,11 @@ PLANNING_TOOLS = frozenset(
 )
 
 
-# Messaging within a delegation tree — permitted at every level. Its class stays where
-# directing another agent belongs, and the tool raises its own approval for a message that
-# reaches an agent able to write from anywhere but below it (`tools/delegation.py`), so the
-# exemption only spares a read-only agent from being unable to report early or to reach a
-# read-only sibling.
-COORDINATION_TOOLS = frozenset({"agents_message"})
+# Spawning and messaging within a delegation tree — permitted at every level. Their class
+# stays where directing another agent belongs, but a spawned agent runs at the stricter of
+# its spawner's level and its own ceiling, so every act it takes is asked about at a level
+# the spawner already holds.
+COORDINATION_TOOLS = frozenset({"agents_spawn", "agents_message"})
 
 #: Every tool the level gate never elevates.
 LEVEL_EXEMPT_TOOLS = PLANNING_TOOLS | COORDINATION_TOOLS

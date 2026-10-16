@@ -756,7 +756,10 @@ async def _settle_code_branch(request: Request, conversation_id: str, *, discard
     the delete. Only a real, countable diff stops it.
     """
     binding = await deps.store(request).binding(conversation_id)
-    if not binding.worktree or not binding.project_id:
+    if not binding.project_id:
+        return
+    if not binding.worktree:
+        await _discard_child_worktrees(request, binding.project_id, conversation_id)
         return
     try:
         project = await deps.projects(request).get(OPERATOR_ID, binding.project_id)
@@ -781,6 +784,17 @@ async def _settle_code_branch(request: Request, conversation_id: str, *, discard
         )
     await deps.worktrees(request).discard(
         root, project_id=binding.project_id, conversation_id=conversation_id
+    )
+
+
+async def _discard_child_worktrees(request: Request, project_id: str, conversation_id: str) -> None:
+    """Remove the worktrees of the sub-agents a deleted thread spawned into them."""
+    try:
+        project = await deps.projects(request).get(OPERATOR_ID, project_id)
+    except NotFoundError:
+        return
+    await deps.worktrees(request).discard_children(
+        Path(project.root_path), project_id=project_id, conversation_id=conversation_id
     )
 
 

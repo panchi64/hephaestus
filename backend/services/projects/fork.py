@@ -1,27 +1,25 @@
-"""A delegated agent's own checkout: cut from its parent's branch, merged back on ask.
+"""A sub-agent's own worktree: cut from where its parent works, landed when the parent
+says so.
 
-A child worktree is a **fork of its parent**, not of the project. It branches from the
-parent conversation's branch and is created out of the parent's *working tree state* —
-the parent snapshots first, so the child opens on the files the parent's transcript
-describes rather than on whatever was last committed. Anything else hands a delegated
-agent a tree that contradicts the instructions it was given.
+A child worktree is cut from its parent's *working state*, not its last commit: from the
+parent's worktree, committed first, or from the operator's checkout with its uncommitted
+files carried across. Either way the child opens on the files the parent's instructions
+describe. It is warm: ``node_modules`` is cloned across (copy-on-write where the
+filesystem allows), because a child that reinstalls before it can run a test is a child
+nobody delegates to.
 
-It sits beside the parent's checkout rather than inside it, and it is warm: the
-parent's ``.venv`` and ``node_modules`` are cloned across (copy-on-write where the
-filesystem allows), because a child that reinstalls them before it can run a test is a
-child nobody delegates to.
-
-**Merging back writes the parent's worktree, never the operator's tree.** That is the
-whole point of the fence: the operator's own files are still only ever written by the
-merge they press themselves. A conflict is reported, never resolved and never forced —
-the merge aborts and touches neither tree, and what becomes of the child afterwards is
-its caller's to decide (the delegation that asked for the fork throws it away).
+Landing it is the parent's call. Into a parent worktree it is a git merge; into the
+checkout it is the child's own changes applied as plain file changes, never a commit or
+an index write. A conflict is reported and touches neither tree, and the child is kept.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import shutil
+import tempfile
 from pathlib import Path
 
 from core.fork import MergeReport, clone_tree
@@ -68,8 +66,40 @@ async def add_child_worktree(
     # the registration and let the add below create it properly.
     _ = await run_git(root, "worktree", "prune")
     _ = await run_git_ok(root, "worktree", "add", "-b", branch, str(child), parent_branch)
+    await _warm(parent_path, child)
+
+
+async def add_checkout_child(*, root: Path, child: Path, branch: str) -> None:
+    """Check ``branch`` out at the checkout's ``HEAD`` in its own worktree, with the
+    checkout's uncommitted and untracked files carried across and committed as its start.
+
+    The child opens on the files the operator has now, not on their last commit, and the
+    starting commit keeps those files out of what the child is later merged with.
+    """
+    if (child / ".git").exists():
+        return
+    _ = await run_git(root, "worktree", "prune")
+    _ = await run_git_ok(root, "worktree", "add", "-b", branch, str(child), "HEAD")
+    listed = await run_git_ok(root, "ls-files", "-z", "-m", "-o", "--exclude-standard")
+    await asyncio.to_thread(_carry, root, child, [p for p in listed.split("\0") if p])
+    _ = await commit_worktree(child, "Starting point: the checkout's uncommitted work")
+    await _warm(root, child)
+
+
+def _carry(root: Path, child: Path, paths: list[str]) -> None:
+    for rel in paths:
+        source, target = root / rel, child / rel
+        if source.is_symlink() or source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.unlink(missing_ok=True)
+            _ = shutil.copy2(source, target, follow_symlinks=False)
+        elif not source.exists():
+            target.unlink(missing_ok=True)
+
+
+async def _warm(source_root: Path, child: Path) -> None:
     for name in WARM_DIRS:
-        source = parent_path / name
+        source = source_root / name
         if source.is_dir() and not (child / name).exists():
             try:
                 # Off the loop: a `node_modules` is gigabytes, and on a volume with no
@@ -85,16 +115,10 @@ async def add_child_worktree(
 async def merge_child_back(
     *, root: Path, parent_path: Path, child: Path, branch: str
 ) -> MergeReport:
-    """Land the child's branch in the **parent's** worktree.
+    """Land the child's branch in the **parent's** worktree, and retire the child.
 
-    Both trees are committed first, because nothing else commits: the child's work is
-    uncommitted by construction (the agent has no ``git commit``), and a dirty parent is
-    a merge git refuses outright — "your local changes would be overwritten" is not an
-    answer the operator can act on.
-
-    A conflict leaves everything where it is: the merge is aborted so the parent's tree
-    stays usable, and the child is left exactly as it was for its caller to retire or
-    keep. Only a clean landing retires it *here*.
+    Both trees are committed first: a dirty parent is a merge git refuses outright. A
+    conflict aborts the merge, so the parent's tree stays usable and the child is kept.
     """
     _ = await commit_worktree(child, "Delegated agent changes")
     _ = await commit_worktree(parent_path, "Agent changes (before a delegated merge)")
@@ -123,6 +147,49 @@ async def merge_child_back(
 
     await remove_child_worktree(root=root, child=child, branch=branch)
     return MergeReport(merged=True, files=files, deleted=deleted)
+
+
+async def child_changes(*, child: Path, base_ref: str) -> MergeReport:
+    """What the child changed since it was cut, with its tree committed first."""
+    _ = await commit_worktree(child, "Delegated agent changes")
+    spec = f"{base_ref}..HEAD"
+    files = _paths(
+        await run_git_ok(child, "diff", "--no-renames", "--name-only", "--diff-filter=d", spec)
+    )
+    deleted = _paths(
+        await run_git_ok(child, "diff", "--no-renames", "--name-only", "--diff-filter=D", spec)
+    )
+    return MergeReport(merged=False, files=files, deleted=deleted)
+
+
+#: The path in each ``git apply --check`` complaint.
+_APPLY_ERROR = re.compile(r"^error: (?:patch failed: )?(.+?):(?: |\d|$)", re.MULTILINE)
+
+
+async def apply_child(*, checkout: Path, child: Path, base_ref: str) -> MergeReport:
+    """Apply the child's changes since ``base_ref`` to the checkout's working tree.
+
+    Only files are written, never the checkout's index or history, so the operator's own
+    git state is untouched. A patch that does not apply cleanly is refused whole, naming
+    the files that clashed, and the child is kept.
+    """
+    changed = await child_changes(child=child, base_ref=base_ref)
+    if not changed.files and not changed.deleted:
+        return MergeReport(merged=True, files=[])
+    with tempfile.TemporaryDirectory() as scratch:
+        # Written by git itself: a text file in another encoding must survive byte-exact.
+        patch_file = Path(scratch) / "child.patch"
+        _ = await run_git_ok(
+            child, "diff", "--no-renames", "--binary", f"--output={patch_file}", f"{base_ref}..HEAD"
+        )
+        code, out, err = await run_git(checkout, "apply", "--check", str(patch_file))
+        if code != 0:
+            clashed = sorted(set(_APPLY_ERROR.findall(err or out)))
+            if not clashed:
+                raise WorktreeError((err or out).strip() or "the changes could not be applied")
+            return MergeReport(merged=False, files=[], conflicts=clashed)
+        _ = await run_git_ok(checkout, "apply", str(patch_file))
+    return MergeReport(merged=True, files=changed.files, deleted=changed.deleted)
 
 
 async def remove_child_worktree(*, root: Path, child: Path, branch: str) -> None:

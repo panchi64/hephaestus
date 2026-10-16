@@ -132,7 +132,7 @@ class BrowserToolset(ReboundToolset):
         sessions = ctx.deps.caps.get_optional(BrowserSessionManager)
         if sessions is None:
             return _UNAVAILABLE
-        key = ctx.deps.workspace_key
+        key = ctx.deps.scratch_key
         live = await sessions.acquire(key, reopen=name in REOPENING_TOOLS)
         if live is None:
             return _CLOSED if sessions.closed(key) else _UNAVAILABLE
@@ -194,7 +194,7 @@ async def browse_instructions(ctx: RunContext[RunDeps]) -> str:
     full text in front of it.
     """
     sessions = ctx.deps.caps.get_optional(BrowserSessionManager)
-    if sessions is None or sessions.existing(ctx.deps.workspace_key) is None:
+    if sessions is None or sessions.existing(ctx.deps.scratch_key) is None:
         return ""
     harness = PlaywrightBrowser(policy=_policy()).get_instructions()(ctx)
     return f"{harness}\n\n{BROWSER_ADDENDUM}" if harness else BROWSER_ADDENDUM

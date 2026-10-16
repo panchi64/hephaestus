@@ -126,6 +126,7 @@ def turn_deps(
         project_id=binding.project_id,
         worktree=binding.worktree,
         leases_from=binding.leases_from,
+        checkout_read_only=binding.checkout_read_only,
         # And how far it may go on its own. The toolset stack reads this to mark the tools
         # that reach past it, so the level is enforced before a call runs rather than
         # apologised for afterwards.

@@ -7,10 +7,10 @@ rather than as the opening message — rebuilt each turn, never read back out of
 so nothing a sub-agent later reads can rewrite the terms it is working under.
 
 The workspace note is the one that varies, and it varies per *launch* rather than per
-sub-agent: the same worker shares the launching thread's files when the thread is waiting
-on it and works in a fork when the thread means to carry on meanwhile. So it is resolved
-where that is known, and the alternative — a brief that claims a private copy while the
-sub-agent is in fact editing the operator's own tree — is the exact failure this avoids.
+sub-agent: the same worker shares the launching thread's files, or works in a worktree of
+its own when the thread asks for one. So it is resolved where that is known: a brief that
+claims a private branch while the sub-agent is editing the operator's own tree is the
+failure this avoids.
 """
 
 from __future__ import annotations
@@ -46,20 +46,19 @@ _SHARED = (
 )
 
 _ISOLATED = (
-    "You have your own private copy of the workspace: edit it, run things in it, and "
-    "check your own work there. Nothing you do reaches anyone else's files, and nothing "
-    "you do is visible to anyone until you report.\n\n"
-    "What you changed is merged back when you finish, so an unrelated edit lands in "
-    "somebody else's work too — and a file they changed while you ran comes back to them "
-    "as a conflict rather than as your version winning. If that happens, your copy is "
-    "gone with you and your report is the only record of what you did to it, so describe "
-    "your changes well enough to be redone from it."
+    "You work on a branch and worktree of your own under ~/worktrees, cut from where the "
+    "agent that launched you works; your file and shell tools start there. Edit, run and "
+    "check your work in it. Nothing you change reaches anyone else's files: your scratch "
+    "is shared with that agent, but the project you change only in your worktree.\n\n"
+    "When you finish, the agent that launched you reviews your branch, fixes what it "
+    "needs to, and decides whether to merge it. Say in your report what you changed and "
+    "why, how you checked it, and anything you left unfinished."
 )
 
 _OWN = (
-    "You are working in a workspace of your own, which starts empty and belongs to "
-    "nobody else. Nothing in it is shared with the agent that launched you, so anything "
-    "you want it to know has to be in your report."
+    "You have a scratch of your own, which starts empty and belongs to nobody else. The "
+    "projects are the ones the agent that launched you works in, and you may write what "
+    "it may. Anything you want it to know about your scratch has to be in your report."
 )
 
 _NOTES: dict[WorkspacePolicy, str] = {

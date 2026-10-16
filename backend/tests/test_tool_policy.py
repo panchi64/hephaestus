@@ -110,7 +110,9 @@ async def test_catalog_matches_the_names_the_agent_is_offered():
 # shrinks the agent's world without any other test noticing — this literal set is the
 # tripwire. A deliberate tool addition/removal updates this list in the same change.
 _PINNED_CATALOG = {
+    "agents_discard",
     "agents_list",
+    "agents_merge",
     "agents_message",
     "agents_publish",
     "agents_read",
@@ -220,8 +222,6 @@ async def test_booted_app_assembles_the_same_catalog():
             "files_write_file",
             "files_edit_file",
             "files_create_directory",
-            "agents_message",
-            "agents_spawn",
             "plugins_test",
             "routines_write",
             "routines_delete",

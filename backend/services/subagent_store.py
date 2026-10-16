@@ -61,6 +61,7 @@ class SubagentStore:
         workspace_key: str | None,
         delegation_id: str | None,
         project_id: str | None = None,
+        base_ref: str | None = None,
     ) -> None:
         """Open a row for a sub-agent that has just been submitted.
 
@@ -84,6 +85,7 @@ class SubagentStore:
             workspace_key=workspace_key,
             delegation_id=delegation_id,
             project_id=project_id,
+            base_ref=base_ref,
         )
 
         def work(session: Session) -> None:

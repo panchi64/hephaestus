@@ -32,7 +32,7 @@ from pathlib import Path
 
 from services.sandbox import SandboxSessionManager
 from services.sandbox.walk import excluded, walk_files
-from services.workspace import SANDBOX_MOUNT
+from services.workspace import SANDBOX_MOUNT, scratch_key
 
 from .deps import PromptContextRequest
 
@@ -167,7 +167,7 @@ async def workspace_context(req: PromptContextRequest) -> str:
     sessions = req.caps.get_optional(SandboxSessionManager)
     if sessions is None:
         return ""
-    root = sessions.settled_workspace(req.workspace_key)
+    root = sessions.settled_workspace(scratch_key(req.workspace_key))
     if root is None:
         return ""
     # The manager's own tuple, not a fresh read of the setting: `walk.py` is one answer

@@ -57,8 +57,9 @@ def _delegate_read_only(place: str) -> str:
     return render_tool_error(
         f"{place} is read-only to you",
         hints=[
-            "a delegated agent cannot be given new write access; write in ~/scratch and "
-            + "report the change for the agent that delegated to you to make"
+            "you may write what the agent that spawned you may, and it cannot write here "
+            + "either; finish what you can and say in your report what needs writing, so "
+            + "it can ask the operator"
         ],
     )
 

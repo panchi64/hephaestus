@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -33,6 +34,7 @@ from pydantic import TypeAdapter
 from routes.chat import compose_turn
 from routes.deps import app_state
 from services.agents import AgentDefinition, builtin_roster
+from services.projects.repo import run_git_ok
 from services.settings_store import set_subagent_limit
 from services.subagent_store import SubagentStore
 from services.subagents import (
@@ -547,32 +549,63 @@ class TestIsolation:
             assert row.workspace_key == "parent-1"
             assert row.delegation_id is None
 
-    async def test_isolating_gives_it_a_delegated_key_of_its_own(
+    async def test_a_worktree_needs_a_project_to_cut_it_from(
         self, monkeypatch: pytest.MonkeyPatch
     ):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
+            with pytest.raises(SubagentUnavailableError, match="not filed under a project"):
+                _ = await launcher_of(app).launch(
+                    "operator",
+                    WORKER,
+                    "rewrite it",
+                    handle="rewriter",
+                    parent=SubagentParent(conversation_id="parent-1", workspace_key="parent-1"),
+                    worktree=True,
+                )
+
+    async def test_a_worktree_is_cut_from_the_checkout_and_left_for_the_parent(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        root = await _git_repo(tmp_path)
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="done")
+            parent, project_id = await _filed_parent(app, root)
             started = await launcher_of(app).launch(
                 "operator",
                 WORKER,
                 "rewrite it",
                 handle="rewriter",
-                parent=SubagentParent(conversation_id="parent-1", workspace_key="parent-1"),
-                isolate=True,
+                parent=SubagentParent(
+                    conversation_id=parent, project_id=project_id, workspace_key=parent
+                ),
+                worktree=True,
             )
             await settle_run(app, started.run_id)
 
             row = await records_of(app).get(started.subagent_id, "operator")
             assert row is not None
-            # A delegated key — `<parent>/<delegation>` — which is what routes it to its
-            # own copy in both workspace kinds (`services/workspace.py`).
-            assert row.workspace_key is not None
-            assert row.workspace_key.startswith("parent-1/")
-            assert row.delegation_id is not None
+            assert row.workspace_policy == "isolated"
+            # Named under the parent, whose scratch it shares.
+            assert row.workspace_key == f"{parent}/{row.delegation_id}"
+            assert row.base_ref
+            opened = await launcher_of(app).worktrees("operator", parent)
+            assert [child.handle for child in opened] == ["rewriter"]
+            assert (opened[0].path / "hello.txt").read_text() == "unsaved\n"
+            # Not merged: the report says where the work waits, and what to do with it.
+            report = (await launcher_of(app).read("operator", parent, "rewriter")).summary
+            assert report is not None
+            assert opened[0].branch in report
+            assert "agents_merge" in report
+            assert (root / "hello.txt").read_text() == "unsaved\n"
 
-    async def test_isolation_only_ever_increases(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_a_definition_that_works_apart_gets_a_worktree_unasked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        root = await _git_repo(tmp_path)
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
+            parent, project_id = await _filed_parent(app, root)
             apart = AgentDefinition(
                 name="apart",
                 description="works apart",
@@ -584,16 +617,38 @@ class TestIsolation:
                 apart,
                 "go",
                 handle="the-apart-one",
-                parent=SubagentParent(conversation_id="parent-1", workspace_key="parent-1"),
-                isolate=False,
+                parent=SubagentParent(
+                    conversation_id=parent, project_id=project_id, workspace_key=parent
+                ),
             )
             await settle_run(app, started.run_id)
 
             row = await records_of(app).get(started.subagent_id, "operator")
             assert row is not None
-            # Omitting `isolate` must not pull a sub-agent written to stay out of the way
-            # back into the operator's own files.
             assert row.workspace_policy == "isolated"
+
+
+async def _git_repo(tmp_path: Path) -> Path:
+    """A repository with one commit, and an edit the operator has not committed."""
+    root = tmp_path / "project"
+    root.mkdir()
+    _ = (root / "hello.txt").write_text("original\n")
+    for argv in (
+        ("init", "-b", "main"),
+        ("add", "-A"),
+        ("-c", "user.name=T", "-c", "user.email=t@e", "commit", "-m", "first"),
+    ):
+        _ = await run_git_ok(root, *argv)
+    _ = (root / "hello.txt").write_text("unsaved\n")
+    return root
+
+
+async def _filed_parent(app: FastAPI, root: Path) -> tuple[str, str]:
+    """A thread filed under a project at ``root``, and the project's id."""
+    state = app_state(app)
+    project = await state.projects.create("operator", "demo", str(root))
+    parent = await state.conversations.create_conversation("operator", project_id=project.id)
+    return parent, project.id
 
 
 def _capture_composition(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:

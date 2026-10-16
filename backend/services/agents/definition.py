@@ -21,10 +21,10 @@ from typing import Literal
 #: ``shared`` — the launching thread's own workspace: it sees the work in progress, and what
 #: it changes is simply there afterwards.
 #:
-#: ``isolated`` — a delegated fork of that workspace, merged back when it ends; anything the
-#: parent changed meanwhile comes back as a reported conflict.
+#: ``isolated`` — a branch and worktree of its own, cut from where the launching thread
+#: works and sharing its scratch; the launching thread reviews it and merges or discards it.
 #:
-#: ``own`` — a fresh workspace of its own, for work that is not about the parent's files.
+#: ``own`` — a fresh scratch of its own, for work that is not about the parent's files.
 WorkspacePolicy = Literal["shared", "isolated", "own"]
 
 WORKSPACE_POLICIES: frozenset[str] = frozenset({"shared", "isolated", "own"})

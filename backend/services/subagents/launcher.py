@@ -21,6 +21,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from services.agents.definition import AgentDefinition
 
@@ -39,29 +40,20 @@ class SubagentUnavailableError(Exception):
 class SubagentParent:
     """The thread doing the launching, as far as launching needs to know it.
 
-    Everything here exists to *narrow* the child. The project it inherits so the child
-    lands in the same scope; the permission it inherits as a ceiling it can never exceed;
-    the workspace key it names so the child's own files are the parent's, or a delegated
-    fork of the parent's, rather than a workspace re-derived down here that might not be
-    the same one.
+    The child inherits the project, so it works on the same code; the permission, as a
+    ceiling it can never exceed; and the workspace key, so its files are the parent's.
     """
 
     conversation_id: str | None = None
-    #: The project the parent is filed under, inherited so a child works on the same code.
     project_id: str | None = None
-    #: Whether the parent works in a worktree, which a sub-agent sharing or forking its
-    #: files works in too.
+    #: Whether the parent works in a worktree, which a sub-agent sharing its files works
+    #: in too, and which a sub-agent given a worktree of its own is cut from.
     worktree: bool = False
-    #: How much rope the *parent* has. A sub-agent runs at the stricter of this and what
-    #: its spec asks for, so one approved launch cannot buy a level the operator never
-    #: chose. None means the caller had no level to hand over and the default stands.
+    #: How far the *parent* may go. A sub-agent runs at the stricter of this and what its
+    #: definition asks for. None means the caller had no level and the default stands.
     permission: str | None = None
-    #: The parent's workspace key. The child's own is derived from it — the same key to
-    #: share those files, or ``<parent>/<delegation>`` to work in a fork of them — so this
-    #: is the whole of what decides which filesystem a sub-agent ends up on. Deliberately
-    #: the key and not a resolved root: resolving the parent's workspace here would open a
-    #: sandbox or cut a checkout for an answer nothing reads, and the child resolves its
-    #: own on its first file-tool call like every other run.
+    #: The parent's workspace key. The child's own is derived from it: the same key to
+    #: share its files, or ``<owner>/<delegation>`` for a worktree of its own.
     workspace_key: str | None = None
     #: The run doing the launching. Only its id is kept, to tie a card back to the turn
     #: that asked for it.
@@ -119,6 +111,23 @@ class SubagentView:
 
 
 @dataclass(frozen=True)
+class ChildWorktree:
+    """A worktree a sub-agent was spawned into, still open: its branch waits on its parent
+    to merge or discard it."""
+
+    handle: str
+    conversation_id: str
+    project_id: str
+    path: Path
+    branch: str
+    #: The commit it was cut at; the sub-agent's own work is everything after it.
+    base_ref: str
+    #: The thread whose worktrees it is named under, and its own delegation id there.
+    holder_id: str
+    delegation_id: str
+
+
+@dataclass(frozen=True)
 class Recipient:
     """Who a message from one agent of a tree reaches."""
 
@@ -155,13 +164,14 @@ class SubagentLauncher(ABC):
         *,
         handle: str,
         parent: SubagentParent | None = None,
-        isolate: bool = False,
+        worktree: bool = False,
     ) -> LaunchedSubagent:
         """Spawn ``agent`` on ``task`` and return as soon as its first turn is submitted.
 
         ``handle`` is normalised and made unique within the tree, so the one to use is the
-        returned one. ``isolate`` asks for a merged-back copy of the parent's workspace; it
-        can only ever add isolation to what the definition declares.
+        returned one. ``worktree`` puts it on a branch and worktree of its own, cut from
+        where the parent works, which only the parent merges; a definition that declares
+        ``isolated`` gets one either way.
 
         Raises :class:`SubagentUnavailableError` for every state that prevents a launch:
         the parent may not delegate, the tree is at its depth or concurrency limit, no
@@ -200,3 +210,15 @@ class SubagentLauncher(ABC):
     @abstractmethod
     async def below(self, owner_id: str, conversation_id: str) -> list[SubagentView]:
         """Every agent below a thread, at any depth, newest first — the panel's read."""
+
+    @abstractmethod
+    async def worktrees(self, owner_id: str, conversation_id: str) -> list[ChildWorktree]:
+        """The open worktrees of the agents this thread spawned itself."""
+
+    @abstractmethod
+    async def worktree(self, owner_id: str, conversation_id: str, handle: str) -> ChildWorktree:
+        """The open worktree of the agent called ``handle`` that this thread spawned.
+
+        Raises :class:`SubagentUnavailableError` when there is no such agent, it is not
+        this thread's own, or it has no worktree open.
+        """

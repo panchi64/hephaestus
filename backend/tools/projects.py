@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pydantic_ai import FunctionToolset, RunContext
 
+from services.home.paths import Place
 from services.projects import ProjectStore
 from services.projects.worktree import WorktreeBusyError
 from services.worktree_switch import WorktreeSwitch
@@ -34,13 +35,14 @@ def project_toolset() -> FunctionToolset[RunDeps]:
     async def list_projects(ctx: RunContext[RunDeps]) -> dict[str, object]:
         """List the operator's projects — the directories they work in.
 
-        Returns each project's name and absolute path on the operator's machine, and
-        which one (if any) this conversation is bound to.
+        Returns each project's name and its path in your home, and which one (if any)
+        this conversation is filed under.
         """
         store = ctx.deps.caps.get_optional(ProjectStore)
         if store is None:
             return {"available": False, "detail": _UNAVAILABLE}
         views = await store.list(ctx.deps.owner_id)
+        slugs = await store.slugs(ctx.deps.owner_id)
         return {
             "available": True,
             "active_project_id": ctx.deps.project_id,
@@ -48,7 +50,7 @@ def project_toolset() -> FunctionToolset[RunDeps]:
                 {
                     "id": v.id,
                     "name": v.name,
-                    "path": v.root_path,
+                    "path": Place("projects", slugs.get(v.id, "")).path,
                     "is_git_repo": v.probe.is_git_repo,
                     "uncommitted_changes": v.probe.uncommitted_changes,
                 }
@@ -71,13 +73,15 @@ def project_toolset() -> FunctionToolset[RunDeps]:
         if ctx.deps.project_id is None:
             return {"available": True, "project": None, "worktree": False}
         view = await store.get(ctx.deps.owner_id, ctx.deps.project_id)
+        slug = (await store.slugs(ctx.deps.owner_id)).get(view.id, "")
         return {
             "available": True,
             "worktree": ctx.deps.worktree,
             "project": {
                 "id": view.id,
                 "name": view.name,
-                "path": view.root_path,
+                "path": Place("projects", slug).path,
+                **({"worktree_path": Place("worktrees", slug).path} if ctx.deps.worktree else {}),
                 "base_ref": view.base_ref,
                 "is_git_repo": view.probe.is_git_repo,
                 "uncommitted_changes": view.probe.uncommitted_changes,

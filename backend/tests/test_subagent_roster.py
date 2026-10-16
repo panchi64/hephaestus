@@ -358,6 +358,8 @@ class TestWhatTheModelActuallySees:
             "publish",
             "spawn",
             "message",
+            "merge",
+            "discard",
             "list",
             "read",
             "stop",
@@ -371,16 +373,9 @@ class TestWhatTheModelActuallySees:
             assert hasattr(category, "wrapped")
 
 
-class TestWhichLaunchesAreTheOperatorsToAllow:
-    """Only a sub-agent that can change things.
-
-    Two mechanisms could gate this and only one of them can tell them apart. The static
-    `requires_approval=True` marking defers a call *before its body runs*, which means the
-    library parks on the tool's name with nothing having looked at which sub-agent was
-    asked for — so every launch asks, an explorer that can only read included, and the
-    conditional check inside the body never decides anything. Raising from inside is what
-    makes the distinction real, and these are what notice the marking coming back.
-    """
+class TestLaunchingNeverAsks:
+    """A spawned agent runs at its spawner's level, so the launch itself is never the
+    operator's to allow."""
 
     def test_launching_is_not_gated_by_name_alone(self):
         category = _agents_roster().wrapped
@@ -395,37 +390,6 @@ class TestWhichLaunchesAreTheOperatorsToAllow:
         # `unapproved` is the kind the static marking produces, and it is what makes the
         # library hold the call back rather than run it.
         assert tools["spawn"].tool_def.kind != "unapproved"
-
-    def test_a_sub_agent_that_only_reads_is_launched_without_asking(self):
-        from tools.delegation import can_write
-
-        roster = builtin_roster()
-        assert not can_write(roster["explorer"])
-        assert not can_write(roster["reviewer"])
-
-    def test_a_sub_agent_that_can_change_things_asks_first(self):
-        from tools.delegation import can_write
-
-        roster = builtin_roster()
-        # The test runner is here on purpose: it is withheld from *editing*, which is
-        # about its job, and still runs commands — so the level, not the withheld list,
-        # is what says whether the operator should rule on it.
-        assert can_write(roster["worker"])
-        assert can_write(roster["test_runner"])
-
-    def test_a_project_agent_is_gated_by_what_it_can_do_rather_than_by_its_name(self):
-        from tools.delegation import can_write
-
-        reads = parse_agent_file(
-            "---\nname: auditor\ndescription: Reads.\npermission: plan\n---\n\nRead it.",
-            name="auditor",
-        )
-        edits = parse_agent_file(
-            "---\nname: fixer\ndescription: Fixes.\npermission: edit\n---\n\nFix it.",
-            name="fixer",
-        )
-        assert not can_write(reads)
-        assert can_write(edits)
 
 
 async def _launch_tools(

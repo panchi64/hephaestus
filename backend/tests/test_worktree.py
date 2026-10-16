@@ -242,32 +242,52 @@ class TestDiffAndMerge:
         assert (state.path / "hello.txt").read_text() == "original\n"
 
 
-class TestFork:
-    """A delegated agent's own checkout, and what comes back from it."""
+class TestChildWorktree:
+    """A sub-agent's own worktree, and how its work lands."""
 
     async def _forked(self, tmp_path: Path):
         """A parent mid-session — edits uncommitted, dependencies installed — and the
-        child forked out of it."""
+        child cut from its worktree."""
         root = await _repo(tmp_path)
         manager = _manager(tmp_path)
         parent = await manager.acquire(
             project_id="p", root=root, base_ref="main", conversation_id="c1"
         )
         _ = (parent.path / "hello.txt").write_text("the parent was in the middle of this\n")
-        # Ignored, the way a real project ignores them: what makes these two interesting
-        # is that git carries neither of them across, so the fork's own copy is the only
-        # thing that can.
+        # Ignored, the way a real project ignores them: git carries neither across, so
+        # the cut's own copy is the only thing that can.
         _ = (parent.path / ".gitignore").write_text("node_modules/\n.venv/\n")
         (parent.path / "node_modules").mkdir()
         _ = (parent.path / "node_modules" / "dep.js").write_text("minutes of installing")
         (parent.path / ".venv").mkdir()
         _ = (parent.path / ".venv" / "pyvenv.cfg").write_text(f"home = {parent.path}/.venv/bin")
-        child = await manager.fork(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
+        child = await manager.cut_child(
+            project_id="p", root=root, conversation_id="c1", delegation_id="d1", source=parent
         )
         return root, manager, parent, child
 
-    async def test_a_fork_opens_on_the_parents_uncommitted_edits(self, tmp_path: Path):
+    async def _from_checkout(self, tmp_path: Path):
+        """The operator mid-edit in their own checkout, and a child cut from it."""
+        root = await _repo(tmp_path)
+        manager = _manager(tmp_path)
+        _ = (root / "hello.txt").write_text("the operator's unsaved thought\n")
+        _ = (root / "notes.txt").write_text("not even added yet\n")
+        child = await manager.cut_child(
+            project_id="p", root=root, conversation_id="c1", delegation_id="d1", source=None
+        )
+        return root, manager, child
+
+    async def _changes(self, manager: WorktreeManager, base_ref: str):
+        return await manager.child_changes(
+            project_id="p", conversation_id="c1", delegation_id="d1", base_ref=base_ref
+        )
+
+    async def _apply(self, manager: WorktreeManager, root: Path, base_ref: str):
+        return await manager.apply_child(
+            project_id="p", root=root, conversation_id="c1", delegation_id="d1", base_ref=base_ref
+        )
+
+    async def test_a_child_opens_on_the_parents_uncommitted_edits(self, tmp_path: Path):
         _root, manager, parent, child = await self._forked(tmp_path)
 
         # THE assertion: the child was handed the files the parent's transcript
@@ -284,20 +304,20 @@ class TestFork:
         # A child is the same conversation working in two places — it must not read as a
         # second thread taking the project.
         assert manager.holder("p") == "c1"
+        # Its own work starts at the cut: nothing yet.
+        assert (await self._changes(manager, child.base_ref)).files == []
 
-    async def test_forking_twice_with_the_same_id_is_not_an_error(self, tmp_path: Path):
-        root, manager, _parent, child = await self._forked(tmp_path)
-        again = await manager.fork(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
-        )
-        assert again.path == child.path
+    async def test_reopening_reads_the_same_child_off_the_disk(self, tmp_path: Path):
+        _root, manager, _parent, child = await self._forked(tmp_path)
+        again = manager.reopen_child(project_id="p", conversation_id="c1", delegation_id="d1")
+        assert (again.path, again.branch) == (child.path, child.branch)
 
     async def test_a_clean_merge_lands_in_the_parent_and_retires_the_child(self, tmp_path: Path):
         root, manager, parent, child = await self._forked(tmp_path)
         _ = (child.path / "added.txt").write_text("the delegated agent's work\n")
 
-        report = await manager.merge_back(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
+        report = await manager.merge_child(
+            project_id="p", root=root, conversation_id="c1", delegation_id="d1", into=parent.path
         )
 
         assert report.merged
@@ -314,8 +334,8 @@ class TestFork:
         _ = (parent.path / "hello.txt").write_text("what the parent did while it waited\n")
         _ = (child.path / "hello.txt").write_text("what the child did\n")
 
-        report = await manager.merge_back(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
+        report = await manager.merge_child(
+            project_id="p", root=root, conversation_id="c1", delegation_id="d1", into=parent.path
         )
 
         assert not report.merged
@@ -335,21 +355,67 @@ class TestFork:
     ):
         # "Your file changed" and "your file is gone" are not the same sentence, and the
         # caller must never have to infer the second one.
-        root, manager, _parent, child = await self._forked(tmp_path)
+        _root, manager, _parent, child = await self._forked(tmp_path)
         (child.path / "hello.txt").unlink()
 
-        report = await manager.merge_back(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
-        )
+        report = await self._changes(manager, child.base_ref)
 
         assert report.deleted == ["hello.txt"]
         assert report.files == []
 
+    async def test_a_child_cut_from_the_checkout_starts_on_its_unsaved_files(
+        self, tmp_path: Path
+    ):
+        root, manager, child = await self._from_checkout(tmp_path)
+
+        assert (child.path / "hello.txt").read_text() == "the operator's unsaved thought\n"
+        assert (child.path / "notes.txt").read_text() == "not even added yet\n"
+        # The operator's own git state is untouched by the cut.
+        _code, status, _err = await run_git(root, "status", "--porcelain")
+        assert sorted(line[3:] for line in status.splitlines()) == ["hello.txt", "notes.txt"]
+        # And those files are its starting point, not its work.
+        assert (await self._changes(manager, child.base_ref)).files == []
+
+    async def test_applying_lands_only_the_childs_work_and_writes_no_git_state(
+        self, tmp_path: Path
+    ):
+        root, manager, child = await self._from_checkout(tmp_path)
+        _ = (child.path / "added.txt").write_text("the sub-agent's work\n")
+        head_before = await run_git(root, "rev-parse", "HEAD")
+
+        report = await self._apply(manager, root, child.base_ref)
+
+        assert report.merged
+        assert report.files == ["added.txt"]
+        assert (root / "added.txt").read_text() == "the sub-agent's work\n"
+        assert (root / "hello.txt").read_text() == "the operator's unsaved thought\n"
+        assert await run_git(root, "rev-parse", "HEAD") == head_before
+        staged, _, _ = await run_git(root, "diff", "--cached", "--quiet")
+        assert staged == 0
+        assert not child.path.exists()
+
+    async def test_applying_a_clash_changes_nothing_and_keeps_the_child(self, tmp_path: Path):
+        root, manager, child = await self._from_checkout(tmp_path)
+        _ = (child.path / "hello.txt").write_text("the sub-agent's version\n")
+        _ = (root / "hello.txt").write_text("the operator kept typing\n")
+
+        report = await self._apply(manager, root, child.base_ref)
+
+        assert not report.merged
+        assert report.conflicts == ["hello.txt"]
+        assert (root / "hello.txt").read_text() == "the operator kept typing\n"
+        assert (child.path / "hello.txt").read_text() == "the sub-agent's version\n"
+
+    async def test_a_non_repository_has_no_checkout_to_cut_from(self, tmp_path: Path):
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        with pytest.raises(WorktreeError):
+            _ = await _manager(tmp_path).cut_child(
+                project_id="p", root=plain, conversation_id="c1", delegation_id="d1", source=None
+            )
+
     async def test_discarding_one_child_takes_its_branch_with_it(self, tmp_path: Path):
-        # What a delegation does in its `finally`, whatever became of the work: the id
-        # naming this checkout lives only in the call that asked for it, so one left
-        # behind is a tree and a branch nothing can ever reach again. It runs after a
-        # clean merge has already retired the same child, so it must also be idempotent.
+        # Idempotent: a clean merge may already have retired the same child.
         root, manager, _parent, child = await self._forked(tmp_path)
         for _ in range(2):
             await manager.discard_child(
@@ -361,42 +427,12 @@ class TestFork:
         assert code != 0
         # The parent is untouched — a discarded child is not a discarded conversation.
         assert manager.holder("p") == "c1"
-
-    async def test_a_conversation_with_no_checkout_has_nothing_to_fork(self, tmp_path: Path):
-        root = await _repo(tmp_path)
         with pytest.raises(WorktreeError):
-            _ = await _manager(tmp_path).fork(
-                project_id="p", root=root, conversation_id="c1", delegation_id="d1"
-            )
-
-    async def test_a_conversation_that_handed_the_project_back_cannot_fork(self, tmp_path: Path):
-        # Merging releases the project, which leaves the shared checkout on whatever
-        # branch and files the last thread had. Forking from there would commit somebody
-        # else's working tree and cut the child from a stale branch.
-        root, manager, _parent, _child = await self._forked(tmp_path)
-        _ = await manager.merge_back(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
-        )
-        _ = await manager.merge(root, base_ref="main", conversation_id="c1", project_id="p")
-
-        with pytest.raises(WorktreeError):
-            _ = await manager.fork(
-                project_id="p", root=root, conversation_id="c1", delegation_id="d2"
-            )
-
-    async def test_another_conversations_project_is_still_refused(self, tmp_path: Path):
-        root, manager, _parent, _child = await self._forked(tmp_path)
-        with pytest.raises(WorktreeBusyError):
-            _ = await manager.fork(
-                project_id="p", root=root, conversation_id="c2", delegation_id="d1"
-            )
+            _ = manager.reopen_child(project_id="p", conversation_id="c1", delegation_id="d1")
 
     async def test_discarding_the_conversation_takes_its_delegated_checkouts_with_it(
         self, tmp_path: Path
     ):
-        # Nothing else names a child: the delegation id lives only in the run that asked
-        # for the fork. Left behind, its files sit in the clear, its branch stays in the
-        # operator's repository, and the next fork with that id is handed the stale tree.
         root, manager, _parent, child = await self._forked(tmp_path)
 
         await manager.discard(root, project_id="p", conversation_id="c1")

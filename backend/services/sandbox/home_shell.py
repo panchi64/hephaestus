@@ -18,7 +18,7 @@ import contextlib
 import secrets
 import time
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Literal
@@ -88,6 +88,13 @@ class HomeShell:
     def busy(self) -> bool:
         """Whether a background command it started may still be running."""
         return bool(self._jobs)
+
+    def stand_within(self, places: Collection[Place], fallback: str) -> None:
+        """Move to ``fallback`` when the working directory is in a place the home no
+        longer holds, such as a sub-agent's worktree that was merged away."""
+        here = _place_of(self._cwd)
+        if here is not None and here != SCRATCH and here not in places:
+            self._cwd = fallback
 
     def reached(
         self, command: str, mounts: Sequence[Mount], *, network: bool = False

@@ -101,6 +101,12 @@ const TOOLS: Record<string, ToolEntry> = {
   agents_list: { icon: "users", label: "List agents" },
   agents_read: { icon: "users", label: "Check agent", keys: ["name"] },
   agents_stop: { icon: "stop", label: "Stop agent", keys: ["name"] },
+  agents_merge: { icon: "branch", label: "Merge agent's work", keys: ["name"] },
+  agents_discard: {
+    icon: "trash",
+    label: "Discard agent's work",
+    keys: ["name"],
+  },
 
   attachments_provision: {
     icon: "attach",

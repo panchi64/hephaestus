@@ -15,7 +15,6 @@ from dataclasses import dataclass, replace
 from typing import override
 
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext, Tool
-from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
 from core.diagnostics import render_tool_error
@@ -27,7 +26,6 @@ from services.agents import (
     describe_roster,
     normalize_agent_name,
 )
-from services.permissions import STRICTEST_PERMISSION
 from services.subagents import (
     ROOT_HANDLE,
     SubagentLauncher,
@@ -35,18 +33,18 @@ from services.subagents import (
     SubagentUnavailableError,
     SubagentView,
 )
+from tools.child_worktrees import discard_child, merge_child, worktree_paths
 from tools.deps import RunDeps
 from tools.describe import registered_tools
-from tools.project_agents import run_catalog, run_roster
+from tools.project_agents import run_roster
 
 #: The spawn tool's name inside the category, before the prefix makes it ``agents_spawn``.
 SPAWN_TOOL = "spawn"
 
-#: Raised for approval only when the agent being spawned, or sent a message from anywhere
-#: but below it, can write.
-GATED_TOOLS: frozenset[str] = frozenset({f"agents_{SPAWN_TOOL}", "agents_message"})
-
 _UNAVAILABLE = "Delegation is unavailable in this deployment."
+
+#: The fewest words a task can say what to do, where to start and what done looks like in.
+_MIN_TASK_WORDS = 15
 
 _SPAWN_DOC = """Spawn an agent to do a self-contained piece of work on its own.
 
@@ -54,12 +52,14 @@ _SPAWN_DOC = """Spawn an agent to do a self-contained piece of work on its own.
 
 It returns immediately; never poll. Spawn as many as the work splits into, issuing the calls
 together, carry on, and end your turn when nothing is left: each one's report reaches you as
-it finishes. Not for work you could do in a couple of tool calls.
+it finishes. Not for work you could do in a couple of tool calls. It may do whatever you may.
 
-`name` is your handle for it — the job, not the worker (`auth-route-reviewer`). `task`
-stands alone: the agent never sees this conversation, so say what to do, where to start, and
-what a finished answer looks like. `isolate` gives it a copy of your workspace, merged back
-when it finishes; ask for it when you will keep editing meanwhile.
+`name` is your handle for it — the job, not the worker (`auth-route-reviewer`). `task` is
+its first message and stands alone: the agent never sees this conversation, so say what to
+do, where to start, and what a finished answer looks like.
+
+`worktree` gives it its own branch and worktree of your project, so you can keep editing
+meanwhile. Its work waits there for you to review, fix, and `agents_merge` or discard.
 """
 
 
@@ -71,7 +71,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         name: str,
         agent_name: str,
         task: str,
-        isolate: bool = False,
+        worktree: bool = False,
     ) -> dict[str, object]:
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
@@ -87,10 +87,16 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
                 f"There is no agent called {agent_name!r}. Choose one of: "
                 + f"{', '.join(sorted(roster))}."
             )
-        # Before a workspace is forked for it: a launch that ends in edits is the
-        # operator's to allow.
-        if can_write(agent) and not ctx.tool_call_approved:
-            raise ApprovalRequired()
+        if len(task.split()) < _MIN_TASK_WORDS:
+            raise ModelRetry(
+                render_tool_error(
+                    f"the task for `{name}` is too short to work from",
+                    hints=[
+                        "the agent never sees this conversation: say what to do, where to "
+                        + "start (files, URLs, names), and what a finished answer looks like"
+                    ],
+                )
+            )
         try:
             started = await launcher.launch(
                 ctx.deps.owner_id,
@@ -98,7 +104,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
                 task,
                 handle=name,
                 parent=_parent(ctx),
-                isolate=isolate,
+                worktree=worktree,
             )
         except SubagentUnavailableError as exc:
             return {"spawned": False, "detail": str(exc)}
@@ -115,8 +121,6 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         }
 
     spawn.__doc__ = spawn_description(delegable(builtin_roster()))
-    # Not `requires_approval=True`: that defers every call before the body runs, while
-    # only an agent that can write is gated.
     _ = toolset.add_function(spawn, name=SPAWN_TOOL)
 
     @toolset.tool(name="message")
@@ -124,36 +128,40 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         """Send a message to another agent of your delegation tree: a handle from
         `agents_list`, `parent` for the agent that spawned you, or `main` for the thread at
         the top. It reaches a running agent at its next step and wakes an idle one; you are
-        not waiting on a reply, which arrives as a message of its own if one comes. A message
-        to an agent that can write, unless it is above you, asks the operator first."""
+        not waiting on a reply, which arrives as a message of its own if one comes."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"sent": False, "detail": _UNAVAILABLE}
         conversation_id = ctx.deps.conversation_id or ""
         try:
-            recipient = await launcher.recipient(ctx.deps.owner_id, conversation_id, to)
-            # Up the tree a message is an early report, which every agent may send. Across
-            # or down it directs work, so reaching an agent that can write asks first, as
-            # spawning one does: a read-only agent's message can carry what it read.
-            if not recipient.upward and not ctx.tool_call_approved:
-                agent = (await run_catalog(ctx)).get(recipient.agent_name or "")
-                if agent is None or can_write(agent):
-                    raise ApprovalRequired()
             label = await launcher.message(ctx.deps.owner_id, conversation_id, to, text)
         except SubagentUnavailableError as exc:
             return {"sent": False, "detail": str(exc)}
         return {"sent": True, "to": label}
 
+    @toolset.tool(name="merge")
+    async def merge(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
+        """Land the work of an agent you spawned with `worktree` where you work. Review and
+        fix it in its worktree first. A clash changes nothing and names the files."""
+        return await merge_child(ctx, name)
+
+    @toolset.tool(name="discard")
+    async def discard(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
+        """Throw away the worktree and branch of an agent you spawned with `worktree`."""
+        return await discard_child(ctx, name)
+
     @toolset.tool(name="list")
     async def list_agents(ctx: RunContext[RunDeps]) -> dict[str, object]:
-        """Every agent of your delegation tree, with who spawned it and whether it is still
-        working. Check it before concluding while agents you spawned are still out."""
+        """Every agent of your delegation tree, with who spawned it, whether it is still
+        working, and the worktree of each you spawned into one. Check it before concluding
+        while agents you spawned are still out."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"available": False, "detail": _UNAVAILABLE}
         conversation_id = ctx.deps.conversation_id or ""
         views = await launcher.tree(ctx.deps.owner_id, conversation_id)
         handles = {view.conversation_id: view.handle for view in views}
+        opened = await worktree_paths(ctx)
         return {
             "available": True,
             "you": handles.get(conversation_id, ROOT_HANDLE),
@@ -164,6 +172,7 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
                     "parent": handles.get(view.parent_conversation_id, ROOT_HANDLE),
                     "task": view.task,
                     "status": view.status,
+                    **opened.get(view.handle, {}),
                 }
                 for view in views
             ],
@@ -182,10 +191,10 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
             raise ModelRetry(
                 render_tool_error(
                     f"could not read {name!r}: {exc}",
-                    hints=["call agents_list_agents for the names in your tree"],
+                    hints=["call agents_list for the names in your tree"],
                 )
             ) from exc
-        return _read_out(view)
+        return {**_read_out(view), **(await worktree_paths(ctx)).get(view.handle, {})}
 
     @toolset.tool(name="stop")
     async def stop(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
@@ -249,14 +258,9 @@ def _read_out(view: SubagentView) -> dict[str, object]:
     }
 
 
-def can_write(agent: AgentDefinition) -> bool:
-    """Whether spawning this agent is the operator's to rule on, read off its ceiling."""
-    return agent.permission_ceiling != STRICTEST_PERMISSION
-
-
 def _parent(ctx: RunContext[RunDeps]) -> SubagentParent:
-    """What the spawning thread hands the agent. Every field narrows it: the permission
-    is a ceiling, and the workspace key decides which files it works in."""
+    """What the spawning thread hands the agent: its project, its level as a ceiling, and
+    the workspace key that decides which files it works in."""
     return SubagentParent(
         conversation_id=ctx.deps.conversation_id,
         project_id=ctx.deps.project_id,

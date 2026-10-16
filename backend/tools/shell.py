@@ -298,13 +298,14 @@ async def _ready(ctx: RunContext[RunDeps], name: str) -> _Ready | str:
     except WorktreeBusyError as exc:
         return str(exc)
     sessions = ctx.deps.caps.get_optional(SandboxSessionManager)
-    session = sessions.existing(ctx.deps.workspace_key) if sessions is not None else None
+    session = sessions.existing(ctx.deps.scratch_key) if sessions is not None else None
     if home is None or session is None:
         return unavailable(ctx.deps)
     approved = ctx.tool_call_approved or ctx.deps.delegated_approved
     if name in EXECUTING_TOOLS and not approved:
         raise ApprovalRequired()
     shell = shells.get(ctx.deps.workspace_key, start=home.default.path)
+    shell.home.stand_within({m.place for m in home.mounts}, home.default.path)
     return _Ready(home=home, session=session, copies=copies, shell=shell)
 
 

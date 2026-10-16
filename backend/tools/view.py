@@ -55,7 +55,7 @@ async def _capture_version(
     files = await asyncio.to_thread(session.collect_text_files)
     snapshot = await history.capture(
         ctx.deps.owner_id,
-        ctx.deps.workspace_key,
+        ctx.deps.scratch_key,
         run_id=ctx.deps.run.id,
         files=files,
         title=title,
@@ -65,7 +65,7 @@ async def _capture_version(
     _ = await ctx.emit(
         RunEventEmitted(
             body=ViewSnapshot(
-                conversation_id=ctx.deps.workspace_key,
+                conversation_id=ctx.deps.scratch_key,
                 snapshot_id=snapshot.id,
                 title=snapshot.title,
                 created_at=snapshot.created_at,
@@ -88,13 +88,13 @@ async def _show_file(ctx: RunContext[RunDeps], file: str, title: str | None) -> 
     if sessions is None or store is None or history is None:
         return "The view is unavailable."
     try:
-        session = await sessions.acquire(ctx.deps.workspace_key, holder=ctx.deps.run)
+        session = await sessions.acquire(ctx.deps.scratch_key, holder=ctx.deps.run)
         content = session.read_file(file)
     except SandboxError as exc:
         return f"Could not read {file!r}: {exc}"
     artifact = await store.publish(
         ctx.deps.owner_id,
-        ctx.deps.workspace_key,
+        ctx.deps.scratch_key,
         filename=file.rsplit("/", 1)[-1],
         content=content,
         title=title,
@@ -129,7 +129,7 @@ async def _show_live(
     if port is None:
         raise ModelRetry("`serve` needs the `port` the server listens on.")
     try:
-        handle = await sessions.start_preview(ctx.deps.workspace_key, serve, port)
+        handle = await sessions.start_preview(ctx.deps.scratch_key, serve, port)
     except SandboxError as exc:
         return f"The live server did not start: {exc}"
     # Announce the running head first — point the iframe at the entry path so a static
@@ -139,7 +139,7 @@ async def _show_live(
     _ = await ctx.emit(
         RunEventEmitted(
             body=ViewLive(
-                conversation_id=ctx.deps.workspace_key,
+                conversation_id=ctx.deps.scratch_key,
                 url=url,
                 title=title,
                 command=" ".join(handle.command),
@@ -154,7 +154,7 @@ async def _show_live(
     # static preview, so it folds no separate version chip — the LIVE chip represents it.
     if ctx.deps.caps.get_optional(WorkspaceHistoryStore) is not None:
         try:
-            session = await sessions.acquire(ctx.deps.workspace_key, holder=ctx.deps.run)
+            session = await sessions.acquire(ctx.deps.scratch_key, holder=ctx.deps.run)
             _ = await _capture_version(
                 ctx, session, title=title, preview_artifact_id=None, preview_kind=None
             )
@@ -206,9 +206,9 @@ def view_toolset() -> FunctionToolset[RunDeps]:
         sessions = ctx.deps.caps.get_optional(SandboxSessionManager)
         if sessions is None:
             return "The live view is unavailable — your computer isn't available right now."
-        await sessions.stop_preview(ctx.deps.workspace_key)
+        await sessions.stop_preview(ctx.deps.scratch_key)
         _ = await ctx.emit(
-            RunEventEmitted(body=ViewLiveStopped(conversation_id=ctx.deps.workspace_key))
+            RunEventEmitted(body=ViewLiveStopped(conversation_id=ctx.deps.scratch_key))
         )
         return "Stopped the live view."
 

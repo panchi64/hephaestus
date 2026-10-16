@@ -73,14 +73,17 @@ async def thread_mounts(
     filed_project_id: str | None = None,
     filed_writable: bool = False,
     worktree_root: Path | None = None,
+    child_worktrees: Sequence[tuple[str, str, Path]] = (),
 ) -> list[Mount]:
-    """The thread's scratch, writable, then every registered project, and the thread's
-    worktree of its filed project at ``~/worktrees/<slug>``.
+    """The thread's scratch, writable, then every registered project, the thread's
+    worktree of its filed project at ``~/worktrees/<slug>``, and each worktree of a
+    sub-agent it spawned, given as (project id, handle, folder), at
+    ``~/worktrees/<slug>-<handle>``.
 
     A project is writable to a thread whose ``lease_holder`` holds a lease on it, and the
     filed project when ``filed_writable`` says so: starting a thread in a project is the
-    operator saying the agent works there. The worktree is the thread's own branch, so it
-    is always writable.
+    operator saying the agent works there. A worktree is a branch of the thread's own or
+    of its sub-agent's, so it is always writable.
     """
     mounts = [] if scratch is None else [Mount(SCRATCH, scratch, writable=True)]
     if projects is None:
@@ -104,7 +107,16 @@ async def thread_mounts(
             mounts.append(
                 Mount(Place("worktrees", slug), worktree_root, writable=True, project_id=project_id)
             )
+        for child_project, handle, folder in child_worktrees:
+            if child_project == project_id:
+                place = Place("worktrees", child_worktree_name(slug, handle))
+                mounts.append(Mount(place, folder, writable=True, project_id=project_id))
     return mounts
+
+
+def child_worktree_name(slug: str, handle: str) -> str:
+    """The name a sub-agent's worktree has in its parent's home, within the guest's limit."""
+    return f"{slug}-{handle}"[:80]
 
 
 def default_place(mounts: Sequence[Mount], filed_slug: str | None) -> Place | None:

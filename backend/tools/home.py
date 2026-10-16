@@ -2,7 +2,8 @@
 
 Assembled once per run and memoised on its deps: the thread's scratch (the sandbox
 session's workspace), every registered project, writable where the thread holds a lease
-or was started in it, and the thread's worktree of its project when it opened one.
+or was started in it, the thread's worktree of its project when it opened one, and the
+open worktrees of the sub-agents it spawned.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from services.home.paths import Place
 from services.home.table import RunHome, default_place, thread_mounts
 from services.projects.store import ProjectStore
 from services.sandbox import SandboxError, SandboxSessionManager
+from services.subagents import SubagentLauncher
 from services.workspace import sandbox_workspace, split_workspace_key
 
 from .deps import RunDeps
@@ -54,16 +56,25 @@ async def resolve_run_home(deps: RunDeps) -> RunHome | None:
         leases=deps.caps.get_optional(WriteLeases),
         lease_holder=lease_holder(deps),
         filed_project_id=deps.project_id,
-        # A thread on a worktree leaves the operator's working copy alone, and a spawned
-        # agent working apart writes only its own copies.
-        filed_writable=not deps.worktree and deps.leases_from != "",
+        # A thread on a worktree leaves the operator's working copy alone, and so does a
+        # spawned agent whose parent works on one.
+        filed_writable=not deps.worktree and not deps.checkout_read_only,
         worktree_root=worktree_root,
+        child_worktrees=await _child_worktrees(deps),
     )
     default = default_place(mounts, slug)
     if default is None:
         return None
     deps.home = RunHome(mounts=tuple(mounts), default=default, key=deps.workspace_key)
     return deps.home
+
+
+async def _child_worktrees(deps: RunDeps) -> list[tuple[str, str, Path]]:
+    launcher = deps.caps.get_optional(SubagentLauncher)
+    if launcher is None or not deps.conversation_id:
+        return []
+    children = await launcher.worktrees(deps.owner_id, deps.conversation_id)
+    return [(child.project_id, child.handle, child.path) for child in children]
 
 
 def change_log(deps: RunDeps) -> ChangeLog | None:

@@ -229,16 +229,33 @@ class TestTheStoredBinding:
         parent = await store.create_conversation(OWNER, project_id="p1")
         _ = await store.open_worktree(parent)
 
-        async def child(key: str) -> tuple[bool, str | None]:
+        async def child(key: str) -> tuple[bool, str | None, bool]:
             conversation_id = await store.create_conversation(
                 OWNER, project_id="p1", parent_id=parent, workspace_key=key
             )
             binding = await store.binding(conversation_id)
-            return binding.worktree, binding.leases_from
+            return binding.worktree, binding.leases_from, binding.checkout_read_only
 
-        # Sharing its parent's files, it works under the parent's leases; working apart, in
-        # a fork or a workspace of its own, under none.
-        assert await child(parent) == (True, parent)
-        assert await child(f"{parent}/s-1") == (True, "")
-        assert await child("") == (False, "")
+        # Every child works under its parent's leases, and the checkout its parent leaves
+        # alone for a worktree it leaves alone too. Sharing the parent's files, it is in the
+        # parent's worktree; given one of its own, in that; in a scratch of its own, in none.
+        assert await child(parent) == (True, parent, True)
+        assert await child(f"{parent}/s-1") == (True, parent, True)
+        assert await child("") == (False, parent, True)
         assert (await store.binding(parent)).leases_from is None
+
+    async def test_a_spawned_agent_writes_the_checkout_its_parent_writes(self, tmp_path: Path):
+        store = await self._store(tmp_path)
+        parent = await store.create_conversation(OWNER, project_id="p1")
+
+        async def child(key: str) -> tuple[bool, str | None, bool]:
+            conversation_id = await store.create_conversation(
+                OWNER, project_id="p1", parent_id=parent, workspace_key=key
+            )
+            binding = await store.binding(conversation_id)
+            return binding.worktree, binding.leases_from, binding.checkout_read_only
+
+        assert await child(parent) == (False, parent, False)
+        # A worktree of its own leaves the checkout to the parent.
+        assert await child(f"{parent}/s-1") == (True, parent, False)
+        assert await child("") == (False, parent, False)

@@ -316,7 +316,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
             timeout_s=timeout_s,
         )
         try:
-            session = await sessions.acquire(ctx.deps.workspace_key, holder=ctx.deps.run)
+            session = await sessions.acquire(ctx.deps.scratch_key, holder=ctx.deps.run)
             # A cold workspace takes a beat to bring into the VM — longer still while
             # the VM itself is starting (the first boot builds its image). Announce that
             # wait so the run reads as the environment starting, not the model stalling;
@@ -389,7 +389,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
                 + "configured. Work with the hosts you can already reach.",
             }
         try:
-            allowed = await policy.allow(ctx.deps.workspace_key, domains)
+            allowed = await policy.allow(ctx.deps.scratch_key, domains)
         except InvalidInputError as exc:
             # The operator has already approved by the time a domain is parsed, so a
             # malformed one must come back as something to fix rather than fail the turn.

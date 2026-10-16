@@ -27,6 +27,7 @@ from collections import OrderedDict
 
 from agent.summarize import resolve_auto_compact_policy
 from core.exceptions import NotFoundError
+from core.fork import MergeReport
 from harness.manifest import DormantCategory, HarnessContext
 from models.subagent import SubagentRecord
 from routes.chat import (
@@ -41,8 +42,11 @@ from runs.lanes import CHAT_TURN_KINDS
 from services.agents import AgentCatalog, lower_of
 from services.agents.thread import DELEGATION_TOOLS, may_delegate, resolve_thread_agent
 from services.conversations import ConversationStore
+from services.home.paths import Place
+from services.home.table import child_worktree_name
 from services.offline import OfflineModeService
 from services.projects import ProjectStore, WorktreeManager
+from services.projects.repo import WorktreeError, branch_for, child_branch_for
 from services.registry import ModelRegistry
 from services.sandbox.thread_shells import ThreadShells
 from services.settings_store import (
@@ -54,10 +58,12 @@ from services.subagent_store import SubagentStore
 from services.subagents.report import message_envelope, report_envelope
 from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
-from services.workspace import DELEGATION_SEP
-from services.workspace_fork import ForkTarget, merge_summary, reopen_fork
+from services.workspace import split_workspace_key
 
 logger = logging.getLogger(__name__)
+
+#: How many changed files a parked sub-agent's note names before counting the rest.
+_FILES_LISTED = 20
 
 #: The kind a wake turn is submitted under — a thread continuing itself (``runs/lanes.py``).
 WAKE_KIND = "wake"
@@ -153,12 +159,12 @@ class SubagentWake:
         if row is None or row.owner_id != run.owner_id:
             return  # an ordinary thread, not one of ours
         summary, error = await self._outcome(run, row.child_conversation_id)
-        merged = await self._merge(row)
+        parked = await self._park(row)
         try:
             await self._records.settle(
                 row.id,
                 status=status_of(run),
-                summary=None if summary is None else _joined(summary, merged),
+                summary=None if summary is None else _joined(summary, parked),
                 error=error,
                 context_used=(getattr(run.metrics, "context_used", None) if run.metrics else None),
                 context_window=run.context_window,
@@ -176,7 +182,7 @@ class SubagentWake:
         _ = await self.deliver(
             row.owner_id,
             row.parent_conversation_id,
-            report_text(row.handle or row.spec_name, row.spec_name, summary, error, merged),
+            report_text(row.handle or row.spec_name, row.spec_name, summary, error, parked),
         )
 
     async def _outcome(self, run: Run, conversation_id: str) -> tuple[str | None, str | None]:
@@ -201,43 +207,37 @@ class SubagentWake:
             (t.content for t in reversed(turns) if t.role == "assistant" and t.content), None
         )
 
-    async def _merge(self, row: SubagentRecord) -> str | None:
-        """Land an isolated sub-agent's work back where it was forked from.
-
-        Only for one that worked apart: a sharing sub-agent's changes are already in the
-        workspace, with nothing to merge and nothing that could conflict.
-        """
-        if row.workspace_policy != "isolated" or not row.workspace_key:
+    async def _park(self, row: SubagentRecord) -> str | None:
+        """Commit the worktree a sub-agent was spawned into and say where it is, for its
+        parent to review and merge. None for one that worked in its parent's files."""
+        holder, delegation = split_workspace_key(row.workspace_key or "")
+        worktrees = self._ctx.capabilities.get_optional(WorktreeManager)
+        projects = self._ctx.capabilities.get_optional(ProjectStore)
+        if (
+            delegation is None
+            or delegation != row.delegation_id
+            or not row.project_id
+            or worktrees is None
+            or projects is None
+        ):
             return None
-        # What it left running writes into the copy being landed, so it stops first.
+        # What it left running writes into the worktree being committed, so it stops first.
         shells = self._ctx.capabilities.get_optional(ThreadShells)
         if shells is not None:
-            await shells.close(row.workspace_key)
-        parent_key, _, _ = row.workspace_key.partition(DELEGATION_SEP)
-        fork = reopen_fork(
-            self._ctx.capabilities,
-            target=ForkTarget(
-                parent_key=parent_key,
-                child_key=row.workspace_key,
-                delegation_id=row.delegation_id or "",
-                owner_id=row.owner_id,
-                project_id=row.project_id,
-                # The *parent's* conversation, which is what a child checkout is keyed on.
-                conversation_id=parent_key,
-            ),
-        )
-        if fork is None:
-            return None
+            await shells.close(row.workspace_key or "")
         try:
-            return merge_summary(await fork.merge())
-        except Exception as exc:  # noqa: BLE001 — a failed merge is news, not a crash
-            logger.warning("subagents: merging %s failed", row.id, exc_info=True)
-            return f"Its work could not be merged back: {exc}"
-        finally:
-            try:
-                await asyncio.shield(fork.discard())
-            except Exception:  # noqa: BLE001 — a leftover copy is untidy, never fatal
-                logger.warning("subagents: could not discard %s", row.workspace_key)
+            changed = await worktrees.child_changes(
+                project_id=row.project_id,
+                conversation_id=holder,
+                delegation_id=delegation,
+                base_ref=row.base_ref or branch_for(holder),
+            )
+        except WorktreeError:
+            return None
+        handle = row.handle or row.spec_name
+        slug = (await projects.slugs(row.owner_id)).get(row.project_id, "")
+        path = Place("worktrees", child_worktree_name(slug, handle)).path
+        return parked_note(handle, path, child_branch_for(holder, delegation), changed)
 
     # -- delivering it --------------------------------------------------------------
 
@@ -425,8 +425,21 @@ def status_of(run: Run) -> str:
     return "cancelled" if run.status is RunStatus.cancelled else "failed"
 
 
-def _joined(summary: str, merged: str | None) -> str:
-    return summary if merged is None else f"{summary}\n\n{merged}"
+def _joined(summary: str, parked: str | None) -> str:
+    return summary if parked is None else f"{summary}\n\n{parked}"
+
+
+def parked_note(handle: str, path: str, branch: str, changed: MergeReport) -> str:
+    """Where a sub-agent in a worktree of its own left its work, and what to do with it."""
+    files = [*changed.files, *(f"{name} (deleted)" for name in changed.deleted)]
+    listed = ", ".join(files[:_FILES_LISTED]) if files else "nothing"
+    if len(files) > _FILES_LISTED:
+        listed += f", and {len(files) - _FILES_LISTED} more"
+    return (
+        f"Its work is on branch `{branch}` in {path}, not merged. Changed: {listed}.\n"
+        + f"  help: review it there and fix what needs fixing, then agents_merge `{handle}` "
+        + f"to land it where you work, or agents_discard `{handle}` to drop it"
+    )
 
 
 def report_text(
@@ -434,7 +447,7 @@ def report_text(
     spec_name: str,
     summary: str | None,
     error: str | None,
-    merged: str | None,
+    parked: str | None,
 ) -> str:
     """A sub-agent's hand-back, as the launching model reads it.
 
@@ -456,6 +469,6 @@ def report_text(
         parts.append(error)
     if summary:
         parts.append(summary)
-    if merged:
-        parts.append(merged)
+    if parked:
+        parts.append(parked)
     return "\n\n".join(parts)

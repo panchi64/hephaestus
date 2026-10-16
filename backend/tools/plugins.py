@@ -170,7 +170,7 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
             raise ApprovalRequired()
         policy = ctx.deps.caps.get_optional(EgressPolicy)
         reachable: frozenset[str] = (
-            await policy.allowed_for(ctx.deps.workspace_key) if policy else frozenset()
+            await policy.allowed_for(ctx.deps.scratch_key) if policy else frozenset()
         )
         hosts = [host for host in manifest.egress if host in reachable]
         files = await store.files(ctx.deps.owner_id, view.id, "current")

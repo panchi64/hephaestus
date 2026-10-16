@@ -125,3 +125,14 @@ def test_a_command_reaches_at_most_a_handful_of_projects(tmp_path: Path) -> None
     mounts = [Mount(Place("projects", f"p{n}"), tmp_path, writable=False) for n in range(12)]
     command = " ".join(f"~/projects/p{n}/x" for n in range(12))
     assert len(_shell().reached(command, mounts)) == 8
+
+
+def test_a_shell_standing_in_a_place_that_went_away_starts_from_the_default() -> None:
+    # A sub-agent's worktree is unmounted once its parent merges it.
+    gone = Place("worktrees", "api-fixer")
+    shell = _shell(start=f"{gone.path}/src")
+    kept = {SCRATCH, Place("projects", "api")}
+    shell.stand_within(kept, f"{HOME}/projects/api")
+    assert shell.cwd == f"{HOME}/projects/api"
+    shell.stand_within(kept, SCRATCH.path)
+    assert shell.cwd == f"{HOME}/projects/api"

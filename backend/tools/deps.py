@@ -34,7 +34,7 @@ from services.permissions import (
     TurnBoundary,
 )
 from services.search import DedupeSets
-from services.workspace import RunWorkspace
+from services.workspace import RunWorkspace, scratch_key
 
 
 def default_workspace_key(conversation_id: str | None, run: Run | None) -> str:
@@ -81,6 +81,9 @@ class RunDeps:
     worktree: bool = False
     # Whose write leases this run works under (`ConversationBinding.leases_from`).
     leases_from: str | None = None
+    # Whether the operator's checkout is read-only to this run because the thread whose
+    # leases it holds works in a worktree (`ConversationBinding.checkout_read_only`).
+    checkout_read_only: bool = False
     # How far this run may go before it has to ask: "plan", "manual", "edit", "auto" or
     # "yolo" — the last of which is the operator saying it never has to.
     # Here because a tool is offered and executed inside a Run,
@@ -132,6 +135,12 @@ class RunDeps:
     def __post_init__(self) -> None:
         if not self.workspace_key:
             self.workspace_key = default_workspace_key(self.conversation_id, self.run)
+
+    @property
+    def scratch_key(self) -> str:
+        """The key of the scratch session this run works in: a sub-agent in a worktree of
+        its own shares the scratch of the thread that spawned it."""
+        return scratch_key(self.workspace_key)
 
 
 # A feature-contributed dynamic instruction (a manifest's `instructions` export): the

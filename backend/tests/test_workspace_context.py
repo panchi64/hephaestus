@@ -246,15 +246,13 @@ async def test_it_creates_neither_a_session_nor_a_directory(tmp_path: Path):
     assert not manager.work_root.exists()
 
 
-async def test_a_delegated_run_is_described_its_own_fork(tmp_path: Path):
+async def test_a_sub_agent_in_a_worktree_is_described_the_scratch_it_shares(tmp_path: Path):
     caps, manager = await _caps(tmp_path)
     _ = _populate(manager, "conv-a", {"parents-file.py": "x"})
-    _ = _populate(manager, "conv-a/deleg-1", {"childs-file.py": "y"})
 
     block = await workspace_context(_request(caps, key="conv-a/deleg-1"))
 
-    assert "/work/childs-file.py" in block
-    assert "parents-file.py" not in block
+    assert "/work/parents-file.py" in block
 
 
 # --- the cap ----------------------------------------------------------------

@@ -22,6 +22,25 @@ from .core import StoreCore
 from .records import ConversationBinding
 
 
+def _has_worktree(session: Session, conversation_id: str) -> bool:
+    row = session.exec(
+        select(ThreadWorktree.id).where(ThreadWorktree.conversation_id == conversation_id)
+    ).first()
+    return row is not None
+
+
+def _lease_root(session: Session, conversation: Conversation) -> str | None:
+    """The thread a spawned agent's leases are read from, or None for a thread of its own."""
+    if conversation.parent_id is None:
+        return None
+    key = conversation.workspace_key or ""
+    if key:
+        return key.partition(DELEGATION_SEP)[0]
+    parent = session.get(Conversation, conversation.parent_id)
+    parent_key = (parent.workspace_key or "") if parent is not None else ""
+    return parent_key.partition(DELEGATION_SEP)[0] or conversation.parent_id
+
+
 class MetadataMixin(StoreCore):
     async def set_title(self, conversation_id: str, title: str | None) -> None:
         """Rename a conversation (and bump its updated_at)."""
@@ -108,32 +127,31 @@ class MetadataMixin(StoreCore):
         which is the same answer a stateless turn gets and the safe one: a sandbox never
         touches the host.
 
-        A spawned agent's thread works in the files its workspace key names, so it works in
-        that workspace's worktree, and under its leases only when it shares them outright.
+        A spawned agent works under the leases of the thread at the top of its workspace,
+        so it may write what that thread may. It works in that thread's worktree when it
+        shares its files, and in a worktree of its own when its key names a delegation.
         """
 
         def work(session: Session) -> ConversationBinding:
             conversation = session.get(Conversation, conversation_id)
             if conversation is None:
                 return ConversationBinding()
-            key = conversation.workspace_key or ""
-            holder, delegated, _ = key.partition(DELEGATION_SEP)
-            if key:
-                leases_from: str | None = "" if delegated else holder
+            holder, delegated, _ = (conversation.workspace_key or "").partition(DELEGATION_SEP)
+            filed = conversation.project_id is not None
+            if delegated:
+                worktree = filed
             else:
-                leases_from = "" if conversation.parent_id is not None else None
-            worktree = session.exec(
-                select(ThreadWorktree.id).where(
-                    ThreadWorktree.conversation_id == (holder or conversation_id)
-                )
-            ).first()
+                worktree = filed and _has_worktree(session, holder or conversation_id)
+            leases_from = _lease_root(session, conversation)
             # The level is a plain string, so an unrecognised value (a restored backup from
             # a future version, a hand-edited row) is normalised towards the answer that
             # does least.
             return ConversationBinding(
                 project_id=conversation.project_id,
-                worktree=worktree is not None and conversation.project_id is not None,
+                worktree=worktree,
                 leases_from=leases_from,
+                checkout_read_only=leases_from is not None
+                and _has_worktree(session, leases_from),
                 permission=permission_level(conversation.permission_level),
                 agent_name=conversation.agent_name,
                 workspace_key=conversation.workspace_key or "",

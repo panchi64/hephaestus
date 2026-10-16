@@ -27,10 +27,12 @@ class ConversationBinding:
     project_id: str | None = None
     #: Whether the thread works on its project in a worktree of its own.
     worktree: bool = False
-    #: Whose write leases the thread works under, and only reads: a spawned agent sharing
-    #: its parent's files holds the parent's, one working apart holds none (``""``). None
-    #: is the thread's own, which it may add to.
+    #: Whose write leases a spawned agent works under, and only reads: the thread at the
+    #: top of its workspace. None is the thread's own, which it may add to.
     leases_from: str | None = None
+    #: Whether the operator's checkout of the project is read-only to this thread because
+    #: the thread whose leases it holds works on that project in a worktree.
+    checkout_read_only: bool = False
     permission: PermissionLevel = DEFAULT_PERMISSION
     #: The agent the thread runs, by name. None is the default agent.
     agent_name: str | None = None
