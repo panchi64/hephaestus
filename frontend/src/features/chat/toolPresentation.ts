@@ -210,7 +210,17 @@ const TOOLS: Record<string, ToolEntry> = {
     keys: ["query"],
     noun: ["memory", "memories"],
   },
-  memory_remember: { icon: "database", label: "Remember", keys: ["content"] },
+  memory_remember: {
+    icon: "database",
+    label: "Remember",
+    keys: ["description", "content"],
+  },
+  memory_open: { icon: "database", label: "Open memory", keys: ["id"] },
+  memory_update: {
+    icon: "database",
+    label: "Update memory",
+    keys: ["description", "id"],
+  },
 
   tasks_read: { icon: "note", label: "Read tasks", noun: ["task", "tasks"] },
   tasks_update_statuses: { icon: "note", label: "Task statuses" },
