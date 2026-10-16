@@ -31,6 +31,7 @@ from core.diagnostics import render_tool_error
 from core.exceptions import InvalidInputError, NotFoundError
 from harness.manifest import DormantCategory, HarnessContext
 from models.subagent import SubagentRecord
+from prompts.voice import CLASSES
 from routes.chat import compose_turn, resolve_turn_models
 from runs import RunRegistry, RunStatus
 from services.agents import (
@@ -57,7 +58,14 @@ from services.settings_store import (
 )
 from services.subagent_store import LIVE_STATUSES, SubagentStore
 from services.subagents.briefing import brief_for
-from services.subagents.callsigns import allocate, fold, resolve
+from services.subagents.callsigns import (
+    allocate,
+    fold,
+    next_serial,
+    resolve,
+    stem_of,
+    with_serial,
+)
 from services.subagents.launcher import (
     PARENT_ADDRESS,
     ROOT_HANDLE,
@@ -163,6 +171,7 @@ class ConversationSubagents(SubagentLauncher):
             async with self._reserve_lock:
                 self._reserved.discard((owner_id, position.root, handle))
                 self._reserved.discard((owner_id, position.root, fold(callsign)))
+                self._reserved.discard((owner_id, position.root, fold(stem_of(callsign))))
 
     async def _launch(
         self,
@@ -367,24 +376,33 @@ class ConversationSubagents(SubagentLauncher):
                 name for owner, tree, name in self._reserved if owner == owner_id and tree == root
             }
             handles = {fold(row.handle) for row in rows if row.handle}
-            callsigns = {fold(row.callsign) for row in rows if row.callsign}
+            stems = {fold(stem_of(row.callsign)) for row in rows if row.callsign}
             live = {
-                fold(row.callsign)
+                fold(stem_of(row.callsign))
                 for row in rows
                 if row.callsign and row.status in LIVE_STATUSES
             }
-            taken = handles | callsigns | reserved | _RESERVED_HANDLES
+            taken = handles | stems | reserved | _RESERVED_HANDLES
             handle = base
             suffix = 2
             while handle in taken:
                 handle = f"{base}-{suffix}"
                 suffix += 1
-            callsign = allocate(
-                agent.agent_class, live | handles | reserved | {handle}, avoid=callsigns
-            )
+            stem = allocate(agent.agent_class, live | handles | reserved | {handle}, avoid=stems)
             self._reserved.add((owner_id, root, handle))
-            if callsign:
-                self._reserved.add((owner_id, root, fold(callsign)))
+            if not stem:
+                return handle, ""
+            # A launch in flight has no row yet, so its claimed serial is counted from here.
+            pool = {fold(entry) for entry in CLASSES[agent.agent_class].callsigns}
+            claimed = [
+                name
+                for owner, _, name in self._reserved
+                if owner == owner_id and fold(stem_of(name)) in pool
+            ]
+            carried = await self._records.callsigns_of(owner_id, agent.agent_class)
+            callsign = with_serial(stem, next_serial([*carried, *claimed]))
+            self._reserved.add((owner_id, root, fold(stem)))
+            self._reserved.add((owner_id, root, fold(callsign)))
             return handle, callsign
 
     async def _check_capacity(self, owner_id: str, root: str) -> None:

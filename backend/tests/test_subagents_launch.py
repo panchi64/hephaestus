@@ -43,6 +43,7 @@ from services.subagents import (
     SubagentParent,
     SubagentUnavailableError,
 )
+from services.subagents.callsigns import stem_of
 from tests._helpers import client_app, patch_model_resolution
 
 EXPLORER = builtin_roster()["explorer"]
@@ -383,7 +384,7 @@ class TestItsHandle:
             # Three `explorer`s produce three titles that differ only in whatever survives
             # the width; three callsigns and handles differ up front.
             callsign = started.callsign
-            assert callsign in CLASSES["kourai"].callsigns
+            assert stem_of(callsign) in CLASSES["kourai"].callsigns
             assert (summary.title or "").startswith(f"{callsign} · parser-finder:")
 
 

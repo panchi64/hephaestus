@@ -230,6 +230,19 @@ class SubagentStore:
 
         return await in_session(self._db, work)
 
+    async def callsigns_of(self, owner_id: str, agent_class: str) -> list[str]:
+        """Every callsign the owner's agents of ``agent_class`` have carried."""
+
+        def work(session: Session) -> list[str]:
+            query = (
+                select(SubagentRecord.callsign)
+                .where(SubagentRecord.owner_id == owner_id)
+                .where(SubagentRecord.agent_class == agent_class)
+            )
+            return [callsign for callsign in session.exec(query).all() if callsign]
+
+        return await in_session(self._db, work)
+
     async def forget(self, subagent_ids: list[str]) -> None:
         """Delete these rows, because the thread above them is gone."""
 

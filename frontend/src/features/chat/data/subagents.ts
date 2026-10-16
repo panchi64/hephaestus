@@ -29,7 +29,7 @@ export interface Subagent {
    *  reads on the card: a thread with three explorers out has three cards that are
    *  otherwise identical. */
   handle: string;
-  /** Its four-letter designation (`BRAX`); empty for a row written before callsigns. */
+  /** Its designation (`BRAX-07`); empty for a row written before callsigns. */
   callsign: string;
   /** Its class's display name (`Tripodes`); empty for the same old rows. */
   agentClass: string;

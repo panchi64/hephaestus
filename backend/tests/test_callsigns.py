@@ -14,7 +14,14 @@ from routes.deps import app_state
 from services.agents import builtin_roster, describe_roster
 from services.agents.files import AgentFileError, parse_agent_file, render_agent_file
 from services.subagents import SubagentParent, SubagentUnavailableError
-from services.subagents.callsigns import allocate, designation, resolve
+from services.subagents.callsigns import (
+    allocate,
+    designation,
+    next_serial,
+    resolve,
+    stem_of,
+    with_serial,
+)
 from tests._helpers import client_app, patch_model_resolution
 from tests.test_subagents_launch import launcher_of, settle_run
 
@@ -56,14 +63,25 @@ class TestAllocate:
     def test_an_avoided_name_is_still_used_once_nothing_else_is_free(self):
         assert allocate("tripodes", TRIPODES[1:], avoid={TRIPODES[0]}) == TRIPODES[0]
 
-    def test_an_exhausted_pool_falls_back_to_a_suffix(self):
-        got = allocate("tripodes", TRIPODES, rng=random.Random(0))
-        entry, _, suffix = got.partition("-")
-        assert (entry in TRIPODES, suffix) == (True, "2")
+    def test_an_exhausted_pool_reuses_a_stem(self):
+        assert allocate("tripodes", TRIPODES, rng=random.Random(0)) in TRIPODES
 
-    def test_the_suffix_climbs_past_taken_suffixes(self):
-        taken = {*TRIPODES, *(f"{name}-2" for name in TRIPODES)}
-        assert allocate("tripodes", taken).endswith("-3")
+
+class TestSerial:
+    def test_it_is_padded_to_two_digits_and_grows_past_them(self):
+        assert with_serial("BRAX", 7) == "BRAX-07"
+        assert with_serial("BRAX", 131) == "BRAX-131"
+
+    def test_the_next_serial_is_one_past_the_highest_carried(self):
+        assert next_serial(["BRAX-03", "TIKK-11", "GORM-02"]) == 12
+
+    def test_the_first_serial_is_one(self):
+        assert next_serial([]) == 1
+
+    def test_a_callsign_from_before_serials_counts_as_none(self):
+        assert next_serial(["BRAX"]) == 1
+        assert stem_of("BRAX") == "BRAX"
+        assert stem_of("BRAX-07") == "BRAX"
 
     def test_a_kourai_callsign_ends_in_e_macron(self):
         for seed in range(20):
@@ -87,6 +105,17 @@ class TestResolve:
         rows = [_row("migrate-schema", "BRAX"), _row("backfill", "TIKK")]
         assert resolve("brax", rows) is rows[0]
         assert resolve("Tikk", rows) is rows[1]
+
+    def test_a_callsign_resolves_with_or_without_its_serial(self):
+        rows = [_row("migrate-schema", "BRAX-07"), _row("backfill", "TIKK-08")]
+        assert resolve("brax-07", rows) is rows[0]
+        assert resolve("BRAX", rows) is rows[0]
+
+    def test_a_full_callsign_settles_a_stem_two_agents_share(self):
+        rows = [_row("first", "BRAX-07"), _row("second", "BRAX-12")]
+        assert resolve("BRAX-12", rows) is rows[1]
+        with pytest.raises(SubagentUnavailableError, match="more than one"):
+            _ = resolve("brax", rows)
 
     def test_the_macron_folds_to_e(self):
         rows = [_row("auth-research", "KYRĒ")]
@@ -199,8 +228,12 @@ class TestSpawning:
                 for index in range(6)
             ]
             callsigns = [each.callsign for each in started]
-            assert len(set(callsigns)) == len(callsigns)
-            assert all(callsign in TRIPODES for callsign in callsigns)
+            stems = [stem_of(callsign) for callsign in callsigns]
+            assert len(set(stems)) == len(stems)
+            assert all(stem in TRIPODES for stem in stems)
+            assert [callsign.rpartition("-")[2] for callsign in callsigns] == [
+                f"{serial:02d}" for serial in range(1, 7)
+            ]
             assert {each.agent_class for each in started} == {"tripodes"}
 
             view = await launcher.read("operator", root, started[2].callsign.lower())

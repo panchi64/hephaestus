@@ -1,8 +1,9 @@
-"""Callsigns: the four-letter names the operator knows spawned agents by (``docs/voice.md`` §3).
+"""Callsigns: the names the operator knows spawned agents by (``docs/voice.md`` §3).
 
-A callsign is drawn from the agent's class pool and is unique among the live agents of one
-delegation tree. Models address agents by handle, but any reference an agent tool takes
-may be either, because the operator names agents by callsign and Talos passes that on.
+A callsign is a four-letter stem from the agent's class pool, preferably unused among the
+live agents of its delegation tree, and a serial counting that class's agents (``BRAX-07``).
+Models address agents by handle, but any reference an agent tool takes may be either, with
+or without the serial, because the operator names agents by callsign and Talos passes it on.
 """
 
 from __future__ import annotations
@@ -36,6 +37,23 @@ def designation(callsign: str, agent_class: str) -> str:
     return f"{callsign} · {display}" if display else callsign
 
 
+def stem_of(callsign: str) -> str:
+    """``BRAX`` for ``BRAX-07``; a callsign recorded before serials is all stem."""
+    stem, _, _ = callsign.partition("-")
+    return stem
+
+
+def with_serial(stem: str, serial: int) -> str:
+    """``BRAX-07``: the stem and its class's production number, padded to two digits."""
+    return f"{stem}-{serial:02d}"
+
+
+def next_serial(carried: Collection[str]) -> int:
+    """One past the highest serial in ``carried``, the callsigns a class has carried."""
+    serials = [int(tail) for _, _, tail in (c.partition("-") for c in carried) if tail.isdigit()]
+    return max(serials, default=0) + 1
+
+
 def allocate(
     agent_class: str,
     taken: Collection[str],
@@ -43,11 +61,11 @@ def allocate(
     avoid: Collection[str] = (),
     rng: random.Random | None = None,
 ) -> str:
-    """A callsign from ``agent_class``'s pool that is not in ``taken``.
+    """A stem from ``agent_class``'s pool that is not in ``taken``.
 
     Entries in ``avoid`` are passed over while any other entry is free. Once every entry is
-    taken, an entry gets the first free suffix (``BRAX-2``). A class with no pool (Talos,
-    the helper voices) gets an empty callsign.
+    taken, any entry is reused; the serial still tells the two apart. A class with no pool
+    (Talos, the helper voices) gets an empty stem.
     """
     spec = CLASSES.get(agent_class)
     pool = spec.callsigns if spec is not None else ()
@@ -58,19 +76,12 @@ def allocate(
     avoided = {fold(name) for name in avoid}
     free = [entry for entry in pool if fold(entry) not in blocked]
     fresh = [entry for entry in free if fold(entry) not in avoided]
-    if free:
-        return pick.choice(fresh or free)
-    suffix = 2
-    while True:
-        suffixed = [f"{entry}-{suffix}" for entry in pool]
-        free = [name for name in suffixed if fold(name) not in blocked]
-        if free:
-            return pick.choice(free)
-        suffix += 1
+    return pick.choice(fresh or free or list(pool))
 
 
 def resolve(reference: str, agents: Sequence[SubagentRecord]) -> SubagentRecord:
-    """The agent ``reference`` names among ``agents``, by handle or by callsign.
+    """The agent ``reference`` names among ``agents``, by handle or by callsign, with or
+    without its serial (``BRAX-07`` or ``BRAX``).
 
     A handle wins over a callsign, since handles are unique in a tree. A callsign shared by
     a finished agent and a live one names the live one.
@@ -85,6 +96,10 @@ def resolve(reference: str, agents: Sequence[SubagentRecord]) -> SubagentRecord:
     if by_handle:
         return max(by_handle, key=lambda row: row.started_at)
     by_callsign = [row for row in agents if row.callsign and fold(row.callsign) in keys]
+    if not by_callsign:
+        by_callsign = [
+            row for row in agents if row.callsign and fold(stem_of(row.callsign)) in keys
+        ]
     live = [row for row in by_callsign if row.status in LIVE_STATUSES]
     matches = live or by_callsign
     if len(matches) == 1:

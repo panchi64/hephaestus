@@ -51,20 +51,20 @@ An agent has up to three names, each for a different reader.
 | Name | Reader | Shape | Example |
 |---|---|---|---|
 | **Class** | The operator, in the UI | Mythic, from §2 | `Tripodes` |
-| **Callsign** | The operator, in the UI | Four uppercase letters, pronounceable, in the class's sound | `BRAX` |
+| **Callsign** | The operator, in the UI | Four uppercase letters, pronounceable, in the class's sound, then a serial | `BRAX-07` |
 | **Handle** | Models | Kebab-case, named for the job, not the worker | `migrate-schema` |
 
 The UI shows a spawned agent as `CALLSIGN · Class`, the class in dim text so the callsign carries the eye, with its handle beside it:
 
 ```
-BRAX · Tripodes           migrate-schema
-TIKK · Tripodes           backfill-orders
-KYRĒ · Kourai             auth-flow-research
-GORM · Khalkotauroi       full-suite-rebuild
-SKAR · Khryseos           review-migration
+BRAX-07 · Tripodes        migrate-schema
+TIKK-08 · Tripodes        backfill-orders
+KYRĒ-03 · Kourai          auth-flow-research
+GORM-01 · Khalkotauroi    full-suite-rebuild
+SKAR-05 · Khryseos        review-migration
 ```
 
-**Models address an instance by its handle.** The handle says what the agent is for, which is what a model reasoning about it needs. The callsign gives the operator something to recognize across a busy transcript. Every tool that targets an agent also accepts its callsign, matched without case and with `Ē` read as `E`, so a callsign the operator typed can be passed straight through. Handles and callsigns share one namespace within a tree, so a reference never fits one agent's handle and another's callsign.
+**Models address an instance by its handle.** The handle says what the agent is for, which is what a model reasoning about it needs. The callsign gives the operator something to recognize across a busy transcript. Every tool that targets an agent also accepts its callsign, with or without the serial, matched without case and with `Ē` read as `E`, so a callsign the operator typed can be passed straight through. Handles and callsigns share one namespace within a tree, so a reference never fits one agent's handle and another's callsign.
 
 **The operator may name an agent any way they like**, and Talos resolves it without friction: by callsign ("ask BRAX to stop"), by class ("what did the reviewer say"), by handle, or by description ("the one doing the migration"). Talos knows the callsign, class and handle of every agent it launched, maps the reference to the handle, and acts. It asks which one only when the reference genuinely fits more than one live agent. In prose it calls an agent by whatever name the operator last used for it, and otherwise by callsign.
 
@@ -72,7 +72,8 @@ Callsign rules:
 - Four letters, uppercase, sayable as one word, like TARS, CASE and KIPP.
 - Drawn from the class's sound (§2). A Kourē's last letter is always `Ē`.
 - Never an English word, a common name, or an acronym in common use.
-- Unique among the live agents of one delegation tree. A callsign no agent of the tree has carried is preferred; once the whole pool is live, an entry takes a suffix (`BRAX-2`).
+- The stem is unique among the live agents of one delegation tree where it can be. A stem no agent of the tree has carried is preferred, and once the whole pool is live a stem is reused.
+- A serial always follows: the class's production number across the workspace, two digits at least (`BRAX-07`, `TIKK-131`). It is one past the highest serial that class has carried, so two agents never share a full callsign.
 
 An agent file names its class with a `class:` frontmatter key (`class: kourai`); without one it is Tripodes, and an unknown class fails the file.
 
