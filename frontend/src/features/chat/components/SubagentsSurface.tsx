@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
-import { Disclosure, EmptyState, toast } from "~/ui";
+import { Disclosure, EmptyState, Text, cx, toast } from "~/ui";
 import {
   isLive,
   openSubagentThread,
@@ -8,85 +8,23 @@ import {
   type Subagent,
 } from "../data";
 import { mainChat } from "../mainChat";
-import { SubagentCard } from "./SubagentCard";
+import { arrange, byUrgency } from "../subagentRoster";
+import { LEDGER_COLUMNS, SubagentCard } from "./SubagentCard";
 import { SubagentDetail } from "./SubagentDetail";
 import { SurfaceBody } from "./surfaceChrome";
 
-/** Waiting on the operator first, then working, then whatever went wrong.
- *
- *  Deliberately not chronological. A list ordered by when things started puts the one
- *  thing that is blocked on the operator wherever it happens to fall, which is the one
- *  ordering guaranteed not to surface it. */
-const RANK: Record<string, number> = {
-  blocked: 0,
-  running: 1,
-  failed: 2,
-  cancelled: 3,
-};
-
-function byUrgency(a: Subagent, b: Subagent): number {
-  const rank = (RANK[a.status] ?? 9) - (RANK[b.status] ?? 9);
-  return rank !== 0 ? rank : b.startedAt.localeCompare(a.startedAt);
-}
-
-interface Placed {
-  subagent: Subagent;
-  level: number;
-}
-
-/** Lay the cards out depth-first, each directly beneath its parent. A card whose parent
- *  is not among them — the viewed thread itself, or one filtered into the other roster —
- *  is top level. */
-function arrange(cards: Subagent[]): Placed[] {
-  const owned = new Set(cards.map((c) => c.conversationId));
-  const children = new Map<string, Subagent[]>();
-  const top: Subagent[] = [];
-  for (const card of cards) {
-    const parent = card.parentConversationId;
-    if (owned.has(parent) && parent !== card.conversationId) {
-      const siblings = children.get(parent);
-      if (siblings) siblings.push(card);
-      else children.set(parent, [card]);
-    } else top.push(card);
-  }
-  const placed: Placed[] = [];
-  const seen = new Set<string>();
-  const walk = (card: Subagent, level: number) => {
-    if (seen.has(card.id)) return;
-    seen.add(card.id);
-    placed.push({ subagent: card, level });
-    for (const child of children.get(card.conversationId) ?? [])
-      walk(child, level + 1);
-  };
-  for (const card of top) walk(card, 0);
-  for (const card of cards) walk(card, 0);
-  return placed;
-}
+const HEADINGS = ["Agent", "Task", "Latest", "Ctx", "T+"];
 
 /**
- * The sub-agents a thread has launched, and what they are doing.
+ * The sub-agents a thread has launched. The operator cannot talk to one, so this is
+ * where they watch it work, read what it did, and see where it went wrong.
  *
- * The operator cannot talk to a sub-agent — there is nowhere to type — so this is the
- * whole of their relationship with one: watch it work, read what it did, and see where
- * it went wrong. That shapes every choice here.
- *
- * **Three tiers, and the third is the interesting one.** Live sub-agents are the reason
- * the panel is open, so they are simply there. A sub-agent that *failed* stays with them
- * rather than folding away, because "see if anything went wrong" is the main reason to
- * come here at all and a failure hidden one click deep behind something labelled
- * *Finished* works against exactly that. Everything that finished cleanly goes into a
- * collapsed accordion: it is kept — a transcript is the record of what happened, and the
- * question about it is usually asked later — but a session's worth of successes between
- * the operator and the two cards they care about is a panel they stop opening.
- *
- * **Collapsed by default, every time.** Not remembered, deliberately: the accordion
- * exists to keep the panel readable, and a remembered *expanded* state would reopen a
- * long session's whole history the next time the panel is opened.
- *
- * **A card opens its sub-agent's own view, and the list gives way to it.** The transcript
- * used to unfold underneath the card instead, which made every row below it move — and
- * since a live transcript grows on every poll, the row the operator wanted next kept
- * sliding away from the cursor. See `SubagentDetail`.
+ * - **Live and unsuccessful rows stay out; clean finishes fold away.** A failure hidden
+ *   behind *Finished* would hide the main reason to open the panel.
+ * - **Finished is collapsed every time it opens**, never remembered: a remembered open
+ *   state would reopen a long session's whole history.
+ * - **A row opens its sub-agent's view in place of the list.** A transcript unfolding
+ *   under its row grew on every poll and pushed the next row from under the cursor.
  */
 export function SubagentsSurface(props: {
   subagents: () => Subagent[];
@@ -95,16 +33,13 @@ export function SubagentsSurface(props: {
 }): JSX.Element {
   const [openId, setOpenId] = createSignal<string | null>(null);
 
-  // Resolved against the live list rather than held as an object: the panel re-reads
-  // these while anything is working, and a captured card would go on showing the status
-  // and the context figures it had when it was clicked.
+  // Resolved against the live list, not held: a captured card would keep the status
+  // and context figures it had when it was clicked.
   const open = createMemo(
     () => props.subagents().find((s) => s.id === openId()) ?? null,
   );
 
-  // Failed and cancelled sit with the live ones — see the note above. `cancelled` is
-  // there for the same reason in a quieter register: a sub-agent the operator stopped,
-  // or one a restart closed out, did not do its job either.
+  // Cancelled stays out with failed: a stopped sub-agent did not do its job either.
   const showing = (): Subagent[] =>
     props
       .subagents()
@@ -134,41 +69,54 @@ export function SubagentsSurface(props: {
     mainChat().setCurrentId(id);
   };
 
-  /** One ruled roster (design §7, §10.14): a frame of flush rows, never a grid of
-   *  cards. It is a list read down a column of handles, so it stays one column at any
-   *  pane width — two would put the scan in two places. */
+  /** One ruled ledger (§10.14). The column legends only exist at the wide layout; the
+   *  narrow one stacks its readout, so there are no columns to name. */
   const roster = (subagents: Subagent[]): JSX.Element => (
-    <ul class="flex flex-col divide-y divide-line border border-line-strong">
-      <For each={arrange(subagents)}>
-        {({ subagent, level }) => (
-          <li>
-            <SubagentCard
-              subagent={subagent}
-              level={level}
-              onOpen={() => setOpenId(subagent.id)}
-              onStop={() => void stop(subagent)}
-              onOpenThread={() => void openThread(subagent)}
-            />
-          </li>
+    <div class="border border-line-strong">
+      <div
+        aria-hidden="true"
+        class={cx(
+          LEDGER_COLUMNS,
+          "hidden border-b border-line px-2 py-1 @2xl:grid",
         )}
-      </For>
-    </ul>
+      >
+        <For each={HEADINGS}>
+          {(heading, i) => (
+            <Text
+              variant="plate"
+              tone="dim"
+              class={i() === HEADINGS.length - 1 ? "text-right" : undefined}
+            >
+              {heading}
+            </Text>
+          )}
+        </For>
+      </div>
+      <ul class="flex flex-col divide-y divide-line">
+        <For each={arrange(subagents)}>
+          {({ subagent, level }) => (
+            <li>
+              <SubagentCard
+                subagent={subagent}
+                level={level}
+                onOpen={() => setOpenId(subagent.id)}
+                onStop={() => void stop(subagent)}
+                onOpenThread={() => void openThread(subagent)}
+              />
+            </li>
+          )}
+        </For>
+      </ul>
+    </div>
   );
 
   return (
-    // Not the body's own scroll: the list scrolls inside, and a sub-agent's view pins
-    // its header while only its transcript scrolls.
+    // The list scrolls inside; a sub-agent's view pins its header and scrolls only
+    // its transcript.
     <SurfaceBody scroll={false}>
-      {/* One sub-agent, or all of them — never both. A sub-agent that is closed out
-          while its view is open (a thread switch, a cancel) resolves to nothing and
-          drops back to the list rather than holding a stale card on screen.
-
-          Unkeyed, deliberately: every poll hands back freshly built cards, so a keyed
-          `Show` would see a new object every few seconds and tear the whole view down
-          and build it again — remounting the transcript, losing its scroll position and
-          re-reading it from scratch, which is the exact instability this pane was made
-          to stop. The accessor keeps the same view alive and lets the new figures
-          through it. */}
+      {/* Unkeyed on purpose: every poll hands back new card objects, and a keyed `Show`
+          would remount the transcript and lose its scroll position each time. A card
+          closed out while open resolves to nothing and drops back to the list. */}
       <Show when={open()}>
         {(subagent) => (
           <SubagentDetail
@@ -179,9 +127,7 @@ export function SubagentsSurface(props: {
         )}
       </Show>
 
-      {/* No title row and no count: the pane's frame carries both now, so they are
-          there whichever surface is in the pane and whether or not a sub-agent's own
-          view is open over the list. */}
+      {/* No title or count here: the pane's frame carries both. */}
       <Show when={!open()}>
         <div class="flex min-h-0 flex-col gap-2 overflow-y-auto">
           <Show

@@ -582,6 +582,24 @@ The exception is `warn` and `alert`, which keep the accent on the label too. Tho
 
 Single line, square, hairline beneath, sans label left, mono meta right. Hover fills `surface-raised`. Disabled drops to `text-dim` with a lock glyph.
 
+#### Ledger row: the Agents roster
+
+A list row that carries several machine figures per entry: one sub-agent per row, inside one ruled frame. **The task gets the width.** Below the pane's `@2xl`, a row has three columns:
+
+- **Agent** (72px): the state square and the callsign in mono `code`, bright. A child of another sub-agent takes a dim `└` and 12px of indent per level, in this column only, so every row's rules still reach both sides of the frame.
+- **Task**: sans `body`, clamped to two lines, with the latest line under it in `micro` dim (`alert` for a failure).
+- **Readout** (56px): context % in `micro`, a 2px gauge filled to that percentage, and the run clock (§10.16), stacked. A blocked row shows the `WAITING` tag here instead.
+
+At `@2xl` the extra width becomes columns, not a longer task line: Agent (callsign plus class), Task (one line), Latest, Ctx and T+, under a `plate` legend row.
+
+Row states:
+
+- **Running:** the 1px `info` live edge (§10.9).
+- **Blocked:** the action tier's echo (§10.18): a 2px amber inset edge and a 5% amber wash.
+- **Cancelled:** the row dims.
+
+Stop and Open thread are icon buttons laid over the readout. They appear only on hover or focus, so a row never spends a line on controls.
+
 ### 10.8 Controls (button, input, select, chip, toggle)
 
 Square, hairline border, `space-2`/`space-3` padding, sans label. Focus is `shadow-focus`, always neutral. A **primary** button — one per view — is the sole carrier of `shadow-accent`.
