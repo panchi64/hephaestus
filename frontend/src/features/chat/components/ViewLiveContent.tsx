@@ -117,7 +117,7 @@ export function ViewLiveContent(props: {
         <EmptyState
           icon="warning"
           message="Live preview stopped"
-          hint="Live preview stopped (sandbox went idle) — ask the assistant to serve it again."
+          hint="Live preview stopped (sandbox went idle) — ask Talos to serve it again."
         />
       }
     >

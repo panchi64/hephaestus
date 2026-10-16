@@ -22,7 +22,11 @@ import type { ChatMessage } from "../model";
  * the sub-agent that wrote it has already ended. The report is also not the place to read
  * the work; the card in the Agents panel opens the whole transcript.
  */
-export function SubagentReport(props: { message: ChatMessage }): JSX.Element {
+export function SubagentReport(props: {
+  message: ChatMessage;
+  /** The reporting sub-agent's callsign, when the thread's sub-agent list knows it. */
+  callsign?: string;
+}): JSX.Element {
   return (
     // A plate naming the region with a hairline running on from it, then the prose
     // bare — the console register's way of setting something apart without boxing it
@@ -30,9 +34,11 @@ export function SubagentReport(props: { message: ChatMessage }): JSX.Element {
     <Stack gap={2} class="my-1 w-full">
       <div class="flex items-center gap-3">
         <Text variant="plate" tone="dim" class="shrink-0">
-          {props.message.author
-            ? `Message · ${props.message.author}`
-            : "Report · sub-agent"}
+          {props.callsign
+            ? `Report · ${props.callsign}`
+            : props.message.author
+              ? `Message · ${props.message.author}`
+              : "Report · sub-agent"}
         </Text>
         <span class="h-px flex-1 bg-line" aria-hidden="true" />
       </div>

@@ -451,8 +451,7 @@ export function createChatStream(
         return false;
       }
       toast.error(
-        (err as { detail?: string })?.detail ??
-          "Unable to reach the assistant.",
+        (err as { detail?: string })?.detail ?? "Unable to reach Talos.",
       );
       return false;
     }

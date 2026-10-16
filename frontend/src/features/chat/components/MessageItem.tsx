@@ -90,6 +90,8 @@ export interface MessageItemProps {
    *  the whole turn — the divider says it in words, this says it at a glance.
    *  Derived by the transcript (presentation only); a turn can't know it alone. */
   dimmed?: boolean;
+  /** For a sub-agent report: the callsign of the agent that sent it. */
+  subagentCallsign?: string;
 }
 
 /** A single chat turn. User turns fill the row with a distinct `surface`
@@ -141,7 +143,10 @@ export function MessageItem(props: MessageItemProps): JSX.Element {
             <CompactionTurn message={props.message} />
           </Match>
           <Match when={props.message.role === "subagent"}>
-            <SubagentReport message={props.message} />
+            <SubagentReport
+              message={props.message}
+              callsign={props.subagentCallsign}
+            />
           </Match>
           <Match when={props.message.role === "user"}>
             <UserTurn

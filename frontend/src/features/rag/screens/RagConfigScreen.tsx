@@ -234,7 +234,7 @@ export function RagConfigScreen(): JSX.Element {
     <Stack gap={6}>
       <PageHeader
         title="Knowledge base"
-        subtitle="The unified retrieval corpus — every source the assistant can search."
+        subtitle="The unified retrieval corpus — every source Talos can search."
         assetId="HEPH-RAG-01.0"
         actions={
           <Row gap={2}>

@@ -27,6 +27,25 @@ describe("grouping the task lists", () => {
     expect(groups[0].items.map((i) => i.content)).toEqual(["read it"]);
   });
 
+  test("a heading leads with the callsign and class, and keeps the handle", () => {
+    const groups = groupTasks(
+      [],
+      [
+        {
+          handle: "migrate-schema",
+          callsign: "BRAX",
+          agentClass: "Tripodes",
+          tasks: [task("a")],
+        },
+        { handle: "old-row", callsign: "", agentClass: "", tasks: [task("b")] },
+      ],
+    );
+    expect(groups.map((g) => g.label)).toEqual([
+      "BRAX · Tripodes · migrate-schema",
+      "old-row",
+    ]);
+  });
+
   test("a sub-agent with no list of its own is not an empty heading", () => {
     // "Has not written a list" and "has nothing to do" are the same state to the
     // operator, and a heading over nothing only asks a question.

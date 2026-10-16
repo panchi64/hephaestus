@@ -161,6 +161,13 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
                   <MessageItem
                     message={message}
                     dimmed={index() < foldedThrough()}
+                    subagentCallsign={
+                      message.role === "subagent"
+                        ? props.viewport
+                            .subagents()
+                            .find((s) => s.handle === message.author)?.callsign
+                        : undefined
+                    }
                     onResolveHostCommands={props.stream.resolveHostCommands}
                     onRegenerate={() =>
                       void props.stream.regenerate(message.id)

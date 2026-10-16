@@ -21,6 +21,7 @@
  */
 
 import type { TaskItem } from "~/lib/stream/events";
+import { designationText } from "./data/subagents";
 
 export interface TaskGroup {
   /** The sub-agent whose list this is, or `null` for the thread's own. */
@@ -32,6 +33,8 @@ export interface TaskGroup {
  *  the list itself. */
 export interface TaskDelegate {
   handle: string;
+  callsign?: string;
+  agentClass?: string;
   tasks: TaskItem[];
 }
 
@@ -52,7 +55,12 @@ export function groupTasks(
   if (own.length > 0) groups.push({ label: null, items: [...own] });
   for (const delegate of delegates)
     if (delegate.tasks.length > 0)
-      groups.push({ label: delegate.handle, items: [...delegate.tasks] });
+      groups.push({
+        label: [designationText(delegate), delegate.handle]
+          .filter(Boolean)
+          .join(" · "),
+        items: [...delegate.tasks],
+      });
   return groups;
 }
 
