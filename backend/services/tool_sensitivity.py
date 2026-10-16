@@ -133,6 +133,7 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "mail_list_accounts",
             "mail_list_messages",
             "mail_read",
+            "memory_open",
             "memory_recall",
             # The plan this thread is working from — a record we wrote and the operator
             # already read. Reading it reaches nothing.
@@ -169,6 +170,7 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # it over `mail_reply`.
             "mail_draft_reply",
             "memory_remember",
+            "memory_update",
             # A branch and a checkout beside the operator's repository, which reach their
             # own folder only through a merge they press.
             "project_open_worktree",

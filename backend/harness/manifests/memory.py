@@ -11,7 +11,7 @@ from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from routes import memory as memory_routes
 from services.embeddings import RegistryEmbedder
 from services.memory import MemoryStore
-from tools.memory import memory_toolset
+from tools.memory import memory_catalog_instructions, memory_toolset
 
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
@@ -24,5 +24,7 @@ MANIFEST = FeatureManifest(
     routers=(memory_routes.router,),
     api_scopes=(ScopeClaim("memory", ("/memory",)),),
     toolsets=(("memory", memory_toolset),),
+    # Every turn lists the pinned memories (ids + descriptions only).
+    instructions=(memory_catalog_instructions,),
     build=_build,
 )

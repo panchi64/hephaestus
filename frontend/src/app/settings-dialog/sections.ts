@@ -153,7 +153,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         id: "memory",
         label: "Memory",
         icon: "database",
-        description: "The long-term facts the assistant remembers about you",
+        description: "The long-term facts Talos remembers about you",
         keywords: ["facts", "recall", "remember", "forget"],
       },
     ],

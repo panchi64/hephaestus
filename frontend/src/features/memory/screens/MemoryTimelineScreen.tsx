@@ -43,7 +43,7 @@ export function MemoryTimelineScreen(): JSX.Element {
   // blank the whole page on initial load. `.latest` never suspends.
   const view = createListView<Memory>({
     source: () => settled(memories) ?? [],
-    search: (m) => m.content,
+    search: (m) => `${m.description}\n${m.content}`,
     sorts: {
       recent: {
         label: "Newest",
@@ -69,18 +69,21 @@ export function MemoryTimelineScreen(): JSX.Element {
   const [editing, setEditing] = createSignal<Memory | null>(null);
   const [composeOpen, setComposeOpen] = createSignal(false);
   const [draft, setDraft] = createSignal("");
+  const [draftDescription, setDraftDescription] = createSignal("");
   const [draftPinned, setDraftPinned] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
 
   const openAdd = () => {
     setEditing(null);
     setDraft("");
+    setDraftDescription("");
     setDraftPinned(false);
     setComposeOpen(true);
   };
   const openEdit = (m: Memory) => {
     setEditing(m);
     setDraft(m.content);
+    setDraftDescription(m.description);
     setDraftPinned(m.pinned);
     setComposeOpen(true);
   };
@@ -88,13 +91,18 @@ export function MemoryTimelineScreen(): JSX.Element {
     const content = draft().trim();
     if (!content || saving()) return;
     setSaving(true);
+    const fields = {
+      content,
+      description: draftDescription().trim(),
+      pinned: draftPinned(),
+    };
     try {
       const target = editing();
       if (target) {
-        await updateMemory(target.id, { content, pinned: draftPinned() });
+        await updateMemory(target.id, fields);
         toast.success("Memory updated");
       } else {
-        await addMemory(content, draftPinned());
+        await addMemory(fields);
         toast.success("Memory added");
       }
       setComposeOpen(false);
@@ -262,7 +270,7 @@ export function MemoryTimelineScreen(): JSX.Element {
                 hint={
                   view.isFiltered()
                     ? "No memories match your filter."
-                    : "Nothing stored yet. Add a memory or let the assistant learn one."
+                    : "Nothing stored yet. Add a memory or let Talos learn one."
                 }
               />
             }
@@ -270,7 +278,8 @@ export function MemoryTimelineScreen(): JSX.Element {
             <For each={view.items()}>
               {(mem) => (
                 <ListRow
-                  label={mem.content}
+                  label={mem.description}
+                  description={mem.content}
                   leading={mem.pinned ? "lock" : "dot"}
                   right={
                     <span class="flex shrink-0 items-center gap-3">
@@ -321,6 +330,12 @@ export function MemoryTimelineScreen(): JSX.Element {
         title={editing() ? "Edit memory" : "Add memory"}
       >
         <Stack gap={3}>
+          <Input
+            label="Description"
+            value={draftDescription()}
+            onInput={(e) => setDraftDescription(e.currentTarget.value)}
+            placeholder="One line saying what this is, e.g. How to address me"
+          />
           <Textarea
             label="Content"
             value={draft()}
@@ -329,7 +344,7 @@ export function MemoryTimelineScreen(): JSX.Element {
             rows={5}
           />
           <Checkbox
-            label="PINNED — always included in recall"
+            label="Pinned: Talos always sees this"
             checked={draftPinned()}
             onChange={setDraftPinned}
           />
@@ -365,7 +380,7 @@ export function MemoryTimelineScreen(): JSX.Element {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void runRecall();
                 }}
-                placeholder="What should the assistant recall?"
+                placeholder="What should Talos recall?"
               />
             </div>
             <Button

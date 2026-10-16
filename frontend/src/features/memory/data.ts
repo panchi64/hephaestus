@@ -7,6 +7,7 @@ import type { DuplicateGroup, Memory, RecallHit } from "./model";
 interface MemoryOut {
   id: string;
   content: string;
+  description: string;
   pinned: boolean;
   created_at: string;
   updated_at: string;
@@ -29,6 +30,7 @@ function toMemory(dto: MemoryOut): Memory {
   return {
     id: dto.id,
     content: dto.content,
+    description: dto.description,
     pinned: dto.pinned,
     createdAt: dto.created_at,
     updatedAt: dto.updated_at,
@@ -57,17 +59,18 @@ export function refreshMemories(): void {
 
 /* ── Mutations ────────────────────────────────────────────────────────────── */
 
-export async function addMemory(
-  content: string,
-  pinned = false,
-): Promise<void> {
-  await api.post("/memory", { content, pinned });
+export async function addMemory(draft: {
+  content: string;
+  description: string;
+  pinned: boolean;
+}): Promise<void> {
+  await api.post("/memory", draft);
   refreshMemories();
 }
 
 export async function updateMemory(
   id: string,
-  patch: { content?: string; pinned?: boolean },
+  patch: { content?: string; description?: string; pinned?: boolean },
 ): Promise<void> {
   await api.patch(`/memory/${id}`, patch);
   refreshMemories();
