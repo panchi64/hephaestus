@@ -67,7 +67,7 @@ class DegradedEmbedder(Embedder):
         raise DegradedCapabilityError("no embedding endpoint configured")
 
 
-def _store(embedder: Embedder) -> tuple[Engine, Vault, MemoryStore]:
+def memory_store(embedder: Embedder) -> tuple[Engine, Vault, MemoryStore]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
@@ -75,7 +75,7 @@ def _store(embedder: Embedder) -> tuple[Engine, Vault, MemoryStore]:
 
 
 async def _setup(embedder: Embedder) -> MemoryStore:
-    _engine, vault, store = _store(embedder)
+    _engine, vault, store = memory_store(embedder)
     await vault.setup("pw")
     return store
 
@@ -193,7 +193,7 @@ async def test_crud_and_timeline_order():
 
 
 async def test_content_and_vector_encrypted_at_rest():
-    engine, vault, store = _store(FakeEmbedder())
+    engine, vault, store = memory_store(FakeEmbedder())
     await vault.setup("pw")
     _ = await store.remember(OWNER, "cat secret")
 

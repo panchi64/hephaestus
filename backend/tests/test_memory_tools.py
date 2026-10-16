@@ -15,7 +15,7 @@ from services.memory import MemoryStore
 from tools.deps import RunDeps
 from tools.memory import memory_catalog_instructions, memory_toolset
 
-from .test_memory import OWNER, FakeEmbedder, _store
+from .test_memory import OWNER, FakeEmbedder, memory_store
 
 _RESULT = TypeAdapter(dict[str, JsonValue])
 
@@ -34,7 +34,7 @@ async def _invoke(name: str, ctx: RunContext[RunDeps], **kwargs: object) -> dict
 
 
 async def _unlocked() -> MemoryStore:
-    _engine, vault, store = _store(FakeEmbedder())
+    _engine, vault, store = memory_store(FakeEmbedder())
     await vault.setup("pw")
     return store
 
@@ -80,7 +80,7 @@ async def test_catalog_is_byte_stable_across_an_unrelated_save():
 async def test_catalog_is_empty_without_pins_store_or_unlocked_vault():
     assert await memory_catalog_instructions(_ctx(None)) == ""
 
-    _engine, vault, store = _store(FakeEmbedder())
+    _engine, vault, store = memory_store(FakeEmbedder())
     await vault.setup("pw")
     _ = await store.remember(OWNER, "unpinned")
     assert await memory_catalog_instructions(_ctx(store)) == ""
@@ -139,13 +139,15 @@ async def test_update_unknown_id_retries():
 async def test_remember_and_recall_carry_id_and_description():
     store = await _unlocked()
     ctx = _ctx(store)
-    saved = (
+    saved = TypeAdapter(str).validate_python(
         await memory_toolset()
         .tools["remember"]
         .function(ctx, content="The boiler is in the cellar.", description="Boiler location")
     )
     assert "Remembered" in saved
 
-    hits = await memory_toolset().tools["recall"].function(ctx, query="boiler")
+    hits = TypeAdapter(list[dict[str, JsonValue]]).validate_python(
+        await memory_toolset().tools["recall"].function(ctx, query="boiler")
+    )
     assert hits[0]["description"] == "Boiler location"
     assert hits[0]["id"] == (await store.list_memories(OWNER))[0].id

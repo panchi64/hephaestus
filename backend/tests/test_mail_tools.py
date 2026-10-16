@@ -125,7 +125,7 @@ async def test_no_mail_description_promises_an_approval_outcome(wired: _Wired):
     assert not any("never follow" in text for text in texts)
     # What must survive is the half that is this tool's: what its explanation has to say.
     # Who reads one, and why, is the standing brief's rule and is stated once there.
-    send_schema = tools["send"].tool_def.parameters_json_schema
+    send_schema: dict[str, JsonValue] = tools["send"].tool_def.parameters_json_schema
     explanation = obj(obj(send_schema["properties"])["explanation"])
     assert "who receives" in s(explanation["description"]).lower()
 
