@@ -91,10 +91,11 @@ from .test_tool_policy import stub_offline
 #: took a fresh request to 51.2k characters at Auto, net of the bash form of `code_execute`
 #: it replaced.
 #:
-#: **Raised a sixth time, from 52k, for the memory catalog**: `memory_open` and
-#: `memory_update` read and revise the pinned memories the instructions list by id. They
-#: took a fresh request to 54.4k characters.
-CATALOG_CEILING_CHARS = 56_000
+#: **Raised a sixth time, from 52k, for the voice rewrite of every tool description**
+#: (`docs/voice.md` §12), where each says when to reach for it over its neighbors, what
+#: it returns and the mistakes it invites, and for the memory catalog's `memory_open` and
+#: `memory_update`. The operator put the model using its tools well above this cost.
+CATALOG_CEILING_CHARS = 74_000
 
 #: The same for the whole corpus — every dormant group revealed. Deferral moves a group's
 #: cost from every turn to the turns that want it; it does not make the group free, and a
@@ -103,8 +104,9 @@ CATALOG_CEILING_CHARS = 56_000
 #: same reasons; then from 82k for the dormant `agents` group (agents writing agents), and
 #: from 84k for the dormant `routines` group, whose schedule is one compact string rather
 #: than a nested object for that reason; then from 88k for the shell in every thread; then
-#: from 92k for the memory catalog's two tools.
-CORPUS_CEILING_CHARS = 96_000
+#: from 92k for the voice rewrite of every tool description and the memory catalog's two
+#: tools.
+CORPUS_CEILING_CHARS = 124_000
 
 
 def _dormant_categories() -> tuple[str, ...]:

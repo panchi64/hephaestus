@@ -26,6 +26,7 @@ from typing import Literal
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness._output import truncate_tail
 
+from core.diagnostics import render_tool_error
 from services.home.backend import Mount
 from services.home.changes import ChangeLog
 from services.home.paths import HOME, SCRATCH, HomePathError, Place, parse, places_named
@@ -168,7 +169,9 @@ class HomeShell:
                 for mount, copy in held:
                     notes += await _bring_back(mount, copy, changes)
             except VMError as exc:
-                raise ModelRetry(f"The platform VM could not run the command: {exc}") from exc
+                raise ModelRetry(
+                    render_tool_error("the platform VM could not run the command", cause=str(exc))
+                ) from exc
             finally:
                 for _mount, copy in held:
                     copy.touch()
@@ -220,7 +223,9 @@ class HomeShell:
                     home=_binds(session.key, held),
                 )
             except VMError as exc:
-                raise ModelRetry(f"The platform VM could not start the command: {exc}") from exc
+                raise ModelRetry(
+                    render_tool_error("the platform VM could not start the command", cause=str(exc))
+                ) from exc
         for _mount, copy in held:
             copy.jobs.add(name)
         self._jobs[command_id] = _Job(name, session, tuple(held), changes)

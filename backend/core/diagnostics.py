@@ -12,6 +12,8 @@ from __future__ import annotations
 import difflib
 from collections.abc import Iterable, Sequence
 
+from core.exceptions import FieldValidationError
+
 #: Marks a failure that is a fault in the platform rather than in the call or the
 #: environment. ``is_platform_failure`` keys on it.
 PLATFORM_CODE = "internal"
@@ -30,6 +32,15 @@ def render_tool_error(
         lines.append(f"  cause: {cause}")
     lines.extend(f"  help: {hint}" for hint in hints)
     return "\n".join(lines)
+
+
+def render_rejection(what: str, exc: FieldValidationError) -> str:
+    """A draft the store refused, naming the part of it to fix."""
+    return render_tool_error(
+        f"{what} was rejected",
+        cause=f"`{exc.field}`: {exc}",
+        hints=[f"fix `{exc.field}` and call again"],
+    )
 
 
 def is_platform_failure(message: str) -> bool:

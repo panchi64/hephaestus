@@ -95,7 +95,7 @@ def _no_vm(reason: str) -> str:
         f"shell commands are unavailable: the platform VM they run in is not running ({reason})",
         hints=[
             "tell the operator; until it is back, work by reading and editing files with "
-            + "the files tools, and say plainly what you could not verify"
+            + "the `files_*` tools, and say plainly what you could not verify"
         ],
     )
 
@@ -159,7 +159,7 @@ def _vm_note(boundary: _Boundary, result: ShellResult) -> str | None:
     if "Read-only file system" in text:
         return (
             "A project you may only read is mounted read-only. To change it, edit the file "
-            "with the files tools, which ask the operator once and then let this thread "
+            "with the `files_*` tools, which ask the operator once and then let this thread "
             "write that project, and run the command again."
         )
     return None
@@ -321,24 +321,35 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
         reach: Reach = "workspace",
         timeout_seconds: float | None = None,
     ) -> dict[str, object] | str:
-        """Execute a shell command in your home and return its output.
+        """Runs a shell command in your home and waits for it to finish. Use it for builds,
+        tests, git, package installs and anything else a terminal does. Read, search and
+        edit files with the `files_*` tools rather than `cat`, `grep` or `sed`, because
+        their edits are checked against the file's current contents.
 
-        It starts in the working directory the last command left (`cwd` in each result).
-        `~/scratch` is yours; `~/projects/<name>` is each of the operator's projects.
+        Your home holds `~/scratch`, which is yours, and `~/projects/<name>` for each of
+        the operator's projects. A command starts where the last one left off, so `cd`
+        carries over between calls. Output streams to the operator while it runs.
+
+        The call blocks until the command exits or its timeout passes, 300 seconds by
+        default. Start a server, a watcher or anything that runs until stopped with
+        `shell_start_command` instead, because here it would hold the turn until the
+        timeout kills it.
+
+        Returns `ok`, `exit_code` (null after a timeout), `stdout`, `stderr`, `timed_out`,
+        `duration_ms`, the `cwd` the next command starts in, the `reach` you declared and
+        whether it ran `fenced` in the VM. A `fence_note` explains a refusal by the fence,
+        such as a blocked host or a read-only project; act on it rather than retrying the
+        same command. `notes` reports what happened when your changes were copied back.
 
         Args:
-            command: The shell command to run.
-            reach: How far this command needs to go. `workspace` runs it in your VM with no
-                network — the right answer for builds, tests, git and anything reading or
-                writing files. `network` additionally reaches the domains the operator has
-                permitted, for installing dependencies. `host` runs it on the operator's
-                machine itself, for a command that has to act on that machine.
-            timeout_seconds: Maximum seconds to wait (default: 300).
-
-        Returns:
-            `ok`, `exit_code` (null if it timed out), `stdout`, `stderr`, `timed_out`,
-            `duration_ms`, the `cwd` the next command starts in, the `reach` you declared,
-            whether it ran `fenced` in the VM, and any `notes` from bringing its work back.
+            command: The command, as you would type it in bash.
+            reach: How far the command needs to go. `workspace` runs it in your VM with
+                no network: builds, tests, git and anything that reads or writes files.
+                `network` adds the domains the operator has allowed, for installs and
+                fetches. `host` runs it unfenced on the operator's own machine, starting
+                in the project's folder there; use it only when the command has to act on
+                that machine, and know that its changes cannot be reverted.
+            timeout_seconds: Seconds to wait before the command is killed. Default 300.
         """
         state = await _ready(ctx, "run_command")
         if isinstance(state, str):
@@ -371,19 +382,23 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
     async def start_command(
         ctx: RunContext[RunDeps], command: str, reach: Reach = "workspace"
     ) -> dict[str, object] | str:
-        """Start a long-running command in the background (e.g. a server or watcher).
+        """Starts a command in the background and returns at once. Use it for a dev
+        server, a watcher, or a build or test run long enough that you want to keep
+        working while it goes; use `shell_run_command` for anything that finishes on its
+        own within a few minutes.
 
-        Callers MUST call `stop_command(command_id)` when done to terminate the
-        process and clean up temporary output files.
+        Check on it with `shell_check_command`, and stop it with `shell_stop_command`
+        once you are done with it, because it keeps running, and keeps its output files,
+        until it is stopped. To show the operator a web server you started for them, use
+        `view_show` with `serve` instead, which runs it where they can open it.
+
+        Returns the `command_id` that the other two tools take, the `command`, and the
+        `reach` and `fenced` pair every executing call carries.
 
         Args:
-            command: The shell command to run in the background.
-            reach: How far this command needs to go — the same three answers
-                `run_command` takes, enforced the same way.
-
-        Returns:
-            `command_id` for later check/stop calls, the `command` itself, and the same
-            `reach` / `fenced` pair every executing call carries.
+            command: The command, as you would type it in bash.
+            reach: How far the command needs to go: `workspace`, `network` or `host`,
+                meaning what they mean for `shell_run_command`.
         """
         state = await _ready(ctx, "start_command")
         if isinstance(state, str):
@@ -426,30 +441,29 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
         return _unknown_command(command_id) if status is None else _background_payload(status)
 
     @toolset.tool
-    async def check_command(
-        ctx: RunContext[RunDeps], command_id: str
-    ) -> dict[str, object] | str:
-        """Check the status and recent output of a background command.
+    async def check_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object] | str:
+        """Returns where a background command stands: `status` (`running` or `finished`),
+        `exit_code` once it has one, and everything it has printed so far in `stdout` and
+        `stderr`.
+
+        Use it to wait for a server to come up or a long run to finish. Between checks,
+        get on with other work rather than calling this again straight away.
 
         Args:
-            command_id: The ID returned by start_command.
-
-        Returns:
-            `status` (`running` or `finished`), `exit_code` once it has one, and
-            everything it has printed so far in `stdout` / `stderr`.
+            command_id: The `command_id` that `shell_start_command` returned.
         """
         return await _find(ctx, command_id, stop=False)
 
     @toolset.tool
     async def stop_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object] | str:
-        """Stop a background command and return its final output.
+        """Stops a background command and returns everything it printed, with its final
+        `exit_code` where it had one.
+
+        Stop each command you started once you no longer need it, including before you
+        end a task, so nothing keeps running unnoticed.
 
         Args:
-            command_id: The ID returned by start_command.
-
-        Returns:
-            `status` of `stopped`, the final `exit_code` where it had one, and everything
-            the command printed.
+            command_id: The `command_id` that `shell_start_command` returned.
         """
         return await _find(ctx, command_id, stop=True)
 

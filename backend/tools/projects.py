@@ -33,10 +33,13 @@ def project_toolset() -> FunctionToolset[RunDeps]:
     # poor trade for a name the decorator can simply be told.
     @toolset.tool(name="list")
     async def list_projects(ctx: RunContext[RunDeps]) -> dict[str, object]:
-        """List the operator's projects — the directories they work in.
+        """Returns the operator's projects, the folders they work in: each one's `id`,
+        `name`, its `path` in your home, whether it is a git repository, and whether it
+        has uncommitted changes. `active_project_id` says which one this conversation is
+        filed under, if any.
 
-        Returns each project's name and its path in your home, and which one (if any)
-        this conversation is filed under.
+        Use it when the operator names a project you have not seen in this conversation,
+        so you work on the path it lives at rather than a guess.
         """
         store = ctx.deps.caps.get_optional(ProjectStore)
         if store is None:
@@ -60,12 +63,15 @@ def project_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool(name="active")
     async def active_project(ctx: RunContext[RunDeps]) -> dict[str, object]:
-        """The project this conversation is working in, if any.
+        """Returns the project this conversation is filed under, if any: its `name`,
+        `path`, `base_ref`, whether it has uncommitted changes, and, when this
+        conversation works in a worktree, the `worktree_path` your file and shell tools
+        act on.
 
-        In a worktree this is the project whose git worktree your file and shell tools
-        act on. Uncommitted changes in the operator's own checkout are **not** visible to
-        you — your worktree branches from the project's base ref — so if their tree is
-        dirty, say so rather than assuming you can see their latest edits.
+        In a worktree, the operator's uncommitted changes are not visible to you, because
+        the worktree branches from the project's base ref. When their folder has
+        uncommitted changes, say so rather than assuming you are seeing their latest
+        edits.
         """
         store = ctx.deps.caps.get_optional(ProjectStore)
         if store is None:
@@ -90,16 +96,19 @@ def project_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool(name="open_worktree")
     async def open_worktree(ctx: RunContext[RunDeps]) -> str:
-        """Open a git worktree of this conversation's project: a separate checkout on a
-        branch of its own, at `~/worktrees/<name>`, which reaches the operator's folder only
-        when they merge it.
+        """Opens a git worktree of this conversation's project: a separate checkout on a
+        branch of its own at `~/worktrees/<name>`, whose changes reach the operator's
+        folder only when they merge the branch.
 
         Use it before work that should stay apart from their working copy: a risky or
         sprawling change, or one that would collide with what they are doing. Small edits
-        belong in their folder. From then on relative paths land in the worktree and their
-        folder is read-only to you. The worktree branches from the project's base ref, so
-        uncommitted changes in their folder (including edits you made there) do not come
-        with you.
+        belong in their folder. Open it before you start editing, because the worktree
+        branches from the project's base ref and uncommitted changes in their folder,
+        including edits you already made there, do not come with you.
+
+        From your next step on, relative paths in the file and shell tools land in the
+        worktree, and the operator's folder is read-only to you. `cd` into the worktree
+        to run commands there. Returns the branch and where the worktree is.
         """
         deps = ctx.deps
         if deps.worktree:

@@ -58,12 +58,27 @@ def web_toolset() -> FunctionToolset[RunDeps]:
         limit: int = 5,
         time_range: Literal["day", "week", "month", "year"] | None = None,
     ) -> SearchResults | str:
-        """Search the web for a query and return ranked results (title, URL, snippet).
+        """Searches the public web and returns ranked results, each with a title, URL and
+        snippet, and `published` when the engine knows the page's date.
 
-        Use `time_range` to restrict results to recent pages when the question is
-        time-sensitive; `published` on a result is its publication date when the engine
-        knew it. No results means the search ran but found nothing — conclude from
-        that rather than retrying the same query."""
+        Use it for anything current, public or outside what you know for certain, and
+        check rather than answer from memory when a fact may have changed. For what the
+        platform already holds (past conversations, memory, the operator's files), use
+        `platform_search` instead.
+
+        A snippet is the engine's excerpt, not the page: read a result with `web_fetch`
+        before you rely on it or cite it. No results means the search ran and found
+        nothing; conclude from that rather than retrying the same query. Repeating a
+        search already run in this turn returns nothing new, so ask a different question
+        or read a result you have.
+
+        Args:
+            query: What to search for, phrased as you would type it into a search
+                engine.
+            limit: The most results to return. Default 5.
+            time_range: Restrict results to pages from the last day, week, month or
+                year, for a question about recent events.
+        """
         svc = ctx.deps.caps.get_optional(SearchService)
         if svc is None:
             return "Web search is unavailable."
@@ -90,15 +105,26 @@ def web_toolset() -> FunctionToolset[RunDeps]:
     async def fetch(
         ctx: RunContext[RunDeps], url: str, offset: int = 0, goal: str | None = None
     ) -> FetchedPage | str:
-        """Fetch a single web page and return its main content as Markdown.
+        """Fetches one web page, renders it, and returns its main content as Markdown.
 
-        Use after `web_search` to read a result in full. State the information you are
-        looking for in `goal` — on large pages the result is then distilled to what's
-        relevant to it; omit `goal` (or pass `offset`) to read the raw text. Fetching
-        returns up to a fixed token budget of the page; when the result ends with a
-        truncation notice, call `web_fetch` again with the same `url` and the `offset` the
-        notice gives to continue reading (dynamic pages may shift slightly between calls).
-        If a URL can't be fetched you will be told why — pick a different source."""
+        Use it to read a `web_search` result in full, or a URL the operator gave you. To
+        click, fill a form, sign in or read a page that only appears after interaction,
+        load the `browse` tools instead.
+
+        A long page comes back up to a fixed budget, ending in a truncation notice; call
+        again with the same `url` and the `offset` the notice gives to read on. A page
+        that renders dynamically may shift slightly between those calls. Fetching a URL
+        already read in this turn returns nothing new, so look back at it in your
+        context. When a URL cannot be read you are told why; pick another source rather
+        than trying variants of the same address.
+
+        Args:
+            url: The full URL, including `https://`.
+            offset: Where to resume a truncated page, as its truncation notice gives it.
+            goal: What you are looking for on the page. On a large page the result is
+                then distilled to what is relevant to it. Omit it, or page with
+                `offset`, to read the raw text.
+        """
         svc = ctx.deps.caps.get_optional(BrowserFetcher)
         if svc is None:
             return render_tool_error(

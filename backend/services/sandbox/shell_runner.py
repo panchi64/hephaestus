@@ -53,6 +53,8 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.shell import Shell
 
+from core.diagnostics import render_tool_error
+
 from .process import filtered_env, kill_tree, spawn_confined, terminate_tree
 
 logger = logging.getLogger(__name__)
@@ -417,7 +419,13 @@ def check_command(command: str) -> None:
     and not the boundary: a determined agent walks around a name check with an interpreter.
     The boundary is the permission layer in front of it."""
     if "\x00" in command:
-        raise ModelRetry("The command contains a NUL byte, which cannot be passed to a process.")
+        raise ModelRetry(
+            render_tool_error(
+                "the command contains a NUL byte",
+                cause="a process cannot be passed one",
+                hints=["remove it and run the command again"],
+            )
+        )
     try:
         # `os.fsencode`, not `str.encode`: the spawn encodes with the filesystem encoding
         # and `surrogateescape`, so plain UTF-8 here would reject commands the OS runs.

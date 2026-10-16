@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
+from core.diagnostics import render_tool_error
 from runs import ViewLive, ViewLiveStopped, ViewSnapshot
 from services.artifacts import ArtifactStore
 from services.sandbox import SandboxError, SandboxSessionManager
@@ -127,7 +128,12 @@ async def _show_live(
     if sessions is None:
         return "The live view is unavailable — your computer isn't available right now."
     if port is None:
-        raise ModelRetry("`serve` needs the `port` the server listens on.")
+        raise ModelRetry(
+            render_tool_error(
+                "`serve` was passed without a `port`",
+                hints=["pass the `port` the server listens on"],
+            )
+        )
     try:
         handle = await sessions.start_preview(ctx.deps.scratch_key, serve, port)
     except SandboxError as exc:
@@ -175,24 +181,47 @@ def view_toolset() -> FunctionToolset[RunDeps]:
         port: int | None = None,
         path: str | None = None,
     ) -> str:
-        """Show the operator what you built, in this conversation's View — one canvas
-        beside the chat with a version history to compare against.
+        """Shows the operator something you built in this conversation's View: a panel
+        beside the chat that keeps every version you show, so they can step back and
+        compare.
+
+        Use it when seeing the result beats reading about it: a page, a chart, an image,
+        a running app. Show it once it works, then tell the operator in a line what they
+        are looking at rather than describing it at length. Each call records a new
+        version, so show meaningful milestones rather than every small edit. It is for
+        showing a result, not for storing data or handing over a file.
 
         Pass exactly one of:
-        - ``file``: a file you made — an HTML page, an image or chart, a code snippet.
-          Becomes a new comparable version.
-        - ``serve`` + ``port``: the argv of a live server (``["npm", "run", "dev"]``)
-          and the port it listens on. Becomes the interactive head, replacing any
-          already running here, and returns once it is up. The server must bind
-          ``0.0.0.0``, not ``127.0.0.1``, and serve assets with relative URLs; if its
-          root would show a directory listing, pass ``path`` for the entry file
-          (``"index.html"``).
+        - `file`: a file you made, as a path relative to `~/scratch` (`chart.png`,
+          `site/index.html`). It renders by kind: an HTML page, an image, a code
+          snippet. Only that one file is captured, so a page that loads scripts or
+          styles from neighboring files needs them inlined, or `serve` instead. A
+          project file has to be copied into `~/scratch` first.
+        - `serve` with `port`: the argv of a server to run from `~/scratch`
+          (`["python", "-m", "http.server", "8000"]`) and the port it listens on. It
+          becomes the View's live, interactive head, replacing any server already shown
+          here, and the call returns once the server answers. The server must bind
+          `0.0.0.0`, not `127.0.0.1`, because the View reaches it from outside your
+          machine. It must load its assets by relative URL, because the View serves it
+          under a path of its own and a root-relative `/app.js` misses. If its root
+          would show a directory listing, pass `path` for the entry page (`index.html`).
 
-        ``title`` labels the View. Use this to *show* a result, not to store data."""
+        Returns a short confirmation, or the reason it could not show the result: a
+        missing file, or the server's own log when it exited without serving.
+
+        Args:
+            title: A short label for this version, shown in the View.
+            file: The file to show, relative to `~/scratch`.
+            serve: The server's argv, one list item per argument.
+            port: The port the server listens on. Required with `serve`.
+            path: The page to open on the live server, relative to its root.
+        """
         if (file is None) == (serve is None):
             raise ModelRetry(
-                "Pass exactly one of `file` (show a file you made) or `serve` (run a "
-                + "live server) — not both, not neither."
+                render_tool_error(
+                    "pass exactly one of `file` or `serve`",
+                    hints=["`file` shows a file you made; `serve` runs a live server"],
+                )
             )
         if serve is not None:
             return await _show_live(ctx, serve, port, path, title)
@@ -201,8 +230,13 @@ def view_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool
     async def close(ctx: RunContext[RunDeps]) -> str:
-        """Stop the live head of this conversation's View, if one is running. The
-        saved versions stay; this only tears down the running server."""
+        """Stops the live server shown in this conversation's View, if one is running.
+
+        Use it when the operator is done with the running app or asks you to stop it.
+        The saved versions stay in the View; only the server goes. A new `view_show`
+        with `serve` replaces the running server on its own, so you do not need this
+        before showing a new one.
+        """
         sessions = ctx.deps.caps.get_optional(SandboxSessionManager)
         if sessions is None:
             return "The live view is unavailable — your computer isn't available right now."

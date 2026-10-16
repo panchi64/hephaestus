@@ -135,7 +135,7 @@ class ExternalCategoryToolset(AbstractToolset[RunDeps]):
     ) -> object:
         route = self._routes.get(name)
         if route is None or self._inner is None:  # pragma: no cover - composed by get_tools
-            raise ModelRetry(f"{name} is no longer available.")
+            raise ModelRetry(render_tool_error(f"`{name}` is no longer available"))
         await self._gate(ctx, route)
         return cast(object, await self._inner.call_tool(name, tool_args, ctx, tool))
 

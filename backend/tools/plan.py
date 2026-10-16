@@ -107,16 +107,23 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool(name="enter")
     async def enter(ctx: RunContext[RunDeps], reason: str) -> str:
-        """Switch this conversation into plan mode and stop acting.
+        """Switches this conversation into plan mode, where you investigate and write a
+        plan for the operator to approve before anything changes.
 
-        For work that is large, ambiguous, or expensive to get wrong — a change across
-        several files, anything that rewrites or deletes what the operator has, a request
-        you can read more than one way. Not for work you can simply do.
+        Use it for work that is large, ambiguous or expensive to get wrong: a change
+        across several files, anything that rewrites or deletes what the operator has, a
+        request you can read more than one way, a choice between designs they would want
+        a say in. Call it before you start changing things, not halfway through. Skip it
+        for work you can simply do; a plan for a one-line fix only slows the operator
+        down.
 
-        Every tool that changes anything leaves your catalog until the operator approves
-        a plan. Investigate by reading, then call `plan_submit`.
+        From the next step on, every tool that changes anything is withdrawn until the
+        operator approves a plan. Read the code and the files, ask with
+        `builtin_ask_user` where the request is open or a choice is theirs, then call
+        `plan_submit`. The operator sees the switch, so there is no need to announce it.
 
-        `reason`: one line on why this needs a plan. The operator reads it.
+        Args:
+            reason: One line on why this work needs a plan, shown to the operator.
         """
         plans = ctx.deps.caps.get_optional(PlanMode)
         conversation_id = ctx.deps.conversation_id
@@ -136,9 +143,11 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool(name="read")
     async def read(ctx: RunContext[RunDeps]) -> str:
-        """The plan this conversation agreed to, in full. Read it while carrying one out
-        when you want the reasoning behind a step: the task list holds the steps, this
-        holds why they are the steps."""
+        """Returns this conversation's plan in full: its title, status, body and steps.
+
+        Read it while carrying out an approved plan when you need the reasoning behind a
+        step. The task list holds the steps; this holds why they are the steps.
+        """
         plans = ctx.deps.caps.get_optional(PlanMode)
         conversation_id = ctx.deps.conversation_id
         if plans is None or conversation_id is None:
@@ -152,16 +161,19 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
     @toolset.tool(name="submit")
     async def submit(
         ctx: RunContext[RunDeps],
-        title: Annotated[str, Field(description="One line naming what this plan does.")],
+        title: Annotated[
+            str, Field(description="One line naming what the plan does, in sentence case.")
+        ],
         body: Annotated[
             str,
             Field(
                 description=(
-                    "The plan, in markdown: why, the approach, which files you would "
-                    "touch and what changes in each, what you found that the operator "
-                    "would not expect, how it would be verified. As long as the work "
-                    "requires — the operator decides on this alone, and shortening it "
-                    "is the one way to make it useless."
+                    "The plan in markdown, written as instructions for the work ahead: "
+                    "why it is needed, the approach, which files change and how, what you "
+                    "found that the operator would not expect, and how you will verify "
+                    "it. Make it as long as the work requires, because the operator "
+                    "decides on this text alone. Leave out rejected options and how your "
+                    "thinking evolved."
                 )
             ),
         ],
@@ -170,19 +182,23 @@ def plan_toolset() -> FunctionToolset[RunDeps]:
             Field(
                 min_length=1,
                 description=(
-                    "The ordered, concrete steps. They become the conversation's task "
-                    "list on approval, so write each as the piece of work it is."
+                    "The ordered, concrete steps, each in imperative form. They become "
+                    "the conversation's task list on approval, so write each as one piece "
+                    "of work you can mark done."
                 ),
             ),
         ],
     ) -> str:
-        """Submit this plan for the operator's approval, and pause until they answer.
+        """Submits a plan for the operator's approval and pauses the turn until they
+        answer. This is how a plan-mode turn ends.
 
-        How a plan-mode turn ends. They approve, ask for changes, or reject. On approval
-        the conversation moves to the Auto level, the steps become its task list, and you
-        carry the plan out in this same turn — do not stop to ask whether to begin. On a
-        request for changes, revise and submit again; the conversation stays in plan mode
-        until they agree.
+        The operator approves, asks for changes, or rejects. On approval the conversation
+        moves to the Auto level, your steps become its task list, and you carry the plan
+        out in this same turn without asking whether to begin. On a request for changes,
+        revise and submit again; the conversation stays in plan mode until they approve.
+
+        Settle open questions with `builtin_ask_user` before you submit, since a plan
+        built on a guess is one the operator has to send back.
         """
         plans = ctx.deps.caps.get_optional(PlanMode)
         conversation_id = ctx.deps.conversation_id
