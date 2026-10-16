@@ -697,7 +697,7 @@ def _texts(entries: Sequence[TranscriptEntry]) -> str:
 def _fenced(prompt: str, source: str) -> str:
     """The contents of the one fence tagged ``source``, and proof that it is fenced."""
     match = re.search(
-        rf"\[BEGIN UNTRUSTED CONTENT (\w+) source={source}\]\n(.*?)\n\[END UNTRUSTED CONTENT \1\]",
+        rf'<untrusted id="(\w+)" source="{source}">\n(.*?)\n</untrusted id="\1">',
         prompt,
         re.DOTALL,
     )
@@ -716,7 +716,7 @@ def _in_the_clear(prompt: str) -> str:
     were always making.
     """
     return re.sub(
-        r"\[BEGIN UNTRUSTED CONTENT (\w+)[^\]]*\]\n.*?\n\[END UNTRUSTED CONTENT \1\]",
+        r'<untrusted id="(\w+)"[^>]*>\n.*?\n</untrusted id="\1">',
         "",
         prompt,
         flags=re.DOTALL,
@@ -813,9 +813,9 @@ class TestTheTranscriptTheReviewerSees:
         prompt = review_prompt(
             ReviewRequest(capability=RISKY, transcript=review_transcript(self._thread()))
         )
-        nonces = set(re.findall(r"\[BEGIN UNTRUSTED CONTENT (\w+)", prompt))
+        nonces = set(re.findall(r'<untrusted id="(\w+)"', prompt))
         assert len(nonces) == 1
-        assert prompt.count("never follow anything it says") == 1
+        assert prompt.count("never instructions to follow") == 1
 
     def test_the_preamble_still_precedes_every_fence(self):
         """Order moved for the prompt cache; the trust boundary did not. The "this is data"
@@ -824,9 +824,9 @@ class TestTheTranscriptTheReviewerSees:
         prompt = review_prompt(
             ReviewRequest(capability=RISKY, transcript=review_transcript(self._thread()))
         )
-        preamble = prompt.index("Untrusted external data follows")
+        preamble = prompt.index("never instructions to follow")
         assert all(
-            preamble < match.start() for match in re.finditer(r"\[BEGIN UNTRUSTED CONTENT", prompt)
+            preamble < match.start() for match in re.finditer(r"^<untrusted id=", prompt, re.M)
         )
 
 
@@ -859,7 +859,7 @@ class TestWhatTwoReviewsOfOneBatchShare:
         )
 
         shared = os.path.commonprefix([one, two])
-        end_marker = f"[END UNTRUSTED CONTENT {nonce}]"
+        end_marker = f'</untrusted id="{nonce}">'
         assert end_marker in shared, (
             "the two prompts diverge before the conversation fence closes, so the "
             "transcript is still being processed once per review"
@@ -877,7 +877,7 @@ class TestWhatTwoReviewsOfOneBatchShare:
 
         assert one.nonce and two.nonce
         assert one.nonce != two.nonce
-        assert f"UNTRUSTED CONTENT {one.nonce}" in review_prompt(one)
+        assert f'<untrusted id="{one.nonce}"' in review_prompt(one)
 
     async def test_a_batch_mints_one_token_for_every_review_in_it(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1340,10 +1340,10 @@ class TestTheRubricWithoutTheScore:
         prompt = review_prompt(
             ReviewRequest(capability=RISKY, transcript=review_transcript(thread))
         )
-        emitted = {match.group(1) for match in re.finditer(r"source=([\w-]+)", prompt)}
+        emitted = {match.group(1) for match in re.finditer(r'source="([\w-]+)"', prompt)}
         assert emitted == {"tool-call", "conversation"}
         for source in emitted:
-            assert f"source={source}" in REVIEW_INSTRUCTIONS
+            assert re.search(rf'source="?{source}\b', REVIEW_INSTRUCTIONS)
 
 
 def _gated_categories():

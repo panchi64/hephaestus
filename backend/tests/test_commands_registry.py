@@ -241,5 +241,5 @@ class TestExpansion:
         assert "Check the diff." in block
         # The untrusted fence tells the model not to follow what is inside it, and a
         # template the operator invoked is precisely what they want followed.
-        assert "UNTRUSTED" not in block
+        assert "<untrusted" not in block
         assert "the auth route" in block

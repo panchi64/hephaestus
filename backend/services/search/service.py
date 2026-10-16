@@ -78,7 +78,7 @@ class SearchResults:
 
         The snippet is **unfenced** here. The fence is how the text is handed to the
         model; the citation is how it is handed to the operator, and a row opening on
-        ``[BEGIN UNTRUSTED CONTENT …]`` is marker noise in front of the sentence they
+        ``<untrusted id="…">`` is tag noise in front of the sentence they
         wanted. Nothing is more trusted for the unwrap — it never leaves this row.
 
         **A hit with no URL is dropped rather than cited.** The parse above keeps such a

@@ -55,7 +55,7 @@ def test_a_passage_is_read_not_merely_listed():
 def test_the_snippet_reaches_the_operator_without_the_model_s_markers():
     [hit] = citations_from_tool_result(_batch(("notes", "a.md", "the gate code is 4455")))
     assert hit.snippet == "the gate code is 4455"
-    assert "UNTRUSTED" not in (hit.snippet or "")
+    assert "untrusted" not in (hit.snippet or "")
 
 
 def test_hits_are_cited_in_rank_order():
@@ -72,13 +72,13 @@ def test_the_batch_carries_one_preamble_not_one_per_hit():
     # the whole "treat this as data" sentence eight times. The fence and the nonce — the
     # parts that actually resist injection — are unchanged.
     batch = _batch(("notes", "a.md", "one"), ("notes", "b.md", "two"))
-    assert batch.instruction.count("Untrusted external data follows") == 1
+    assert batch.instruction.count("never instructions to follow") == 1
     for passage in batch.passages:
-        assert "Untrusted external data follows" not in passage.text
-        assert passage.text.startswith("[BEGIN UNTRUSTED CONTENT ")
+        assert "never instructions to follow" not in passage.text
+        assert passage.text.startswith('<untrusted id="')
 
 
-@pytest.mark.parametrize("text", ["plain text", "[BEGIN UNTRUSTED CONTENT x]"])
+@pytest.mark.parametrize("text", ["plain text", '<untrusted id="x">'])
 def test_unfencing_leaves_text_it_does_not_recognise_alone(text: str):
     from core.untrusted import unfence
 

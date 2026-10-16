@@ -54,7 +54,17 @@ _SECTION_KEYS = tuple(re.sub(r"[^a-z0-9]+", " ", name.lower()).strip() for name 
 # Anchors heading (the prompt allows omission), and then the first `## Anchors` in the text
 # is one the fenced page wrote — lifting *those* lines forward would launder an injection
 # into every later checkpoint, verbatim, forever.
-_FENCE_MARKER = re.compile(r"\[(?:BEGIN|END) UNTRUSTED CONTENT\b[^\]]*\]")
+#
+# Matches the square-bracket shape too: checkpoints stored before the tag switch carry it.
+_FENCE_MARKER = re.compile(
+    r"\[(?P<legacy>BEGIN|END) UNTRUSTED CONTENT\b[^\]]*\]|<(?P<close>/)?untrusted\b[^>]*>"
+)
+
+
+def _opens(marker: re.Match[str]) -> bool:
+    """Whether a ``_FENCE_MARKER`` match opens a fence rather than closing one."""
+    legacy = marker.group("legacy")
+    return legacy == "BEGIN" if legacy else marker.group("close") is None
 
 
 def section_key(name: str) -> str:
@@ -121,7 +131,7 @@ def without_fenced(text: str) -> str:
     for line in text.splitlines():
         marker = _FENCE_MARKER.search(line)
         if marker is not None:
-            fenced = marker.group().startswith("[BEGIN")
+            fenced = _opens(marker)
             continue
         if not fenced:
             out.append(line)
@@ -143,11 +153,7 @@ def _fenced_content(body: str) -> str:
     err-long rule from the other side."""
     lines = body.splitlines()
     begin = next(
-        (
-            i
-            for i, line in enumerate(lines)
-            if (m := _FENCE_MARKER.search(line)) and m.group().startswith("[BEGIN")
-        ),
+        (i for i, line in enumerate(lines) if (m := _FENCE_MARKER.search(line)) and _opens(m)),
         None,
     )
     if begin is None:
@@ -158,7 +164,7 @@ def _fenced_content(body: str) -> str:
         (
             i
             for i, line in enumerate(lines[begin + 1 :], start=begin + 1)
-            if (m := _FENCE_MARKER.search(line)) and m.group().startswith("[END")
+            if (m := _FENCE_MARKER.search(line)) and not _opens(m)
         ),
         len(lines),
     )

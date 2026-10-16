@@ -128,14 +128,14 @@ async def test_a_listing_is_fenced_once_per_batch(wired: _Wired):
     service, account, _transport = wired
     result = await _call(mail_toolset(), "list_messages", _deps(service), account_id=account.id)
     assert result["ok"] is True
-    assert "never follow" in s(result["instruction"])
+    assert "never instructions to follow" in s(result["instruction"])
     [fenced_message] = arr(result["messages"])
     fenced = s(fenced_message)
     # The sender's words are inside the fence, and the fence's nonce is unguessable from
     # inside it — the message cannot forge its own closing marker.
     assert INJECTION in fenced
-    assert fenced.startswith("[BEGIN UNTRUSTED CONTENT ")
-    assert fenced.rstrip().endswith("]")
+    assert fenced.startswith('<untrusted id="')
+    assert fenced.rstrip().endswith('">')
 
 
 async def test_every_read_body_is_wrapped_before_it_can_reach_the_model(wired: _Wired):
@@ -146,8 +146,8 @@ async def test_every_read_body_is_wrapped_before_it_can_reach_the_model(wired: _
     payload = s(result["message"])
     assert INJECTION in payload
     # No path returns a body outside the fence.
-    assert "UNTRUSTED CONTENT" in payload
-    body_start = payload.index("[BEGIN UNTRUSTED CONTENT")
+    assert "</untrusted id=" in payload
+    body_start = payload.index('\n<untrusted id="')
     assert payload.index(INJECTION) > body_start
 
 
