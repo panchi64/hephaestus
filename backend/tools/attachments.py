@@ -27,6 +27,7 @@ from pathlib import PurePosixPath
 
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
+from core.diagnostics import render_tool_error
 from core.exceptions import NotFoundError
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import SandboxError, stage_attachment
@@ -41,14 +42,17 @@ def attachments_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool
     async def provision(ctx: RunContext[RunDeps], attachment_id: str) -> dict[str, object]:
-        """Re-stage a file the operator attached to this conversation, by the upload id
-        in its attachment note. Use it when the path that note gave is gone, or to bring
-        back an earlier turn's file.
+        """Puts an attached file back into your workspace, by the upload id in its
+        attachment note. Use it when the path the note gave no longer holds the file, or
+        to bring back an earlier turn's file. To search a document's text instead, use
+        `corpus_retrieve` with the same id.
 
-        Returns the ``path`` it was written to — read it there with the ``files_*``
-        tools, using that path verbatim, since a name already taken stages this file
-        under a different one. To search a document's text instead, call
-        ``corpus_retrieve`` with the same id."""
+        Returns the `path` the file now sits at. Use it verbatim with the `files_*`
+        tools, because a file whose name is taken is staged under another name.
+
+        Args:
+            attachment_id: The upload id from the file's attachment note.
+        """
         uploads = ctx.deps.caps.get_optional(UploadStore)
         if uploads is None:
             return {"ok": False, "error": "Attachments are unavailable right now."}
@@ -62,8 +66,10 @@ def attachments_toolset() -> FunctionToolset[RunDeps]:
             blob = await uploads.content(ctx.deps.owner_id, attachment_id)
         except NotFoundError:
             raise ModelRetry(
-                f"No attachment with id {attachment_id!r}. Use an id from the "
-                + "attachment note for a file in this conversation."
+                render_tool_error(
+                    f"no attachment with id {attachment_id!r}",
+                    hints=["use the id from the attachment note of a file in this conversation"],
+                )
             ) from None
 
         try:
