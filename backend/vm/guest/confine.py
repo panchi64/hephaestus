@@ -177,6 +177,11 @@ def _bwrap(args: _Args, paths: dict[str, str]) -> list[str]:
         # (a stray dotfile, a cache) outlives it. World-writable because the sandbox
         # user is the only one in here, and its tools expect to write under $HOME.
         argv += ["--perms", "1777", "--tmpfs", _HOME]
+        # Made here because bubblewrap would make a bind's missing parent itself, as root
+        # and 0700, and the sandbox user could then not reach `~/projects/<name>` by path.
+        groups = sorted({dest.split("/")[0] for _key, dest, _writable in binds if "/" in dest})
+        for group in groups:
+            argv += ["--perms", "0755", "--dir", f"{_HOME}/{group}"]
         for key, dest, writable in binds:
             source = os.path.join(paths["work"], key)
             argv += ["--bind" if writable else "--ro-bind", source, f"{_HOME}/{dest}"]

@@ -77,6 +77,14 @@ def test_a_home_binds_each_folder_at_its_place_with_its_mode(tmp_path: Path) -> 
     assert ("--bind", str(work / "s-thread"), "/work") in binds
     assert _env(argv, "HOME") == "/home/agent"
     assert argv[argv.index("--chdir") + 1] == "/home/agent/projects/api"
+    # Measured: left to bubblewrap, `~/projects` came up root-owned 0700, so a command
+    # standing in a project could not reach `~/projects/<name>` by its absolute path.
+    for group in ("projects", "worktrees"):
+        at = argv.index(f"/home/agent/{group}")
+        assert argv[at - 3 : at] == ["--perms", "0755", "--dir"]
+        assert at < argv.index(
+            f"/home/agent/{group}/" + ("api" if group == "projects" else "api-fix")
+        )
 
 
 @pytest.mark.parametrize(
