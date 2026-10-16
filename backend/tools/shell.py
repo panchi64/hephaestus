@@ -343,13 +343,12 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
 
         Args:
             command: The command, as you would type it in bash.
-            reach: How far the command needs to go, which is also what the operator
-                approves. `workspace` runs it in your VM with no network: builds, tests,
-                git and anything that reads or writes files. `network` adds the domains
-                the operator has allowed, for installs and fetches. `host` runs it
-                unfenced on the operator's own machine, starting in the project's folder
-                there; use it only when the command has to act on that machine, and know
-                that its changes cannot be reverted.
+            reach: How far the command needs to go. `workspace` runs it in your VM with
+                no network: builds, tests, git and anything that reads or writes files.
+                `network` adds the domains the operator has allowed, for installs and
+                fetches. `host` runs it unfenced on the operator's own machine, starting
+                in the project's folder there; use it only when the command has to act on
+                that machine, and know that its changes cannot be reverted.
             timeout_seconds: Seconds to wait before the command is killed. Default 300.
         """
         state = await _ready(ctx, "run_command")

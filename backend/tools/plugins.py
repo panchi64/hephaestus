@@ -146,7 +146,7 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         view = await store.get_by_name(ctx.deps.owner_id, name.strip().lower())
         if view is None:
             raise _no_such_plugin(name)
-        which ="active" if version == "published" else "current"
+        which = "active" if version == "published" else "current"
         files = await store.files(ctx.deps.owner_id, view.id, which)
         texts: dict[str, str] = {}
         budget = _READ_MAX_CHARS

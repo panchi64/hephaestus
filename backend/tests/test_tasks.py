@@ -247,7 +247,7 @@ async def test_the_offered_surface_is_three_tools_under_our_own_names():
     # cross-references tools this catalog never offers.
     descriptions = {name: tool.tool_def.description or "" for name, tool in tools.items()}
     assert "add_task" not in " ".join(descriptions.values())
-    assert descriptions["tasks_read"].startswith("The current list")
+    assert descriptions["tasks_read"].startswith("Returns your task list")
 
 
 async def test_the_catalog_lists_the_same_names_the_model_is_offered(tasks: ConversationTasks):

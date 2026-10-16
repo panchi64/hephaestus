@@ -90,7 +90,13 @@ from .test_tool_policy import stub_offline
 #: well as the code tools, where a sandbox thread used to have the code tools alone. It
 #: took a fresh request to 51.2k characters at Auto, net of the bash form of `code_execute`
 #: it replaced.
-CATALOG_CEILING_CHARS = 52_000
+#:
+#: **Raised a sixth time, from 52k, for the voice rewrite of every tool description**
+#: (`docs/voice.md` §12): each says when to reach for it over its neighbors, what it
+#: returns and the mistakes it invites, and documents its parameters. The operator put the
+#: model using its tools well above this cost. It took a fresh request to 67.8k characters
+#: at Auto.
+CATALOG_CEILING_CHARS = 70_000
 
 #: The same for the whole corpus — every dormant group revealed. Deferral moves a group's
 #: cost from every turn to the turns that want it; it does not make the group free, and a
@@ -98,8 +104,9 @@ CATALOG_CEILING_CHARS = 52_000
 #: Raised from 50k, then from 60k, then from 72k, alongside the ceiling above and for the
 #: same reasons; then from 82k for the dormant `agents` group (agents writing agents), and
 #: from 84k for the dormant `routines` group, whose schedule is one compact string rather
-#: than a nested object for that reason; then from 88k for the shell in every thread.
-CORPUS_CEILING_CHARS = 92_000
+#: than a nested object for that reason; then from 88k for the shell in every thread; then
+#: from 92k, to 117.5k, for the voice rewrite of every tool description.
+CORPUS_CEILING_CHARS = 120_000
 
 
 def _dormant_categories() -> tuple[str, ...]:

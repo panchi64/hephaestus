@@ -275,11 +275,8 @@ def mail_toolset() -> FunctionToolset[RunDeps]:
 
         Args:
             account_id: The account to send from, from `mail_list_accounts`.
-            to: The recipients' addresses.
-            subject: The subject line.
             body: The message, in plain text.
             explanation: Who receives this and the gist of what it says.
-            cc: Addresses to copy.
         """
         del explanation  # Read by the approval card from the call's arguments, not by this body.
         service = _service(ctx)

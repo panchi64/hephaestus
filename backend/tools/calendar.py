@@ -126,8 +126,6 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
                 operator's own zone. It keeps a repeating event at the same local time
                 across daylight-saving changes.
             all_day: True for an event with no time of day.
-            location: Where it happens.
-            description: Notes for the event.
             rrule: An RFC 5545 rule for a repeating event, such as
                 `FREQ=WEEKLY;BYDAY=MO`.
         """
@@ -190,13 +188,9 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
 
         Args:
             event_id: The `event_id` from `calendar_agenda`.
-            title: A new name.
             start: A new ISO 8601 start, with its UTC offset.
             end: A new ISO 8601 end, with its UTC offset.
-            timezone: A new IANA zone.
-            location: A new location.
-            description: New notes.
-            rrule: A new RFC 5545 rule.
+            rrule: A new RFC 5545 rule, which replaces the series' recurrence.
         """
         service = ctx.deps.caps.get_optional(CalendarService)
         if service is None:
