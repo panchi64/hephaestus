@@ -128,6 +128,8 @@ export interface MessageDTO {
   /** On a `subagent` row: the handle of the agent that sent it, when it is a message
    *  one agent sent another rather than a report. */
   author?: string | null;
+  /** On a `subagent` row that is a report: the handle of the agent that reported. */
+  reporter?: string | null;
   tools: ToolCallDTO[];
   versions?: MessageVersionRefDTO[];
   created_at?: string | null;

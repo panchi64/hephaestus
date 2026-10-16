@@ -31,7 +31,7 @@ from pydantic_ai.models.test import TestModel
 
 from agent import turn as turn_module
 from agent.injected import injected_text
-from harness.manifests._subagent_wake import SubagentWake
+from harness.manifests._subagent_wake import SubagentWake, report_text
 from routes.chat import compose_turn
 from routes.deps import app_state
 from runs import QueuedMessage, Run, RunStatus, RunStream
@@ -193,6 +193,16 @@ class TestHowTheOperatorReadsIt:
         # And the framing written for the model is taken back off: it addresses the model
         # about the operator, in the third person, and the operator is who reads this.
         assert views[0].content == "I found it"
+
+    def test_a_report_turn_names_who_reported_and_has_no_author(self):
+        from services.conversation_view import project_tree
+        from services.subagents.report import report_envelope
+
+        text = report_text("done", "fixer", "worker", "fixed", None, None, callsign="BRAX")
+        request = ModelRequest(parts=[UserPromptPart(content=report_envelope(text))])
+        views = project_tree([("n1", request)])
+
+        assert (views[0].reporter, views[0].author) == ("fixer", None)
 
     def test_a_message_from_another_agent_is_shown_with_its_sender(self):
         from services.conversation_view import project_tree

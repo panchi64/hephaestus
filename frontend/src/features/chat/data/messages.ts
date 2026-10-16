@@ -126,6 +126,7 @@ export function toMessage(dto: MessageDTO): ChatMessage {
     id: dto.id,
     role: dto.role,
     author: dto.author ?? undefined,
+    reporter: dto.reporter ?? undefined,
     content: dto.content,
     createdAt: dto.created_at ?? new Date().toISOString(),
     versionIndex: dto.version_index,

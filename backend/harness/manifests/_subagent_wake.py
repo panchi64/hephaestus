@@ -66,7 +66,7 @@ from services.settings_store import (
 from services.subagent_store import SubagentStore
 from services.subagents import FiledReport
 from services.subagents.callsigns import designation
-from services.subagents.report import message_envelope, report_envelope
+from services.subagents.report import message_envelope, report_envelope, report_heading
 from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
 from services.workspace import split_workspace_key
@@ -228,12 +228,13 @@ class SubagentWake:
             logger.exception("subagents: could not close out %s", row.id)
         if not row.parent_conversation_id:
             return  # spawned from a run with no thread of its own
+        handle = row.handle or row.spec_name
         _ = await self.deliver(
             row.owner_id,
             row.parent_conversation_id,
             report_text(
                 outcome.status,
-                row.handle or row.spec_name,
+                handle,
                 row.spec_name,
                 summary,
                 outcome.error,
@@ -241,6 +242,7 @@ class SubagentWake:
                 callsign=row.callsign,
                 agent_class=row.agent_class,
             ),
+            sender=handle,
         )
 
     async def _outcome(self, run: Run, conversation_id: str) -> _Outcome:
@@ -317,8 +319,8 @@ class SubagentWake:
         sender: str | None = None,
     ) -> bool:
         """Put a report (``source="subagent"``) or another agent's message
-        (``source="agent"``, from ``sender``) in front of a thread. False when the
-        recipient is an agent that was stopped, which nothing wakes."""
+        (``source="agent"``) from the agent ``sender`` names in front of a thread. False
+        when the recipient is an agent that was stopped, which nothing wakes."""
         async with self._lock_for(conversation_id):
             run = self._runs.active_run_for(conversation_id, owner_id)
             if run is not None and not run.is_terminal:
@@ -593,8 +595,7 @@ def report_text(
     extras = [name for name in (designation(callsign, agent_class),) if name]
     if spec_name != handle:
         extras.append(spec_name)
-    named = f"`{handle}`" + (f" ({', '.join(extras)})" if extras else "")
-    parts = [f"{named}: {status}."]
+    parts = [report_heading(handle, extras, status)]
     if error:
         parts.append(f"error: {error}")
     if summary:

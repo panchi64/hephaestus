@@ -448,13 +448,17 @@ describe("whose queued message it is", () => {
     text,
     ...(source === undefined ? {} : { source }),
   });
-  const fromAgent = (text: string, sender: string): RunEvent => ({
+  const fromAgent = (
+    text: string,
+    sender: string,
+    source: "subagent" | "agent" = "agent",
+  ): RunEvent => ({
     type: "message.queued",
     seq: ++seq,
     ts: "",
     message_id: "q1",
     text,
-    source: "agent",
+    source,
     sender,
   });
   const injected = (source?: "operator" | "subagent" | "agent"): RunEvent => ({
@@ -487,6 +491,15 @@ describe("whose queued message it is", () => {
     const bubble = h.messages.find((m) => m.queuedMessageId === "q1");
     expect(bubble?.role).toBe("subagent");
     expect(bubble?.author).toBe("planner");
+    expect(bubble?.reporter).toBeUndefined();
+  });
+
+  test("a report carries who reported, and is not mistaken for a message", () => {
+    const h = harness(turn());
+    h.fold(fromAgent("`fixer`: done.", "fixer", "subagent"));
+    const bubble = h.messages.find((m) => m.queuedMessageId === "q1");
+    expect(bubble?.reporter).toBe("fixer");
+    expect(bubble?.author).toBeUndefined();
   });
 
   test("a report never tags an optimistic bubble the operator is waiting on", () => {

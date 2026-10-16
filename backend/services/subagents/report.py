@@ -138,6 +138,23 @@ def report_body(text: str) -> str | None:
     return body if body is not None else _unwrap(_LEGACY_REPORT_HEADER, REPORT_CLOSE, text)
 
 
+def report_heading(handle: str, extras: list[str], status: str) -> str:
+    """A report's first line: `` `handle` (extras): status. ``, which :func:`report_sender`
+    reads back."""
+    named = f"`{handle}`" + (f" ({', '.join(extras)})" if extras else "")
+    return f"{named}: {status}."
+
+
+#: Also matches the ``Sub-agent `handle` (…) finished.`` line older reports opened with.
+_REPORT_SENDER = re.compile(r"(?:Sub-agent )?`(?P<handle>[^`\n]+)`")
+
+
+def report_sender(body: str) -> str | None:
+    """The handle a report's heading names, or ``None`` for a body without one."""
+    match = _REPORT_SENDER.match(body)
+    return None if match is None else match.group("handle")
+
+
 def direction_body(text: str) -> str | None:
     """The direction inside an envelope, or ``None`` when this is not one."""
     return _unwrap(_DIRECTION_HEADER, DIRECTION_CLOSE, text)

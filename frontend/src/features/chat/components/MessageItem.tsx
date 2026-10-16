@@ -90,7 +90,7 @@ export interface MessageItemProps {
    *  the whole turn — the divider says it in words, this says it at a glance.
    *  Derived by the transcript (presentation only); a turn can't know it alone. */
   dimmed?: boolean;
-  /** For a sub-agent report: the callsign of the agent that sent it. */
+  /** For a sub-agent report or message: the callsign of the agent that sent it. */
   subagentCallsign?: string;
 }
 

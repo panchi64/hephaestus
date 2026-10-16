@@ -39,7 +39,13 @@ from core.text import chars_to_tokens
 from services.answers import ASK_USER_TOOL, AnsweredQuestion, parse_answer, questions_of
 from services.commands.spec import Invocation
 from services.shapes import as_dict, as_list
-from services.subagents.report import direction_body, message_body, report_body, report_prose
+from services.subagents.report import (
+    direction_body,
+    message_body,
+    report_body,
+    report_prose,
+    report_sender,
+)
 
 if TYPE_CHECKING:  # a type, not a dependency — nothing here calls into the run substrate
     from runs import TurnOverhead
@@ -198,6 +204,8 @@ class MessageView:
     # On a "subagent" turn that is a message rather than a report, the handle of the agent
     # that sent it.
     author: str | None = None
+    # On a "subagent" turn that is a report, the handle of the agent that reported.
+    reporter: str | None = None
     tools: list[ToolView] = field(default_factory=list)
     timestamp: datetime | None = None
     # The model that produced this assistant turn (the last response's model_name —
@@ -837,6 +845,7 @@ def project_tree(
                 views.append(
                     MessageView(
                         role="subagent" if report is not None else "user",
+                        reporter=None if report is None else report_sender(report),
                         content=strip_file_refs_marker(text if body is None else body),
                         timestamp=part.timestamp,
                         id=node_id,

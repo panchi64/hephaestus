@@ -20,9 +20,8 @@ from services.workspace import DELEGATION_SEP
 
 _CONTRACT = """\
 Another agent of the forge spawned you to do one self-contained piece of work and is \
-waiting on your report. Usually nobody is in this thread with you. Where the rules above \
-speak of keeping the operator posted or asking them a question, the agent that spawned you \
-stands in: you post no updates, and you ask through a `blocked` report.
+waiting on your report. Usually nobody is in this thread with you, so you post no updates, \
+and a question for the agent that spawned you goes in a `blocked` report.
 
 You belong to that agent's delegation tree. `agents_message` reaches the agent that spawned \
 you (`parent`) and any other agent in the tree by its handle, which `agents_list` names. Use \

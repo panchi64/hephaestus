@@ -87,7 +87,7 @@ from tools import (
 
 from .code_mode import code_mode_limits
 from .compaction_context import build_compaction_context
-from .factory import NO_DORMANT, TurnAgent, build_agent, system_prompt_for
+from .factory import NO_DORMANT, TurnAgent, build_agent
 from .finalize import (
     finalize,
     flush_recorder,
@@ -140,7 +140,7 @@ def turn_agent(
     fold composes its agent here too, rather than a lookalike that could drift."""
     return build_agent(
         model,
-        system_prompt=system_prompt_for(binding),
+        spawned=binding.spawned,
         categories=categories,
         instruction_providers=instruction_providers,
         dormant=dormant,

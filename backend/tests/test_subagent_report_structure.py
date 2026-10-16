@@ -20,7 +20,9 @@ from services.subagents.report import (
     findings_block,
     report_body,
     report_envelope,
+    report_heading,
     report_prose,
+    report_sender,
     report_structure,
 )
 
@@ -88,6 +90,19 @@ def test_a_report_stored_before_reports_carried_a_status_still_reads_as_one():
         "matters.\n\nfound it\n</subagent-report>"
     )
     assert report_body(stored) == "found it"
+
+
+def test_a_report_names_the_agent_that_sent_it():
+    heading = report_heading("migrate-schema", ["DOTT · Tripodes", "worker"], "done")
+    assert report_sender(f"{heading}\n\nAdded the column.") == "migrate-schema"
+
+
+def test_a_report_from_before_the_status_heading_still_names_its_sender():
+    assert report_sender("Sub-agent `explorer` finished.\n\nfound it") == "explorer"
+
+
+def test_a_body_with_no_heading_names_nobody():
+    assert report_sender("found it") is None
 
 
 def test_a_report_with_no_block_is_a_report_not_a_failure():

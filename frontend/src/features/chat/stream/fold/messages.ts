@@ -47,7 +47,10 @@ export function foldMessages(ev: RunEvent, c: FoldContext): boolean {
               queuedPending: true,
               queuedMessageId: ev.message_id,
               createdAt: ev.ts,
-              author: ev.sender ?? undefined,
+              author:
+                ev.source === "agent" ? (ev.sender ?? undefined) : undefined,
+              reporter:
+                ev.source === "subagent" ? (ev.sender ?? undefined) : undefined,
             });
         }),
       );

@@ -24,9 +24,14 @@ import type { ChatMessage } from "../model";
  */
 export function SubagentReport(props: {
   message: ChatMessage;
-  /** The reporting sub-agent's callsign, when the thread's sub-agent list knows it. */
+  /** The sending agent's callsign, when the thread's sub-agent list knows it. */
   callsign?: string;
 }): JSX.Element {
+  const plate = (): string => {
+    const { author, reporter } = props.message;
+    if (author) return `Message · ${props.callsign || author}`;
+    return `Report · ${props.callsign || reporter || "sub-agent"}`;
+  };
   return (
     // A plate naming the region with a hairline running on from it, then the prose
     // bare — the console register's way of setting something apart without boxing it
@@ -34,11 +39,7 @@ export function SubagentReport(props: {
     <Stack gap={2} class="my-1 w-full">
       <div class="flex items-center gap-3">
         <Text variant="plate" tone="dim" class="shrink-0">
-          {props.callsign
-            ? `Report · ${props.callsign}`
-            : props.message.author
-              ? `Message · ${props.message.author}`
-              : "Report · sub-agent"}
+          {plate()}
         </Text>
         <span class="h-px flex-1 bg-line" aria-hidden="true" />
       </div>

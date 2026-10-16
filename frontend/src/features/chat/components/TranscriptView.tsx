@@ -165,7 +165,11 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
                       message.role === "subagent"
                         ? props.viewport
                             .subagents()
-                            .find((s) => s.handle === message.author)?.callsign
+                            .find(
+                              (s) =>
+                                s.handle ===
+                                (message.author ?? message.reporter),
+                            )?.callsign
                         : undefined
                     }
                     onResolveHostCommands={props.stream.resolveHostCommands}

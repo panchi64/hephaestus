@@ -193,6 +193,8 @@ class MessageOut(BaseModel):
     content: str
     # The sending agent's handle, on a message one agent sent another.
     author: str | None = None
+    # The reporting agent's handle, on a sub-agent's report.
+    reporter: str | None = None
     tools: list[ToolCallOut] = []
     versions: list[ViewVersionRefOut] = []
     created_at: datetime | None = None
@@ -405,6 +407,7 @@ def message_out(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut
         role=view.role,
         content=view.content,
         author=view.author,
+        reporter=view.reporter,
         tools=[
             ToolCallOut(
                 id=t.id,

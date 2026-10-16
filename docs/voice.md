@@ -192,7 +192,7 @@ Across every model on the platform:
 
 No sub-agent goes quiet. One that ends a turn without calling back is sent back once; one that still doesn't, or that stalls, loops or runs out of budget, is reported to its parent as failed by the platform, with the reason, so nothing is left idle. A report that would wake a tree past its unattended-turn ceiling is held, not dropped: the operator is told once, and it goes out with their next message.
 
-A spawned thread runs under its own system prompt rather than Talos's: the forge, a line saying it is not Talos and speaks only through its report, and the house rules. Its class, the report contract and its workspace come in its brief, on every turn.
+A spawned thread runs under its own system prompt rather than Talos's: the forge, a line saying it is not Talos and speaks only through its report, and the house rules. Its operating rules are Talos's without the ones that assume an operator in the room: plan mode, questions, progress beats, pushback, and launching agents. Its class, the report contract and its workspace come in its brief, on every turn.
 
 **A report is:**
 1. The answer or outcome, first.

@@ -21,7 +21,7 @@ from pydantic_ai.models.test import TestModel
 from agent.factory import build_agent
 from core.container import ServiceContainer
 from core.timezone import local_zone_key
-from prompts.agent import INSTRUCTIONS, SYSTEM_PROMPT
+from prompts.agent import INSTRUCTIONS, SPAWNED_INSTRUCTIONS, SYSTEM_PROMPT
 from prompts.levels import AUTO_LEVEL, MANUAL_LEVEL, PLAN_LEVEL
 from runs import Run, RunStream
 from services.permissions import PermissionLevel
@@ -29,7 +29,12 @@ from tools.builtin import builtin_toolset
 from tools.deps import RunDeps
 
 
-async def _brief(*, project_id: str | None = None, permission: PermissionLevel = "edit") -> str:
+async def _brief(
+    *,
+    project_id: str | None = None,
+    permission: PermissionLevel = "edit",
+    spawned: bool = False,
+) -> str:
     """The instructions a turn in this thread would actually ship with.
 
     Driven through a real agent rather than read off the registries, because the thing
@@ -44,7 +49,7 @@ async def _brief(*, project_id: str | None = None, permission: PermissionLevel =
         project_id=project_id,
         permission=permission,
     )
-    agent = build_agent(TestModel(), categories={})
+    agent = build_agent(TestModel(), categories={}, spawned=spawned)
     result = await agent.run("hello", deps=deps)
     requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
     return "\n".join(m.instructions or "" for m in requests)
@@ -124,6 +129,20 @@ class TestTheSystemPrompt:
         lowered = SYSTEM_PROMPT.lower()
         for claim in ("pip", "immutable", "apt", "home directory"):
             assert claim not in lowered
+
+
+class TestASpawnedThread:
+    async def test_it_ships_the_shared_rules_without_the_ones_only_talos_keeps(self):
+        """A sub-agent has nobody to post beats to, push back on or ask, and a rule about
+        how the operator names agents is noise in its head."""
+        brief = await _brief(spawned=True)
+        assert SPAWNED_INSTRUCTIONS in brief
+        for talos_only in ("`plan_enter`", "`builtin_ask_user`", "brief beats", "BRAX"):
+            assert talos_only in INSTRUCTIONS
+            assert talos_only not in brief
+
+    async def test_a_thread_nobody_spawned_keeps_talos_rules(self):
+        assert INSTRUCTIONS in await _brief()
 
 
 class TestTheDateLine:

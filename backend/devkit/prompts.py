@@ -11,7 +11,12 @@ import argparse
 import importlib
 import sys
 
-from prompts.agent import INSTRUCTIONS, SPAWNED_SYSTEM_PROMPT, SYSTEM_PROMPT
+from prompts.agent import (
+    INSTRUCTIONS,
+    SPAWNED_INSTRUCTIONS,
+    SPAWNED_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
+)
 from prompts.voice import join
 from services.agents.builtin import builtin_roster
 from services.permissions.levels import PERMISSION_LADDER, permission_spec
@@ -48,7 +53,7 @@ def render(target: str) -> str:
     if kind == "subagent":
         agent = builtin_roster()[argument]
         brief = brief_for(agent.instructions, agent.workspace, agent.agent_class)
-        return join(SPAWNED_SYSTEM_PROMPT, INSTRUCTIONS, brief)
+        return join(SPAWNED_SYSTEM_PROMPT, SPAWNED_INSTRUCTIONS, brief)
     module, _, name = target.partition(".")
     if module not in _PROMPT_MODULES:
         raise KeyError(target)
