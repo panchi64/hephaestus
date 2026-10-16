@@ -332,19 +332,25 @@ function categoryOf(name: string): string {
  *  this adds is the prefix strip. */
 function humanize(name: string): string {
   const category = categoryOf(name);
-  const bare =
-    category in CATEGORY_ICONS ? name.slice(category.length + 1) : name;
+  const bare = Object.hasOwn(CATEGORY_ICONS, category)
+    ? name.slice(category.length + 1)
+    : name;
   // The full registry name is the fallback, not the stripped remainder: `files_` has
   // nothing left after the prefix, and a blank row says less than the raw name does.
   return sentenceCase(bare, name);
 }
 
-/** The full row for a tool — presentation plus the summarizer's hints. */
+/** The full row for a tool — presentation plus the summarizer's hints.
+ *
+ *  Own keys only: the name is whatever the model called, and a plain index would
+ *  hand `constructor` or `toString_x` an `Object.prototype` member as its entry. */
 export function toolEntry(name: string): ToolEntry {
-  const known = TOOLS[name];
-  if (known) return known;
+  if (Object.hasOwn(TOOLS, name)) return TOOLS[name];
+  const category = categoryOf(name);
   return {
-    icon: CATEGORY_ICONS[categoryOf(name)] ?? DEFAULT_ICON,
+    icon: Object.hasOwn(CATEGORY_ICONS, category)
+      ? CATEGORY_ICONS[category]
+      : DEFAULT_ICON,
     label: humanize(name),
   };
 }

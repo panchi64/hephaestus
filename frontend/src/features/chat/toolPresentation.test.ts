@@ -79,6 +79,19 @@ describe("a tool reads as a glyph and a short label", () => {
     });
     expect(toolPresentation("webs")).toEqual({ icon: "plug", label: "Webs" });
   });
+
+  // The name is whatever the model called. An `Object.prototype` member is not an
+  // entry: indexing one out handed `Icon` an undefined name, which threw.
+  test("a name that collides with an object built-in falls back like any other", () => {
+    expect(toolPresentation("constructor")).toEqual({
+      icon: "plug",
+      label: "Constructor",
+    });
+    expect(toolPresentation("toString_thing")).toEqual({
+      icon: "plug",
+      label: "ToString thing",
+    });
+  });
 });
 
 describe("one-line form, for places with no room for a card", () => {
