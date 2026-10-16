@@ -1,0 +1,52 @@
+/* The licensed moment (§11.1) — a dot grid behind a whole page, strongest
+   around the focal object and gone by the page edges. One per screen.
+
+   1px squares at the 24px pitch, anchored to the viewport (`fixed`) so the grid
+   holds still while the rail is dragged. A conic gradient paints the square:
+   everything but the quadrant above-left of (1px, 1px) is transparent.
+
+   The focus is where the launchpad composer centres in the column across
+   window heights (≈46%); the 404 plate sits at 50%, inside the falloff's core.
+   `closest-side` reaches zero at the nearest edge on each axis, so no edge and
+   no corner carries a dot. */
+.heph-dot-field {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: conic-gradient(
+    at 1px 1px,
+    transparent 75%,
+    var(--dot-field) 0
+  );
+  background-size: var(--space-6) var(--space-6);
+  background-attachment: fixed;
+  mask-image: radial-gradient(
+    closest-side at 50% 46%,
+    #000 30%,
+    rgb(0 0 0 / 0.4) 65%,
+    transparent 100%
+  );
+}
+
+/* A page carrying the field, and the rule that makes a page-wide field safe.
+
+   The field runs under content the operator is meant to read, which §11 forbids
+   unless nothing readable sits *on* it. So every framed shell on such a page
+   trades its opaque `bg-surface` for the glass the View and the park dock use,
+   and the dots behind a console group arrive as a blur.
+
+   Scoped to the host rather than baked into the shells: off a field page there is
+   nothing behind a panel but flat ground, and `backdrop-filter` over a uniform
+   field returns that field — a compositor layer per panel to change nothing.
+   `.heph-framed` is the opt-in marker the shells carry (Panel, ConsoleGroup,
+   Composer, InstrumentBand); a shell with no surface of its own (a bare panel,
+   the system strip) does not.
+
+   The backdrop-root trap documented on `.heph-glass` applies in full: nothing
+   between the field and a framed shell may set `opacity`, `filter`, `mask` or
+   `isolation`, or the blur samples nothing. The field's own `mask` is safe only
+   because the field is a sibling of the content, never an ancestor. */
+.heph-field-page .heph-framed {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-filter);
+}

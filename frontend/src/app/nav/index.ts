@@ -124,12 +124,11 @@ export function isFlushRoute(pathname: string): boolean {
 }
 
 /**
- * Routes whose content column is backed by the deep field (§11.1).
+ * Routes whose content column is backed by the dot field (§11.1).
  *
- * The field is the *page's* ground, not a region's — cropped to one band it loses the
- * limb, and a horizon you cannot see run the width of the frame is not a horizon. So
- * the shell hosts it behind the whole column (status bar included) rather than letting
- * a screen paint one inside its own padding box, and the screen stops knowing about it.
+ * The field is the *page's* ground, not a region's: its falloff has to reach zero at
+ * the page edges, not at the edge of a screen's padding box. So the shell hosts it
+ * behind the whole column (status bar included) and the screen stops knowing about it.
  *
  * It stays rationed. Two surfaces qualify: the launchpad, whose focal object is a
  * composer and whose other panels are readouts that go glass over it, and the 404,
@@ -141,9 +140,9 @@ export function isFlushRoute(pathname: string): boolean {
  * A list rather than a flag on `NavItem`, for the same reason as `FLUSH_TOP_ROUTES`
  * above: this is the shell deciding what it paints behind its region.
  */
-const DEEP_FIELD_ROUTES = ["/"];
+const DOT_FIELD_ROUTES = ["/"];
 
-/** Whether the shell paints the deep field behind this route's column.
+/** Whether the shell paints the dot field behind this route's column.
  *
  *  **Exact, not `matchesHref`** — and not because a root href would over-match: it
  *  would not. `matchesHref(p, "/")` asks `p === "/" || p.startsWith("//")`, and no
@@ -158,9 +157,9 @@ const DEEP_FIELD_ROUTES = ["/"];
  *  `routes` is injectable for the same reason `areas` is on the resolvers above: the
  *  rule has to be testable against a fixture that fights it, and the real list holds
  *  only `/`, where exact and prefix matching agree. */
-export function isDeepFieldRoute(
+export function isDotFieldRoute(
   pathname: string,
-  routes: string[] = DEEP_FIELD_ROUTES,
+  routes: string[] = DOT_FIELD_ROUTES,
 ): boolean {
   return routes.includes(pathname);
 }

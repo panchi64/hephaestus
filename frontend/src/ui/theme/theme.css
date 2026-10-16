@@ -7,6 +7,7 @@
 @import "./styles/motion-registers.css";
 @import "./styles/interaction.css";
 @import "./styles/utilities.css";
+@import "./styles/dot-field.css";
 @import "./styles/animations-machine.css";
 @import "./styles/animations-human.css";
 @import "./styles/construction-reveal.css";

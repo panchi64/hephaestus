@@ -1,4 +1,4 @@
-import { Button, ConstructionReveal, DeepField, Text } from "~/ui";
+import { Button, ConstructionReveal, DotField, Text } from "~/ui";
 
 /** A path with no route. The surfaces that became settings sections used to
  *  forward through here into `?settings=…`; nothing is deployed anywhere that
@@ -10,19 +10,19 @@ import { Button, ConstructionReveal, DeepField, Text } from "~/ui";
  *  the one screen the operator reaches by accident, which is the right place for the
  *  product to be quietly good-looking rather than merely correct.
  *
- *  It draws its own field rather than going through `isDeepFieldRoute`: this route is
+ *  It draws its own field rather than going through `isDotFieldRoute`: this route is
  *  outside the `(app)` group, so there is no shell column here to paint behind. */
 export default function NotFound() {
   return (
     <div class="relative flex h-screen items-center justify-center overflow-hidden bg-bg text-text">
-      <DeepField />
+      <DotField />
       {/* The plate is the View's own panel — `ConstructionReveal`: registration
           marks, hairline rules, and the frosted `.heph-glass` surface inside them.
           It is reused rather than reproduced on `RegistrationFrame`, which draws
           marks and no surface: a second "framed glass panel" in the system is two
           things to keep in step, and the frost is the whole point here. The field
-          runs right under this plate, so a surface that merely tinted would leave
-          a graticule crossing the words.
+          is densest right under this plate, so a surface that merely tinted would
+          leave dots behind the words.
 
           `when` is a constant true. Everywhere else this component gates a region
           the operator deliberately opens, and the entry gesture says *a place was
