@@ -43,10 +43,15 @@ def vault_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool(requires_approval=True)
     async def list_entries(ctx: RunContext[RunDeps], reason: str) -> dict[str, object]:
-        """List what the operator keeps in their password vault — names, usernames, and
-        URLs, never the passwords themselves.
+        """Lists the entries in the operator's password vault: each one's `id`, `name`,
+        `username` and `url`, never the passwords.
 
-        ``reason`` MUST say why you need to see the vault's contents.
+        Call it to find the entry a task needs before reading it with `vault_get_entry`.
+        When the vault is locked, the result says so; only the operator can unlock it,
+        so ask them rather than retrying.
+
+        Args:
+            reason: Which credential you are looking for and what task needs it.
         """
         del reason  # Read by the approval card from the call's arguments, not by this body.
         service = ctx.deps.caps.get_optional(SecretVaultService)
@@ -60,11 +65,17 @@ def vault_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool(requires_approval=True)
     async def get_entry(ctx: RunContext[RunDeps], entry_id: str, reason: str) -> dict[str, object]:
-        """Read one stored credential in full, **including its password**.
+        """Returns one vault entry in full, its password included.
 
-        Use it only when the task genuinely needs the secret itself. ``reason`` MUST be a
-        plain-language statement of what you will do with the credential. Find an entry's
-        id with ``vault_list_entries`` first.
+        Use it only when the task needs the secret itself, such as signing in or
+        configuring a service, and never to show the operator a password they can open
+        themselves. Once you have it, use it where the task needs it and nowhere else:
+        don't repeat it in your reply, write it into a file the task did not ask for, or
+        pass it to a host it does not belong to.
+
+        Args:
+            entry_id: The entry's `id`, from `vault_list_entries`.
+            reason: What you will do with this credential, and where it will be used.
         """
         del reason  # Read by the approval card from the call's arguments, not by this body.
         service = ctx.deps.caps.get_optional(SecretVaultService)
