@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
+from core.diagnostics import render_tool_error
 from core.exceptions import NotFoundError
 from models.calendar import DEFAULT_TIMEZONE
 from services.calendar import CalendarService, EventView, OccurrenceView
@@ -41,10 +42,21 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
     async def agenda(
         ctx: RunContext[RunDeps], start: str | None = None, end: str | None = None
     ) -> list[dict[str, object]]:
-        """List calendar events between two moments, with recurring events expanded.
+        """Returns the operator's calendar events between two moments, across every
+        calendar, with each occurrence of a recurring event listed separately.
 
-        `start` and `end` are ISO-8601 timestamps (UTC unless they carry an offset).
-        Defaults to now through two weeks ahead.
+        Use it to answer what is coming up, to find free time, and to get the `event_id`
+        that `calendar_update_event` and `calendar_delete_event` need. Each entry carries
+        `event_id`, its `occurrence_start` and `occurrence_end`, `title`, `all_day`,
+        `recurring`, `location` and `calendar_id`.
+
+        A window can span at most 366 days; page through anything longer.
+
+        Args:
+            start: An ISO 8601 timestamp. Default now. Include the operator's UTC offset
+                (`2026-06-12T09:00:00+02:00`), because a timestamp without one is read as
+                UTC.
+            end: An ISO 8601 timestamp, with its offset. Default two weeks after `start`.
         """
         service = ctx.deps.caps.get_optional(CalendarService)
         if service is None:
@@ -52,17 +64,26 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
         window_start = _moment(start) if start else datetime.now(UTC)
         window_end = _moment(end) if end else window_start + timedelta(days=_DEFAULT_AGENDA_DAYS)
         if window_end < window_start:
-            raise ModelRetry("end must not be before start.")
+            raise ModelRetry(render_tool_error("`end` is before `start`"))
         if window_end - window_start > timedelta(days=_MAX_AGENDA_DAYS):
             raise ModelRetry(
-                f"Ask for a window of at most {_MAX_AGENDA_DAYS} days and page through it."
+                render_tool_error(
+                    f"the window is longer than {_MAX_AGENDA_DAYS} days",
+                    hints=["ask for a shorter window and page through the rest"],
+                )
             )
         found = await service.occurrences(ctx.deps.owner_id, window_start, window_end)
         return [_occurrence(occurrence) for occurrence in found]
 
     @toolset.tool
     async def list_calendars(ctx: RunContext[RunDeps]) -> list[dict[str, object]]:
-        """List the operator's calendars — `calendar_create_event` needs one to write to."""
+        """Returns the operator's calendars, each with its `calendar_id`, `name` and
+        whether it is `read_only`.
+
+        Call it when the operator names a calendar ("put it on my work calendar"), to
+        find the `calendar_id` that `calendar_create_event` takes. Without one, events
+        go to their first writable calendar.
+        """
         service = ctx.deps.caps.get_optional(CalendarService)
         if service is None:
             return [{"error": _UNAVAILABLE}]
@@ -84,20 +105,43 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
         description: str | None = None,
         rrule: str | None = None,
     ) -> dict[str, object]:
-        """Add an event to a calendar.
+        """Adds an event to one of the operator's calendars and returns it as stored,
+        with its `event_id`.
 
-        `start`/`end` are ISO-8601 timestamps and `timezone` is the IANA zone the event
-        belongs to (e.g. `Europe/Madrid`) — pass it for a timed event so a repeating one
-        keeps its local time across daylight-saving changes. `rrule` is a bare RFC 5545
-        rule such as `FREQ=WEEKLY;BYDAY=MO`. Omitting `calendar_id` uses the operator's
-        first writable calendar; `calendar_list_calendars` names the rest.
+        Before you create one, check `calendar_agenda` when a clash would matter or the
+        event may already exist, since a duplicate is easy to make and annoying to find.
+        Resolve relative dates ("next Tuesday") against today's date in the operator's
+        zone, and state the date and time you chose in your reply so a misreading shows.
+
+        Args:
+            title: The event's name, as the operator would write it.
+            start: An ISO 8601 timestamp with its UTC offset, because one without is read
+                as UTC. For an all-day event, a bare date (`2026-06-12`): a date with a
+                time and offset can land on the day before.
+            end: An ISO 8601 timestamp with its offset. Omit for a one-hour event, or a
+                one-day all-day event. An all-day `end` is the day after the last day.
+            calendar_id: The calendar to write to, from `calendar_list_calendars`. Omit
+                for the operator's first writable calendar.
+            timezone: The IANA zone the event belongs to (`Europe/Madrid`). Default the
+                operator's own zone. It keeps a repeating event at the same local time
+                across daylight-saving changes.
+            all_day: True for an event with no time of day.
+            location: Where it happens.
+            description: Notes for the event.
+            rrule: An RFC 5545 rule for a repeating event, such as
+                `FREQ=WEEKLY;BYDAY=MO`.
         """
         service = ctx.deps.caps.get_optional(CalendarService)
         if service is None:
             return {"error": _UNAVAILABLE}
         target = calendar_id or await _default_calendar(ctx)
         if target is None:
-            raise ModelRetry("There are no writable calendars; ask the operator to add one.")
+            raise ModelRetry(
+                render_tool_error(
+                    "the operator has no writable calendar",
+                    hints=["ask the operator to add one"],
+                )
+            )
         try:
             created = await service.create_event(
                 ctx.deps.owner_id,
@@ -112,9 +156,17 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
                 rrule=rrule,
             )
         except NotFoundError as exc:
-            raise ModelRetry(f"No such calendar: {exc}") from exc
+            raise ModelRetry(
+                render_tool_error(
+                    "no such calendar",
+                    cause=str(exc),
+                    hints=["take a `calendar_id` from `calendar_list_calendars`"],
+                )
+            ) from exc
         except ValueError as exc:
-            raise ModelRetry(f"That event couldn't be created: {exc}") from exc
+            raise ModelRetry(
+                render_tool_error("the event could not be created", cause=str(exc))
+            ) from exc
         return _event(created)
 
     @toolset.tool
@@ -129,9 +181,23 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
         description: str | None = None,
         rrule: str | None = None,
     ) -> dict[str, object]:
-        """Change an existing event, by an `event_id` from `calendar_agenda`. Only the
-        fields you pass are altered; for a recurring event this changes the whole
-        series."""
+        """Changes an existing event and returns it as stored. Only the fields you pass
+        change.
+
+        For a recurring event this changes the whole series. To move a single
+        occurrence, cancel it with `calendar_delete_event` and create a one-off event in
+        its place.
+
+        Args:
+            event_id: The `event_id` from `calendar_agenda`.
+            title: A new name.
+            start: A new ISO 8601 start, with its UTC offset.
+            end: A new ISO 8601 end, with its UTC offset.
+            timezone: A new IANA zone.
+            location: A new location.
+            description: New notes.
+            rrule: A new RFC 5545 rule.
+        """
         service = ctx.deps.caps.get_optional(CalendarService)
         if service is None:
             return {"error": _UNAVAILABLE}
@@ -148,18 +214,27 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
                 rrule=rrule,
             )
         except NotFoundError as exc:
-            raise ModelRetry(f"No such event: {exc}") from exc
+            raise _no_such_event(exc) from exc
         except ValueError as exc:
-            raise ModelRetry(f"That change couldn't be applied: {exc}") from exc
+            raise ModelRetry(
+                render_tool_error("the change could not be applied", cause=str(exc))
+            ) from exc
         return _event(updated)
 
     @toolset.tool
     async def delete_event(
         ctx: RunContext[RunDeps], event_id: str, occurrence_start: str | None = None
     ) -> str:
-        """Delete an event. Pass `occurrence_start` (the ISO start of one instance) to
-        cancel just that instance of a recurring event and leave the rest of the series in
-        place; omit it to delete the event outright."""
+        """Deletes an event, or cancels one occurrence of a recurring event.
+
+        Without `occurrence_start` the whole event goes, every occurrence of a series
+        included, so pass it whenever the operator means a single date.
+
+        Args:
+            event_id: The `event_id` from `calendar_agenda`.
+            occurrence_start: The `occurrence_start` of the one instance to cancel, as
+                `calendar_agenda` gave it. The rest of the series stays.
+        """
         service = ctx.deps.caps.get_optional(CalendarService)
         if service is None:
             return _UNAVAILABLE
@@ -171,12 +246,24 @@ def calendar_toolset() -> FunctionToolset[RunDeps]:
                 return "Cancelled that occurrence; the rest of the series is unchanged."
             await service.delete_event(ctx.deps.owner_id, event_id)
         except NotFoundError as exc:
-            raise ModelRetry(f"No such event: {exc}") from exc
+            raise _no_such_event(exc) from exc
         except ValueError as exc:
-            raise ModelRetry(f"That deletion couldn't be applied: {exc}") from exc
+            raise ModelRetry(
+                render_tool_error("the deletion could not be applied", cause=str(exc))
+            ) from exc
         return "Deleted."
 
     return toolset
+
+
+def _no_such_event(exc: NotFoundError) -> ModelRetry:
+    return ModelRetry(
+        render_tool_error(
+            "no such event",
+            cause=str(exc),
+            hints=["take an `event_id` from `calendar_agenda`"],
+        )
+    )
 
 
 async def _default_calendar(ctx: RunContext[RunDeps]) -> str | None:
@@ -197,7 +284,10 @@ def _moment(raw: str) -> datetime:
         parsed = datetime.fromisoformat(raw)
     except (TypeError, ValueError) as exc:
         raise ModelRetry(
-            f"{raw!r} is not an ISO-8601 timestamp; use e.g. 2026-06-12T13:00:00Z."
+            render_tool_error(
+                f"{raw!r} is not an ISO 8601 timestamp",
+                hints=["write it like `2026-06-12T13:00:00+02:00`, with the offset"],
+            )
         ) from exc
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 

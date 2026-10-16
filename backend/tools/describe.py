@@ -123,8 +123,7 @@ _PLAN_PROPERTY_TEXT: Mapping[tuple[str, str], str] = {
     ),
     ("PlanItem", "status"): "Current status of this task. Exactly one task is `in_progress`.",
     ("PlanItem", "active_form"): (
-        'The task in the present continuous, shown while it runs: "Adding the database '
-        'migration".'
+        'The task in the present continuous, shown while it runs: "Adding the database migration".'
     ),
     ("PlanStatusUpdate", "task_id"): (
         "The task's `id`, as you gave it in `tasks_write` or as `tasks_read` shows it."

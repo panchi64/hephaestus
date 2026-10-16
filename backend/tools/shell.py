@@ -442,9 +442,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
         return _unknown_command(command_id) if status is None else _background_payload(status)
 
     @toolset.tool
-    async def check_command(
-        ctx: RunContext[RunDeps], command_id: str
-    ) -> dict[str, object] | str:
+    async def check_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object] | str:
         """Returns where a background command stands: `status` (`running` or `finished`),
         `exit_code` once it has one, and everything it has printed so far in `stdout` and
         `stderr`.
