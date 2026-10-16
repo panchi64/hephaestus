@@ -2,6 +2,7 @@ import { Show, type JSX } from "solid-js";
 import { Button, Text, cx } from "~/ui";
 import { duration, parseInstant } from "~/lib/format";
 import { isLive, type Subagent, type SubagentStatus } from "../data";
+import { SubagentDesignation } from "./SubagentDesignation";
 
 /** The 8px state square. Each state is a different fill, and the two that are not
  *  "finished" say so a second way — running blinks (hard-stepped, the machine
@@ -134,6 +135,7 @@ export function SubagentCard(props: {
         />
         <span class="flex min-w-0 flex-1 flex-col gap-1">
           <span class="flex min-w-0 items-baseline gap-3">
+            <SubagentDesignation subagent={s()} />
             {/* The handle, not the roster name: the launching agent named this one for
               the job it is doing, and `explorer` three times over identifies nothing.
               Capped and truncated — a handle is whatever the launching model typed. */}

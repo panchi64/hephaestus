@@ -53,7 +53,7 @@ export function buildConversationTranscript(messages: ChatMessage[]): string {
           ? "Operator"
           : m.role === "compaction"
             ? "Context compacted"
-            : "Assistant";
+            : "Talos";
       const body =
         m.role === "assistant" ? assembleTranscript(m.blocks) : m.content;
       return `${label} · ${m.createdAt}\n${body}`;

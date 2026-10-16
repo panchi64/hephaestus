@@ -25,10 +25,13 @@ import yaml
 from pydantic_ai_harness.repo_context import RepoContext
 
 from core.frontmatter import FrontmatterError, split_frontmatter
+from prompts.voice import CLASSES
 from services.agents.definition import (
+    DEFAULT_CLASS,
     AgentDefinition,
     ToolAccess,
     WorkspacePolicy,
+    class_key,
     workspace_policy,
 )
 from services.permissions import PERMISSION_LEVELS, STRICTEST_PERMISSION
@@ -166,6 +169,7 @@ def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinit
     return AgentDefinition(
         name=spec_name,
         description=_clip(description, DESCRIPTION_MAX_CHARS) if clip else description,
+        agent_class=_declared_class(fields, name=spec_name),
         instructions=_clip(brief, BRIEF_MAX_CHARS) if clip else brief,
         tools=_declared_tools(fields),
         permission_ceiling=_declared_ceiling(fields, name=spec_name),
@@ -181,7 +185,11 @@ def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinit
 def render_agent_file(agent: AgentDefinition) -> str:
     """``agent`` as an agent file that :func:`parse_agent_file` reads back. The model is
     left out: it names an endpoint of this installation."""
-    front: dict[str, object] = {"name": agent.name, "description": agent.description}
+    front: dict[str, object] = {
+        "name": agent.name,
+        "description": agent.description,
+        "class": agent.agent_class,
+    }
     if agent.tools.allow is not None:
         front["tools"] = ", ".join(sorted(agent.tools.allow))
     if agent.tools.deny:
@@ -256,6 +264,20 @@ def _text(raw: object, *, field: str | None = None) -> str:
 
 def _clip(value: str, limit: int) -> str:
     return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
+
+
+def _declared_class(fields: dict[str, object], *, name: str) -> str:
+    """The ``class:`` key as a class key. Unlike an unknown workspace, an unknown class
+    fails the file: it decides the agent's role, voice and callsigns, and no fallback is
+    a safe guess at the author's intent."""
+    declared = _text(fields.get("class"), field="class")
+    if not declared:
+        return DEFAULT_CLASS
+    key = class_key(declared)
+    if key is None:
+        known = ", ".join(spec.key for spec in CLASSES.values())
+        raise AgentFileError(f"agent {name!r} names unknown class {declared!r}; use one of {known}")
+    return key
 
 
 def _declared_workspace(fields: dict[str, object], *, name: str) -> WorkspacePolicy:

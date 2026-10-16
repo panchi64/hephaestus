@@ -80,7 +80,7 @@ export const KNOWLEDGE_BASE: NavItem = {
   icon: "library",
   connected: true,
   description:
-    "The unified retrieval corpus — every source the assistant can search (RAG)",
+    "The unified retrieval corpus — every source Talos can search (RAG)",
 };
 
 export const COMPARE: NavItem = {

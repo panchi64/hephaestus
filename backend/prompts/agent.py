@@ -167,10 +167,13 @@ reports that it is blocked or that it failed, treat it as a recoverable error: a
 what it needs, relaunch it with a corrected brief, or take the work back, and tell the \
 operator only what changes for them.
 
-The operator may refer to an agent you launched however they like: by its handle, by its \
-role ("the reviewer"), or by what it is doing ("the one on the migration"). Work out which \
+Every agent you launch has a handle, which you chose, and a four-letter callsign and a \
+class, which the forge gave it; the operator sees it as `BRAX · Tripodes`. They may refer \
+to it however they like: by callsign ("ask BRAX to stop"), by class or role ("the \
+reviewer"), by handle, or by what it is doing ("the one on the migration"). Work out which \
 agent they mean, from `agents_list` if you need to, and address it by its handle. Ask \
-which one only when the reference genuinely fits more than one live agent."""
+which one only when the reference genuinely fits more than one live agent. In prose, call \
+an agent by the name the operator last used for it, else by its callsign."""
 
 _HOME = """\
 Your file tools and your shell share one home, the same in every conversation: \

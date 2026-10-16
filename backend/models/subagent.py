@@ -82,6 +82,10 @@ class SubagentRecord(Table, table=True):
     #: the task it describes, and it is why ``helper-function-finder`` is a handle and "find
     #: the helper that normalises the customer's billing address" is not.
     handle: str = Field(default="", index=True)
+    #: Its class's key in ``prompts.voice.CLASSES``, and the callsign drawn from that
+    #: class's pool for the operator to know it by. Empty on rows written before either.
+    agent_class: str = Field(default="")
+    callsign: str = Field(default="")
     #: What it was asked to do. User content (the agent's words about the operator's
     #: work), so sealed like every other piece of it.
     task_enc: str

@@ -2,6 +2,7 @@ import { Show, type JSX } from "solid-js";
 import { Button, Row, StatusFlag, Text } from "~/ui";
 import type { Subagent, SubagentStatus } from "../data";
 import { SubagentApproval } from "./SubagentApproval";
+import { SubagentDesignation } from "./SubagentDesignation";
 import { SubagentTranscript } from "./SubagentTranscript";
 
 /** The same reading as the card's, in the flag's vocabulary. `blocked` is the only one
@@ -59,9 +60,12 @@ export function SubagentDetail(props: {
             {LABEL[props.subagent.status]}
           </StatusFlag>
         </Row>
-        <Text variant="label" tone="bright">
-          {props.subagent.handle}
-        </Text>
+        <Row gap={2} align="center" wrap>
+          <SubagentDesignation subagent={props.subagent} />
+          <Text variant="label" tone="bright">
+            {props.subagent.handle}
+          </Text>
+        </Row>
         {/* The brief, in full and wrapped. It is the first thing worth reading about a
             sub-agent that answered the wrong question — see `SubagentTranscript`. */}
         <Text variant="micro" tone="dim" class="block break-words">

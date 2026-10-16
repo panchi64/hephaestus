@@ -6,6 +6,7 @@ import type { Approval, ApprovalDecision } from "../model";
 import type { Subagent } from "../data";
 import { isOneClickPark } from "../approvalDecisions";
 import { ApprovalPanel } from "./ApprovalPanel";
+import { SubagentDesignation } from "./SubagentDesignation";
 
 /**
  * A sub-agent that stopped to ask permission, answered where the operator finds it.
@@ -99,7 +100,12 @@ export function SubagentApproval(props: {
     // sub-agent surface that is a request rather than a report.
     <ActionFrame
       tone="approval"
-      title={`Approval needed · ${props.subagent.handle}`}
+      title={
+        <>
+          Approval needed · <SubagentDesignation subagent={props.subagent} />{" "}
+          {props.subagent.handle}
+        </>
+      }
     >
       <Show
         when={approvals().length > 0}

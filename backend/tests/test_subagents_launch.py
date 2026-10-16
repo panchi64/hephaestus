@@ -31,6 +31,7 @@ import pytest
 from fastapi import FastAPI
 from pydantic import TypeAdapter
 
+from prompts.voice import CLASSES
 from routes.chat import compose_turn
 from routes.deps import app_state
 from services.agents import AgentDefinition, builtin_roster
@@ -380,8 +381,10 @@ class TestItsHandle:
             )
             assert summary is not None
             # Three `explorer`s produce three titles that differ only in whatever survives
-            # the width; three handles differ in the first word.
-            assert (summary.title or "").startswith("parser-finder:")
+            # the width; three callsigns and handles differ up front.
+            callsign = started.callsign
+            assert callsign in CLASSES["kourai"].callsigns
+            assert (summary.title or "").startswith(f"{callsign} · parser-finder:")
 
 
 class TestTheRegister:

@@ -30,6 +30,8 @@ class Agent(Table, table=True):
     owner_id: str = Field(index=True)
     name: str = Field(index=True)
     description_enc: str
+    # A key of ``prompts.voice.CLASSES``.
+    agent_class: str = Field(default="tripodes")
     instructions_enc: str
     endpoint_id: str | None = Field(default=None)
     model: str | None = Field(default=None)

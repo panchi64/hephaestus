@@ -155,8 +155,7 @@ export function createSteeringOps(deps: SteeringDeps): SteeringOps {
       toast.error(
         isApiError(err) && err.status === 409
           ? "Can't queue this message right now — try again in a moment."
-          : ((err as { detail?: string })?.detail ??
-              "Unable to reach the assistant."),
+          : ((err as { detail?: string })?.detail ?? "Unable to reach Talos."),
       );
       return false;
     }

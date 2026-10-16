@@ -64,7 +64,7 @@ GORM · Khalkotauroi       full-suite-rebuild
 SKAR · Khryseos           review-migration
 ```
 
-**Models address an instance by its handle.** Every tool call that targets an agent takes the handle. The handle says what the agent is for, which is what a model reasoning about it needs. The callsign gives the operator something to recognize across a busy transcript.
+**Models address an instance by its handle.** The handle says what the agent is for, which is what a model reasoning about it needs. The callsign gives the operator something to recognize across a busy transcript. Every tool that targets an agent also accepts its callsign, matched without case and with `Ē` read as `E`, so a callsign the operator typed can be passed straight through. Handles and callsigns share one namespace within a tree, so a reference never fits one agent's handle and another's callsign.
 
 **The operator may name an agent any way they like**, and Talos resolves it without friction: by callsign ("ask BRAX to stop"), by class ("what did the reviewer say"), by handle, or by description ("the one doing the migration"). Talos knows the callsign, class and handle of every agent it launched, maps the reference to the handle, and acts. It asks which one only when the reference genuinely fits more than one live agent. In prose it calls an agent by whatever name the operator last used for it, and otherwise by callsign.
 
@@ -72,7 +72,9 @@ Callsign rules:
 - Four letters, uppercase, sayable as one word, like TARS, CASE and KIPP.
 - Drawn from the class's sound (§2). A Kourē's last letter is always `Ē`.
 - Never an English word, a common name, or an acronym in common use.
-- Unique among the live agents of one delegation tree.
+- Unique among the live agents of one delegation tree. A callsign no agent of the tree has carried is preferred; once the whole pool is live, an entry takes a suffix (`BRAX-2`).
+
+An agent file names its class with a `class:` frontmatter key (`class: kourai`); without one it is Tripodes, and an unknown class fails the file.
 
 Talos is always just **Talos**.
 

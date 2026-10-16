@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from prompts.voice import CLASSES
+
 #: Which files a delegated agent works on. Each is one workspace *key*; see
 #: ``services/workspace.py`` for how a key is read.
 #:
@@ -48,6 +50,15 @@ AgentSource = Literal["builtin", "project", "user", "agent", "plugin"]
 
 #: The agent a chat runs when it names none.
 DEFAULT_AGENT = "default"
+
+#: The class an agent belongs to when its definition names none.
+DEFAULT_CLASS = "tripodes"
+
+
+def class_key(raw: str) -> str | None:
+    """``raw`` (a class key or display name, any case) as a key of ``CLASSES``, or None."""
+    key = raw.strip().lower().replace("ē", "e")
+    return key if key in CLASSES else None
 
 
 @dataclass(frozen=True)
@@ -84,6 +95,8 @@ class AgentDefinition:
     #: One or two lines on what the agent is for. The launch tool's roster is these lines,
     #: so it is the only thing the model reads when choosing whom to delegate to.
     description: str
+    #: Its key in ``prompts.voice.CLASSES``: the role, voice and callsign pool it takes.
+    agent_class: str = DEFAULT_CLASS
     #: The agent's standing brief, delivered as an instruction so nothing it later reads
     #: can rewrite it. May be empty: an agent can differ from the default only in its model
     #: or its tools.
@@ -119,3 +132,5 @@ class AgentDefinition:
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("an agent needs a name")
+        if self.agent_class not in CLASSES:
+            raise ValueError(f"{self.agent_class!r} is not an agent class")

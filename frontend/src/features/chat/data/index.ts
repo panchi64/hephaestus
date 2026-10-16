@@ -90,6 +90,7 @@ export {
   isLive,
   openSubagentThread,
   stopSubagent,
+  designationText,
   type Subagent,
   type SubagentsRead,
   type SubagentStatus,

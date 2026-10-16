@@ -29,6 +29,10 @@ export interface Subagent {
    *  reads on the card: a thread with three explorers out has three cards that are
    *  otherwise identical. */
   handle: string;
+  /** Its four-letter designation (`BRAX`); empty for a row written before callsigns. */
+  callsign: string;
+  /** Its class's display name (`Tripodes`); empty for the same old rows. */
+  agentClass: string;
   /** Which sub-agent off the roster this is — built-in or project-declared. */
   name: string;
   task: string;
@@ -62,6 +66,15 @@ export interface Subagent {
 export type SubagentStatus =
   "running" | "blocked" | "done" | "failed" | "cancelled";
 
+/** `BRAX · Tripodes` as plain text, or "" when it has no callsign. */
+export function designationText(who: {
+  callsign?: string;
+  agentClass?: string;
+}): string {
+  if (!who.callsign) return "";
+  return who.agentClass ? `${who.callsign} · ${who.agentClass}` : who.callsign;
+}
+
 /** Still expected to report. Both count as live, and a blocked one sorts above the rest
  *  because it is the only one that is waiting on a person. */
 export function isLive(subagent: Subagent): boolean {
@@ -73,6 +86,8 @@ interface SubagentDTO {
   conversation_id: string;
   run_id: string;
   handle: string;
+  callsign: string;
+  agent_class: string;
   name: string;
   task: string;
   tasks: TaskItem[];
@@ -96,6 +111,8 @@ function toSubagent(dto: SubagentDTO): Subagent {
     // `?? dto.name` for a row written before handles existed — its migration backfilled
     // the spec name, and a card with no title is worse than one naming the roster twice.
     handle: dto.handle || dto.name,
+    callsign: dto.callsign ?? "",
+    agentClass: dto.agent_class ?? "",
     name: dto.name,
     task: dto.task,
     tasks: dto.tasks ?? [],
