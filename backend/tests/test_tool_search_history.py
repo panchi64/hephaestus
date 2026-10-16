@@ -62,6 +62,7 @@ from agent.history import (
     split_injected_requests,
 )
 from agent.summarize import AutoCompactPolicy, compact_conversation
+from prompts.compaction import COMPACT_CLOSE
 from routes.deps import OPERATOR_ID, app_state
 from runs import Run, RunStatus, TurnOverhead
 from services.conversations import ConversationStore
@@ -640,7 +641,7 @@ async def test_the_carried_reveal_persists_with_the_checkpoint():
         assert isinstance(checkpoint.parts[0], ToolAvailabilityDeltaPart)
         view = await store.messages_view(cid)
         divider = next(m for m in view if m.role == "compaction")
-        assert divider.content.endswith("so far")
+        assert divider.content.endswith(f"so far\n{COMPACT_CLOSE}")
         assert divider.compaction_reason == "manual"
 
 

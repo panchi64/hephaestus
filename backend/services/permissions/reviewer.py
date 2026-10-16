@@ -87,8 +87,8 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, TextPart, UserPromp
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
+from core.compaction_sections import is_checkpoint
 from core.untrusted import new_nonce, untrusted_fence, untrusted_preamble
-from prompts.compaction import COMPACT_MARKER
 from prompts.utility import REVIEW_INSTRUCTIONS
 from services.permissions.capability import Capability
 
@@ -273,14 +273,11 @@ def _prose(messages: Sequence[ModelMessage], chars: int) -> tuple[TranscriptEntr
 def _is_compaction_summary(part: UserPromptPart) -> bool:
     """Whether this user-shaped message is a compaction checkpoint rather than a request.
 
-    Recognised by the **first line** of the label the compaction writes in front of it,
-    which is the same string the operator's transcript and the run's own event use — a
-    marker, not a heuristic. Matching the marker rather than the whole preamble is what
-    keeps a checkpoint stored before the preamble grew its second line recognisable. An
-    operator who types that line themselves loses their message from the reviewer's view,
-    which costs them a park and nothing else.
+    Recognized by the opening tag the compaction writes, a marker rather than a heuristic.
+    An operator who types that tag themselves loses their message from the reviewer's
+    view, which costs them a park and nothing else.
     """
-    return _prompt_text(part).lstrip().startswith(COMPACT_MARKER)
+    return is_checkpoint(_prompt_text(part))
 
 
 def _prompt_text(part: UserPromptPart) -> str:

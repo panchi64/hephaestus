@@ -30,10 +30,13 @@ from pydantic import BaseModel
 
 from prompts.compaction import (
     COMPACT_ANCHORS_SECTION,
+    COMPACT_CLOSE,
     COMPACT_MARKER,
     COMPACT_PREAMBLE,
     COMPACT_SECTIONS,
     COMPACT_TOOLS_SECTION,
+    LEGACY_COMPACT_MARKER,
+    LEGACY_COMPACT_PREAMBLE,
 )
 
 # Sections are asked for as `## Name` lines; anything else in the text is body. A model
@@ -189,16 +192,19 @@ class SummarySection(BaseModel):
     voice: Literal["prose", "machine"] = "prose"
 
 
-def strip_preamble(text: str) -> str:
-    """``text`` without the ``COMPACT_PREAMBLE`` the store wrote in front of it.
+def is_checkpoint(text: str) -> bool:
+    """Whether ``text`` is a stored compaction summary, in the tagged or the legacy form."""
+    return text.lstrip().startswith((COMPACT_MARKER, LEGACY_COMPACT_MARKER))
 
-    The preamble is addressed to the *model* — it exists because the checkpoint is replayed
-    as a user-shaped message and would otherwise read as something the operator typed. The
-    operator's own transcript already knows what the divider is, so repeating it there is
-    plumbing on screen. Falls back to the marker line alone, which is all a checkpoint
-    stored before the preamble's second line existed carries."""
-    body = text.strip()
-    for prefix in (COMPACT_PREAMBLE, COMPACT_MARKER):
+
+def strip_preamble(text: str) -> str:
+    """``text`` without the label the store wrapped it in.
+
+    The label is addressed to the model; the operator's transcript already draws the
+    divider. Legacy checkpoints carry the bracketed marker, some without the note line."""
+    body = text.strip().removesuffix(COMPACT_CLOSE).rstrip()
+    prefixes = (COMPACT_PREAMBLE, LEGACY_COMPACT_PREAMBLE, COMPACT_MARKER, LEGACY_COMPACT_MARKER)
+    for prefix in prefixes:
         if body.startswith(prefix):
             return body[len(prefix) :].strip()
     return body

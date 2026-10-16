@@ -59,7 +59,7 @@ from agent.summarize import (
 )
 from agent.turn import turn_deps
 from core.config import Settings, get_settings
-from prompts.compaction import COMPACT_PREAMBLE
+from prompts.compaction import COMPACT_CLOSE, COMPACT_PREAMBLE
 from routes.deps import OPERATOR_ID, app_state
 from runs import Run, RunStatus, RunStream, TurnOverhead
 from services.conversation_view import estimate_tokens, project_tree
@@ -424,7 +424,7 @@ async def test_compact_conversation_end_to_end():
         # The stored summary is labelled, so the model can't read it as the operator's own
         # words once the provider merges it with the next turn's prompt — and the event
         # carries the same string the divider renders on a reload.
-        assert outcome.summary == f"{COMPACT_PREAMBLE}\n\nthe story so far"
+        assert outcome.summary == f"{COMPACT_PREAMBLE}\n\nthe story so far\n{COMPACT_CLOSE}"
         assert outcome.messages_compacted == 8  # q0/a0 … q3/a3
         assert _texts(await store.model_history(cid))[0] == outcome.summary
 
@@ -662,7 +662,7 @@ async def test_a_full_thread_compacts_before_the_turn_and_announces_it():
 
         events = [e.body for e in run.stream.replay() if e.body.type == "conversation.compacted"]
         assert len(events) == 1
-        assert events[0].summary.endswith("FOLDED AWAY")
+        assert events[0].summary.endswith(f"FOLDED AWAY\n{COMPACT_CLOSE}")
         assert events[0].summary.startswith(COMPACT_PREAMBLE)
         assert events[0].conversation_id == cid
         assert events[0].messages_compacted > 0
@@ -678,7 +678,7 @@ async def test_a_full_thread_compacts_before_the_turn_and_announces_it():
         # The model's view now opens on the summary, and the turn that ran persisted
         # normally on top of it.
         replayed = _texts(await store.model_history(cid))
-        assert replayed[0].endswith("FOLDED AWAY")
+        assert replayed[0].endswith(f"FOLDED AWAY\n{COMPACT_CLOSE}")
         assert replayed[-2:] == ["next question", "the answer"]
 
 

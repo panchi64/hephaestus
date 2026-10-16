@@ -32,6 +32,7 @@ from pydantic_ai.usage import RequestUsage
 from agent import build_chat_orchestrator
 from agent.summarize import build_auto_compact_policy
 from core.config import Settings
+from prompts.compaction import COMPACT_CLOSE
 from routes.deps import OPERATOR_ID, app_state
 from runs import RunStatus
 from services.conversation_view import MessageView
@@ -141,7 +142,7 @@ async def test_a_regenerate_at_the_threshold_folds_and_answers_the_same_request(
         assert len(folds) == 1
 
         replayed = _texts(await store.model_history(cid))
-        assert replayed[0].endswith("FOLDED AWAY")
+        assert replayed[0].endswith(f"FOLDED AWAY\n{COMPACT_CLOSE}")
         assert replayed[-2:] == ["q3", "a better answer"]
 
         # The regenerated answer is version 2 of the one it replaced, not an orphan

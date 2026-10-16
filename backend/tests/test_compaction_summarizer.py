@@ -54,15 +54,18 @@ from agent.emit import ChassisEvent
 from agent.factory import TurnAgent, build_agent
 from agent.summarize import FoldFailed, summarize_history
 from agent.turn import turn_deps
-from core.compaction_sections import section_key, summary_sections
+from core.compaction_sections import is_checkpoint, section_key, strip_preamble, summary_sections
 from core.container import ServiceContainer
 from prompts.compaction import (
     COMPACT_ANCHORS_SECTION,
+    COMPACT_CLOSE,
     COMPACT_INSTRUCTIONS,
     COMPACT_MARKER,
     COMPACT_PREAMBLE,
     COMPACT_SECTIONS,
     COMPACT_TOOLS_SECTION,
+    LEGACY_COMPACT_MARKER,
+    LEGACY_COMPACT_PREAMBLE,
 )
 from runs import PrefixLedger, Run, RunStream
 from tools import RunDeps, core_categories
@@ -576,3 +579,21 @@ class TestTheRoster:
         keys = [section_key(name) for name in COMPACT_SECTIONS]
         for key in keys:
             assert [other for other in keys if other.startswith(key)] == [key]
+
+
+class TestTheCheckpointLabel:
+    def test_a_tagged_checkpoint_is_recognized_and_unwrapped(self):
+        stored = f"{COMPACT_PREAMBLE}\n\n## Goal\nship it\n{COMPACT_CLOSE}"
+        assert is_checkpoint(stored)
+        assert strip_preamble(stored) == "## Goal\nship it"
+
+    def test_a_checkpoint_stored_before_the_tags_still_reads(self):
+        for stored in (
+            f"{LEGACY_COMPACT_PREAMBLE}\n\n## Goal\nship it",
+            f"{LEGACY_COMPACT_MARKER}\n\n## Goal\nship it",
+        ):
+            assert is_checkpoint(stored)
+            assert strip_preamble(stored) == "## Goal\nship it"
+
+    def test_an_ordinary_message_is_not_a_checkpoint(self):
+        assert not is_checkpoint("what did we decide about the deploy?")

@@ -58,6 +58,7 @@ from agent.summarize import AutoCompactPolicy, should_compact
 from agent.turn import TurnResult, turn_deps
 from agent.verify import verify_and_correct
 from core.config import get_settings
+from prompts.compaction import COMPACT_CLOSE
 from routes.deps import OPERATOR_ID, app_state
 from runs import (
     CompactionStarted,
@@ -208,7 +209,7 @@ async def test_an_overflow_folds_the_thread_and_the_retried_request_answers():
         assert started[0].messages > 0
         compacted = bodies_of(run, ConversationCompacted)
         assert [c.reason for c in compacted] == ["overflow"]
-        assert compacted[0].summary.endswith("FOLDED AWAY")
+        assert compacted[0].summary.endswith(f"FOLDED AWAY\n{COMPACT_CLOSE}")
 
         # The persistence index moved with the fold: the tree gains the checkpoint and
         # exactly this turn's two messages — nothing re-recorded, nothing dropped. The
@@ -218,7 +219,7 @@ async def test_an_overflow_folds_the_thread_and_the_retried_request_answers():
         after = _texts(await store.history(cid))
         assert len(after) == before + 3
         assert after[-3] == "next question"
-        assert after[-2].endswith("FOLDED AWAY")
+        assert after[-2].endswith(f"FOLDED AWAY\n{COMPACT_CLOSE}")
         assert after[-1] == "the answer"
 
 
@@ -233,7 +234,7 @@ async def test_the_retry_replays_the_folded_history_not_the_original():
         assert run.status is RunStatus.done
         replayed = _texts(await store.model_history(cid))
         # The summary now opens the model's view, and the turn that recovered sits on top.
-        assert replayed[0].endswith("FOLDED AWAY")
+        assert replayed[0].endswith(f"FOLDED AWAY\n{COMPACT_CLOSE}")
         assert replayed[-2:] == ["next question", "the answer"]
         # And the folded turns are still in the transcript — nothing was destroyed.
         assert "q0" in _texts(await store.history(cid))
@@ -279,7 +280,8 @@ async def test_the_summary_is_written_by_the_turns_own_model_on_its_recorded_tur
 
         assert run.status is RunStatus.done
         assert model.folds == 1
-        assert bodies_of(run, ConversationCompacted)[0].summary.endswith("FOLDED AWAY")
+        summary = bodies_of(run, ConversationCompacted)[0].summary
+        assert summary.endswith(f"FOLDED AWAY\n{COMPACT_CLOSE}")
 
 
 async def test_a_summary_request_that_overflows_too_stops_the_turn_with_the_notice():
