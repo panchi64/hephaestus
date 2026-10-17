@@ -582,6 +582,9 @@ export interface ReviewCompleted extends Base {
   risk: "low" | "high" | "too_destructive" | null;
   authorization: "explicitly_no" | "neutral" | "explicitly_yes" | null;
   correctness: string | null;
+  /** Optional: a replayed older event carries neither field. */
+  scores?: Record<string, number> | null;
+  setup?: "unbound" | "unreachable" | null;
 }
 /** Who a queued message is from. `operator` is somebody typing while a run is going;
  *  `subagent` is a report from one the agent launched, delivered into the thread that

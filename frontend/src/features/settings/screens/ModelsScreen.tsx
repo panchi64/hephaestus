@@ -158,6 +158,23 @@ export function ModelsScreen(): JSX.Element {
     }
   };
 
+  const pickDecision = async (value: string) => {
+    const sel = decodeModelValue(value);
+    if (!sel) return;
+    try {
+      await setRoleBinding(
+        "decision",
+        chainHeadedBy("decision", sel.endpointId),
+        sel.model,
+      );
+      toast.success(`Decision model set to ${sel.model}.`);
+    } catch (e) {
+      toast.error(
+        isApiError(e) ? e.detail : "Unable to set the decision model.",
+      );
+    }
+  };
+
   return (
     <Stack gap={6}>
       <PageHeader
@@ -215,6 +232,17 @@ export function ModelsScreen(): JSX.Element {
               bound={roleEndpoint("embedding") !== undefined}
             />
           </ModelRoleCard>
+
+          <ModelRoleCard
+            label="Decision model"
+            description="Rules on Auto's actions without asking you. Needs a decision endpoint: llama-server's /v1/systemone, or OpenRouter's decision models."
+            groups={modelPickerGroups()}
+            value={roleValue("decision")}
+            onChange={(v) => void pickDecision(v)}
+            onOpen={rediscover}
+            placeholder="Not set — Auto asks you instead"
+            endpoint={roleEndpoint("decision")}
+          />
         </Stack>
       </Show>
 

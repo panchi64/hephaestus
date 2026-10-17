@@ -31,7 +31,7 @@ from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
 from models.registry import ModelEndpoint, ModelRole
 from runs import Endpoint, EndpointGate
-from services import embeddings, llm
+from services import decisions, embeddings, llm
 from services.endpoint_spec import EndpointSpec
 from services.providers import DEFAULT_PROVIDER_ID, get_provider
 from services.providers.base import ModelLimits
@@ -308,8 +308,8 @@ class ModelRegistry:
         self, owner_id: str, role: str, endpoint_ids: list[str], *, model: str | None = None
     ) -> None:
         """Bind ``role`` to an ordered chain. Validates each endpoint exists and
-        is owned, that tool-driving roles use only tool-calling endpoints, and —
-        for ``embedding`` — that the bound endpoint/model actually serves vectors.
+        is owned, that tool-driving roles use only tool-calling endpoints, and that an
+        ``embedding`` or ``decision`` binding's head actually serves that API.
 
         ``model`` pins an explicit model on the bound endpoint (``None`` ⇒ the
         endpoint's default). It is the embedding role's stand-in for ``main``'s
@@ -325,6 +325,14 @@ class ModelRegistry:
                 )
         if role == "embedding":
             await self._validate_embedding_endpoints(endpoints, model)
+        if role == "decision" and endpoints:
+            try:
+                await decisions.probe(
+                    self._to_spec(endpoints[0], role, model_override=model),
+                    client=self._http_client,
+                )
+            except DegradedCapabilityError as exc:
+                raise ValueError(str(exc)) from exc
 
         def work(session: Session) -> None:
             binding = session.exec(
@@ -680,20 +688,30 @@ class ModelRegistry:
             return None
         return specs[0].context_window if specs else None
 
-    async def resolve_embedding_spec(self, owner_id: str) -> EndpointSpec:
-        """The embedding endpoint as a raw spec — embeddings hit the provider's
-        ``/embeddings`` API directly, not a Pydantic AI chat model, so the
-        embedding service needs the base_url/model/key, not a built model.
-        Unconfigured ⇒ degraded (recall falls back to keyword)."""
-        chain_ids, model = await self.get_role_binding(owner_id, "embedding")
+    @property
+    def http_client(self) -> httpx.AsyncClient | None:
+        """The pooled client for calls made straight to a resolved spec."""
+        return self._http_client
+
+    async def resolve_raw_spec(self, owner_id: str, role: str) -> EndpointSpec:
+        """The head of ``role``'s chain as a raw spec, for a role served by an API other
+        than chat (embeddings, decisions) and so never built into a model.
+
+        Raises ``DegradedCapabilityError`` when the role is unbound or its head is disabled.
+        """
+        chain_ids, model = await self.get_role_binding(owner_id, role)
         if not chain_ids:
-            raise DegradedCapabilityError("no embedding endpoint configured")
+            raise DegradedCapabilityError(f"no {role} endpoint configured")
         endpoint = await self.get_endpoint(owner_id, chain_ids[0])
         # A benched endpoint is skipped everywhere, exactly as chat resolution skips it.
-        # Degrade to keyword recall rather than resolve one the operator switched off.
         if not endpoint.enabled:
-            raise DegradedCapabilityError(f"embedding endpoint {endpoint.name!r} is disabled")
-        return self._to_spec(endpoint, "embedding", model_override=model)
+            raise DegradedCapabilityError(f"{role} endpoint {endpoint.name!r} is disabled")
+        return self._to_spec(endpoint, role, model_override=model)
+
+    async def resolve_embedding_spec(self, owner_id: str) -> EndpointSpec:
+        """The embedding endpoint as a raw spec. Unconfigured ⇒ degraded (recall falls back
+        to keyword)."""
+        return await self.resolve_raw_spec(owner_id, "embedding")
 
     async def list_provider_models(self, owner_id: str, endpoint_id: str) -> list[str]:
         """Ask the endpoint's provider which models it serves (the chat picker's

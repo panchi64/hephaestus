@@ -1,5 +1,6 @@
+import { useSearchParams } from "@solidjs/router";
 import { Show, type JSX } from "solid-js";
-import { Collapse, StatusFlag, Text } from "~/ui";
+import { Button, Collapse, StatusFlag, Text } from "~/ui";
 import type { Review } from "../model";
 import { toolPresentation } from "../toolPresentation";
 import { ProcessRow, Sep, createAdoptedOpen } from "./ProcessRow";
@@ -20,12 +21,34 @@ const VERDICT: Record<NonNullable<Review["decision"]>, string> = {
 };
 
 /** Which stage settled it, spelled out. The distinction is the operator's to act on: a
- *  call cleared structurally means the rule is too broad, and one cleared by the reviewer
- *  means the model judged it — two different things to go and change. */
+ *  call cleared structurally means the rule is too broad, and one cleared by the decision
+ *  model means the model judged it — two different things to go and change. */
 const STAGE: Record<NonNullable<Review["stage"]>, string> = {
   judge: "Settled by its structure, with no model call.",
-  reviewer: "Settled by the reviewer.",
+  reviewer: "Settled by the decision model.",
 };
+
+/** Why a call that needed the decision model was handed over instead. */
+const SETUP: Record<NonNullable<Review["setup"]>, string> = {
+  unbound: "No decision model is set up, so Auto asked you.",
+  unreachable: "The decision model did not answer, so Auto asked you.",
+};
+
+/** The decision model's probabilities, in the order its questions are asked. */
+const SCORE_ORDER = [
+  "risk",
+  "irreversible",
+  "outward",
+  "requested",
+  "refused",
+  "mismatch",
+] as const;
+
+function scoreLine(scores: Record<string, number>): string {
+  return SCORE_ORDER.filter((key) => key in scores)
+    .map((key) => `${key} ${scores[key].toFixed(2)}`)
+    .join(" · ");
+}
 
 /** The ground the structural stage cleared it on. Three different arguments, not three
  *  degrees of trust — the one granted to a classified read grants nothing to a command,
@@ -79,6 +102,7 @@ export function ReviewCard(props: {
   open?: boolean;
 }): JSX.Element {
   const { open, toggle } = createAdoptedOpen(props);
+  const [, setParams] = useSearchParams();
   const judged = () => toolPresentation(props.review.name).label;
   const verdict = () =>
     props.review.decision ? VERDICT[props.review.decision] : "checking…";
@@ -113,6 +137,26 @@ export function ReviewCard(props: {
           {verdict()}
         </Text>
       </ProcessRow>
+      {/* Outside the collapse: the operator has to see why they were asked, and the fix is
+          one setting away. `?settings=` is the settings dialog's own address. */}
+      <Show when={props.review.setup}>
+        {(setup) => (
+          <div class="flex flex-wrap items-center gap-2 px-2 py-1">
+            <Text variant="micro" tone="warn">
+              {SETUP[setup()]}
+            </Text>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setParams({ settings: "models" }, { scroll: false })
+              }
+            >
+              Set up a decision model
+            </Button>
+          </div>
+        )}
+      </Show>
       <Collapse open={open()}>
         <div class="flex flex-col gap-1 px-2 py-1.5">
           {/* What the action would do at its worst — the same sentence the reviewer was
@@ -178,13 +222,18 @@ export function ReviewCard(props: {
               </Text>
             )}
           </Show>
-          {/* Never a veto — an observation the operator reads. A reviewer that could
-              refuse on "this looks like the wrong path" would be second-guessing the
-              model's work rather than ruling on its permission. */}
+          {/* An observation the operator reads; on its own it refuses nothing. */}
           <Show when={props.review.correctness}>
             {(correctness) => (
               <Text variant="micro" tone="warn">
                 {correctness()}
+              </Text>
+            )}
+          </Show>
+          <Show when={props.review.scores}>
+            {(scores) => (
+              <Text variant="micro" tone="dim" class="font-mono">
+                {scoreLine(scores())}
               </Text>
             )}
           </Show>

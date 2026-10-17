@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 
+import httpx
 import httpx2
 import pytest
 from openai import AsyncOpenAI, InternalServerError
@@ -23,9 +24,14 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from core.config import Settings
 from devkit.stub import MODEL_ID, create_stub
 from devkit.stub.embeddings import DIMENSIONS, embed
 from devkit.stub.scripts import REQUEST_LOG_LIMIT
+from services.endpoint_spec import EndpointSpec
+from services.permissions import ReviewRequest, ScoredVerdict, capability_of
+from services.permissions.decision_reviewer import make_decision_reviewer
+from services.permissions.decision_scoring import Thresholds
 
 from ._json import arr, obj, parse_json
 
@@ -302,3 +308,32 @@ async def test_the_pydantic_ai_model_the_registry_builds_can_talk_to_it(stub: _S
     )
     result = await Agent(model).run("ping")
     assert result.output == "pong"
+
+
+async def _decide_through_the_stub(*overrides: Mapping[str, object]) -> object:
+    """One Auto review by the app's own decision reviewer, answered by the stub."""
+    app = create_stub()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as client:
+        if overrides:
+            pushed = await client.post("http://stub/_stub/decisions", json=list(overrides))
+            assert pushed.status_code == 200
+        reviewer = make_decision_reviewer(
+            EndpointSpec(base_url="http://stub/v1", model=MODEL_ID),
+            thresholds=Thresholds.from_settings(Settings()),
+            timeout_s=5,
+            client=client,
+        )
+        capability = capability_of("mail_send", {"to": "a@b.c"})
+        return await reviewer(ReviewRequest(capability=capability))
+
+
+async def test_the_stub_clears_an_action_by_default():
+    result = await _decide_through_the_stub()
+    assert isinstance(result, ScoredVerdict)
+    assert (result.verdict.risk, result.verdict.authorization) == ("low", "explicitly_yes")
+
+
+async def test_a_pushed_decision_overrides_the_named_answers_once():
+    result = await _decide_through_the_stub({"refused": {"noul": 0.9}})
+    assert isinstance(result, ScoredVerdict)
+    assert result.verdict.authorization == "explicitly_no"

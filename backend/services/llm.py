@@ -43,7 +43,7 @@ from services.shapes import as_dict, as_list
 
 logger = logging.getLogger(__name__)
 
-ROLES = frozenset({"main", "utility", "embedding"})
+ROLES = frozenset({"main", "utility", "embedding", "decision"})
 # Roles that drive the agent loop must support native tool-calling (AE-8.1).
 TOOL_CALLING_ROLES = frozenset({"main", "utility"})
 

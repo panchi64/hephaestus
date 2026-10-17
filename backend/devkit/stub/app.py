@@ -136,6 +136,25 @@ def create_stub() -> FastAPI:
             "usage": {"prompt_tokens": len(texts), "total_tokens": len(texts)},
         }
 
+    decisions: list[dict[str, JsonValue]] = []
+
+    @app.post("/v1/systemone")
+    async def decide(body: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        # The decision wire (`services/decisions.py`). By default every action is low risk
+        # and requested, so Auto clears it; a pushed override replaces named answers once.
+        book.requests.append(body)
+        questions = body.get("questions")
+        override = decisions.pop(0) if decisions else {}
+        answers: dict[str, JsonValue] = {}
+        for name, question in (questions if isinstance(questions, dict) else {}).items():
+            answers[name] = override.get(name) or _default_answer(name, question)
+        return {"answers": answers}
+
+    @app.post("/_stub/decisions")
+    async def push_decisions(overrides: list[dict[str, JsonValue]]) -> dict[str, int]:
+        decisions.extend(overrides)
+        return {"pending": len(decisions)}
+
     @app.post("/_stub/script")
     async def push_script(scenarios: list[ScenarioIn]) -> dict[str, int]:
         book.push([item.to_scenario() for item in scenarios])
@@ -144,6 +163,7 @@ def create_stub() -> FastAPI:
     @app.post("/_stub/reset")
     async def reset() -> dict[str, int]:
         book.reset()
+        decisions.clear()
         return {"pending": book.pending}
 
     @app.get("/_stub/requests")
@@ -151,6 +171,24 @@ def create_stub() -> FastAPI:
         return {"count": len(book.requests), "requests": [*book.requests]}
 
     return app
+
+
+def _default_answer(name: str, question: JsonValue) -> JsonValue:
+    """A confident "low risk, and the operator asked for it" for each question type."""
+    kind = question.get("type") if isinstance(question, dict) else None
+    criteria = question.get("criteria") if isinstance(question, dict) else None
+    if kind == "score":
+        levels = len(criteria) if isinstance(criteria, list) else 2
+        probabilities: list[JsonValue] = [0.0] * levels
+        probabilities[0] = 0.9
+        if levels > 1:
+            probabilities[1] = 0.1
+        return {"score": 0.1, "probabilities": probabilities, "confidence": 0.8}
+    if kind == "choice":
+        options = list(criteria) if isinstance(criteria, dict) else []
+        first = options[0] if options else ""
+        return {"choice": first, "probabilities": {first: 1.0}, "confidence": 1.0}
+    return {"noul": 0.95 if name == "requested" else 0.02}
 
 
 async def _aiter(frames: Iterable[str], delay_s: float = 0.0) -> AsyncGenerator[str]:

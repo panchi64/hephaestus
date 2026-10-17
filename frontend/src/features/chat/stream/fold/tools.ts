@@ -240,6 +240,8 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
         b.review.risk = ev.risk ?? undefined;
         b.review.authorization = ev.authorization ?? undefined;
         b.review.correctness = ev.correctness ?? undefined;
+        b.review.scores = ev.scores ?? undefined;
+        b.review.setup = ev.setup ?? undefined;
       });
       return true;
     case "approval.required": {

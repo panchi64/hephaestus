@@ -38,7 +38,7 @@ export interface EndpointInput {
  *  absent because it is single-endpoint: its card overwrites the whole binding,
  *  exactly as the top-bar picker does. The binding shape
  *  (`RoleBinding`/`RoleBindings`) is owned by `~/lib/stores/models`. */
-export const BINDABLE_ROLES = ["utility", "embedding"] as const;
+export const BINDABLE_ROLES = ["utility", "embedding", "decision"] as const;
 
 /** Progress of a background re-embed (after the embedding model changes). The
  *  vectors of every memory + chat message are re-embedded into the new model's

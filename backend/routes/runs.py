@@ -34,6 +34,7 @@ from services.answers import (
     render_answer,
 )
 from services.approval_grants import ONCE_ONLY_TOOLS, GrantInfo, grant_scopes, grant_width
+from services.approval_ledger import LedgerEntry
 from services.plan_mode import PLAN_SUBMIT_TOOL
 from services.settings_store import get_inactivity_timeout, get_wall_clock_timeout
 
@@ -516,4 +517,21 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
                 if (tool_name, scope) not in already:
                     await grants.revoke(deps.OPERATOR_ID, conv_id, tool_name, scope)
         raise HTTPException(status_code=409, detail="run could not be resumed")
+    if conv_id is not None:
+        await deps.approval_ledger(request).record(
+            deps.OPERATOR_ID,
+            conv_id,
+            [
+                LedgerEntry.of(
+                    decision.tool_call_id,
+                    call_by_id[decision.tool_call_id].tool_name,
+                    decision.override_args
+                    if decision.override_args is not None
+                    else call_by_id[decision.tool_call_id].args_as_dict(),
+                    "operator",
+                )
+                for decision in body.decisions
+                if decision.approved
+            ],
+        )
     return ApprovalOutcome(granted=[list(scope) for _, scope, _ in to_grant], unscoped=unscoped)

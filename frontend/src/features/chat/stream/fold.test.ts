@@ -335,6 +335,43 @@ describe("a review's two frames", () => {
     expect(block?.kind === "review" && block.review.detail).toBeUndefined();
   });
 
+  test("the decision model's scores and a setup gap land with the verdict", () => {
+    const h = harness(turn());
+    h.fold(started("network"));
+    h.fold({
+      type: "review.completed",
+      seq: ++seq,
+      ts: "",
+      tool_call_id: "t1",
+      name: "shell_run_command",
+      decision: "ask",
+      stage: "reviewer",
+      reason: "the decision model did not answer",
+      tier: null,
+      fenced: true,
+      risk: null,
+      authorization: null,
+      correctness: null,
+      scores: { risk: 1.4, requested: 0.3 },
+      setup: "unreachable",
+    });
+    const block = review(h.messages);
+    expect(block?.kind === "review" && block.review.scores).toEqual({
+      risk: 1.4,
+      requested: 0.3,
+    });
+    expect(block?.kind === "review" && block.review.setup).toBe("unreachable");
+  });
+
+  test("an event stored before the decision model carries no scores", () => {
+    const h = harness(turn());
+    h.fold(started("workspace"));
+    h.fold(completed("workspace", true));
+    const block = review(h.messages);
+    expect(block?.kind === "review" && block.review.scores).toBeUndefined();
+    expect(block?.kind === "review" && block.review.setup).toBeUndefined();
+  });
+
   test("the ground and the fence land with the verdict", () => {
     const h = harness(turn());
     h.fold(started("workspace"));

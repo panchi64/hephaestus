@@ -12,12 +12,15 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from sqlmodel import Session, select
 
+import agent.gating as gating
+from core.container import ServiceContainer
 from core.db import in_session, init_db, make_engine
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
 from models.registry import ModelRole
 from runs import Endpoint, EndpointGate
-from services import embeddings, llm
+from services import decisions, embeddings, llm
+from services.decisions import DecisionUnavailable
 from services.endpoint_spec import EndpointSpec
 from services.gated_model import EndpointGatedModel
 from services.registry import ModelRegistry
@@ -285,6 +288,38 @@ async def test_embedding_role_persists_the_picked_model(monkeypatch: pytest.Monk
     assert await reg.get_role_model(OWNER, "embedding") == "text-embed-3"
     spec = await reg.resolve_embedding_spec(OWNER)
     assert spec.model == "text-embed-3"  # resolution honors the pinned model
+
+
+async def test_decision_role_rejects_an_endpoint_that_cannot_decide(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    reg = await make_registry()
+    ep = await reg.create_endpoint(OWNER, name="chat", base_url="http://x/v1", model="gpt-4o")
+
+    async def failing(spec: EndpointSpec, **_kwargs: object) -> None:
+        raise DecisionUnavailable(f"{spec.model!r} answered 501")
+
+    monkeypatch.setattr(decisions, "probe", failing)
+    with pytest.raises(ValueError, match="501"):
+        await reg.set_role(OWNER, "decision", [ep.id])
+    assert await reg.get_role(OWNER, "decision") == []
+
+
+async def test_the_auto_reviewer_is_the_bound_decision_model(monkeypatch: pytest.MonkeyPatch):
+    reg = await make_registry()
+    caps = ServiceContainer.of(reg)
+    # Unbound: nothing reviews, and nothing falls back to a chat model.
+    _ = await reg.create_endpoint(OWNER, name="chat", base_url="http://x/v1", model="gpt-4o")
+    assert await gating.resolve_reviewer(caps, OWNER) is None
+
+    async def passing(_spec: EndpointSpec, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(decisions, "probe", passing)
+    ep = await reg.create_endpoint(OWNER, name="kev", base_url="http://127.0.0.1:8080", model="k")
+    await reg.set_role(OWNER, "decision", [ep.id])
+    assert (await reg.resolve_raw_spec(OWNER, "decision")).model == "k"
+    assert await gating.resolve_reviewer(caps, OWNER) is not None
 
 
 async def test_an_unreachable_embedding_endpoint_degrades_instead_of_raising(

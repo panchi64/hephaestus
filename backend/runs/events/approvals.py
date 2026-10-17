@@ -147,3 +147,8 @@ class ReviewCompleted(Body):
     risk: Literal["low", "high", "too_destructive"] | None = None
     authorization: Literal["explicitly_no", "neutral", "explicitly_yes"] | None = None
     correctness: str | None = None
+    #: The decision model's probabilities behind the three axes, by question.
+    scores: dict[str, float] | None = None
+    #: Set when the model stage was needed and could not run: no decision model is
+    #: bound, or the bound one did not answer. The client offers to set one up.
+    setup: Literal["unbound", "unreachable"] | None = None

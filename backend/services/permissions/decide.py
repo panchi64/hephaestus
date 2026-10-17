@@ -39,14 +39,14 @@ question was never "may this tool run" but "what would this call do", and a gran
 either, there being no prompt left for it to skip.
 
 **The second half of this module is that review** (:func:`review`), which is what
-``REVIEW`` resolves to: the deterministic stage first (``judge.py``), the model second
-(``reviewer.py``), and the arithmetic over their answers here — deliberately *here*,
-where a reader can see the whole rule at once and where the reviewer cannot read it.
+``REVIEW`` resolves to: the structural judge first (``judge.py``), the decision model
+second (``decision_reviewer.py``), and the arithmetic over their answers here, where a
+reader can see the whole rule at once and the model cannot.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Literal
@@ -57,8 +57,10 @@ from services.permissions.levels import ApprovalPolicy, beyond_scope, permission
 from services.permissions.reviewer import (
     Authorization,
     GrantWidth,
+    PriorApproval,
     Reviewer,
     ReviewRequest,
+    ReviewUnavailable,
     ReviewVerdict,
     TranscriptEntry,
 )
@@ -153,6 +155,8 @@ def blocked_message(level: str, tool: str) -> str:
 #: Which stage settled a review — the structural judge, or the model.
 type ReviewStage = Literal["judge", "reviewer"]
 
+type SetupNeeded = Literal["unbound", "unreachable"]
+
 
 @dataclass(frozen=True)
 class ReviewOutcome:
@@ -170,6 +174,11 @@ class ReviewOutcome:
     #: The model stage's three axes, when it ran. None when the deterministic stage
     #: settled it, or when the model stage could not be reached at all.
     verdict: ReviewVerdict | None = None
+    #: The decision model's raw probabilities behind ``verdict``.
+    scores: Mapping[str, float] | None = None
+    #: Why the model stage was needed and could not run: no decision model is bound, or
+    #: the bound one did not answer. Either way the operator is asked to set one up.
+    setup: SetupNeeded | None = None
     #: Which deterministic ground cleared it, when one did — None on everything the model
     #: stage settled. It rides onto the review row beside the reason because "cleared, and
     #: it ran fenced to the worktree" and "cleared, because the tool only observes" are
@@ -196,7 +205,7 @@ class ReviewBudget:
     """How many model reviews one turn may still spend.
 
     A turn is not one deferred call: a model that keeps reaching past the level's ceiling
-    is reviewed on every hop, and each review is a round trip on the utility model with a
+    is reviewed on every hop, and each review is a round trip to the decision model with a
     timeout measured in seconds. Without a ceiling, a turn that loops through sensitive
     calls pays for a review per call — latency the operator watches, on a turn that is
     already going wrong.
@@ -224,6 +233,7 @@ async def review(
     *,
     reviewer: Reviewer | None,
     transcript: Sequence[TranscriptEntry] = (),
+    approved_calls: Sequence[PriorApproval] = (),
     granted: GrantWidth = "none",
     fenced: bool = False,
     budget: ReviewBudget | None = None,
@@ -278,11 +288,11 @@ async def review(
     there is nothing for a grant to authorize, so the call parks like every other
     unreviewable one — and that is the case the wider width most needs to keep, since a
     grant that settled the call outright here would switch the level off on any
-    installation with no utility model bound, where nothing would ever have looked at the
+    installation with no decision model bound, where nothing would ever have looked at the
     act to say whether it was recoverable.
 
-    The combination, stated once here and written down nowhere the reviewer can read it
-    (``reviewer.py``):
+    The combination, stated once here and written down nowhere the model can read it
+    (``decision_questions.py``):
 
     - the deterministic stage's approval **runs**, with no model call at all;
     - ``too_destructive`` **parks**, unless the operator holds a whole-tool grant over the
@@ -293,10 +303,11 @@ async def review(
     - ``high`` risk runs **only** on an explicit yes;
     - everything else **parks**, and so does every way this can fail.
 
-    Note what is deliberately absent: ``correctness`` moves nothing. It is an observation
-    for the operator to read on the review row, not a fourth term — a reviewer that could
-    veto on "this looks like the wrong path" would be second-guessing the model's work
-    rather than ruling on its permission, and those are different jobs.
+    ``correctness`` moves nothing here; it is a note for the review row. The mismatch
+    probability behind it already withholds an explicit yes (``decision_scoring.py``).
+
+    ``approved_calls`` is the conversation's earlier approvals, which the model reads as
+    context and, where the operator or a grant gave them, as authorization.
     """
     verdict_of_judge = judge(capability, fenced=fenced)
     if verdict_of_judge.approved:
@@ -304,14 +315,13 @@ async def review(
             Decision.ALLOW, "judge", verdict_of_judge.reason, tier=verdict_of_judge.tier
         )
     if reviewer is None:
-        # No utility model bound, or none reachable from here. The conservative branch is
-        # the default at exactly this point, because the alternative is an action nobody
-        # — no operator, no judge, no reviewer — ever agreed to. A standing grant does not
-        # rescue it: the grant is an input to a review, and the review this call needed is
-        # the one that could not run. The operator is asked instead, which is the same
-        # degrade a timeout and an unparseable answer take.
+        # A standing grant does not rescue this: the grant is an input to a review, and the
+        # review this call needed is the one that could not run.
         return ReviewOutcome(
-            Decision.ASK, "judge", f"{verdict_of_judge.reason}; no reviewer is available"
+            Decision.ASK,
+            "judge",
+            f"{verdict_of_judge.reason}; no decision model is set up to review it",
+            setup="unbound",
         )
     if budget is not None and not budget.take():
         # Claimed before the call rather than counted after it, so a turn cannot exceed the
@@ -322,12 +332,18 @@ async def review(
             "judge",
             f"{verdict_of_judge.reason}; this turn has already spent its {budget.limit} reviews",
         )
-    request = ReviewRequest(capability=capability, transcript=transcript)
-    verdict = await reviewer(replace(request, nonce=nonce) if nonce else request)
-    if verdict is None:
+    request = ReviewRequest(
+        capability=capability, transcript=transcript, approved_calls=approved_calls
+    )
+    result = await reviewer(replace(request, nonce=nonce) if nonce else request)
+    if isinstance(result, ReviewUnavailable):
         return ReviewOutcome(
-            Decision.ASK, "reviewer", f"{verdict_of_judge.reason}; the review did not complete"
+            Decision.ASK,
+            "reviewer",
+            f"{verdict_of_judge.reason}; the decision model did not answer ({result.detail})",
+            setup="unreachable",
         )
+    verdict = result.verdict
     # Derived once and handed to both halves: the arithmetic and the row's account of it
     # have to be reading the same authorization, and re-deriving it in each was two places
     # for the grant's rule to be stated in.
@@ -350,6 +366,7 @@ async def review(
             unrecoverable=unrecoverable,
         ),
         verdict,
+        scores=result.scores,
         # Marked as the grant's only where the grant is what *changed* the answer — the
         # same verdict read without it parks. A low-risk act the review would have cleared
         # anyway does not become revocable for having a grant sitting beside it, and

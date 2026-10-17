@@ -320,25 +320,26 @@ class Settings(BaseSettings):
     # conversation for this long before lapsing back to strict per-call approval.
     approval_grant_ttl_s: float = 86400.0
 
-    # Auto review (`services/permissions`). At the Auto level a deferred call is settled
-    # by a deterministic shell judge and then, if that declines, by one structured call on
-    # the utility model. `review_timeout_s` bounds that call — it runs inside a live turn
-    # with the operator watching, so a stuck reviewer would hold the run open on a call
-    # nobody has been asked about, which is worse than the park it was avoiding. A timeout
-    # therefore parks, like every other way the review can fail. `review_max_tokens` is
-    # the output cap, sized like the title call's: reasoning is requested off, but a
-    # runtime that ignores the lever reasons anyway and the cap has to leave room for a
-    # think block plus three short fields. `review_transcript_entries` is how much of the
-    # thread the reviewer reads, counted from the end in **entries of prose** — the
-    # operator's and the assistant's own words — rather than in messages, since a single
-    # tool round trip is two messages and a window measured in those held nothing but tool
-    # traffic after a few calls. The turn's opening request is always included on top of
-    # it. `review_max_per_turn` caps how many *model* reviews one turn may spend: a
-    # structurally-cleared command costs none, and past the cap the calls park.
-    review_timeout_s: float = 30.0
-    review_max_tokens: int = 2048
+    # Auto review (`services/permissions`). A deferred call the structural judge declines
+    # goes to the `decision` model. A timeout parks the call, like every other failure.
+    # `review_transcript_entries` counts entries of prose (the operator's and the
+    # assistant's own words), not messages; the turn's opening request is kept on top of
+    # it. `review_max_per_turn` caps decision calls per turn; past it the calls park.
+    # `review_ledger_entries` is how many of the conversation's approved calls the model
+    # reads.
+    review_timeout_s: float = 10.0
     review_transcript_entries: int = 12
     review_max_per_turn: int = 12
+    review_ledger_entries: int = 20
+    # Thresholds over the decision model's probabilities (`decision_scoring.py`).
+    decision_destroy_min: float = 0.35
+    decision_low_position_max: float = 0.8
+    decision_low_tail_max: float = 0.2
+    decision_outward_max: float = 0.5
+    decision_refused_min: float = 0.5
+    decision_requested_min: float = 0.8
+    decision_refused_clear_max: float = 0.2
+    decision_mismatch_max: float = 0.5
 
     # Web search. `web_search_result_limit` caps results from the SearXNG provider;
     # `web_search_timeout_s` bounds one query (its own budget, not the fetch timeout).

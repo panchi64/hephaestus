@@ -505,6 +505,10 @@ export interface Review {
   risk?: "low" | "high" | "too_destructive";
   authorization?: "explicitly_no" | "neutral" | "explicitly_yes";
   correctness?: string;
+  /** The decision model's probabilities behind the axes, by question. */
+  scores?: Record<string, number>;
+  /** Set when the call needed the decision model and none could answer. */
+  setup?: "unbound" | "unreachable";
 }
 
 /** A host-machine command, rendered as a persistent terminal. */

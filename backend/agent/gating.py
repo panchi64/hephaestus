@@ -53,6 +53,7 @@ from pydantic_ai.messages import ModelMessage, ToolCallPart
 from core.concurrency import gather_bounded
 from core.config import get_settings
 from core.container import ServiceContainer
+from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.untrusted import new_nonce
 from runs import Run
 from runs.events import ReviewCompleted, ReviewStarted
@@ -62,9 +63,12 @@ from services.approval_grants import (
     covered_by_grant,
     grant_width,
 )
+from services.approval_ledger import ApprovalLedger, LedgerEntry
 from services.permissions import (
+    ApprovedBy,
     Decision,
     GrantWidth,
+    PriorApproval,
     ReviewBudget,
     Reviewer,
     ReviewOutcome,
@@ -73,11 +77,12 @@ from services.permissions import (
     blocked_message,
     capability_of,
     decide,
-    make_utility_reviewer,
     measured_against_root,
     review,
     review_transcript,
 )
+from services.permissions.decision_reviewer import make_decision_reviewer
+from services.permissions.decision_scoring import Thresholds
 from services.permissions.fence import Fence
 from services.registry import ModelRegistry
 from services.sandbox.thread_shells import ThreadShells
@@ -87,7 +92,7 @@ from tools.home import resolve_run_home
 
 logger = logging.getLogger(__name__)
 
-#: How many reviews of one batch may be in flight at once. Each is a utility-model round
+#: How many reviews of one batch may be in flight at once. Each is a decision-model round
 #: trip, so the cap protects the far side (and a local runtime's own queue) rather than
 #: this process; a turn rarely defers more than a handful of calls, and the point is that
 #: their latencies overlap rather than stack.
@@ -193,6 +198,7 @@ async def settle_deferred(
     # ALLOW can come from a grant or from a level that allows outright, and only the first
     # is revocable.
     ruled = [(call, *_by_level(permission, call, granted)) for call in approvals]
+    ledger = caps.get_optional(ApprovalLedger)
     reviewed = await review_batch(
         run,
         [call for call, decision, _ in ruled if decision is Decision.REVIEW],
@@ -200,16 +206,27 @@ async def settle_deferred(
         deps=deps,
         messages=messages,
         grants=granted,
+        prior=(
+            await ledger.recent(run.owner_id, conversation_id, get_settings().review_ledger_entries)
+            if ledger is not None and conversation_id is not None
+            else ()
+        ),
         turn_start=turn_start,
         budget=budget,
     )
     settled: dict[str, ToolApproved | ToolDenied] = {}
     manual: list[ToolCallPart] = []
+    approved: list[LedgerEntry] = []
     for call, decision, grant_backed in ruled:
         outcome = reviewed.get(call.tool_call_id)
         if outcome is not None:
             decision = outcome.decision
         if decision is Decision.ALLOW:
+            approver = _approver(outcome, grant_backed=grant_backed)
+            if approver is not None:
+                approved.append(
+                    LedgerEntry.of(call.tool_call_id, call.tool_name, call.args_as_dict(), approver)
+                )
             # Reviewed, resting on a grant, or given by a level that asks nobody — and
             # which of the three is recorded, because only the grant is still worth
             # re-checking when the operator answers. A review that leant on the grant for
@@ -238,7 +255,19 @@ async def settle_deferred(
             )
         else:
             manual.append(call)
+    if ledger is not None and conversation_id is not None:
+        await ledger.record(run.owner_id, conversation_id, approved)
     return settled, manual
+
+
+def _approver(outcome: ReviewOutcome | None, *, grant_backed: bool) -> ApprovedBy | None:
+    """Who an allow is recorded under in the ledger, or None for one that says nothing
+    about the operator's wishes: a structural clearance, or a level that asks nobody."""
+    if outcome is None:
+        return "grant" if grant_backed else None
+    if outcome.stage != "reviewer":
+        return None
+    return "grant" if outcome.by_grant else "review"
 
 
 def _by_level(
@@ -281,6 +310,7 @@ async def review_batch(
     deps: RunDeps,
     messages: list[ModelMessage],
     grants: Sequence[GrantInfo] = (),
+    prior: Sequence[PriorApproval] = (),
     turn_start: TurnBoundary | None = None,
     budget: ReviewBudget | None = None,
 ) -> dict[str, ReviewOutcome]:
@@ -295,7 +325,7 @@ async def review_batch(
     transcript being one object saved this process the work of rebuilding it; it saved the
     *server* nothing, because each prompt still opened on a nonce of its own and so diverged
     from its siblings within a few tokens. One nonce per batch, with the shared prose first
-    (``reviewer.review_prompt``), means the second and later reviews of a turn arrive on a
+    (``decision_questions.build_state``), means the second and later reviews of a turn arrive on a
     prefix the engine has already processed. Per batch and no wider: a fresh token every
     turn, never reused across threads or over time.
     """
@@ -320,6 +350,7 @@ async def review_batch(
                 args=call.args_as_dict(),
                 root=root,
                 transcript=transcript,
+                prior=prior,
                 reviewer=reviewer,
                 granted=grant_width(call.tool_name, call.args_as_dict(), grants),
                 fenced=fenced,
@@ -374,33 +405,25 @@ async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Fence | 
 
 
 async def resolve_reviewer(caps: ServiceContainer, owner_id: str) -> Reviewer | None:
-    """The Auto reviewer for this run, or None when there is nothing to review with.
+    """The Auto reviewer over the ``decision`` role, or None when none is bound.
 
-    Resolves the **utility** role through the same ``resolve_background`` rule titling,
-    verification and delegation use, so the review is cheap by construction rather than by
-    a second policy — and so an operator who has bound only ``main`` still gets one.
-
-    None is the degraded answer, and every caller turns it into a park. That is the one
-    place in this codebase where the conservative branch has to be the default: a review
-    that cannot run is not a review that passes.
+    None parks every call that reaches the model stage, and the review row asks the
+    operator to set a decision model up. Nothing falls back to a chat model.
     """
     registry = caps.get_optional(ModelRegistry)
     if registry is None:
         return None
     try:
-        resolved = await registry.resolve_background(owner_id=owner_id)
-    except Exception as exc:  # noqa: BLE001 — an unbound role is a degrade, not an error
-        logger.info("auto review unavailable: no utility model (%s)", exc)
+        spec = await registry.resolve_raw_spec(owner_id, "decision")
+    except (DegradedCapabilityError, NotFoundError) as exc:
+        logger.info("auto review unavailable: no decision model (%s)", exc)
         return None
     settings = get_settings()
-    return make_utility_reviewer(
-        resolved.model,
-        # Reasoning off for the same reason the namer and the judge request it: this is
-        # background work inside a turn the operator is watching, and the three scored
-        # fields are read off the structured output whatever the model thinks first.
-        model_settings=resolved.reasoning_off,
+    return make_decision_reviewer(
+        spec,
+        thresholds=Thresholds.from_settings(settings),
         timeout_s=settings.review_timeout_s,
-        max_tokens=settings.review_max_tokens,
+        client=registry.http_client,
     )
 
 
@@ -412,6 +435,7 @@ async def review_call(
     args: dict[str, object],
     root: Fence | None,
     transcript: Sequence[TranscriptEntry],
+    prior: Sequence[PriorApproval] = (),
     reviewer: Reviewer | None,
     granted: GrantWidth = "none",
     fenced: bool,
@@ -443,6 +467,7 @@ async def review_call(
         capability,
         reviewer=reviewer,
         transcript=transcript,
+        approved_calls=prior,
         granted=granted,
         fenced=fenced,
         budget=budget,
@@ -464,6 +489,8 @@ async def review_call(
             risk=verdict.risk if verdict else None,
             authorization=verdict.authorization if verdict else None,
             correctness=verdict.correctness if verdict else None,
+            scores=dict(outcome.scores) if outcome.scores is not None else None,
+            setup=outcome.setup,
         )
     )
     return outcome

@@ -14,6 +14,8 @@ from sqlmodel import Session, col, select
 from core.db import in_session
 from core.vault import Vault
 from core.worker import WriteBehindWorker
+from models.approval_grant import ApprovalGrant
+from models.approved_call import ApprovedCall
 from models.conversation import Conversation, Message
 from models.thread_worktree import ThreadWorktree
 from services.embeddings import Embedder
@@ -323,6 +325,12 @@ class StoreCore:
             _ = session.exec(delete(Message).where(col(Message.conversation_id) == conversation_id))
             _ = session.exec(
                 delete(ThreadWorktree).where(col(ThreadWorktree.conversation_id) == conversation_id)
+            )
+            _ = session.exec(
+                delete(ApprovedCall).where(col(ApprovedCall.conversation_id) == conversation_id)
+            )
+            _ = session.exec(
+                delete(ApprovalGrant).where(col(ApprovalGrant.conversation_id) == conversation_id)
             )
             if conversation is not None:
                 session.delete(conversation)

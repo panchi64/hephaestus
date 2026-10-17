@@ -19,10 +19,10 @@ from devkit.stub.app import MODEL_ID
 #: existing workspace updates them in place instead of accumulating duplicates.
 ENDPOINT_NAME = "dev-instance"
 
-#: Every role the registry knows (``services.llm.ROLES``), all pointed at the one
-#: endpoint. `main` drives chat; leaving the other two unbound would make a seeded
-#: workspace fail at exactly the background work — titling, compaction, recall — that a
-#: visual check is least likely to notice going missing.
+#: The chat-API roles (``services.llm.ROLES`` less ``decision``), all pointed at the one
+#: endpoint. Leaving `utility` or `embedding` unbound would make a seeded workspace fail
+#: at exactly the background work (titling, compaction, recall) that a visual check is
+#: least likely to notice going missing.
 ROLES = ("main", "utility", "embedding")
 
 #: Declared rather than discovered, and not optional. The app refuses to send a turn on
@@ -80,7 +80,9 @@ async def seed_model(ctx: SeedContext) -> str:
     endpoint_id = await _endpoint_id(ctx)
     model = live.endpoint()["model"] if live.configured() else MODEL_ID
     embed = (live.embed_model() if live.configured() else None) or model
-    for role in ROLES:
+    # A live chat endpoint serves no decisions, and binding it would fail the probe.
+    roles = ROLES if live.configured() else (*ROLES, "decision")
+    for role in roles:
         bound = await ctx.client.put(
             f"/models/roles/{role}",
             json={"endpoint_ids": [endpoint_id], "model": embed if role == "embedding" else model},
@@ -88,4 +90,4 @@ async def seed_model(ctx: SeedContext) -> str:
         _ = bound.raise_for_status()
     where = "a real endpoint (HEPH_DEV_CHAT_*)" if live.configured() else "the stub"
     embedding = f", embeddings on {embed}" if embed != model else ""
-    return f"{model} on {where}, bound to {', '.join(ROLES)}{embedding}"
+    return f"{model} on {where}, bound to {', '.join(roles)}{embedding}"

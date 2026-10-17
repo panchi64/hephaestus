@@ -97,7 +97,7 @@ async def test_the_base_fixture_binds_every_role_to_one_endpoint(seeding: regist
     assert n(endpoints[0]["context_window"]) > 0
 
     roles = json_body(await seeding.client.get("/models/roles"))
-    for role in ROLES:
+    for role in (*ROLES, "decision"):
         assert obj(roles[role])["endpoint_ids"] == [endpoints[0]["id"]]
 
 

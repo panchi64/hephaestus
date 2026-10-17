@@ -1,8 +1,8 @@
 """The permission axis: what a level is (:mod:`levels`), what it rules (:mod:`decide`),
 and — at the one level whose meaning is that the operator's answers are given for them —
 what an action would do (:mod:`capability`, :mod:`shell_ast`, :mod:`shell_flags`) and who
-says so (:mod:`judge`, structurally, then :mod:`reviewer`). Imported through the package,
-so a caller names one home for all of it."""
+says so (:mod:`judge`, structurally, then the decision model in :mod:`decision_reviewer`).
+Imported through the package, so a caller names one home for all of it."""
 
 from services.permissions.capability import (
     DEFAULT_REACH,
@@ -19,6 +19,7 @@ from services.permissions.decide import (
     ReviewBudget,
     ReviewOutcome,
     ReviewStage,
+    SetupNeeded,
     blocked_message,
     decide,
     review,
@@ -44,14 +45,17 @@ from services.permissions.levels import (
     tools_beyond_scope,
 )
 from services.permissions.reviewer import (
+    ApprovedBy,
     Authorization,
     GrantWidth,
+    PriorApproval,
     Reviewer,
     ReviewRequest,
+    ReviewUnavailable,
     ReviewVerdict,
+    ScoredVerdict,
     TranscriptEntry,
     TurnBoundary,
-    make_utility_reviewer,
     review_transcript,
 )
 from services.permissions.shell_ast import ShellCommand, command_prefixes, strip_comments
@@ -70,6 +74,7 @@ __all__ = [
     "STRICTEST_PERMISSION",
     "ActionKind",
     "ApprovalPolicy",
+    "ApprovedBy",
     "Authorization",
     "Capability",
     "Decision",
@@ -77,13 +82,17 @@ __all__ = [
     "Judgement",
     "PermissionLevel",
     "PermissionSpec",
+    "PriorApproval",
     "Reach",
     "ReviewBudget",
     "ReviewOutcome",
     "ReviewRequest",
     "ReviewStage",
+    "ReviewUnavailable",
     "ReviewVerdict",
     "Reviewer",
+    "ScoredVerdict",
+    "SetupNeeded",
     "ShellCommand",
     "Tier",
     "TranscriptEntry",
@@ -95,7 +104,6 @@ __all__ = [
     "decide",
     "declared_reach",
     "judge",
-    "make_utility_reviewer",
     "measured_against_root",
     "permission_level",
     "permission_spec",

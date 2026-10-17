@@ -53,6 +53,7 @@ from routes.deps import OPERATOR_ID, AppState, app_state
 from runs import LaneLimits, PrefixLedger, RunRegistry
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
+from services.approval_ledger import ApprovalLedger
 from services.conversations import ConversationStore
 from services.credential_store import CredentialStore
 from services.egress import EgressPolicy
@@ -276,6 +277,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # Conversation-scoped tool auto-approval grants — part of the approval posture,
     # so it stays core beside the run substrate the approvals park on.
     state.approval_grants = ApprovalGrantStore(engine, settings.approval_grant_ttl_s)
+    state.approval_ledger = ApprovalLedger(engine, vault)
     # The one egress allowlist both fences read — the VM's egress gateway and the
     # OS-level confinement. Beside the approval grants because it is the same posture seen
     # from the other side: that store remembers which *tools* may run without asking, this
@@ -396,6 +398,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         state.credentials,
         state.settings_store,
         state.approval_grants,
+        state.approval_ledger,
         state.egress,
         state.api_tokens,
         platform_vm,
@@ -412,6 +415,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     # split, and the sandbox backs code execution. Everything else reaches the bag
     # through its own manifest's `capabilities` export.
     agent_capabilities.add(state.approval_grants)
+    agent_capabilities.add(state.approval_ledger)
     # ...and the egress policy beside it: the tool that asks for a domain is an agent tool,
     # and the fences that read the allowlist wrap the agent's own execution.
     agent_capabilities.add(state.egress)
