@@ -57,6 +57,7 @@ from .lifecycle import (
     ThinkingDelta,
 )
 from .messages import (
+    InboxWaiting,
     MessageEdited,
     MessageHeld,
     MessageInjected,
@@ -112,6 +113,7 @@ __all__ = [
     "EventBody",
     "FoldPoint",
     "INJECTED_TEXT_LIMIT",
+    "InboxWaiting",
     "LastRequestUsage",
     "LimitNotice",
     "MessageEdited",

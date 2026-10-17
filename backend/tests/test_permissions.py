@@ -65,6 +65,7 @@ from ._helpers import (
     collect_sse_events,
     full_tool_categories,
     patch_model_resolution,
+    settle,
 )
 from ._json import json_body, parse_json, s
 from .test_chat_concurrency_guards import patch_hanging_model
@@ -514,9 +515,9 @@ class TestTheLiveControl:
             assert first_run is not None
             await first_run.wait()
 
-    async def test_a_rejected_send_leaves_the_level_alone(self, monkeypatch: pytest.MonkeyPatch):
-        """The other way a send gets no turn of its own: a busy thread answers 409 to a
-        send carrying attachments, because steering is text-only."""
+    async def test_a_queued_send_leaves_the_level_alone(self, monkeypatch: pytest.MonkeyPatch):
+        """A send into a busy thread queues rather than running at the level it asked for,
+        so the stored level stays what the running turn is running at."""
         hang, started = asyncio.Event(), asyncio.Event()
         patch_hanging_model(monkeypatch, hang, started)
         async with client_app() as (client, app):
@@ -527,7 +528,7 @@ class TestTheLiveControl:
             conversation_id = s(json_body(first)["conversation_id"])
             _ = await started.wait()
 
-            rejected = await client.post(
+            queued = await client.post(
                 "/chat",
                 json={
                     "prompt": "again",
@@ -536,14 +537,13 @@ class TestTheLiveControl:
                     "attachment_ids": [json_body(upload)["id"]],
                 },
             )
-            assert rejected.status_code == 409
+            assert queued.status_code == 202
+            assert json_body(queued)["queued_message_id"]
             detail = await client.get(f"/conversations/{conversation_id}")
             assert json_body(detail)["permission_level"] == "manual"
 
             hang.set()
-            first_run = app_state(app).runs.get(s(json_body(first)["run_id"]))
-            assert first_run is not None
-            await first_run.wait()
+            await settle(app)
 
     async def test_an_unknown_level_is_refused_at_the_edge(self, monkeypatch: pytest.MonkeyPatch):
         patch_model_resolution(monkeypatch, output_text="ok")

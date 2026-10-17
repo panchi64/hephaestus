@@ -25,7 +25,7 @@ from core.container import ServiceContainer
 from core.exceptions import NotFoundError
 from core.ratelimit import RateLimiter
 from core.vault import Vault
-from runs import ConversationBusyError, Run, RunRegistry
+from runs import ConversationBusyError, InboxDispatch, Run, RunRegistry
 from services.agents import AgentCatalog, AgentStore
 from services.api_token_store import ApiTokenStore
 from services.approval_grants import ApprovalGrantStore
@@ -88,8 +88,16 @@ class AppState(State):
     own dict, and a class-level default would shadow the stored one."""
 
     def __init__(self) -> None:
-        super().__init__({"vm": None, "subagent_records": None, "browser_sessions": None})
+        super().__init__(
+            {
+                "vm": None,
+                "subagent_records": None,
+                "browser_sessions": None,
+                "inbox_dispatcher": None,
+            }
+        )
         self.runs: RunRegistry
+        self.inbox_dispatcher: InboxDispatch | None
         self.capabilities: ServiceContainer
         self.tool_categories: dict[str, AbstractToolset[RunDeps]]
         self.gated_tools: frozenset[str]
@@ -161,7 +169,12 @@ class AppState(State):
         self.task_run_waiters: dict[str, asyncio.Future[Run]]
 
 
-def app_state(source: FastAPI | Request | WebSocket) -> AppState:
+#: What an accessor resolves app state from. The app itself is how a turn the inbox starts
+#: (``routes/chat/queued.py``) reaches the same handles a request does.
+type Source = FastAPI | Request | WebSocket
+
+
+def app_state(source: Source) -> AppState:
     """The typed ``app.state`` of the app behind a request, socket or the app itself."""
     app = source if isinstance(source, FastAPI) else cast(object, source.app)
     if not isinstance(app, FastAPI):
@@ -182,16 +195,21 @@ def web_client(request: Request) -> httpx.AsyncClient:
     return app_state(request).web_client
 
 
+def inbox_dispatcher(request: Source) -> InboxDispatch | None:
+    """What starts the next turn from an idle thread's inbox, or None when not wired."""
+    return app_state(request).inbox_dispatcher
+
+
 def subagent_records(request: Request) -> SubagentStore | None:
     """The sub-agent register, or None when sub-agents are not wired in this deployment."""
     return app_state(request).subagent_records
 
 
-def registry(request: Request) -> RunRegistry:
+def registry(request: Source) -> RunRegistry:
     return app_state(request).runs
 
 
-def capabilities(request: Request) -> ServiceContainer:
+def capabilities(request: Source) -> ServiceContainer:
     """The app's one agent-facing capability bag (`RunDeps.caps`) — assembled at
     startup from every feature manifest's `capabilities` export. Every run path
     (live chat, approval resume, the scheduler's executor) hands this same bag to
@@ -199,7 +217,7 @@ def capabilities(request: Request) -> ServiceContainer:
     return app_state(request).capabilities
 
 
-def tool_categories(request: Request) -> Mapping[str, AbstractToolset[RunDeps]]:
+def tool_categories(request: Source) -> Mapping[str, AbstractToolset[RunDeps]]:
     """The assembled tool-category mapping (core + every enabled manifest's
     `toolsets` export) — what the agent runs against and the catalog routes list."""
     return app_state(request).tool_categories
@@ -211,7 +229,7 @@ def gated_tools(request: Request) -> frozenset[str]:
     return app_state(request).gated_tools
 
 
-def category_availability(request: Request) -> tuple[CategoryAvailability, ...]:
+def category_availability(request: Source) -> tuple[CategoryAvailability, ...]:
     """The manifests' availability checks, resolved against the categories they register
     — the seventh axis of the disabled set, asked of the live services on every turn."""
     return app_state(request).category_availability
@@ -229,7 +247,7 @@ def dormant_category_names(request: Request) -> frozenset[str]:
     return frozenset(entry.category for entry in dormant_categories(request))
 
 
-def dormant_summaries(request: Request) -> dict[str, str]:
+def dormant_summaries(request: Source) -> dict[str, str]:
     """The same declarations as category → summary, which is the shape a turn is composed
     from: the engine reads the names to defer and the lines to advertise off one mapping,
     so a group cannot be withheld without being announced.
@@ -241,12 +259,12 @@ def dormant_summaries(request: Request) -> dict[str, str]:
     return app_state(request).dormant_summaries
 
 
-def instruction_providers(request: Request) -> tuple[InstructionProvider, ...]:
+def instruction_providers(request: Source) -> tuple[InstructionProvider, ...]:
     """The manifests' dynamic instruction providers, registered on every agent."""
     return app_state(request).instruction_providers
 
 
-def prompt_context_providers(request: Request) -> tuple[PromptContextProvider, ...]:
+def prompt_context_providers(request: Source) -> tuple[PromptContextProvider, ...]:
     """The manifests' per-turn prompt-context providers, appended to the tail of every
     turn's user prompt (never persisted) — the cache-friendly home for volatile context."""
     return app_state(request).prompt_context_providers
@@ -274,11 +292,16 @@ def claim_conversation(request: Request, conversation_id: str) -> None:
 
 
 def release_conversation(request: Request, conversation_id: str) -> None:
-    """Release a claim taken by `claim_conversation`. Idempotent."""
-    registry(request).release(conversation_id, OPERATOR_ID)
+    """Release a claim taken by `claim_conversation`. Idempotent. A claim that started no
+    run leaves whatever queued behind it to the inbox dispatcher."""
+    runs = registry(request)
+    runs.release(conversation_id, OPERATOR_ID)
+    dispatcher = inbox_dispatcher(request)
+    if dispatcher is not None and runs.active_run_for(conversation_id, OPERATOR_ID) is None:
+        dispatcher.kick(OPERATOR_ID, conversation_id)
 
 
-def store(request: Request) -> ConversationStore:
+def store(request: Source) -> ConversationStore:
     return app_state(request).conversations
 
 
@@ -290,7 +313,7 @@ def corpus(request: Request) -> CorpusIndex:
     return app_state(request).corpus
 
 
-def models(request: Request) -> ModelRegistry:
+def models(request: Source) -> ModelRegistry:
     return app_state(request).models
 
 
@@ -326,7 +349,7 @@ def platform_skills(request: Request) -> PlatformSkills:
     return app_state(request).platform_skills
 
 
-def agents(request: Request) -> AgentCatalog:
+def agents(request: Source) -> AgentCatalog:
     return app_state(request).agents
 
 
@@ -338,7 +361,7 @@ def plugins(request: Request) -> PluginStore:
     return app_state(request).plugins
 
 
-def commands(request: Request) -> CommandRegistry:
+def commands(request: Source) -> CommandRegistry:
     return app_state(request).commands
 
 
@@ -347,7 +370,7 @@ def command_store(request: Request) -> CommandStore:
 
 
 async def composer_tree(
-    request: Request, project_id: str | None, conversation_id: str | None
+    request: Source, project_id: str | None, conversation_id: str | None
 ) -> tuple[Path | None, bool]:
     """The checkout a composer in this thread is looking at, and whether it is the thread's
     own worktree rather than the operator's checkout.
@@ -376,14 +399,14 @@ async def composer_tree(
 
 
 async def composer_root(
-    request: Request, project_id: str | None, conversation_id: str | None
+    request: Source, project_id: str | None, conversation_id: str | None
 ) -> Path | None:
     """:func:`composer_tree` for the callers that only need the tree, not its provenance."""
     root, _from_worktree = await composer_tree(request, project_id, conversation_id)
     return root
 
 
-def uploads(request: Request) -> UploadStore:
+def uploads(request: Source) -> UploadStore:
     return app_state(request).uploads
 
 
@@ -411,12 +434,12 @@ def searxng(request: Request) -> ManagedSearxng:
     return app_state(request).searxng
 
 
-def offline(request: Request) -> OfflineModeService:
+def offline(request: Source) -> OfflineModeService:
     return app_state(request).offline
 
 
 async def disabled_tools(
-    request: Request,
+    request: Source,
     *,
     vision: bool = True,
     kind: str = "chat",
@@ -467,11 +490,11 @@ def browser_sessions(request: Request) -> BrowserSessionManager | None:
     return app_state(request).browser_sessions
 
 
-def projects(request: Request) -> ProjectStore:
+def projects(request: Source) -> ProjectStore:
     return app_state(request).projects
 
 
-def worktrees(request: Request) -> WorktreeManager:
+def worktrees(request: Source) -> WorktreeManager:
     return app_state(request).worktrees
 
 
@@ -514,7 +537,7 @@ async def active_project(request: Request) -> str | None:
     return header or await projects(request).active_id(OPERATOR_ID)
 
 
-def settings_store(request: Request) -> SettingsStore:
+def settings_store(request: Source) -> SettingsStore:
     return app_state(request).settings_store
 
 

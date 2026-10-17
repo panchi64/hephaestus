@@ -64,7 +64,8 @@ import { createTranscriptFollow } from "../transcriptScroll";
 import { createRenameConversation } from "../components/RenameConversationModal";
 import { createComposerCommands } from "../commands/useComposerCommands";
 import { createComposerFileRefs } from "../files/useFileRefs";
-import { createComposerRecall, isOperatorQueued } from "../composerRecall";
+import { InboxDock } from "../components/InboxDock";
+import { createComposerRecall } from "../composerRecall";
 import { nextPermissionLevel, parsePermissionLevel } from "../model";
 
 /** The conversation's reading measure. A line of text on a 27" display is
@@ -324,7 +325,6 @@ export function ChatRoomScreen(): JSX.Element {
     conversationId: currentId,
     messages: stream.messages,
     sending: stream.sending,
-    cancel: stream.cancel,
     removeMessage: stream.removeMessage,
     browser,
     showBrowser: () => viewport.showSurface("browser"),
@@ -434,10 +434,10 @@ export function ChatRoomScreen(): JSX.Element {
   };
 
   // ArrowUp in the empty composer edits the newest queued message in place — the third
-  // surface that edits one, following the same hold-and-draft protocol as the bubble and
+  // surface that edits one, following the same hold protocol as the thread's bubble and
   // the dock's list (see `composerRecall.ts`).
   const recall = createComposerRecall({
-    messages: stream.messages,
+    items: () => stream.inbox().items,
     editQueued: (id, text) => void stream.editQueued(id, text),
     holdQueued: (id, held) => void stream.holdQueued(id, held),
     stash: stream.stashDraft,
@@ -455,13 +455,27 @@ export function ChatRoomScreen(): JSX.Element {
     ),
   );
 
-  /** The operator's own messages queued into the live run. Read once for both places
-   *  that show them — the composer's header counts them, the park dock lists them — so
-   *  the two can never disagree about how many are waiting, and the recall walks the
-   *  same set through the same predicate. */
-  const queuedOperator = createMemo(() =>
-    stream.messages.filter(isOperatorQueued),
+  // The inbox, read once for every place that shows it: the thread's foot, the
+  // composer's count chip and the dock. The dock opens from the chip, and on its own when
+  // a Stop leaves the inbox waiting for the operator.
+  const inbox = stream.inbox;
+  const [dockOpen, setDockOpen] = createSignal(false);
+  createEffect(
+    on(
+      () => inbox().waiting,
+      (waiting) => waiting && setDockOpen(true),
+    ),
   );
+  createEffect(() => {
+    if (inbox().items.length === 0) setDockOpen(false);
+  });
+  const dockVisible = () => dockOpen() && inbox().items.length > 0;
+  const inboxActions = {
+    onEdit: (id: string, text: string) => void stream.editQueued(id, text),
+    onWithdraw: (id: string) => void stream.withdrawQueued(id),
+    onHold: (id: string, held: boolean) => void stream.holdQueued(id, held),
+    onResume: () => void stream.resumeInbox(),
+  };
 
   /** The composer's `Jump ↑`: to the newest turn holding an ask, through the follow so
    *  the bottom pin lets go — else to the tail, where the run is. */
@@ -546,6 +560,7 @@ export function ChatRoomScreen(): JSX.Element {
                 conversationId={currentId}
                 messageCount={() => stream.messages.length}
                 compacting={stream.compacting}
+                turnLive={stream.sending}
                 viewport={viewport}
                 branch={branch.latest}
                 actions={{
@@ -618,14 +633,15 @@ export function ChatRoomScreen(): JSX.Element {
                   // A park and a queued message can be outstanding together, and both
                   // reach the model on the same resume — so the dock that has taken the
                   // composer's slot also has to be where the queue is answerable.
-                  queued={queuedOperator()}
-                  onEditQueued={(id, text) => void stream.editQueued(id, text)}
-                  onWithdrawQueued={(id) => void stream.withdrawQueued(id)}
-                  onHoldQueued={(id, held) => void stream.holdQueued(id, held)}
+                  inbox={inbox()}
+                  inboxActions={inboxActions}
                 />
               )}
             </Show>
             <Show when={!stream.park()}>
+              <Show when={dockVisible()}>
+                <InboxDock framed inbox={inbox()} {...inboxActions} />
+              </Show>
               <Composer
                 autofocus
                 streaming={stream.sending()}
@@ -662,7 +678,9 @@ export function ChatRoomScreen(): JSX.Element {
                   <ComposerHeaderAside
                     streaming={stream.sending}
                     runClock={stream.runClock}
-                    queued={() => queuedOperator().length}
+                    queued={() => inbox().items.length}
+                    queuedOpen={dockVisible}
+                    onToggleQueued={() => setDockOpen((open) => !open)}
                     branch={() => branch.latest()?.branch}
                   />
                 }

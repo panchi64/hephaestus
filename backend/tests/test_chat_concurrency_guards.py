@@ -3,9 +3,9 @@ mutation on the same conversation (chat-03, chat-04, resume-02 backend half).
 
 A live (queued/running/awaiting_input) run on a conversation must block every
 leaf-moving branch op and a second ``/chat/regenerate``/``/chat/edit`` submission
-with a clear 409 raised **before** any store mutation. A second plain-text
-``/chat`` POST is the exception: it queues into the live run (mid-run steering)
-instead of being rejected — only an attachment-carrying send still 409s.
+with a clear 409 raised **before** any store mutation. A ``/chat`` POST is never
+refused: it queues into the conversation's inbox, and whatever holds the thread takes it
+next.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from ._helpers import (
     client_app,
     patch_model_resolution,
     register_stub_provider,
+    settle,
     stub_resolution,
     swap_tool_catalog,
 )
@@ -112,9 +113,9 @@ async def test_second_chat_post_queues_into_live_run(monkeypatch: pytest.MonkeyP
         await _wait(app, s(first_body["run_id"]))
 
 
-async def test_attachment_send_still_rejected_while_run_live(monkeypatch: pytest.MonkeyPatch):
-    # Steering is text-only: a send carrying attachments can't ride an existing
-    # run's request, so the busy conversation still answers 409 for it.
+async def test_an_attachment_send_queues_and_opens_its_own_turn(monkeypatch: pytest.MonkeyPatch):
+    # A send carrying attachments can't ride the running request, so it waits in the inbox
+    # as a turn item and opens a turn of its own once the running one ends.
     hang, started = asyncio.Event(), asyncio.Event()
     patch_hanging_model(monkeypatch, hang, started)
 
@@ -136,14 +137,21 @@ async def test_attachment_send_still_rejected_while_run_live(monkeypatch: pytest
                 "attachment_ids": [upload_id],
             },
         )
-        assert second.status_code == 409
-        assert "already in progress" in s(json_body(second)["detail"])
-        # Nothing was queued into the run either.
-        live = app_state(app).runs.get(s(first["run_id"]))
-        assert live is not None and live.pending_messages == []
+        assert second.status_code == 202
+        queued_id = s(json_body(second)["queued_message_id"])
+        inbox = app_state(app).runs.inbox(conv_id, OPERATOR_ID)
+        [waiting] = inbox.messages
+        assert (waiting.id, waiting.is_turn) == (queued_id, True)
+        # Never injected into the running turn.
+        assert inbox.drain() == []
 
         hang.set()
-        await _wait(app, s(first["run_id"]))
+        await settle(app)
+        assert inbox.messages == ()
+        detail = json_body(await client.get(f"/conversations/{conv_id}"))
+        users = [obj(m) for m in arr(detail["messages"]) if obj(m)["role"] == "user"]
+        assert [s(m["content"]).split("\n")[0] for m in users] == ["hello", "again"]
+        assert users[-1]["attachment_ids"] == [upload_id]
 
 
 async def test_guard_releases_once_run_reaches_terminal(monkeypatch: pytest.MonkeyPatch):
@@ -160,14 +168,14 @@ async def test_guard_releases_once_run_reaches_terminal(monkeypatch: pytest.Monk
         assert json_body(queued)["queued_message_id"]
 
         hang.set()
-        await _wait(app, s(first["run_id"]))
+        await settle(app)
 
-        # Once the run is terminal a new send starts a fresh run (no queueing).
+        # Once the thread is idle a new send starts a fresh run (no queueing).
         accepted = await client.post("/chat", json={"prompt": "now", "conversation_id": conv_id})
         assert accepted.status_code == 202
         assert json_body(accepted)["run_id"] != first["run_id"]
-        assert json_body(accepted)["queued_message_id"] is None
-        await _wait(app, s(json_body(accepted)["run_id"]))
+        assert "queued_message_id" not in json_body(accepted)
+        await settle(app)
 
 
 async def test_regenerate_rejected_while_run_live_and_leaf_unmoved(
@@ -266,17 +274,18 @@ async def test_branch_ops_rejected_while_run_live(monkeypatch: pytest.MonkeyPatc
         rewind_resp = await client.post(f"/conversations/{conv_id}/messages/{assistant_id}/rewind")
         assert rewind_resp.status_code == 409
 
-        pin_resp = await client.post(
-            f"/conversations/{conv_id}/messages/{assistant_id}/pin",
-            json={"pinned": True},
-        )
-        assert pin_resp.status_code == 409
-
         delete_resp = await client.delete(f"/conversations/{conv_id}/messages/{assistant_id}")
         assert delete_resp.status_code == 409
 
         after = await client.get(f"/conversations/{conv_id}")
         assert json_body(before) == json_body(after)  # none of the rejected ops mutated the tree
+
+        # A pin is metadata, not a tree change, so it works while a turn streams.
+        pin_resp = await client.post(
+            f"/conversations/{conv_id}/messages/{assistant_id}/pin",
+            json={"pinned": True},
+        )
+        assert pin_resp.status_code == 204
 
         hang.set()
         await _wait(app, s(json_body(live)["run_id"]))
@@ -428,20 +437,23 @@ async def test_delete_message_purge_claims_against_a_concurrent_chat_submission(
         )
         _ = await entered.wait()  # the delete is now parked inside `image_orphans`
 
+        # A send during the delete is not refused: it queues behind the claim.
         concurrent_chat = await client.post(
             "/chat", json={"prompt": "again", "conversation_id": conv_id}
         )
-        assert concurrent_chat.status_code == 409
+        assert concurrent_chat.status_code == 202
+        assert json_body(concurrent_chat)["run_id"] is None
 
         gate.set()
         delete_resp = await delete_task
         assert delete_resp.status_code == 200
 
-        # The claim is released once the delete's own mutation is done — a fresh
-        # submission is accepted again.
-        accepted = await client.post("/chat", json={"prompt": "now", "conversation_id": conv_id})
-        assert accepted.status_code == 202
-        await _wait(app, s(json_body(accepted)["run_id"]))
+        # Releasing the claim started a run for it.
+        await settle(app)
+        assert app_state(app).runs.inbox(conv_id, OPERATOR_ID).messages == ()
+        detail = json_body(await client.get(f"/conversations/{conv_id}"))
+        users = [s(obj(m)["content"]) for m in arr(detail["messages"]) if obj(m)["role"] == "user"]
+        assert users[-1] == "again"
 
 
 async def test_awaiting_input_run_queues_a_new_chat_submission(monkeypatch: pytest.MonkeyPatch):

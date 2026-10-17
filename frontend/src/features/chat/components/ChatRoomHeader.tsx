@@ -9,6 +9,7 @@ import {
   type MenuItem,
 } from "~/ui";
 import { REVEAL_SPEED_MS, pendingCount } from "../data";
+import { TURN_LOCK_HINT } from "../turnLock";
 import type { ChatViewport } from "../useChatViewport";
 import type { BranchState } from "../data";
 import { BranchChip } from "./BranchChip";
@@ -45,6 +46,8 @@ export interface ChatRoomHeaderProps {
   /** True while a hand-started fold is running on this thread — the menu row's own
    *  throbber. The room says so out loud in the composer's header line. */
   compacting: () => boolean;
+  /** True while a turn is running, which switches off compacting and deleting. */
+  turnLive: () => boolean;
   viewport: ChatViewport;
   /** The thread's branch, fetched by the room and shared with the Diff surface. */
   branch: () => BranchState | null | undefined;
@@ -182,8 +185,13 @@ export function ChatRoomHeader(props: ChatRoomHeaderProps): JSX.Element {
                 // left it lit on threads that could only ever be refused. So the row
                 // asks about the one thing the room does know, and the backend says
                 // in its own words when it declines.
-                disabled: !props.conversationId() || props.messageCount() === 0,
-                hint: "There are no turns in this thread to fold yet.",
+                disabled:
+                  !props.conversationId() ||
+                  props.messageCount() === 0 ||
+                  props.turnLive(),
+                hint: props.turnLive()
+                  ? TURN_LOCK_HINT
+                  : "There are no turns in this thread to fold yet.",
                 onSelect: props.actions.compact,
               },
               {
@@ -206,7 +214,8 @@ export function ChatRoomHeader(props: ChatRoomHeaderProps): JSX.Element {
                 label: "Delete conversation",
                 icon: "trash",
                 danger: true,
-                disabled: !props.conversationId(),
+                disabled: !props.conversationId() || props.turnLive(),
+                hint: TURN_LOCK_HINT,
                 onSelect: props.actions.remove,
               },
             ] satisfies MenuItem[]

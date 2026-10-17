@@ -14,10 +14,16 @@ from fastapi import APIRouter, HTTPException, Request
 
 from core.exceptions import NotFoundError
 from routes import deps
-from routes.chat.schemas import ChatCreate, ChatCreated, EditCreate, RegenerateCreate
+from routes.chat.schemas import (
+    ChatCreate,
+    ChatCreated,
+    ChatQueued,
+    EditCreate,
+    RegenerateCreate,
+)
 from routes.chat.submit import resolve_models, submit_turn, thread_agent, thread_models
 from routes.deps import OPERATOR_ID
-from runs import CHAT_TURN_KINDS, ConversationBusyError, RunRegistry
+from runs import ConversationBusyError, RunRegistry, TurnPayload
 from services.agents import DEFAULT_AGENT
 from services.conversations import ConversationBinding, ConversationStore
 from services.turn_stamps import still_named
@@ -39,40 +45,58 @@ async def _validate_attachments(request: Request, attachment_ids: list[str]) -> 
             raise HTTPException(status_code=404, detail=f"attachment {upload_id!r} not found")
 
 
-def _enqueue_steering(
-    registry: RunRegistry, conversation_id: str, body: ChatCreate
-) -> ChatCreated | None:
-    """Queue a mid-run message into the conversation's live chat run, or None when
-    the busy conversation can't take one (the claim is held by a regenerate/edit
-    with no run registered yet, the run isn't a chat turn, or the send carries
-    attachments or a command — steering is text-only). Synchronous end to end: no
-    ``await`` between finding the run and enqueueing, so the run can't reach terminal
-    (or drain) in between.
+def _enqueue(registry: RunRegistry, conversation_id: str, body: ChatCreate) -> ChatQueued:
+    """Queue a send into a busy conversation's inbox. Never refused: a plain message joins
+    the running turn at its next model request, and one carrying attachments, file
+    references or a command waits to open a turn of its own, composed through the prelude
+    like any send. Synchronous end to end, so nothing drains between the lookup and the
+    enqueue.
 
-    **A command is refused rather than queued**, and that is not an oversight. A queued
-    message is injected verbatim: there is no prelude around it to resolve a command
-    through, so `/deploy prod` would reach the model as the literal token. Expanding
-    before enqueueing is the alternative and is worse — the operator can edit a queued
-    message (`PATCH /runs/{id}/messages/{mid}`), and they would then be editing text
-    they never wrote. The 409 sends it down the ordinary path instead, where the whole
-    composition exists.
-
-    "Is a chat turn" is membership in the composed kinds, not equality with ``chat``: a
-    scheduled task's run and a sub-agent's or woken turn both drive a conversation
-    the operator can open and both drain the queued-message inbox, so both take steering.
-    Only a run some other orchestrator submitted — which would never read the queue — is
-    refused."""
-    if body.attachment_ids or body.command or body.file_refs:
-        return None
+    A command is queued unexpanded. The operator can edit a queued message, and expanding
+    it now would have them editing text they never wrote. A turn item keeps the model,
+    level and agent picked for it; a plain message joins a turn already running on its
+    own."""
+    payload = (
+        TurnPayload(
+            attachment_ids=tuple(body.attachment_ids),
+            file_refs=tuple(body.file_refs),
+            command=body.command.model_dump_json() if body.command else None,
+            endpoint_id=body.endpoint_id,
+            model=body.model,
+            permission_level=body.permission_level,
+            agent=body.agent,
+        )
+        if body.attachment_ids or body.command or body.file_refs
+        else None
+    )
+    inbox = registry.inbox(conversation_id, OPERATOR_ID)
+    # After a Stop the operator's new word leads what waited behind the Stop.
+    message = inbox.enqueue(body.prompt, payload=payload, ahead=inbox.waiting_for_operator)
+    # The operator acting again clears a Stop's hold, or this would wait forever behind it.
+    inbox.resume()
     run = registry.active_run_for(conversation_id, OPERATOR_ID)
-    if run is None or run.kind not in CHAT_TURN_KINDS:
-        return None
-    message = run.enqueue_message(body.prompt)
-    return ChatCreated(
-        run_id=run.id,
+    return ChatQueued(
+        run_id=run.id if run is not None else None,
         conversation_id=conversation_id,
         queued_message_id=message.id,
     )
+
+
+async def _queued_after_losing(
+    request: Request, registry: RunRegistry, conversation_id: str, body: ChatCreate
+) -> ChatQueued:
+    """A turn started on the thread under this send's claim, so the send joins its inbox
+    instead of being refused."""
+    queued = _enqueue(registry, conversation_id, body)
+    await _retire_stop_marker(deps.store(request), conversation_id, body)
+    return queued
+
+
+def _resumed(request: Request, conversation_id: str) -> None:
+    """The operator started a turn, so whatever waited since they stopped one flows again.
+    Called once the run is submitted and before it makes its first request, which then
+    takes the inbox behind the operator's own message."""
+    deps.registry(request).inbox(conversation_id, OPERATOR_ID).resume()
 
 
 async def _retire_stop_marker(
@@ -103,8 +127,8 @@ async def _validate_new_thread_binding(request: Request, body: ChatCreate) -> No
         raise HTTPException(status_code=404, detail="project not found") from None
 
 
-@router.post("", status_code=202, response_model=ChatCreated)
-async def create_chat(body: ChatCreate, request: Request) -> ChatCreated:
+@router.post("", status_code=202, response_model=ChatCreated | ChatQueued)
+async def create_chat(body: ChatCreate, request: Request) -> ChatCreated | ChatQueued:
     # A turn needs *something* to act on: text, or at least one attached file ("here,
     # look at this").
     if not body.prompt.strip() and not body.attachment_ids:
@@ -115,12 +139,13 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated:
 
     store = deps.store(request)
     agent_name = None if body.agent == DEFAULT_AGENT else body.agent
+    stored: ConversationBinding | None = None
     if body.conversation_id is not None:
         # Continue an existing conversation, but only one the operator owns —
         # an unknown id must not silently spawn orphan messages.
         if not await store.exists(body.conversation_id, OPERATOR_ID):
             raise HTTPException(status_code=404, detail="conversation not found")
-        binding = await store.binding(body.conversation_id)
+        binding = stored = await store.binding(body.conversation_id)
         if body.agent is not None:
             binding = replace(binding, agent_name=agent_name)
     else:
@@ -158,48 +183,52 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated:
     # run for `active_run_for` to see. A brand-new conversation's id is unknown to
     # anyone else yet, so this always succeeds for it.
     #
-    # A busy conversation is not always a rejection: when the claim is held by a live
-    # *chat* run (not a regenerate/edit claim) and the send is plain text, the message
-    # queues into that run for injection at its next model-request boundary. The
-    # check-and-enqueue is synchronous, so the run can't go terminal in between; and a
-    # run that went terminal just before the POST simply lets the claim succeed — the
-    # client never has to pick between "queue" and "new turn".
+    # A busy conversation never refuses a send: it queues into the inbox, and whatever
+    # holds the thread (a turn, a fold, a regenerate about to submit) takes it next.
     registry = deps.registry(request)
     try:
         registry.claim(conversation_id, OPERATOR_ID)
     except ConversationBusyError:
-        queued = _enqueue_steering(registry, conversation_id, body)
-        if queued is not None:
-            await _retire_stop_marker(store, conversation_id, body)
-            return queued
-        raise HTTPException(status_code=409, detail=deps.CONVERSATION_BUSY_DETAIL) from None
+        return await _queued_after_losing(request, registry, conversation_id, body)
     try:
         # The one binding fact a later turn may change, written now that this request owns
         # the thread and *before* `submit_turn` reads the binding — so this send runs at
-        # the level it asked for, and the next one inherits it. Deliberately after the
-        # claim: a send that is rejected as busy, or diverted into the live run as
-        # steering, never gets a turn of its own to run at the new level, and moving the
-        # stored one anyway would leave the operator's control reading a level nothing is
-        # actually running at.
-        if body.conversation_id is not None and body.permission_level is not None:
+        # the level it asked for, and the next one inherits it. After the claim on purpose:
+        # a send that only queues gets no turn at the new level, and moving the stored one
+        # would leave the control reading a level nothing runs at.
+        if stored is not None and body.permission_level is not None:
             _ = await store.set_permission_level(conversation_id, body.permission_level)
-        if body.conversation_id is not None and body.agent is not None:
+        if stored is not None and body.agent is not None:
             await store.set_agent_name(conversation_id, agent_name)
-        created = await submit_turn(
-            request,
-            prompt=body.prompt,
-            conversation_id=conversation_id,
-            models=models,
-            attachment_ids=body.attachment_ids,
-            file_refs=body.file_refs,
-            command=body.command.recorded() if body.command else None,
-            ephemeral=body.ephemeral,
-        )
+        try:
+            created = await submit_turn(
+                request,
+                prompt=body.prompt,
+                conversation_id=conversation_id,
+                models=models,
+                attachment_ids=body.attachment_ids,
+                file_refs=body.file_refs,
+                command=body.command.recorded() if body.command else None,
+                ephemeral=body.ephemeral,
+            )
+        except (ConversationBusyError, HTTPException) as exc:
+            if isinstance(exc, HTTPException) and (
+                exc.status_code != 409 or exc.detail != deps.CONVERSATION_BUSY_DETAIL
+            ):
+                raise
+            # Another turn took the thread after the binding moved: put it back, since this
+            # send only queues (a turn item carries its own picks to its turn).
+            if stored is not None and body.permission_level is not None:
+                _ = await store.set_permission_level(conversation_id, stored.permission)
+            if stored is not None and body.agent is not None:
+                await store.set_agent_name(conversation_id, stored.agent_name)
+            return await _queued_after_losing(request, registry, conversation_id, body)
         # Only once the run is submitted — a rejected send leaves the operator with the
         # same unfinished turn, so it must leave them the marker too. The claim above is
         # not enough to know that: `submit` has its own atomic check-and-claim, and a
         # race it catches becomes a 409 from in here.
         await _retire_stop_marker(store, conversation_id, body)
+        _resumed(request, conversation_id)
         return created
     finally:
         deps.release_conversation(request, conversation_id)
@@ -229,7 +258,7 @@ async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
         models = await thread_models(request, body.conversation_id, body.endpoint_id, body.model)
         if not await store.regenerate_point(body.conversation_id, body.message_id):
             raise HTTPException(status_code=404, detail="message not found")
-        return await submit_turn(
+        created = await submit_turn(
             request,
             prompt=None,
             conversation_id=body.conversation_id,
@@ -241,6 +270,8 @@ async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
             # history this replays.
             command=(await store.turn_stamps(body.conversation_id)).command,
         )
+        _resumed(request, body.conversation_id)
+        return created
     finally:
         deps.release_conversation(request, body.conversation_id)
 
@@ -275,7 +306,7 @@ async def edit(body: EditCreate, request: Request) -> ChatCreated:
         stamps = still_named(stamped, body.prompt)
         if not await store.edit_point(body.conversation_id, body.message_id):
             raise HTTPException(status_code=404, detail="message not found")
-        return await submit_turn(
+        created = await submit_turn(
             request,
             prompt=body.prompt,
             conversation_id=body.conversation_id,
@@ -284,5 +315,7 @@ async def edit(body: EditCreate, request: Request) -> ChatCreated:
             file_refs=stamps.file_refs,
             command=stamps.command,
         )
+        _resumed(request, body.conversation_id)
+        return created
     finally:
         deps.release_conversation(request, body.conversation_id)

@@ -19,11 +19,7 @@ from __future__ import annotations
 
 import httpx
 from pydantic import JsonValue, TypeAdapter, ValidationError
-from pydantic_ai.exceptions import (
-    ModelAPIError,
-    ModelHTTPError,
-    UsageLimitExceeded,
-)
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 
 from runs import Run
 
@@ -165,40 +161,4 @@ def model_load_hint(exc: ModelHTTPError) -> str | None:
         f"Couldn't load {model!r} on its inference server. Load it before use — in "
         "LM Studio, pre-load each model you want to compare, or raise “Max loaded "
         "models” / enable JIT so the server can hold more than one at once."
-    )
-
-
-# --- our own per-turn budgets ------------------------------------------------------
-
-
-def usage_limit_kind(exc: UsageLimitExceeded) -> str:
-    """Which bound in ``UsageLimits`` tripped — ``UsageLimitExceeded`` carries no
-    structured field, only a message, so classify it by the marker each check raises
-    (see ``pydantic_ai.usage.UsageLimits``)."""
-    message = str(exc)
-    if "tool_calls_limit" in message:
-        return "tool_calls"
-    if "tokens_limit" in message:
-        return "tokens"
-    return "steps"
-
-
-def usage_limit_message(exc: UsageLimitExceeded) -> str:
-    """An operator-legible sentence for a usage-limit stop, mirroring the treatment
-    ``_timeout_message`` (``runs/registry.py``) gives wall-clock/inactivity bounds:
-    this reaches the operator verbatim, both as the toast (``LimitNotice.message``) and
-    as the turn's persisted stop marker, so it must read as a plain sentence — never
-    ``str(exc)``'s raw internal phrasing (e.g. pydantic_ai's own ``{tool_calls=}`` repr).
-
-    Each names the *local* budget that tripped and where to raise it. These are this
-    chassis's own per-turn ceilings, nothing to do with a provider's rate limit — so the
-    wording must never leave the operator hunting for an account-level quota."""
-    kind = usage_limit_kind(exc)
-    if kind == "tool_calls":
-        return "this run hit its tool-call limit for a single turn and stopped"
-    if kind == "tokens":
-        return "this run hit its token budget for a single turn and stopped"
-    return (
-        "this run hit its step limit for a single turn and stopped — raise the "
-        "model request limit in Settings to let a turn run longer"
     )

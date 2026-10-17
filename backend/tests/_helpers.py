@@ -23,6 +23,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from agent import ParkedTurn
 from app import create_app
 from core.config import Settings
+from harness.manifests._inbox_dispatch import InboxDispatcher
 from routes.deps import app_state
 from runs import EventBody, Run
 from services.providers.base import ModelLimits, Provider, ProviderPreset
@@ -360,6 +361,26 @@ async def await_parked(app: FastAPI, run_id: str) -> Run:
             return run
         await asyncio.sleep(0.01)
     raise AssertionError("run never parked")
+
+
+async def settle(app: FastAPI) -> None:
+    """Wait until nothing is running: every live run, the terminal hooks they fire, and
+    the turns the inbox starts after them. A parked run counts as settled."""
+    state = app_state(app)
+    for _ in range(100):
+        live = [r for r in state.runs.list() if not r.is_terminal and not r.is_parked]
+        hooks = list(state.run_terminal_tasks)
+        dispatcher = state.inbox_dispatcher
+        kicks = isinstance(dispatcher, InboxDispatcher) and dispatcher.pending
+        if not live and not hooks and not kicks:
+            return
+        for run in live:
+            await run.wait()
+        _ = await asyncio.gather(*hooks, return_exceptions=True)
+        if isinstance(dispatcher, InboxDispatcher):
+            await dispatcher.drain()
+        await asyncio.sleep(0.01)
+    raise AssertionError("runs never settled")
 
 
 def run_bodies(run: Run) -> list[EventBody]:

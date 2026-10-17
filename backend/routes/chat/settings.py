@@ -12,18 +12,14 @@ from runs import ContextThresholds
 from services.settings_store import (
     AutoCompactSettings,
     SettingsStore,
-    get_agent_request_limit,
     get_auto_compact,
-    get_auto_continue_max,
     get_context_thresholds,
     get_first_token_timeout,
     get_inactivity_timeout,
     get_subagent_limit,
     get_wall_clock_timeout,
     get_work_summary_idle_minutes,
-    set_agent_request_limit,
     set_auto_compact,
-    set_auto_continue_max,
     set_context_thresholds,
     set_first_token_timeout,
     set_inactivity_timeout,
@@ -45,8 +41,6 @@ async def _current(store: SettingsStore) -> ChatSettings:
         work_summary_idle_minutes=await get_work_summary_idle_minutes(store, OPERATOR_ID),
         context_warn_threshold=context.warn,
         context_alert_threshold=context.alert,
-        agent_request_limit=await get_agent_request_limit(store, OPERATOR_ID),
-        auto_continue_max=await get_auto_continue_max(store, OPERATOR_ID),
         first_token_timeout_s=await get_first_token_timeout(store, OPERATOR_ID),
         inactivity_timeout_s=await get_inactivity_timeout(store, OPERATOR_ID),
         wall_clock_timeout_s=await get_wall_clock_timeout(store, OPERATOR_ID),
@@ -67,10 +61,6 @@ async def update_chat_settings(body: ChatSettings, request: Request) -> ChatSett
     each multi-field group is merged over its current values and only written when the body
     touched it, so a client tuning one preference can't reset the rest."""
     store = deps.settings_store(request)
-    if body.agent_request_limit is not None:
-        _ = await set_agent_request_limit(store, OPERATOR_ID, body.agent_request_limit)
-    if body.auto_continue_max is not None:
-        _ = await set_auto_continue_max(store, OPERATOR_ID, body.auto_continue_max)
     if body.first_token_timeout_s is not None:
         _ = await set_first_token_timeout(store, OPERATOR_ID, body.first_token_timeout_s)
     if body.inactivity_timeout_s is not None:

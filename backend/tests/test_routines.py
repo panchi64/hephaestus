@@ -314,8 +314,11 @@ async def test_every_run_gets_a_fresh_thread_told_how_the_last_ended(
         binding = await store.binding(s(second["conversationId"]))
         assert binding is not None and binding.agent_name == "researcher"
         turns = await store.messages_view(s(second["conversationId"]))
-        [prompt] = [turn.content for turn in turns if turn.role == "user"]
-        assert "How the previous run ended" in prompt and "Inbox is quiet." in prompt
+        [prompt] = [turn for turn in turns if turn.role == "user"]
+        assert "How the previous run ended" in prompt.content
+        # The previous run's own words are quoted, so they ride as a part of their own.
+        assert prompt.parts is not None
+        assert any("Inbox is quiet." in part.text for part in prompt.parts)
         latest = obj(arr(json_body(await client.get("/tasks"))["items"])[0])["conversationId"]
         assert latest == second["conversationId"]
 

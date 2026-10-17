@@ -163,9 +163,9 @@ class TestWhatAScriptMayCall:
 
 
 class TestTheLimits:
-    def test_the_call_cap_sits_under_the_turns_own(self):
+    def test_the_call_cap_is_the_scripts_own(self):
         assert code_mode_limits(Settings()).max_tool_calls == 25
-        assert code_mode_limits(Settings(agent_tool_calls_limit=10)).max_tool_calls == 10
+        assert code_mode_limits(Settings(code_mode_max_tool_calls=10)).max_tool_calls == 10
 
 
 # --- a script's calls, end to end -------------------------------------------------------

@@ -18,11 +18,12 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.repo_context._loader import ContextFile
 
+from core.envelopes import BRIEF_KEY
 from runs import Run, RunStream
 from services.home.backend import Mount
 from services.home.paths import SCRATCH, Place
 from services.home.table import RunHome
-from tools.briefing import BRIEF_KEY, with_brief, with_brief_payload
+from tools.briefing import with_brief, with_brief_payload
 from tools.deps import RunDeps
 from tools.repo_instructions import (
     INSTRUCTIONS_BYTE_BUDGET,

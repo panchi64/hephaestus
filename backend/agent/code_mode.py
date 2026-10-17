@@ -115,19 +115,11 @@ class CodeModeLimits:
 
 
 def code_mode_limits(settings: Settings) -> CodeModeLimits:
-    """The limits a turn's scripts run under, from the turn's one settings object.
-
-    A script's calls count toward the turn's own ``agent_tool_calls_limit`` — the sandbox
-    dispatches through the same usage the turn is bounded by — so where that is set the
-    script's cap is clamped under it: a budget the turn could never let a script spend is
-    a number that only misleads."""
-    calls = settings.code_mode_max_tool_calls
-    if settings.agent_tool_calls_limit is not None:
-        calls = min(calls, settings.agent_tool_calls_limit)
+    """The limits a turn's scripts run under, from the turn's one settings object."""
     return CodeModeLimits(
         max_duration_s=settings.code_mode_max_duration_s,
         max_memory_bytes=settings.code_mode_max_memory_mb * 1024 * 1024,
-        max_tool_calls=max(1, calls),
+        max_tool_calls=max(1, settings.code_mode_max_tool_calls),
     )
 
 

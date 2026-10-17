@@ -1,113 +1,64 @@
 /**
- * The steering family: messages the operator queues into a live run, and what becomes of
- * them — tagged, edited, held, withdrawn, or injected into the turn.
+ * The inbox family: messages waiting in the conversation's inbox, and the moment one
+ * reaches the model.
+ *
+ * Everything but the last is inbox bookkeeping and touches no transcript row. Only
+ * `message.injected` does, because from there the message is part of the turn.
  */
 
 import { produce } from "solid-js/store";
 import type { RunEvent } from "~/lib/stream";
+import { foldInboxEvent, type InboxItem } from "../../inbox";
 import type { ChatMessage } from "../../model";
 import { nextId } from "../patch";
 import type { FoldContext } from "./types";
 
-/** Fold one steering event; false when the event is not in this family. */
+/** The row an injected item becomes. Nothing for a turn item — it opens its own turn,
+ *  whose prompt arrives with that turn. A system item becomes a notice row. */
+function injectedRow(item: InboxItem, ts: string): ChatMessage | null {
+  if (item.turn) return null;
+  if (item.source === "system")
+    return {
+      id: nextId("n"),
+      role: "notice",
+      content: item.text,
+      notice: item.notice ?? undefined,
+      createdAt: ts,
+    };
+  const fromAgent = item.source === "subagent" || item.source === "agent";
+  return {
+    id: nextId(fromAgent ? "s" : "u"),
+    role: fromAgent ? "subagent" : "user",
+    content: item.text,
+    createdAt: ts,
+    author: item.source === "agent" ? (item.sender ?? undefined) : undefined,
+    reporter:
+      item.source === "subagent" ? (item.sender ?? undefined) : undefined,
+  };
+}
+
+/** Fold one inbox event; false when the event is not in this family. */
 export function foldMessages(ev: RunEvent, c: FoldContext): boolean {
   const { deps, assistantId } = c;
-  const { state, setMessages } = deps;
+  const { state, setMessages, inbox } = deps;
   switch (ev.type) {
-    case "message.queued": {
-      // A message the backend accepted into this run. Usually it tags the optimistic
-      // bubble `send` already pushed (matched by text, first untagged wins so duplicate
-      // texts pair off in order); on a reattach replay there is no optimistic bubble, so
-      // rebuild it from the event.
-      //
-      // A sub-agent's report rides the same road and must not read the same. It gets no
-      // optimistic bubble to tag — nobody typed it — and it lands as a `subagent` row, so
-      // the live transcript says what a reload says rather than attributing to the
-      // operator words they have not even seen. It also means the report is not offered
-      // the edit/withdraw affordances, which belong to a message its author can still
-      // take back.
-      const fromSubagent = ev.source === "subagent" || ev.source === "agent";
-      setMessages(
-        produce((list) => {
-          if (list.some((m) => m.queuedMessageId === ev.message_id)) return;
-          const untagged = fromSubagent
-            ? undefined
-            : list.find(
-                (m) =>
-                  m.queuedPending &&
-                  !m.queuedMessageId &&
-                  m.content === ev.text,
-              );
-          if (untagged) untagged.queuedMessageId = ev.message_id;
-          else
-            list.push({
-              id: nextId(fromSubagent ? "s" : "u"),
-              role: fromSubagent ? "subagent" : "user",
-              content: ev.text,
-              queuedPending: true,
-              queuedMessageId: ev.message_id,
-              createdAt: ev.ts,
-              author:
-                ev.source === "agent" ? (ev.sender ?? undefined) : undefined,
-              reporter:
-                ev.source === "subagent" ? (ev.sender ?? undefined) : undefined,
-            });
-        }),
-      );
-      return true;
-    }
+    case "message.queued":
     case "message.edited":
-      // The operator rewrote a still-pending bubble. Usually `editQueued`
-      // already applied the text optimistically-on-success; this fold makes a
-      // reattach replay (and any second tab) converge on the same content. An
-      // already-injected message is part of the turn and never changes.
-      setMessages(
-        produce((list) => {
-          const bubble = list.find(
-            (m) => m.queuedMessageId === ev.message_id && m.queuedPending,
-          );
-          if (bubble) bubble.content = ev.text;
-        }),
-      );
-      return true;
     case "message.held":
-      // The run is holding this one back (or has stopped). Folded rather than left to
-      // the request that asked for it, so a second tab — and a reattaching client
-      // replaying the stream — see a stalled queue for what it is.
-      setMessages(
-        produce((list) => {
-          const bubble = list.find(
-            (m) => m.queuedMessageId === ev.message_id && m.queuedPending,
-          );
-          if (bubble) bubble.queuedHeld = ev.held;
-        }),
-      );
-      return true;
     case "message.withdrawn":
-      // Only a still-pending bubble is removable — an already-injected message
-      // is part of the turn and must never vanish from the transcript.
-      setMessages(
-        produce((list) => {
-          const i = list.findIndex(
-            (m) => m.queuedMessageId === ev.message_id && m.queuedPending,
-          );
-          if (i >= 0) list.splice(i, 1);
-        }),
-      );
+    case "inbox.waiting":
+      if (inbox) inbox.set(foldInboxEvent(inbox.get(), ev));
       return true;
-    case "message.injected":
-      // The queued message reached the model: promote its bubble to a normal
-      // user turn and split the assistant flow around it, mirroring how the
-      // backend persists the steered turn (…assistant segment, user message,
-      // next assistant segment…) so the live transcript and a reload agree.
+    case "message.injected": {
+      const item = inbox?.get().items.find((i) => i.id === ev.message_id);
+      if (inbox) inbox.set(foldInboxEvent(inbox.get(), ev));
+      const bubble = item ? injectedRow(item, ev.ts) : null;
+      if (!bubble) return true;
+      // Split the assistant flow around the message, mirroring how the backend
+      // persists the steered turn (…assistant segment, user message, next assistant
+      // segment…) so the live transcript and a reload agree.
       setMessages(
         produce((list) => {
-          const qi = list.findIndex(
-            (m) => m.queuedMessageId === ev.message_id && m.queuedPending,
-          );
-          if (qi < 0) return;
-          const [bubble] = list.splice(qi, 1);
-          bubble.queuedPending = false;
           const target = list.find((m) => m.id === assistantId);
           const targetIsFresh =
             target && !target.blocks?.length && !target.content;
@@ -134,6 +85,7 @@ export function foldMessages(ev: RunEvent, c: FoldContext): boolean {
         }),
       );
       return true;
+    }
     default:
       return false;
   }

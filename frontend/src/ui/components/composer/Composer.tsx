@@ -57,11 +57,11 @@ export function Composer(props: ComposerProps): JSX.Element {
 
   const items = () => props.attachments?.items() ?? [];
 
-  // Files arrive by drop and paste only while the attach button would take them. A
-  // file dropped mid-run used to become a chip that STOP & correct then threw away.
+  // Files arrive by drop and paste only while the attach button would take them. Mid-run
+  // they ride a queued send, which becomes a turn of its own after the live one.
   const drop = useFileDrop(
     (files) => props.attachments?.attach(files),
-    () => !props.disabled && !props.streaming && !recalling(),
+    () => !props.disabled && !recalling(),
   );
 
   const { announcement, announce } = createComposerAnnouncer(props, recalling);
@@ -200,9 +200,7 @@ export function Composer(props: ComposerProps): JSX.Element {
             <AttachButton
               attachments={props.attachments}
               drop={drop}
-              disabled={Boolean(
-                props.disabled || props.streaming || recalling(),
-              )}
+              disabled={Boolean(props.disabled || recalling())}
             />
             {controls()}
           </>

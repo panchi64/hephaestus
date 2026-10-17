@@ -9,11 +9,11 @@ import pytest
 from fastapi import FastAPI
 
 from agent.injected import injected_text
+from harness.manifests._inbox_dispatch import InboxDispatcher
 from harness.manifests._subagent_wake import SubagentWake
 from routes.deps import app_state
-from runs import RunRegistry
+from runs import QueuedMessage, RunRegistry
 from runs.events import now_utc
-from runs.run import QueuedMessage
 from services.agents import AgentDefinition, builtin_roster, lower_of
 from services.conversations import ConversationStore
 from services.subagents import LaunchedSubagent, SubagentParent, SubagentUnavailableError
@@ -322,7 +322,9 @@ class TestTheTreesWakeBudget:
             assert run is not None
             run.kind = "chat"
 
-            wake.observed(run)
+            dispatcher = app_state(app).inbox_dispatcher
+            assert isinstance(dispatcher, InboxDispatcher)
+            dispatcher.observed(run)
 
             assert wake.unattended_turns(root) == 0
             await _settle_thread(app, root)

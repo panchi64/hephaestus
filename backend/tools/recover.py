@@ -28,7 +28,6 @@ from pydantic_ai.exceptions import (
     SuspendedResponseExpired,
     ToolFailedError,
     ToolRetryError,
-    UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
@@ -57,7 +56,6 @@ _PASS_THROUGH = (
     SkipToolValidation,
     RunCancelled,
     SuspendedResponseExpired,
-    UsageLimitExceeded,
     UserError,
 )
 

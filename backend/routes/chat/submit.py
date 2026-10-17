@@ -1,13 +1,13 @@
-"""Submitting a turn on behalf of a request: the thread's ``TurnScope``, the picked slash
+"""Submitting a turn on the operator's behalf: the thread's ``TurnScope``, the picked slash
 command's tail block, and the operator's settings resolved once for every interactive
-turn (send, regenerate, edit) before handing off to ``compose_turn``."""
+turn (send, regenerate, edit, and one the inbox starts) before handing off to
+``compose_turn``. Everything resolves from a request or from the app itself."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from fastapi import Request
 from pydantic_ai import AbstractToolset
 
 from agent.summarize import AutoCompactPolicy, resolve_auto_compact_policy
@@ -21,7 +21,6 @@ from services.agents.thread import ThreadAgent, resolve_thread_agent
 from services.commands import Invocation, expand
 from services.conversations import ConversationBinding
 from services.settings_store import (
-    get_agent_request_limit_override,
     get_context_thresholds,
     get_inactivity_timeout,
     get_wall_clock_timeout,
@@ -31,7 +30,7 @@ from tools import InstructionProvider, RunDeps
 
 
 async def resolve_models(
-    request: Request,
+    request: deps.Source,
     endpoint_id: str | None,
     model: str | None,
     *,
@@ -45,7 +44,7 @@ async def resolve_models(
 
 
 async def thread_models(
-    request: Request, conversation_id: str, endpoint_id: str | None, model: str | None
+    request: deps.Source, conversation_id: str, endpoint_id: str | None, model: str | None
 ) -> TurnModels:
     """The models a turn on an existing thread runs on, its agent's pick included."""
     binding = await deps.store(request).binding(conversation_id)
@@ -54,7 +53,7 @@ async def thread_models(
 
 
 async def thread_agent(
-    request: Request, binding: ConversationBinding, conversation_id: str | None
+    request: deps.Source, binding: ConversationBinding, conversation_id: str | None
 ) -> ThreadAgent:
     """The agent this thread runs, applied to its binding."""
     return await resolve_thread_agent(
@@ -68,7 +67,7 @@ async def thread_agent(
 
 
 async def _command_context(
-    request: Request,
+    request: deps.Source,
     command: Invocation | None,
     conversation_id: str,
     binding: ConversationBinding,
@@ -123,7 +122,7 @@ class TurnScope:
     instruction_providers: Sequence[InstructionProvider]
 
 
-async def turn_scope(request: Request, conversation_id: str, *, vision: bool) -> TurnScope:
+async def turn_scope(request: deps.Source, conversation_id: str, *, vision: bool) -> TurnScope:
     """This thread's :class:`TurnScope`, read off the `Request`.
 
     ``vision`` is the resolved main model's image fact: a tool that answers with an image
@@ -147,7 +146,7 @@ async def turn_scope(request: Request, conversation_id: str, *, vision: bool) ->
 
 
 async def submit_turn(
-    request: Request,
+    request: deps.Source,
     *,
     prompt: str | None,
     conversation_id: str,
@@ -196,23 +195,14 @@ async def submit_turn(
         attachment_ids=attachment_ids,
         file_refs=file_refs,
         ephemeral=ephemeral,
-        # Resolved here, not at each caller, for the same reason as the request limit
-        # below: send, regenerate and edit all want it and none of them should have to
-        # know it exists.
+        # Resolved here, not at each caller: send, regenerate and edit all want it and none
+        # of them should have to know it exists.
         auto_compact=await _resolve_auto_compact(request, conversation_id),
-        # Resolved here rather than at each caller so every interactive turn — send,
-        # regenerate, edit — runs under the operator's ceiling without threading it
-        # through three call sites. The *override*, not the effective number: a sub-agent
-        # spec's floor may raise a bound nobody chose, and must not overrule one they did.
-        request_limit=lower_of(
-            scope.agent.request_limit,
-            await get_agent_request_limit_override(deps.settings_store(request), OPERATOR_ID),
-        ),
         # Same again for the context gauge's boundaries: resolved once here so send,
         # regenerate and edit all report severity against the operator's own pair.
         context_thresholds=await get_context_thresholds(deps.settings_store(request), OPERATOR_ID),
-        # Same reason as the request limit: every interactive turn runs under the
-        # operator's inactivity bound (else the config default).
+        # Same reason again: every interactive turn runs under the operator's inactivity
+        # bound (else the config default).
         inactivity_timeout_s=await get_inactivity_timeout(
             deps.settings_store(request), OPERATOR_ID
         ),
@@ -225,7 +215,9 @@ async def submit_turn(
     )
 
 
-async def _resolve_auto_compact(request: Request, conversation_id: str | None) -> AutoCompactPolicy:
+async def _resolve_auto_compact(
+    request: deps.Source, conversation_id: str | None
+) -> AutoCompactPolicy:
     """The effective conversation auto-compaction policy for a turn: the thread's on/off
     override beats the operator's global default, which beats the config default —
     resolved here rather than in the engine so the orchestrator never reads the settings

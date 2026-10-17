@@ -3,11 +3,11 @@
  * with.
  *
  * What is left here after the split is the *assembly*: the signals a thread's UI reads,
- * the ops that start and stop a turn, and the wiring that lets six single-purpose modules
+ * the ops that start and stop a turn, and the wiring that lets seven single-purpose modules
  * behave as one object. Each of those modules answers a question this file deliberately no
  * longer does — driving a run's transport (`drive.ts`), what a frame changes on screen
- * (`fold.ts`), a message sent into a run already going (`steering.ts`), deciding the calls
- * a run parked on (`approvals.ts`), reconciling with what was persisted (`resume.ts`),
+ * (`fold.ts`), the conversation's inbox of queued messages (`steering.ts`), deciding the
+ * calls a run parked on (`approvals.ts`), reconciling with what was persisted (`resume.ts`),
  * acting on a turn already recorded (`branching.ts`), and being pointed at a different
  * thread (`binding.ts`).
  *
@@ -20,22 +20,22 @@
  * positional guesswork about which is which.
  *
  * **The ops form a cycle, and it is a real one.** A run's teardown reconciles the thread,
- * reconciling can discover a live run and start a drive, and a drive hands undelivered
- * steering text back. Two of the wirings below therefore reach the drive at *call* time
- * rather than holding its handle, which is what makes the cycle two named edges instead of
- * one closure in which every part can reach every other.
+ * and reconciling can discover a live run and start a drive. Two of the wirings below
+ * therefore reach the drive at *call* time rather than holding its handle, which is what
+ * makes the cycle two named edges instead of one closure in which every part can reach
+ * every other.
  */
 
-import { createEffect, createSignal, untrack } from "solid-js";
+import { createEffect, createSignal, on, untrack } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
-import { api, isApiError } from "~/lib/api";
+import { api } from "~/lib/api";
 import { effectiveSelection, type ModelSelection } from "~/lib/stores/models";
 import type { TaskItem } from "~/lib/stream";
 import type { PlanDocument } from "../model";
 import { toast } from "~/ui";
 import { CONTINUE_PROMPT } from "../data/constants";
 import { refreshSessions } from "../data/sessions";
-import type { ChatCreatedDTO, ConversationDetailDTO } from "../data/wire";
+import type { ChatSendDTO, ConversationDetailDTO } from "../data/wire";
 import type {
   ActiveRun,
   ChatMessage,
@@ -62,6 +62,7 @@ import {
 import { createPatchById, nextId } from "./patch";
 import { createResumeOps } from "./resume";
 import { createSteeringOps } from "./steering";
+import { deliveryDue } from "../inbox";
 
 export interface ChatStreamOptions {
   /** Fired once when a brand-new conversation receives its backend id. */
@@ -201,10 +202,19 @@ export function createChatStream(
 
   const patchById = createPatchById(messages, setMessages);
 
+  // The conversation's inbox: everything queued behind the running turn. Declared before
+  // the fold, which keeps it current from the run's `message.*` events.
+  const steering = createSteeringOps({
+    conversationId: () => activeConversationId,
+    // Reached at call time, like the resume ops it goes through.
+    afterRelease: (due) => void followQueued(due),
+  });
+
   const foldEvent = createFolder({
     state: foldState,
     patchById,
     setMessages,
+    inbox: { get: steering.inbox, set: steering.setInbox },
     setSnapshots,
     setTasks,
     setPlan,
@@ -224,22 +234,14 @@ export function createChatStream(
     onFoldMisplaced: () => void resume.reconcileStaleDecision(),
   });
 
-  // Steering: a message sent into a run that is already going, and the text handed
-  // back when one never reached the model. It reaches the drive declared below
-  // through a call-time closure rather than a handle — the cycle is real (a queue
-  // attempt can turn into a fresh turn to drive, and a drive's teardown hands back
-  // what it never delivered), and naming the edge is better than merging the two.
-  const steering = createSteeringOps({
-    messages,
-    setMessages,
-    patchById,
-    conversationId: () => activeConversationId,
-    adoptConversationId: bindConversation,
-    activeRunId: () => foldState.activeRunId,
-    setSending,
-    selection: () => options.selection?.() ?? effectiveSelection(),
-    driveRun: (runId, assistantId) => drive.driveRun(runId, assistantId),
-  });
+  // The inbox is bound to the thread, not to a run: read it whenever the thread changes,
+  // because messages queued while no run is live emit no events.
+  createEffect(
+    on(boundConversationId, (id) => {
+      steering.reset();
+      if (id !== null) void steering.refresh();
+    }),
+  );
 
   // Everything that reconciles the optimistic store with what the backend persisted.
   // It lives next door because all four are one move — read the detail, act on it only
@@ -264,7 +266,8 @@ export function createChatStream(
     setSending,
     setErrored,
     setTitlePending,
-    restoreUndelivered: steering.restoreUndelivered,
+    deliveryDue: () => deliveryDue(steering.inbox()),
+    followQueued: (due) => followQueued(due),
     conversationId: () => activeConversationId,
     reseatAfterRun: resume.reseatAfterRun,
     recoverLostRun: resume.recoverLostRun,
@@ -347,35 +350,24 @@ export function createChatStream(
     const { continuesMessageId, command, fileRefs } = extras;
     // A turn needs either prompt text or at least one attachment to send.
     if (!text.trim() && attachmentIds.length === 0) return false;
-    if (sending()) {
-      // Mid-run steering is text-only — an attachment can't ride an existing
-      // run's request (and the composer disables attach while streaming).
-      if (attachmentIds.length > 0) {
-        toast.error(
-          "Attachments can't be added while a response is in progress.",
-        );
-        return false;
-      }
-      // Nor can a command. A queued message is injected verbatim, with no prelude
-      // around it to resolve one through — so `/deploy prod` would reach the model
-      // as the literal token. The backend refuses it for the same reason; saying so
-      // here keeps the operator's typed message rather than spending it on a 409.
-      // Nor a file reference, for the same reason and with the same backend refusal.
-      if (command || fileRefs?.length) {
-        toast.error(
-          "A command or file reference can't be sent while a response is in progress.",
-        );
-        return false;
-      }
-      if (!text.trim()) return false;
-      return steering.sendWhileStreaming(text);
+    // A send while a turn is going is queued by the backend, whatever it carries. This
+    // client draws no optimistic row for it: the inbox shows it once the backend has it.
+    const live = sending();
+    if (live && activeConversationId === null) {
+      // The first turn's POST hasn't resolved yet, so there is no conversation to
+      // queue against. The composer already cleared itself — hand the text back
+      // rather than dropping it. Handed back already, so this counts as taken.
+      steering.stash(text);
+      return true;
     }
-    setSending(true);
 
     const wasNew = activeConversationId === null;
-    // A fresh, non-ephemeral thread gets auto-named during this turn; show the
-    // working throbber on the title until it lands. Ephemeral threads aren't titled.
-    if (wasNew && !options.ephemeral) setTitlePending(true);
+    if (!live) {
+      setSending(true);
+      // A fresh, non-ephemeral thread gets auto-named during this turn; show the
+      // working throbber on the title until it lands. Ephemeral threads aren't titled.
+      if (wasNew && !options.ephemeral) setTitlePending(true);
+    }
     const userMsg: ChatMessage = {
       id: nextId("u"),
       role: "user",
@@ -399,12 +391,23 @@ export function createChatStream(
       queued: true,
       createdAt: new Date().toISOString(),
     };
-    setMessages(produce((m) => m.push(userMsg, assistantMsg)));
+    const showTurn = (): void =>
+      setMessages(produce((m) => m.push(userMsg, assistantMsg)));
+    const hideTurn = (): void => {
+      setMessages(
+        reconcile(
+          messages.filter((m) => m.id !== userMsg.id && m.id !== assistantId),
+        ),
+      );
+      setSending(false);
+      setTitlePending(false);
+    };
+    if (!live) showTurn();
 
-    let created: ChatCreatedDTO;
+    let created: ChatSendDTO;
     const agent = options.agent?.(wasNew);
     try {
-      created = await api.post<ChatCreatedDTO>("/chat", {
+      created = await api.post<ChatSendDTO>("/chat", {
         prompt: text.trim(),
         conversation_id: activeConversationId ?? undefined,
         endpoint_id: override?.endpointId,
@@ -429,27 +432,10 @@ export function createChatStream(
         file_refs: fileRefs?.length ? fileRefs : undefined,
       });
     } catch (err) {
-      // Not accepted, for either reason — so the optimistic turn comes back out of the
-      // transcript, and the `false` hands its text back to the composer. **One rule
-      // for both failures**: a send the backend did not take is not a turn, and it
-      // goes back where it was written. The generic arm used to leave the bubble
-      // standing under a dead assistant reply, which read as a turn that happened and
-      // failed — and the words were gone from the field, so retrying meant retyping.
-      setMessages(
-        reconcile(
-          messages.filter((m) => m.id !== userMsg.id && m.id !== assistantId),
-        ),
-      );
-      setSending(false);
-      setTitlePending(false);
-      if (isApiError(err) && err.status === 409) {
-        // A run is already active on this conversation — surface the one that's
-        // actually in flight instead of silently discarding this send.
-        toast.error("A response is still in progress in this conversation.");
-        if (activeConversationId)
-          void resume.reattachToLiveRun(activeConversationId);
-        return false;
-      }
+      // Not accepted: a send the backend did not take is not a turn, so the optimistic
+      // turn comes back out of the transcript and the `false` hands its text back to
+      // the composer. A queued send drew nothing, and the live run is not ours to end.
+      if (!live) hideTurn();
       toast.error(
         (err as { detail?: string })?.detail ?? "Unable to reach Talos.",
       );
@@ -457,6 +443,23 @@ export function createChatStream(
     }
     bindConversation(created.conversation_id);
     if (agent !== undefined) options.onAgentSent?.(agent);
+    if ("queued_message_id" in created) {
+      // The conversation was busy, so the backend queued this send instead of
+      // starting a turn.
+      if (!live) hideTurn();
+      await steering.refresh();
+      // A live run this client is not driving (another tab, or one that started
+      // between the room's last read and the send) becomes visible by attaching.
+      if (created.run_id && created.run_id !== foldState.activeRunId)
+        void resume.reattachToLiveRun(created.conversation_id);
+      return true;
+    }
+    // The run `live` saw ended before the POST landed: the backend started a fresh turn
+    // for this send, which is driven like any other.
+    if (live) {
+      showTurn();
+      setSending(true);
+    }
     // A brand-new thread exists the moment the backend accepts the send. The list read
     // fired when `sending` flipped went out before this id did, so it cannot have
     // listed the thread; read it again now so the row (and its running echo) appears
@@ -523,6 +526,22 @@ export function createChatStream(
     await continueTurn(messageId);
   }
 
+  /** Queued messages go out on a turn the backend starts, which this client never
+   *  submitted and so has no stream for. The settle read answers once that turn has
+   *  started, naming its run: reseat and attach to it. With no run, reseat only when
+   *  something was due (that turn may already have run to its end) and the operator's
+   *  Stop is not what kept it from starting. */
+  async function followQueued(due: boolean): Promise<void> {
+    if (sending()) return;
+    const read = await steering.settle();
+    if (read === null || sending()) return;
+    if (read.run_id === null && (!due || read.waiting_for_operator)) return;
+    await resume.reconcileStaleDecision();
+    // A turn that ran to its end before it was found has no drive to report it, so the
+    // thread's outcome in the list (and the plate reading it) would stay at the last one.
+    options.onTurnComplete?.();
+  }
+
   /** Cancel the in-flight run for real: tell the backend to stop it (it keeps
    *  running even when the SSE is dropped), then abort the local stream and clear
    *  the streaming state. Safe to call with no active run. */
@@ -530,7 +549,9 @@ export function createChatStream(
     const runId = foldState.activeRunId;
     if (runId) {
       try {
-        await api.post(`/runs/${runId}/cancel`, {});
+        // Stop holds the inbox: nothing queued starts a turn until the operator's next
+        // send or an explicit resume.
+        await api.post(`/runs/${runId}/cancel`, { hold_inbox: true });
       } catch (err) {
         // The local abort below still stops the UI; surface but don't block.
         toast.error(
@@ -556,10 +577,9 @@ export function createChatStream(
       }),
     );
     setSending(false);
-    // A cancel with steering messages still queued: they'll never be injected
-    // now, so restore them to the composer. (The drive's own teardown also calls
-    // this; it's idempotent, and this covers the detached case it skips.)
-    steering.restoreUndelivered();
+    // The cancel moved the inbox to "waiting for you"; the drive's teardown reads it
+    // too, but a detached drive skips that.
+    void steering.refresh();
     // Whatever was half-answered in the dock goes with the run it was answering. Kept
     // any longer it would be seeded into the *next* park — a different question wearing
     // the last one's answers.
@@ -580,8 +600,7 @@ export function createChatStream(
     patchById,
     overrideSelection: () => options.selection?.(),
     driveRun: (runId, assistantId) => drive.driveRun(runId, assistantId),
-    reattachToLiveRun: resume.reattachToLiveRun,
-    cancel,
+    reattachToLiveRun: (id) => resume.reattachToLiveRun(id),
     onTurnComplete: () => options.onTurnComplete?.(),
   });
 
@@ -654,13 +673,17 @@ export function createChatStream(
     /** Fold the thread, then resume the turn the context window stopped. */
     compactAndContinue,
     cancel,
-    /** Withdraw a queued (not-yet-injected) steering message from the live run. */
-    withdrawQueued: (id: string) => steering.withdrawQueued(id),
-    /** Rewrite a queued (not-yet-injected) steering message in place. */
-    editQueued: (id: string, text: string) => steering.editQueued(id, text),
-    holdQueued: (id: string, held: boolean) => steering.holdQueued(id, held),
-    /** Text of queued messages the run never consumed (restored on terminal) —
-     *  the screen prefills the composer with it, then clears it. */
+    /** What is queued behind the running turn, and whether Stop is holding it. */
+    inbox: steering.inbox,
+    /** Withdraw an operator message that has not yet reached the model. */
+    withdrawQueued: (id: string) => steering.withdraw(id),
+    /** Rewrite an operator message that has not yet reached the model. */
+    editQueued: (id: string, text: string) => steering.edit(id, text),
+    holdQueued: (id: string, held: boolean) => steering.hold(id, held),
+    /** Release a Stop's hold so the waiting messages are delivered. */
+    resumeInbox: steering.resume,
+    /** Text handed back to the composer (`stashDraft`) — the screen prefills the
+     *  composer with it, then clears it. */
     undeliveredDraft: steering.undeliveredDraft,
     clearUndeliveredDraft: steering.clearUndeliveredDraft,
     /** Hand text back to the composer through the same prefill — for a send made on

@@ -6,6 +6,7 @@ export {
   type CompactionReason,
   type CompactionDelta,
   type CompactionStarted,
+  type ContentPartWire,
   type ContextComposition,
   type ContextInjected,
   type ContextSegment,

@@ -6,7 +6,7 @@ lives in the engine; a definition only decides how one ordinary turn is composed
 
 **A definition is a request, never a grant.** Every limit here is folded against the
 thread or launcher that uses it: ``permission_ceiling`` with the conversation's own level,
-``request_limit`` and ``wall_clock_timeout_s`` with the operator's bounds. An agent that
+``wall_clock_timeout_s`` with the operator's bound. An agent that
 declares itself all-powerful gets what the operator already allowed and no more.
 """
 
@@ -114,7 +114,6 @@ class AgentDefinition:
     #: Where a delegated run of this agent works by default. The launch may ask for more
     #: isolation, never less.
     workspace: WorkspacePolicy = "shared"
-    request_limit: int | None = None
     wall_clock_timeout_s: float | None = None
     #: Whether this agent may hand work to other agents.
     can_delegate: bool = False

@@ -200,9 +200,6 @@ BUILTIN: tuple[AgentDefinition, ...] = (
         # web probably says — which reads, to everyone downstream, exactly like something
         # it went and looked up.
         required=frozenset({"web_search", "web_fetch"}),
-        # Reading enough sources to see where they disagree is many more round trips than
-        # answering a question.
-        request_limit=120,
     ),
 )
 

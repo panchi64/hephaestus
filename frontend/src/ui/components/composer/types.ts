@@ -117,8 +117,7 @@ export interface ComposerProps {
    *  field, so the interrupt control sits where the user's focus already is, and
    *  Escape in the field is a plain stop. When the field itself stays enabled
    *  (`disabled` false), SEND remains beside it — the caller queues the message
-   *  into the live run (mid-run steering); a disabled field shows STOP alone.
-   *  Attaching, dropping and pasting files are unavailable while streaming. */
+   *  into the live run (mid-run steering); a disabled field shows STOP alone. */
   streaming?: boolean;
   /** The run is waiting in line for capacity: the plate takes the queue tone, still. */
   queued?: boolean;

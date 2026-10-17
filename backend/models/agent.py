@@ -40,7 +40,6 @@ class Agent(Table, table=True):
     tools_deny_json: str | None = Field(default=None)
     permission_ceiling: str | None = Field(default=None)
     workspace: str = Field(default="shared")
-    request_limit: int | None = Field(default=None)
     wall_clock_timeout_s: float | None = Field(default=None)
     can_delegate: bool = Field(default=False)
     max_depth: int | None = Field(default=None)

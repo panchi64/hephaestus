@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from core.envelopes import ContentPart
+
 from .base import Body
 
 
@@ -47,6 +49,8 @@ class ToolCompleted(Body):
     tool_call_id: str
     name: str
     result: object = None
+    #: ``result`` split into text and envelope parts, or None when it carries no envelope.
+    result_parts: list[ContentPart] | None = None
     images: list[ToolImage] = Field(default_factory=list)
     parent_tool_call_id: str | None = None
 

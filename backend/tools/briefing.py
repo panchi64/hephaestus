@@ -14,14 +14,12 @@ from collections.abc import Iterable, Sequence
 from pydantic_ai import RunContext
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 
+from core.envelopes import BRIEF_KEY
 from services.home.paths import HOME, Place
 from services.home.table import RunHome
 
 from .deps import RunDeps
 from .repo_instructions import repo_instruction_text
-
-#: The key a dict result carries the brief under.
-BRIEF_KEY = "project_instructions"
 
 
 def _header(place: Place) -> str:

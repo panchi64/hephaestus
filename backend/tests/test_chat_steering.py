@@ -219,9 +219,9 @@ async def test_inbox_enqueue_withdraw_drain_events():
     second = run.enqueue_message("second")
 
     # Withdraw one before it's consumed; unknown/duplicate withdrawals say no.
-    assert run.withdraw_message(first.id)
-    assert not run.withdraw_message(first.id)
-    assert not run.withdraw_message("nope")
+    assert run.messages.withdraw(first.id)
+    assert not run.messages.withdraw(first.id)
+    assert not run.messages.withdraw("nope")
 
     drained = run.drain_messages()
     assert [m.id for m in drained] == [second.id]
@@ -238,19 +238,19 @@ async def test_inbox_edit_rewrites_in_place():
     second = run.enqueue_message("second")
 
     # Edit keeps the message's id and its place in the queue.
-    assert run.edit_message(first.id, "final wording")
+    assert run.messages.edit(first.id, "final wording")
     assert [(m.id, m.text) for m in run.pending_messages] == [
         (first.id, "final wording"),
         (second.id, "second"),
     ]
 
     # A withdrawn, drained, or unknown message can no longer be edited.
-    assert run.withdraw_message(second.id)
-    assert not run.edit_message(second.id, "too late")
+    assert run.messages.withdraw(second.id)
+    assert not run.messages.edit(second.id, "too late")
     drained = run.drain_messages()
     assert [m.text for m in drained] == ["final wording"]
-    assert not run.edit_message(first.id, "too late")
-    assert not run.edit_message("nope", "never was")
+    assert not run.messages.edit(first.id, "too late")
+    assert not run.messages.edit("nope", "never was")
 
     bodies = [e.body for e in run.stream.replay()]
     edited = [b for b in bodies if b.type == "message.edited"]
@@ -266,10 +266,10 @@ async def test_a_held_message_stalls_the_drain_and_releases_in_order():
     second = run.enqueue_message("second")
     third = run.enqueue_message("third")
 
-    assert run.hold_message(second.id, True)
+    assert run.messages.hold(second.id, True)
     # Setting the hold it already has succeeds and says nothing new.
-    assert run.hold_message(second.id, True)
-    assert not run.hold_message("nope", True)
+    assert run.messages.hold(second.id, True)
+    assert not run.messages.hold("nope", True)
 
     # The prefix ahead of the hold goes; the held message and everything behind it stay.
     assert [m.id for m in run.drain_messages()] == [first.id]
@@ -277,7 +277,7 @@ async def test_a_held_message_stalls_the_drain_and_releases_in_order():
     # And the stall holds — a second boundary still delivers nothing.
     assert run.drain_messages() == []
 
-    assert run.hold_message(second.id, False)
+    assert run.messages.hold(second.id, False)
     assert [m.id for m in run.drain_messages()] == [second.id, third.id]
 
     bodies = _bodies(run)
@@ -291,28 +291,25 @@ async def test_a_held_message_stalls_the_drain_and_releases_in_order():
 
 
 async def test_a_hold_survives_an_edit_and_an_edit_keeps_the_source():
-    """The two mutators rebuild a frozen record, so each has to carry what the other
-    owns: an edit that dropped ``source`` would re-label a sub-agent's queued report as
-    the operator's own words, and one that dropped the hold would inject the very draft
-    the hold exists to protect."""
+    """Each mutator rebuilds a frozen record, so it has to carry what the others own: an
+    edit that dropped ``source`` would re-label a report as the operator's own words, and
+    one that dropped the hold would inject the very draft the hold exists to protect."""
     run = Run(id="r1", kind="chat", owner_id=OWNER, stream=RunStream())
+    draft = run.enqueue_message("first draft")
     report = run.enqueue_message("I found it", source="subagent")
 
-    assert run.hold_message(report.id, True)
-    assert run.edit_message(report.id, "I found it, eventually")
-    [pending] = run.pending_messages
-    assert (pending.text, pending.source, pending.held) == (
-        "I found it, eventually",
-        "subagent",
-        True,
-    )
-    assert run.drain_messages() == []
+    assert run.messages.hold(draft.id, True)
+    assert run.messages.edit(draft.id, "final wording")
+    assert run.messages.edit(report.id, "I found it, eventually")
+    held = run.messages.get(draft.id)
+    assert held is not None and (held.text, held.held) == ("final wording", True)
 
-    assert run.hold_message(report.id, False)
+    # The held draft stays; the report is not the operator's and is not stalled by it.
     [drained] = run.drain_messages()
     assert (drained.text, drained.source) == ("I found it, eventually", "subagent")
-    injected = [b for b in _bodies(run) if b.type == "message.injected"]
-    assert [b.source for b in injected] == ["subagent"]
+
+    assert run.messages.hold(draft.id, False)
+    assert [m.text for m in run.drain_messages()] == ["final wording"]
 
 
 def _echo_user_texts() -> StreamFunctionDef:
@@ -411,7 +408,7 @@ async def test_edited_message_is_injected_with_new_text():
     @toolset.tool(metadata={"sensitivity": "read"})
     async def poke(ctx: RunContext[RunDeps]) -> str:
         message = ctx.deps.run.enqueue_message("rough draft")
-        assert ctx.deps.run.edit_message(message.id, "polished ask")
+        assert ctx.deps.run.messages.edit(message.id, "polished ask")
         return "poked"
 
     reg = RunRegistry()

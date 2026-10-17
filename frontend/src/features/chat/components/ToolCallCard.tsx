@@ -14,6 +14,7 @@ import type { ToolInvocation } from "../model";
 import { toolPresentation } from "../toolPresentation";
 import { Branch } from "./Branch";
 import { CommandBoundary, FenceNote } from "./CommandBoundary";
+import { EnvelopeRow } from "./EnvelopeRow";
 import { ProcessRow, Sep, createAdoptedOpen } from "./ProcessRow";
 
 /** The family glyph carries the call's state as well as its kind, so a column of
@@ -291,14 +292,38 @@ export function ToolCallCard(props: {
           <Show
             when={props.tool.status === "error" && props.tool.error}
             fallback={
-              <Show when={props.tool.result}>
-                <Text
-                  variant="micro"
-                  tone="dim"
-                  class="whitespace-pre-wrap break-words"
-                >
-                  {props.tool.result}
-                </Text>
+              <Show
+                when={props.tool.resultParts}
+                fallback={
+                  <Show when={props.tool.result}>
+                    <Text
+                      variant="micro"
+                      tone="dim"
+                      class="whitespace-pre-wrap break-words"
+                    >
+                      {props.tool.result}
+                    </Text>
+                  </Show>
+                }
+              >
+                <For each={props.tool.resultParts}>
+                  {(part) => (
+                    <Show
+                      when={part.kind !== "text"}
+                      fallback={
+                        <Text
+                          variant="micro"
+                          tone="dim"
+                          class="whitespace-pre-wrap break-words"
+                        >
+                          {part.text}
+                        </Text>
+                      }
+                    >
+                      <EnvelopeRow variant="part" part={part} scope="tool" />
+                    </Show>
+                  )}
+                </For>
               </Show>
             }
           >

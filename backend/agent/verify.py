@@ -58,7 +58,6 @@ async def verify_and_correct(
     disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
     partial_history_ref: list[Callable[[], list[ModelMessage]]] | None = None,
     store: ConversationStore | None = None,
-    request_limit: int | None = None,
     binding: ConversationBinding = DEFAULT_BINDING,
     vision: bool = True,
     drop_ref: list[tuple[int, int]] | None = None,
@@ -122,7 +121,6 @@ async def verify_and_correct(
         vision=vision,
         partial_history_ref=partial_history_ref,
         store=store,
-        request_limit=request_limit,
         turn_start=turn_start,
         # No fold under a correction: `clean_drop` indexes the pre-fold history.
         correcting=True,

@@ -46,7 +46,7 @@ async def test_bad_input_is_a_422_naming_the_field():
         for body, field in (
             ({**_BODY, "name": "default"}, "name"),
             ({**_BODY, "description": ""}, "description"),
-            ({**_BODY, "request_limit": 0}, "request_limit"),
+            ({**_BODY, "wall_clock_timeout_s": 0}, "wall_clock_timeout_s"),
         ):
             resp = await client.post("/agents", json=body)
             assert resp.status_code == 422
@@ -108,7 +108,7 @@ async def test_an_exported_agent_imports_back_as_a_draft():
                     "deny_tools": ["shell"],
                     "permission_ceiling": "plan",
                     "workspace": "own",
-                    "request_limit": 12,
+                    "wall_clock_timeout_s": 600.0,
                     "can_delegate": True,
                 },
             )
@@ -131,7 +131,7 @@ async def test_an_exported_agent_imports_back_as_a_draft():
             "workspace": "own",
         }
         assert body["permission_ceiling"] == "plan"
-        assert body["request_limit"] == 12
+        assert body["wall_clock_timeout_s"] == 600.0
         assert body["can_delegate"] is True
         assert body["instructions"] == "Look around."
 

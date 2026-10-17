@@ -22,7 +22,6 @@ function agent(over: Partial<Agent> = {}): Agent {
     denyTools: [],
     permissionCeiling: null,
     workspace: "shared",
-    requestLimit: null,
     wallClockTimeoutS: null,
     canDelegate: false,
     maxDepth: null,

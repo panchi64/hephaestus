@@ -18,8 +18,6 @@ const DTO = {
   work_summary_idle_minutes: 15,
   context_warn_threshold: 0.75,
   context_alert_threshold: 0.9,
-  agent_request_limit: 25,
-  auto_continue_max: 0,
   first_token_timeout_s: 600,
   inactivity_timeout_s: 120,
   wall_clock_timeout_s: null,
@@ -34,8 +32,6 @@ describe("reading the stored preferences", () => {
       workSummaryIdleMinutes: 15,
       contextWarnThreshold: 0.75,
       contextAlertThreshold: 0.9,
-      agentRequestLimit: 25,
-      autoContinueMax: 0,
       firstTokenTimeoutS: 600,
       inactivityTimeoutS: 120,
       wallClockTimeoutS: null,
@@ -63,13 +59,6 @@ describe("writing a patch", () => {
     // clock, in the second field to carry it.
     expect(toChatSettingsBody({ subagentMaxConcurrent: null })).toEqual({
       subagent_max_concurrent: null,
-    });
-  });
-
-  test("turning auto-continue off survives the encode", () => {
-    // 0 is a setting here (stop at the limit every time), and it is falsy.
-    expect(toChatSettingsBody({ autoContinueMax: 0 })).toEqual({
-      auto_continue_max: 0,
     });
   });
 

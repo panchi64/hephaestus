@@ -34,10 +34,12 @@ from pydantic_ai.messages import ModelMessage, ModelRequestPart, ModelResponsePa
 
 from core.compaction_sections import SummarySection, summary_sections
 from core.diagnostics import is_platform_failure
+from core.envelopes import ContentPart, result_parts, split_envelopes
 from core.serde import jsonable
 from core.text import chars_to_tokens
 from services.answers import ASK_USER_TOOL, AnsweredQuestion, parse_answer, questions_of
 from services.commands.spec import Invocation
+from services.notices import notice_body
 from services.shapes import as_dict, as_list
 from services.subagents.report import (
     direction_body,
@@ -117,6 +119,9 @@ class ToolView:
     args: dict[str, object]
     status: str = "running"  # "running" | "ok" | "error"
     result: object = None
+    # `result` split into text and envelope parts (`core/envelopes.py`), or None when it
+    # carries no envelope.
+    result_parts: list[ContentPart] | None = None
     error: str | None = None
     images: list[ToolImageView] = field(default_factory=list)
     # `ask_user` only — the questions this call asked and what the operator said to each,
@@ -185,6 +190,7 @@ def _script_calls(part: ToolReturnPart) -> list[ToolView]:
         else:
             view.status = "ok"
             view.result = jsonable(_field(returned, "content"))
+            view.result_parts = result_parts(view.result)
         views.append(view)
     return views
 
@@ -199,13 +205,21 @@ class MessageView:
     # has reported back, and the report reached the thread as the one shape the model has
     # for a message from outside itself. Left as "user" it would claim the operator typed
     # something they have not even read.
-    role: str  # "user" | "assistant" | "compaction" | "subagent"
+    #
+    # "notice" is a chassis notice (`services/notices.py`): `notice` names its kind and
+    # `content` is the body without the envelope.
+    role: str  # "user" | "assistant" | "compaction" | "subagent" | "notice"
     content: str = ""
     # On a "subagent" turn that is a message rather than a report, the handle of the agent
     # that sent it.
     author: str | None = None
     # On a "subagent" turn that is a report, the handle of the agent that reported.
     reporter: str | None = None
+    notice: str | None = None
+    # On a "user" turn whose text carried untrusted fences (an attachment's fallback text,
+    # a routine's previous-run fence): those fences in order, with `content` keeping only
+    # the surrounding text. None when there were none.
+    parts: list[ContentPart] | None = None
     tools: list[ToolView] = field(default_factory=list)
     timestamp: datetime | None = None
     # The model that produced this assistant turn (the last response's model_name —
@@ -812,6 +826,18 @@ def project_tree(
                 assistant = None
                 part = user_parts[0]
                 text = flatten_content(part.content)
+                notice = notice_body(text)
+                if notice is not None:
+                    views.append(
+                        MessageView(
+                            role="notice",
+                            notice=notice[0],
+                            content=notice[1],
+                            timestamp=part.timestamp,
+                            id=node_id,
+                        )
+                    )
+                    continue
                 # A sub-agent's report arrives in the one shape the model has for a
                 # message from outside itself, so on the way back out it would claim the
                 # operator typed it — and they have not even seen it. Recognised by the
@@ -842,11 +868,19 @@ def project_tree(
                     )
                     continue
                 body = report if report is not None else direction
+                content = strip_file_refs_marker(text if body is None else body)
+                parts: list[ContentPart] | None = None
+                if report is None:
+                    split = split_envelopes(content, vouched_only=True)
+                    if any(piece.kind != "text" for piece in split):
+                        content = "\n\n".join(p.text for p in split if p.kind == "text")
+                        parts = [p for p in split if p.kind != "text"]
                 views.append(
                     MessageView(
                         role="subagent" if report is not None else "user",
                         reporter=None if report is None else report_sender(report),
-                        content=strip_file_refs_marker(text if body is None else body),
+                        content=content,
+                        parts=parts,
                         timestamp=part.timestamp,
                         id=node_id,
                         file_refs=stamped_file_refs(message),
@@ -866,6 +900,7 @@ def project_tree(
                     if tool is not None:
                         tool.status = "ok"
                         tool.result = jsonable(part.content)
+                        tool.result_parts = result_parts(tool.result)
                         _attach_answers(tool)
                         # A script's own calls follow it on the turn, each naming it as
                         # its parent — the order a client nests them in.

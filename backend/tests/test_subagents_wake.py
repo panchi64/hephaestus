@@ -11,9 +11,8 @@ and the report lands at the following boundary. There is deliberately no second 
 route; a second route is how that guarantee would be lost.
 
 The one that road does not cover is next: a report arriving during the parent's **final**
-stream, where no further request is ever made. The substrate drops what is still queued at
-terminal — correct for the operator, whose client rebuilds their own text from the replay,
-and silently lossy for a report, which nothing else holds.
+stream, where no further request is ever made. The inbox outlives the run, so the next turn
+on the thread takes it.
 """
 
 from __future__ import annotations
@@ -31,6 +30,7 @@ from pydantic_ai.models.test import TestModel
 
 from agent import turn as turn_module
 from agent.injected import injected_text
+from harness.manifests._inbox_dispatch import InboxDispatcher
 from harness.manifests._subagent_wake import SubagentWake, report_text
 from routes.chat import compose_turn
 from routes.deps import app_state
@@ -39,7 +39,7 @@ from runs.events import MessageSource
 from services.agents import ToolAccess
 from services.subagent_store import SubagentStore
 from services.subagents import FiledReport, ReportStatus
-from tests._helpers import client_app, patch_model_resolution
+from tests._helpers import client_app, patch_model_resolution, settle
 from tests._json import json_body, s
 from tools import RunDeps, build_agent_toolsets
 from tools.report import report_toolset, require_report
@@ -78,9 +78,15 @@ def _woken(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
     """
     calls: list[dict[str, object]] = []
     monkeypatch.setattr(
-        "harness.manifests._subagent_wake.compose_turn", _capturing(compose_turn, calls)
+        "harness.manifests._inbox_dispatch.compose_turn", _capturing(compose_turn, calls)
     )
     return calls
+
+
+def _dispatcher(app: FastAPI) -> InboxDispatcher:
+    dispatcher = app_state(app).inbox_dispatcher
+    assert isinstance(dispatcher, InboxDispatcher)
+    return dispatcher
 
 
 def _prompt(call: dict[str, object]) -> str:
@@ -287,7 +293,7 @@ class TestDelivery:
         assert lane_for("wake") == "linked"
 
 
-class TestTheReportThatNearlyGotDropped:
+class TestNothingQueuedIsLostAtTerminal:
     async def test_a_report_queued_during_the_final_stream_survives_terminal(
         self, monkeypatch: pytest.MonkeyPatch
     ):
@@ -295,41 +301,42 @@ class TestTheReportThatNearlyGotDropped:
             patch_model_resolution(monkeypatch, output_text="ok")
             created = await client.post("/chat", json={"prompt": "go"})
             body = json_body(created)
+            conversation_id = s(body["conversation_id"])
             run = _run_of(app, s(body["run_id"]))
-            if run.task is not None:
-                await run.task
-            await _settled(app)
+            await settle(app)
             # Exactly the case: it arrived while the last answer was streaming, so no
-            # further model request was ever made and the substrate is about to drop it.
-            run.pending_messages.append(_queued("the sub-agent's only report"))
+            # further model request was ever made on that run.
+            _ = app_state(app).runs.inbox(conversation_id, "operator").enqueue(
+                "the sub-agent's only report", source="subagent"
+            )
             composed = _woken(monkeypatch)
 
-            await _wake(app).settled(run, False)
+            await _dispatcher(app).settled(run, False)
 
             assert composed, "the report was dropped with the run"
             assert "the sub-agent's only report" in _prompt(composed[0])
-            await _drain(app)
+            await settle(app)
 
-    async def test_the_operators_undelivered_message_is_left_alone(
+    async def test_the_operators_queued_message_opens_its_own_turn(
         self, monkeypatch: pytest.MonkeyPatch
     ):
         async with client_app() as (client, app):
             patch_model_resolution(monkeypatch, output_text="ok")
             created = await client.post("/chat", json={"prompt": "go"})
             body = json_body(created)
+            conversation_id = s(body["conversation_id"])
             run = _run_of(app, s(body["run_id"]))
-            if run.task is not None:
-                await run.task
-            await _settled(app)
-            run.pending_messages.append(_queued("hang on", source="operator"))
+            await settle(app)
+            _ = app_state(app).runs.inbox(conversation_id, "operator").enqueue("hang on")
             composed = _woken(monkeypatch)
 
-            await _wake(app).settled(run, False)
+            await _dispatcher(app).settled(run, False)
+            await settle(app)
 
-            # Their client still holds the text and rebuilds the pending bubble from the
-            # replay. Reviving it here would put words in the thread they may have since
-            # thought better of.
+            # The operator's words open an operator turn, not an unattended wake.
             assert composed == []
+            turns = await app_state(app).conversations.messages_view(conversation_id)
+            assert [t.content for t in turns if t.role == "user"] == ["go", "hang on"]
 
 
 class TestTheRunawayRail:
@@ -375,8 +382,8 @@ class TestTheRunawayRail:
 
             # The operator sending a turn into the tree is what clears the rail, and the
             # report waits for exactly that rather than being dropped at the ceiling.
-            wake.observed(run)
-            await wake.settled(run, False)
+            _dispatcher(app).observed(run)
+            await _dispatcher(app).settled(run, False)
 
             assert [c["kind"] for c in composed] == ["wake"]
             assert "the held report" in _prompt(composed[0])
@@ -419,7 +426,7 @@ class TestTheRunawayRail:
             wake = _wake(app)
             wake.spend_budget(s(body["conversation_id"]))
 
-            wake.observed(run)
+            _dispatcher(app).observed(run)
 
             # The rail exists to stop an unattended loop. A human sending a message is
             # exactly the evidence that this is no longer one.

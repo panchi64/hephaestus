@@ -906,7 +906,7 @@ async def test_chat_settings_round_trip_the_auto_compact_preferences():
         assert resp.json()["auto_compact_threshold"] == pytest.approx(0.8)
 
         # A PUT touching only one group leaves the rest alone.
-        resp = await client.put("/chat/settings", json={"agent_request_limit": 33})
+        resp = await client.put("/chat/settings", json={"first_token_timeout_s": 900})
         assert resp.json()["auto_compact_threshold"] == pytest.approx(0.8)
         assert resp.json()["auto_compact_enabled"] is False
 

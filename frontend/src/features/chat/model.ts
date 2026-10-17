@@ -81,7 +81,17 @@ export interface LastRequest {
  *  operator has not seen it, did not write it, and is not being replied to. Like a
  *  compaction it carries its text in `content` and has no actions — there is nothing to
  *  edit, and nothing to send it back to. */
-export type Role = "user" | "assistant" | "compaction" | "subagent";
+export type Role = "user" | "assistant" | "compaction" | "subagent" | "notice";
+
+/** One typed slice of a payload the backend wrapped. `untrusted` came from outside and
+ *  was fenced for the model (`source` is the fence's attribute); `context_file` is a
+ *  project instruction file (`path`). */
+export interface ContentPart {
+  kind: "text" | "untrusted" | "context_file";
+  text: string;
+  source?: string;
+  path?: string;
+}
 
 export type ToolStatus = "running" | "ok" | "error";
 
@@ -114,6 +124,9 @@ export interface ToolInvocation {
   outcome?: string;
   /** Result preview shown when expanded. */
   result?: string;
+  /** The result split into typed parts, when the backend sent them. `result` stays the
+   *  raw text for copy and as the fallback. */
+  resultParts?: ContentPart[];
   /** Error detail shown when status='error'. */
   error?: string;
   /** The failure was the platform's own fault, not the call's or the environment's.
@@ -577,6 +590,11 @@ export interface ChatMessage {
    *  answer lives in the `text` blocks of `blocks` (kept "" so copy/edit/version
    *  paths that touch user content stay role-agnostic). */
   content: string;
+  /** User turns: the non-text parts split out of the operator's bubble — attachment
+   *  text, a routine's previous run — which `content` no longer holds. */
+  parts?: ContentPart[];
+  /** `notice` rows: the kind (`open-tasks`); `content` is the notice body. */
+  notice?: string;
   /** Assistant turns: the ordered block sequence (the single source of truth for
    *  what the turn rendered). Absent on user turns. */
   blocks?: AssistantBlock[];
@@ -607,22 +625,6 @@ export interface ChatMessage {
    *  turn is neither actively updating nor over, so it needs its own re-attach
    *  affordance rather than silently looking finished or frozen. */
   detached?: boolean;
-  /** User turns only: this message was sent while a run was still executing and
-   *  is queued on that run, waiting to be handed to the model at its next
-   *  boundary (mid-run steering). Rendered as a pending "QUEUED" bubble with
-   *  edit + withdraw affordances; cleared when `message.injected` promotes it to a
-   *  normal user turn. Distinct from the assistant-side `queued` (concurrency
-   *  semaphore wait). */
-  queuedPending?: boolean;
-  /** User turns only: the backend id of the queued message (`message.queued` /
-   *  the send response's `queued_message_id`) — the handle `withdrawQueued`
-   *  addresses. Kept after injection for event idempotency. */
-  queuedMessageId?: string;
-  /** User turns only: the run has been told to hold this message back because the
-   *  operator has it open in an editor. Backend-owned (`message.held`) — the client asks
-   *  for the hold, the run is what refuses to drain. Rendered so a queue that has stopped
-   *  moving says why rather than looking stuck. */
-  queuedHeld?: boolean;
   createdAt: string;
   /** Model/endpoint that produced an assistant message. */
   model?: string;

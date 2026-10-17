@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from core.container import ServiceContainer
 
 if TYPE_CHECKING:
-    from fastapi import APIRouter
+    from fastapi import APIRouter, FastAPI
     from pydantic_ai import AbstractToolset
     from sqlalchemy import Engine
 
@@ -106,6 +106,9 @@ class HarnessContext:
     # ``services/tool_policy.effective_disabled_tools`` so an unconfigured category is
     # withheld from it exactly as it is from an interactive one.
     category_availability: tuple[CategoryAvailability, ...] = ()
+    # The app itself, for a feature that composes a turn on the operator's behalf the way a
+    # request would (the inbox dispatcher). None where a test builds a context by hand.
+    app: FastAPI | None = None
 
 
 @dataclass(frozen=True)

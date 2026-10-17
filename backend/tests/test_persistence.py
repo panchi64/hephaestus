@@ -74,10 +74,8 @@ def _noop_toolset() -> FunctionToolset[RunDeps]:
 
 
 def _bounds_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Zero the tool-call ceiling, so the first call the model reaches for stops the turn."""
-    monkeypatch.setattr(
-        engine, "get_settings", lambda: Settings(agent_request_limit=25, agent_tool_calls_limit=0)
-    )
+    """Set the loop guard so the first call the model reaches for stops the turn."""
+    monkeypatch.setattr(engine, "get_settings", lambda: Settings(loop_repeat_threshold=1))
 
 
 def _calls_noop() -> FunctionModel:
@@ -249,7 +247,7 @@ async def test_content_is_encrypted_at_rest(tmp_path: Path):
 async def test_blocked_turn_persists_with_its_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    # A tool-calls bound tripped after the model already committed to a call: the
+    # The loop guard tripped after the model already committed to a call: the
     # turn stops blocked, but what ran (the tool-call response) is real conversation
     # content — persist it, tagged with why it stopped, so a reload shows the same
     # marker the live stream rendered rather than a turn that silently never happened.
@@ -274,10 +272,7 @@ async def test_blocked_turn_persists_with_its_reason(
     views = await store.messages_view(conv)
     assert views[0].role == "user"
     assert views[-1].role == "assistant"
-    # The marker names the bound that tripped — one of this run's own per-turn budgets.
-    # A bare "usage limit reached" would read as a provider rate limit and send the
-    # operator looking for an account quota that has nothing to do with the stop.
-    reason = "this run hit its tool-call limit for a single turn and stopped"
+    reason = "stopped: repeated an action without making progress"
     assert views[-1].blocked_reason == reason
 
     # Reload parity: a cold store rehydrates the same marker from the DB.

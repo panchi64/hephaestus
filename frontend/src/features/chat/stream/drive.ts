@@ -48,8 +48,11 @@ export interface RunDriveDeps {
   setSending: (value: boolean) => void;
   setErrored: (value: boolean) => void;
   setTitlePending: (value: boolean) => void;
-  /** Hand back steering messages the run never consumed. */
-  restoreUndelivered: () => void;
+  /** Whether the run's events left something queued that a turn will be started for. */
+  deliveryDue: () => boolean;
+  /** Read the inbox again, and pick up the turn the backend starts for what was queued
+   *  (`due`, as the run left it, or anything the read finds). */
+  followQueued: (due: boolean) => Promise<void>;
   /** The thread the stream is bound to, read once a turn has settled. */
   conversationId: () => string | null;
   /** Reseat the transcript from the backend's rows once the run has ended — the turn's
@@ -237,10 +240,9 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
           m.detached = false; // the turn is genuinely over — clear any stale banner
           m.queued = false; // defensive: covers a resolve with no frames ever folded
         });
-        // Steering messages the run never consumed (it was cancelled/errored/
-        // timed out before their boundary): hand the text back to the composer
-        // rather than silently dropping the operator's words.
-        deps.restoreUndelivered();
+        // Read before any await: by the time the transcript is reseated the backend may
+        // have emptied the queue into the turn this has to go looking for.
+        const due = deps.deliveryDue();
         deps.setSending(false);
         deps.setTitlePending(false); // turn ended — clear even if no title landed
         const conversationId = deps.conversationId();
@@ -257,6 +259,7 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
         // appears and a later regenerate/edit/delete/pin would address an id the
         // backend doesn't know.
         await deps.reseatAfterRun();
+        await deps.followQueued(due);
       }
     }
   }

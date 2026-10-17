@@ -40,6 +40,7 @@ from pydantic_ai import (
 
 from core.citations import Citable
 from core.diagnostics import is_platform_failure
+from core.envelopes import result_parts
 from core.serde import jsonable
 from runs import (
     AnswerDelta,
@@ -196,11 +197,13 @@ def _emit_result(
     result — pixels, today. It rides the frame beside the call id, so the warm render
     pairs an image to its call exactly; the cold projection has to recover the same
     pairing positionally (see ``_attach_tool_images``)."""
+    result = jsonable(content)
     _ = run.emit(
         ToolCompleted(
             tool_call_id=tool_call_id,
             name=name,
-            result=jsonable(content),
+            result=result,
+            result_parts=result_parts(result),
             images=[
                 ToolImage(media_type=image.media_type, data=image.data)
                 for image in tool_images(user_content)

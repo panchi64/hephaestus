@@ -12,12 +12,8 @@ import {
   type Park,
   type ParkDraft,
 } from "../stream/approvals";
-import type {
-  ApprovalDecision,
-  ChatMessage,
-  QuestionAnswer,
-  QuestionReply,
-} from "../model";
+import type { InboxState } from "../inbox";
+import type { ApprovalDecision, QuestionAnswer, QuestionReply } from "../model";
 import {
   allPagesAnswered,
   answersFor,
@@ -25,7 +21,7 @@ import {
   parkPages,
 } from "../parkPages";
 import { ApprovalPanel } from "./ApprovalPanel";
-import { QueuedMessageList } from "./QueuedMessageList";
+import { InboxDock, type InboxActions } from "./InboxDock";
 import { QuestionPanel } from "./QuestionPanel";
 
 /**
@@ -98,13 +94,11 @@ export function ParkDock(props: {
     answers?: QuestionAnswer[];
   }) => void | Promise<void>;
   onStop: () => void;
-  /** Messages the operator queued before the run parked. Listed here because the dock
-   *  holds the slot they would otherwise be managed from, and because they land on the
-   *  same resume as the answer — a park is the one moment both are in flight at once. */
-  queued?: ChatMessage[];
-  onEditQueued?: (queuedMessageId: string, text: string) => void;
-  onWithdrawQueued?: (queuedMessageId: string) => void;
-  onHoldQueued?: (queuedMessageId: string, held: boolean) => void;
+  /** What is waiting in the inbox when the run parks. Listed here because the dock holds
+   *  the slot it would otherwise be managed from, and because it lands on the same
+   *  resume as the answer — a park is the one moment both are in flight at once. */
+  inbox?: InboxState;
+  inboxActions?: InboxActions;
   /** Put the Plan panel on screen, for a park holding a submitted plan. Left unset by
    *  hosts that have no viewport — a compare pane — where the card simply does not offer
    *  the button. */
@@ -260,13 +254,8 @@ export function ParkDock(props: {
               and it will reach the model on the same resume this answer does. Without
               it the queue is invisible from the one surface the operator is looking at
               — the dock has taken the slot its bubbles are normally managed from. */}
-          <Show when={props.queued?.length}>
-            <QueuedMessageList
-              messages={props.queued ?? []}
-              onEdit={props.onEditQueued}
-              onWithdraw={props.onWithdrawQueued}
-              onHold={props.onHoldQueued}
-            />
+          <Show when={props.inbox?.items.length ? props.inbox : undefined}>
+            {(inbox) => <InboxDock inbox={inbox()} {...props.inboxActions} />}
           </Show>
 
           {/* A question page's footer is the choice list's own: its primary is Next

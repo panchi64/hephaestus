@@ -1,28 +1,23 @@
 /**
  * Editing a message that is still queued on a live run — the rule, without the markup.
  *
- * Two surfaces edit the same thing: the queued bubble in the transcript, and the row the
- * approval dock lists while a park holds the composer's slot. They look nothing alike —
- * one is the operator's own turn at reading size, the other a line in a panel — so they
- * are not one component with a variant. What they must not differ on is the *protocol*,
- * which is three rules and easy to half-implement:
+ * Three surfaces edit the same thing: the queued bubble at the foot of the thread, the
+ * row the dock lists, and the composer's recall. They look nothing alike, so they are not
+ * one component with a variant. What they must not differ on is the *protocol*, which is
+ * two rules and easy to half-implement:
  *
- *   1. **Take the hold before the first keystroke.** The race is with the run's next model
- *      call, not with the operator's typing: by the time they have written anything the
- *      message may already have been injected and the edit lost.
+ *   1. **Take the hold before the first keystroke.** The race is with the inbox's next
+ *      delivery, not with the operator's typing: by the time they have written anything
+ *      the message may already have been injected and the edit lost.
  *   2. **Release it on every way out** — saved, cancelled, or the surface unmounted under
- *      them. The hold stops the run draining, so a forgotten one stalls the queue with
- *      nothing on screen to explain the stall.
- *   3. **Publish the draft** (`queuedDraft.ts`), because a run that ends mid-edit hands
- *      undelivered text back to the composer and must hand back what is being typed
- *      rather than the text it is replacing.
+ *      them. The hold stops delivery, so a forgotten one stalls the queue with nothing on
+ *      screen to explain the stall.
  *
  * It is state only: no fetch, no timer, no DOM. What `onEdit`/`onHold` actually do is the
  * consuming layer's business.
  */
 
 import { createSignal, onCleanup, type Accessor } from "solid-js";
-import { forgetQueuedDraft, rememberQueuedDraft } from "./queuedDraft";
 
 export interface QueuedEditDeps {
   /** The backend id of the queued message, or `undefined` for a message that is not
@@ -56,16 +51,11 @@ export function createQueuedEdit(deps: QueuedEditDeps): QueuedEdit {
 
   const write = (text: string): void => {
     setDraft(text);
-    const id = deps.messageId();
-    if (id && deps.queued()) rememberQueuedDraft(id, text);
   };
 
   const close = (): void => {
     setEditing(false);
-    const id = deps.messageId();
-    if (!id) return;
-    forgetQueuedDraft(id);
-    if (deps.queued()) deps.onHold?.(false);
+    if (deps.messageId() && deps.queued()) deps.onHold?.(false);
   };
 
   const start = (): void => {

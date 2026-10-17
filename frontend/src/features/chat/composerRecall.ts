@@ -6,8 +6,8 @@
  * does not mean reaching for the bubble up-thread. It is the same act the bubble and
  * the dock's list offer, so it follows the same protocol: one `createQueuedEdit`, whose
  * target is swapped as the arrows walk the queue. The hold is taken before the first
- * keystroke and released on every way out, and the draft is published for the run's
- * teardown, exactly as on the other two surfaces — none of it restated here.
+ * keystroke and released on every way out, exactly as on the other two surfaces — none
+ * of it restated here.
  *
  * What this adds is only what is particular to a field that is *borrowed*: which message
  * the arrows land on (`queuedRecall.ts`), and leaving when that message stops being
@@ -16,46 +16,40 @@
 
 import { createEffect, createSignal, untrack } from "solid-js";
 import type { ComposerRecallApi } from "~/ui";
-import type { ChatMessage } from "./model";
+import { isOperatorItem, type InboxItem } from "./inbox";
 import { createQueuedEdit } from "./queuedEdit";
 import { recallStep, type RecallDirection } from "./queuedRecall";
 
 export interface ComposerRecallDeps {
-  messages: readonly ChatMessage[];
+  /** What is in the inbox, in delivery order. */
+  items: () => readonly InboxItem[];
   editQueued: (queuedMessageId: string, text: string) => void;
   holdQueued: (queuedMessageId: string, held: boolean) => void;
   /** Hand text back to the composer's own draft. */
   stash: (text: string) => void;
 }
 
-/** A message the operator queued into the live run and that is still waiting — never a
- *  sub-agent's report, which queues on the same road and is neither theirs to rewrite
- *  nor to take back (the rule `restoreUndelivered` keeps). One predicate for every
- *  surface that lists or walks them, so they cannot disagree about which are waiting. */
-export const isOperatorQueued = (m: ChatMessage): boolean =>
-  Boolean(m.queuedPending) && m.role === "user";
-
-/** The operator's queued message ids, in transcript order. */
-const queuedIds = (messages: readonly ChatMessage[]): string[] =>
-  messages.flatMap((m) =>
-    isOperatorQueued(m) && m.queuedMessageId ? [m.queuedMessageId] : [],
-  );
+/** The operator's queued message ids, oldest first. Never a report or a notice, which
+ *  are neither theirs to rewrite nor to take back. */
+const operatorIds = (items: readonly InboxItem[]): string[] =>
+  items.filter(isOperatorItem).map((i) => i.id);
 
 export function createComposerRecall(
   deps: ComposerRecallDeps,
 ): ComposerRecallApi {
   const [target, setTarget] = createSignal<string | null>(null);
-  const message = () => {
+  // The text the open edit started from, kept because the item itself can be gone by the
+  // time the arrows are asked what changed.
+  let opened = "";
+  const item = () => {
     const id = target();
-    return id === null
-      ? undefined
-      : deps.messages.find((m) => m.queuedMessageId === id);
+    return id === null ? undefined : deps.items().find((i) => i.id === id);
   };
 
   const edit = createQueuedEdit({
     messageId: () => target() ?? undefined,
-    queued: () => message()?.queuedPending === true,
-    initial: () => message()?.content ?? "",
+    queued: () => item() !== undefined,
+    initial: () => item()?.text ?? "",
     onHold: (held) => {
       const id = target();
       if (id) deps.holdQueued(id, held);
@@ -67,7 +61,7 @@ export function createComposerRecall(
   });
 
   /** Leave without committing. Guarded, because closing an edit that is not open would
-   *  still tell the run to stop holding a message nobody asked it to hold. */
+   *  still tell the inbox to stop holding a message nobody asked it to hold. */
   const cancel = (): void => {
     if (edit.editing()) edit.cancel();
     setTarget(null);
@@ -75,6 +69,7 @@ export function createComposerRecall(
 
   const open = (id: string): void => {
     setTarget(id);
+    opened = item()?.text ?? "";
     edit.start();
   };
 
@@ -84,9 +79,8 @@ export function createComposerRecall(
     // edges are also plain caret keys, and one pressed on the way to the first line
     // would otherwise throw the rewrite away. Save or Escape leave it; the arrows
     // resume once it matches what was sent.
-    if (current !== null && edit.draft() !== (message()?.content ?? ""))
-      return false;
-    const next = recallStep(queuedIds(deps.messages), current, direction);
+    if (current !== null && edit.draft() !== opened) return false;
+    const next = recallStep(operatorIds(deps.items()), current, direction);
     // Nothing older: stay on the one that is open. Nothing newer: step out, which is a
     // move — the field goes back to the operator's own draft.
     if (next === null && direction === "older") return false;
@@ -96,21 +90,15 @@ export function createComposerRecall(
     return true;
   };
 
-  // The message stopped being queued underneath the edit. Read as three cases, because
-  // they differ in who already has the operator's typing:
-  //  - the run ended: `restoreUndelivered` removed the bubble and has already handed the
-  //    published draft to the composer's prefill — handing it back again would double it;
-  //  - withdrawn: removed on purpose, so what was being typed over it goes with it;
-  //  - injected before the hold landed: the bubble stays, delivered with its old text,
-  //    and the typing has no other way back — so it goes into the composer's own draft.
+  // The message left the inbox underneath the edit: injected before the hold landed,
+  // withdrawn from another surface, or turned into a turn. Whatever was typed over it
+  // has no message to land on, so it goes into the composer's own draft.
   createEffect(() => {
-    if (!edit.editing()) return;
-    const m = message();
-    if (m?.queuedPending) return;
+    if (!edit.editing() || item()) return;
     untrack(() => {
       const typed = edit.draft().trim();
       cancel();
-      if (m && typed && typed !== m.content.trim()) deps.stash(typed);
+      if (typed && typed !== opened.trim()) deps.stash(typed);
     });
   });
 

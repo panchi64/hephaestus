@@ -52,7 +52,6 @@ from services.projects.worktree import WorktreeBusyError
 from services.registry import ModelRegistry
 from services.settings_store import (
     SettingsStore,
-    get_agent_request_limit_override,
     get_context_thresholds,
     get_subagent_limit,
 )
@@ -283,11 +282,6 @@ class ConversationSubagents(SubagentLauncher):
             uploads=self._uploads,
             disabled_tools=disabled,
             binding=binding,
-            # A definition's limit is a request, folded under the operator's.
-            request_limit=lower_of(
-                agent.request_limit,
-                await get_agent_request_limit_override(self._settings, owner_id),
-            ),
             context_thresholds=await get_context_thresholds(self._settings, owner_id),
             auto_compact=await resolve_auto_compact_policy(self._settings, owner_id),
             owner_id=owner_id,

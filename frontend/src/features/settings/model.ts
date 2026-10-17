@@ -94,16 +94,13 @@ export interface SearchProviderInput {
  *  context meter reports; the UI presents it as a percentage). A fold keeps nothing
  *  verbatim — the summary alone carries the thread. It is the only reduction there
  *  is — per-tool-result digesting was removed.
- *  `agentRequestLimit` is how many model round-trips a single turn may spend before it
- *  stops — the ceiling a long tool-using turn actually runs out of.
  *  `inactivityTimeoutS` is how long (seconds) a run may go without emitting an event
  *  before the watchdog stops it — the bound a long generation (a big write, a slow
  *  first token) needs raised to stay alive.
  *  `wallClockTimeoutS` is a total-duration bound on a run however busy it is, and is
- *  `null` (no bound) unless the operator sets one: a turn is already bounded by
- *  `agentRequestLimit`, so a wall clock mostly stops runs that are merely slow. What it
- *  does catch is a run that keeps emitting — a tool streaming progress, a model streaming
- *  tokens — and so refreshes the inactivity watchdog forever without spending a step.
+ *  `null` (no bound) unless the operator sets one. It catches a run that keeps
+ *  emitting — a tool streaming progress, a model streaming tokens — and so refreshes the
+ *  inactivity watchdog forever.
  *  `contextWarnThreshold`/`contextAlertThreshold` are where the composer's context gauge
  *  turns amber and then red — fractions like `autoCompactThreshold`, and tunable for the
  *  same reason the ring is grey below them: how much remaining room counts as "enough"
@@ -122,10 +119,6 @@ export interface ChatSettings {
   workSummaryIdleMinutes: number;
   contextWarnThreshold: number;
   contextAlertThreshold: number;
-  agentRequestLimit: number;
-  /** How many times a turn still making progress carries on past `agentRequestLimit`
-   *  by itself; 0 stops at the limit every time. */
-  autoContinueMax: number;
   /** How long (seconds) a turn waits for the model's first token while it reads the
    *  prompt — minutes on a local model with a long cold thread. `null` when the deploy
    *  leaves that wait to the inactivity watchdog. */

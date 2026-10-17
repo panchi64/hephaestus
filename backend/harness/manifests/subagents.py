@@ -18,6 +18,7 @@ from harness.manifest import (
     FeatureRuntime,
     HarnessContext,
 )
+from harness.manifests._inbox_dispatch import InboxDispatcher
 from harness.manifests._subagent_wake import SubagentWake
 from harness.manifests._subagents import ConversationSubagents
 from routes.subagents import router as subagents_router
@@ -28,7 +29,7 @@ from tools.report import report_toolset
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
     records = SubagentStore(ctx.engine, ctx.vault)
-    wake = SubagentWake(ctx, records)
+    wake = SubagentWake(ctx, records, ctx.services.get(InboxDispatcher))
     launcher = ConversationSubagents(ctx, records, wake)
     # Waits for the key like every other startup pass that touches sealed rows, and does
     # nothing on an installation that has never run a sub-agent.
@@ -46,11 +47,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         # Registered under the abstract type so `tools/subagents.py` can resolve it
         # without importing this wiring layer, which sits above `tools/`.
         capabilities=((launcher, SubagentLauncher),),
-        # The sync half notes the operator driving the thread themselves, which clears the
-        # unattended-turn count; it runs inline so the count is already right by the time
-        # anything reacts. The async half carries a finished sub-agent's report back to the
-        # thread that launched it, and rescues one the substrate is about to drop.
-        run_terminal_sync=(wake.observed,),
+        # Carries a finished sub-agent's report back to the thread that launched it.
         run_terminal=(wake.settled,),
     )
 
@@ -69,6 +66,7 @@ MANIFEST = FeatureManifest(
     # task executor works under, and for the same reason.
     after=(
         "agents",
+        "inbox",
         "calendar",
         "corpus",
         "external",

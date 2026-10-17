@@ -21,9 +21,6 @@ import { NumberSetting, SettingHeader, wholeNumber } from "./NumberSetting";
 
 const Rule = (): JSX.Element => <div class="border-line border-t" />;
 
-/** The backend's ceiling on how many times a turn carries on past its step limit. */
-const AUTO_CONTINUE_CEILING = 20;
-
 /** This panel's policy for a bound that isn't set: fall back to the shared seed, so
  *  switching the limit on and pressing Save writes something sensible instead of erroring
  *  on a blank field. The conversion itself is `wallClockMinutes`. */
@@ -217,46 +214,6 @@ export function ChatSection(): JSX.Element {
     <Panel label="Chat">
       <Show when={chatSettings()} fallback={<LoadingText />}>
         <Stack gap={3}>
-          <NumberSetting
-            title="Step limit per turn"
-            stored={chatSettings()?.agentRequestLimit ?? null}
-            placeholder="60"
-            invalid="Enter a whole number of steps (1 or more)."
-            noun="Step limit"
-            save={async (n) =>
-              (await saveChatSettings({ agentRequestLimit: n }))
-                .agentRequestLimit
-            }
-          >
-            How many times the model may be called within a single turn. Every
-            tool call spends one, so a long research or multi-step turn is what
-            runs this out — raise it for work that needs many steps, lower it to
-            stop a runaway turn sooner. Mid-run messages you send continue the
-            same turn and share its budget.
-          </NumberSetting>
-
-          <Rule />
-
-          <NumberSetting
-            title="Carry on past the step limit"
-            stored={chatSettings()?.autoContinueMax ?? null}
-            placeholder="3"
-            min={0}
-            max={AUTO_CONTINUE_CEILING}
-            invalid={`Enter a whole number between 0 and ${AUTO_CONTINUE_CEILING}.`}
-            noun="Carry-on limit"
-            save={async (n) =>
-              (await saveChatSettings({ autoContinueMax: n })).autoContinueMax
-            }
-          >
-            How many times a turn that is still getting work done may carry on
-            past the step limit by itself, each time with a fresh allowance of
-            steps. A turn that stopped making progress stops at the limit
-            anyway. 0 stops at the limit every time.
-          </NumberSetting>
-
-          <Rule />
-
           <NumberSetting
             title="Inactivity timeout"
             stored={chatSettings()?.inactivityTimeoutS ?? null}

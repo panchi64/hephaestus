@@ -20,11 +20,15 @@ from uuid import uuid4
 
 from .endpoint_gate import Endpoint, EndpointGate
 from .events import EventBody, LimitNotice, RunEnded, RunError, RunQueued, RunStarted, now_utc
+from .inbox import NO_JOURNAL, ConversationInbox, InboxJournal
 from .lanes import LaneGate, LaneLimits
 from .run import Orchestrator, Run, RunStatus
 from .stream import RunStream
 
 logger = logging.getLogger(__name__)
+
+#: How many inboxes are kept before idle ones are dropped.
+_INBOXES_KEPT = 256
 
 
 class Unset(Enum):
@@ -154,10 +158,68 @@ class RunRegistry:
         # attention-surface emit policy over this; nothing in `runs/` imports
         # `services/`). Synchronous and best-effort: see `_fire_terminal`.
         self._on_terminal: Callable[[Run], None] | None = on_terminal
+        # One inbox per (owner, conversation), outliving every run on it.
+        self._inboxes: dict[tuple[str, str], ConversationInbox] = {}
+        self._journal: InboxJournal = NO_JOURNAL
+        self._closing: bool = False
+
+    @property
+    def closing(self) -> bool:
+        """Set once shutdown begins: no turn may start from a queued message, so the inboxes
+        and their journal stay as they were for the next boot."""
+        return self._closing
 
     @property
     def endpoints(self) -> EndpointGate:
         return self._endpoints
+
+    # --- inboxes --------------------------------------------------------------
+    def attach_journal(self, journal: InboxJournal) -> None:
+        """Write every inbox through ``journal`` from now on."""
+        self._journal = journal
+        for inbox in self._inboxes.values():
+            inbox.journal = journal
+
+    def inbox(self, conversation_id: str, owner_id: str) -> ConversationInbox:
+        """The inbox of ``conversation_id``. Its events go to the live run on the thread."""
+        key = (owner_id, conversation_id)
+        found = self._inboxes.get(key)
+        if found is None:
+
+            def sink(body: EventBody) -> None:
+                run = self.active_run_for(conversation_id, owner_id)
+                if run is not None and not run.stream.closed:
+                    _ = run.emit(body)
+
+            found = ConversationInbox(
+                owner_id, conversation_id, sink=sink, journal=self._journal
+            )
+            self._prune_inboxes()
+            self._inboxes[key] = found
+        return found
+
+    def _prune_inboxes(self) -> None:
+        """Drop idle inboxes once there are many. One whose thread is live or claimed stays:
+        a run or a request may hold it (a turn being started from it among them), and a
+        second inbox for the thread would split its queue."""
+        if len(self._inboxes) < _INBOXES_KEPT:
+            return
+        for key, inbox in list(self._inboxes.items()):
+            owner_id, conversation_id = key
+            if (
+                inbox.idle
+                and key not in self._claims
+                and self.active_run_for(conversation_id, owner_id) is None
+            ):
+                del self._inboxes[key]
+
+    def inboxes(self) -> list[ConversationInbox]:
+        """Every inbox holding something, or waiting on its operator."""
+        return [
+            inbox
+            for inbox in self._inboxes.values()
+            if inbox.messages or inbox.waiting_for_operator
+        ]
 
     # --- lookup ---------------------------------------------------------------
     def get(self, run_id: str) -> Run | None:
@@ -253,6 +315,8 @@ class RunRegistry:
             endpoint=endpoint,
             stream=RunStream(),
         )
+        if conversation_id is not None:
+            run.inbox = self.inbox(conversation_id, owner_id)
         self.register(run)
         self._evict_old()
         wall = self._wall_clock if wall_clock_timeout_s is UNSET else wall_clock_timeout_s
@@ -323,6 +387,7 @@ class RunRegistry:
         runs each turn's own pre-cancel flush while the stores are still live, so a turn
         in flight at shutdown is persisted rather than silently lost.
         """
+        self._closing = True
         live = [run for run in self._runs.values() if not run.is_terminal]
         for run in live:
             _ = await self.cancel(run.id)

@@ -465,6 +465,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         network_tools=state.network_tools,
         dormant_categories=state.dormant_categories,
         category_availability=state.category_availability,
+        app=app,
     )
     for manifest in state.feature_manifests:
         if manifest.enabled is not None and not manifest.enabled(settings):

@@ -38,6 +38,7 @@ from .lifecycle import (
     ThinkingDelta,
 )
 from .messages import (
+    InboxWaiting,
     MessageEdited,
     MessageHeld,
     MessageInjected,
@@ -93,6 +94,7 @@ EventBody = Annotated[
     | MessageWithdrawn
     | MessageHeld
     | MessageInjected
+    | InboxWaiting
     | TasksUpdated
     | PlanUpdated
     | PermissionChanged

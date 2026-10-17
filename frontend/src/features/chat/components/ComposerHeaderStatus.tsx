@@ -91,8 +91,11 @@ export function ComposerHeaderStatus(
 export interface ComposerHeaderAsideProps {
   streaming: () => boolean;
   runClock: () => RunClock | null;
-  /** Operator messages waiting in the run. */
+  /** Messages waiting in the conversation's inbox. */
   queued: () => number;
+  /** Whether the dock listing them is open. */
+  queuedOpen: () => boolean;
+  onToggleQueued: () => void;
   /** A worktree thread's branch, when it has one. */
   branch: () => string | undefined;
 }
@@ -108,7 +111,17 @@ export function ComposerHeaderAside(
   return (
     <Switch>
       <Match when={props.queued()}>
-        {(count) => <span class="text-warn">Queued {count()} · ↑ to edit</span>}
+        {(count) => (
+          <button
+            type="button"
+            class={`uppercase hover:text-bright ${props.queuedOpen() ? "text-bright" : "text-warn"}`}
+            aria-expanded={props.queuedOpen()}
+            aria-label={`${count()} queued, ${props.queuedOpen() ? "hide" : "show"}`}
+            onClick={props.onToggleQueued}
+          >
+            {count()} queued
+          </button>
+        )}
       </Match>
       <Match when={props.streaming() && props.runClock()}>
         {(clock) => (

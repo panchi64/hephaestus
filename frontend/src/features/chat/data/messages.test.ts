@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { toMessage } from "./messages";
+import { toMessage, toTool } from "./messages";
 import type { MessageDTO, ToolCallDTO } from "./wire";
 
 function divider(overrides: Partial<MessageDTO> = {}): MessageDTO {
@@ -251,6 +251,65 @@ describe("toMessage replays an assistant turn in emission order", () => {
         }),
       ),
     ).toEqual(["tool:script[inner]", "chip:v1", "text:Done."]);
+  });
+
+  test("typed parts and a notice's kind come across, snake_case mapped", () => {
+    const user = toMessage({
+      id: "u1",
+      role: "user",
+      content: "summarize this",
+      tools: [],
+      parts: [
+        { kind: "untrusted", text: "file body", source: "a.pdf", path: null },
+      ],
+    });
+    expect(user.parts).toEqual([
+      {
+        kind: "untrusted",
+        text: "file body",
+        source: "a.pdf",
+        path: undefined,
+      },
+    ]);
+    const notice = toMessage({
+      id: "n1",
+      role: "notice",
+      content: "- a\n- b",
+      tools: [],
+      notice: "open-tasks",
+    });
+    expect(notice.notice).toBe("open-tasks");
+    expect(notice.parts).toBeUndefined();
+  });
+
+  test("a call's result parts come across, and none means absent", () => {
+    const call = (result_parts: ToolCallDTO["result_parts"]) =>
+      toTool({
+        id: "c",
+        name: "web_fetch",
+        args: {},
+        status: "ok",
+        result_parts,
+      });
+    expect(call(null).resultParts).toBeUndefined();
+    expect(call([]).resultParts).toBeUndefined();
+    expect(
+      call([
+        {
+          kind: "context_file",
+          text: "rules",
+          source: null,
+          path: "AGENTS.md",
+        },
+      ]).resultParts,
+    ).toEqual([
+      {
+        kind: "context_file",
+        text: "rules",
+        source: undefined,
+        path: "AGENTS.md",
+      },
+    ]);
   });
 
   test("a chip whose call is unknown still renders, at the end", () => {

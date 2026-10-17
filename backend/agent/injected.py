@@ -1,7 +1,7 @@
 """How a message that is not the operator's reaches the model.
 
 A sub-agent's report is delivered into the launching thread the same way an operator's
-mid-turn message is — queued on the Run, handed over at the next model-request boundary.
+mid-turn message is — queued in the inbox, handed over at the next model-request boundary.
 That road is the right one and was chosen deliberately: the injection point amends the
 *next, not-yet-sent* request, so nothing queued can interrupt a model that is mid-stream.
 
@@ -24,6 +24,7 @@ the only way their writers and their readers cannot drift.
 from __future__ import annotations
 
 from runs import QueuedMessage
+from services.notices import notice_envelope
 from services.subagents.report import message_envelope, report_envelope
 
 
@@ -32,11 +33,13 @@ def injected_text(message: QueuedMessage) -> str:
 
     The operator's own words are handed over untouched: they are what a user message is,
     and wrapping them would put framing between the operator and the model that neither
-    asked for. Everything else came down a link between a thread and a sub-agent, and is
-    framed as whichever direction it travelled.
+    asked for. Everything else is framed as who sent it: a sub-agent, another agent of the
+    tree, or the chassis itself.
     """
     if message.source == "subagent":
         return report_envelope(message.text)
     if message.source == "agent":
         return message_envelope(message.sender or "an agent", message.text)
+    if message.source == "system":
+        return notice_envelope(message.notice or "notice", message.text)
     return message.text

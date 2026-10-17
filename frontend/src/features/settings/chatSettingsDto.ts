@@ -22,8 +22,6 @@ export interface ChatSettingsDTO {
   work_summary_idle_minutes: number;
   context_warn_threshold: number;
   context_alert_threshold: number;
-  agent_request_limit: number;
-  auto_continue_max: number;
   first_token_timeout_s: number | null;
   inactivity_timeout_s: number;
   wall_clock_timeout_s: number | null;
@@ -38,8 +36,6 @@ export function toChatSettings(dto: ChatSettingsDTO): ChatSettings {
     workSummaryIdleMinutes: dto.work_summary_idle_minutes,
     contextWarnThreshold: dto.context_warn_threshold,
     contextAlertThreshold: dto.context_alert_threshold,
-    agentRequestLimit: dto.agent_request_limit,
-    autoContinueMax: dto.auto_continue_max,
     firstTokenTimeoutS: dto.first_token_timeout_s,
     inactivityTimeoutS: dto.inactivity_timeout_s,
     wallClockTimeoutS: dto.wall_clock_timeout_s,
@@ -63,10 +59,6 @@ export function toChatSettingsBody(
     body.context_warn_threshold = patch.contextWarnThreshold;
   if (patch.contextAlertThreshold !== undefined)
     body.context_alert_threshold = patch.contextAlertThreshold;
-  if (patch.agentRequestLimit !== undefined)
-    body.agent_request_limit = patch.agentRequestLimit;
-  if (patch.autoContinueMax !== undefined)
-    body.auto_continue_max = patch.autoContinueMax;
   if (
     patch.firstTokenTimeoutS !== undefined &&
     patch.firstTokenTimeoutS !== null

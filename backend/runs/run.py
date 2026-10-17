@@ -15,7 +15,6 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from uuid import uuid4
 
 from .endpoint_gate import Endpoint
 from .events import (
@@ -24,15 +23,11 @@ from .events import (
     Event,
     EventBody,
     FoldPoint,
-    MessageEdited,
-    MessageHeld,
-    MessageInjected,
-    MessageQueued,
     MessageSource,
-    MessageWithdrawn,
     RunMetrics,
     now_utc,
 )
+from .inbox import ConversationInbox, QueuedMessage
 from .overhead import TurnOverhead
 from .prefix import PrefixVerdict
 from .stream import RunStream
@@ -60,30 +55,6 @@ TERMINAL_STATUSES = {
     RunStatus.error,
     RunStatus.cancelled,
 }
-
-
-@dataclass(frozen=True)
-class QueuedMessage:
-    """A message that arrived while the run was still executing, waiting to be handed to
-    the model at the next model-request boundary.
-
-    Two things queue here: the operator typing mid-turn, and a sub-agent's report arriving
-    for the thread that launched it. They share this road on purpose — the injection point
-    hands a queued message to the *next, not-yet-sent* request, so neither can interrupt a
-    model that is mid-stream — and ``source`` is what keeps them distinguishable
-    afterwards, in the transcript and in what becomes of one left undelivered.
-    """
-
-    id: str
-    text: str
-    queued_at: datetime
-    source: MessageSource = "operator"
-    #: For a message from another agent in the delegation tree, that agent's handle.
-    sender: str | None = None
-    #: Held back from the drain while the operator has this message open in an editor.
-    #: The message keeps its place in the queue — a hold is a pause, not a removal — and
-    #: the drain stops at it rather than stepping over it (see :meth:`Run.drain_messages`).
-    held: bool = False
 
 
 @dataclass
@@ -174,12 +145,10 @@ class Run:
     # Opaque continuation payload for a parked run (set by the orchestrator
     # layer when awaiting approval). The substrate never interprets it.
     parked_payload: object | None = None
-    # Operator messages sent while this run was still executing, waiting for the
-    # orchestrator to drain them at its next model-request boundary. Lives on the
-    # Run (like `parked_payload`) so it survives a park/resume cycle; anything
-    # still here at terminal is dropped — the client rebuilds undelivered text
-    # from the event replay (`message.queued` with no matching `injected`).
-    pending_messages: list[QueuedMessage] = field(default_factory=list)
+    # The conversation's inbox, which the orchestrator drains at each model-request
+    # boundary. The registry hands a conversation's run the conversation's own inbox, which
+    # outlives the run; a run with no conversation gets one of its own.
+    inbox: ConversationInbox | None = None
     # Opaque hook the orchestrator may set to flush whatever partial state it holds
     # before the registry force-cancels this run's task for a wall-clock/inactivity
     # bound — called synchronously with the bound's operator-legible message, from
@@ -268,129 +237,28 @@ class Run:
         self.status = RunStatus.awaiting_input
         self.parked_payload = payload
 
+    @property
+    def messages(self) -> ConversationInbox:
+        """This run's inbox; a run built outside the registry gets one of its own."""
+        if self.inbox is None:
+            self.inbox = ConversationInbox(self.owner_id, sink=self._emit_open)
+        return self.inbox
+
+    @property
+    def pending_messages(self) -> list[QueuedMessage]:
+        return list(self.messages.messages)
+
     def enqueue_message(
         self, text: str, *, source: MessageSource = "operator", sender: str | None = None
     ) -> QueuedMessage:
-        """Queue a message for injection at the next model-request boundary.
-
-        Synchronous (no ``await`` between append and emit), so under single-threaded
-        asyncio it can never interleave with a concurrent ``drain_messages`` and lose the
-        message.
-
-        ``source`` is who it is from — the operator by default, or a sub-agent reporting
-        back to the thread that launched it. It rides on the message because what becomes
-        of one still queued at terminal depends on it: the operator's client can rebuild
-        their own undelivered text from the replay, and nothing but this holds a report.
-        """
-        message = QueuedMessage(
-            id=uuid4().hex, text=text, queued_at=now_utc(), source=source, sender=sender
-        )
-        self.pending_messages.append(message)
-        _ = self.emit(
-            MessageQueued(
-                message_id=message.id,
-                text=message.text,
-                source=message.source,
-                sender=message.sender,
-            )
-        )
-        return message
-
-    def edit_message(self, message_id: str, text: str) -> bool:
-        """Rewrite a queued message's text before the run consumes it, keeping its
-        id and place in the queue. False when the id is unknown — already injected,
-        already withdrawn, or never queued. Synchronous for the same reason as
-        ``enqueue_message``: it can never interleave with a concurrent drain."""
-        for i, message in enumerate(self.pending_messages):
-            if message.id == message_id:
-                # Everything but the text is carried across, because the record is frozen
-                # and rebuilt rather than mutated: a rewrite that dropped ``source`` would
-                # relabel a sub-agent's queued report as the operator's own words, which
-                # is the one fact about a queued message nothing downstream can recover.
-                self.pending_messages[i] = QueuedMessage(
-                    id=message.id,
-                    text=text,
-                    queued_at=message.queued_at,
-                    source=message.source,
-                    sender=message.sender,
-                    held=message.held,
-                )
-                _ = self.emit(MessageEdited(message_id=message_id, text=text))
-                return True
-        return False
-
-    def hold_message(self, message_id: str, held: bool) -> bool:
-        """Hold a queued message back from the drain, or release it again.
-
-        What it is for: the operator opens a queued message in the composer to rewrite it,
-        and the run reaches a model-request boundary while they are still typing. Without
-        a hold the draft they were editing is injected as it stood and the edit lands on a
-        message that is already part of the turn. The state has to be the **backend's** —
-        the drain is here, and a flag held only by the editor is a flag the drain cannot
-        read.
-
-        Returns False for an unknown id — already injected, already withdrawn, or never
-        queued — exactly like its neighbours. Setting a hold to the value it already has
-        succeeds and emits nothing: idempotent, because the client may be reconciling
-        rather than toggling, and a frame saying nothing changed is one a replaying client
-        has to decide to ignore.
-
-        Synchronous for the same reason as ``enqueue_message``: no ``await`` between the
-        mutation and the emit, so under single-threaded asyncio it cannot interleave with
-        a concurrent drain — which is the very race a hold exists to settle.
-        """
-        for i, message in enumerate(self.pending_messages):
-            if message.id == message_id:
-                if message.held == held:
-                    return True
-                self.pending_messages[i] = QueuedMessage(
-                    id=message.id,
-                    text=message.text,
-                    queued_at=message.queued_at,
-                    source=message.source,
-                    sender=message.sender,
-                    held=held,
-                )
-                _ = self.emit(MessageHeld(message_id=message_id, held=held))
-                return True
-        return False
-
-    def withdraw_message(self, message_id: str) -> bool:
-        """Remove a queued message before the run consumes it. False when the
-        id is unknown — already injected, already withdrawn, or never queued."""
-        for i, message in enumerate(self.pending_messages):
-            if message.id == message_id:
-                del self.pending_messages[i]
-                _ = self.emit(MessageWithdrawn(message_id=message_id))
-                return True
-        return False
+        return self.messages.enqueue(text, source=source, sender=sender)
 
     def drain_messages(self) -> list[QueuedMessage]:
-        """Take the pending messages up to the first **held** one (in queue order),
-        emitting ``message.injected`` for each — the caller is committing to hand them to
-        the model. Everything from the held message onwards stays queued.
+        return self.messages.drain()
 
-        A held message therefore blocks the ones behind it, and that is the point rather
-        than a limitation. The alternative — stepping over the hold and draining what
-        follows — delivers the operator's third message before their second, and the
-        second one is the one they were still writing when they held it: the model would
-        read their afterthought as the instruction and their instruction as a correction
-        of it. A hold is short (it lasts while an editor is open), it is the operator's own
-        doing, and a stalled queue is visible to them; a silently reordered conversation is
-        not. So the drain stalls, deliberately, and resumes in order the moment the hold
-        comes off.
-        """
-        stop = next(
-            (i for i, message in enumerate(self.pending_messages) if message.held),
-            len(self.pending_messages),
-        )
-        drained, self.pending_messages = (
-            self.pending_messages[:stop],
-            self.pending_messages[stop:],
-        )
-        for message in drained:
-            _ = self.emit(MessageInjected(message_id=message.id, source=message.source))
-        return drained
+    def _emit_open(self, body: EventBody) -> None:
+        if not self.stream.closed:
+            _ = self.emit(body)
 
     def set_metrics(self, metrics: RunMetrics) -> None:
         """Stash final metrics; the registry emits them at terminal."""

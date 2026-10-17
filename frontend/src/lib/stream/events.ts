@@ -220,11 +220,22 @@ export interface ToolProgress extends Base {
   elapsed_s: number | null;
   partial: string | null;
 }
+/** One typed slice of a wrapped payload. `untrusted` was fenced for the model and
+ *  `source` is the fence's attribute; `context_file` is a project instruction file at
+ *  `path`. The cold DTOs carry the same shape. */
+export interface ContentPartWire {
+  kind: "text" | "untrusted" | "context_file";
+  text: string;
+  source: string | null;
+  path: string | null;
+}
 export interface ToolCompleted extends Base, Nestable {
   type: "tool.completed";
   tool_call_id: string;
   name: string;
   result: unknown;
+  /** The result split into typed parts; `result` stays the raw payload. */
+  result_parts?: ContentPartWire[] | null;
   /** Images the call handed back for the model to look at — a screenshot. Base64,
    *  media type alongside; the renderer adds the data-URI scheme. */
   images?: ToolImage[];
@@ -564,8 +575,10 @@ export interface ReviewCompleted extends Base {
  *  because a report shown as the operator's own words is a transcript lying about who said
  *  what. Absent on an older backend, which only ever sent the operator's.
  *
- *  `subagent` and `agent` both render as an incoming `subagent` row. */
-export type MessageSource = "operator" | "subagent" | "agent";
+ *  `subagent` and `agent` both render as an incoming `subagent` row. `system` is a
+ *  reminder the chassis wrote (see `notice` on the queue frame) and renders as a
+ *  `notice` row. */
+export type MessageSource = "operator" | "subagent" | "agent" | "system";
 /** A message arrived while the run was still executing; it is queued for injection
  *  at the run's next model-request boundary. `text` rides inline so a reattaching
  *  client rebuilds the pending bubble purely from replay. */
@@ -576,6 +589,11 @@ export interface MessageQueued extends Base {
   source?: MessageSource;
   /** The handle of the agent that sent it, when `source` is `agent`. */
   sender?: string | null;
+  /** An operator message carrying attachments, file refs or a command: it opens a turn
+   *  of its own after this one instead of joining it. */
+  turn?: boolean;
+  /** The notice's kind (`open-tasks`), when `source` is `system`. */
+  notice?: string | null;
 }
 /** The operator rewrote a queued message's text before the run consumed it.
  *  `text` is the full replacement (not a delta), inline so a reattaching client
@@ -611,6 +629,12 @@ export interface MessageInjected extends Base {
   /** Repeated from the queue frame rather than looked up, so a client attaching after
    *  that frame scrolled out of its replay window still knows whose message landed. */
   source?: MessageSource;
+}
+/** The operator stopped the turn, so the inbox holds everything until they send again
+ *  (`waiting`), or they did and it flows again. */
+export interface InboxWaiting extends Base {
+  type: "inbox.waiting";
+  waiting: boolean;
 }
 /** One task on the agent's running list for this conversation. `blocked` only occurs
  *  when the backend enables subtasks/dependencies; it is carried here so a future flip
@@ -735,6 +759,7 @@ export type RunEvent =
   | MessageHeld
   | MessageWithdrawn
   | MessageInjected
+  | InboxWaiting
   | TasksUpdated
   | PlanUpdated
   | PermissionChanged

@@ -143,74 +143,33 @@ async def stream_run_events(
     return sse_response(run, after)
 
 
+class CancelRequest(BaseModel):
+    #: The operator's Stop on their own thread: everything waiting in its inbox stays there,
+    #: behind their next message, instead of starting the next turn.
+    hold_inbox: bool = False
+
+
 @router.post("/{run_id}/cancel", status_code=202)
-async def cancel_run(run_id: str, request: Request) -> dict[str, str]:
+async def cancel_run(
+    run_id: str, request: Request, body: CancelRequest | None = None
+) -> dict[str, str]:
     registry = deps.registry(request)
+    run = registry.get(run_id)
+    held = None
+    if body is not None and body.hold_inbox and run is not None and run.conversation_id:
+        # Before the cancel, so the run ending finds the inbox already held.
+        inbox = registry.inbox(run.conversation_id, run.owner_id)
+        held = (inbox, inbox.stop())
     cancelled = await registry.cancel(run_id)
     if not cancelled:
+        if held is not None:
+            held[0].undo_stop(held[1])
         # Unknown, or already terminal — surface the distinction.
         run = registry.get(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
         raise HTTPException(status_code=409, detail=f"run already {run.status.value}")
     return {"status": "cancelling"}
-
-
-class QueuedMessageEdit(BaseModel):
-    text: str
-
-
-@router.patch("/{run_id}/messages/{message_id}", status_code=200)
-async def edit_queued_message(
-    run_id: str, message_id: str, body: QueuedMessageEdit, request: Request
-) -> dict[str, str]:
-    """Rewrite an operator message queued into a live run before the run consumes
-    it (the message keeps its id and place in the queue). Same 404 envelope as
-    withdraw: unknown id, already injected, already withdrawn, or the run is
-    gone/terminal — the message can no longer be edited."""
-    if not body.text.strip():
-        raise HTTPException(status_code=422, detail="text must not be empty")
-    run = _require_run(request, run_id)
-    if run.is_terminal or not run.edit_message(message_id, body.text):
-        raise HTTPException(status_code=404, detail="queued message not found")
-    return {"status": "edited"}
-
-
-@router.delete("/{run_id}/messages/{message_id}", status_code=200)
-async def withdraw_queued_message(run_id: str, message_id: str, request: Request) -> dict[str, str]:
-    """Withdraw an operator message queued into a live run before the run consumes
-    it. 404 covers every way the message can no longer be withdrawn: unknown id,
-    already injected, already withdrawn, or the run is gone/terminal."""
-    run = _require_run(request, run_id)
-    if run.is_terminal or not run.withdraw_message(message_id):
-        raise HTTPException(status_code=404, detail="queued message not found")
-    return {"status": "withdrawn"}
-
-
-class QueuedMessageHold(BaseModel):
-    held: bool
-
-
-@router.post("/{run_id}/messages/{message_id}/hold", status_code=200)
-async def hold_queued_message(
-    run_id: str, message_id: str, body: QueuedMessageHold, request: Request
-) -> dict[str, str]:
-    """Hold a queued message back from the run's next drain, or release it again.
-
-    The operator opening a queued message to rewrite it is the case this exists for: the
-    run can reach a model-request boundary mid-edit, and without a hold it injects the
-    draft they were still changing. The decision is the backend's because the drain is —
-    a client-side "don't send this yet" cannot be consulted by the thing doing the
-    sending.
-
-    Same 404 envelope as the edit/withdraw pair: unknown id, already injected, already
-    withdrawn, or the run is gone/terminal — the message can no longer be held either
-    way. Setting the hold it already has is a 200, so a client reconciling its own state
-    never has to know which side it is on."""
-    run = _require_run(request, run_id)
-    if run.is_terminal or not run.hold_message(message_id, body.held):
-        raise HTTPException(status_code=404, detail="queued message not found")
-    return {"status": "held" if body.held else "released"}
 
 
 class ApprovalDecision(BaseModel):

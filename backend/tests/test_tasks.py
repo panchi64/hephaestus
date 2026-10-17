@@ -6,11 +6,21 @@ keeps the harness's word for it out of the model's catalog.
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
 
 import pytest
-from pydantic_ai import DeferredToolRequests, ModelRetry, RunContext
+from pydantic_ai import RunContext
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+    StreamFunctionDef,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
@@ -19,14 +29,16 @@ from pydantic_ai_harness.planning import TaskStatus
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
+from agent import build_chat_orchestrator
+from agent.open_tasks import open_tasks_notice
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
 from models.task_list import ConversationTaskList
-from runs import EventBody, Run, RunStream, TasksUpdated
+from runs import EventBody, Run, RunRegistry, RunStatus, RunStream, TasksUpdated
 from services.task_list import ConversationTasks, ConversationTaskStore
 from tools import RunDeps, build_agent_toolsets, harness_events_capability
-from tools.tasks import remind_of_open_tasks, tasks_toolset
+from tools.tasks import tasks_toolset
 
 OWNER = "operator"
 
@@ -275,34 +287,37 @@ def test_the_rename_map_is_a_bijection_over_the_allowlist():
     assert {LOCAL[upstream] for upstream in UPSTREAM.values()} == set(UPSTREAM)
 
 
-async def test_an_answer_with_steps_still_open_is_sent_back_once(tasks: ConversationTasks):
+def _caps(tasks: ConversationTasks) -> ServiceContainer:
+    caps = ServiceContainer()
+    caps.add(tasks, as_type=ConversationTasks)
+    return caps
+
+
+async def test_open_steps_are_raised_once_per_open_set(tasks: ConversationTasks):
     items = _items("read the file", "fix the bug")
     items[0] = items[0].model_copy(update={"status": TaskStatus.completed})
     await _store(tasks).set_items(items)
-    _, ctx = await _toolset_ctx(tasks, "conv-1")
-    ctx.deps.tasks_touched = True
+    caps = _caps(tasks)
 
-    with pytest.raises(ModelRetry) as caught:
-        _ = await remind_of_open_tasks(ctx, "All done!")
-    assert "fix the bug (pending)" in caught.value.message
-    assert "read the file" not in caught.value.message
-    # Once per turn: the answer the model gives next stands, whatever it says.
-    assert await remind_of_open_tasks(ctx, "Could not fix the bug.") == "Could not fix the bug."
+    notice = await open_tasks_notice(caps, OWNER, "conv-1")
+    assert notice is not None
+    assert "fix the bug (pending)" in notice
+    assert "read the file" not in notice
+    assert await open_tasks_notice(caps, OWNER, "conv-1") is None
 
 
-async def test_a_run_that_never_used_the_list_is_not_held_to_it(tasks: ConversationTasks):
-    # A list left open by earlier work is not what a later, unrelated question was about.
-    await _store(tasks).set_items(_items("deploy to staging"))
-    toolset, ctx = await _toolset_ctx(tasks, "conv-1")
-    assert await remind_of_open_tasks(ctx, "It is 9pm in Tokyo.") == "It is 9pm in Tokyo."
-    tools = await toolset.get_tools(ctx)
-    read = cast(object, await toolset.call_tool("tasks_read", {}, ctx, tools["tasks_read"]))
-    assert "deploy to staging" in str(read)
-    with pytest.raises(ModelRetry):
-        _ = await remind_of_open_tasks(ctx, "Done.")
+async def test_a_changed_open_set_is_raised_again(tasks: ConversationTasks):
+    store = _store(tasks)
+    await store.set_items(_items("one"))
+    caps = _caps(tasks)
+    assert await open_tasks_notice(caps, OWNER, "conv-1") is not None
+
+    await store.set_items(_items("one", "two"))
+    notice = await open_tasks_notice(caps, OWNER, "conv-1")
+    assert notice is not None and "two (pending)" in notice
 
 
-async def test_an_answer_with_every_step_settled_stands(tasks: ConversationTasks):
+async def test_settled_steps_raise_nothing(tasks: ConversationTasks):
     items = [
         item.model_copy(update={"status": status})
         for item, status in zip(
@@ -312,12 +327,52 @@ async def test_an_answer_with_every_step_settled_stands(tasks: ConversationTasks
         )
     ]
     await _store(tasks).set_items(items)
-    _, ctx = await _toolset_ctx(tasks, "conv-1")
-    assert await remind_of_open_tasks(ctx, "Done.") == "Done."
+    assert await open_tasks_notice(_caps(tasks), OWNER, "conv-1") is None
 
 
-async def test_a_turn_parking_on_a_question_is_not_held_to_its_list(tasks: ConversationTasks):
-    await _store(tasks).set_items(_items("ask the operator"))
-    _, ctx = await _toolset_ctx(tasks, "conv-1")
-    parked = DeferredToolRequests()
-    assert await remind_of_open_tasks(ctx, parked) is parked
+async def test_no_conversation_or_no_capability_raises_nothing(tasks: ConversationTasks):
+    await _store(tasks).set_items(_items("one"))
+    assert await open_tasks_notice(_caps(tasks), OWNER, None) is None
+    assert await open_tasks_notice(ServiceContainer(), OWNER, "conv-1") is None
+
+
+def _answer(*, write_list: bool) -> StreamFunctionDef:
+    async def stream_fn(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
+        if write_list and not any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            args = {"items": [{"content": "ship it"}]}
+            yield {0: DeltaToolCall(name="tasks_write", json_args=json.dumps(args))}
+        else:
+            yield "done"
+
+    return stream_fn
+
+
+async def _run_with_list(tasks: ConversationTasks, *, write_list: bool) -> Run:
+    orch = build_chat_orchestrator(
+        "go",
+        model=FunctionModel(stream_function=_answer(write_list=write_list)),
+        categories={"tasks": tasks_toolset()},
+        capabilities=_caps(tasks),
+        conversation_id="conv-e2e",
+    )
+    run = RunRegistry().submit(kind="chat", owner_id=OWNER, orchestrator=orch)
+    await run.wait()
+    return run
+
+
+def _notices(run: Run) -> list[str]:
+    return [b.type for b in _bodies(run) if b.type == "message.injected"]
+
+
+async def test_the_turn_continues_once_for_open_steps_and_not_again(tasks: ConversationTasks):
+    first = await _run_with_list(tasks, write_list=True)
+    assert first.status is RunStatus.done
+    assert _notices(first) == ["message.injected"]
+    assert [b.type for b in _bodies(first)].count("step.started") == 3
+    assert [b.type for b in _bodies(first)].count("run.ended") == 1
+
+    second = await _run_with_list(tasks, write_list=False)
+    assert second.status is RunStatus.done
+    assert _notices(second) == []

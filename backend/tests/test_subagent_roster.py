@@ -29,7 +29,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RunUsage
 
-from core.config import Settings
 from routes.deps import app_state
 from runs import Run, RunStream
 from services.agents import (
@@ -123,13 +122,6 @@ class TestTheResearcher:
         # Reading the web changes nothing, so the operator is not asked. What they rule on
         # is the plan the launching thread submits before it fans out.
         assert builtin_roster()["researcher"].permission_ceiling == "plan"
-
-    def test_it_carries_its_own_request_limit(self):
-        # Reading enough sources to see where they disagree is many more round trips than
-        # the operator's default turn budget allows for.
-        limit = builtin_roster()["researcher"].request_limit
-        assert limit is not None
-        assert limit > Settings().agent_request_limit
 
     def test_it_works_nowhere_near_the_launching_threads_files(self):
         # It is reading the open web, which is the case `own` exists for. Sharing would

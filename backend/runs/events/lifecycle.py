@@ -80,12 +80,8 @@ class AnswerRetracted(Body):
 
 class LimitNotice(Body):
     type: Literal["limit.notice"] = "limit.notice"
-    # "steps" | "tool_calls" | "tokens" | "time" | "loop" | "verify" | "context" | "search"
-    # | "continue" (not a stop: the turn carried on past a bound by itself)
-    # ("context" = the model's context window was exceeded; the run stops, it isn't degraded.
-    # "search" was the deep-research pipeline's two-empty-rounds abort; nothing emits it now
-    # that research is an ordinary thread, and it stays in the vocabulary because removing a
-    # value a client already handles is a narrowing, which this protocol does not do.)
+    # "time" | "loop" | "verify" | "context" | "continue" (not a stop: a transient model
+    # error is being retried). "context" means the model's context window was exceeded.
     limit: str
     message: str
     # The stop marker this notice announces, when the bound also blocked the turn — the

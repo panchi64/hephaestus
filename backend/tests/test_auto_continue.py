@@ -1,10 +1,5 @@
-"""A turn that is getting somewhere carries on past the request limit by itself, and a
-request a transient model error cut short is sent again.
-
-Both resume from the last complete request in the same run, so the operator's thread reads
-as one turn. Neither is unconditional: an extension needs a completed tool call since the
-last one, and both have a budget.
-"""
+"""A turn has no request budget, and a request a transient model error cut short is sent
+again from the last complete request in the same run."""
 
 from __future__ import annotations
 
@@ -75,34 +70,14 @@ async def _run(model: FunctionModel, toolset: FunctionToolset[RunDeps]):
     return run
 
 
-async def test_a_turn_making_progress_carries_on_past_the_request_limit(
+async def test_a_long_turn_runs_past_the_library_default_request_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _settings(monkeypatch, Settings(agent_request_limit=3, auto_continue_max=3))
-    run = await _run(_works_for(6), _work_toolset())
+    # pydantic-ai caps a run at 50 requests unless told otherwise.
+    _settings(monkeypatch, Settings())
+    run = await _run(_works_for(70), _work_toolset())
     assert run.status is RunStatus.done
-    notices = [n for n in bodies_of(run, LimitNotice) if n.limit == "continue"]
-    assert len(notices) == 2
-    assert "1 of 3" in notices[0].message
-
-
-async def test_the_extensions_run_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    _settings(monkeypatch, Settings(agent_request_limit=2, auto_continue_max=1))
-    run = await _run(_works_for(10), _work_toolset())
-    assert run.status is RunStatus.blocked
-    assert [n.limit for n in bodies_of(run, LimitNotice)] == ["continue", "steps"]
-
-
-async def test_a_turn_whose_calls_all_fail_is_not_extended(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _settings(
-        monkeypatch,
-        Settings(agent_request_limit=2, auto_continue_max=3, loop_repeat_threshold=99),
-    )
-    run = await _run(_works_for(10), _work_toolset(fail=True))
-    assert run.status is RunStatus.blocked
-    assert [n.limit for n in bodies_of(run, LimitNotice)] == ["steps"]
+    assert bodies_of(run, LimitNotice) == []
 
 
 def _fails_first(status: int) -> FunctionModel:

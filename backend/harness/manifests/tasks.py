@@ -28,7 +28,7 @@ from routes import tasks as tasks_routes
 from routes.chat import WallClockOverride, compose_turn, resolve_turn_models
 from routes.deps import OPERATOR_ID
 from runs import Run, RunRegistry, RunStatus
-from services.agents import AgentCatalog, lower_of
+from services.agents import AgentCatalog
 from services.agents.thread import DELEGATION_TOOLS, may_delegate, resolve_thread_agent
 from services.approval_grants import ONCE_ONLY_TOOLS, ApprovalGrantStore
 from services.conversations import ConversationStore
@@ -40,7 +40,6 @@ from services.routines import RoutineStore, ScheduleNaturalLanguage
 from services.scheduler import ScheduledTaskView, SchedulerService, TaskRunResult
 from services.settings_store import (
     SettingsStore,
-    get_agent_request_limit_override,
     get_context_thresholds,
 )
 from services.tool_policy import effective_disabled_tools
@@ -170,10 +169,6 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         )
         if not may_delegate(applied.agent, 0, ctx.settings.agent_max_depth):
             disabled |= DELEGATION_TOOLS
-        request_limit = lower_of(
-            applied.agent.request_limit,
-            await get_agent_request_limit_override(settings_store, view.owner_id),
-        )
         thresholds = await get_context_thresholds(settings_store, view.owner_id)
         timeouts: WallClockOverride = {}
         if applied.agent.wall_clock_timeout_s is not None:
@@ -195,7 +190,6 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             uploads=services.get(UploadStore),
             disabled_tools=disabled | applied.withheld,
             binding=applied.binding,
-            request_limit=request_limit,
             context_thresholds=thresholds,
             auto_compact=auto_compact,
             owner_id=view.owner_id,

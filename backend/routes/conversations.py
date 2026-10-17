@@ -24,6 +24,7 @@ from agent.summarize import FoldFailed, NothingToFold, resolve_auto_compact_poli
 from agent.title import title_from_history
 from core.compaction_sections import SummarySection
 from core.config import get_settings
+from core.envelopes import ContentPart
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from routes import deps
 from routes.chat import thread_models, turn_scope
@@ -138,6 +139,7 @@ class ToolCallOut(BaseModel):
     args: dict[str, object]
     status: str
     result: object = None
+    result_parts: list[ContentPart] | None = None
     error: str | None = None
     images: list[ToolCallImageOut] = Field(default_factory=list)
     answers: list[ToolCallAnswerOut] = Field(default_factory=list)
@@ -195,6 +197,11 @@ class MessageOut(BaseModel):
     author: str | None = None
     # The reporting agent's handle, on a sub-agent's report.
     reporter: str | None = None
+    # `role == "notice"` only — the notice's kind; `content` is its body.
+    notice: str | None = None
+    # User turns whose text carried untrusted fences — those fences in order; `content`
+    # keeps the surrounding text. None elsewhere.
+    parts: list[ContentPart] | None = None
     tools: list[ToolCallOut] = []
     versions: list[ViewVersionRefOut] = []
     created_at: datetime | None = None
@@ -408,6 +415,8 @@ def message_out(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut
         content=view.content,
         author=view.author,
         reporter=view.reporter,
+        notice=view.notice,
+        parts=view.parts,
         tools=[
             ToolCallOut(
                 id=t.id,
@@ -415,6 +424,7 @@ def message_out(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut
                 args=t.args,
                 status=t.status,
                 result=t.result,
+                result_parts=t.result_parts,
                 error=t.error,
                 images=[ToolCallImageOut(media_type=i.media_type, data=i.data) for i in t.images],
                 answers=[
@@ -831,6 +841,8 @@ async def delete_conversation(
             await image_orphans(request, conversation_id, message_id=None) if purge_images else []
         )
         await store.delete_conversation(conversation_id)
+        # Queued messages restate what was said to the thread; they go with it.
+        deps.registry(request).inbox(conversation_id, OPERATOR_ID).clear()
         await _purge_uploads(request, orphans)
         # Drop the conversation's View history (snapshots + any blob no other snapshot
         # needs), so the work doesn't linger encrypted on disk after the thread is gone.
@@ -941,14 +953,8 @@ async def pin_message(
     """Pin or unpin a turn — a durable bookmark surfaced in the projection."""
     store = deps.store(request)
     _ = await _require_owned(request, conversation_id)
-    # A tree mutation like the others here — rejected while a run is live on this
-    # conversation, same as switch_version/rewind/delete_message.
-    deps.claim_conversation(request, conversation_id)
-    try:
-        if not await store.set_pin(conversation_id, message_id, body.pinned):
-            raise HTTPException(status_code=404, detail="message not found")
-    finally:
-        deps.release_conversation(request, conversation_id)
+    if not await store.set_pin(conversation_id, message_id, body.pinned):
+        raise HTTPException(status_code=404, detail="message not found")
 
 
 @router.post("/{conversation_id}/messages/{message_id}/rewind", response_model=ConversationDetail)

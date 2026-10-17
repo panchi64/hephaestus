@@ -5,21 +5,17 @@ from __future__ import annotations
 from core.config import get_settings
 from core.db import init_db, make_engine
 from services.settings_store import (
-    AGENT_REQUEST_LIMIT_KEY,
     AUTO_COMPACT_ENABLED_KEY,
     AUTO_COMPACT_THRESHOLD_KEY,
     INACTIVITY_TIMEOUT_KEY,
     SUBAGENT_LIMIT_KEY,
     WALL_CLOCK_TIMEOUT_KEY,
     SettingsStore,
-    get_agent_request_limit,
-    get_agent_request_limit_override,
     get_auto_compact,
     get_inactivity_timeout,
     get_subagent_limit,
     get_wall_clock_timeout,
     resolve_compaction_enabled,
-    set_agent_request_limit,
     set_inactivity_timeout,
     set_subagent_limit,
     set_wall_clock_timeout,
@@ -99,30 +95,6 @@ def test_resolve_compaction_enabled_precedence():
     assert resolve_compaction_enabled(None, False) is False
     assert resolve_compaction_enabled(False, True) is False
     assert resolve_compaction_enabled(True, False) is True
-
-
-async def test_the_request_limit_distinguishes_unset_from_set():
-    """A mode may raise a bound nobody chose (`services/modes.py`) but must not overrule
-    one the operator typed — so the turn-composing path needs "did they set one?", which
-    the effective getter cannot answer once it has folded in the config default."""
-    store = _store()
-    assert await get_agent_request_limit_override(store, OWNER) is None
-    assert await get_agent_request_limit(store, OWNER) == get_settings().agent_request_limit
-
-    _ = await set_agent_request_limit(store, OWNER, 10)
-    assert await get_agent_request_limit_override(store, OWNER) == 10
-    assert await get_agent_request_limit(store, OWNER) == 10
-
-
-async def test_a_corrupted_request_limit_reads_as_unset():
-    # A stored 0, negative or non-numeric value is corruption, not an intent to cap a turn
-    # at nothing — it must not present as a number the operator chose.
-    store = _store()
-    cfg = get_settings()
-    for bad in ("0", "-5", "not-a-number"):
-        await store.set(OWNER, AGENT_REQUEST_LIMIT_KEY, bad)
-        assert await get_agent_request_limit_override(store, OWNER) is None, bad
-        assert await get_agent_request_limit(store, OWNER) == cfg.agent_request_limit
 
 
 async def test_there_is_no_subagent_cap_until_the_operator_sets_one():

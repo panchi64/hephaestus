@@ -245,7 +245,6 @@ def build_chat_orchestrator(
     auto_compact: AutoCompactPolicy | None = None,
     disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
     binding: ConversationBinding = DEFAULT_BINDING,
-    request_limit: int | None = None,
     workspace_key: str = "",
 ) -> Orchestrator:
     """Build the orchestrator for one chat turn (one always-agent path).
@@ -300,11 +299,6 @@ def build_chat_orchestrator(
     ``title_model`` (and ``title_enabled`` in settings) the *first* completed turn
     of a fresh thread is auto-named; ``title_settings`` carries the model's
     reasoning-off settings so the namer runs fast.
-
-    ``request_limit`` is the turn's model-round-trip ceiling — the operator's setting
-    when the caller resolved one, else the config default. It bounds the *whole* turn,
-    grant-resume and mid-run-steering continuations included, so a steady drip of
-    steering messages can't extend it.
 
     ``binding`` is the thread's binding (its workspace kind, project and level), read off
     the conversation by the caller. It decides where this turn's file work happens
@@ -484,6 +478,8 @@ def build_chat_orchestrator(
             store=store,
             conversation_id=conversation_id,
         )
+        if setup.stop_notice is not None:
+            _ = run.messages.take_stop_notice()
 
         try:
             turn = await drive_turn(
@@ -500,7 +496,6 @@ def build_chat_orchestrator(
                 vision=vision,
                 partial_history_ref=partial_history_ref,
                 store=store,
-                request_limit=request_limit,
                 compaction=setup.compaction,
                 turn_start=setup.turn_start,
                 workspace_key=workspace_key,
@@ -541,7 +536,6 @@ def build_chat_orchestrator(
                         vision=vision,
                         partial_history_ref=partial_history_ref,
                         store=store,
-                        request_limit=request_limit,
                         drop_ref=drop_ref,
                         # The correction cannot fold, so it is skipped outright when the
                         # window has no room left for it. Measured against the same share
@@ -704,9 +698,6 @@ def build_resume_orchestrator(
                 binding=parked.binding,
                 partial_history_ref=partial_history_ref,
                 store=store,
-                # The ceiling the parked turn was running under — a resume continues
-                # under the same one rather than reverting to the config default.
-                request_limit=parked.request_limit,
                 # And what it may fold with, so a resume that overruns the window recovers
                 # exactly as the original turn would have. A turn that parked *inside* a
                 # verifier correction carries a drop range indexed into the pre-fold

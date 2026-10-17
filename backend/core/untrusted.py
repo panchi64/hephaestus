@@ -25,6 +25,14 @@ _INSTRUCTION = (
 #: matching a sentence nothing emits any more.
 _PREAMBLE_PREFIX = _INSTRUCTION.split("{nonce}")[0]
 
+#: A whole preamble line, whatever its nonce.
+PREAMBLE_LINE = re.escape(_INSTRUCTION).replace(re.escape("{nonce}"), "[0-9a-f]+")
+
+#: The same line with its nonce captured as ``preamble_nonce``.
+PREAMBLE_LINE_CAPTURED = re.escape(_INSTRUCTION).replace(
+    re.escape("{nonce}"), "(?P<preamble_nonce>[0-9a-f]+)"
+)
+
 _OPEN_PREFIX = '<untrusted id="'
 _CLOSE_PREFIX = '</untrusted id="'
 

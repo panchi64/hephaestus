@@ -102,11 +102,6 @@ class RunDeps:
     # reason as `workspace` — and deliberately per *run* rather than per conversation:
     # "I already read this" is a fact about the investigation in flight, not a durable one.
     web_dedupe: DedupeSets = field(default_factory=DedupeSets, repr=False, compare=False)
-    # Set once this turn has been sent back for answering with its task list still open
-    # (`tools/tasks.py`), so the reminder is given once and the model's next answer stands.
-    open_tasks_reminded: bool = field(default=False, repr=False, compare=False)
-    # Set once this run has called a task-list tool; only such a run is held to the list.
-    tasks_touched: bool = field(default=False, repr=False, compare=False)
     # Whether another agent spawned this thread, so it is offered `subagent_report` and owes
     # its parent a report (`tools/report.py`).
     reports_to_parent: bool = False

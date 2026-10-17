@@ -2,10 +2,10 @@
 
 The loop around ``agent.iter()`` — the segment structure of a turn (the initial model
 pass, then a continuation for every batch of deferred calls that settles without the
-operator), the one usage budget / no-progress guard / usage accumulator / review budget
-they share, the live gauge frame as each response lands, mid-run steering drained at both
-boundaries, and the four ways a turn stops that are *state* rather than errors: a usage
-bound, the loop breaker, a context overflow, and a call that needs the operator.
+operator), the no-progress guard / usage accumulator / review budget they share, the live
+gauge frame as each response lands, mid-run steering drained at both boundaries, and the
+ways a turn stops that are *state* rather than errors: the first-token timeout, the loop
+breaker, a context overflow, and a call that needs the operator.
 
 It is its own file because it is the one thing both orchestrators and the verifier's
 corrective re-attempt run: ``engine.py`` sequences a run around it and ``verify.py`` calls
@@ -35,8 +35,6 @@ from pydantic_ai import (
     ModelRequestNode,
     ModelResponse,
     RunUsage,
-    ToolReturnPart,
-    UsageLimitExceeded,
     UsageLimits,
     UserPromptPart,
 )
@@ -68,9 +66,8 @@ from .model_errors import (
     is_context_overflow,
     is_transient,
     model_load_hint,
-    usage_limit_kind,
-    usage_limit_message,
 )
+from .open_tasks import open_tasks_notice
 from .parking import DEFAULT_BINDING, park_for_input
 from .translate import stream_agent_run
 
@@ -152,15 +149,9 @@ def turn_deps(
 TRANSIENT_BACKOFF_S = (2.0, 8.0)
 
 
-def _successful_calls(messages: Sequence[ModelMessage]) -> int:
-    """Tool calls in ``messages`` that returned without failing: the turn's progress."""
-    return sum(
-        1
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.outcome == "success"
-    )
+#: No request or tool-call budget: a turn is bounded by the loop guard and the timeouts.
+#: Explicit because the library applies a 50-request cap when ``usage_limits`` is omitted.
+UNBOUNDED = UsageLimits(request_limit=None)
 
 
 def _resume_point(messages: list[ModelMessage]) -> list[ModelMessage] | None:
@@ -191,7 +182,6 @@ async def drive_turn(
     vision: bool = True,
     partial_history_ref: list[Callable[[], list[ModelMessage]]] | None = None,
     store: ConversationStore | None = None,
-    request_limit: int | None = None,
     compaction: CompactionContext | None = None,
     turn_start: TurnStart | None = None,
     correcting: bool = False,
@@ -212,14 +202,6 @@ async def drive_turn(
     corrective re-attempt, where a fold is refused: the correction's drop range is a pair
     of absolute indices into the pre-fold history, and folding underneath it would leave
     the persist dropping two messages that are no longer the ones it meant."""
-    # The operator's runtime setting when they set one; None means nobody chose a number
-    # (an untouched control, a stateless eval turn, an older parked payload). It bounds
-    # *model round-trips*, so every tool call spends one.
-    resolved_limit = settings.agent_request_limit if request_limit is None else request_limit
-    limits = UsageLimits(
-        request_limit=resolved_limit,
-        tool_calls_limit=settings.agent_tool_calls_limit,
-    )
     # ONE review budget for the whole turn: at the Auto level every hop's deferred calls
     # are reviewed, and a model that keeps reaching past the level's ceiling would
     # otherwise spend a utility-model round trip per call for as long as the turn runs.
@@ -239,11 +221,11 @@ async def drive_turn(
     )
     # A turn may run as several segments: the initial model pass, then a continuation
     # for each batch of deferred calls a conversation grant auto-approves. They share
-    # ONE usage budget, ONE no-progress guard, and ONE usage accumulator, so the *whole*
-    # turn is bounded — a granted tool the model keeps re-calling can't reset the guards
-    # (or grow the call stack) by deferring on each hop; it trips the loop/usage stop.
+    # ONE no-progress guard and ONE usage accumulator, so a granted tool the model keeps
+    # re-calling can't reset the guard by deferring on each hop; it trips the loop stop.
     loop_breaker = LoopBreaker(repeat_threshold=settings.loop_repeat_threshold)
     usage = RunUsage()
+    open_tasks_raised = False
 
     def report_progress(history: list[ModelMessage]) -> None:
         # A live context/usage frame as each model response lands, so the operator's context
@@ -298,12 +280,6 @@ async def drive_turn(
     # for a reason folding cannot reach (one enormous tool result, an attachment that
     # doesn't fit), and re-folding would strip the thread's memory for nothing.
     compacted = False
-    # Auto-continue: how many times this turn has gone on past the request limit, and the
-    # successful tool calls it had made when it last did, so an extension is granted only
-    # to a turn that got something done with the one before. Transient model errors have a
-    # budget of their own.
-    extensions = 0
-    progress_mark = _successful_calls(message_history or [])
     transient_retries = 0
 
     while True:
@@ -319,7 +295,7 @@ async def drive_turn(
                 deps=deps,
                 message_history=message_history,
                 deferred_tool_results=deferred_results,
-                usage_limits=limits,
+                usage_limits=UNBOUNDED,
                 usage=usage,
             ) as agent_run:
                 await stream_agent_run(
@@ -338,48 +314,6 @@ async def drive_turn(
             _ = run.emit(LimitNotice(limit="time", message=detail))
             run.block(detail)
             return TurnResult(answer=None, messages=_partial_history(), blocked_reason=detail)
-        except UsageLimitExceeded as exc:
-            partial = _partial_history()
-            done = _successful_calls(partial)
-            resume = _resume_point(partial)
-            if (
-                usage_limit_kind(exc) == "steps"
-                and extensions < settings.auto_continue_max
-                and done > progress_mark
-                and resume is not None
-            ):
-                extensions += 1
-                progress_mark = done
-                _ = run.emit(
-                    LimitNotice(
-                        limit="continue",
-                        message=(
-                            f"Kept going past the step limit ({extensions} of "
-                            + f"{settings.auto_continue_max} extensions)"
-                        ),
-                    )
-                )
-                limits = UsageLimits(
-                    request_limit=(limits.request_limit or resolved_limit) + resolved_limit,
-                    tool_calls_limit=limits.tool_calls_limit,
-                )
-                prompt = None
-                message_history = resume
-                deferred_results = None
-                continue
-            # Hit a usage bound — stop and report state, don't error. The *same* sentence
-            # is both the toast and the persisted stop marker: a bare "usage limit reached"
-            # reads as a provider rate limit (the operator's first guess, and the wrong
-            # one), where this names the bound that actually tripped — one of this run's
-            # own local budgets.
-            detail = usage_limit_message(exc)
-            _ = run.emit(LimitNotice(limit=usage_limit_kind(exc), message=detail))
-            run.block(detail)
-            return TurnResult(
-                answer=None,
-                messages=_partial_history(),
-                blocked_reason=detail,
-            )
         except LoopDetected as exc:
             # No-progress guard tripped — stop and report state, don't error.
             _ = run.emit(LimitNotice(limit="loop", message=str(exc)))
@@ -484,10 +418,19 @@ async def drive_turn(
         # a call awaiting an answer (`ask_user`). Both arrive on the same object, and
         # either one alone means there is more of this turn to run.
         if not (isinstance(output, DeferredToolRequests) and (output.approvals or output.calls)):
+            # About to stop with nothing else to take: an open task list gets one word first.
+            if (
+                not open_tasks_raised
+                and conversation_id is not None
+                and not run.messages.has_deliverable()
+            ):
+                open_tasks_raised = True
+                notice = await open_tasks_notice(caps, run.owner_id, conversation_id)
+                if notice is not None:
+                    _ = run.messages.enqueue(notice, source="system", notice="open-tasks")
             # The model finished, but something queued while it was working: instead of
             # ending the run, continue it with the queued text as the next user
-            # request(s) — same run id, same stream, same usage/loop budget (so a steady
-            # drip of messages still trips the turn's bounds rather than extending them).
+            # request(s) — same run id, same stream, same loop guard and timeouts.
             # `prompt=None` + a history ending in a user request is the same continuation
             # shape a regenerate uses.
             #
@@ -536,7 +479,6 @@ async def drive_turn(
                 notifications=caps.get_optional(NotificationService),
                 store=store,
                 conversation_id=conversation_id,
-                request_limit=request_limit,
                 binding=binding,
                 vision=vision,
                 # Carried so a resume can recover from an overflow the way this turn would
