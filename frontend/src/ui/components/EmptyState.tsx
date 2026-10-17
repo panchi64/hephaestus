@@ -21,7 +21,7 @@ export interface EmptyStateProps {
  *  component is a *panel's* empty arm, not a screen's, and a launchpad on first run
  *  renders several of them at once. A moment admitted here would be one per empty
  *  panel rather than one per screen, which is how a moment becomes wallpaper. A screen
- *  that genuinely *is* its empty region (the 404) places `DeepField` itself. */
+ *  that genuinely *is* its empty region (the 404) places `DotField` itself. */
 export function EmptyState(props: EmptyStateProps): JSX.Element {
   const [local] = splitProps(props, [
     "message",

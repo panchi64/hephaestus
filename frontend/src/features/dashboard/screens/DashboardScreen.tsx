@@ -84,12 +84,12 @@ const RUN_STATUS_TONE: Record<ActiveRun["status"], Status> = {
  *  strip. Every panel reflects real backend state — the composer/threads via the chat
  *  seam, the facts band + capability health via `/overview`, the sequencer via `/runs`.
  *
- *  The screen's **licensed moment** (§11.1) is the deep field, and this screen does not
- *  draw it: `isDeepFieldRoute` puts it behind the shell's whole content column, because
- *  cropping it to one region cut the limb off short of the page edges it is drawn
- *  against. What this screen owes the field is the other half of the arrangement —
- *  every surface here either frosts it out (`heph-framed` → glass) or has no surface at
- *  all, so nothing on the launchpad is read against a graticule. */
+ *  The screen's **licensed moment** (§11.1) is the dot field, and this screen does not
+ *  draw it: `isDotFieldRoute` puts it behind the shell's whole content column, so its
+ *  falloff reaches the page edges rather than this screen's padding box. What this
+ *  screen owes the field is the other half of the arrangement — every surface here
+ *  either frosts it out (`heph-framed` → glass) or has no surface at all, so nothing on
+ *  the launchpad is read against the dots. */
 export function DashboardScreen(): JSX.Element {
   const navigate = useNavigate();
   const { data: overview, refetch: refetchOverview } = useOverview();
@@ -221,10 +221,8 @@ export function DashboardScreen(): JSX.Element {
           is the only card on this screen that lights its accent on focus, which
           is what makes "start typing" the obvious move on arrival (§6.2).
 
-          The deep field runs behind the whole column now (the shell paints it), so
-          there is no cropping layer here any more — one lived in this region and
-          sliced the field to a 320px band. The composer's own surface goes glass
-          over it. */}
+          The dot field's falloff is centred where this lands (`.heph-dot-field`'s
+          focus, 50% × 46% of the column); move the composer and move that too. */}
       <div class="flex min-h-0 flex-1 items-center justify-center py-8">
         <div class="w-full max-w-3xl">
           <Composer

@@ -110,7 +110,7 @@ export function Composer(props: ComposerProps): JSX.Element {
      shadows are for things that float). A live run is said in the plate, which
      turns info with a blinking square. */
   // `class` lands on the unit — it is layout glue, and the thing being placed is the
-  // whole unit. `heph-framed`: on a page carrying the deep field the composer's fill
+  // whole unit. `heph-framed`: on a page carrying the dot field the composer's fill
   // goes glass, so the field reads *through* the screen's focal object instead of
   // stopping dead at its edge (§11.1). A bare composer has no fill to trade. The whole
   // unit is the drop target: it is where the operator is already looking.

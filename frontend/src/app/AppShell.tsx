@@ -1,7 +1,7 @@
 import { createEffect, onCleanup, Show, Suspense, type JSX } from "solid-js";
 import { useLocation } from "@solidjs/router";
 import {
-  DeepField,
+  DotField,
   ErrorBoundary,
   LoadingText,
   NotConnectedOverlay,
@@ -18,7 +18,7 @@ import {
 } from "~/lib/stores/notifications";
 import { NotificationBell } from "./NotificationBell";
 import { Sidebar, useSidebarWidth } from "./sidebar";
-import { isConnectedRoute, isDeepFieldRoute, isFlushRoute } from "./nav";
+import { isConnectedRoute, isDotFieldRoute, isFlushRoute } from "./nav";
 import { SettingsDialog } from "./settings-dialog";
 
 /** The authenticated app chrome: sidebar rail + top status bar + the routed
@@ -26,7 +26,7 @@ import { SettingsDialog } from "./settings-dialog";
 export function AppShell(props: { children: JSX.Element }): JSX.Element {
   const location = useLocation();
   const connected = () => isConnectedRoute(location.pathname);
-  const deepField = () => isDeepFieldRoute(location.pathname);
+  const dotField = () => isDotFieldRoute(location.pathname);
   const session = useSession();
   const rail = useSidebarWidth();
 
@@ -57,27 +57,26 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
         onResizeEnd={rail.persist}
       />
 
-      {/* `relative` + `heph-field-page`: the column is where the deep field is
+      {/* `relative` + `heph-field-page`: the column is where the dot field is
           painted on the screens that carry one (§11.1), and the marker is what
-          turns every framed surface inside it to glass. It hosts the field rather
-          than the screen doing so, for two reasons — a screen can only paint
-          inside `main`'s padding box, which leaves the limb cropped short of the
-          page edges it is drawn against, and the status bar would sit on bare
-          ground above a field that starts an inch below it. */}
+          turns every framed surface inside it to glass. The shell hosts the field
+          because a screen can only paint inside `main`'s padding box, which would
+          stop the falloff short of the page edges and leave the status bar on
+          bare ground. */}
       <div
         class={cx(
           "relative flex min-w-0 flex-1 flex-col",
-          deepField() && "heph-field-page",
+          dotField() && "heph-field-page",
         )}
       >
-        <Show when={deepField()}>
+        <Show when={dotField()}>
           {/* A sibling BEHIND the column's content, never an ancestor of it:
               `backdrop-filter` samples only what is painted inside its backdrop
-              root, and the field's own `opacity` (Paper runs it at 0.55) would
-              make it one — leaving every glass surface on the page blurring
-              nothing at all. Both siblings below are positioned, so paint order
-              is DOM order and the field stays underneath. */}
-          <DeepField />
+              root, and the field's own `mask` makes it one — as an ancestor it
+              would leave every glass surface on the page blurring nothing. Both
+              siblings below are positioned, so paint order is DOM order and the
+              field stays underneath. */}
+          <DotField />
         </Show>
         {/* No rule under the top bar (§7). It is already a distinct region by
             position and by what it holds; a full-width hairline across every

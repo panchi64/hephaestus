@@ -17,7 +17,7 @@ import {
   areaForPath,
   flattenNav,
   isConnectedRoute,
-  isDeepFieldRoute,
+  isDotFieldRoute,
   isFlushRoute,
   itemForPath,
 } from "./index";
@@ -155,29 +155,29 @@ describe("isFlushRoute", () => {
   });
 });
 
-describe("isDeepFieldRoute", () => {
+describe("isDotFieldRoute", () => {
   test("the launchpad carries the field", () => {
-    expect(isDeepFieldRoute("/")).toBe(true);
+    expect(isDotFieldRoute("/")).toBe(true);
   });
 
   test("no working surface does", () => {
     // The ration is the rule, not a default: a screen full of content read
-    // against a graticule is the failure §11.1 exists to prevent.
-    expect(isDeepFieldRoute("/chat")).toBe(false);
-    expect(isDeepFieldRoute("/rag")).toBe(false);
-    expect(isDeepFieldRoute("/email")).toBe(false);
+    // against a dot grid is the failure §11.1 exists to prevent.
+    expect(isDotFieldRoute("/chat")).toBe(false);
+    expect(isDotFieldRoute("/rag")).toBe(false);
+    expect(isDotFieldRoute("/email")).toBe(false);
   });
 
   test("a detail route does NOT inherit its parent's field", () => {
     // The one rule this list does not share with FLUSH_TOP_ROUTES, and the fixture
     // is the only thing that can show it: against the real list (`/` alone) exact
-    // and prefix matching agree, so `isDeepFieldRoute("/anything")` is false under
+    // and prefix matching agree, so `isDotFieldRoute("/anything")` is false under
     // either and proves nothing. `matchesHref("/docs/drafts", "/docs")` is true, so
     // swapping the implementation to `matchesHref` fails exactly this assertion —
     // which is the regression the ration exists to prevent, a whole section of
     // content-bearing detail pages handed the field because one page earned it.
-    expect(isDeepFieldRoute("/docs", ["/docs"])).toBe(true);
-    expect(isDeepFieldRoute("/docs/drafts", ["/docs"])).toBe(false);
+    expect(isDotFieldRoute("/docs", ["/docs"])).toBe(true);
+    expect(isDotFieldRoute("/docs/drafts", ["/docs"])).toBe(false);
   });
 });
 

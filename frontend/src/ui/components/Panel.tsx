@@ -54,7 +54,7 @@ export function Panel(props: PanelProps): JSX.Element {
         local.bare
           ? "bg-transparent"
           : // `heph-framed` is inert everywhere except on a page carrying the
-            // deep field, where it trades the opaque fill for glass (§11.1). A
+            // dot field, where it trades the opaque fill for glass (§11.1). A
             // bare panel has no surface to trade, so it doesn't take the marker.
             cx(
               "heph-framed border bg-surface",
