@@ -17,7 +17,13 @@
  */
 import { createSignal } from "solid-js";
 import { api } from "~/lib/api";
-import { parseInstant } from "~/lib/format";
+import {
+  reinsertRows,
+  removeRows,
+  restoreReadState,
+  setReadState,
+  upsertOrdered,
+} from "./notificationList";
 import {
   streamNotifications,
   type NotificationStreamState,
@@ -103,32 +109,36 @@ function upsert(
   notification: Notification,
   kind: "created" | "updated" = "created",
 ): void {
-  const prev = items();
-  const idx = prev.findIndex((n) => n.id === notification.id);
-  if (idx === -1) {
-    const at = prev.findIndex(
-      (n) => parseInstant(n.createdAt) <= parseInstant(notification.createdAt),
-    );
-    const next = prev.slice();
-    next.splice(at === -1 ? next.length : at, 0, notification);
-    setItems(next);
+  const { items: next, previous: was } = upsertOrdered(items(), notification);
+  setItems(next);
+  if (!was) {
     if (kind === "created" && !notification.readAt) {
       setUnreadCount((c) => c + 1);
     }
     return;
   }
-  const was = prev[idx];
   if (!was.readAt && notification.readAt) {
     setUnreadCount((c) => Math.max(0, c - 1));
   } else if (was.readAt && !notification.readAt) {
     setUnreadCount((c) => c + 1);
   }
-  const next = prev.slice();
-  next[idx] = notification;
+}
+
+function applyDeleted(notification: Notification): void {
+  const { items: next, removed } = removeRows(
+    items(),
+    new Set([notification.id]),
+  );
+  if (removed.length === 0) return;
   setItems(next);
+  if (!removed[0].readAt) setUnreadCount((c) => Math.max(0, c - 1));
 }
 
 function applyStreamEvent(event: NotificationStreamEvent): void {
+  if (event.type === "notification.deleted") {
+    applyDeleted(event.notification);
+    return;
+  }
   upsert(
     event.notification,
     event.type === "notification.created" ? "created" : "updated",
@@ -258,12 +268,10 @@ export async function loadOlder(): Promise<void> {
  *  the backend was briefly unreachable made them vanish, with `hasOlder` still true,
  *  so the only symptom was a list that got shorter. Undoing by id cannot reach
  *  anything the caller did not touch. */
-function restoreUnread(flipped: ReadonlySet<string>): void {
-  if (flipped.size === 0) return;
-  setItems(
-    items().map((n) => (flipped.has(n.id) ? { ...n, readAt: null } : n)),
-  );
-  setUnreadCount((c) => c + flipped.size);
+function restoreUnread(flipped: readonly Notification[]): void {
+  if (flipped.length === 0) return;
+  setItems(restoreReadState(items(), flipped));
+  setUnreadCount((c) => c + flipped.length);
 }
 
 /** Mark specific notifications read — optimistic, reconciled by the
@@ -272,22 +280,66 @@ function restoreUnread(flipped: ReadonlySet<string>): void {
  *  if the optimistic state already matches). Rolled back on failure. */
 export async function markRead(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  const idSet = new Set(ids);
-  const now = new Date().toISOString();
   // The rows this call actually flipped — its undo list, and its share of the badge.
-  const flipped = new Set<string>();
-  setItems(
-    items().map((n) => {
-      if (!idSet.has(n.id) || n.readAt) return n;
-      flipped.add(n.id);
-      return { ...n, readAt: now };
-    }),
+  const { items: next, before: flipped } = setReadState(
+    items(),
+    new Set(ids),
+    new Date().toISOString(),
   );
-  if (flipped.size > 0) setUnreadCount((c) => Math.max(0, c - flipped.size));
+  setItems(next);
+  if (flipped.length > 0)
+    setUnreadCount((c) => Math.max(0, c - flipped.length));
   try {
     await api.post("/notifications/read", { ids });
   } catch {
     restoreUnread(flipped);
+  }
+}
+
+/** Mark specific notifications unread — optimistic, rolled back on failure. */
+export async function markUnread(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const { items: next, before: flipped } = setReadState(
+    items(),
+    new Set(ids),
+    null,
+  );
+  setItems(next);
+  setUnreadCount((c) => c + flipped.length);
+  try {
+    await api.post("/notifications/unread", { ids });
+  } catch {
+    setItems(restoreReadState(items(), flipped));
+    setUnreadCount((c) => Math.max(0, c - flipped.length));
+  }
+}
+
+/** Remove notifications — optimistic; the removed rows are put back on failure. */
+export async function dismiss(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const { items: next, removed } = removeRows(items(), new Set(ids));
+  setItems(next);
+  const unreadRemoved = removed.filter((n) => !n.readAt).length;
+  if (unreadRemoved > 0) setUnreadCount((c) => Math.max(0, c - unreadRemoved));
+  try {
+    await api.post("/notifications/delete", { ids });
+  } catch {
+    setItems(reinsertRows(items(), removed));
+    setUnreadCount((c) => c + unreadRemoved);
+  }
+}
+
+/** Remove every read notification — optimistic; the removed rows are put back on failure. */
+export async function clearRead(): Promise<void> {
+  const { items: next, removed } = removeRows(items(), (n) =>
+    Boolean(n.readAt),
+  );
+  if (removed.length === 0) return;
+  setItems(next);
+  try {
+    await api.post("/notifications/clear_read");
+  } catch {
+    setItems(reinsertRows(items(), removed));
   }
 }
 
@@ -306,15 +358,12 @@ export async function markRead(ids: string[]): Promise<void> {
  *  reason `restoreUnread` gives. */
 export async function markAllRead(): Promise<void> {
   const prevUnread = unreadCount();
-  const now = new Date().toISOString();
-  const flipped = new Set<string>();
-  setItems(
-    items().map((n) => {
-      if (n.readAt) return n;
-      flipped.add(n.id);
-      return { ...n, readAt: now };
-    }),
+  const { items: next, before: flipped } = setReadState(
+    items(),
+    new Set(items().map((n) => n.id)),
+    new Date().toISOString(),
   );
+  setItems(next);
   setUnreadCount(0);
   try {
     await api.post("/notifications/read_all");
@@ -326,14 +375,21 @@ export async function markAllRead(): Promise<void> {
   }
 }
 
-/** Mark a conversation's unread notifications read — the read-on-view policy
- *  (opening a conversation resolves its unread run and approval items) calls
- *  this from the chat screen. */
-export function markConversationRead(conversationId: string): void {
+/** Mark a conversation's unread notifications read, skipping `except`, and return the
+ *  ids it marked. The read-on-view policy calls this from the chat screen and passes
+ *  what it already marked, so a row the operator set back to unread stays unread. */
+export function markConversationRead(
+  conversationId: string,
+  except: ReadonlySet<string> = new Set(),
+): string[] {
   const ids = items()
-    .filter((n) => n.conversationId === conversationId && !n.readAt)
+    .filter(
+      (n) =>
+        n.conversationId === conversationId && !n.readAt && !except.has(n.id),
+    )
     .map((n) => n.id);
   void markRead(ids);
+  return ids;
 }
 
 export function useNotifications() {
@@ -358,6 +414,9 @@ export function useNotifications() {
     },
     loadOlder,
     markRead,
+    markUnread,
+    dismiss,
+    clearRead,
     markAllRead,
     markConversationRead,
   };

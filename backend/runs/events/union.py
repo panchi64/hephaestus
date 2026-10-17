@@ -16,6 +16,7 @@ from .approvals import (
     ReviewCompleted,
     ReviewStarted,
 )
+from .browser import BrowserOpened
 from .citations import CitationAdded
 from .context import ContextInjected
 from .conversation import (
@@ -47,7 +48,7 @@ from .messages import (
 )
 from .metrics import RunMetrics
 from .plan import PermissionChanged, PlanUpdated, TasksUpdated
-from .tools import ToolCompleted, ToolFailed, ToolProgress, ToolStarted
+from .tools import ToolCompleted, ToolFailed, ToolPreparing, ToolProgress, ToolStarted
 from .view import ViewLive, ViewLiveStopped, ViewSnapshot
 
 #: The ``subagent.*`` family that used to live here is gone with the blocking delegation
@@ -70,11 +71,13 @@ EventBody = Annotated[
     | ThinkingDelta
     | AnswerDelta
     | AnswerRetracted
+    | ToolPreparing
     | ToolStarted
     | ToolProgress
     | ToolCompleted
     | ToolFailed
     | CitationAdded
+    | BrowserOpened
     | ViewLive
     | ViewLiveStopped
     | ViewSnapshot

@@ -98,6 +98,7 @@ export function ChatRoomScreen(): JSX.Element {
     history,
     reloadHistory,
     stream,
+    browserOpenedSeq,
     warmResolved,
     markWarmResolved,
     permission,
@@ -272,7 +273,7 @@ export function ChatRoomScreen(): JSX.Element {
   // The viewport pane beside the conversation — everything about what it holds, how
   // wide it is, whether it renders as an aside or a sheet, and where focus goes when
   // it closes. It is a concern of its own, so it lives in one.
-  const browser = createBrowserState(currentId);
+  const browser = createBrowserState(currentId, browserOpenedSeq);
   const viewport = useChatViewport(currentId, {
     ...stream,
     browser,

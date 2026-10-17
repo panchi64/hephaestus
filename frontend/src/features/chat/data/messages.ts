@@ -94,6 +94,15 @@ export function startedTool(
   };
 }
 
+/** A call whose arguments are still streaming: a name and a growing character count. */
+export function preparingTool(
+  id: string,
+  name: string,
+  chars: number,
+): ToolInvocation {
+  return { id, name, args: "", status: "preparing", argsChars: chars };
+}
+
 /** The wire's typed parts as the model's, or undefined when there are none — the same
  *  mapping for a live `tool.completed`, a persisted call and a user turn. */
 export function toContentParts(

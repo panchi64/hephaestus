@@ -45,6 +45,9 @@ class Scenario:
     needs_tools: bool | None = None
     #: Seconds to stall before replying — for watching a spinner, or tripping a timeout.
     latency_s: float = 0.0
+    #: Seconds between streamed frames, for watching a reply or a tool call's arguments
+    #: arrive.
+    chunk_delay_s: float = 0.0
     #: An HTTP status to fail with instead of replying. The error paths are as much a
     #: part of the product as the happy one, and far harder to provoke against a real
     #: endpoint that insists on working.

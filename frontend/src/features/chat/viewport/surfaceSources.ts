@@ -72,6 +72,8 @@ export interface SurfaceDeps {
   /** Whether the thread has a live browser, or one that has just ended. Held by the room
    *  and read once on open, so this opens no fetch either. */
   browser: () => boolean;
+  /** Whether the stream reported the agent starting that browser during this view. */
+  browserStarted: () => boolean;
 }
 
 export function createSurfaceSources(
@@ -174,10 +176,10 @@ export function createSurfaceSources(
     // A thread has a browser only once the agent or the operator has started one.
     browser: {
       available: () => deps.browser(),
-      // **Silent.** The agent is already narrating what it does in the browser, and the
-      // operator driving it is a choice they make from the menu; a panel that opened
-      // itself on every page load would be one they learn to close.
-      arrival: () => "silent",
+      // **Steal once per thread, only for an opening the stream announced**; the constant
+      // key makes a later close stick. A browser found on load, or opened from the menu
+      // (which shows the panel itself), stays silent so a closed panel is not reopened.
+      arrival: () => (deps.browserStarted() ? "steal" : "silent"),
       claimKey: () => "",
     },
     // A thread's View is its captured versions plus any live head.

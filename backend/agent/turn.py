@@ -385,6 +385,7 @@ async def drive_turn(
             if resume is None or transient_retries >= settings.auto_continue_transient_max:
                 raise
             transient_retries += 1
+            run.preparing_calls.clear()
             if run.step_text_chars or run.step_thinking_chars:
                 _ = run.emit(
                     AnswerRetracted(

@@ -68,6 +68,7 @@ const sources = (over: Partial<SurfaceDeps> = {}) =>
     commands: () => [],
     sources: () => buildInventory([]),
     browser: () => false,
+    browserStarted: () => false,
     ...over,
   });
 
@@ -76,6 +77,17 @@ describe("availability", () => {
     expect(sources().browser.available()).toBe(false);
     expect(sources({ browser: () => true }).browser.available()).toBe(true);
     expect(sources({ browser: () => true }).browser.arrival()).toBe("silent");
+  });
+
+  test("the browser steals the panel only for an opening the stream reported", () => {
+    const live = sources({ browser: () => true });
+    expect(live.browser.arrival()).toBe("silent");
+    const started = sources({
+      browser: () => true,
+      browserStarted: () => true,
+    });
+    expect(started.browser.arrival()).toBe("steal");
+    expect(started.browser.claimKey()).toBe("");
   });
 
   test("nothing is offered on a fresh thread", () => {

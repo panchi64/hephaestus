@@ -34,9 +34,7 @@ _NAMED: dict[str, PlaceKind] = {
 _LAYOUT = "a path under ~/scratch, ~/projects/<name>, ~/worktrees/<name> or ~/shared/<name>"
 #: A named place's name, as the guest accepts it after its group (`vm/guest/confine.py`).
 _NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
-_NAMED_PLACE = re.compile(
-    r"(?:~|/home/agent)/(projects|worktrees)/([a-z0-9][a-z0-9._-]{0,79})"
-)
+_NAMED_PLACE = re.compile(r"(?:~|/home/agent)/(projects|worktrees)/([a-z0-9][a-z0-9._-]{0,79})")
 
 
 def places_named(text: str) -> list[Place]:

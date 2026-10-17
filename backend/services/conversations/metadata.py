@@ -150,8 +150,7 @@ class MetadataMixin(StoreCore):
                 project_id=conversation.project_id,
                 worktree=worktree,
                 leases_from=leases_from,
-                checkout_read_only=leases_from is not None
-                and _has_worktree(session, leases_from),
+                checkout_read_only=leases_from is not None and _has_worktree(session, leases_from),
                 permission=permission_level(conversation.permission_level),
                 agent_name=conversation.agent_name,
                 workspace_key=conversation.workspace_key or "",

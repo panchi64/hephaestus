@@ -363,9 +363,7 @@ class TestChildWorktree:
         assert report.deleted == ["hello.txt"]
         assert report.files == []
 
-    async def test_a_child_cut_from_the_checkout_starts_on_its_unsaved_files(
-        self, tmp_path: Path
-    ):
+    async def test_a_child_cut_from_the_checkout_starts_on_its_unsaved_files(self, tmp_path: Path):
         root, manager, child = await self._from_checkout(tmp_path)
 
         assert (child.path / "hello.txt").read_text() == "the operator's unsaved thought\n"

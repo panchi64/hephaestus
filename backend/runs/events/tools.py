@@ -24,6 +24,19 @@ class ToolStarted(Body):
     parent_tool_call_id: str | None = None
 
 
+class ToolPreparing(Body):
+    """The model has named a tool and is still writing its arguments. Throttled, so
+    ``args_chars`` rises in steps; ``tool.started`` with the same id supersedes it, and a
+    call that never starts is dropped by the client at the next step."""
+
+    type: Literal["tool.preparing"] = "tool.preparing"
+    tool_call_id: str
+    name: str
+    args_chars: int = 0
+    #: The id this call was announced under before the stream changed it.
+    replaces: str | None = None
+
+
 class ToolProgress(Body):
     type: Literal["tool.progress"] = "tool.progress"
     tool_call_id: str

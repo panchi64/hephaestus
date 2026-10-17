@@ -9,6 +9,7 @@ import { CONTEXT_OVERFLOW_AFTER_FOLD_DETAIL } from "~/lib/stream";
 import type { RunEvent } from "~/lib/stream";
 import { toast } from "~/ui";
 import { toStats } from "../../data/summaries";
+import { dropPreparing } from "../patch";
 import { dropLiveFolds, FOLD_RUN_KIND } from "./compaction";
 import type { FoldContext } from "./types";
 
@@ -19,7 +20,10 @@ export function foldLifecycle(ev: RunEvent, c: FoldContext): boolean {
   switch (ev.type) {
     case "run.error":
       if (announce) toast.error(ev.message || "The run failed.");
-      patchById(assistantId, (m) => (m.streaming = false));
+      patchById(assistantId, (m) => {
+        m.streaming = false;
+        dropPreparing(m);
+      });
       deps.setErrored(true);
       deps.setRunQueue?.(null);
       return true;
@@ -62,6 +66,7 @@ export function foldLifecycle(ev: RunEvent, c: FoldContext): boolean {
         );
       return true;
     case "run.ended":
+      patchById(assistantId, (m) => dropPreparing(m));
       // A blocked outcome is a real stopping point, not a normal finish —
       // leave a persistent marker on the turn (the limit.notice toast alone
       // vanishes, and a reload would otherwise show a turn that just stops).
@@ -110,6 +115,7 @@ export function foldLifecycle(ev: RunEvent, c: FoldContext): boolean {
       // Only onto a clock this run started: a reattach past `run.started` has no
       // start instant to pair the step with, and a step alone is not a clock.
       deps.setRunClock?.((prev) => prev && { ...prev, step: ev.index });
+      patchById(assistantId, (m) => dropPreparing(m));
       return true;
     // step.completed: no store change
     default:

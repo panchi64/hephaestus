@@ -553,9 +553,7 @@ class TestIsolation:
             assert row.workspace_key == "parent-1"
             assert row.delegation_id is None
 
-    async def test_a_worktree_needs_a_project_to_cut_it_from(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    async def test_a_worktree_needs_a_project_to_cut_it_from(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             with pytest.raises(SubagentUnavailableError, match="not filed under a project"):

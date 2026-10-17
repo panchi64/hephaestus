@@ -23,6 +23,9 @@ from .base import (
     PROTOCOL_VERSION,
     now_utc,
 )
+from .browser import (
+    BrowserOpened,
+)
 from .citations import (
     CitationAdded,
 )
@@ -78,6 +81,7 @@ from .tools import (
     ToolCompleted,
     ToolFailed,
     ToolImage,
+    ToolPreparing,
     ToolProgress,
     ToolStarted,
 )
@@ -96,6 +100,7 @@ __all__ = [
     "AnswerRetracted",
     "AnsweredQuestionOut",
     "ApprovalRequired",
+    "BrowserOpened",
     "CitationAdded",
     "CompactionDelta",
     "CompactionFailed",
@@ -143,6 +148,7 @@ __all__ = [
     "ToolCompleted",
     "ToolFailed",
     "ToolImage",
+    "ToolPreparing",
     "ToolProgress",
     "ToolStarted",
     "ViewLive",

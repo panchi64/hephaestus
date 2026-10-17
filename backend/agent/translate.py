@@ -8,7 +8,9 @@ library's events into our domain events:
 - text parts → ``answer.delta``, thinking parts → ``thinking.delta`` (the
   reasoning/answer split);
 - a ``CallToolsNode`` surfaces tool execution → ``tool.started`` /
-  ``tool.completed`` / ``tool.failed`` with full args/results inline.
+  ``tool.completed`` / ``tool.failed`` with full args/results inline;
+- a tool call's streaming arguments → throttled ``tool.preparing`` frames before it
+  starts.
 
 Step boundaries, document lifecycle, citations, and run metrics are *ours* —
 the library doesn't know about them; we emit them here and in the engine.
@@ -17,6 +19,7 @@ the library doesn't know about them; we emit them here and in the engine.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
@@ -36,6 +39,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
 )
 
 from core.citations import Citable
@@ -45,6 +49,7 @@ from core.serde import jsonable
 from runs import (
     AnswerDelta,
     CitationAdded,
+    PreparingCall,
     Run,
     StepCompleted,
     StepStarted,
@@ -52,6 +57,7 @@ from runs import (
     ToolCompleted,
     ToolFailed,
     ToolImage,
+    ToolPreparing,
     ToolStarted,
 )
 from services.conversation_view import tool_images
@@ -72,6 +78,8 @@ from .meta import FirstTokenTimeout, LoopBreaker
 #: is already in the tool result the frame sits beside, so a generous cap here would pay
 #: for every snippet twice on a search that returned ten.
 SNIPPET_MAX_CHARS = 400
+
+PREPARING_STEP_CHARS = 256
 
 
 def _clip(text: str | None) -> str | None:
@@ -229,6 +237,54 @@ def _thinking(run: Run, text: str) -> None:
 def _settle_step(run: Run) -> None:
     run.step_text_chars = 0
     run.step_thinking_chars = 0
+    run.preparing_calls.clear()
+
+
+def _announce_preparing(run: Run, call: PreparingCall, replaces: str | None = None) -> None:
+    call.emitted_chars = call.chars
+    call.announced = True
+    _ = run.emit(
+        ToolPreparing(
+            tool_call_id=call.tool_call_id,
+            name=call.name,
+            args_chars=call.chars,
+            replaces=replaces,
+        )
+    )
+
+
+def _args_length(args: str | dict[str, object] | None) -> int:
+    if args is None:
+        return 0
+    return len(args) if isinstance(args, str) else len(json.dumps(args))
+
+
+def _on_tool_call_start(run: Run, index: int, part: ToolCallPart) -> None:
+    call = PreparingCall(part.tool_call_id, part.tool_name, _args_length(part.args))
+    run.preparing_calls[index] = call
+    if call.name and call.tool_call_id:
+        _announce_preparing(run, call)
+
+
+def _on_tool_call_delta(run: Run, index: int, delta: ToolCallPartDelta) -> None:
+    call = run.preparing_calls.get(index)
+    if call is None:
+        call = PreparingCall(delta.tool_call_id or "", "")
+        run.preparing_calls[index] = call
+    replaces: str | None = None
+    if delta.tool_call_id and delta.tool_call_id != call.tool_call_id:
+        if call.announced:
+            replaces = call.tool_call_id
+        call.tool_call_id = delta.tool_call_id
+    call.name += delta.tool_name_delta or ""
+    call.chars += _args_length(delta.args_delta)
+    # The client keys the card by id, so a frame without one would orphan it.
+    if not call.name or not call.tool_call_id:
+        return
+    if replaces is not None:
+        _announce_preparing(run, call, replaces)
+    elif not call.announced or call.chars - call.emitted_chars >= PREPARING_STEP_CHARS:
+        _announce_preparing(run, call)
 
 
 def _on_model_event(event: object, run: Run, mark_first_token: Callable[[], None]) -> None:
@@ -253,13 +309,17 @@ def _on_model_event(event: object, run: Run, mark_first_token: Callable[[], None
             _answer(run, part.content)
         elif isinstance(part, ThinkingPart) and part.content:
             _thinking(run, part.content)
+        elif isinstance(part, ToolCallPart):
+            _on_tool_call_start(run, event.index, part)
     elif isinstance(event, PartDeltaEvent):
         delta = event.delta
         if isinstance(delta, TextPartDelta) and delta.content_delta:
             _answer(run, delta.content_delta)
         elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
             _thinking(run, delta.content_delta)
-    # PartEndEvent / FinalResultEvent carry no domain signal we surface — tool
+        elif isinstance(delta, ToolCallPartDelta):
+            _on_tool_call_delta(run, event.index, delta)
+    # PartEndEvent / FinalResultEvent carry no domain signal we surface; tool
     # execution is reported from the CallToolsNode.
 
 

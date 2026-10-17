@@ -63,9 +63,7 @@ class TestCatalog:
     async def test_the_builtin_sources_answer(self):
         async with client_app() as (_client, app):
             registry = _registry(app)
-            entries = await registry.catalog(
-                "operator", place="sandbox", has_conversation=True
-            )
+            entries = await registry.catalog("operator", place="sandbox", has_conversation=True)
             sources = {e.spec.source for e in entries}
             assert "action" in sources
             assert "agent" in sources
@@ -75,9 +73,7 @@ class TestCatalog:
             registry = _registry(app)
             names = {
                 e.spec.name
-                for e in await registry.catalog(
-                    "operator", place="sandbox", has_conversation=False
-                )
+                for e in await registry.catalog("operator", place="sandbox", has_conversation=False)
             }
             assert "compact" not in names
             assert "fork" not in names
@@ -104,9 +100,7 @@ class TestCatalog:
             registry = _registry(app)
 
             async def skill_names() -> set[str]:
-                entries = await registry.catalog(
-                    "operator", place="sandbox", has_conversation=True
-                )
+                entries = await registry.catalog("operator", place="sandbox", has_conversation=True)
                 return {e.spec.name for e in entries if e.spec.source == "skill"}
 
             # A draft is no more reachable by hand than it is by the model — publish stays

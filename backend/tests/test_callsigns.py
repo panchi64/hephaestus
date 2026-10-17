@@ -213,9 +213,7 @@ class TestSpawning:
         worker = builtin_roster()["worker"]
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
-            root = await app_state(app).conversations.create_conversation(
-                "operator", title="root"
-            )
+            root = await app_state(app).conversations.create_conversation("operator", title="root")
             launcher = launcher_of(app)
             started = [
                 await launcher.launch(

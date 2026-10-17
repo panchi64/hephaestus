@@ -62,9 +62,7 @@ def split_envelopes(text: str, *, vouched_only: bool = False) -> list[ContentPar
     parts: list[ContentPart] = []
     cursor = 0
     for match in _ENVELOPE.finditer(text):
-        if vouched_only and (
-            match["nonce"] is None or match["preamble_nonce"] != match["nonce"]
-        ):
+        if vouched_only and (match["nonce"] is None or match["preamble_nonce"] != match["nonce"]):
             continue
         parts.extend(_text(text[cursor : match.start()]))
         cursor = match.end()

@@ -195,7 +195,8 @@ Surfaced while surveying the whole spec; captured here so they aren't lost. One-
     - **Run:** `run.queued` (v1.1, D117) · `run.started` · `run.metrics` · `run.ended` · `run.error`
     - **Step:** `step.started` · `step.completed`
     - **Content:** `thinking.delta` · `answer.delta` (the `AE-6.3` reasoning/answer split)
-    - **Tools:** `tool.started` · `tool.progress` (elapsed + partial, for slow tools) · `tool.completed` · `tool.failed`
+    - **Tools:** `tool.preparing` (D144) · `tool.started` · `tool.progress` (elapsed + partial, for slow tools) · `tool.completed` · `tool.failed`
+    - **Browser:** `browser.opened` (D145)
     - **Documents:** `document.created` · `document.delta` · `document.committed` (`AE-6.2`)
     - **Notices:** `citation.added` · `approval.required` (D20) · `limit.notice`
   - **Deltas are coalesced server-side** (batched by time/punctuation, not one frame per token) for smoother render and lower frame overhead.
@@ -1165,3 +1166,13 @@ reason: what a section is when nobody is searching must not be a function of a q
   - **Rejected: merging as `update` plus one `forget` per extra memory.** It is not atomic, and the operator is asked once per memory.
   - **Rejected: an `explanation` argument written by the model.** The operator would be approving the model's description of the deletion rather than what is stored.
   - **Rejected: leaving deletion to the operator in the Memory screen.** The agent could add and correct memories but never prune them, so the set only grew.
+- **D144 — A tool call is on screen while its arguments stream 🟢 DECIDED.** The translator records each `ToolCallPart` by part index (`Run.preparing_calls`) and emits `tool.preparing` with the tool's name and the argument characters so far: once the name is known, then every 256 characters. A frame carries `replaces` when the stream changed the call's id after announcing it. The client shows a card with a per-tool phrase (`toolPresentation.ts:preparingPhrase`) and the count; `tool.started` with the same id turns it into the normal card, and one that never starts is dropped at the next `step.started` or at run end. Additive to v1.
+  - **Rejected: streaming the partial arguments.** Partial JSON is unreadable, and a large `write_file` would push its whole body through the stream twice.
+  - **Rejected: a frame per argument delta.** A long call is thousands of deltas, and the count needs only a few steps to show progress.
+  - **Rejected: a blinking row.** The stepped blink is the state-dot signal, and a row blinking is the stalled caret this replaces; the lit rail and the rising count say the call is live.
+- **D145 — The browser panel opens itself the first time the agent starts a browser 🟢 DECIDED.** Supersedes the browser surface's silent arrival. `BrowserToolset.bind` emits `browser.opened` when a call attaches a new session (none before, or a new token after a reap). The main chat controller turns it into a signal the room's browser state reads, and the surface steals focus once per thread for an opening the stream announced. A browser found live when a thread is read, a replayed event after a reload, and one the operator opened from the menu stay silent, so a closed panel is not reopened.
+  - **Rejected: polling `GET /browser/session`.** It costs a request per interval for every open thread, lags the opening by up to an interval, and still cannot tell an agent's opening from one found on load.
+  - **Rejected: staying silent and only offering the panel.** The operator asked to watch the agent browse; a panel they have to find is one they miss.
+- **D146 — Notifications are read, unread or deleted 🟢 DECIDED.** The panel has Unread and All tabs. A row can be marked read or unread and dismissed; "Clear read" deletes every read notification. Deletion removes the row (`POST /notifications/delete`, `/clear_read`) through the same write-behind queue as the other writes, and the stream sends `notification.deleted` so other tabs drop it. Read-on-view marks a thread's notifications read once per visit, so one the operator sets back to unread stays unread.
+  - **Rejected: an archived state.** It adds a third state and a screen to find it in, for history nobody asked to keep.
+  - **Rejected: hiding read rows only in the client.** They would come back on every reload and still count against the page size.

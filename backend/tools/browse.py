@@ -60,9 +60,11 @@ from pydantic_ai_harness.playwright import (
 )
 
 from prompts.browse import BROWSER_ADDENDUM
+from runs import BrowserOpened
 from services.browser import BrowserSessionManager
 
 from .deps import RunDeps
+from .emit import RunEventEmitted
 from .rebound import ReboundToolset
 
 #: The tools the category contributes, unprefixed — the harness's own set. Written out so
@@ -134,9 +136,12 @@ class BrowserToolset(ReboundToolset):
         if sessions is None:
             return _UNAVAILABLE
         key = ctx.deps.scratch_key
+        before = sessions.existing(key)
         live = await sessions.acquire(key, reopen=name in REOPENING_TOOLS)
         if live is None:
             return _CLOSED if sessions.closed(key) else _UNAVAILABLE
+        if before is None or before.token != live.token:
+            _ = await ctx.emit(RunEventEmitted(body=BrowserOpened()))
         # A reaped conversation can be re-attached under a *new* session; the cached
         # toolset would still be pointed at the dead one, so it is keyed by the session's
         # token rather than by the conversation.

@@ -460,6 +460,15 @@ describe("runningTools", () => {
     ).toHaveLength(2);
   });
 
+  test("counts a call still preparing its arguments", () => {
+    expect(
+      runningTools([
+        tool("a", "web_search", "preparing"),
+        tool("b", "web_fetch", "running"),
+      ]),
+    ).toHaveLength(2);
+  });
+
   test("is empty for a turn with no tools", () => {
     expect(runningTools([text("t")])).toEqual([]);
     expect(runningTools(undefined)).toEqual([]);

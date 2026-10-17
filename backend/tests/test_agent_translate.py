@@ -2,17 +2,33 @@
 
 from __future__ import annotations
 
-from pydantic_ai import Agent, FunctionToolResultEvent, RetryPromptPart, RunContext
+from pydantic_ai import (
+    Agent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelResponse,
+    RetryPromptPart,
+    RunContext,
+)
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from agent import stream_agent_run
 from agent.injections import AnnounceInjections
 from agent.overhead import MeasureOverhead
 from agent.translate import on_tool_event
-from runs import Run, RunStream, ToolCompleted, ToolFailed, ToolStarted, ViewLiveStopped
+from runs import (
+    Run,
+    RunStream,
+    ToolCompleted,
+    ToolFailed,
+    ToolPreparing,
+    ToolStarted,
+    ViewLiveStopped,
+)
 from tools.emit import RunEventEmitted
 
-from ._helpers import first_body
+from ._helpers import bodies_of, first_body
 from ._json import dump, n, obj
 
 
@@ -126,7 +142,11 @@ async def test_a_tool_puts_its_own_news_on_the_stream():
     # Inside its own call, not before it: the ordering the direct `run.emit` could not
     # promise, because a value written straight to the run is visible immediately while
     # the frame for the call it belongs to waits for the translator to reach it.
-    order = [b.type for b in _bodies(run) if b.type.startswith(("tool.", "view."))]
+    order = [
+        b.type
+        for b in _bodies(run)
+        if b.type.startswith(("tool.", "view.")) and b.type != "tool.preparing"
+    ]
     assert order == ["tool.started", "view.live.stopped", "tool.completed"]
 
 
@@ -210,3 +230,57 @@ async def test_a_direct_calls_frames_name_no_parent():
         await stream_agent_run(agent_run, run)
     frames = [b for b in _bodies(run) if isinstance(b, (ToolStarted, ToolCompleted, ToolFailed))]
     assert frames and all(b.parent_tool_call_id is None for b in frames)
+
+
+async def _preparing_run(*pieces: DeltaToolCall) -> Run:
+    async def stream(messages: list[ModelMessage], _info: AgentInfo):
+        if any(isinstance(m, ModelResponse) for m in messages):
+            yield "done"
+            return
+        yield {0: pieces[0]}
+        for piece in pieces[1:]:
+            yield {0: piece}
+
+    agent = Agent(FunctionModel(stream_function=stream))
+
+    @agent.tool_plain
+    def add(a: int = 0) -> int:
+        return a
+
+    run = _run()
+    async with agent.iter("go") as agent_run:
+        await stream_agent_run(agent_run, run)
+    return run
+
+
+async def test_a_named_tool_call_announces_itself_once_then_throttles():
+    run = await _preparing_run(
+        DeltaToolCall(name="add", json_args='{"a": 1', tool_call_id="c1"),
+        DeltaToolCall(json_args=" " * 100),
+        DeltaToolCall(json_args=" " * 300),
+        DeltaToolCall(json_args="}"),
+    )
+    frames = bodies_of(run, ToolPreparing)
+    assert [(f.tool_call_id, f.name, f.args_chars) for f in frames] == [
+        ("c1", "add", 7),
+        ("c1", "add", 407),
+    ]
+    assert run.preparing_calls == {}
+
+
+async def test_a_call_id_changed_after_announce_is_reported_at_once():
+    run = await _preparing_run(
+        DeltaToolCall(name="add", json_args="{", tool_call_id="old"),
+        DeltaToolCall(json_args=" ", tool_call_id="new"),
+    )
+    frames = bodies_of(run, ToolPreparing)
+    assert [(f.tool_call_id, f.replaces) for f in frames] == [("old", None), ("new", "old")]
+
+
+async def test_an_unnamed_start_announces_when_the_name_arrives():
+    run = await _preparing_run(
+        DeltaToolCall(json_args="{", tool_call_id="c2"),
+        DeltaToolCall(name="add", json_args='"a": 1}'),
+    )
+    frames = bodies_of(run, ToolPreparing)
+    assert [(f.tool_call_id, f.name) for f in frames] == [("c2", "add")]

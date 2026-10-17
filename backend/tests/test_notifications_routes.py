@@ -173,6 +173,63 @@ async def test_mark_all_read_route():
         assert listing["unreadCount"] == 0
 
 
+async def test_mark_unread_route():
+    async with client_app() as (client, app):
+        service = app_state(app).notifications
+        a = await service.notify(OPERATOR_ID, "system", "a")
+        _ = await service.notify(OPERATOR_ID, "system", "b")
+        _ = await client.post("/notifications/read_all")
+
+        resp = await client.post("/notifications/unread", json={"ids": [a.id, "no-such-id"]})
+        assert resp.status_code == 200
+        assert json_body(resp) == {"updated": 1}
+        assert json_body(await client.get("/notifications"))["unreadCount"] == 1
+        again = await client.post("/notifications/unread", json={"ids": [a.id]})
+        assert json_body(again) == {"updated": 0}
+
+
+async def test_delete_route_removes_rows_and_ignores_unknown_ids():
+    async with client_app() as (client, app):
+        service = app_state(app).notifications
+        a = await service.notify(OPERATOR_ID, "system", "a")
+        _ = await service.notify(OPERATOR_ID, "system", "b")
+
+        resp = await client.post("/notifications/delete", json={"ids": [a.id, "no-such-id"]})
+        assert resp.status_code == 200
+        assert json_body(resp) == {"deleted": 1}
+        listing = json_body(await client.get("/notifications"))
+        assert _titles(listing) == ["b"]
+        assert listing["unreadCount"] == 1
+        again = await client.post("/notifications/delete", json={"ids": [a.id]})
+        assert json_body(again) == {"deleted": 0}
+
+
+async def test_clear_read_route_deletes_only_read_rows():
+    async with client_app() as (client, app):
+        service = app_state(app).notifications
+        a = await service.notify(OPERATOR_ID, "system", "a")
+        _ = await service.notify(OPERATOR_ID, "system", "b")
+        _ = await client.post("/notifications/read", json={"ids": [a.id]})
+
+        resp = await client.post("/notifications/clear_read")
+        assert resp.status_code == 200
+        assert json_body(resp) == {"deleted": 1}
+        listing = json_body(await client.get("/notifications"))
+        assert _titles(listing) == ["b"]
+        assert listing["unreadCount"] == 1
+
+
+async def test_stream_delivers_deleted_envelope():
+    async with client_app() as (client, app):
+        service = app_state(app).notifications
+        view = await service.notify(OPERATOR_ID, "system", "a")
+        _ = await client.post("/notifications/delete", json={"ids": [view.id]})
+
+        frames = await _collect_stream_frames(service, after_seq=0, n=2)
+        assert frames[1]["type"] == "notification.deleted"
+        assert obj(frames[1]["notification"])["id"] == view.id
+
+
 # --- SSE stream ------------------------------------------------------------------
 
 
@@ -201,6 +258,9 @@ async def test_notifications_routes_require_auth():
         assert (await client.get("/notifications")).status_code == 401
         assert (await client.post("/notifications/read", json={"ids": []})).status_code == 401
         assert (await client.post("/notifications/read_all")).status_code == 401
+        assert (await client.post("/notifications/unread", json={"ids": []})).status_code == 401
+        assert (await client.post("/notifications/delete", json={"ids": []})).status_code == 401
+        assert (await client.post("/notifications/clear_read")).status_code == 401
         # A 401 is decided by the auth gate before the route ever streams anything,
         # so a plain request (no need to open it as a stream) already proves the gate.
         assert (await client.get("/notifications/stream")).status_code == 401

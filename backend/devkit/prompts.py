@@ -23,7 +23,14 @@ from services.permissions.levels import PERMISSION_LADDER, permission_spec
 from services.subagents.briefing import brief_for
 
 _PROMPT_MODULES = (
-    "agent", "browse", "calendar", "compaction", "levels", "routines", "utility", "voice",
+    "agent",
+    "browse",
+    "calendar",
+    "compaction",
+    "levels",
+    "routines",
+    "utility",
+    "voice",
 )
 
 

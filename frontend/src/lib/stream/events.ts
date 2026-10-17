@@ -214,6 +214,16 @@ export interface ToolStarted extends Base, Nestable {
   name: string;
   args: Record<string, unknown>;
 }
+/** The model has named a tool and is still writing its arguments. `args_chars` rises in
+ *  throttled steps; `tool.started` with the same id supersedes it. */
+export interface ToolPreparing extends Base {
+  type: "tool.preparing";
+  tool_call_id: string;
+  name: string;
+  args_chars: number;
+  /** The id the call was announced under before the stream changed it. */
+  replaces?: string | null;
+}
 export interface ToolProgress extends Base {
   type: "tool.progress";
   tool_call_id: string;
@@ -251,6 +261,12 @@ export interface ToolFailed extends Base, Nestable {
   error: string;
   /** The failure is the platform's own fault. Absent from older backends. */
   platform?: boolean;
+}
+
+// --- Browser ---------------------------------------------------------------
+/** A tool attached a browser to the conversation; not sent when a call reuses one. */
+export interface BrowserOpened extends Base {
+  type: "browser.opened";
 }
 
 // --- View (the conversation's one versioned output surface) ----------------
@@ -735,10 +751,12 @@ export type RunEvent =
   | ThinkingDelta
   | AnswerDelta
   | AnswerRetracted
+  | ToolPreparing
   | ToolStarted
   | ToolProgress
   | ToolCompleted
   | ToolFailed
+  | BrowserOpened
   | ViewLive
   | ViewLiveStopped
   | ViewSnapshot

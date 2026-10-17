@@ -49,7 +49,7 @@ class NotificationListOut(CamelModel):
 class NotificationStreamEnvelope(CamelModel):
     """The SSE `data:` payload: `{type, seq, ts, notification}`."""
 
-    type: Literal["notification.created", "notification.updated"]
+    type: Literal["notification.created", "notification.updated", "notification.deleted"]
     seq: int
     ts: datetime
     notification: NotificationOut
@@ -61,6 +61,10 @@ class MarkReadIn(BaseModel):
 
 class MarkReadOut(CamelModel):
     updated: int
+
+
+class DeleteOut(CamelModel):
+    deleted: int
 
 
 def _out(view: NotificationView) -> NotificationOut:
@@ -77,9 +81,18 @@ def _out(view: NotificationView) -> NotificationOut:
     )
 
 
+_ENVELOPE_TYPES: dict[
+    str, Literal["notification.created", "notification.updated", "notification.deleted"]
+] = {
+    "created": "notification.created",
+    "updated": "notification.updated",
+    "deleted": "notification.deleted",
+}
+
+
 def _envelope(event: NotificationEvent) -> NotificationStreamEnvelope:
     return NotificationStreamEnvelope(
-        type="notification.created" if event.kind == "created" else "notification.updated",
+        type=_ENVELOPE_TYPES[event.kind],
         seq=event.seq,
         ts=event.ts,
         notification=_out(event.notification),
@@ -111,6 +124,24 @@ async def mark_all_read(request: Request) -> MarkReadOut:
     return MarkReadOut(updated=updated)
 
 
+@router.post("/unread", response_model=MarkReadOut)
+async def mark_unread(body: MarkReadIn, request: Request) -> MarkReadOut:
+    updated = await deps.notifications(request).mark_unread(OPERATOR_ID, body.ids)
+    return MarkReadOut(updated=updated)
+
+
+@router.post("/delete", response_model=DeleteOut)
+async def delete_notifications(body: MarkReadIn, request: Request) -> DeleteOut:
+    deleted = await deps.notifications(request).delete(OPERATOR_ID, body.ids)
+    return DeleteOut(deleted=deleted)
+
+
+@router.post("/clear_read", response_model=DeleteOut)
+async def clear_read(request: Request) -> DeleteOut:
+    deleted = await deps.notifications(request).delete_read(OPERATOR_ID)
+    return DeleteOut(deleted=deleted)
+
+
 def frame(event: NotificationEvent) -> str:
     """One notification as an SSE frame — the same framing the run transport emits, since
     the client parses both with one reader."""
@@ -122,7 +153,7 @@ def frame(event: NotificationEvent) -> str:
 async def stream_notifications(
     request: Request, last_event_id: Annotated[int | None, Query()] = None
 ):
-    """SSE stream of `notification.created`/`notification.updated`. Reconnect with
+    """SSE stream of `notification.created`/`updated`/`deleted`. Reconnect with
     `Last-Event-ID` to replay from the in-memory ring buffer (process-lifetime)."""
     after = parse_last_event_id(request.headers.get("last-event-id"), last_event_id)
     service = deps.notifications(request)

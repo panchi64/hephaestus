@@ -306,8 +306,10 @@ class TestNothingQueuedIsLostAtTerminal:
             await settle(app)
             # Exactly the case: it arrived while the last answer was streaming, so no
             # further model request was ever made on that run.
-            _ = app_state(app).runs.inbox(conversation_id, "operator").enqueue(
-                "the sub-agent's only report", source="subagent"
+            _ = (
+                app_state(app)
+                .runs.inbox(conversation_id, "operator")
+                .enqueue("the sub-agent's only report", source="subagent")
             )
             composed = _woken(monkeypatch)
 
@@ -549,9 +551,7 @@ class TestTheReportContract:
             assert "error: it ended without reporting" in prompt
             await _drain(app)
 
-    async def test_a_stop_overrides_a_report_already_filed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    async def test_a_stop_overrides_a_report_already_filed(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="ok")
             _, conversation_id = await _spawned(app)

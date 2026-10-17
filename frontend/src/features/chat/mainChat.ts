@@ -73,6 +73,10 @@ export interface MainChat {
    *  I looking at", not a second seat. */
   openId: Accessor<string | null>;
   stream: ReturnType<typeof createChatStream>;
+  /** Rises each time the stream reports the agent starting a browser. The stream
+   *  outlives the room, so the room's browser state reacts to this rather than being
+   *  handed a callback. */
+  browserOpenedSeq: Accessor<number>;
   /** Whether the one-time warm-resume entry intent has run this app session. The
    *  flag is part of the singleton so it survives navigation — see the screen. */
   warmResolved: Accessor<boolean>;
@@ -114,6 +118,7 @@ export function mainChat(): MainChat {
     // it, and it exists only so `seatPermission` can tell "the operator's choice for
     // the thread on screen" from "the last thread's level, still sitting there".
     let permissionOwner: string | null = null;
+    const [browserOpenedSeq, setBrowserOpenedSeq] = createSignal(0);
     // Whether the seated level is the strictest-level stand-in for one still in flight.
     // Only the seating effect writes it; an operator's own choice is never provisional,
     // and it cannot be made while the control is pending on this flag.
@@ -187,6 +192,7 @@ export function mainChat(): MainChat {
         // stops the next send from writing the level the control was still holding back
         // over the one the thread is actually at. Never provisional — this is the thread
         // saying so, not a placeholder for a value still in flight.
+        onBrowserOpened: () => setBrowserOpenedSeq((n) => n + 1),
         onPermissionChanged: (level) => {
           setPermission(level);
           setPermissionPending(false);
@@ -270,10 +276,20 @@ export function mainChat(): MainChat {
     // Read-on-view: the one place a thread selection lands, regardless of whether it
     // came from the RECENTS rail, the chat screen's warm-resume, or a notification's
     // deep-link — so opening a conversation always clears its unread notifications
-    // without every caller having to remember to do it.
+    // without every caller having to remember to do it. It re-runs as the list changes,
+    // so one arriving while the thread is open is read too; each id is marked once per
+    // visit, so one the operator marks unread again stays unread.
+    let readFor: string | null = null;
+    let autoRead = new Set<string>();
     createEffect(() => {
       const id = currentId();
-      if (id) markConversationRead(id);
+      if (id !== readFor) {
+        readFor = id;
+        autoRead = new Set();
+      }
+      if (!id) return;
+      for (const marked of markConversationRead(id, autoRead))
+        autoRead.add(marked);
     });
     // Runs begun out of sight (another tab, a scheduled task) are
     // found by re-reading the open thread — see `watchLateRuns`.
@@ -287,6 +303,7 @@ export function mainChat(): MainChat {
     const [warmResolved, setWarmResolved] = createSignal(false);
     return {
       currentId,
+      browserOpenedSeq,
       setCurrentId: (id) => {
         if (
           id !== null &&

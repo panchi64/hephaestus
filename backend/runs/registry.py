@@ -191,9 +191,7 @@ class RunRegistry:
                 if run is not None and not run.stream.closed:
                     _ = run.emit(body)
 
-            found = ConversationInbox(
-                owner_id, conversation_id, sink=sink, journal=self._journal
-            )
+            found = ConversationInbox(owner_id, conversation_id, sink=sink, journal=self._journal)
             self._prune_inboxes()
             self._inboxes[key] = found
         return found

@@ -47,6 +47,7 @@ class ScenarioIn(BaseModel):
     tool_calls: list[ToolCallIn] = []
     needs_tools: bool | None = None
     latency_s: float = 0.0
+    chunk_delay_s: float = 0.0
     status: int = 200
     error: str = "scripted failure"
     uses: int | None = None
@@ -58,6 +59,7 @@ class ScenarioIn(BaseModel):
             tool_calls=[ToolCall(c.name, c.arguments, c.id) for c in self.tool_calls],
             needs_tools=self.needs_tools,
             latency_s=self.latency_s,
+            chunk_delay_s=self.chunk_delay_s,
             status=self.status,
             error=self.error,
             uses=self.uses,
@@ -107,7 +109,10 @@ def create_stub() -> FastAPI:
         options = body.get("stream_options")
         include_usage = isinstance(options, dict) and bool(options.get("include_usage"))
         return StreamingResponse(
-            _aiter(stream(model, reply, request_id=request_id, include_usage=include_usage)),
+            _aiter(
+                stream(model, reply, request_id=request_id, include_usage=include_usage),
+                scenario.chunk_delay_s,
+            ),
             media_type="text/event-stream",
         )
 
@@ -148,7 +153,9 @@ def create_stub() -> FastAPI:
     return app
 
 
-async def _aiter(frames: Iterable[str]) -> AsyncGenerator[str]:
+async def _aiter(frames: Iterable[str], delay_s: float = 0.0) -> AsyncGenerator[str]:
     """The sync generator `wire.stream` produces, as the async one Starlette wants."""
     for frame in frames:
         yield frame
+        if delay_s:
+            await asyncio.sleep(delay_s)

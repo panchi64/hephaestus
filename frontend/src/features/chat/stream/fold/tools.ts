@@ -12,6 +12,7 @@ import {
   toTerminalOutcome,
 } from "../../data/hostCommands";
 import {
+  preparingTool,
   startedTool,
   stringifyResult,
   toContentParts,
@@ -23,6 +24,7 @@ import { describeToolResult } from "../../toolSummary";
 import { placeToolCall } from "../../toolTree";
 import {
   clearPark,
+  dropPreparing,
   findHost,
   findReview,
   findTool,
@@ -42,22 +44,63 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
       // seeds the pending terminal.) A call a script made is never one: it nests on
       // the script's card as a compact row, whatever tool it is.
       if (!ev.parent_tool_call_id && isTerminalTool(ev.name)) {
-        patchById(assistantId, (m) =>
-          upsertHost(m, ev.tool_call_id, ev.name, {
-            command: typeof ev.args.command === "string" ? ev.args.command : "",
-            explanation: commandReason(ev.args),
-          }),
-        );
+        patchById(assistantId, (m) => {
+          const at = m.blocks?.findIndex(
+            (b) =>
+              b.kind === "tool" &&
+              b.tool.status === "preparing" &&
+              b.tool.id === ev.tool_call_id,
+          );
+          dropPreparing(m, ev.tool_call_id);
+          upsertHost(
+            m,
+            ev.tool_call_id,
+            ev.name,
+            {
+              command:
+                typeof ev.args.command === "string" ? ev.args.command : "",
+              explanation: commandReason(ev.args),
+            },
+            at === undefined || at < 0 ? undefined : at,
+          );
+        });
         return true;
       }
-      patchById(assistantId, (m) =>
+      patchById(assistantId, (m) => {
         placeToolCall(
           m.blocks ?? (m.blocks = []),
           (id) => `tool-${id}`,
           startedTool(ev.tool_call_id, ev.name, ev.args),
           ev.parent_tool_call_id,
-        ),
-      );
+        );
+        const t = findTool(m, ev.tool_call_id);
+        if (t) t.argsChars = undefined;
+      });
+      return true;
+    case "tool.preparing":
+      patchById(assistantId, (m) => {
+        if (ev.replaces && !findTool(m, ev.tool_call_id)) {
+          const old = m.blocks?.find(
+            (b) =>
+              b.kind === "tool" &&
+              b.tool.status === "preparing" &&
+              b.tool.id === ev.replaces,
+          );
+          if (old?.kind === "tool") {
+            old.tool.id = ev.tool_call_id;
+            old.id = `tool-${ev.tool_call_id}`;
+          }
+        }
+        const t = findTool(m, ev.tool_call_id);
+        if (!t) {
+          placeToolCall(
+            m.blocks ?? (m.blocks = []),
+            (id) => `tool-${id}`,
+            preparingTool(ev.tool_call_id, ev.name, ev.args_chars),
+            null,
+          );
+        } else if (t.status === "preparing") t.argsChars = ev.args_chars;
+      });
       return true;
     case "tool.progress":
       // One frame, two readings, and **the block that already exists is what says

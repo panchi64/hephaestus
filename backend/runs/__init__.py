@@ -25,6 +25,7 @@ from .events import (
     AnsweredQuestionOut,
     AnswerRetracted,
     ApprovalRequired,
+    BrowserOpened,
     CitationAdded,
     CompactionDelta,
     CompactionFailed,
@@ -68,6 +69,7 @@ from .events import (
     ToolCompleted,
     ToolFailed,
     ToolImage,
+    ToolPreparing,
     ToolProgress,
     ToolStarted,
     ViewLive,
@@ -87,7 +89,7 @@ from .lanes import CHAT_TURN_KINDS, LANE_BY_KIND, LaneLimits, lane_for
 from .overhead import BriefBlock, ToolGroupOverhead, TurnOverhead
 from .prefix import FIRST_REQUEST, PrefixDigest, PrefixLedger, PrefixVerdict
 from .registry import ConversationBusyError, RunRegistry, RunTimeout
-from .run import Orchestrator, Run, RunStatus
+from .run import Orchestrator, PreparingCall, Run, RunStatus
 from .stream import RunStream
 from .timings import ResponseTiming, TimingTotals, TurnTimer, total_timings
 from .transport import parse_last_event_id, sse_response
@@ -107,6 +109,7 @@ __all__ = [
     "lane_for",
     "ConversationBusyError",
     "Run",
+    "PreparingCall",
     "RunStatus",
     "QueuedMessage",
     "ConversationInbox",
@@ -149,11 +152,13 @@ __all__ = [
     "AnswerDelta",
     "AnswerRetracted",
     "ToolStarted",
+    "ToolPreparing",
     "ToolProgress",
     "ToolCompleted",
     "ToolFailed",
     "ToolImage",
     "CitationAdded",
+    "BrowserOpened",
     "ViewLive",
     "ViewLiveStopped",
     "ViewSnapshot",

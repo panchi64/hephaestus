@@ -106,6 +106,19 @@ export function findTool(
   return findToolCall(m.blocks, toolCallId);
 }
 
+/** Remove the top-level block of a call still in `preparing` — all of them, or one id. */
+export function dropPreparing(m: ChatMessage, toolCallId?: string): void {
+  if (!m.blocks) return;
+  m.blocks = m.blocks.filter(
+    (b) =>
+      !(
+        b.kind === "tool" &&
+        b.tool.status === "preparing" &&
+        (toolCallId === undefined || b.tool.id === toolCallId)
+      ),
+  );
+}
+
 /** The terminal block for one call, keyed by tool_call_id.
  *
  *  `upsertHost` finds the same block to write to it; this is the read, for a frame that
@@ -163,12 +176,13 @@ export function clearPark(m: ChatMessage, toolCallId: string): void {
  *
  *  `name` rides along because more than one tool renders as a terminal and a
  *  conversation grant is recorded against a tool name — the card cannot assume which
- *  one it is holding. */
+ *  one it is holding. A new block lands at `at`, else at the end. */
 export function upsertHost(
   m: ChatMessage,
   toolCallId: string,
   name: string,
   patch: Partial<HostCommand>,
+  at?: number,
 ): void {
   const existing = findHost(m, toolCallId);
   if (existing) {
@@ -179,10 +193,12 @@ export function upsertHost(
     // output and repaint a command that never ran as a green OK.
     if (existing.command.phase === "denied") return;
     Object.assign(existing.command, patch);
-  } else
-    (m.blocks ?? (m.blocks = [])).push({
+  } else {
+    const blocks = m.blocks ?? (m.blocks = []);
+    blocks.splice(at ?? blocks.length, 0, {
       kind: "host_command",
       id: `host-${toolCallId}`,
       command: { toolCallId, name, command: "", phase: "pending", ...patch },
     });
+  }
 }

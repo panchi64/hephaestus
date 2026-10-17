@@ -238,8 +238,10 @@ async def test_a_withdraw_during_a_dispatch_is_told_it_is_too_late(
         first = json_body(await client.post("/chat", json={"prompt": "hello"}))
         conversation_id = s(first["conversation_id"])
         _ = await started.wait()
-        queued_turn = app_state(app).runs.inbox(conversation_id, OPERATOR_ID).enqueue(
-            "queued text", payload=TurnPayload(file_refs=("x",))
+        queued_turn = (
+            app_state(app)
+            .runs.inbox(conversation_id, OPERATOR_ID)
+            .enqueue("queued text", payload=TurnPayload(file_refs=("x",)))
         )
         message_id = queued_turn.id
 
@@ -361,8 +363,10 @@ async def test_a_queued_turn_item_runs_at_the_level_it_was_sent_with(
         first = json_body(await client.post("/chat", json={"prompt": "hello"}))
         conversation_id = s(first["conversation_id"])
         _ = await started.wait()
-        _ = app_state(app).runs.inbox(conversation_id, OPERATOR_ID).enqueue(
-            "with a file", payload=TurnPayload(file_refs=("x",), permission_level="edit")
+        _ = (
+            app_state(app)
+            .runs.inbox(conversation_id, OPERATOR_ID)
+            .enqueue("with a file", payload=TurnPayload(file_refs=("x",), permission_level="edit"))
         )
 
         gate.set()
@@ -381,8 +385,10 @@ async def test_settle_names_the_run_a_dispatch_started(monkeypatch: pytest.Monke
         first = json_body(await client.post("/chat", json={"prompt": "hello"}))
         conversation_id = s(first["conversation_id"])
         _ = await started.wait()
-        _ = app_state(app).runs.inbox(conversation_id, OPERATOR_ID).enqueue(
-            "next", payload=TurnPayload(file_refs=("x",))
+        _ = (
+            app_state(app)
+            .runs.inbox(conversation_id, OPERATOR_ID)
+            .enqueue("next", payload=TurnPayload(file_refs=("x",)))
         )
 
         # A plain cancel holds nothing, so the queued turn item starts as the run ends. A

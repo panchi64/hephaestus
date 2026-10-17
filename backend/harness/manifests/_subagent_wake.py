@@ -233,9 +233,7 @@ class SubagentWake:
         row = await self._records.by_child(conversation_id)
         if row is not None and row.status == "cancelled":
             return False
-        _ = self._runs.inbox(conversation_id, owner_id).enqueue(
-            text, source=source, sender=sender
-        )
+        _ = self._runs.inbox(conversation_id, owner_id).enqueue(text, source=source, sender=sender)
         await self._dispatcher.dispatch(owner_id, conversation_id)
         return True
 

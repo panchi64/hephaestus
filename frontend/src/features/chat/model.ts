@@ -93,7 +93,12 @@ export interface ContentPart {
   path?: string;
 }
 
-export type ToolStatus = "running" | "ok" | "error";
+export type ToolStatus = "preparing" | "running" | "ok" | "error";
+
+/** A call still out: its arguments are streaming or it is executing. */
+export function isLiveStatus(status: ToolStatus): boolean {
+  return status === "preparing" || status === "running";
+}
 
 export interface ToolInvocation {
   id: string;
@@ -116,6 +121,8 @@ export interface ToolInvocation {
    *  (the argument is optional on purpose), so the detail remains the fallback. */
   narration?: string;
   status: ToolStatus;
+  /** Characters of arguments streamed so far while `status='preparing'`. */
+  argsChars?: number;
   /** Latest progress note while `status='running'` (`tool.progress`), e.g. the
    *  sandbox spinning up. Reassures the operator the wait is work, not a stall. */
   progress?: string;

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { toolPresentation, toolRowLabel } from "./toolPresentation";
+import {
+  TOOLS,
+  preparingPhrase,
+  toolPresentation,
+  toolRowLabel,
+} from "./toolPresentation";
 import type { ToolInvocation } from "./model";
 
 function tool(part: Partial<ToolInvocation>): ToolInvocation {
@@ -107,6 +112,31 @@ describe("one-line form, for places with no room for a card", () => {
 
   test("a tool with no arguments at all is just its label", () => {
     expect(toolRowLabel(tool({ name: "builtin_now" }))).toBe("Clock");
+  });
+});
+
+describe("the phrase shown while a call's arguments are being written", () => {
+  test("every table entry has its own", () => {
+    for (const [name, entry] of Object.entries(TOOLS))
+      expect([name, typeof entry.preparing]).toEqual([name, "string"]);
+  });
+
+  test("the browser tools are in the table", () => {
+    expect(toolPresentation("browse_navigate").label).toBe("Navigate");
+    expect(toolPresentation("browse_unlisted").icon).toBe("eye");
+  });
+
+  test("an unlisted tool falls back to its category", () => {
+    expect(preparingPhrase("external_linear_create_issue")).toBe(
+      "Preparing a connector call",
+    );
+    expect(preparingPhrase("browse_unlisted")).toBe(
+      "Preparing a browser action",
+    );
+  });
+
+  test("a tool in no category falls back to its label", () => {
+    expect(preparingPhrase("widget")).toBe("Preparing widget");
   });
 });
 

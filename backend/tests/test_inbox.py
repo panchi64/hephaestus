@@ -308,8 +308,10 @@ async def test_a_busy_thread_queues_and_the_operator_manages_their_own(
         )
         assert queued["run_id"] == first["run_id"]
         message_id = s(queued["queued_message_id"])
-        report = app_state(app).runs.inbox(conversation_id, OPERATOR_ID).enqueue(
-            "found it", source="subagent"
+        report = (
+            app_state(app)
+            .runs.inbox(conversation_id, OPERATOR_ID)
+            .enqueue("found it", source="subagent")
         )
 
         listed = json_body(await client.get(f"/conversations/{conversation_id}/inbox"))

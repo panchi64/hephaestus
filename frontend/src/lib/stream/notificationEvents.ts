@@ -32,7 +32,7 @@ export interface Notification {
   conversationId: string | null;
   runId: string | null;
   createdAt: string;
-  /** Set once the operator has seen/dismissed it. */
+  /** Set once the operator has read it. */
   readAt: string | null;
   /** Set when the thing it's about is resolved (e.g. an approval decided,
    *  by any path — approve/deny/conversation-grant — or its run reaching
@@ -59,7 +59,14 @@ export interface NotificationUpdated extends Base {
   notification: Notification;
 }
 
-export type NotificationStreamEvent = NotificationCreated | NotificationUpdated;
+/** A notification was removed (dismissed or cleared); `notification` is its last state. */
+export interface NotificationDeleted extends Base {
+  type: "notification.deleted";
+  notification: Notification;
+}
+
+export type NotificationStreamEvent =
+  NotificationCreated | NotificationUpdated | NotificationDeleted;
 
 /** REST backfill response shape (`GET /notifications`). */
 export interface NotificationsPage {

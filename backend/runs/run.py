@@ -57,6 +57,17 @@ TERMINAL_STATUSES = {
 }
 
 
+@dataclass(slots=True)
+class PreparingCall:
+    """A tool call whose arguments are still streaming in."""
+
+    tool_call_id: str
+    name: str
+    chars: int = 0
+    emitted_chars: int = 0
+    announced: bool = False
+
+
 @dataclass
 class Run:
     id: str
@@ -142,6 +153,8 @@ class Run:
     # retry of that request has to take back off the operator's screen.
     step_text_chars: int = 0
     step_thinking_chars: int = 0
+    # Tool calls whose arguments are streaming for the request in flight, by part index.
+    preparing_calls: dict[int, PreparingCall] = field(default_factory=dict)
     # Opaque continuation payload for a parked run (set by the orchestrator
     # layer when awaiting approval). The substrate never interprets it.
     parked_payload: object | None = None

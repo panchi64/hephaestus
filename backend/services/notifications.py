@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
@@ -79,7 +79,7 @@ class NotificationEvent:
 
     seq: int
     ts: datetime
-    kind: Literal["created", "updated"]
+    kind: Literal["created", "updated", "deleted"]
     notification: NotificationView
 
 
@@ -88,10 +88,13 @@ class _Job:
     """A unit of durable work. ``create`` inserts a fresh row (encrypting title/body
     just before the write); ``update`` writes back the current read/resolved state —
     always the *whole* current state, never a delta, so replaying it is idempotent
-    even if two updates for the same id end up queued back to back."""
+    even if two updates for the same id end up queued back to back. ``delete`` removes
+    the rows named in ``ids`` in one transaction; it rides the same FIFO queue, so it lands
+    after any pending create/update."""
 
-    op: Literal["create", "update"]
-    id: str
+    op: Literal["create", "update", "delete"]
+    id: str = ""
+    ids: tuple[str, ...] = ()
     owner_id: str = ""
     notif_kind: str = ""
     title: str = ""
@@ -128,6 +131,8 @@ class NotificationService:
         self._vault: Vault = vault
         self._channels: list[NotificationChannel] = channels or []
         self._cache: dict[str, NotificationView] = {}
+        # Deleted ids whose DB delete is still queued; keeps `rehydrate` from re-reading them.
+        self._pending_deletes: set[str] = set()
         self._buffer: deque[NotificationEvent] = deque(maxlen=ring_buffer_max)
         self._seq: int = 0
         self._subscribers: set[asyncio.Queue[NotificationEvent | None]] = set()
@@ -262,13 +267,28 @@ class NotificationService:
         """Mark specific notifications read. Ids that don't exist, aren't the owner's,
         or are already read are silently skipped — idempotent, never an error. Returns
         how many actually changed."""
-        wanted = set(ids)
-        return self._mark_read(owner_id, lambda view: view.id in wanted)
+        return self._set_read(owner_id, ids, utcnow())
 
     async def mark_all_read(self, owner_id: str) -> int:
         """Mark every one of the owner's unread notifications read. Returns how many
         changed."""
-        return self._mark_read(owner_id, lambda _view: True)
+        return self._set_read(owner_id, None, utcnow())
+
+    async def mark_unread(self, owner_id: str, ids: list[str]) -> int:
+        """Mark specific read notifications unread. Unknown, unowned, or already-unread
+        ids are skipped. Returns how many changed."""
+        return self._set_read(owner_id, ids, None)
+
+    async def delete(self, owner_id: str, ids: list[str]) -> int:
+        """Delete specific notifications. Unknown or unowned ids are skipped. Returns
+        how many were removed."""
+        wanted = set(ids)
+        return self._delete(owner_id, lambda view: view.id in wanted)
+
+    async def delete_read(self, owner_id: str) -> int:
+        """Delete every one of the owner's read notifications. Returns how many were
+        removed."""
+        return self._delete(owner_id, lambda view: view.read_at is not None)
 
     async def resolve_for_run(self, owner_id: str, run_id: str) -> list[NotificationView]:
         """Resolve every one of the run's not-yet-resolved notifications (in practice
@@ -339,22 +359,39 @@ class NotificationService:
 
     # --- internals --------------------------------------------------------
 
-    def _mark_read(self, owner_id: str, predicate: Callable[[NotificationView], bool]) -> int:
-        now = utcnow()
+    def _set_read(self, owner_id: str, ids: Iterable[str] | None, read_at: datetime | None) -> int:
+        """Move the owner's notifications to ``read_at`` (``None`` means unread). ``ids``
+        of ``None`` covers every cached row; rows already in that state are skipped."""
+        if ids is None:
+            candidates = list(self._cache.values())
+        else:
+            candidates = [v for i in set(ids) if (v := self._cache.get(i)) is not None]
         changed: list[NotificationView] = []
-        for notif_id, view in list(self._cache.items()):
-            if view.owner_id != owner_id or view.read_at is not None or not predicate(view):
+        for view in candidates:
+            if view.owner_id != owner_id or (view.read_at is None) == (read_at is None):
                 continue
-            updated = replace(view, read_at=now)
-            self._cache[notif_id] = updated
+            updated = replace(view, read_at=read_at)
+            self._cache[view.id] = updated
             changed.append(updated)
         for view in changed:
             _ = self._emit("updated", view)
             self._queue_update(view)
         return len(changed)
 
+    def _delete(self, owner_id: str, predicate: Callable[[NotificationView], bool]) -> int:
+        removed = [
+            view for view in self._cache.values() if view.owner_id == owner_id and predicate(view)
+        ]
+        for view in removed:
+            del self._cache[view.id]
+            self._pending_deletes.add(view.id)
+            _ = self._emit("deleted", view)
+        if removed:
+            self._worker.submit(_Job(op="delete", ids=tuple(view.id for view in removed)))
+        return len(removed)
+
     def _emit(
-        self, kind: Literal["created", "updated"], view: NotificationView
+        self, kind: Literal["created", "updated", "deleted"], view: NotificationView
     ) -> NotificationEvent:
         """Stamp, ring-buffer, and fan out. Synchronous and atomic — no `await` between
         a mutation landing in the cache and this fan-out, so `subscribe` can never
@@ -383,8 +420,13 @@ class NotificationService:
         )
 
     def _on_drop(self, job: _Job, exc: Exception) -> None:
+        # A dropped delete keeps its ids in `_pending_deletes`, so `rehydrate` can't
+        # bring the rows back for the rest of this process.
         logger.error(
-            "notifications: dropped a %s write for %s after retries: %s", job.op, job.id, exc
+            "notifications: dropped a %s write for %s after retries: %s",
+            job.op,
+            ", ".join(job.ids) if job.op == "delete" else job.id,
+            exc,
         )
 
     # --- out-of-band delivery (AE-3.2, TASK-6) ------------------------------
@@ -422,6 +464,8 @@ class NotificationService:
             logger.exception("notifications: rehydrate from DB failed")
             return
         for row in rows:
+            if row.id in self._pending_deletes:
+                continue
             if row.id in self._cache:  # a notify() since boot already cached it fresher
                 continue
             self._cache[row.id] = self._row_to_view(row)
@@ -467,6 +511,16 @@ class NotificationService:
                 )
 
             await in_session(self._engine, work)
+        elif job.op == "delete":
+
+            def work(session: Session) -> None:
+                for row_id in job.ids:
+                    row = session.get(Notification, row_id)
+                    if row is not None:
+                        session.delete(row)
+
+            await in_session(self._engine, work)
+            self._pending_deletes.difference_update(job.ids)
         else:
 
             def work(session: Session) -> None:

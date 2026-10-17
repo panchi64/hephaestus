@@ -53,9 +53,7 @@ async def home(tmp_path: Path) -> AsyncIterator[_Home]:
 
 
 def _shell(repo: Path, home: _Home) -> Shell:
-    return Shell(
-        shell_toolset(), checkout_ctx(repo, copies=home.copies, sessions=home.sessions)
-    )
+    return Shell(shell_toolset(), checkout_ctx(repo, copies=home.copies, sessions=home.sessions))
 
 
 async def _call(shell: Shell, name: str, **args: str | int) -> dict[str, JsonValue]:
@@ -76,9 +74,7 @@ async def test_a_workspace_command_edits_a_file_and_it_lands_in_the_host_repo(
     assert (repo / "added.txt").read_text() == "new\n"
 
 
-async def test_a_command_runs_in_the_vm_copy_not_in_the_host_folder(
-    repo: Path, home: _Home
-):
+async def test_a_command_runs_in_the_vm_copy_not_in_the_host_folder(repo: Path, home: _Home):
     shell = _shell(repo, home)
     result = await _call(shell, "run_command", command="pwd; ls")
     stdout = s(result["stdout"])
@@ -87,9 +83,7 @@ async def test_a_command_runs_in_the_vm_copy_not_in_the_host_folder(
     assert "hello.txt" in stdout
 
 
-async def test_a_cd_into_a_subdirectory_persists_to_the_next_command(
-    repo: Path, home: _Home
-):
+async def test_a_cd_into_a_subdirectory_persists_to_the_next_command(repo: Path, home: _Home):
     shell = _shell(repo, home)
     _ = await _call(shell, "run_command", command="mkdir -p sub")
     _ = await _call(shell, "run_command", command="cd sub")
@@ -115,9 +109,7 @@ async def test_a_failed_cd_leaves_the_directory_where_it_was(repo: Path, home: _
     assert s((await _call(shell, "run_command", command="pwd"))["stdout"]).strip() == PROJECT
 
 
-async def test_a_workspace_command_gets_no_proxy_and_cannot_reach_out(
-    repo: Path, home: _Home
-):
+async def test_a_workspace_command_gets_no_proxy_and_cannot_reach_out(repo: Path, home: _Home):
     shell = _shell(repo, home)
     env = await _call(shell, "run_command", command="env")
     env_stdout = s(env["stdout"])
@@ -138,9 +130,7 @@ async def test_a_workspace_command_gets_no_proxy_and_cannot_reach_out(
     assert "URLError" in s(urllib["stderr"])
 
 
-async def test_a_network_command_gets_the_egress_proxy_with_credentials(
-    repo: Path, home: _Home
-):
+async def test_a_network_command_gets_the_egress_proxy_with_credentials(repo: Path, home: _Home):
     shell = _shell(repo, home)
     result = await _call(shell, "run_command", command="env", reach="network")
     env = {
@@ -200,9 +190,7 @@ async def test_a_finished_background_command_reports_its_exit_and_brings_its_wor
     assert (repo / "from-bg.txt").read_text() == "made\n"
 
 
-async def test_a_command_past_its_timeout_is_timed_out_with_no_exit_code(
-    repo: Path, home: _Home
-):
+async def test_a_command_past_its_timeout_is_timed_out_with_no_exit_code(repo: Path, home: _Home):
     shell = _shell(repo, home)
     result = await _call(
         shell, "run_command", command="echo reached-here; sleep 30", timeout_seconds=2
@@ -268,9 +256,7 @@ async def test_work_on_another_branch_is_noted_and_not_landed(repo: Path, home: 
     assert git(repo, "rev-parse", "HEAD") == before
 
 
-async def test_a_change_made_on_the_host_reaches_the_next_command(
-    repo: Path, home: _Home
-):
+async def test_a_change_made_on_the_host_reaches_the_next_command(repo: Path, home: _Home):
     shell = _shell(repo, home)
     _ = await _call(shell, "run_command", command="true")
     _ = (repo / "hello.txt").write_text("operator edit\n")

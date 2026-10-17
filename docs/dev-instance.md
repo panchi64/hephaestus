@@ -87,6 +87,7 @@ curl -X POST http://127.0.0.1:{{stub_port}}/_stub/script -H 'content-type: appli
   {"match": "weather", "text": "It is raining."},
   {"match": "add", "tool_calls": [{"name": "calculator", "arguments": "{\"a\": 2}"}]},
   {"match": "slow", "text": "eventually", "latency_s": 4},
+  {"match": "drip", "text": "one word at a time", "chunk_delay_s": 0.05},
   {"match": "boom", "status": 500, "error": "upstream exploded"}
 ]'
 

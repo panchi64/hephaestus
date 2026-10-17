@@ -2,7 +2,7 @@
  *  No Solid/DOM here — just data → data, so the rules (grouping, compaction,
  *  transcript assembly) stay testable and live in one place. */
 
-import { isAnswered } from "./model";
+import { isAnswered, isLiveStatus } from "./model";
 import type {
   AssistantBlock,
   BlockKind,
@@ -246,7 +246,7 @@ function hasLiveHost(group: BlockGroup): boolean {
  *  spinners of every call still in flight. Same rule as `hasLiveHost`. */
 function hasLiveTool(group: BlockGroup): boolean {
   return group.blocks.some(
-    (b) => b.kind === "tool" && b.tool.status === "running",
+    (b) => b.kind === "tool" && isLiveStatus(b.tool.status),
   );
 }
 
@@ -367,7 +367,7 @@ export function runningTools(
   blocks: AssistantBlock[] | undefined,
 ): ToolInvocation[] {
   return (blocks ?? []).flatMap((b) =>
-    b.kind === "tool" && b.tool.status === "running" ? [b.tool] : [],
+    b.kind === "tool" && isLiveStatus(b.tool.status) ? [b.tool] : [],
   );
 }
 

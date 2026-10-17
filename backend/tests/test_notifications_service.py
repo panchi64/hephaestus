@@ -9,6 +9,9 @@ from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
 
+from sqlalchemy import Engine
+from sqlalchemy import event as sa_event
+from sqlalchemy.exc import OperationalError
 from sqlmodel import select
 
 from core.db import in_session, init_db, make_engine
@@ -31,6 +34,20 @@ async def _service(tmp_path: Path, *, ring_buffer_max: int | None = None) -> Not
         service = NotificationService(engine, vault, ring_buffer_max=ring_buffer_max)
     await service.start()
     return service
+
+
+async def _stored(engine: Engine) -> list[Notification]:
+    return list(await in_session(engine, lambda session: session.exec(select(Notification)).all()))
+
+
+async def _with_db(tmp_path: Path) -> tuple[NotificationService, Engine, Vault]:
+    engine = make_engine("sqlite:///:memory:")
+    init_db(engine)
+    vault = Vault(tmp_path / "keyfile.json")
+    await vault.setup("pw")
+    service = NotificationService(engine, vault)
+    await service.start()
+    return service, engine, vault
 
 
 def _titles(events: list[NotificationEvent]) -> list[str]:
@@ -201,6 +218,147 @@ async def test_mark_all_read_flags_every_unread(tmp_path: Path):
     _, unread = await service.list_notifications(OWNER)
     assert unread == 0
     assert await service.mark_all_read(OWNER) == 0  # idempotent
+    await service.stop()
+
+
+async def test_mark_unread_reverts_read_rows_and_persists(tmp_path: Path):
+    service, engine, _ = await _with_db(tmp_path)
+    a = await service.notify(OWNER, "system", "a")
+    b = await service.notify(OWNER, "system", "b")
+    _ = await service.mark_all_read(OWNER)
+    last = service.last_seq
+
+    assert await service.mark_unread(OWNER, [a.id, "no-such-id", "other"]) == 1
+    assert await service.mark_unread(OWNER, [a.id]) == 0
+    items, unread = await service.list_notifications(OWNER)
+    assert unread == 1
+    assert {v.id: v.read_at is None for v in items} == {a.id: True, b.id: False}
+
+    events = await _collect(service, after_seq=last, n=1)
+    assert events[0].kind == "updated"
+    assert events[0].notification.read_at is None
+
+    await service.flush()
+    rows = await _stored(engine)
+    assert {r.id: r.read_at is None for r in rows} == {a.id: True, b.id: False}
+    await service.stop()
+
+
+async def test_delete_removes_owned_rows_emits_and_survives_reload(tmp_path: Path):
+    service, engine, vault = await _with_db(tmp_path)
+    a = await service.notify(OWNER, "system", "a")
+    b = await service.notify(OWNER, "system", "b")
+    foreign = await service.notify("someone-else", "system", "x")
+    last = service.last_seq
+
+    assert await service.delete(OWNER, [a.id, foreign.id, "no-such-id"]) == 1
+    assert await service.delete(OWNER, [a.id]) == 0
+    items, unread = await service.list_notifications(OWNER)
+    assert [v.id for v in items] == [b.id]
+    assert unread == 1
+
+    events = await _collect(service, after_seq=last, n=1)
+    assert events[0].kind == "deleted"
+    assert events[0].notification.id == a.id
+
+    await service.flush()
+    await service.stop()
+    cold = NotificationService(engine, vault)
+    await cold.start()
+    assert cold.rehydrate_task is not None
+    await cold.rehydrate_task
+    ids = {v.id for v in (await cold.list_notifications(OWNER))[0]}
+    assert ids == {b.id}
+    await cold.stop()
+
+
+async def test_delete_read_removes_only_read_rows(tmp_path: Path):
+    service, engine, _ = await _with_db(tmp_path)
+    a = await service.notify(OWNER, "system", "a")
+    b = await service.notify(OWNER, "system", "b")
+    c = await service.notify(OWNER, "system", "c")
+    _ = await service.mark_read(OWNER, [a.id, b.id])
+    last = service.last_seq
+
+    assert await service.delete_read(OWNER) == 2
+    assert await service.delete_read(OWNER) == 0
+    items, unread = await service.list_notifications(OWNER)
+    assert [v.id for v in items] == [c.id]
+    assert unread == 1
+
+    events = await _collect(service, after_seq=last, n=2)
+    assert [e.kind for e in events] == ["deleted", "deleted"]
+    assert {e.notification.id for e in events} == {a.id, b.id}
+
+    await service.flush()
+    rows = await _stored(engine)
+    assert [r.id for r in rows] == [c.id]
+    await service.stop()
+
+
+async def test_delete_right_after_notify_wins_over_the_pending_insert(tmp_path: Path):
+    service, engine, _ = await _with_db(tmp_path)
+    view = await service.notify(OWNER, "system", "a")
+    assert await service.delete(OWNER, [view.id]) == 1
+    await service.flush()
+    assert await _stored(engine) == []
+    await service.stop()
+
+
+def _fail_deletes(engine: Engine, failures: int) -> list[int]:
+    """Make the next ``failures`` DELETE statements raise; the list counts attempts."""
+    attempts: list[int] = []
+
+    def maybe_fail(*args: object) -> None:
+        statement = args[2]
+        if isinstance(statement, str) and statement.lstrip().upper().startswith("DELETE"):
+            attempts.append(1)
+            if len(attempts) <= failures:
+                raise OperationalError(statement, None, Exception("disk busy"))
+
+    sa_event.listen(engine, "before_cursor_execute", maybe_fail)
+    return attempts
+
+
+async def test_a_batched_delete_removes_every_row_together(tmp_path: Path):
+    service, engine, _ = await _with_db(tmp_path)
+    views = [await service.notify(OWNER, "system", t) for t in "abc"]
+    await service.flush()
+    attempts = _fail_deletes(engine, 0)
+
+    assert await service.delete(OWNER, [v.id for v in views]) == 3
+    await service.flush()
+
+    assert await _stored(engine) == []
+    assert len(attempts) == 3  # one transaction, one DELETE per row
+    await service.stop()
+
+
+async def test_a_delete_survives_a_transient_failure(tmp_path: Path):
+    service, engine, _ = await _with_db(tmp_path)
+    view = await service.notify(OWNER, "system", "a")
+    await service.flush()
+    _ = _fail_deletes(engine, 2)
+
+    assert await service.delete(OWNER, [view.id]) == 1
+    await service.flush()
+
+    assert await _stored(engine) == []
+    await service.stop()
+
+
+async def test_a_dropped_delete_does_not_resurrect_the_row_in_this_process(tmp_path: Path):
+    service, engine, _ = await _with_db(tmp_path)
+    view = await service.notify(OWNER, "system", "a")
+    await service.flush()
+    _ = _fail_deletes(engine, 100)
+
+    assert await service.delete(OWNER, [view.id]) == 1
+    await service.flush()
+    await service.rehydrate()
+
+    assert [r.id for r in await _stored(engine)] == [view.id]
+    assert (await service.list_notifications(OWNER))[0] == []
     await service.stop()
 
 

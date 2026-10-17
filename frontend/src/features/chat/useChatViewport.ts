@@ -238,6 +238,7 @@ export function useChatViewport(
     commands,
     sources: sourceInventory,
     browser: source.browser.available,
+    browserStarted: source.browser.startedByAgent,
   });
   const available = (id: SurfaceId): boolean => sources[id].available();
   const firstAvailable = (): SurfaceId | undefined =>

@@ -51,6 +51,7 @@ def place_kind(project_id: str | None, worktree: bool) -> PlaceKind:
         return "sandbox"
     return "worktree" if worktree else "checkout"
 
+
 #: Where a conversation's sandbox workspace appears inside the VM. The model is
 #: told this, never the host path — the host path means nothing in the guest.
 SANDBOX_MOUNT = "/work"

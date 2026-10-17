@@ -9,9 +9,9 @@ import {
   copyToClipboard,
   cx,
 } from "~/ui";
-import { num } from "~/lib/format";
-import type { ToolInvocation } from "../model";
-import { toolPresentation } from "../toolPresentation";
+import { compactCount, num } from "~/lib/format";
+import { isLiveStatus, type ToolInvocation } from "../model";
+import { preparingPhrase, toolPresentation } from "../toolPresentation";
 import { Branch } from "./Branch";
 import { CommandBoundary, FenceNote } from "./CommandBoundary";
 import { EnvelopeRow } from "./EnvelopeRow";
@@ -28,6 +28,7 @@ import { ToolScreenshots } from "./ToolScreenshots";
  *  what made a turn read as a console dump, and it spent the accent budget (§5)
  *  on the most ambient state there is. */
 const iconTone: Record<ToolInvocation["status"], string> = {
+  preparing: "text-info",
   running: "text-info",
   ok: "text-dim",
   error: "text-alert",
@@ -81,6 +82,11 @@ export function ToolCallCard(props: {
     props.tool.status === "error",
   );
   const shown = createMemo(() => toolPresentation(props.tool.name));
+  const preparing = (): boolean => props.tool.status === "preparing";
+  const argsSize = (): string | undefined => {
+    const n = props.tool.argsChars;
+    return !n ? undefined : `${compactCount(n).toLowerCase()} chars`;
+  };
   // What the row is *about*, in preference order: the model's own reason for the
   // call, the salient argument, then the full summary — never nothing.
   //
@@ -117,9 +123,12 @@ export function ToolCallCard(props: {
       <ProcessRow
         open={open()}
         onToggle={toggle}
+        foldable={preparing() ? false : undefined}
         icon={shown().icon}
         iconClass={iconTone[props.tool.status]}
-        label={shown().label}
+        label={
+          preparing() ? `${preparingPhrase(props.tool.name)}…` : shown().label
+        }
         title={props.tool.name}
         class="hover:bg-raised"
         trailing={
@@ -149,8 +158,10 @@ export function ToolCallCard(props: {
                 turn's tempo line only says "Running 3 tools", so without this a
                 screen reader cannot tell which of six identical-reading rows is
                 still out. Costs nothing visually and restores the fact. */}
-            <Show when={props.tool.status === "running"}>
-              <span class="sr-only">Running</span>
+            <Show when={isLiveStatus(props.tool.status)}>
+              <span class="sr-only">
+                {preparing() ? "Preparing" : "Running"}
+              </span>
             </Show>
             <button
               type="button"
@@ -169,10 +180,20 @@ export function ToolCallCard(props: {
           </>
         }
       >
+        <Show when={preparing() && argsSize()}>
+          {(size) => (
+            <>
+              <Sep />
+              <Text variant="micro" tone="dim" class="shrink-0 tabular-nums">
+                {size()}
+              </Text>
+            </>
+          )}
+        </Show>
         <Show
           when={props.tool.status === "running" && props.tool.progress}
           fallback={
-            <Show when={detail()}>
+            <Show when={!preparing() && detail()}>
               <Sep />
               <Text
                 variant="micro"
@@ -209,7 +230,7 @@ export function ToolCallCard(props: {
               <Branch
                 variant="nested"
                 edge={{ first: i() === 0, last: i() === kids().length - 1 }}
-                lit={child.status === "running"}
+                lit={isLiveStatus(child.status)}
               >
                 <ToolCallCard tool={child} open={props.open} variant="nested" />
               </Branch>

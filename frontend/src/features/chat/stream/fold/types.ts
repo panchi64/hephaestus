@@ -101,6 +101,10 @@ export interface FoldDeps {
    *  the backend. The fold will not guess a position; the caller re-reads the
    *  persisted thread instead. Optional for a caller that never folds. */
   onFoldMisplaced?: () => void;
+  /** The agent attached a browser to the thread. Not called on a replay: a reattach finds
+   *  the live session through the room's own read. Optional for a caller with no browser
+   *  panel (the compare pane). */
+  onBrowserOpened?: () => void;
 }
 
 /** When the streaming run began and how far it has got, both straight off the wire:

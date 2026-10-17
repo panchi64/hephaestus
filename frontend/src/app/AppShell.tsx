@@ -16,7 +16,7 @@ import {
   startNotifications,
   stopNotifications,
 } from "~/lib/stores/notifications";
-import { NotificationBell } from "./NotificationBell";
+import { NotificationBell } from "./notifications/NotificationBell";
 import { Sidebar, useSidebarWidth } from "./sidebar";
 import { isConnectedRoute, isDotFieldRoute, isFlushRoute } from "./nav";
 import { SettingsDialog } from "./settings-dialog";

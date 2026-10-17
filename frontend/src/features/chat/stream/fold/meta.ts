@@ -162,6 +162,9 @@ export function foldMeta(ev: RunEvent, c: FoldContext): boolean {
       // same beat the throbber goes.
       deps.setTitlePending(false);
       return true;
+    case "browser.opened":
+      if (c.announce) deps.onBrowserOpened?.();
+      return true;
     case "citation.added":
       patchById(assistantId, (m) => {
         const citations = m.citations ?? (m.citations = []);

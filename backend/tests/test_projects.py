@@ -454,9 +454,7 @@ class TestRoutes:
             resp = await client.post("/projects/ensure", json={"rootPath": str(tmp_path / "no")})
             assert resp.status_code == 422, resp.text
 
-    async def test_a_filed_thread_carries_its_projects_name_into_the_listing(
-        self, tmp_path: Path
-    ):
+    async def test_a_filed_thread_carries_its_projects_name_into_the_listing(self, tmp_path: Path):
         async with client_app() as (client, app):
             work = tmp_path / "acme-api"
             work.mkdir()

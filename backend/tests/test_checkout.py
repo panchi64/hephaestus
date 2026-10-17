@@ -222,9 +222,7 @@ class TestTheStoredBinding:
         assert not await store.open_worktree(conversation_id)
         assert not (await store.binding(conversation_id)).worktree
 
-    async def test_a_spawned_agent_works_in_its_parents_worktree_and_leases(
-        self, tmp_path: Path
-    ):
+    async def test_a_spawned_agent_works_in_its_parents_worktree_and_leases(self, tmp_path: Path):
         store = await self._store(tmp_path)
         parent = await store.create_conversation(OWNER, project_id="p1")
         _ = await store.open_worktree(parent)

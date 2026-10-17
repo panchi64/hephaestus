@@ -95,6 +95,8 @@ export interface ChatStreamOptions {
    *  on every message, so a caller that did not hear this would write the stale one over
    *  the change on the operator's next send. */
   onPermissionChanged?: (level: PermissionLevel) => void;
+  /** Fired when the run reports the agent attaching a browser to the thread. */
+  onBrowserOpened?: () => void;
   /** The loaded conversation's context-window state, seeded alongside its history
    *  so an existing thread shows window fullness before its next turn runs. */
   initialContext?: () => ContextUsage | null | undefined;
@@ -232,6 +234,7 @@ export function createChatStream(
     // thread is ahead of it, so take its word rather than a guessed position. Reached
     // at call time — the resume ops are built below, and need the drive that needs this.
     onFoldMisplaced: () => void resume.reconcileStaleDecision(),
+    onBrowserOpened: options.onBrowserOpened,
   });
 
   // The inbox is bound to the thread, not to a run: read it whenever the thread changes,

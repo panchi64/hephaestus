@@ -18,6 +18,9 @@ import { fetchBrowserSession } from "./data";
 export interface BrowserState {
   /** The backend has a live session for this thread. */
   active: Accessor<boolean>;
+  /** The stream reported the agent starting a browser while this thread was open. A
+   *  browser found live when the thread was read does not set it. */
+  startedByAgent: Accessor<boolean>;
   /** The panel has something to show: a live session, or one that just ended. */
   available: Accessor<boolean>;
   /** A session was started or attached from here. */
@@ -31,9 +34,23 @@ export interface BrowserState {
 
 export function createBrowserState(
   conversationId: () => string | null,
+  agentOpened: Accessor<number>,
 ): BrowserState {
   const [active, setActive] = createSignal(false);
   const [engaged, setEngaged] = createSignal(false);
+  const [startedByAgent, setStartedByAgent] = createSignal(false);
+
+  createEffect(
+    on(
+      agentOpened,
+      () => {
+        setActive(true);
+        setEngaged(true);
+        setStartedByAgent(true);
+      },
+      { defer: true },
+    ),
+  );
 
   createEffect(
     on(conversationId, (id, previous) => {
@@ -42,6 +59,7 @@ export function createBrowserState(
       if (previous !== null && previous !== undefined) {
         setActive(false);
         setEngaged(false);
+        setStartedByAgent(false);
       }
       if (id === null) return;
       void fetchBrowserSession(id)
@@ -54,6 +72,7 @@ export function createBrowserState(
 
   return {
     active,
+    startedByAgent,
     available: () => active() || engaged(),
     opened: () => {
       setActive(true);
