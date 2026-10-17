@@ -4,12 +4,16 @@ short-circuits, the generated settings file, and the service bring-up and stop."
 from __future__ import annotations
 
 import asyncio
+import logging
 import tempfile
 from collections.abc import Callable, Coroutine, Sequence
 from pathlib import Path
 from typing import cast, override
 
+import pytest
+
 from services.searxng import ManagedSearxng
+from services.vm import VMError
 from services.vm.host import ServiceHost
 from services.vm.platform import GuestLayout
 
@@ -24,6 +28,9 @@ class _ServiceVM(ServiceHost):
         self.puts: list[tuple[str, str]] = []
         self.services: list[tuple[str, str, list[str]]] = []
         self.hooks: list[Callable[[], Coroutine[object, object, None]]] = []
+        self.alive: bool = True
+        self.log: str = ""
+        self.start_error: VMError | None = None
 
     @property
     @override
@@ -47,7 +54,17 @@ class _ServiceVM(ServiceHost):
     @override
     async def start_service(self, name: str, user: str, argv: Sequence[str]) -> None:
         self.calls.append(("start_service", name, user, list(argv)))
+        if self.start_error is not None:
+            raise self.start_error
         self.services.append((name, user, list(argv)))
+
+    @override
+    async def service_alive(self, name: str) -> bool:
+        return self.alive
+
+    @override
+    async def service_log(self, name: str, *, max_bytes: int) -> str:
+        return self.log[-max_bytes:]
 
     @override
     async def forward(self, guest_port: int) -> int:
@@ -62,11 +79,14 @@ class _ServiceVM(ServiceHost):
         return [c for c in self.calls if c[0] == call]
 
 
-async def _http_stub(status: int = 200) -> tuple[asyncio.Server, int]:
+async def _http_stub(status: list[int] | int = 200) -> tuple[asyncio.Server, int]:
+    """A local HTTP server answering with ``status``; pass a one-item list to change it later."""
+    holder = status if isinstance(status, list) else [status]
+
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         _ = await reader.read(4096)
         writer.write(
-            f"HTTP/1.1 {status} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode()
+            f"HTTP/1.1 {holder[0]} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode()
         )
         await writer.drain()
         writer.close()
@@ -90,6 +110,7 @@ def _manager(
         data_dir=data_dir or Path(tempfile.mkdtemp()),
         startup_timeout_s=startup_timeout_s,
         external_base_url=external_base_url,
+        probe_window_s=0.1,
     )
 
 
@@ -179,14 +200,73 @@ async def test_a_rebuilt_vm_gets_the_service_started_again():
         await m.stop()
 
 
-async def test_a_server_that_never_answers_leaves_the_base_url_none():
-    server, port = await _http_stub(status=503)
-    m = _manager(vm=_ServiceVM(port), startup_timeout_s=0.3)
+async def _until(predicate: Callable[[], bool], timeout_s: float = 5.0) -> None:
+    async with asyncio.timeout(timeout_s):
+        while not predicate():
+            await asyncio.sleep(0.02)
+
+
+async def test_a_slow_server_is_reported_slow_and_still_waited_on(caplog: pytest.LogCaptureFixture):
+    status = [503]
+    server, port = await _http_stub(status)
+    vm = _ServiceVM(port)
+    vm.log = "loading engines..."
+    m = _manager(vm=vm, startup_timeout_s=0.2)
     async with server:
-        await m.start()
-        await _ready(m)
+        with caplog.at_level(logging.WARNING, logger="services.searxng"):
+            await m.start()
+            await _until(lambda: m.state == "slow")
         assert m.base_url is None
+        assert m.bring_up is not None and not m.bring_up.done()
+        assert "loading engines..." in caplog.text
+
+        status[0] = 200
+        await _ready(m)
+
+        assert m.state == "ready"
+        assert m.base_url == f"http://127.0.0.1:{port}"
         await m.stop()
+
+
+async def test_a_service_that_exits_is_reported_crashed_with_its_output(
+    caplog: pytest.LogCaptureFixture,
+):
+    server, port = await _http_stub(status=503)
+    vm = _ServiceVM(port)
+    vm.alive = False
+    vm.log = "ModuleNotFoundError: No module named 'searx'"
+    m = _manager(vm=vm)
+    async with server:
+        with caplog.at_level(logging.WARNING, logger="services.searxng"):
+            await m.start()
+            await _ready(m)
+        assert m.state == "crashed"
+        assert m.base_url is None
+        assert "No module named 'searx'" in caplog.text
+        await m.stop()
+
+
+async def test_a_service_that_cannot_be_launched_is_reported_failed():
+    vm = _ServiceVM(0)
+    vm.start_error = VMError("bwrap: not found")
+    m = _manager(vm=vm)
+    await m.start()
+    await _ready(m)
+    assert m.state == "failed"
+    assert m.base_url is None
+    await m.stop()
+
+
+async def test_state_is_off_when_disabled_or_stopped_and_ready_for_an_external_url():
+    disabled = _manager(enabled=False)
+    await disabled.start()
+    assert disabled.state == "off"
+
+    external = _manager(external_base_url="http://my.searx:8080")
+    await external.start()
+    assert external.state == "ready"
+    await external.stop()
+    assert external.state == "off"
 
 
 def test_settings_enable_json_and_keep_a_stable_secret_key():

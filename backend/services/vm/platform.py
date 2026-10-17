@@ -602,6 +602,25 @@ class PlatformVM:
             ["sh", "-c", f"[ -f {pid} ] && kill -- -$(cat {pid}); rm -f {pid}; true"]
         )
 
+    async def service_alive(self, name: str) -> bool:
+        """Whether the service ``start_service`` launched is still running. The pid file
+        holds bwrap's pid, which lives exactly as long as the service under it."""
+        if not self.available:
+            return False
+        pid = f"{self.layout.run_dir}/{name}.pid"
+        result = await self._call(
+            ["sh", "-c", f"[ -f {pid} ] && kill -0 $(cat {pid})"], timeout_s=_ADMIN_TIMEOUT_S
+        )
+        return result.exit_code == 0
+
+    async def service_log(self, name: str, *, max_bytes: int) -> str:
+        """The last ``max_bytes`` of the service's combined output, or "" when there is none."""
+        if not self.available:
+            return ""
+        log = f"{self.layout.run_dir}/logs/{name}.log"
+        result = await self._call(["tail", "-c", str(max_bytes), log], timeout_s=_ADMIN_TIMEOUT_S)
+        return result.stdout if result.exit_code == 0 else ""
+
     async def put_text(self, guest: str, text: str, *, mode: str = "0644") -> None:
         staged = await self._put_bytes(text.encode())
         _ = await self._admin(["install", "-D", "-m", mode, staged, guest])

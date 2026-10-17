@@ -19,8 +19,32 @@ from pydantic import BaseModel
 from core.config import get_settings
 from routes import deps
 from routes.deps import OPERATOR_ID
+from services.searxng import SearxngState
 
 router = APIRouter(prefix="/overview", tags=["overview"])
+
+_MANAGED_SEARCH_DETAIL: dict[SearxngState, str] = {
+    "off": "turned off",
+    "waiting_vm": "starting",
+    "starting": "starting",
+    "slow": "slow to start — still waiting",
+    "crashed": "crashed on start — see backend log",
+    "failed": "could not start — see backend log",
+    "ready": "SearXNG (managed)",
+}
+
+
+def search_detail(
+    *, offline: bool, provider_enabled: bool, vm_ready: bool, managed: SearxngState
+) -> str:
+    """The web-search row's detail. An enabled provider wins over the managed instance."""
+    if offline:
+        return "offline mode — paused"
+    if provider_enabled:
+        return "SearXNG configured"
+    if managed != "ready" and not vm_ready:
+        return "VM not ready — disabled"
+    return _MANAGED_SEARCH_DETAIL[managed]
 
 
 class Capability(BaseModel):
@@ -73,7 +97,8 @@ async def get_overview(request: Request) -> Overview:
     vm = deps.vm(request)
     vm_ready = vm is not None and vm.available
     provider_enabled = any(p.enabled for p in search_providers)
-    managed_search_ready = deps.searxng(request).base_url is not None
+    searxng = deps.searxng(request)
+    managed_search_ready = searxng.base_url is not None
     web_search_configured = provider_enabled or managed_search_ready
     # Offline mode suspends both web capabilities (their VM services are stopped to save
     # resources); when active it's the reason the rows are down, so it overrides the
@@ -160,25 +185,18 @@ async def get_overview(request: Request) -> Overview:
             detail=sandbox_detail,
         )
     )
-    # Web search — the backend's managed SearXNG (or an operator-configured provider that
-    # overrides it) ⇒ search available; neither ⇒ disabled (degraded, not down — e.g. the
-    # platform VM is not up, or the instance is still booting).
-    if offline_active:
-        search_detail = "offline mode — paused"
-    elif provider_enabled:
-        search_detail = "SearXNG configured"
-    elif managed_search_ready:
-        search_detail = "SearXNG (managed)"
-    elif not vm_ready:
-        search_detail = "VM not ready — disabled"
-    else:
-        search_detail = "not running — disabled"
+    # Web search without a provider or a ready managed instance is degraded, not down.
     capabilities.append(
         Capability(
             key="web_search",
             label="WEB SEARCH",
             status="warn" if offline_active or not web_search_configured else "nominal",
-            detail=search_detail,
+            detail=search_detail(
+                offline=offline_active,
+                provider_enabled=provider_enabled,
+                vm_ready=vm_ready,
+                managed=searxng.state,
+            ),
         )
     )
     # Web fetch — a separate capability from search: a headless browser in the platform

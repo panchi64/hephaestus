@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from pydantic import JsonValue
 
 from routes.deps import app_state
+from routes.overview import search_detail
+from services.searxng import SearxngState
 
 from ._helpers import client_app
 from ._json import arr, json_body, obj, s
@@ -57,6 +60,30 @@ async def test_overview_web_search_nominal_once_a_provider_is_enabled():
     web = _capabilities(body)["web_search"]
     assert web["status"] == "nominal"
     assert web["detail"] == "SearXNG configured"
+
+
+@pytest.mark.parametrize(
+    ("offline", "provider", "vm_ready", "managed", "detail"),
+    [
+        (True, True, True, "ready", "offline mode — paused"),
+        (False, True, False, "off", "SearXNG configured"),
+        (False, False, True, "ready", "SearXNG (managed)"),
+        (False, False, False, "starting", "VM not ready — disabled"),
+        (False, False, True, "waiting_vm", "starting"),
+        (False, False, True, "starting", "starting"),
+        (False, False, True, "slow", "slow to start — still waiting"),
+        (False, False, True, "crashed", "crashed on start — see backend log"),
+        (False, False, True, "failed", "could not start — see backend log"),
+        (False, False, True, "off", "turned off"),
+    ],
+)
+def test_search_detail_names_the_managed_state(
+    offline: bool, provider: bool, vm_ready: bool, managed: SearxngState, detail: str
+):
+    got = search_detail(
+        offline=offline, provider_enabled=provider, vm_ready=vm_ready, managed=managed
+    )
+    assert got == detail
 
 
 async def test_overview_chat_model_nominal_with_a_tool_calling_endpoint():

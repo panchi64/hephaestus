@@ -447,7 +447,8 @@ class Settings(BaseSettings):
     # the DB-backed provider registry stays as an optional override for a custom/remote
     # instance. Without the VM web search simply degrades (no host fallback).
     # `searxng_base_url` points at an already-running instance instead, so nothing is
-    # managed.
+    # managed. Past `searxng_startup_timeout_s` a live but silent instance is reported as
+    # slow and its output logged; bring-up keeps waiting either way.
     searxng_enabled: bool = True
     searxng_startup_timeout_s: float = 30.0
     searxng_base_url: str | None = None

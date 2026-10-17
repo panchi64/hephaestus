@@ -6,9 +6,11 @@ VM, reached on a forwarded loopback port, and the search service queries it
 automatically. Its upstream requests leave through the VM's egress gateway, which allows
 public addresses only.
 
-Bring-up is **best-effort and non-fatal**: a VM that never comes up, or a server that
-never binds, leaves :attr:`base_url` ``None`` and web search simply degrades (no host
-fallback) — it never blocks app startup. The DB-backed provider registry
+Bring-up is **best-effort and non-fatal**: it never blocks app startup, and until the
+server answers :attr:`base_url` stays ``None`` and web search degrades (no host fallback).
+A server that is alive but slow is waited on indefinitely; one whose process exits before
+answering is reported as crashed, with its output in the log. :attr:`state` says which.
+The DB-backed provider registry
 (``models/search``) stays as an optional override: an enabled provider there wins over
 this managed instance.
 
@@ -22,6 +24,7 @@ import asyncio
 import logging
 import secrets
 from pathlib import Path
+from typing import Literal
 
 from core import net
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
@@ -35,6 +38,11 @@ _USER = "searxng"
 _PORT = 8888
 _SETTINGS_PATH = "/etc/searxng/settings.yml"
 _PYTHON = "/opt/hephaestus/searxng/bin/python"
+# How long each readiness probe runs before the process is checked for a crash.
+_PROBE_WINDOW_S = 2.0
+_LOG_TAIL_BYTES = 4096
+
+type SearxngState = Literal["off", "waiting_vm", "starting", "slow", "crashed", "failed", "ready"]
 
 # The secret key is generated once and reused across boots so session cookies stay
 # stable; the settings file itself is rewritten each boot so template changes take effect.
@@ -74,13 +82,16 @@ class ManagedSearxng:
         data_dir: Path,
         startup_timeout_s: float,
         external_base_url: str | None = None,
+        probe_window_s: float = _PROBE_WINDOW_S,
     ) -> None:
         self._enabled: bool = enabled
+        self._probe_window_s: float = probe_window_s
         self._vm: ServiceHost | None = vm
         self._dir: Path = data_dir / "searxng"
         self._startup_timeout_s: float = startup_timeout_s
         self._external: str | None = external_base_url.rstrip("/") if external_base_url else None
         self._base_url: str | None = None
+        self._state: SearxngState = "off"
         self._task: asyncio.Task[None] | None = None
         if vm is not None:
             vm.on_ready(self._after_boot)
@@ -89,6 +100,11 @@ class ManagedSearxng:
     def base_url(self) -> str | None:
         """The instance's URL once reachable, else ``None`` (degrade web search)."""
         return self._base_url
+
+    @property
+    def state(self) -> SearxngState:
+        """Where bring-up stands, for the status row."""
+        return self._state
 
     @property
     def bring_up(self) -> asyncio.Task[None] | None:
@@ -105,6 +121,7 @@ class ManagedSearxng:
         if self._external is not None:
             # The operator runs their own; nothing to manage.
             self._base_url = self._external
+            self._state = "ready"
             logger.info("search: using external SearXNG at %s", self._external)
             return
         if self._task is not None:
@@ -119,6 +136,7 @@ class ManagedSearxng:
         await cancel_and_wait(self._task, STOP_TIMEOUT_S)
         self._task = None
         self._base_url = None
+        self._state = "off"
         if self._vm is not None and self._external is None:
             try:
                 await self._vm.stop_service(_SERVICE)
@@ -130,6 +148,7 @@ class ManagedSearxng:
         if self._task is None or not self._task.done():
             return
         self._base_url = None
+        self._state = "starting"
         self._task = asyncio.create_task(self._bring_up())
 
     async def _bring_up(self) -> None:
@@ -137,7 +156,9 @@ class ManagedSearxng:
         if vm is None:
             logger.info("search: no platform VM — managed web search unavailable")
             return
+        self._state = "waiting_vm"
         _ = await vm.wait_ready(float("inf"))
+        self._state = "starting"
         try:
             await vm.put_text(_SETTINGS_PATH, self.settings(vm.layout.platform_proxy))
             await vm.stop_service(_SERVICE)
@@ -149,14 +170,41 @@ class ManagedSearxng:
             host_port = await vm.forward(_PORT)
         except VMError as exc:
             logger.warning("search: managed SearXNG did not start: %s", exc)
+            self._state = "failed"
             return
-        if not await net.await_http_ready(
-            f"http://127.0.0.1:{host_port}/", self._startup_timeout_s
-        ):
-            logger.warning("search: managed SearXNG did not answer in time")
-            return
-        self._base_url = f"http://127.0.0.1:{host_port}"
+        url = f"http://127.0.0.1:{host_port}"
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        while not await net.await_http_ready(f"{url}/", self._probe_window_s):
+            try:
+                alive = await vm.service_alive(_SERVICE)
+            except VMError:
+                alive = True  # the check itself failed; that says nothing about the service
+            if not alive:
+                self._state = "crashed"
+                logger.warning(
+                    "search: managed SearXNG exited before answering; last output:\n%s",
+                    await self._log_tail(vm),
+                )
+                return
+            waited = loop.time() - started
+            if self._state != "slow" and waited >= self._startup_timeout_s:
+                self._state = "slow"
+                logger.warning(
+                    "search: managed SearXNG still starting after %.0fs; last output:\n%s",
+                    waited,
+                    await self._log_tail(vm),
+                )
+        self._base_url = url
+        self._state = "ready"
         logger.info("search: managed SearXNG ready at %s", self._base_url)
+
+    @staticmethod
+    async def _log_tail(vm: ServiceHost) -> str:
+        try:
+            return await vm.service_log(_SERVICE, max_bytes=_LOG_TAIL_BYTES) or "(no output)"
+        except VMError:
+            return "(could not read the service log)"
 
     def settings(self, proxy: str) -> str:
         """The settings file, with a secret key persisted across boots."""
