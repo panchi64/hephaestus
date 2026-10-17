@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import httpx
 from pydantic import BaseModel, Field, TypeAdapter
 
+from runs.events.approvals import ApprovalRequired, QuestionAsked
 from runs.events.union import EventBody
 
 _EVENT: TypeAdapter[EventBody] = TypeAdapter(EventBody)
@@ -71,11 +72,27 @@ class DevClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def send(self, prompt: str, conversation_id: str | None) -> tuple[str, str]:
+    @property
+    def http(self) -> httpx.AsyncClient:
+        """The underlying client, for routes this class has no method for."""
+        return self._http
+
+    async def send(
+        self,
+        prompt: str,
+        conversation_id: str | None,
+        *,
+        permission_level: str | None = None,
+        project_id: str | None = None,
+    ) -> tuple[str, str]:
         """Start a turn; returns ``(run_id, conversation_id)``."""
         body: dict[str, object] = {"prompt": prompt}
         if conversation_id is not None:
             body["conversation_id"] = conversation_id
+        if permission_level is not None:
+            body["permission_level"] = permission_level
+        if project_id is not None:
+            body["project_id"] = project_id
         response = await self._http.post("/chat", json=body)
         _ = response.raise_for_status()
         created = _Created.model_validate_json(response.content)
@@ -141,3 +158,35 @@ class DevClient:
             f"/runs/{run_id}/approve", content=body.model_dump_json(), headers=_JSON
         )
         _ = response.raise_for_status()
+
+
+class Settler:
+    """Answers whatever one run parks on, batch by batch, under one approval policy."""
+
+    def __init__(self, client: DevClient, run_id: str, *, approve: bool) -> None:
+        self._client: DevClient = client
+        self._run_id: str = run_id
+        self._approve: bool = approve
+        self._approvals: list[str] = []
+        self._questions: dict[str, int] = {}
+        self._task: asyncio.Task[None] | None = None
+
+    def park(self, body: ApprovalRequired | QuestionAsked) -> None:
+        if isinstance(body, ApprovalRequired):
+            self._approvals.append(body.tool_call_id)
+        else:
+            self._questions[body.tool_call_id] = len(body.questions)
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._settle())
+
+    async def _settle(self) -> None:
+        # Until nothing is waiting: a resumed run can park again before the answer to the
+        # last batch returns, and no new settle starts while this one runs.
+        while self._approvals or self._questions:
+            # Let the rest of the batch arrive before answering it as one.
+            await asyncio.sleep(0.5)
+            approvals = self._approvals.copy()
+            questions = dict(self._questions)
+            self._approvals.clear()
+            self._questions.clear()
+            await self._client.settle(self._run_id, approvals, questions, approve=self._approve)

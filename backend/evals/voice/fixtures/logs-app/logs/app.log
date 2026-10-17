@@ -1,0 +1,7 @@
+DEBUG:app:handling req-01201
+INFO:app:done req-01201
+DEBUG:app:handling req-01202
+INFO:app:done req-01202
+WARNING:app:slow upstream req-01203
+DEBUG:app:handling req-01203
+INFO:app:done req-01203

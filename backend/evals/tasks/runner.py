@@ -21,7 +21,7 @@ from pathlib import Path
 
 from devkit import live
 from devkit.instance import resolve
-from evals.tasks.client import DevClient
+from evals.tasks.client import DevClient, Settler
 from evals.tasks.judge import judge
 from evals.tasks.report import write_summary
 from evals.tasks.results import Outcome, TaskResult, TurnRecord
@@ -60,12 +60,9 @@ async def _run_turn(
     run_id, conversation_id = await client.send(prompt, thread)
     turn = _Turn(record=TurnRecord(ended="timeout"))
     started = time.monotonic()
-    approvals: list[str] = []
-    questions: dict[str, int] = {}
-    settling: asyncio.Task[None] | None = None
+    settler = Settler(client, run_id, approve=task.approve == "all")
 
     async def follow() -> None:
-        nonlocal settling
         async for frame in client.frames(run_id):
             body = frame.body
             now = time.monotonic()
@@ -89,32 +86,15 @@ async def _run_turn(
             elif isinstance(body, ApprovalRequired | QuestionAsked):
                 if isinstance(body, ApprovalRequired):
                     turn.record.approvals += 1
-                    approvals.append(body.tool_call_id)
                 else:
                     turn.record.questions += 1
-                    questions[body.tool_call_id] = len(body.questions)
-                if settling is None or settling.done():
-                    settling = asyncio.create_task(_settle())
+                settler.park(body)
             elif isinstance(body, RunEnded):
                 turn.record.ended = body.outcome
                 turn.record.detail = body.detail
             elif isinstance(body, RunError):
                 turn.record.ended = "error"
                 turn.record.detail = f"{body.kind}: {body.message}"
-
-    async def _settle() -> None:
-        # Until nothing is waiting: a resumed run can park again before the answer to the
-        # last batch returns, and no new settle starts while this one runs.
-        while approvals or questions:
-            # Let the rest of the batch arrive before answering it as one.
-            await asyncio.sleep(0.5)
-            pending_approvals = approvals.copy()
-            pending_questions = dict(questions)
-            approvals.clear()
-            questions.clear()
-            await client.settle(
-                run_id, pending_approvals, pending_questions, approve=task.approve == "all"
-            )
 
     try:
         await asyncio.wait_for(follow(), timeout=task.timeout_s)
