@@ -34,7 +34,7 @@ send the fourth to the model — but everything a review needs that is *not* per
 built once for the batch: the reviewer (a registry resolution and a model construction),
 the transcript (a walk of the recent history into role-tagged entries the reviewer reads
 inside an untrusted fence, never as lines it could be talked into believing) and the
-workspace root every path is measured against (:func:`_judged_root`). The model calls
+home every path is measured against (:func:`_judged_root`). The model calls
 that remain are independent of one another and each carries a timeout measured in
 seconds, so they are awaited together rather than in a line; a turn that deferred four
 calls waits once, not four times.
@@ -45,7 +45,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from pydantic_ai import ToolApproved, ToolDenied
@@ -79,10 +78,12 @@ from services.permissions import (
     review,
     review_transcript,
 )
+from services.permissions.fence import Fence
 from services.registry import ModelRegistry
+from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
 from tools.deps import RunDeps
-from tools.workspace import resolve_run_workspace
+from tools.home import resolve_run_home
 
 logger = logging.getLogger(__name__)
 
@@ -337,8 +338,9 @@ def vm_fences(caps: ServiceContainer) -> bool:
     return copies is not None and copies.vm.available
 
 
-async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Path | None:
-    """The directory every path in this batch is measured against.
+async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Fence | None:
+    """The home every path in this batch is measured against, read from where the
+    thread's shell stands.
 
     **Resolved, not read off the run's memo**, and that is the whole point: the *first*
     shell command of a turn is deferred before any tool has run, so nothing has opened a
@@ -358,11 +360,17 @@ async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Path | N
     if not any(measured_against_root(call.tool_name) for call in calls):
         return None
     try:
-        workspace = await resolve_run_workspace(deps)
+        home = await resolve_run_home(deps)
     except Exception:  # noqa: BLE001 — a judge that raises would abort the operator's turn
-        logger.info("auto review: no workspace to judge against", exc_info=True)
+        logger.info("auto review: no home to judge against", exc_info=True)
         return None
-    return workspace.root if workspace is not None else None
+    if home is None:
+        return None
+    shells = deps.caps.get_optional(ThreadShells)
+    cwd = shells.cwd(deps.workspace_key) if shells is not None else None
+    # A working directory in a place the home no longer holds is where the shell will not
+    # start (`HomeShell.stand_within`).
+    return home.fence(cwd if cwd is not None and home.place_of(cwd) is not None else None)
 
 
 async def resolve_reviewer(caps: ServiceContainer, owner_id: str) -> Reviewer | None:
@@ -402,7 +410,7 @@ async def review_call(
     tool_call_id: str,
     tool: str,
     args: dict[str, object],
-    root: Path | None,
+    root: Fence | None,
     transcript: Sequence[TranscriptEntry],
     reviewer: Reviewer | None,
     granted: GrantWidth = "none",
@@ -412,7 +420,7 @@ async def review_call(
 ) -> ReviewOutcome:
     """Rule on one deferred call at the Auto level, announcing both ends on the stream.
 
-    ``root`` is the run's workspace directory, resolved once for the batch
+    ``root`` is the run's home, resolved once for the batch
     (:func:`_judged_root`), and None where there is none — which is not a gap but the
     strictest reading: with nowhere to measure containment against, every absolute or
     upward path in a command reads as leaving the workspace and escalates. ``fenced`` is

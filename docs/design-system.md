@@ -582,6 +582,24 @@ The exception is `warn` and `alert`, which keep the accent on the label too. Tho
 
 Single line, square, hairline beneath, sans label left, mono meta right. Hover fills `surface-raised`. Disabled drops to `text-dim` with a lock glyph.
 
+#### Ledger row: the Agents roster
+
+A list row that carries several machine figures per entry: one sub-agent per row, inside one ruled frame. **The task gets the width.** Below the pane's `@2xl`, a row has three columns:
+
+- **Agent** (72px): the state square and the callsign in mono `code`, bright. A child of another sub-agent takes a dim `└` and 12px of indent per level, in this column only, so every row's rules still reach both sides of the frame.
+- **Task**: sans `body`, clamped to two lines, with the latest line under it in `micro` dim (`alert` for a failure).
+- **Readout** (56px): context % in `micro`, a 2px gauge filled to that percentage, and the run clock (§10.16), stacked. A blocked row shows the `WAITING` tag here instead.
+
+At `@2xl` the extra width becomes columns, not a longer task line: Agent (callsign plus class), Task (one line), Latest, Ctx and T+, under a `plate` legend row.
+
+Row states:
+
+- **Running:** the 1px `info` live edge (§10.9).
+- **Blocked:** the action tier's echo (§10.18): a 2px amber inset edge and a 5% amber wash.
+- **Cancelled:** the row dims.
+
+Stop and Open thread are icon buttons laid over the readout. They appear only on hover or focus, so a row never spends a line on controls.
+
 ### 10.8 Controls (button, input, select, chip, toggle)
 
 Square, hairline border, `space-2`/`space-3` padding, sans label. Focus is `shadow-focus`, always neutral. A **primary** button — one per view — is the sole carrier of `shadow-accent`.
@@ -635,7 +653,7 @@ Below the answer, the **Sources row** lists the pages the turn's tools actually 
 
 The card — `surface`, **only the writing**, top to bottom:
 
-1. **the header line** — one line of `plate` mono (10px, engraved tracking, dim): what the input is doing on the left, what is waiting on the operator on the right. The caller fills both (`headerStart`/`headerEnd`); `title` is the left's fallback (the hero's "New conversation"). In chat: `INPUT` at rest; while a run streams `● RUN` in info (`● FOLDING` for a hand-started fold), then `T+` the run's `MetClock` from `run.started`'s own `ts`, then `STEP n` from the newest `step.started` — each only once the stream has reported it. It is also where the thread's state is said now that the title carries none: `DISCONNECTED` in alert outranks everything (a detached run's clock would go on ticking over nothing), and at rest a run state other than `DONE` — `FAILED`, `BLOCKED`, `CANCELLED`, or a run the backend reports live that this room isn't driving — replaces `INPUT` as `● STATE` in the `runState.ts` table's own status tone, the same table the rail reads. On the right, `QUEUED n · ↑ TO EDIT` in warn while operator messages wait in the run; otherwise `DRAFT SAVED` while the field holds a draft persisted under `storageKey` (only on a composer that already has a header, so the first keystroke never grows a line);
+1. **the header line** — one line of `plate` mono (10px, engraved tracking, dim): what the input is doing on the left, what is waiting on the operator on the right. The caller fills both (`headerStart`/`headerEnd`); `title` is the left's fallback (the hero's "New conversation"). In chat: `INPUT` at rest; while a run streams `● RUN` in info (`● FOLDING` for a hand-started fold), then `T+` the run's `MetClock` from `run.started`'s own `ts`, then `STEP n` from the newest `step.started` — each only once the stream has reported it. It is also where the thread's state is said now that the title carries none: `DISCONNECTED` in alert outranks everything (a detached run's clock would go on ticking over nothing), and at rest a run state other than `DONE` — `FAILED`, `BLOCKED`, `CANCELLED`, or a run the backend reports live that this room isn't driving — replaces `INPUT` as `● STATE` in the `runState.ts` table's own status tone, the same table the rail reads. On the right, an `N queued` chip while messages wait in the run; it toggles the inbox dock above the composer. The same items sit dimmed at the foot of the thread, where they will land: the operator's own as `QUEUED` bubbles, the rest as `Waiting · …` lines. After the operator's Stop the dock reads `Waiting for you` with Resume. With nothing queued, `DRAFT SAVED` while the field holds a draft persisted under `storageKey` (only on a composer that already has a header, so the first keystroke never grows a line);
 2. attachment chips;
 3. one row: the field — **transparent, borderless, no focus ring of its own** — with the commit keys at its right, bottom-aligned so they stay by the last line as the field grows.
 
@@ -750,6 +768,15 @@ A coloured border alone is too quiet for the one moment the run cannot continue 
 - Presentation only: `value`/`onChange`/`freeText.onInput`/`onSubmit` — it holds no state and decides nothing about what an answer does.
 
 `ParkDock`, `QuestionAnswerCard`, `ConflictCard` and plan approval all move onto it.
+
+### 10.19 Envelope and notice rows
+
+Text that arrives wrapped, which nobody in the thread wrote, is its own row (`EnvelopeRow`) instead of sitting inline in the text around it: fetched or mailed content inside a tool result, attachment text and a routine's previous run beside the operator's turn, a project's instruction file, a chassis reminder.
+
+- **Anatomy** is the context-injection row's: `ProcessRow`, dashed socket glyph, no hover fill, closed at rest, body in dim `micro` mono capped at `max-h-64`.
+- **The label is a word in the machine voice**, never only a glyph (§12): `External · <source>`, `Attachment text · <file>`, `Previous run`, `Project instructions · <path>`, `Reminder · N tasks open`, or `Notice · <kind>`.
+- **Untrusted bodies** sit behind a hairline under an attribution line ("Quoted from …, not this workspace's own words"), the block a compaction checkpoint uses for tool-derived text (`QuotedBlock`).
+- A **notice** (`role: "notice"`) is the same row as a thread turn: no bubble, no actions.
 
 ### States — all components
 

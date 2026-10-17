@@ -17,8 +17,9 @@ consulted where the provider has already told us the answer.
 
 from __future__ import annotations
 
+import httpx
 from pydantic import JsonValue, TypeAdapter, ValidationError
-from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 
 from runs import Run
 
@@ -71,6 +72,16 @@ def provider_error_code(exc: ModelHTTPError) -> str | None:
         return None
     code = error.get("code") or error.get("type")
     return code.lower() if isinstance(code, str) else None
+
+
+def is_transient(exc: Exception) -> bool:
+    """Whether sending the same request again could succeed: the server was overloaded or
+    rate-limited, the connection dropped, or the stream was cut short. A refusal of the
+    request itself (bad model, bad auth, a malformed prompt) would only fail again, and so
+    would a tool call cut off at the output-token limit."""
+    if isinstance(exc, ModelHTTPError):
+        return exc.status_code == 429 or exc.status_code >= 500
+    return isinstance(exc, ModelAPIError | httpx.TransportError)
 
 
 def is_context_overflow(exc: ModelHTTPError) -> bool:
@@ -150,40 +161,4 @@ def model_load_hint(exc: ModelHTTPError) -> str | None:
         f"Couldn't load {model!r} on its inference server. Load it before use — in "
         "LM Studio, pre-load each model you want to compare, or raise “Max loaded "
         "models” / enable JIT so the server can hold more than one at once."
-    )
-
-
-# --- our own per-turn budgets ------------------------------------------------------
-
-
-def usage_limit_kind(exc: UsageLimitExceeded) -> str:
-    """Which bound in ``UsageLimits`` tripped — ``UsageLimitExceeded`` carries no
-    structured field, only a message, so classify it by the marker each check raises
-    (see ``pydantic_ai.usage.UsageLimits``)."""
-    message = str(exc)
-    if "tool_calls_limit" in message:
-        return "tool_calls"
-    if "tokens_limit" in message:
-        return "tokens"
-    return "steps"
-
-
-def usage_limit_message(exc: UsageLimitExceeded) -> str:
-    """An operator-legible sentence for a usage-limit stop, mirroring the treatment
-    ``_timeout_message`` (``runs/registry.py``) gives wall-clock/inactivity bounds:
-    this reaches the operator verbatim, both as the toast (``LimitNotice.message``) and
-    as the turn's persisted stop marker, so it must read as a plain sentence — never
-    ``str(exc)``'s raw internal phrasing (e.g. pydantic_ai's own ``{tool_calls=}`` repr).
-
-    Each names the *local* budget that tripped and where to raise it. These are this
-    chassis's own per-turn ceilings, nothing to do with a provider's rate limit — so the
-    wording must never leave the operator hunting for an account-level quota."""
-    kind = usage_limit_kind(exc)
-    if kind == "tool_calls":
-        return "this run hit its tool-call limit for a single turn and stopped"
-    if kind == "tokens":
-        return "this run hit its token budget for a single turn and stopped"
-    return (
-        "this run hit its step limit for a single turn and stopped — raise the "
-        "model request limit in Settings to let a turn run longer"
     )

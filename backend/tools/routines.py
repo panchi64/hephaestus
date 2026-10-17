@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pydantic_ai import AbstractToolset, FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 
+from core.diagnostics import render_rejection, render_tool_error
 from core.exceptions import NotFoundError, RoutineValidationError
 from models.calendar import DEFAULT_TIMEZONE
 from services.routines import (
@@ -50,7 +51,12 @@ async def _find(store: RoutineStore, ctx: RunContext[RunDeps], routine_id: str) 
     try:
         return await store.get(ctx.deps.owner_id, routine_id)
     except NotFoundError:
-        raise ModelRetry(f"There is no routine {routine_id!r}; list them first.") from None
+        raise ModelRetry(
+            render_tool_error(
+                f"there is no routine {routine_id!r}",
+                hints=["take an `id` from `routines_list`"],
+            )
+        ) from None
 
 
 def routines_toolset() -> AbstractToolset[RunDeps]:
@@ -68,13 +74,35 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
         enabled: bool = True,
         routine_id: str | None = None,
     ) -> dict[str, object]:
-        """Draft a routine, or rewrite `routine_id`: `prompt` goes to `agent` on `schedule`,
-        each time in a new thread.
+        """Drafts a routine, a prompt that runs on a schedule in a new thread each time,
+        or rewrites an existing one. Use it when the operator asks for something to
+        happen later or on repeat: a morning summary, a weekly check, a reminder.
 
-        `schedule`: `once 2026-06-12T09:00+02:00`, `every 30m` (m/h/d), or
-        `cron 0 9 * * 1-5 [zone]` (default: the operator's zone). `pre_authorized` names
-        tools its turns may use without asking; `notify` reports each outcome. A new
-        routine waits for the operator's approval; check `next_runs`.
+        A new routine is a draft and never fires until the operator approves it, so tell
+        them it is waiting for their approval rather than that it is set up. Rewriting an
+        approved routine asks them again, unless the change only takes reach away.
+
+        Returns the routine's `id`, `status` and `next_runs`, the next times it will
+        fire. Read `next_runs` against what the operator asked for, because a misread
+        schedule shows there before anything runs.
+
+        Args:
+            title: A short name the operator will recognize in their routines list.
+            prompt: What the routine's agent is told each time. It starts with no
+                memory of this conversation, so write it as a complete brief.
+            schedule: `once 2026-06-12T09:00+02:00` (with the offset), `every 30m`
+                (`m`, `h` or `d`), or `cron 0 9 * * 1-5 [zone]`, read in the operator's
+                zone unless you name another.
+            agent: The agent that runs it. Omit for the default.
+            pre_authorized: Full tool names its runs may use without asking, such as
+                `shell_run_command`. Nobody is watching when it fires, so a run that
+                reaches an unlisted tool needing approval waits until the operator
+                answers.
+            notify: True to send the operator a notification with each outcome, rather
+                than only leaving the thread.
+            enabled: False to save it switched off.
+            routine_id: The routine to rewrite, from `routines_list`. Omit to draft a
+                new one.
         """
         store = ctx.deps.caps.get_optional(RoutineStore)
         if store is None:
@@ -98,13 +126,14 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
                         raise ApprovalRequired()
                 routine = await store.update(ctx.deps.owner_id, routine.id, values)
         except RoutineValidationError as exc:
-            raise ModelRetry(f"That routine was rejected ({exc.field}): {exc}") from None
+            raise ModelRetry(render_rejection("the routine", exc)) from None
         _wake(ctx)
         return {"ok": True, **_summary(routine)}
 
     @toolset.tool(name="list")
     async def list_routines(ctx: RunContext[RunDeps]) -> dict[str, object]:
-        """Every routine, with its id, agent, schedule, status and next fire times."""
+        """Returns every routine, each with its `id`, `title`, `agent`, `schedule`,
+        `status` (`draft`, `on` or `off`) and `next_runs`."""
         store = ctx.deps.caps.get_optional(RoutineStore)
         if store is None:
             return {"ok": False, "error": _UNAVAILABLE}
@@ -112,7 +141,12 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
 
     @toolset.tool
     async def delete(ctx: RunContext[RunDeps], routine_id: str) -> dict[str, object]:
-        """Delete a routine. Its threads stay."""
+        """Deletes a routine so it never fires again. The threads it already ran stay.
+        Deleting an approved routine asks the operator first.
+
+        Args:
+            routine_id: The routine's `id`, from `routines_list`.
+        """
         store = ctx.deps.caps.get_optional(RoutineStore)
         if store is None:
             return {"ok": False, "error": _UNAVAILABLE}
@@ -124,7 +158,15 @@ def routines_toolset() -> AbstractToolset[RunDeps]:
 
     @toolset.tool
     async def run_now(ctx: RunContext[RunDeps], routine_id: str) -> dict[str, object]:
-        """Fire an approved routine once now, in a new thread, without waiting."""
+        """Fires an approved, switched-on routine once now, in a new thread, and returns
+        at once without waiting for it to finish. Its schedule is unchanged.
+
+        Use it when the operator wants to see a routine run, or to try one they just
+        approved.
+
+        Args:
+            routine_id: The routine's `id`, from `routines_list`.
+        """
         store = ctx.deps.caps.get_optional(RoutineStore)
         scheduler = ctx.deps.caps.get_optional(SchedulerService)
         if store is None or scheduler is None:

@@ -2,10 +2,10 @@
 
 The loop around ``agent.iter()`` — the segment structure of a turn (the initial model
 pass, then a continuation for every batch of deferred calls that settles without the
-operator), the one usage budget / no-progress guard / usage accumulator / review budget
-they share, the live gauge frame as each response lands, mid-run steering drained at both
-boundaries, and the four ways a turn stops that are *state* rather than errors: a usage
-bound, the loop breaker, a context overflow, and a call that needs the operator.
+operator), the no-progress guard / usage accumulator / review budget they share, the live
+gauge frame as each response lands, mid-run steering drained at both boundaries, and the
+ways a turn stops that are *state* rather than errors: the first-token timeout, the loop
+breaker, a context overflow, and a call that needs the operator.
 
 It is its own file because it is the one thing both orchestrators and the verifier's
 corrective re-attempt run: ``engine.py`` sequences a run around it and ``verify.py`` calls
@@ -25,6 +25,7 @@ from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 
+import httpx
 from pydantic_ai import (
     AgentRun,
     DeferredToolRequests,
@@ -32,19 +33,19 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelRequestNode,
+    ModelResponse,
     RunUsage,
-    UsageLimitExceeded,
     UsageLimits,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import UserContent
 from pydantic_ai.tools import DeferredToolApprovalResult
 
 from core.config import Settings
 from core.container import ServiceContainer
 from core.exceptions import ModelLoadError
-from runs import LimitNotice, Run
+from runs import AnswerRetracted, LimitNotice, Run
 from services.conversations import ConversationBinding, ConversationStore
 from services.notifications import NotificationService
 from services.permissions import ReviewBudget
@@ -56,17 +57,17 @@ from .folding import compact_and_retry
 from .gating import settle_deferred
 from .history import TurnStart
 from .injected import injected_text
-from .meta import LoopBreaker, LoopDetected
+from .meta import FirstTokenTimeout, LoopBreaker, LoopDetected
 from .metrics import turn_metrics
 from .model_errors import (
     CONTEXT_OVERFLOW_AFTER_FOLD_DETAIL,
     CONTEXT_OVERFLOW_DETAIL,
     context_limit_message,
     is_context_overflow,
+    is_transient,
     model_load_hint,
-    usage_limit_kind,
-    usage_limit_message,
 )
+from .open_tasks import open_tasks_notice
 from .parking import DEFAULT_BINDING, park_for_input
 from .translate import stream_agent_run
 
@@ -120,7 +121,9 @@ def turn_deps(
         # binding by the caller, never from a live request — switching the active project
         # must not change what an already-running thread is doing.
         project_id=binding.project_id,
-        workspace_kind=binding.workspace_kind,
+        worktree=binding.worktree,
+        leases_from=binding.leases_from,
+        checkout_read_only=binding.checkout_read_only,
         # And how far it may go on its own. The toolset stack reads this to mark the tools
         # that reach past it, so the level is enforced before a call runs rather than
         # apologised for afterwards.
@@ -128,6 +131,7 @@ def turn_deps(
         # Which tools the thread's agent is offered at all, before anything else withholds.
         tool_access=binding.tools,
         permission_ceiling=binding.permission_ceiling,
+        reports_to_parent=binding.spawned,
         # Which workspace this run's file work happens in. Empty — every turn an operator
         # sends — fills itself in from the conversation, which is the ordinary case and
         # needs no argument anywhere. A sub-agent's run is the case that passes one: it
@@ -139,6 +143,27 @@ def turn_deps(
         turn_start=turn_start,
         review_budget=review_budget,
     )
+
+
+#: The wait before each resend of a request a transient model error cut short.
+TRANSIENT_BACKOFF_S = (2.0, 8.0)
+
+
+#: No request or tool-call budget: a turn is bounded by the loop guard and the timeouts.
+#: Explicit because the library applies a 50-request cap when ``usage_limits`` is omitted.
+UNBOUNDED = UsageLimits(request_limit=None)
+
+
+def _resume_point(messages: list[ModelMessage]) -> list[ModelMessage] | None:
+    """The history to resume a stopped turn from, ending in the request to send again.
+
+    A stream cut mid-answer leaves its partial response at the tail; dropping it re-sends
+    the request that produced it. None when there is no request to resume from.
+    """
+    history = messages[:-1] if messages and isinstance(messages[-1], ModelResponse) else messages
+    if not history or not isinstance(history[-1], ModelRequest):
+        return None
+    return history
 
 
 async def drive_turn(
@@ -157,7 +182,6 @@ async def drive_turn(
     vision: bool = True,
     partial_history_ref: list[Callable[[], list[ModelMessage]]] | None = None,
     store: ConversationStore | None = None,
-    request_limit: int | None = None,
     compaction: CompactionContext | None = None,
     turn_start: TurnStart | None = None,
     correcting: bool = False,
@@ -178,14 +202,6 @@ async def drive_turn(
     corrective re-attempt, where a fold is refused: the correction's drop range is a pair
     of absolute indices into the pre-fold history, and folding underneath it would leave
     the persist dropping two messages that are no longer the ones it meant."""
-    # The operator's runtime setting when they set one; None means nobody chose a number
-    # (an untouched control, a stateless eval turn, an older parked payload). It bounds
-    # *model round-trips*, so every tool call spends one.
-    resolved_limit = settings.agent_request_limit if request_limit is None else request_limit
-    limits = UsageLimits(
-        request_limit=resolved_limit,
-        tool_calls_limit=settings.agent_tool_calls_limit,
-    )
     # ONE review budget for the whole turn: at the Auto level every hop's deferred calls
     # are reviewed, and a model that keeps reaching past the level's ceiling would
     # otherwise spend a utility-model round trip per call for as long as the turn runs.
@@ -205,11 +221,11 @@ async def drive_turn(
     )
     # A turn may run as several segments: the initial model pass, then a continuation
     # for each batch of deferred calls a conversation grant auto-approves. They share
-    # ONE usage budget, ONE no-progress guard, and ONE usage accumulator, so the *whole*
-    # turn is bounded — a granted tool the model keeps re-calling can't reset the guards
-    # (or grow the call stack) by deferring on each hop; it trips the loop/usage stop.
+    # ONE no-progress guard and ONE usage accumulator, so a granted tool the model keeps
+    # re-calling can't reset the guard by deferring on each hop; it trips the loop stop.
     loop_breaker = LoopBreaker(repeat_threshold=settings.loop_repeat_threshold)
     usage = RunUsage()
+    open_tasks_raised = False
 
     def report_progress(history: list[ModelMessage]) -> None:
         # A live context/usage frame as each model response lands, so the operator's context
@@ -264,6 +280,7 @@ async def drive_turn(
     # for a reason folding cannot reach (one enormous tool result, an attachment that
     # doesn't fit), and re-folding would strip the thread's memory for nothing.
     compacted = False
+    transient_retries = 0
 
     while True:
         # Same cooperative-cancel check as `report_progress`, at the turn-segment
@@ -278,7 +295,7 @@ async def drive_turn(
                 deps=deps,
                 message_history=message_history,
                 deferred_tool_results=deferred_results,
-                usage_limits=limits,
+                usage_limits=UNBOUNDED,
                 usage=usage,
             ) as agent_run:
                 await stream_agent_run(
@@ -288,23 +305,15 @@ async def drive_turn(
                     loop_breaker=loop_breaker,
                     on_step=report_progress,
                     on_request_node=_inject_queued,
+                    first_token_timeout_s=settings.first_token_timeout_s,
                 )
                 result = agent_run.result
                 assert result is not None
-        except UsageLimitExceeded as exc:
-            # Hit a usage bound — stop and report state, don't error. The *same* sentence
-            # is both the toast and the persisted stop marker: a bare "usage limit reached"
-            # reads as a provider rate limit (the operator's first guess, and the wrong
-            # one), where this names the bound that actually tripped — one of this run's
-            # own local budgets.
-            detail = usage_limit_message(exc)
-            _ = run.emit(LimitNotice(limit=usage_limit_kind(exc), message=detail))
+        except FirstTokenTimeout as exc:
+            detail = f"stopped: {exc}"
+            _ = run.emit(LimitNotice(limit="time", message=detail))
             run.block(detail)
-            return TurnResult(
-                answer=None,
-                messages=_partial_history(),
-                blocked_reason=detail,
-            )
+            return TurnResult(answer=None, messages=_partial_history(), blocked_reason=detail)
         except LoopDetected as exc:
             # No-progress guard tripped — stop and report state, don't error.
             _ = run.emit(LimitNotice(limit="loop", message=str(exc)))
@@ -315,14 +324,14 @@ async def drive_turn(
                 messages=_partial_history(),
                 blocked_reason=detail,
             )
-        except ModelHTTPError as exc:
+        except (ModelAPIError, httpx.TransportError) as exc:
             # Context-window overflow. The request that overran is still the tail of the
             # partial history and would replay on every later turn, so this cannot simply
             # be reported: fold the thread once and re-send the same request against the
             # summary. If there is nothing to fold, folding is refused here, or the retry
             # overruns again, it is a definitive ceiling — stop and name it, rather than
             # papering over it by silently dropping content.
-            if is_context_overflow(exc):
+            if isinstance(exc, ModelHTTPError) and is_context_overflow(exc):
                 rebuilt = (
                     None
                     if compacted or correcting or compaction is None or turn_start is None
@@ -365,12 +374,40 @@ async def drive_turn(
                     messages=_partial_history(),
                     blocked_reason=detail,
                 )
-            # Rewrite a model-couldn't-load error into something the operator can act
-            # on; let every other HTTP error propagate with its own detail.
-            hint = model_load_hint(exc)
-            if hint is None:
+            # Rewrite a model-couldn't-load error into something the operator can act on.
+            hint = model_load_hint(exc) if isinstance(exc, ModelHTTPError) else None
+            if hint is not None:
+                raise ModelLoadError(hint) from exc
+            # A dropped connection, an overloaded server or a stream cut short is worth
+            # sending again from the last complete request, a couple of times, before
+            # the error propagates with its own detail.
+            resume = _resume_point(_partial_history()) if is_transient(exc) else None
+            if resume is None or transient_retries >= settings.auto_continue_transient_max:
                 raise
-            raise ModelLoadError(hint) from exc
+            transient_retries += 1
+            if run.step_text_chars or run.step_thinking_chars:
+                _ = run.emit(
+                    AnswerRetracted(
+                        text_chars=run.step_text_chars, thinking_chars=run.step_thinking_chars
+                    )
+                )
+                run.step_text_chars = run.step_thinking_chars = 0
+            _ = run.emit(
+                LimitNotice(
+                    limit="continue",
+                    message=(
+                        f"The model connection failed ({type(exc).__name__}); retrying "
+                        + f"({transient_retries} of {settings.auto_continue_transient_max})"
+                    ),
+                )
+            )
+            await asyncio.sleep(
+                TRANSIENT_BACKOFF_S[min(transient_retries, len(TRANSIENT_BACKOFF_S)) - 1]
+            )
+            prompt = None
+            message_history = resume
+            deferred_results = None
+            continue
 
         output = result.output
         messages = result.all_messages()
@@ -381,10 +418,19 @@ async def drive_turn(
         # a call awaiting an answer (`ask_user`). Both arrive on the same object, and
         # either one alone means there is more of this turn to run.
         if not (isinstance(output, DeferredToolRequests) and (output.approvals or output.calls)):
+            # About to stop with nothing else to take: an open task list gets one word first.
+            if (
+                not open_tasks_raised
+                and conversation_id is not None
+                and not run.messages.has_deliverable()
+            ):
+                open_tasks_raised = True
+                notice = await open_tasks_notice(caps, run.owner_id, conversation_id)
+                if notice is not None:
+                    _ = run.messages.enqueue(notice, source="system", notice="open-tasks")
             # The model finished, but something queued while it was working: instead of
             # ending the run, continue it with the queued text as the next user
-            # request(s) — same run id, same stream, same usage/loop budget (so a steady
-            # drip of messages still trips the turn's bounds rather than extending them).
+            # request(s) — same run id, same stream, same loop guard and timeouts.
             # `prompt=None` + a history ending in a user request is the same continuation
             # shape a regenerate uses.
             #
@@ -433,7 +479,6 @@ async def drive_turn(
                 notifications=caps.get_optional(NotificationService),
                 store=store,
                 conversation_id=conversation_id,
-                request_limit=request_limit,
                 binding=binding,
                 vision=vision,
                 # Carried so a resume can recover from an overflow the way this turn would

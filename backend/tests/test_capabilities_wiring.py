@@ -23,6 +23,7 @@ from pathlib import Path
 from routes.deps import app_state
 from services.plugins import PluginRuntime
 from services.sandbox import SandboxSessionManager
+from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
 from tests._helpers import client_app
 
@@ -36,6 +37,7 @@ _CONDITIONAL = {
     SandboxSessionManager,
     # Added only when the platform VM is enabled; tests run vm_enabled=False.
     ProjectCopies,
+    ThreadShells,
     PluginRuntime,
 }
 

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import cast, override
 
 import pytest
-from pydantic_ai import RunContext
+from pydantic_ai import BinaryContent, RunContext, ToolReturn
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.playwright import PlaywrightBrowserSession, PlaywrightBrowserToolset
@@ -32,7 +32,13 @@ from services.browser import session as session_module
 from services.browser.session import BrowserHost
 from tools import RunDeps
 from tools import browse as browse_module
-from tools.browse import TOOL_NAMES, BrowserToolset, browse_instructions, browse_toolset
+from tools.browse import (
+    TOOL_NAMES,
+    BrowserToolset,
+    browse_instructions,
+    browse_toolset,
+    with_screenshot_handle,
+)
 
 from ._json import obj, parse_json
 
@@ -505,6 +511,26 @@ async def test_a_new_session_gets_a_new_binding():
     after = await toolset.bind("navigate", _ctx(caps, "c1"))
 
     assert before is not after
+
+
+def test_a_screenshot_is_told_the_id_an_answer_embeds_it_by():
+    shot = ToolReturn(
+        return_value="Screenshot captured. URL: https://example.com",
+        content=[BinaryContent(data=b"png", media_type="image/png")],
+    )
+    told = with_screenshot_handle(shot, "call_7")
+    assert isinstance(told, ToolReturn)
+    assert isinstance(told.return_value, str)
+    assert told.return_value.startswith("Screenshot captured.")
+    assert "![what it shows](screenshot:call_7)" in told.return_value
+    assert told.content == shot.content
+
+
+def test_a_return_without_an_image_gets_no_handle():
+    refusal = "The screenshot is too large to return."
+    assert with_screenshot_handle(refusal, "call_7") == refusal
+    text_only = ToolReturn(return_value="nothing to see")
+    assert with_screenshot_handle(text_only, "call_7") is text_only
 
 
 @pytest.mark.parametrize("name", sorted(TOOL_NAMES))

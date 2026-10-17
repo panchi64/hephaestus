@@ -1,17 +1,16 @@
-"""The `shell` category — running commands in a project chat's folder.
+"""The `shell` category: running commands in the agent's home.
 
 Four tools: `run_command` (blocking), `start_command` / `check_command` / `stop_command`
 (background), so a dev server or a long test run is a process the agent checks on rather
-than a turn that blocks for ten minutes. Rebound per run to the project's folder, the
-same way `files` is. This file is the contract the model sees, and the one place that
-turns what the model *said* into where a command runs.
+than a turn that blocks for ten minutes. This file is the contract the model sees, and the
+one place that turns what the model *said* into where a command runs.
 
-**Commands run in the platform VM, not on the operator's machine.** The project folder is
-brought into the VM before each command and what it changed is brought back after
-(``services/sandbox/project_shell.py``, ``services/vm/project.py``): what git counts as
-the project crosses, ignored build output stays on its own side, and commits come back
-only as a fast-forward of the branch. A command cannot read the operator's home directory,
-their other projects, or anything else the folder does not hold.
+**Commands run in the platform VM, in the home** (``services/sandbox/home_shell.py``).
+The thread's scratch is always there; a project is brought in when the working directory
+is in it or the command names it, and what the command changed is brought back after. A
+project the thread may only read is mounted read-only. The working directory persists per
+thread (``services/sandbox/thread_shells.py``) and starts in the thread's own place: its
+project, or its scratch.
 
 **The executing tools take a `reach`.** The model states how far a command needs to go,
 and this file holds it to that:
@@ -20,7 +19,10 @@ and this file holds it to that:
 - `network` runs in the VM with the conversation's egress credentials, reaching the
   domains the operator has allowed (``services/egress.py``);
 - `host` runs on the operator's machine itself, unfenced, for a command that has to act
-  on that machine — which is what the approver was shown.
+  on that machine — which is what the approver was shown. It starts in the host folder of
+  the project the working directory is in, else in the host scratch directory. What it
+  changes there is not recorded for revert (``services/home/changes.py``): it writes the
+  folder directly rather than coming back through the VM.
 
 The same declaration is what the permission layer rules on
 (``services/permissions/judge.py``), so what a command was cleared for and where it runs
@@ -28,130 +30,78 @@ are one statement. A `workspace` declaration the command's own syntax contradict
 names a URL) was approved in the words it was read in, so it gets the network it plainly
 needs rather than failing.
 
-**Refused outside a project folder, and while the VM is down.** The enabled gate already
-hides these tools from sandbox chats (``services/workspace_kind.py``), but a filter is the
-wrong place for the only thing standing between a host command and a sandbox thread, so
-the check is here too. Without the VM there is nowhere to run a fenced command, and
-running one on the operator's machine instead is not something this tool will do.
-
-**What a command hands back says where it ran.** The result carries the `reach` the
-model declared, whether it ran `fenced` in the VM, and — when it ran on the host — why.
-Bringing the work back can have something to say too (commits on another branch, a
-rewritten branch); that goes on the result as `notes`.
+**Refused while the VM is down.** Without the VM there is nowhere to run a fenced
+command, and running one on the operator's machine instead is not something this tool
+will do.
 
 **Output streams while the command runs.** `run_command` passes a progress hook and each
-new piece of output goes out as `tool.progress`, so a ten-minute build reads as work
-rather than as a stall. Only the blocking tool streams: a background command is *already*
-the answer to "this takes too long to watch", and the agent reads it with
-`check_command`.
+new piece of output goes out as `tool.progress`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
 from typing import Literal
 
-from pydantic_ai import AbstractToolset, FunctionToolset, RunContext
+from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 
+from core.diagnostics import render_tool_error
 from runs import ToolProgress
-from services.egress import EgressPolicy
+from services.home.paths import HomePathError, Place, parse
+from services.home.table import RunHome
 from services.permissions import Reach, capability_of
-from services.sandbox.project_shell import ProjectShell
-from services.sandbox.session import proxy_env
-from services.sandbox.shell_runner import (
-    BackgroundStatus,
-    HostShell,
-    ProgressHook,
-    ShellResult,
-)
+from services.projects.worktree import WorktreeBusyError
+from services.sandbox import SandboxSessionManager
+from services.sandbox.host import host_scratch_dir
+from services.sandbox.session import SandboxSession
+from services.sandbox.shell_runner import BackgroundStatus, ProgressHook, ShellResult
+from services.sandbox.thread_shells import ThreadShell, ThreadShells
 from services.vm import DENIED_MARKER
 from services.vm.project import ProjectCopies
-from services.workspace import RunWorkspace
-from services.workspace_kind import is_project_folder
 
+from .briefing import with_brief_payload
 from .deps import RunDeps
 from .emit import RunEventEmitted
-from .rebound import WorkspaceToolset
-from .workspace import run_workspace
+from .home import change_log, resolve_run_home
+from .workspace import unavailable
 
 #: Long enough for a real build or test suite; short enough that a hung command doesn't
 #: hold the turn open indefinitely. The agent can pass its own timeout per call, and any
 #: genuinely long-running thing belongs in `start_command`.
-_TIMEOUT_S = 300.0
+SHELL_TIMEOUT_S = 300.0
 
-#: Effectively no cap. This codebase has one context reduction — conversation compaction,
-#: on measured pressure — and truncating a tool result is exactly what was torn out of
-#: `code_execute`. A pathological command's output is caught by the run's own
-#: context-overflow stop, which says so out loud rather than silently costing the model
-#: the middle of what it just asked for.
-_MAX_OUTPUT_CHARS = 2_000_000
+#: Effectively no cap: a pathological command's output is caught by the run's own
+#: context-overflow stop, which says so out loud rather than silently dropping the middle.
+SHELL_MAX_OUTPUT_CHARS = 2_000_000
 
 #: The two tools that execute something new. `check_command` and `stop_command` act on a
 #: process that was already approved into existence, so re-asking would be noise.
 EXECUTING_TOOLS = frozenset({"run_command", "start_command"})
 
-#: The same two, namespaced — the conditionally-gated names this category contributes to
-#: the approval-scope vocabulary. **This declaration is what makes the gate usable.** The
-#: raise below parks the run either way, but a name absent from `app.state.gated_tools`
-#: never reaches `tools/catalog.approval_scopes`, so the operator could not grant it for
-#: the conversation (nor pre-authorize it on a scheduled task) and would be asked again on
-#: every single command — which would make the approval gate the nuisance an allowlist was
-#: rejected for being.
+#: The same two, namespaced: the conditionally-gated names this category contributes to
+#: the approval-scope vocabulary. A name absent from `app.state.gated_tools` could not be
+#: granted for the conversation, so the operator would be asked on every command.
 GATED_TOOLS = frozenset(f"shell_{name}" for name in EXECUTING_TOOLS)
 
-#: The prefix `tools/toolsets.py` will put in front of these names. Spelled here because
-#: the capability extraction is keyed on the namespaced name and this file only ever sees
-#: the bare one.
+#: The prefix `tools/toolsets.py` puts in front of these names; the capability extraction
+#: is keyed on the namespaced name and this file only ever sees the bare one.
 _NAMESPACE = "shell_"
 
-#: A root no run will ever have. The template toolset exists to answer `get_tools`, which
-#: does not depend on where a command would run, and a plausible-looking path here would
-#: invite the assumption that it does.
-_TEMPLATE_ROOT = Path("/nonexistent-template-root")
 
-_WRONG_MODE = (
-    "Shell commands are only available in a conversation filed under a project, which "
-    "works in that project's folder. This conversation runs in the sandbox — use "
-    "`code_execute` instead."
-)
+def _no_vm(reason: str) -> str:
+    return render_tool_error(
+        f"shell commands are unavailable: the platform VM they run in is not running ({reason})",
+        hints=[
+            "tell the operator; until it is back, work by reading and editing files with "
+            + "the `files_*` tools, and say plainly what you could not verify"
+        ],
+    )
 
-_NO_VM = (
-    "Shell commands are unavailable: the platform VM they run in is not running ({reason}). "
-    "Commands in a project chat run in the VM, and running one on the operator's machine "
-    "instead is not something this tool will do. Tell the operator; until it is back, "
-    "work by reading and editing files rather than by running commands, and say plainly "
-    "what you could not verify."
-)
 
 #: How long the first command of a session waits for a VM that is still starting.
 _VM_WAIT_S = 120.0
-
-
-async def _guard(name: str, ctx: RunContext[RunDeps], workspace: RunWorkspace) -> str | None:
-    """Refuse outside a project folder or without the VM; otherwise pause for approval on
-    the first command.
-
-    Both refusals are plain strings rather than `ModelRetry`: neither is something the
-    model can fix by rephrasing, and handing it a retry would only buy a loop.
-    `tool_call_approved` is set on the re-invocation after an approval, so the raise below
-    fires once and then lets the command run — and a conversation-scoped grant means the
-    operator is asked once per thread, not once per command.
-    """
-    if not is_project_folder(ctx.deps.workspace_kind) or workspace.kind == "sandbox":
-        return _WRONG_MODE
-    copies = ctx.deps.caps.get_optional(ProjectCopies)
-    if copies is None:
-        return _NO_VM.format(reason="it is disabled")
-    vm = copies.vm
-    if not vm.available and not await vm.wait_ready(_VM_WAIT_S):
-        return _NO_VM.format(reason=vm.failure or "it is still starting")
-    approved = ctx.tool_call_approved or ctx.deps.delegated_approved
-    if name in EXECUTING_TOOLS and not approved:
-        raise ApprovalRequired()
-    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +123,7 @@ class _Boundary:
 _HOST_DECLARED = "the command declared `host`, which asks for the operator's machine itself"
 
 
-def boundary(name: str, command: str, reach: Reach, workspace: RunWorkspace) -> _Boundary:
+def boundary(name: str, command: str, reach: Reach, home: RunHome, cwd: str) -> _Boundary:
     """Where this command runs, built from the declaration rather than from a judgement:
     the permission layer answers *who must approve*, and this answers *where it runs*.
 
@@ -185,24 +135,10 @@ def boundary(name: str, command: str, reach: Reach, workspace: RunWorkspace) -> 
     network = reach == "network"
     if not network:
         capability = capability_of(
-            f"{_NAMESPACE}{name}", {"command": command, "reach": reach}, root=workspace.root
+            f"{_NAMESPACE}{name}", {"command": command, "reach": reach}, root=home.fence(cwd)
         )
         network = capability.network
     return _Boundary(reach=reach, where="vm", network=network, reason=None)
-
-
-async def _vm_env(ctx: RunContext[RunDeps], boundary: _Boundary) -> dict[str, str]:
-    """The environment a VM command runs with: a scratch `HOME` outside the project, and
-    the conversation's egress credentials when it may reach the network."""
-    env = {"HOME": "/tmp", "GIT_PAGER": "cat", "PAGER": "cat"}
-    if not boundary.network:
-        return env
-    policy = ctx.deps.caps.get_optional(EgressPolicy)
-    copies = ctx.deps.caps.get_optional(ProjectCopies)
-    if policy is None or copies is None:
-        return env
-    allow_dir = await policy.materialise(ctx.deps.workspace_key)
-    return {**env, **proxy_env(copies.vm.gateway.credentials_for(allow_dir))}
 
 
 def _vm_note(boundary: _Boundary, result: ShellResult) -> str | None:
@@ -220,19 +156,19 @@ def _vm_note(boundary: _Boundary, result: ShellResult) -> str | None:
             "This command declared `workspace`, which has no network. Declare `network` "
             "to reach the domains the operator has allowed."
         )
+    if "Read-only file system" in text:
+        return (
+            "A project you may only read is mounted read-only. To change it, edit the file "
+            "with the `files_*` tools, which ask the operator once and then let this thread "
+            "write that project, and run the command again."
+        )
     return None
 
 
 def _progress_hook(ctx: RunContext[RunDeps]) -> ProgressHook | None:
-    """Put this command's output on the operator's stream as it arrives, or None.
-
-    None where there is no call to attribute a frame to — a tool driven outside a run, in
-    a test or a direct call. `tool.progress` is the frame a cold sandbox start already
-    uses, so there is nothing new on the wire: what is new is that a `partial` can now
-    arrive many times for one call, each carrying the *next* piece of output rather than
-    the whole of it so far. A reader appends; the completed result is still the record,
-    and is what a reload reads.
-    """
+    """Put this command's output on the operator's stream as it arrives, or None where
+    there is no call to attribute a frame to. Each frame carries the *next* piece of
+    output; the completed result is still the record a reload reads."""
     tool_call_id = ctx.tool_call_id
     if not tool_call_id:
         return None
@@ -248,14 +184,15 @@ def _progress_hook(ctx: RunContext[RunDeps]) -> ProgressHook | None:
 
 
 def _run_payload(
-    result: ShellResult, boundary: _Boundary, timeout_s: float, notes: tuple[str, ...] = ()
+    result: ShellResult,
+    boundary: _Boundary,
+    timeout_s: float,
+    *,
+    cwd: str,
+    notes: tuple[str, ...] = (),
 ) -> dict[str, object]:
-    """One finished command, as the model and the operator's terminal both read it.
-
-    The optional keys are **absent rather than null** when they say nothing, the same way
-    `code_execute`'s result omits its failure hint on success: a key whose presence is the
-    fact is easier to read than a null a reader has to know the meaning of.
-    """
+    """One finished command, as the model and the operator's terminal both read it. The
+    optional keys are absent rather than null when they say nothing."""
     payload: dict[str, object] = {
         "ok": result.ok,
         "exit_code": result.exit_code,
@@ -263,6 +200,7 @@ def _run_payload(
         "stderr": result.stderr,
         "timed_out": result.timed_out,
         "duration_ms": result.duration_ms,
+        "cwd": cwd,
         **_boundary_fields(boundary),
     }
     note = _vm_note(boundary, result)
@@ -281,8 +219,7 @@ def _run_payload(
 
 
 def _boundary_fields(boundary: _Boundary) -> dict[str, object]:
-    """The declaration and the fence's verdict, as the two keys every executing tool
-    carries — at every permission level, which is the whole point of them being here."""
+    """The declaration and the fence's verdict, which every executing tool carries."""
     fields: dict[str, object] = {"reach": boundary.reach, "fenced": boundary.fenced}
     if boundary.reason is not None:
         fields["unfenced_reason"] = boundary.reason
@@ -290,9 +227,8 @@ def _boundary_fields(boundary: _Boundary) -> dict[str, object]:
 
 
 def _background_payload(status: BackgroundStatus) -> dict[str, object]:
-    """A background command as it stands. ``ok`` reads the same way it does everywhere
-    else here — nothing went wrong — so a process still running is fine, and one that has
-    exited non-zero is not."""
+    """A background command as it stands; ``ok`` means nothing went wrong, so a process
+    still running is fine and one that exited non-zero is not."""
     return {
         "ok": status.exit_code in (None, 0),
         "command_id": status.command_id,
@@ -314,23 +250,69 @@ def _unknown_command(command_id: str) -> dict[str, object]:
     }
 
 
-def _tools_for(project: ProjectShell, host: HostShell) -> FunctionToolset[RunDeps]:
-    """The four tools, over one folder's VM shell and its host shell."""
+def _host_root(home: RunHome, cwd: str) -> Path:
+    """Where a host command starts: the host folder of the project or worktree the
+    working directory is in, else the host scratch directory."""
+    try:
+        target = parse(cwd)
+    except HomePathError:
+        return host_scratch_dir()
+    mount = home.mount(target.place)
+    if mount is None or target.place.kind not in ("projects", "worktrees"):
+        return host_scratch_dir()
+    return mount.root / target.rel if target.rel else mount.root
+
+
+def _touched(state: _Ready, command: str, bound: _Boundary, cwd: str) -> list[Place]:
+    """The projects and worktrees a command works in: the ones the VM binds for it, or the
+    one a host command starts in."""
+    if bound.fenced:
+        reached = state.shell.home.reached(command, state.home.mounts, network=bound.network)
+        return [mount.place for mount in reached]
+    try:
+        return [parse(cwd).place]
+    except HomePathError:
+        return []
+
+
+@dataclass(frozen=True, slots=True)
+class _Ready:
+    home: RunHome
+    session: SandboxSession
+    copies: ProjectCopies
+    shell: ThreadShell
+
+
+async def _ready(ctx: RunContext[RunDeps], name: str) -> _Ready | str:
+    """The run's home, its scratch session, the VM's copies and the thread's shell, or why
+    there are none. An executing call asks for approval once all of those are there."""
+    copies = ctx.deps.caps.get_optional(ProjectCopies)
+    shells = ctx.deps.caps.get_optional(ThreadShells)
+    if copies is None or shells is None:
+        return _no_vm("it is disabled")
+    vm = copies.vm
+    if not vm.available and not await vm.wait_ready(_VM_WAIT_S):
+        return _no_vm(vm.failure or "it is still starting")
+    try:
+        home = await resolve_run_home(ctx.deps)
+    except WorktreeBusyError as exc:
+        return str(exc)
+    sessions = ctx.deps.caps.get_optional(SandboxSessionManager)
+    session = sessions.existing(ctx.deps.scratch_key) if sessions is not None else None
+    if home is None or session is None:
+        return unavailable(ctx.deps)
+    approved = ctx.tool_call_approved or ctx.deps.delegated_approved
+    if name in EXECUTING_TOOLS and not approved:
+        raise ApprovalRequired()
+    shell = shells.get(ctx.deps.workspace_key, start=home.default.path)
+    shell.home.stand_within({m.place for m in home.mounts}, home.default.path)
+    return _Ready(home=home, session=session, copies=copies, shell=shell)
+
+
+def shell_toolset() -> FunctionToolset[RunDeps]:
+    """The `shell` category, built once at app assembly. Each thread's working directory
+    and background commands live in the app's :class:`ThreadShells`."""
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
-
-    async def boundary_for(
-        ctx: RunContext[RunDeps], name: str, command: str, reach: Reach
-    ) -> _Boundary:
-        workspace = await run_workspace(ctx)
-        if workspace is None:  # pragma: no cover — `bind` refuses this before we get here
-            return _Boundary(reach=reach, where="vm", network=False, reason=None)
-        return boundary(name, command, reach, workspace)
-
-    def copies_of(ctx: RunContext[RunDeps]) -> ProjectCopies:
-        copies = ctx.deps.caps.get_optional(ProjectCopies)
-        if copies is None:  # pragma: no cover — the guard refuses this before we get here
-            raise RuntimeError("the project shell has no platform VM")
-        return copies
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
     async def run_command(
@@ -338,144 +320,151 @@ def _tools_for(project: ProjectShell, host: HostShell) -> FunctionToolset[RunDep
         command: str,
         reach: Reach = "workspace",
         timeout_seconds: float | None = None,
-    ) -> dict[str, object]:
-        """Execute a shell command in the project's folder and return its output.
+    ) -> dict[str, object] | str:
+        """Runs a shell command in your home and waits for it to finish. Use it for builds,
+        tests, git, package installs and anything else a terminal does. Read, search and
+        edit files with the `files_*` tools rather than `cat`, `grep` or `sed`, because
+        their edits are checked against the file's current contents.
+
+        Your home holds `~/scratch`, which is yours, and `~/projects/<name>` for each of
+        the operator's projects. A command starts where the last one left off, so `cd`
+        carries over between calls. Output streams to the operator while it runs.
+
+        The call blocks until the command exits or its timeout passes, 300 seconds by
+        default. Start a server, a watcher or anything that runs until stopped with
+        `shell_start_command` instead, because here it would hold the turn until the
+        timeout kills it.
+
+        Returns `ok`, `exit_code` (null after a timeout), `stdout`, `stderr`, `timed_out`,
+        `duration_ms`, the `cwd` the next command starts in, the `reach` you declared and
+        whether it ran `fenced` in the VM. A `fence_note` explains a refusal by the fence,
+        such as a blocked host or a read-only project; act on it rather than retrying the
+        same command. `notes` reports what happened when your changes were copied back.
 
         Args:
-            command: The shell command to run.
-            reach: How far this command needs to go. `workspace` runs it in your VM's copy
-                of the project with no network — the right answer for builds, tests, git and
-                anything reading or writing the project. `network` additionally reaches the
-                domains the operator has permitted, for installing dependencies. `host` runs
-                it on the operator's machine itself, for a command that has to act on that
-                machine. Files you change come back to the project after every command;
-                ignored paths (dependencies, build output) stay in the VM.
-            timeout_seconds: Maximum seconds to wait (default: 300).
-
-        Returns:
-            `ok`, `exit_code` (null if it timed out), `stdout`, `stderr`, `timed_out`,
-            `duration_ms`, the `reach` you declared, whether it ran `fenced` in the VM,
-            and any `notes` from bringing its work back.
+            command: The command, as you would type it in bash.
+            reach: How far the command needs to go. `workspace` runs it in your VM with
+                no network: builds, tests, git and anything that reads or writes files.
+                `network` adds the domains the operator has allowed, for installs and
+                fetches. `host` runs it unfenced on the operator's own machine, starting
+                in the project's folder there; use it only when the command has to act on
+                that machine, and know that its changes cannot be reverted.
+            timeout_seconds: Seconds to wait before the command is killed. Default 300.
         """
-        boundary = await boundary_for(ctx, "run_command", command, reach)
-        timeout = timeout_seconds if timeout_seconds is not None else _TIMEOUT_S
-        if not boundary.fenced:
-            result = await host.run(
+        state = await _ready(ctx, "run_command")
+        if isinstance(state, str):
+            return state
+        shell = state.shell
+        cwd = shell.home.cwd
+        bound = boundary("run_command", command, reach, state.home, cwd)
+        touched = _touched(state, command, bound, cwd)
+        timeout = timeout_seconds if timeout_seconds is not None else SHELL_TIMEOUT_S
+        if not bound.fenced:
+            result = await shell.host_at(_host_root(state.home, cwd)).run(
+                command, timeout_seconds=timeout_seconds, on_progress=_progress_hook(ctx)
+            )
+            payload = _run_payload(result, bound, timeout, cwd=cwd)
+        else:
+            done = await shell.home.run(
+                state.session,
+                state.copies,
                 command,
+                mounts=state.home.mounts,
+                network=bound.network,
                 timeout_seconds=timeout_seconds,
                 on_progress=_progress_hook(ctx),
+                changes=change_log(ctx.deps),
             )
-            return _run_payload(result, boundary, timeout)
-        done = await project.run(
-            copies_of(ctx),
-            command,
-            env=await _vm_env(ctx, boundary),
-            timeout_seconds=timeout_seconds,
-            on_progress=_progress_hook(ctx),
-        )
-        return _run_payload(done.result, boundary, timeout, done.notes)
+            payload = _run_payload(done.result, bound, timeout, cwd=done.cwd, notes=done.notes)
+        return await with_brief_payload(ctx, state.home, touched, payload)
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
     async def start_command(
         ctx: RunContext[RunDeps], command: str, reach: Reach = "workspace"
-    ) -> dict[str, object]:
-        """Start a long-running command in the background (e.g. a server or watcher).
+    ) -> dict[str, object] | str:
+        """Starts a command in the background and returns at once. Use it for a dev
+        server, a watcher, or a build or test run long enough that you want to keep
+        working while it goes; use `shell_run_command` for anything that finishes on its
+        own within a few minutes.
 
-        Callers MUST call `stop_command(command_id)` when done to terminate the
-        process and clean up temporary output files.
+        Check on it with `shell_check_command`, and stop it with `shell_stop_command`
+        once you are done with it, because it keeps running, and keeps its output files,
+        until it is stopped. To show the operator a web server you started for them, use
+        `view_show` with `serve` instead, which runs it where they can open it.
+
+        Returns the `command_id` that the other two tools take, the `command`, and the
+        `reach` and `fenced` pair every executing call carries.
 
         Args:
-            command: The shell command to run in the background.
-            reach: How far this command needs to go — the same three answers
-                `run_command` takes, enforced the same way.
-
-        Returns:
-            `command_id` for later check/stop calls, the `command` itself, and the same
-            `reach` / `fenced` pair every executing call carries.
+            command: The command, as you would type it in bash.
+            reach: How far the command needs to go: `workspace`, `network` or `host`,
+                meaning what they mean for `shell_run_command`.
         """
-        boundary = await boundary_for(ctx, "start_command", command, reach)
-        if boundary.fenced:
-            command_id = await project.start(
-                copies_of(ctx), command, env=await _vm_env(ctx, boundary)
+        state = await _ready(ctx, "start_command")
+        if isinstance(state, str):
+            return state
+        shell = state.shell
+        cwd = shell.home.cwd
+        bound = boundary("start_command", command, reach, state.home, cwd)
+        touched = _touched(state, command, bound, cwd)
+        if bound.fenced:
+            command_id = await shell.home.start(
+                state.session,
+                state.copies,
+                command,
+                mounts=state.home.mounts,
+                network=bound.network,
+                changes=change_log(ctx.deps),
             )
         else:
-            command_id = await host.start(command)
-        return {
+            command_id = await shell.host_at(_host_root(state.home, cwd)).start(command)
+        payload: dict[str, object] = {
             "ok": True,
             "command_id": command_id,
             "command": command,
-            **_boundary_fields(boundary),
+            **_boundary_fields(bound),
         }
+        return await with_brief_payload(ctx, state.home, touched, payload)
 
-    @toolset.tool
-    async def check_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object]:
-        """Check the status and recent output of a background command.
-
-        Args:
-            command_id: The ID returned by start_command.
-
-        Returns:
-            `status` (`running` or `finished`), `exit_code` once it has one, and
-            everything it has printed so far in `stdout` / `stderr`.
-        """
-        status = await project.check(copies_of(ctx), command_id) or await host.check(command_id)
+    async def _find(
+        ctx: RunContext[RunDeps], command_id: str, *, stop: bool
+    ) -> dict[str, object] | str:
+        state = await _ready(ctx, "stop_command" if stop else "check_command")
+        if isinstance(state, str):
+            return state
+        shell = state.shell
+        act = shell.home.stop if stop else shell.home.check
+        status = await act(state.copies, command_id)
+        for host in shell.hosts.values():
+            if status is None:
+                status = await (host.stop if stop else host.check)(command_id)
         return _unknown_command(command_id) if status is None else _background_payload(status)
 
     @toolset.tool
-    async def stop_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object]:
-        """Stop a background command and return its final output.
+    async def check_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object] | str:
+        """Returns where a background command stands: `status` (`running` or `finished`),
+        `exit_code` once it has one, and everything it has printed so far in `stdout` and
+        `stderr`.
+
+        Use it to wait for a server to come up or a long run to finish. Between checks,
+        get on with other work rather than calling this again straight away.
 
         Args:
-            command_id: The ID returned by start_command.
-
-        Returns:
-            `status` of `stopped`, the final `exit_code` where it had one, and everything
-            the command printed.
+            command_id: The `command_id` that `shell_start_command` returned.
         """
-        status = await project.stop(copies_of(ctx), command_id) or await host.stop(command_id)
-        return _unknown_command(command_id) if status is None else _background_payload(status)
+        return await _find(ctx, command_id, stop=False)
+
+    @toolset.tool
+    async def stop_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object] | str:
+        """Stops a background command and returns everything it printed, with its final
+        `exit_code` where it had one.
+
+        Stop each command you started once you no longer need it, including before you
+        end a task, so nothing keeps running unnoticed.
+
+        Args:
+            command_id: The `command_id` that `shell_start_command` returned.
+        """
+        return await _find(ctx, command_id, stop=True)
 
     return toolset
-
-
-@dataclass(frozen=True, slots=True)
-class BoundShell:
-    """One folder's two shells, for the caller that owns their lifetime."""
-
-    project: ProjectShell
-    host: HostShell
-
-    async def shutdown(self, copies: ProjectCopies | None) -> None:
-        if copies is not None:
-            await self.project.shutdown(copies)
-        await self.host.shutdown()
-
-
-def _toolset_for(
-    root: Path,
-    *,
-    shells: list[BoundShell] | None = None,
-) -> AbstractToolset[RunDeps]:
-    bound = BoundShell(
-        project=ProjectShell(root, default_timeout=_TIMEOUT_S, max_output_chars=_MAX_OUTPUT_CHARS),
-        host=HostShell(
-            root,
-            default_timeout=_TIMEOUT_S,
-            max_output_chars=_MAX_OUTPUT_CHARS,
-        ),
-    )
-    if shells is not None:
-        shells.append(bound)
-    return _tools_for(bound.project, bound.host)
-
-
-def shell_toolset(*, shells: list[BoundShell] | None = None) -> AbstractToolset[RunDeps]:
-    """The `shell` category, built once per turn and rebound per run's project folder.
-
-    ``shells`` collects every shell this toolset binds, for the one caller that owns their
-    lifetime: a conversation's shell outlives its turns on purpose and is stopped through
-    `stop_command`, while a run whose workspace is taken away when it ends — an isolated
-    sub-agent's fork — has to have what it left running reaped with it.
-    """
-    build = partial(_toolset_for, shells=shells)
-    return WorkspaceToolset("shell", build(_TEMPLATE_ROOT), build, guard=_guard)

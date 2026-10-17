@@ -23,9 +23,9 @@ answerable from three facts it can actually establish:
   could not be read at all;
 - **a declared reach** — ``workspace``, ``network`` or ``host``, stated by the model on the
   call itself (:data:`~services.permissions.capability.Reach`);
-- **a fence** — whether a process can actually be *held* to that reach: a project command
-  runs in the platform VM against a copy of the project (``services/sandbox/project_shell.py``),
-  with no network unless it declared one.
+- **a fence** — whether a process can actually be *held* to that reach: a shell command
+  runs in the platform VM in the agent's home (``services/sandbox/home_shell.py``), with
+  no network unless it declared one.
 
 The declaration is what makes the structure decidable and the fence is what holds a command
 to most of it: a command declaring ``workspace`` runs in the VM with no network, so an
@@ -137,10 +137,13 @@ def judge(capability: Capability, *, fenced: bool) -> Judgement:
         # and no rule about arguments took part in, and the row should not let that pass
         # for the same kind of answer a command gets.
         return Judgement(True, "classified read, cleared at Auto with no review", tier="read")
-    if capability.sandboxed and not capability.network:
+    if capability.sandboxed and not capability.network and (
+        fenced or capability.kind is not ActionKind.SHELL
+    ):
         # The sandbox is the fence: no host filesystem, no egress, and outputs that come
         # back explicitly. Reading the program would add nothing, which is why this is the
-        # one branch that clears something the extraction could not bound.
+        # one branch that clears something the extraction could not bound. A shell command
+        # is held there only by the VM, so it needs the fence up.
         return Judgement(True, "runs offline in the conversation's own sandbox", tier="sandbox")
     if capability.unbounded:
         return Judgement(False, capability.unbounded[0])
@@ -167,10 +170,10 @@ def _shell_judgement(capability: Capability, *, fenced: bool) -> Judgement:
     """
     reach = capability.reach
     if reach is None:
-        # A shell-shaped call from a tool with no `reach` argument — a `bash` `code_execute`
-        # that asked for the network, today. Nothing was declared, so there is no
-        # declaration to check the structure against and no tier to build a fence from;
-        # saying it declared `host` would be this stage inventing the model's words.
+        # A shell-shaped call from a tool with no `reach` argument. Nothing was declared, so
+        # there is no declaration to check the structure against and no tier to build a
+        # fence from; saying it declared `host` would be this stage inventing the model's
+        # words.
         return Judgement(False, "declares no reach, so there is nothing here to hold it to")
     if reach == "host":
         return Judgement(

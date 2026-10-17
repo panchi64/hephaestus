@@ -67,7 +67,7 @@ class DegradedEmbedder(Embedder):
         raise DegradedCapabilityError("no embedding endpoint configured")
 
 
-def _store(embedder: Embedder) -> tuple[Engine, Vault, MemoryStore]:
+def memory_store(embedder: Embedder) -> tuple[Engine, Vault, MemoryStore]:
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)
     vault = Vault(Path(tempfile.mkdtemp()) / "keyfile.json")
@@ -75,7 +75,7 @@ def _store(embedder: Embedder) -> tuple[Engine, Vault, MemoryStore]:
 
 
 async def _setup(embedder: Embedder) -> MemoryStore:
-    _engine, vault, store = _store(embedder)
+    _engine, vault, store = memory_store(embedder)
     await vault.setup("pw")
     return store
 
@@ -119,15 +119,30 @@ async def test_recall_degrades_to_keyword_without_embeddings():
     assert all(not v.has_embedding for v in views)
 
 
-async def test_pinned_memory_always_recalled():
+async def test_recall_does_not_append_pinned_memories():
+    # Pins reach the agent through the catalog instruction, so recall ranks them like
+    # any other memory rather than tacking every one onto every result.
     store = await _setup(FakeEmbedder())
     _ = await store.remember(OWNER, "unrelated note about a dog", pinned=True)
     _ = await store.remember(OWNER, "a memory about a car")
 
     hits = await store.recall(OWNER, "automobile", limit=5)
-    contents = [h.memory.content for h in hits]
-    assert any("dog" in c for c in contents)  # pinned, despite no relevance
-    assert any(h.matched_by == "pinned" for h in hits)
+    assert [h.memory.content for h in hits] == ["a memory about a car"]
+
+
+async def test_description_falls_back_to_the_first_line():
+    store = await _setup(FakeEmbedder())
+    long_line = "x" * 120
+    bare = await store.remember(OWNER, f"\n{long_line}\nsecond line")
+    assert bare.description == "x" * 80
+
+    described = await store.remember(OWNER, "body", description="  How to  address them ")
+    assert described.description == "How to address them"
+
+    cleared = await store.update(OWNER, described.id, description="")
+    assert cleared.description == "body"
+    renamed = await store.update(OWNER, described.id, description="Form of address")
+    assert (await store.get(OWNER, renamed.id)).description == "Form of address"
 
 
 async def test_embedding_model_change_is_segregated():
@@ -178,7 +193,7 @@ async def test_crud_and_timeline_order():
 
 
 async def test_content_and_vector_encrypted_at_rest():
-    engine, vault, store = _store(FakeEmbedder())
+    engine, vault, store = memory_store(FakeEmbedder())
     await vault.setup("pw")
     _ = await store.remember(OWNER, "cat secret")
 
@@ -217,10 +232,13 @@ async def test_memory_rest_crud_and_keyword_recall():
     # No embedding endpoint is configured in the booted app, so recall exercises
     # the keyword-fallback path end to end over HTTP.
     async with client_app() as (client, _app):
-        created = await client.post("/memory", json={"content": "my gate code is 4455"})
+        created = await client.post(
+            "/memory", json={"content": "my gate code is 4455", "description": "Gate code"}
+        )
         assert created.status_code == 201
         body = json_body(created)
         assert body["content"] == "my gate code is 4455"
+        assert body["description"] == "Gate code"
         assert body["has_embedding"] is False  # degraded embedder, no vector
         memory_id = body["id"]
 
@@ -232,8 +250,11 @@ async def test_memory_rest_crud_and_keyword_recall():
         hits = json_list(recall)
         assert hits and obj(hits[0])["matched_by"] == "keyword"
 
-        patched = await client.patch(f"/memory/{memory_id}", json={"pinned": True})
+        patched = await client.patch(
+            f"/memory/{memory_id}", json={"pinned": True, "description": "The gate"}
+        )
         assert json_body(patched)["pinned"] is True
+        assert json_body(patched)["description"] == "The gate"
 
         deleted = await client.delete(f"/memory/{memory_id}")
         assert deleted.status_code == 204
@@ -265,7 +286,8 @@ async def test_agent_memory_tool_reaches_the_store():
     # so the turn drives both through to the store without an approval anywhere.
     orch = build_chat_orchestrator(
         "note something",
-        model=TestModel(custom_output_text="done"),
+        # `open` and `update` need a real id; TestModel's placeholder would retry forever.
+        model=TestModel(custom_output_text="done", call_tools=["memory_remember", "memory_recall"]),
         categories={"memory": memory_toolset()},
         capabilities=ServiceContainer.of(store),
         conversation_id="c",
@@ -273,5 +295,5 @@ async def test_agent_memory_tool_reaches_the_store():
     run = RunRegistry().submit(kind="chat", owner_id=OWNER, orchestrator=orch)
     await run.wait()
 
-    assert run.status is RunStatus.done
+    assert run.status is RunStatus.done, run.detail
     assert await store.list_memories(OWNER), "the remember tool should have stored a memory"

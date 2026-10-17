@@ -25,10 +25,9 @@ run path can apply one source and silently drop the others. Every site that fill
 ``RunDeps.disabled_tools`` calls it — the live chat turn, the approval-resume path, and
 the scheduler's unattended task executor.
 
-**The permission level and the workspace kind are deliberately not among them**, though
-both withhold too (:func:`permission_disabled_tools`, Plan only, and
-``services/workspace_kind.workspace_disabled_tools``). They are applied *live*, at the
-enabled gate, because unlike the five above they can **move inside a turn**:
+**The permission level is deliberately not among them**, though it withholds too
+(:func:`permission_disabled_tools`, Plan only). It is applied *live*, at the enabled gate,
+because unlike the five above it can **move inside a turn**:
 ``tools/plan.py`` narrows a thread to Plan and an approved plan widens it again, both
 taking effect on the next model request. A union cannot be undone — nothing in a set of
 names records *which* source put each one there — so a level folded in here could be added

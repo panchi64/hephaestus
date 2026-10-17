@@ -22,12 +22,18 @@ import type {
   AssistantBlock,
   ChatMessage,
   Citation,
+  ContentPart,
   ToolImage,
   ToolInvocation,
 } from "../model";
 import { isTerminalTool, toolEntry } from "../toolPresentation";
 import { placeToolCall } from "../toolTree";
-import type { MessageDTO, ToolCallDTO, ToolImageDTO } from "./wire";
+import type {
+  ContentPartDTO,
+  MessageDTO,
+  ToolCallDTO,
+  ToolImageDTO,
+} from "./wire";
 import { citationsFromToolResult } from "./citations";
 import { commandBoundary, toHostCommand } from "./hostCommands";
 import { toVersionChipBlock } from "./viewSnapshots";
@@ -88,6 +94,20 @@ export function startedTool(
   };
 }
 
+/** The wire's typed parts as the model's, or undefined when there are none — the same
+ *  mapping for a live `tool.completed`, a persisted call and a user turn. */
+export function toContentParts(
+  parts: ContentPartDTO[] | null | undefined,
+): ContentPart[] | undefined {
+  if (!parts?.length) return undefined;
+  return parts.map((p) => ({
+    kind: p.kind,
+    text: p.text,
+    source: p.source ?? undefined,
+    path: p.path ?? undefined,
+  }));
+}
+
 export function toTool(dto: ToolCallDTO): ToolInvocation {
   return {
     ...startedTool(dto.id, dto.name, dto.args),
@@ -99,7 +119,9 @@ export function toTool(dto: ToolCallDTO): ToolInvocation {
         ? describeToolResult(dto.name, dto.result)
         : undefined,
     result: stringifyResult(dto.result),
+    resultParts: toContentParts(dto.result_parts),
     error: dto.error ?? undefined,
+    platform: dto.platform || undefined,
     images: toolImages(dto.images),
     // A backgrounded command is still a command run on the operator's machine, and it
     // renders as an ordinary card rather than as a terminal — so this is the only place
@@ -125,7 +147,10 @@ export function toMessage(dto: MessageDTO): ChatMessage {
     id: dto.id,
     role: dto.role,
     author: dto.author ?? undefined,
+    reporter: dto.reporter ?? undefined,
     content: dto.content,
+    parts: toContentParts(dto.parts),
+    notice: dto.notice ?? undefined,
     createdAt: dto.created_at ?? new Date().toISOString(),
     versionIndex: dto.version_index,
     versionCount: dto.version_count,

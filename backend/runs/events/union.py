@@ -27,6 +27,7 @@ from .conversation import (
 )
 from .lifecycle import (
     AnswerDelta,
+    AnswerRetracted,
     LimitNotice,
     RunEnded,
     RunError,
@@ -37,6 +38,7 @@ from .lifecycle import (
     ThinkingDelta,
 )
 from .messages import (
+    InboxWaiting,
     MessageEdited,
     MessageHeld,
     MessageInjected,
@@ -67,6 +69,7 @@ EventBody = Annotated[
     | StepCompleted
     | ThinkingDelta
     | AnswerDelta
+    | AnswerRetracted
     | ToolStarted
     | ToolProgress
     | ToolCompleted
@@ -91,6 +94,7 @@ EventBody = Annotated[
     | MessageWithdrawn
     | MessageHeld
     | MessageInjected
+    | InboxWaiting
     | TasksUpdated
     | PlanUpdated
     | PermissionChanged

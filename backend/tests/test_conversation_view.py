@@ -22,7 +22,10 @@ from pydantic_ai import (
     UserPromptPart,
 )
 
+from core.envelopes import ContentPart
+from core.untrusted import wrap_untrusted
 from services.conversation_view import MAX_TOOL_IMAGE_BYTES, project_tree, tool_images
+from services.notices import notice_envelope
 
 PNG = BinaryContent(data=b"\x89PNG-pretend", media_type="image/png")
 
@@ -199,3 +202,54 @@ def test_an_empty_passage_does_not_split_its_neighbours():
         ]
     )
     assert [(s.kind, s.text) for s in views[1].segments] == [("thinking", "ab")]
+
+
+def test_tool_result_with_an_envelope_carries_parts() -> None:
+    nodes: list[tuple[str, ModelMessage]] = [
+        ("n0", ModelRequest(parts=[UserPromptPart(content="fetch")])),
+        (
+            "n1",
+            ModelResponse(parts=[ToolCallPart(tool_name="web_fetch", args={}, tool_call_id="c1")]),
+        ),
+        (
+            "n2",
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name="web_fetch",
+                        content=wrap_untrusted("hello", source="https://x.test"),
+                        tool_call_id="c1",
+                    )
+                ]
+            ),
+        ),
+    ]
+    tool = project_tree(nodes)[1].tools[0]
+    assert tool.result_parts == [
+        ContentPart(kind="untrusted", text="hello", source="https://x.test")
+    ]
+
+
+def test_user_turn_with_a_fence_splits_into_parts() -> None:
+    text = f"read this\n\n{wrap_untrusted('file text', source='a.txt')}"
+    view = project_tree([("n0", ModelRequest(parts=[UserPromptPart(content=text)]))])[0]
+    assert view.role == "user"
+    assert view.content == "read this"
+    assert view.parts == [ContentPart(kind="untrusted", text="file text", source="a.txt")]
+
+
+def test_plain_user_turn_has_no_parts() -> None:
+    view = project_tree([("n0", ModelRequest(parts=[UserPromptPart(content="hi")]))])[0]
+    assert view.parts is None
+
+
+def test_notice_request_is_its_own_row() -> None:
+    nodes: list[tuple[str, ModelMessage]] = [
+        ("n0", ModelRequest(parts=[UserPromptPart(content="go")])),
+        ("n1", ModelResponse(parts=[TextPart(content="done")])),
+        ("n2", ModelRequest(parts=[UserPromptPart(content=notice_envelope("open-tasks", "two"))])),
+    ]
+    views = project_tree(nodes)
+    assert [v.role for v in views] == ["user", "assistant", "notice"]
+    assert views[2].notice == "open-tasks"
+    assert views[2].content == "two"

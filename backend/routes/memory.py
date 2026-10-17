@@ -22,17 +22,21 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 
 class MemoryCreate(BaseModel):
     content: str
+    # Blank reads as the content's first line.
+    description: str | None = None
     pinned: bool = False
 
 
 class MemoryUpdate(BaseModel):
     content: str | None = None
+    description: str | None = None
     pinned: bool | None = None
 
 
 class MemoryOut(BaseModel):
     id: str
     content: str
+    description: str
     pinned: bool
     created_at: datetime
     updated_at: datetime
@@ -60,6 +64,7 @@ def _out(view: MemoryView) -> MemoryOut:
     return MemoryOut(
         id=view.id,
         content=view.content,
+        description=view.description,
         pinned=view.pinned,
         created_at=view.created_at,
         updated_at=view.updated_at,
@@ -77,7 +82,9 @@ async def list_memories(request: Request) -> list[MemoryOut]:
 async def create_memory(body: MemoryCreate, request: Request) -> MemoryOut:
     if not body.content.strip():
         raise HTTPException(status_code=422, detail="content must not be empty")
-    view = await deps.memory(request).remember(OPERATOR_ID, body.content, pinned=body.pinned)
+    view = await deps.memory(request).remember(
+        OPERATOR_ID, body.content, description=body.description, pinned=body.pinned
+    )
     return _out(view)
 
 
@@ -113,7 +120,11 @@ async def get_memory(memory_id: str, request: Request) -> MemoryOut:
 async def update_memory(memory_id: str, body: MemoryUpdate, request: Request) -> MemoryOut:
     try:
         view = await deps.memory(request).update(
-            OPERATOR_ID, memory_id, content=body.content, pinned=body.pinned
+            OPERATOR_ID,
+            memory_id,
+            content=body.content,
+            description=body.description,
+            pinned=body.pinned,
         )
     except NotFoundError:
         raise HTTPException(status_code=404, detail="memory not found") from None

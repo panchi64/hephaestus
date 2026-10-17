@@ -13,6 +13,7 @@ import type {
   PlanDocument,
   ViewSnapshotRef,
 } from "../../model";
+import type { InboxState } from "../../inbox";
 import type { PatchById } from "../patch";
 
 /** The run-scoped bookkeeping the fold both reads and advances. Shared by reference
@@ -72,6 +73,9 @@ export interface FoldDeps {
    *  every delta goes through the same instance. */
   patchById: PatchById;
   setMessages: SetStoreFunction<ChatMessage[]>;
+  /** The conversation's inbox, which the `message.*` and `inbox.waiting` events keep
+   *  current. Optional for a caller that never folds one. */
+  inbox?: { get: () => InboxState; set: (next: InboxState) => void };
   setSnapshots: (fn: (prev: ViewSnapshotRef[]) => ViewSnapshotRef[]) => void;
   setTasks: (items: TaskItem[]) => void;
   setPlan: (plan: PlanDocument | null) => void;

@@ -23,6 +23,7 @@ from .events import (
     PROTOCOL_VERSION,
     AnswerDelta,
     AnsweredQuestionOut,
+    AnswerRetracted,
     ApprovalRequired,
     CitationAdded,
     CompactionDelta,
@@ -39,6 +40,7 @@ from .events import (
     Event,
     EventBody,
     FoldPoint,
+    InboxWaiting,
     LastRequestUsage,
     LimitNotice,
     MessageEdited,
@@ -72,11 +74,20 @@ from .events import (
     ViewLiveStopped,
     ViewSnapshot,
 )
+from .inbox import (
+    NO_JOURNAL,
+    STOP_NOTICE,
+    ConversationInbox,
+    InboxDispatch,
+    InboxJournal,
+    QueuedMessage,
+    TurnPayload,
+)
 from .lanes import CHAT_TURN_KINDS, LANE_BY_KIND, LaneLimits, lane_for
 from .overhead import BriefBlock, ToolGroupOverhead, TurnOverhead
 from .prefix import FIRST_REQUEST, PrefixDigest, PrefixLedger, PrefixVerdict
 from .registry import ConversationBusyError, RunRegistry, RunTimeout
-from .run import Orchestrator, QueuedMessage, Run, RunStatus
+from .run import Orchestrator, Run, RunStatus
 from .stream import RunStream
 from .timings import ResponseTiming, TimingTotals, TurnTimer, total_timings
 from .transport import parse_last_event_id, sse_response
@@ -98,6 +109,12 @@ __all__ = [
     "Run",
     "RunStatus",
     "QueuedMessage",
+    "ConversationInbox",
+    "InboxDispatch",
+    "InboxJournal",
+    "NO_JOURNAL",
+    "STOP_NOTICE",
+    "TurnPayload",
     "Orchestrator",
     "RunStream",
     "BriefBlock",
@@ -130,6 +147,7 @@ __all__ = [
     "StepCompleted",
     "ThinkingDelta",
     "AnswerDelta",
+    "AnswerRetracted",
     "ToolStarted",
     "ToolProgress",
     "ToolCompleted",
@@ -160,6 +178,7 @@ __all__ = [
     "MessageWithdrawn",
     "MessageHeld",
     "MessageInjected",
+    "InboxWaiting",
     "TasksUpdated",
     "PlanUpdated",
     "PermissionChanged",

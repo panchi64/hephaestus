@@ -101,6 +101,12 @@ const TOOLS: Record<string, ToolEntry> = {
   agents_list: { icon: "users", label: "List agents" },
   agents_read: { icon: "users", label: "Check agent", keys: ["name"] },
   agents_stop: { icon: "stop", label: "Stop agent", keys: ["name"] },
+  agents_merge: { icon: "branch", label: "Merge agent's work", keys: ["name"] },
+  agents_discard: {
+    icon: "trash",
+    label: "Discard agent's work",
+    keys: ["name"],
+  },
 
   attachments_provision: {
     icon: "attach",
@@ -204,7 +210,17 @@ const TOOLS: Record<string, ToolEntry> = {
     keys: ["query"],
     noun: ["memory", "memories"],
   },
-  memory_remember: { icon: "database", label: "Remember", keys: ["content"] },
+  memory_remember: {
+    icon: "database",
+    label: "Remember",
+    keys: ["description", "content"],
+  },
+  memory_open: { icon: "database", label: "Open memory", keys: ["id"] },
+  memory_update: {
+    icon: "database",
+    label: "Update memory",
+    keys: ["description", "id"],
+  },
 
   tasks_read: { icon: "note", label: "Read tasks", noun: ["task", "tasks"] },
   tasks_update_statuses: { icon: "note", label: "Task statuses" },
@@ -316,19 +332,25 @@ function categoryOf(name: string): string {
  *  this adds is the prefix strip. */
 function humanize(name: string): string {
   const category = categoryOf(name);
-  const bare =
-    category in CATEGORY_ICONS ? name.slice(category.length + 1) : name;
+  const bare = Object.hasOwn(CATEGORY_ICONS, category)
+    ? name.slice(category.length + 1)
+    : name;
   // The full registry name is the fallback, not the stripped remainder: `files_` has
   // nothing left after the prefix, and a blank row says less than the raw name does.
   return sentenceCase(bare, name);
 }
 
-/** The full row for a tool — presentation plus the summarizer's hints. */
+/** The full row for a tool — presentation plus the summarizer's hints.
+ *
+ *  Own keys only: the name is whatever the model called, and a plain index would
+ *  hand `constructor` or `toString_x` an `Object.prototype` member as its entry. */
 export function toolEntry(name: string): ToolEntry {
-  const known = TOOLS[name];
-  if (known) return known;
+  if (Object.hasOwn(TOOLS, name)) return TOOLS[name];
+  const category = categoryOf(name);
   return {
-    icon: CATEGORY_ICONS[categoryOf(name)] ?? DEFAULT_ICON,
+    icon: Object.hasOwn(CATEGORY_ICONS, category)
+      ? CATEGORY_ICONS[category]
+      : DEFAULT_ICON,
     label: humanize(name),
   };
 }

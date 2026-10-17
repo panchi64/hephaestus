@@ -67,9 +67,11 @@ from pydantic_ai import (
 from pydantic_ai.settings import ModelSettings
 
 from core.compaction_sections import (
+    is_checkpoint,
     replace_section,
     section_body,
     section_key,
+    strip_preamble,
     without_fenced,
 )
 from core.text import strip_think_blocks
@@ -77,7 +79,6 @@ from core.untrusted import new_nonce, untrusted_fence, untrusted_preamble
 from prompts.compaction import (
     COMPACT_ANCHORS_SECTION,
     COMPACT_INSTRUCTIONS,
-    COMPACT_MARKER,
     COMPACT_TOOLS_SECTION,
 )
 from services.conversation_view import flatten_content
@@ -249,6 +250,6 @@ def _checkpoint_texts(messages: list[ModelMessage]) -> list[str]:
         for part in message.parts:
             if isinstance(part, UserPromptPart):
                 text = flatten_content(part.content).strip()
-                if text.startswith(COMPACT_MARKER):
-                    texts.append(without_fenced(text))
+                if is_checkpoint(text):
+                    texts.append(without_fenced(strip_preamble(text)))
     return texts

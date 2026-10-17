@@ -8,6 +8,7 @@ import {
   type TaskItem,
 } from "~/lib/stream";
 import { toast } from "~/ui";
+import { emptyInbox, type InboxState } from "../inbox";
 import type { ChatMessage, CompactionProgress } from "../model";
 import { FOLD_RUN_KIND, createFolder, type FoldState } from "./fold";
 import { createPatchById } from "./patch";
@@ -32,6 +33,7 @@ function harness(
   } = {},
 ) {
   const [messages, setMessages] = createStore<ChatMessage[]>(seed);
+  let inbox: InboxState = emptyInbox;
   const state: FoldState = {
     maxFoldedSeq: 0,
     foldTarget: null,
@@ -46,6 +48,12 @@ function harness(
     state,
     patchById: createPatchById(messages, setMessages),
     setMessages,
+    inbox: {
+      get: () => inbox,
+      set: (next) => {
+        inbox = next;
+      },
+    },
     setSnapshots: () => {},
     setTasks: hooks.setTasks ?? (() => {}),
     setPlan: () => {},
@@ -62,6 +70,7 @@ function harness(
     foldFrom: (ev: RunEvent, epoch: number) => fold("a1", ev, epoch),
     state,
     messages,
+    inbox: () => inbox,
   };
 }
 
@@ -439,7 +448,7 @@ describe("a review's two frames", () => {
 describe("whose queued message it is", () => {
   const queued = (
     text: string,
-    source?: "operator" | "subagent" | "agent",
+    source?: "operator" | "subagent" | "agent" | "system",
   ): RunEvent => ({
     type: "message.queued",
     seq: ++seq,
@@ -448,13 +457,17 @@ describe("whose queued message it is", () => {
     text,
     ...(source === undefined ? {} : { source }),
   });
-  const fromAgent = (text: string, sender: string): RunEvent => ({
+  const fromAgent = (
+    text: string,
+    sender: string,
+    source: "subagent" | "agent" = "agent",
+  ): RunEvent => ({
     type: "message.queued",
     seq: ++seq,
     ts: "",
     message_id: "q1",
     text,
-    source: "agent",
+    source,
     sender,
   });
   const injected = (source?: "operator" | "subagent" | "agent"): RunEvent => ({
@@ -465,61 +478,74 @@ describe("whose queued message it is", () => {
     ...(source === undefined ? {} : { source }),
   });
 
+  const rows = (h: ReturnType<typeof harness>) =>
+    h.messages.filter((m) => m.id !== "u1" && m.role !== "assistant");
+
   test("an unmarked frame is the operator's, as it always was", () => {
     // An older backend sends no `source` at all, and everything it ever queued was theirs.
     const h = harness(turn());
     h.fold(queued("actually, check the tests too"));
-    const bubble = h.messages.find((m) => m.queuedMessageId === "q1");
-    expect(bubble?.role).toBe("user");
+    expect(h.inbox().items[0]?.source).toBe("operator");
+    h.fold(injected());
+    expect(rows(h)[0]?.role).toBe("user");
   });
 
-  test("a sub-agent's report is not the operator speaking", () => {
+  test("a queued message waits in the inbox, not in the transcript", () => {
     const h = harness(turn());
     h.fold(queued("explorer: the parser is in lexer.ts", "subagent"));
-    const bubble = h.messages.find((m) => m.queuedMessageId === "q1");
-    expect(bubble?.role).toBe("subagent");
-    expect(bubble?.content).toBe("explorer: the parser is in lexer.ts");
+    expect(h.inbox().items).toHaveLength(1);
+    expect(rows(h)).toHaveLength(0);
   });
 
   test("another agent's message lands as a subagent row carrying its sender", () => {
     const h = harness(turn());
     h.fold(fromAgent("check the lexer", "planner"));
-    const bubble = h.messages.find((m) => m.queuedMessageId === "q1");
-    expect(bubble?.role).toBe("subagent");
-    expect(bubble?.author).toBe("planner");
+    h.fold(injected("agent"));
+    const row = rows(h)[0];
+    expect(row?.role).toBe("subagent");
+    expect(row?.author).toBe("planner");
+    expect(row?.reporter).toBeUndefined();
+    expect(h.inbox().items).toHaveLength(0);
   });
 
-  test("a report never tags an optimistic bubble the operator is waiting on", () => {
-    // Same text, by coincidence or because the operator was reading the panel. Tagging
-    // theirs with the report's id would make their own message the one that promotes as
-    // a sub-agent's, and leave the report with no bubble at all.
-    const h = harness([
-      ...turn(),
-      {
-        id: "u2",
-        role: "user",
-        content: "same words",
-        queuedPending: true,
-        createdAt: "",
-      },
-    ]);
-    h.fold(queued("same words", "subagent"));
-    expect(
-      h.messages.find((m) => m.id === "u2")?.queuedMessageId,
-    ).toBeUndefined();
-    expect(h.messages.filter((m) => m.queuedMessageId === "q1")).toHaveLength(
-      1,
-    );
-  });
-
-  test("it promotes to a turn of the thread like any other injected message", () => {
+  test("a report carries who reported, and is not mistaken for a message", () => {
     const h = harness(turn());
-    h.fold(queued("explorer: nothing there", "subagent"));
+    h.fold(fromAgent("`fixer`: done.", "fixer", "subagent"));
     h.fold(injected("subagent"));
-    const landed = h.messages.find((m) => m.queuedMessageId === "q1");
-    expect(landed?.queuedPending).toBe(false);
-    // Still not theirs — what a reload will show, from the envelope it was delivered in.
-    expect(landed?.role).toBe("subagent");
+    const row = rows(h)[0];
+    expect(row?.role).toBe("subagent");
+    expect(row?.reporter).toBe("fixer");
+    expect(row?.author).toBeUndefined();
+  });
+
+  test("a turn item opens its own turn, so injecting it adds no row here", () => {
+    const h = harness(turn());
+    h.fold({ ...queued("with a file"), turn: true } as RunEvent);
+    expect(h.inbox().items[0]?.turn).toBe(true);
+    h.fold(injected());
+    expect(h.inbox().items).toHaveLength(0);
+    expect(rows(h)).toHaveLength(0);
+  });
+
+  test("a withdrawn message leaves the inbox and never reaches the transcript", () => {
+    const h = harness(turn());
+    h.fold(queued("never mind"));
+    h.fold({
+      type: "message.withdrawn",
+      seq: ++seq,
+      ts: "",
+      message_id: "q1",
+    });
+    expect(h.inbox().items).toHaveLength(0);
+    expect(rows(h)).toHaveLength(0);
+  });
+
+  test("inbox.waiting is folded as the Stop hold", () => {
+    const h = harness(turn());
+    h.fold({ type: "inbox.waiting", seq: ++seq, ts: "", waiting: true });
+    expect(h.inbox().waiting).toBe(true);
+    h.fold({ type: "inbox.waiting", seq: ++seq, ts: "", waiting: false });
+    expect(h.inbox().waiting).toBe(false);
   });
 });
 
@@ -607,7 +633,7 @@ describe("an event belongs to the drive that read it", () => {
     h.foldFrom(tasks(), 1);
     h.foldFrom(queued(), 1);
     expect(seen).toEqual([]);
-    expect(h.messages.some((m) => m.queuedMessageId === "q1")).toBe(false);
+    expect(h.inbox().items).toHaveLength(0);
     expect(h.state.maxFoldedSeq).toBe(0);
   });
 

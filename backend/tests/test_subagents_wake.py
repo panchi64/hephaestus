@@ -11,9 +11,8 @@ and the report lands at the following boundary. There is deliberately no second 
 route; a second route is how that guarantee would be lost.
 
 The one that road does not cover is next: a report arriving during the parent's **final**
-stream, where no further request is ever made. The substrate drops what is still queued at
-terminal — correct for the operator, whose client rebuilds their own text from the replay,
-and silently lossy for a report, which nothing else holds.
+stream, where no further request is ever made. The inbox outlives the run, so the next turn
+on the thread takes it.
 """
 
 from __future__ import annotations
@@ -26,17 +25,24 @@ from typing import cast
 
 import pytest
 from fastapi import FastAPI
-from pydantic_ai import ModelRequest, UserPromptPart
+from pydantic_ai import ModelRequest, ModelRetry, RunContext, RunUsage, UserPromptPart
+from pydantic_ai.models.test import TestModel
 
 from agent import turn as turn_module
 from agent.injected import injected_text
-from harness.manifests._subagent_wake import SubagentWake
+from harness.manifests._inbox_dispatch import InboxDispatcher
+from harness.manifests._subagent_wake import SubagentWake, report_text
 from routes.chat import compose_turn
 from routes.deps import app_state
 from runs import QueuedMessage, Run, RunStatus, RunStream
 from runs.events import MessageSource
-from tests._helpers import client_app, patch_model_resolution
+from services.agents import ToolAccess
+from services.subagent_store import SubagentStore
+from services.subagents import FiledReport, ReportStatus
+from tests._helpers import client_app, patch_model_resolution, settle
 from tests._json import json_body, s
+from tools import RunDeps, build_agent_toolsets
+from tools.report import report_toolset, require_report
 
 
 def _wake(app: FastAPI) -> SubagentWake:
@@ -72,9 +78,15 @@ def _woken(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
     """
     calls: list[dict[str, object]] = []
     monkeypatch.setattr(
-        "harness.manifests._subagent_wake.compose_turn", _capturing(compose_turn, calls)
+        "harness.manifests._inbox_dispatch.compose_turn", _capturing(compose_turn, calls)
     )
     return calls
+
+
+def _dispatcher(app: FastAPI) -> InboxDispatcher:
+    dispatcher = app_state(app).inbox_dispatcher
+    assert isinstance(dispatcher, InboxDispatcher)
+    return dispatcher
 
 
 def _prompt(call: dict[str, object]) -> str:
@@ -112,7 +124,7 @@ class TestItNeverInterrupts:
         # transcript would claim the operator typed the report, and every later turn
         # would replay it that way.
         assert "I found it in parser.py" in text
-        assert "not a message from the operator" in text
+        assert "not from the operator" in text
 
     def test_the_operators_own_words_are_handed_over_untouched(self):
         # Framing between the operator and the model is framing neither asked for.
@@ -188,6 +200,16 @@ class TestHowTheOperatorReadsIt:
         # about the operator, in the third person, and the operator is who reads this.
         assert views[0].content == "I found it"
 
+    def test_a_report_turn_names_who_reported_and_has_no_author(self):
+        from services.conversation_view import project_tree
+        from services.subagents.report import report_envelope
+
+        text = report_text("done", "fixer", "worker", "fixed", None, None, callsign="BRAX")
+        request = ModelRequest(parts=[UserPromptPart(content=report_envelope(text))])
+        views = project_tree([("n1", request)])
+
+        assert (views[0].reporter, views[0].author) == ("fixer", None)
+
     def test_a_message_from_another_agent_is_shown_with_its_sender(self):
         from services.conversation_view import project_tree
         from services.subagents.report import message_envelope
@@ -260,7 +282,7 @@ class TestDelivery:
             # roads are the same event, and a model that could tell them apart would
             # answer one of them as though the operator had spoken.
             assert "a report" in _prompt(composed[0])
-            assert "not a message from the operator" in _prompt(composed[0])
+            assert "not from the operator" in _prompt(composed[0])
             await _drain(app)
 
     async def test_a_wake_turn_does_not_take_the_interactive_lane(self):
@@ -271,7 +293,7 @@ class TestDelivery:
         assert lane_for("wake") == "linked"
 
 
-class TestTheReportThatNearlyGotDropped:
+class TestNothingQueuedIsLostAtTerminal:
     async def test_a_report_queued_during_the_final_stream_survives_terminal(
         self, monkeypatch: pytest.MonkeyPatch
     ):
@@ -279,41 +301,42 @@ class TestTheReportThatNearlyGotDropped:
             patch_model_resolution(monkeypatch, output_text="ok")
             created = await client.post("/chat", json={"prompt": "go"})
             body = json_body(created)
+            conversation_id = s(body["conversation_id"])
             run = _run_of(app, s(body["run_id"]))
-            if run.task is not None:
-                await run.task
-            await _settled(app)
+            await settle(app)
             # Exactly the case: it arrived while the last answer was streaming, so no
-            # further model request was ever made and the substrate is about to drop it.
-            run.pending_messages.append(_queued("the sub-agent's only report"))
+            # further model request was ever made on that run.
+            _ = app_state(app).runs.inbox(conversation_id, "operator").enqueue(
+                "the sub-agent's only report", source="subagent"
+            )
             composed = _woken(monkeypatch)
 
-            await _wake(app).settled(run, False)
+            await _dispatcher(app).settled(run, False)
 
             assert composed, "the report was dropped with the run"
             assert "the sub-agent's only report" in _prompt(composed[0])
-            await _drain(app)
+            await settle(app)
 
-    async def test_the_operators_undelivered_message_is_left_alone(
+    async def test_the_operators_queued_message_opens_its_own_turn(
         self, monkeypatch: pytest.MonkeyPatch
     ):
         async with client_app() as (client, app):
             patch_model_resolution(monkeypatch, output_text="ok")
             created = await client.post("/chat", json={"prompt": "go"})
             body = json_body(created)
+            conversation_id = s(body["conversation_id"])
             run = _run_of(app, s(body["run_id"]))
-            if run.task is not None:
-                await run.task
-            await _settled(app)
-            run.pending_messages.append(_queued("hang on", source="operator"))
+            await settle(app)
+            _ = app_state(app).runs.inbox(conversation_id, "operator").enqueue("hang on")
             composed = _woken(monkeypatch)
 
-            await _wake(app).settled(run, False)
+            await _dispatcher(app).settled(run, False)
+            await settle(app)
 
-            # Their client still holds the text and rebuilds the pending bubble from the
-            # replay. Reviving it here would put words in the thread they may have since
-            # thought better of.
+            # The operator's words open an operator turn, not an unattended wake.
             assert composed == []
+            turns = await app_state(app).conversations.messages_view(conversation_id)
+            assert [t.content for t in turns if t.role == "user"] == ["go", "hang on"]
 
 
 class TestTheRunawayRail:
@@ -338,6 +361,62 @@ class TestTheRunawayRail:
             # against the sub-agent; the thread simply stops driving itself.
             assert composed == []
 
+    async def test_a_held_report_goes_out_on_the_operators_next_turn(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            created = await client.post("/chat", json={"prompt": "go"})
+            body = json_body(created)
+            conversation_id = s(body["conversation_id"])
+            run = _run_of(app, s(body["run_id"]))
+            if run.task is not None:
+                await run.task
+            await _settled(app)
+            wake = _wake(app)
+            wake.spend_budget(conversation_id)
+            composed = _woken(monkeypatch)
+
+            _ = await wake.deliver("operator", conversation_id, "the held report")
+            assert composed == []
+
+            # The operator sending a turn into the tree is what clears the rail, and the
+            # report waits for exactly that rather than being dropped at the ceiling.
+            _dispatcher(app).observed(run)
+            await _dispatcher(app).settled(run, False)
+
+            assert [c["kind"] for c in composed] == ["wake"]
+            assert "the held report" in _prompt(composed[0])
+            await _drain(app)
+
+    async def test_the_operator_is_told_once_when_a_tree_pauses(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from services.notifications import NotificationService
+
+        async with client_app() as (client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            created = await client.post("/chat", json={"prompt": "go"})
+            body = json_body(created)
+            conversation_id = s(body["conversation_id"])
+            run = _run_of(app, s(body["run_id"]))
+            if run.task is not None:
+                await run.task
+            await _settled(app)
+            notifications = app_state(app).capabilities.get(NotificationService)
+            _, before = await notifications.list_notifications("operator")
+            wake = _wake(app)
+            wake.spend_budget(conversation_id)
+
+            _ = await wake.deliver("operator", conversation_id, "one")
+            _ = await wake.deliver("operator", conversation_id, "two")
+
+            listed, unread = await notifications.list_notifications("operator")
+            paused = [n for n in listed if n.title == "Agents paused for you"]
+            assert len(paused) == 1
+            assert paused[0].conversation_id == conversation_id
+            assert unread == before + 1
+
     async def test_the_operators_own_turn_clears_the_count(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (client, app):
             patch_model_resolution(monkeypatch, output_text="ok")
@@ -347,7 +426,7 @@ class TestTheRunawayRail:
             wake = _wake(app)
             wake.spend_budget(s(body["conversation_id"]))
 
-            wake.observed(run)
+            _dispatcher(app).observed(run)
 
             # The rail exists to stop an unattended loop. A human sending a message is
             # exactly the evidence that this is no longer one.
@@ -374,3 +453,158 @@ class TestStatus:
         # A sub-agent stopped at a bound did not do its job, and a card calling that
         # "done" is a card the operator would be wrong to trust.
         assert status_of(run) == expected
+
+
+async def _spawned(app: FastAPI) -> tuple[str, str]:
+    """A spawned agent under ``parent-1`` whose first turn has ended: its record id and
+    its thread."""
+    from services.agents import builtin_roster
+    from services.subagents import SubagentLauncher, SubagentParent
+
+    launcher = app_state(app).capabilities.get(SubagentLauncher)
+    started = await launcher.launch(
+        "operator",
+        builtin_roster()["worker"],
+        "migrate the schema",
+        handle="migrate-schema",
+        parent=SubagentParent(conversation_id="parent-1"),
+    )
+    run = _run_of(app, started.run_id)
+    if run.task is not None:
+        await run.task
+    await _settled(app)
+    # Its first report woke the parent; that turn ends before the test's own delivery, so
+    # the delivery composes a turn rather than queueing onto it.
+    await _drain(app)
+    await _settled(app)
+    return started.subagent_id, started.conversation_id
+
+
+def _records(app: FastAPI) -> SubagentStore:
+    records = cast(object, app.state.subagent_records)
+    assert isinstance(records, SubagentStore)
+    return records
+
+
+def _ended(conversation_id: str, status: RunStatus = RunStatus.done) -> Run:
+    """A later unattended turn of the agent, ended."""
+    run = Run(
+        id="later-turn",
+        kind="wake",
+        owner_id="operator",
+        stream=RunStream(),
+        conversation_id=conversation_id,
+    )
+    run.status = status
+    return run
+
+
+class TestTheReportContract:
+    @pytest.mark.parametrize(
+        ("status", "hint"),
+        [
+            ("done", None),
+            ("blocked", "help: answer it with `agents_message` to `migrate-schema`"),
+            ("failed", "help: spawn a fresh agent with a narrower brief"),
+        ],
+    )
+    async def test_a_filed_report_decides_how_the_agent_ended(
+        self, monkeypatch: pytest.MonkeyPatch, status: ReportStatus, hint: str | None
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            subagent_id, conversation_id = await _spawned(app)
+            wake = _wake(app)
+            composed = _woken(monkeypatch)
+            run = _ended(conversation_id)
+
+            wake.file(run.id, FiledReport(status=status, text="the report body"))
+            await wake.settled(run, False)
+
+            row = await _records(app).get(subagent_id, "operator")
+            assert row is not None
+            assert row.status == status
+            prompt = _prompt(composed[0])
+            assert "`migrate-schema` (" in prompt
+            assert f"): {status}." in prompt
+            assert "the report body" in prompt
+            if hint is None:
+                assert "help:" not in prompt
+            else:
+                assert hint in prompt
+            await _drain(app)
+
+    async def test_an_unattended_turn_without_a_report_is_failed_and_says_so(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            _, conversation_id = await _spawned(app)
+            composed = _woken(monkeypatch)
+
+            await _wake(app).settled(_ended(conversation_id), False)
+
+            prompt = _prompt(composed[0])
+            assert "): failed." in prompt
+            assert "error: it ended without reporting" in prompt
+            await _drain(app)
+
+    async def test_a_stop_overrides_a_report_already_filed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            _, conversation_id = await _spawned(app)
+            composed = _woken(monkeypatch)
+            run = _ended(conversation_id, RunStatus.cancelled)
+
+            _wake(app).file(run.id, FiledReport(status="done", text="all good"))
+            await _wake(app).settled(run, False)
+
+            # Stopped is what happened; a report written before the stop does not undo it.
+            assert "): cancelled." in _prompt(composed[0])
+            await _drain(app)
+
+    async def test_the_agent_is_sent_back_once_before_its_answer_stands(self):
+        ctx = _validator_ctx("wake", reports=True)
+
+        with pytest.raises(ModelRetry, match="without calling `subagent_report`"):
+            _ = await require_report(ctx, "all done")
+        assert await require_report(ctx, "all done") == "all done"
+
+    @pytest.mark.parametrize(
+        ("kind", "reports", "reported"),
+        [("chat", True, False), ("wake", False, False), ("wake", True, True)],
+    )
+    async def test_only_an_unreported_unattended_agent_turn_is_sent_back(
+        self, kind: str, reports: bool, reported: bool
+    ):
+        ctx = _validator_ctx(kind, reports=reports)
+        ctx.deps.reported = reported
+
+        assert await require_report(ctx, "answer") == "answer"
+
+
+class TestWhoIsOfferedTheReportTool:
+    @pytest.mark.parametrize(("reports", "offered"), [(True, True), (False, False)])
+    async def test_only_a_spawned_thread_sees_it(self, reports: bool, offered: bool):
+        assert await _offered(_validator_ctx("wake", reports=reports)) is offered
+
+    async def test_switching_off_its_category_does_not_take_it_away(self):
+        ctx = _validator_ctx("wake", reports=True)
+        ctx.deps.disabled_tools = frozenset({"subagent_report"})
+        ctx.deps.tool_access = ToolAccess(deny=frozenset({"subagent"}))
+
+        # Without it an agent has no way to finish, which no setting is meant to cause.
+        assert await _offered(ctx)
+
+
+async def _offered(ctx: RunContext[RunDeps]) -> bool:
+    (stack,) = build_agent_toolsets({"subagent": report_toolset()})
+    return "subagent_report" in await stack.get_tools(ctx)
+
+
+def _validator_ctx(kind: str, *, reports: bool) -> RunContext[RunDeps]:
+    run = Run(id="r", kind=kind, owner_id="operator", stream=RunStream())
+    deps = RunDeps(run=run, owner_id="operator", reports_to_parent=reports)
+    return RunContext(deps=deps, model=TestModel(), usage=RunUsage())

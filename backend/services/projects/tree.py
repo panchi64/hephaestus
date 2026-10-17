@@ -39,11 +39,11 @@ async def worktree_root(
 
 
 async def thread_tree(
-    project_root: Path, worktree_path: Path, workspace_kind: str, conversation_id: str | None
+    project_root: Path, worktree_path: Path, worktree: bool, conversation_id: str | None
 ) -> Path:
-    """The tree a thread of this kind works in: the project's own folder for a checkout,
-    the thread's worktree once it exists."""
-    if workspace_kind != "worktree" or conversation_id is None:
+    """The tree a thread works in: the project's own folder, or the thread's worktree once
+    it exists."""
+    if not worktree or conversation_id is None:
         return project_root
     tree, _ = await worktree_root(worktree_path, conversation_id, project_root)
     return tree

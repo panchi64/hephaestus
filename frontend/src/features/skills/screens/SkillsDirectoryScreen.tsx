@@ -165,7 +165,7 @@ export function SkillsDirectoryScreen(props: {
   return (
     <LibraryDirectory
       title="Skills"
-      subtitle="Agent Skills bundles — reusable procedures the assistant can follow."
+      subtitle="Agent Skills bundles — reusable procedures Talos can follow."
       assetId="HEPH-SKL-01.0"
       noun="skill"
       nouns="skills"
@@ -179,7 +179,7 @@ export function SkillsDirectoryScreen(props: {
       initialSort="recent"
       initialDir="desc"
       bandExtra={[{ label: "Bundles", value: bytes(totalBytes()) }]}
-      draftHint="A draft is invisible to the agent. Publishing is what makes a skill's instructions something the assistant will follow — imported bundles always land as drafts so you can read them first."
+      draftHint="A draft is invisible to the agent. Publishing is what makes a skill's instructions something Talos will follow — imported bundles always land as drafts so you can read them first."
       importHint="Accepts an Agent Skills bundle (.zip) or a lone SKILL.md. The bundle keeps its supporting files, and anything unusual about it is reported as a warning."
       importAccept=".zip,.md"
       importing={importing()}

@@ -9,6 +9,7 @@ messages through the conversation store.
 - ``turn.py`` — ``resolve_turn_models``/``compose_turn``, the Request-agnostic halves of a
   turn, exported so a non-HTTP caller (the scheduler's agent-task executor) reuses them.
 - ``submit.py`` — gathers a turn's resources from the ``Request`` and calls ``compose_turn``.
+- ``queued.py`` — starts a turn the operator queued, from the app rather than a request.
 - ``send.py`` — send / regenerate / edit routes.
 - ``settings.py`` — the operator's chat preferences.
 """
@@ -18,6 +19,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from routes.chat import send, settings
+from routes.chat.queued import submit_queued
 from routes.chat.submit import TurnScope, thread_models, turn_scope
 from routes.chat.turn import TurnModels, WallClockOverride, compose_turn, resolve_turn_models
 from runs import ConversationBusyError
@@ -34,6 +36,7 @@ __all__ = [
     "compose_turn",
     "resolve_turn_models",
     "router",
+    "submit_queued",
     "thread_models",
     "turn_scope",
 ]

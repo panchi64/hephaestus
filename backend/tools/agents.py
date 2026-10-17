@@ -18,13 +18,11 @@ from core.exceptions import AgentValidationError
 from services.agents import AgentStore, ToolAccess
 from services.permissions import PermissionLevel
 
-from .delegation import GATED_TOOLS as DELEGATION_GATED
 from .delegation import ProjectRoster, add_delegation_tools
 from .deps import RunDeps
 
-#: Raised for approval only when the agent being rewritten is published, or when the agent
-#: being spawned can write.
-GATED_TOOLS: frozenset[str] = frozenset({"agents_write"}) | DELEGATION_GATED
+#: Raised for approval only when the agent being rewritten is published.
+GATED_TOOLS: frozenset[str] = frozenset({"agents_write"})
 
 _UNAVAILABLE = "Agents cannot be written in this deployment."
 
@@ -50,7 +48,8 @@ def agents_toolset() -> AbstractToolset[RunDeps]:
 
         `description` says what it does and when to pick it. `tools` limits it to those
         tools or categories (`files`, `shell`); `deny_tools` withholds more. `workspace` is
-        where it works when delegated: your files, a merged-back copy, or its own.
+        where it works when delegated: your files, a worktree of its own that you merge,
+        or a scratch of its own.
 
         A new agent is a draft until the operator publishes it.
         """

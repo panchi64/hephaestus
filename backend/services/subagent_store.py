@@ -60,8 +60,10 @@ class SubagentStore:
         workspace_policy: str,
         workspace_key: str | None,
         delegation_id: str | None,
-        workspace_kind: str | None = None,
         project_id: str | None = None,
+        base_ref: str | None = None,
+        agent_class: str = "",
+        callsign: str = "",
     ) -> None:
         """Open a row for a sub-agent that has just been submitted.
 
@@ -80,12 +82,14 @@ class SubagentStore:
             parent_run_id=parent_run_id,
             spec_name=spec_name,
             handle=handle,
+            agent_class=agent_class,
+            callsign=callsign,
             task_enc=self._vault.encrypt_str(task),
             workspace_policy=workspace_policy,
             workspace_key=workspace_key,
             delegation_id=delegation_id,
-            workspace_kind=workspace_kind,
             project_id=project_id,
+            base_ref=base_ref,
         )
 
         def work(session: Session) -> None:
@@ -131,38 +135,6 @@ class SubagentStore:
         def work(session: Session) -> SubagentRecord | None:
             row = session.get(SubagentRecord, subagent_id)
             return row if row is not None and row.owner_id == owner_id else None
-
-        return await in_session(self._db, work)
-
-    async def by_handle(
-        self, root_conversation_id: str, handle: str, owner_id: str
-    ) -> SubagentRecord | None:
-        """The agent a delegation tree calls ``handle``. Scoped to the tree, which is where
-        a handle is unique and also how far an agent may reach. Newest first, for rows
-        written before handles were unique."""
-
-        def work(session: Session) -> SubagentRecord | None:
-            rows = session.exec(
-                select(SubagentRecord)
-                .where(SubagentRecord.owner_id == owner_id)
-                .where(SubagentRecord.root_conversation_id == root_conversation_id)
-                .where(SubagentRecord.handle == handle)
-            ).all()
-            return max(rows, key=lambda row: row.started_at, default=None)
-
-        return await in_session(self._db, work)
-
-    async def handles_in_tree(self, root_conversation_id: str, owner_id: str) -> set[str]:
-        """Every handle taken in a tree, finished agents included: one can still be read
-        back by name after it reports."""
-
-        def work(session: Session) -> set[str]:
-            rows = session.exec(
-                select(col(SubagentRecord.handle))
-                .where(SubagentRecord.owner_id == owner_id)
-                .where(SubagentRecord.root_conversation_id == root_conversation_id)
-            ).all()
-            return {handle for handle in rows if handle}
 
         return await in_session(self._db, work)
 
@@ -258,6 +230,19 @@ class SubagentStore:
 
         return await in_session(self._db, work)
 
+    async def callsigns_of(self, owner_id: str, agent_class: str) -> list[str]:
+        """Every callsign the owner's agents of ``agent_class`` have carried."""
+
+        def work(session: Session) -> list[str]:
+            query = (
+                select(SubagentRecord.callsign)
+                .where(SubagentRecord.owner_id == owner_id)
+                .where(SubagentRecord.agent_class == agent_class)
+            )
+            return [callsign for callsign in session.exec(query).all() if callsign]
+
+        return await in_session(self._db, work)
+
     async def forget(self, subagent_ids: list[str]) -> None:
         """Delete these rows, because the thread above them is gone."""
 
@@ -317,6 +302,8 @@ class SubagentStore:
             # migration's backfill — a card with no name to address it by is worse than one
             # named after its spec, which is what every such row was called anyway.
             handle=row.handle or row.spec_name,
+            callsign=row.callsign,
+            agent_class=row.agent_class,
             task=self._vault.decrypt_str(row.task_enc),
             parent_conversation_id=row.parent_conversation_id,
             depth=row.depth,

@@ -28,6 +28,7 @@ from services.commands.definitions import (
 )
 from services.commands.registry import merge
 from services.commands.store import CommandStore
+from services.workspace import PlaceKind
 
 from ._helpers import client_app
 from ._json import arr, json_body, json_list, obj
@@ -281,7 +282,7 @@ class TestTheCatalogReadsTheCheckout:
 
     @pytest.mark.parametrize("kind", ["checkout", "worktree"])
     async def test_a_project_declares_both_a_command_and_a_sub_agent(
-        self, tmp_path: Path, kind: str
+        self, tmp_path: Path, kind: PlaceKind
     ):
         _write(tmp_path, ".claude/commands/deploy.md", "ship it")
         _write(
@@ -291,7 +292,7 @@ class TestTheCatalogReadsTheCheckout:
         )
         async with client_app() as (_client, app):
             entries = await _registry(app).catalog(
-                "operator", workspace_kind=kind, has_conversation=True, root=tmp_path
+                "operator", place=kind, has_conversation=True, root=tmp_path
             )
         by_name = {e.spec.name: e.spec for e in entries}
         assert by_name["deploy"].source == "project"
@@ -301,7 +302,7 @@ class TestTheCatalogReadsTheCheckout:
 
     @pytest.mark.parametrize("kind", ["checkout", "worktree"])
     async def test_a_project_agent_replaces_the_builtin_of_that_name(
-        self, tmp_path: Path, kind: str
+        self, tmp_path: Path, kind: PlaceKind
     ):
         _write(
             tmp_path,
@@ -310,7 +311,7 @@ class TestTheCatalogReadsTheCheckout:
         )
         async with client_app() as (_client, app):
             entries = await _registry(app).catalog(
-                "operator", workspace_kind=kind, has_conversation=True, root=tmp_path
+                "operator", place=kind, has_conversation=True, root=tmp_path
             )
         rows = [e.spec for e in entries if e.spec.name == "explorer"]
         # One row, not two: this is the roster's own shadowing, which is also what resolves
@@ -321,7 +322,7 @@ class TestTheCatalogReadsTheCheckout:
     async def test_without_a_root_the_project_sources_are_simply_absent(self):
         async with client_app() as (_client, app):
             entries = await _registry(app).catalog(
-                "operator", workspace_kind="worktree", has_conversation=True
+                "operator", place="worktree", has_conversation=True
             )
         assert all(e.spec.source != "project" for e in entries)
 
@@ -333,20 +334,20 @@ class TestTheCatalogReadsTheCheckout:
         )
         async with client_app() as (_client, app):
             entries = await _registry(app).catalog(
-                "operator", workspace_kind="sandbox", has_conversation=True, root=tmp_path
+                "operator", place="sandbox", has_conversation=True, root=tmp_path
             )
-        # A thread files under a project in *every* kind of workspace, so a resolvable root
-        # is not the question — `tools/project_agents.run_roster` reads a project's
-        # declarations only in a project folder. Offering `/scout` here would put a row in
-        # the menu whose launch resolves to nothing, and the operator would meet that as a
-        # failed tool call mid-turn rather than as an option that was never there.
+        # A resolvable root is not the question — `tools/project_agents.run_roster` reads a
+        # project's declarations only in a thread filed under it. Offering `/scout` here
+        # would put a row in the menu whose launch resolves to nothing, and the operator
+        # would meet that as a failed tool call mid-turn rather than as an option that was
+        # never there.
         assert all(e.spec.name != "scout" for e in entries)
         # The built-ins are still offered — it is the project layer that is withheld.
         assert any(e.spec.name == "explorer" for e in entries)
 
     @pytest.mark.parametrize("kind", ["checkout", "worktree"])
     async def test_two_roster_names_differing_only_by_separator_ship_once(
-        self, tmp_path: Path, kind: str
+        self, tmp_path: Path, kind: PlaceKind
     ):
         _write(
             tmp_path,
@@ -355,7 +356,7 @@ class TestTheCatalogReadsTheCheckout:
         )
         async with client_app() as (_client, app):
             entries = await _registry(app).catalog(
-                "operator", workspace_kind=kind, has_conversation=True, root=tmp_path
+                "operator", place=kind, has_conversation=True, root=tmp_path
             )
         rows = [e for e in entries if e.spec.name == "test-runner"]
         # The built-in is `test_runner` and the underscore folds to a hyphen, so both
@@ -369,18 +370,18 @@ class TestTheCatalogReadsTheCheckout:
         _write(tmp_path, ".claude/commands/deploy.md", "ship it")
         async with client_app() as (_client, app):
             entries = await _registry(app).catalog(
-                "operator", workspace_kind="sandbox", has_conversation=True, root=tmp_path
+                "operator", place="sandbox", has_conversation=True, root=tmp_path
             )
         assert all(e.spec.name != "deploy" for e in entries)
 
     @pytest.mark.parametrize("kind", ["checkout", "worktree"])
     async def test_a_project_command_resolves_by_name_on_the_way_out(
-        self, tmp_path: Path, kind: str
+        self, tmp_path: Path, kind: PlaceKind
     ):
         _write(tmp_path, ".claude/commands/deploy.md", "ship it carefully")
         async with client_app() as (_client, app):
             spec = await _registry(app).resolve(
-                "operator", "deploy", workspace_kind=kind, has_conversation=True, root=tmp_path
+                "operator", "deploy", place=kind, has_conversation=True, root=tmp_path
             )
         # The send has to reach the same tree the menu listed from, or a picked command
         # would expand to nothing the moment the operator pressed enter.

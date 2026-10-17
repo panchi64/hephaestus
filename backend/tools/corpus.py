@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from core.citations import Citation
+from core.diagnostics import render_tool_error
 from core.untrusted import new_nonce, unfence, untrusted_fence, untrusted_preamble
 from services.corpus import CorpusIndex
 from services.projects import visible_project_ids
@@ -106,13 +107,32 @@ def corpus_toolset() -> FunctionToolset[RunDeps]:
         source_ids: list[str],
         limit: int = 8,
     ) -> CorpusPassages | str:
-        """Retrieve the passages most relevant to ``query`` from specific files by id —
-        e.g. a file attached to this conversation, whose id appears in its attachment
-        marker — by meaning, with a keyword fallback. A file excluded from the knowledge
-        base still reads by id. To search everything, use ``platform_search``."""
+        """Searches inside specific files you have the ids of, such as a file attached to
+        this conversation, and returns the passages most relevant to `query`, matched by
+        meaning with a keyword fallback.
+
+        Use it to find what a long document says about something without reading all
+        of it. To search everything the platform holds, use `platform_search`; to work on
+        the file itself with code, stage it with `attachments_provision`. A file excluded
+        from the knowledge base can still be searched here by id.
+
+        Returns each passage with its `source`, a `ref` locating it in the file, and how
+        it was matched.
+
+        Args:
+            query: What you are looking for, in plain words.
+            source_ids: The files to search, by the ids their attachment notes give.
+            limit: The most passages to return. Default 8.
+        """
         if not source_ids:
             raise ModelRetry(
-                "Pass the ids of the files to search; to search everything, use platform_search."
+                render_tool_error(
+                    "no `source_ids` were given",
+                    hints=[
+                        "pass the ids of the files to search",
+                        "to search everything, use `platform_search`",
+                    ],
+                )
             )
         index = ctx.deps.caps.get_optional(CorpusIndex)
         if index is None:

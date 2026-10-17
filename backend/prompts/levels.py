@@ -17,9 +17,9 @@ the *only* thing reading it — so the fragment has to say both that nothing wil
 work and that the one statement the model makes about it is still load-bearing.
 
 **A fragment is delivered at its level in every workspace, so it may claim nothing about the
-catalog.** The tools that take a ``reach`` are the shell's, and the shell exists only in a project
-folder (``services/workspace_kind.py``); a sentence beginning "every shell command" would be a false
-premise on every sandbox thread, about tools they were never offered. It is written as the
+catalog.** The tools that take a ``reach`` are the shell's, and an operator can switch the shell
+off; a sentence beginning "every shell command" would be a false premise in a thread that was
+never offered it. It is written as the
 conditional it actually is — *where* a tool asks how far a command reaches — which costs a clause
 and is true everywhere the fragment is delivered.
 
@@ -47,12 +47,12 @@ the files and the history the work touches.
 
 Ask before you plan, not after. Where the request can be read more than one way, where \
 two approaches would lead to materially different work, or where a decision turns on what \
-the operator wants rather than on what the code says, use `builtin_ask_user` — several \
-questions in one call — and plan on the answers. This is the level where asking is \
-cheapest and guessing is most expensive: a plan built on an assumption spends the \
-operator's whole review on correcting it, and a wrong assumption approved is a wrong \
-assumption carried out. Do not ask what the files, the code or your tools can tell you; \
-find that out yourself.
+the operator wants rather than on what the code says, use `builtin_ask_user` (several \
+questions in one call, each with the option you recommend first) and plan on the \
+answers. This is the level where asking is cheapest and guessing is most expensive: a \
+plan built on an assumption spends the operator's whole review on correcting it, and a \
+wrong assumption approved is a wrong assumption carried out. Do not ask what the files, \
+the code or your tools can tell you; find that out yourself.
 
 Then end the turn by calling `plan_submit`, which is the only way out of this mode. Write \
 the plan at whatever length the work actually needs: which files, which commands, what \

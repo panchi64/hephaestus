@@ -33,12 +33,11 @@ from pydantic_ai.settings import ModelSettings
 
 from core.config import Settings
 from core.container import ServiceContainer
-from runs import Run
+from runs import STOP_NOTICE, Run
 from services.commands.spec import Invocation
 from services.conversation_view import estimate_tokens
 from services.conversations import ConversationBinding, ConversationStore
 from services.projects import ProjectStore, WorktreeManager
-from services.projects.checkout import CheckoutHolders
 from services.sandbox import SandboxSessionManager
 from services.uploads import UploadStore
 from services.workspace import resolve_workspace
@@ -82,6 +81,9 @@ class TurnSetup:
     file_refs: list[str] = field(default_factory=list)
     # filled by prepare_turn
     user_prompt: str | list[UserContent] | None = None
+    #: The stop notice this turn opens with: at the head of a fresh ``user_prompt`` (which
+    #: the recorded prompt leaves out), or of a regenerate's tail context.
+    stop_notice: str | None = None
     history: list[ModelMessage] | None = None  # persistence baseline
     model_history: list[ModelMessage] | None = None  # what the model replays
     compaction: CompactionContext | None = None
@@ -125,6 +127,10 @@ def record_prompt(
     ):
         return
     content = setup.user_prompt if setup.user_prompt is not None else prompt
+    if setup.stop_notice is not None and isinstance(content, list):
+        # The store reads the leading string as the operator's typed text.
+        rest = content[1:]
+        content = rest[0] if len(rest) == 1 and isinstance(rest[0], str) else rest
     message_id = store.record_prompt(
         conversation_id,
         ModelRequest(parts=[UserPromptPart(content)]),
@@ -256,15 +262,14 @@ async def prepare_turn(
     workspace = None
     if prompt is not None and (attachment_ids or file_refs):
         workspace = await resolve_workspace(
-            workspace_kind=binding.workspace_kind,
             project_id=binding.project_id,
+            worktree=binding.worktree,
             conversation_id=conversation_id,
             workspace_key=workspace_key or default_workspace_key(conversation_id, run),
             owner_id=run.owner_id,
             sessions=caps.get_optional(SandboxSessionManager),
             projects=caps.get_optional(ProjectStore),
             worktrees=caps.get_optional(WorktreeManager),
-            checkouts=caps.get_optional(CheckoutHolders),
             holder=run,
         )
 
@@ -324,8 +329,8 @@ async def prepare_turn(
         caps=caps,
         owner_id=run.owner_id,
         conversation_id=conversation_id,
-        workspace_kind=binding.workspace_kind,
         project_id=binding.project_id,
+        worktree=binding.worktree,
         # The same derivation the file tools use, for the reason `default_workspace_key`
         # exists: a delegated run must be described its own fork, not its parent's files.
         workspace_key=workspace_key or default_workspace_key(conversation_id, run),
@@ -371,6 +376,27 @@ async def prepare_turn(
             # An empty (non-None) persisted set still strips the live payload back
             # to the typed prompt on record — the tail context must not persist.
             setup.persisted = setup.persisted if setup.persisted is not None else []
+    # The first turn after the operator stopped one opens on a word about it, ahead of what
+    # they say now, so the model does not resume as if nothing happened. Not persisted: it
+    # is about this turn, not the thread. A regenerate has no fresh prompt to lead, so it
+    # rides the tail context there. Read, not taken: the engine takes it once the turn is
+    # recorded, so a prelude that fails after this point leaves it for the retry.
+    stop_notice = STOP_NOTICE if run.messages.stop_notice_pending else None
+    if stop_notice is not None:
+        setup.stop_notice = stop_notice
+        announce_injection(run, "stop", stop_notice, "prompt")
+        if prompt is not None:
+            head: list[UserContent] = (
+                user_prompt
+                if isinstance(user_prompt, list)
+                else []
+                if user_prompt is None
+                else [user_prompt]
+            )
+            user_prompt = [stop_notice, *head]
+            setup.persisted = setup.persisted if setup.persisted is not None else []
+        else:
+            context_texts.insert(0, stop_notice)
     setup.user_prompt = user_prompt
 
     # Fold the older turns away — *after* the attachments and the per-turn context are

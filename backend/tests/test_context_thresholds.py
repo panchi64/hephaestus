@@ -192,7 +192,7 @@ async def test_tuning_the_gauge_leaves_the_other_preferences_alone():
         before = json_body(await client.get("/chat/settings"))
         _ = await client.put("/chat/settings", json={"context_warn_threshold": 0.55})
         after = json_body(await client.get("/chat/settings"))
-        for key in ("auto_compact_enabled", "auto_compact_threshold", "agent_request_limit"):
+        for key in ("auto_compact_enabled", "auto_compact_threshold", "first_token_timeout_s"):
             assert after[key] == before[key]
 
 

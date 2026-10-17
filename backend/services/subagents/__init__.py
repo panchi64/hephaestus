@@ -11,8 +11,11 @@ from __future__ import annotations
 from services.subagents.launcher import (
     PARENT_ADDRESS,
     ROOT_HANDLE,
+    ChildWorktree,
+    FiledReport,
     LaunchedSubagent,
     Recipient,
+    ReportStatus,
     SubagentLauncher,
     SubagentParent,
     SubagentUnavailableError,
@@ -22,8 +25,11 @@ from services.subagents.launcher import (
 __all__ = [
     "PARENT_ADDRESS",
     "ROOT_HANDLE",
+    "ChildWorktree",
+    "FiledReport",
     "LaunchedSubagent",
     "Recipient",
+    "ReportStatus",
     "SubagentLauncher",
     "SubagentParent",
     "SubagentUnavailableError",

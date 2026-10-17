@@ -18,7 +18,6 @@ const dto: AgentOut = {
   deny_tools: ["bash"],
   permission_ceiling: "edit",
   workspace: "shared",
-  request_limit: 40,
   wall_clock_timeout_s: null,
   can_delegate: true,
   max_depth: 2,
@@ -34,7 +33,6 @@ describe("toAgent", () => {
     const agent = toAgent(dto);
     expect(agent.denyTools).toEqual(["bash"]);
     expect(agent.permissionCeiling).toBe("edit");
-    expect(agent.requestLimit).toBe(40);
     expect(agent.wallClockTimeoutS).toBeNull();
     expect(agent.tools).toBeNull();
     expect(agent.canDelegate).toBe(true);

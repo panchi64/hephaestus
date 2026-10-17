@@ -21,12 +21,18 @@ import {
 } from "~/ui";
 import { hostLabel, longTimestamp } from "~/lib/format";
 import { CONTEXT_OVERFLOW_DETAIL } from "~/lib/stream";
-import type { ApprovalDecision, ChatMessage, Citation } from "../model";
+import type {
+  ApprovalDecision,
+  ChatMessage,
+  Citation,
+  ContentPart,
+} from "../model";
 import { hasLayers as turnHasLayers } from "../blocks";
-import { createQueuedEdit } from "../queuedEdit";
+import { TURN_LOCK_HINT, useTurnLocked } from "../turnLock";
 import type { ViewItem } from "../viewport/viewItems";
 import { TURN_GAP } from "./BlockRow";
 import { CompactionTurn } from "./CompactionTurn";
+import { EnvelopeRow } from "./EnvelopeRow";
 import { SubagentReport } from "./SubagentReport";
 import { MessageActions, TURN_REVEAL_CLASS } from "./MessageActions";
 import { MessageAttachments } from "./MessageAttachments";
@@ -55,13 +61,6 @@ export interface MessageItemProps {
   onSwitchVersion?: (id: string, index: number) => void;
   /** Pin/unpin this turn (backend-owned flag). */
   onTogglePin?: () => void;
-  /** Withdraw this still-queued steering message before the run consumes it. */
-  onWithdraw?: () => void;
-  /** Rewrite this still-queued steering message in place (it keeps its spot in
-   *  the queue) — the queued counterpart of `onEditMessage`. */
-  onEditQueued?: (text: string) => void;
-  /** Hold this queued message back while its editor is open — see `UserTurn`. */
-  onHoldQueued?: (held: boolean) => void;
   /** Open a View item (a version or the live head) in the side viewport, by key. */
   onOpenInView?: (key: string) => void;
   /** Re-attach to this turn's run after its transport detached (reconnect
@@ -90,6 +89,8 @@ export interface MessageItemProps {
    *  the whole turn — the divider says it in words, this says it at a glance.
    *  Derived by the transcript (presentation only); a turn can't know it alone. */
   dimmed?: boolean;
+  /** For a sub-agent report or message: the callsign of the agent that sent it. */
+  subagentCallsign?: string;
 }
 
 /** A single chat turn. User turns fill the row with a distinct `surface`
@@ -141,7 +142,17 @@ export function MessageItem(props: MessageItemProps): JSX.Element {
             <CompactionTurn message={props.message} />
           </Match>
           <Match when={props.message.role === "subagent"}>
-            <SubagentReport message={props.message} />
+            <SubagentReport
+              message={props.message}
+              callsign={props.subagentCallsign}
+            />
+          </Match>
+          <Match when={props.message.role === "notice"}>
+            <EnvelopeRow
+              variant="notice"
+              kind={props.message.notice}
+              body={props.message.content}
+            />
           </Match>
           <Match when={props.message.role === "user"}>
             <UserTurn
@@ -151,9 +162,6 @@ export function MessageItem(props: MessageItemProps): JSX.Element {
               onFork={props.onFork}
               onSwitchVersion={props.onSwitchVersion}
               onTogglePin={props.onTogglePin}
-              onWithdraw={props.onWithdraw}
-              onEditQueued={props.onEditQueued}
-              onHoldQueued={props.onHoldQueued}
               onContinue={props.onContinue}
               onCompactAndRetry={props.onCompactAndRetry}
               compacting={props.compacting}
@@ -172,6 +180,7 @@ function VersionCycler(props: {
 }): JSX.Element {
   const count = () => props.message.versionCount ?? 1;
   const index = () => props.message.versionIndex ?? 0;
+  const locked = useTurnLocked();
   const go = (next: number) => {
     const clamped = Math.max(0, Math.min(count() - 1, next));
     if (clamped !== index()) props.onSwitchVersion?.(props.message.id, clamped);
@@ -190,7 +199,8 @@ function VersionCycler(props: {
           size="sm"
           leading="chevron-left"
           aria-label="Previous version"
-          disabled={index() <= 0}
+          title={locked() ? TURN_LOCK_HINT : undefined}
+          disabled={index() <= 0 || locked()}
           onClick={() => go(index() - 1)}
         />
         <Text variant="micro" tone="dim">
@@ -201,7 +211,8 @@ function VersionCycler(props: {
           size="sm"
           leading="chevron-right"
           aria-label="Next version"
-          disabled={index() >= count() - 1}
+          title={locked() ? TURN_LOCK_HINT : undefined}
+          disabled={index() >= count() - 1 || locked()}
           onClick={() => go(index() + 1)}
         />
       </span>
@@ -296,7 +307,7 @@ const USER_TURN_CLAMP_LINES = 12;
  *  A long turn clamps to a fixed height with a fade and a SHOW MORE. Presentation-only
  *  state, deliberately not persisted: it is a way of skimming *this* scrollback right
  *  now, not a preference about the message. */
-function UserText(props: { text: string }): JSX.Element {
+function UserText(props: { text: string; parts?: ContentPart[] }): JSX.Element {
   const [expanded, setExpanded] = createSignal(false);
   const [clampable, setClampable] = createSignal(false);
   let ref: HTMLDivElement | undefined;
@@ -332,6 +343,7 @@ function UserText(props: { text: string }): JSX.Element {
       <div
         ref={ref}
         class="relative w-full overflow-hidden"
+        classList={{ hidden: !props.text }}
         style={{
           "max-height": expanded()
             ? undefined
@@ -373,6 +385,15 @@ function UserText(props: { text: string }): JSX.Element {
           {expanded() ? "Show less" : "Show more"}
         </Button>
       </Show>
+      {/* Text the operator did not write — attachment text, a routine's previous run —
+          rides the same request but is its own row, not part of their words. */}
+      <For each={props.parts}>
+        {(part) => (
+          <div class="w-full text-left">
+            <EnvelopeRow variant="part" part={part} scope="message" />
+          </div>
+        )}
+      </For>
     </div>
   );
 }
@@ -384,35 +405,25 @@ function UserTurn(props: {
   onFork?: () => void;
   onSwitchVersion?: (id: string, index: number) => void;
   onTogglePin?: () => void;
-  onWithdraw?: () => void;
-  onEditQueued?: (text: string) => void;
-  /** Ask the run to hold this queued message back while it is being edited, or to stop
-   *  holding it. Absent on hosts that do not steer (a compare pane). */
-  onHoldQueued?: (held: boolean) => void;
   onContinue?: () => void;
   onCompactAndRetry?: () => void;
   compacting?: boolean;
 }): JSX.Element {
   const m = () => props.message;
-  // The hold/draft protocol is shared with the dock's own list of queued messages —
-  // see `queuedEdit.ts`. What stays here is which write the save is.
-  const edit = createQueuedEdit({
-    messageId: () => m().queuedMessageId,
-    queued: () => m().queuedPending === true,
-    initial: () => m().content,
-    onHold: (held) => props.onHoldQueued?.(held),
-    // Routed by the bubble's state *at save time*: a still-queued message edits in place
-    // on the live run; a delivered one re-asks as a new version, so a bubble injected
-    // mid-edit falls through to the normal edit path rather than 404ing on the queue.
-    onSave: (text) => {
-      if (m().queuedPending) props.onEditQueued?.(text);
-      else props.onEditMessage?.(m().id, text);
-    },
-  });
-  const editing = edit.editing;
-  const draft = edit.draft;
-  const startEdit = edit.start;
-  const save = edit.save;
+  const [editing, setEditing] = createSignal(false);
+  const [draft, setDraft] = createSignal("");
+  const startEdit = (): void => {
+    setDraft(m().content);
+    setEditing(true);
+  };
+  const cancel = (): void => {
+    setEditing(false);
+  };
+  const save = (): void => {
+    const text = draft().trim();
+    if (text) props.onEditMessage?.(m().id, text);
+    setEditing(false);
+  };
 
   return (
     // The turn is a square block pinned to the right that shrinks to its content
@@ -445,7 +456,7 @@ function UserTurn(props: {
         </time>
         {/* The actions sit outside the block too, in the same margin but level with
             its foot, so the stamp (top) and they never meet. */}
-        <Show when={!editing() && !m().queuedPending}>
+        <Show when={!editing()}>
           <div class="absolute right-full bottom-0 mr-2">
             <MessageActions
               message={m()}
@@ -459,44 +470,8 @@ function UserTurn(props: {
         {/* The block names no speaker: its place on the right and its edge already
             say whose it is, and a tag row reserved for a label left an empty band
             over every message. The row exists only when it has state to show. */}
-        <Show
-          when={m().queuedPending || m().pinned || (m().versionCount ?? 1) > 1}
-        >
+        <Show when={m().pinned || (m().versionCount ?? 1) > 1}>
           <div class="relative flex items-center justify-end gap-2 px-2.5 pt-[7px]">
-            <Show when={m().queuedPending && !editing()}>
-              <Button
-                variant="ghost"
-                size="sm"
-                leading="pen"
-                aria-label="Edit queued message"
-                onClick={startEdit}
-              >
-                Edit
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                leading="close"
-                aria-label="Withdraw queued message"
-                onClick={() => props.onWithdraw?.()}
-              >
-                Withdraw
-              </Button>
-            </Show>
-            <Show when={m().queuedPending}>
-              <Text variant="label" tone="warn">
-                Queued
-              </Text>
-            </Show>
-            {/* A queue that has stopped moving says so. The hold is what makes editing
-              safe, and it is also the one state in which the run is waiting on the
-              operator without having asked them for anything — silence there reads as
-              the agent having stalled. */}
-            <Show when={m().queuedPending && m().queuedHeld}>
-              <Text variant="label" tone="dim">
-                Held
-              </Text>
-            </Show>
             <PinMarker message={m()} />
             <VersionCycler
               message={m()}
@@ -507,8 +482,8 @@ function UserTurn(props: {
         <Show
           when={editing()}
           fallback={
-            <Show when={m().content}>
-              <UserText text={m().content} />
+            <Show when={m().content || m().parts?.length}>
+              <UserText text={m().content} parts={m().parts} />
             </Show>
           }
         >
@@ -516,11 +491,11 @@ function UserTurn(props: {
             <Textarea
               value={draft()}
               rows={3}
-              onInput={(e) => edit.write(e.currentTarget.value)}
+              onInput={(e) => setDraft(e.currentTarget.value)}
               aria-label="Edit message"
             />
             <div class="mt-1 flex justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={edit.cancel}>
+              <Button variant="ghost" size="sm" onClick={cancel}>
                 Cancel
               </Button>
               <Button
@@ -542,17 +517,6 @@ function UserTurn(props: {
           </Show>
           <Show when={m().fileRefs?.length}>
             <MessageFileRefs paths={m().fileRefs!} />
-          </Show>
-          {/* Sets the expectation the QUEUED badge alone doesn't: the run hands
-                this to the model at its next model call, so a reply already being
-                written finishes first and this lands after it — not woven into the
-                text mid-sentence. Without saying so, an answer that streams on
-                past the message reads as the steering having been ignored. */}
-          <Show when={m().queuedPending}>
-            <Text variant="micro" tone="dim" class="max-w-4/5 text-right">
-              Goes to the model at its next step — after the current reply if it
-              finishes first.
-            </Text>
           </Show>
           {/* A bound that tripped before any response landed stamps the stop on
                 this message (the turn's own prompt) — show the marker + Continue

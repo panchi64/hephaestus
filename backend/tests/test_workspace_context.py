@@ -29,7 +29,6 @@ from services.conversations import ConversationBinding
 from services.sandbox import SandboxSessionManager
 from services.sandbox.base import safe_key
 from services.sandbox.walk import walk_files
-from services.workspace_kind import WorkspaceKind
 from tools.deps import PromptContextRequest
 from tools.workspace_context import MAX_ENTRIES, workspace_context
 
@@ -61,14 +60,18 @@ async def _caps(
 
 
 def _request(
-    caps: ServiceContainer, *, kind: WorkspaceKind = "sandbox", key: str = "conv-a"
+    caps: ServiceContainer,
+    *,
+    project_id: str | None = None,
+    worktree: bool = False,
+    key: str = "conv-a",
 ) -> PromptContextRequest:
     return PromptContextRequest(
         caps=caps,
         owner_id="operator",
         conversation_id="conv-a",
-        workspace_kind=kind,
-        project_id=None,
+        project_id=project_id,
+        worktree=worktree,
         workspace_key=key,
     )
 
@@ -214,15 +217,15 @@ async def test_an_empty_workspace_means_no_block(tmp_path: Path):
     assert await workspace_context(_request(caps)) == ""
 
 
-@pytest.mark.parametrize("kind", ["checkout", "worktree"])
-async def test_a_project_folder_thread_gets_no_block(tmp_path: Path, kind: WorkspaceKind):
-    """A project folder is the operator's own repository, with git in it and
-    `repo_instructions` already describing it — listing thousands of tracked files every
-    turn would be this idea's whole cost with none of its benefit."""
+@pytest.mark.parametrize("worktree", [False, True])
+async def test_a_project_thread_is_told_its_scratch(tmp_path: Path, worktree: bool):
+    """Every thread has a scratch, so a project thread is told what it left there too; the
+    project itself, the operator's repository with git in it, is never listed."""
     caps, manager = await _caps(tmp_path)
     _ = _populate(manager, "conv-a", {"analysis.py": "x"})
 
-    assert await workspace_context(_request(caps, kind=kind)) == ""
+    block = await workspace_context(_request(caps, project_id="proj-1", worktree=worktree))
+    assert "/work/analysis.py" in block
 
 
 async def test_no_sandbox_capability_means_no_block():
@@ -243,15 +246,13 @@ async def test_it_creates_neither_a_session_nor_a_directory(tmp_path: Path):
     assert not manager.work_root.exists()
 
 
-async def test_a_delegated_run_is_described_its_own_fork(tmp_path: Path):
+async def test_a_sub_agent_in_a_worktree_is_described_the_scratch_it_shares(tmp_path: Path):
     caps, manager = await _caps(tmp_path)
     _ = _populate(manager, "conv-a", {"parents-file.py": "x"})
-    _ = _populate(manager, "conv-a/deleg-1", {"childs-file.py": "y"})
 
     block = await workspace_context(_request(caps, key="conv-a/deleg-1"))
 
-    assert "/work/childs-file.py" in block
-    assert "parents-file.py" not in block
+    assert "/work/parents-file.py" in block
 
 
 # --- the cap ----------------------------------------------------------------
@@ -374,7 +375,7 @@ async def test_a_live_turn_carries_the_block_at_the_tail(tmp_path: Path):
         categories={},
         capabilities=caps,
         prompt_context_providers=[workspace_context],
-        binding=ConversationBinding(workspace_kind="sandbox"),
+        binding=ConversationBinding(),
         workspace_key="conv-a",
         context_window=100_000,
     )
@@ -393,32 +394,3 @@ async def test_a_live_turn_carries_the_block_at_the_tail(tmp_path: Path):
     assert "/work/analysis.py" in block.text
     first_answer = next(e.seq for e in events if e.body.type == "answer.delta")
     assert all(e.seq < first_answer for e in injected)
-
-
-@pytest.mark.parametrize("kind", ["checkout", "worktree"])
-async def test_a_live_project_folder_turn_carries_no_block(tmp_path: Path, kind: WorkspaceKind):
-    caps, manager = await _caps(tmp_path)
-    _ = _populate(manager, "conv-a", {"analysis.py": "x"})
-
-    orch = build_chat_orchestrator(
-        "carry on",
-        model=TestModel(custom_output_text="ok", call_tools=[]),
-        categories={},
-        capabilities=caps,
-        prompt_context_providers=[workspace_context],
-        binding=ConversationBinding(workspace_kind=kind, project_id="proj-1"),
-        workspace_key="conv-a",
-        context_window=100_000,
-    )
-    run = RunRegistry().submit(kind="chat", owner_id="operator", orchestrator=orch)
-    _ = await run.wait()
-    assert run.status is RunStatus.done
-
-    listings = [
-        e
-        for e in run.stream.replay()
-        if e.body.type == "context.injected"
-        and e.body.contributor == "workspace"
-        and e.body.placement == "prompt"
-    ]
-    assert listings == []

@@ -65,13 +65,23 @@ async def seed_memory(ctx: SeedContext) -> str:
     if rows(await ctx.client.get("/memory")):
         return "already populated"
     memories = [
-        ("Prefers concise answers with the reasoning shown only when it changes the result.", True),
-        ("Works in Python and TypeScript; uses uv and bun rather than pip and npm.", False),
-        ("Is in the Europe/Madrid timezone.", False),
+        (
+            "Prefers concise answers with the reasoning shown only when it changes the result.",
+            "How the operator likes answers",
+            True,
+        ),
+        (
+            "Works in Python and TypeScript; uses uv and bun rather than pip and npm.",
+            "The operator's languages and package managers",
+            False,
+        ),
+        ("Is in the Europe/Madrid timezone.", "The operator's timezone", False),
     ]
     made = 0
-    for content, pinned in memories:
-        created = await ctx.client.post("/memory", json={"content": content, "pinned": pinned})
+    for content, description, pinned in memories:
+        created = await ctx.client.post(
+            "/memory", json={"content": content, "description": description, "pinned": pinned}
+        )
         made += created.status_code in (200, 201)
     return f"{made} memories"
 

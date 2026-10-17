@@ -93,10 +93,10 @@ export function createResumeOps(deps: ResumeDeps): ResumeOps {
     });
   }
 
-  /** After a 409 (the backend already has a run active on this conversation — a
-   *  parallel submit, a stale UI, or a second tab/device) look up the conversation's
-   *  current active run and reattach to it, so the turn that's actually in flight
-   *  becomes visible instead of silently going nowhere. */
+  /** When the backend has a run active on this conversation that this client is not
+   *  driving (a second tab/device, a stale UI) look up the conversation's current
+   *  active run and reattach to it, so the turn that's actually in flight becomes
+   *  visible instead of silently going nowhere. */
   async function reattachToLiveRun(conversationId: string): Promise<void> {
     await withFreshDetail(conversationId, async (detail) => {
       const ar = toActiveRun(detail.active_run);

@@ -66,6 +66,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
 from core.config import Settings
+from core.diagnostics import render_tool_error
 from services.permissions import beyond_scope
 from services.tool_sensitivity import (
     CHASSIS_TOOLS,
@@ -74,6 +75,7 @@ from services.tool_sensitivity import (
 )
 from tools import RunDeps
 from tools.describe import NARRATION_ARG, NARRATION_PROPERTY, add_property, drop_properties
+from tools.recover import describe_failure
 
 from .emit import NestedToolFinished, NestedToolStarted
 from .gating import settle_deferred
@@ -113,19 +115,11 @@ class CodeModeLimits:
 
 
 def code_mode_limits(settings: Settings) -> CodeModeLimits:
-    """The limits a turn's scripts run under, from the turn's one settings object.
-
-    A script's calls count toward the turn's own ``agent_tool_calls_limit`` — the sandbox
-    dispatches through the same usage the turn is bounded by — so where that is set the
-    script's cap is clamped under it: a budget the turn could never let a script spend is
-    a number that only misleads."""
-    calls = settings.code_mode_max_tool_calls
-    if settings.agent_tool_calls_limit is not None:
-        calls = min(calls, settings.agent_tool_calls_limit)
+    """The limits a turn's scripts run under, from the turn's one settings object."""
     return CodeModeLimits(
         max_duration_s=settings.code_mode_max_duration_s,
         max_memory_bytes=settings.code_mode_max_memory_mb * 1024 * 1024,
-        max_tool_calls=max(1, calls),
+        max_tool_calls=max(1, settings.code_mode_max_tool_calls),
     )
 
 
@@ -159,11 +153,11 @@ def script_call_of(ctx: RunContext[RunDeps]) -> str | None:
     return None
 
 
-def _error_text(error: BaseException) -> str:
-    """The sentence a failed nested call's row shows."""
+def _error_text(name: str, error: Exception) -> str:
+    """The text a failed nested call's row shows."""
     if isinstance(error, ModelRetry | ToolFailed):
         return error.message
-    return f"{type(error).__name__}: {error}"
+    return describe_failure(name, error)
 
 
 @dataclass
@@ -301,7 +295,12 @@ class CodeModeCapability(CodeMode[RunDeps]):
     ) -> ValidatedToolArgs:
         parent = script_call_of(ctx)
         if parent is not None:
-            await self._finished(ctx, parent, call, error=_error_text(error))
+            text = (
+                error.message
+                if isinstance(error, ModelRetry | ToolFailed)
+                else render_tool_error(f"the arguments to {call.tool_name} are invalid: {error}")
+            )
+            await self._finished(ctx, parent, call, error=text)
         raise error
 
     @override
@@ -353,7 +352,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
         except ApprovalRequired, CallDeferred:
             raise
         except Exception as exc:
-            await self._finished(ctx, parent, call, error=_error_text(exc))
+            await self._finished(ctx, parent, call, error=_error_text(call.tool_name, exc))
             raise
         outcome: object = result
         if isinstance(outcome, ToolReturn):

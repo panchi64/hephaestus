@@ -11,16 +11,17 @@ from routes.deps import OPERATOR_ID
 from runs import ContextThresholds
 from services.settings_store import (
     AutoCompactSettings,
-    get_agent_request_limit,
+    SettingsStore,
     get_auto_compact,
     get_context_thresholds,
+    get_first_token_timeout,
     get_inactivity_timeout,
     get_subagent_limit,
     get_wall_clock_timeout,
     get_work_summary_idle_minutes,
-    set_agent_request_limit,
     set_auto_compact,
     set_context_thresholds,
+    set_first_token_timeout,
     set_inactivity_timeout,
     set_subagent_limit,
     set_wall_clock_timeout,
@@ -30,40 +31,27 @@ from services.settings_store import (
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-def _settings_response(
-    auto: AutoCompactSettings,
-    context: ContextThresholds,
-    steps: int,
-    inactivity: float | None,
-    wall_clock: float | None,
-    subagents: int | None,
-    work_summary_idle_minutes: int,
-) -> ChatSettings:
+async def _current(store: SettingsStore) -> ChatSettings:
+    """Every preference as it now stands: the runtime override, else the config default."""
+    auto = await get_auto_compact(store, OPERATOR_ID)
+    context = await get_context_thresholds(store, OPERATOR_ID)
     return ChatSettings(
         auto_compact_enabled=auto.enabled,
         auto_compact_threshold=auto.threshold,
-        work_summary_idle_minutes=work_summary_idle_minutes,
+        work_summary_idle_minutes=await get_work_summary_idle_minutes(store, OPERATOR_ID),
         context_warn_threshold=context.warn,
         context_alert_threshold=context.alert,
-        agent_request_limit=steps,
-        inactivity_timeout_s=inactivity,
-        wall_clock_timeout_s=wall_clock,
-        subagent_max_concurrent=subagents,
+        first_token_timeout_s=await get_first_token_timeout(store, OPERATOR_ID),
+        inactivity_timeout_s=await get_inactivity_timeout(store, OPERATOR_ID),
+        wall_clock_timeout_s=await get_wall_clock_timeout(store, OPERATOR_ID),
+        subagent_max_concurrent=await get_subagent_limit(store, OPERATOR_ID),
     )
 
 
 @router.get("/settings", response_model=ChatSettings)
 async def get_chat_settings(request: Request) -> ChatSettings:
     """The operator's chat preferences (the runtime overrides, else the config defaults)."""
-    store = deps.settings_store(request)
-    auto = await get_auto_compact(store, OPERATOR_ID)
-    steps = await get_agent_request_limit(store, OPERATOR_ID)
-    inactivity = await get_inactivity_timeout(store, OPERATOR_ID)
-    wall_clock = await get_wall_clock_timeout(store, OPERATOR_ID)
-    context = await get_context_thresholds(store, OPERATOR_ID)
-    subagents = await get_subagent_limit(store, OPERATOR_ID)
-    idle_minutes = await get_work_summary_idle_minutes(store, OPERATOR_ID)
-    return _settings_response(auto, context, steps, inactivity, wall_clock, subagents, idle_minutes)
+    return await _current(deps.settings_store(request))
 
 
 @router.put("/settings", response_model=ChatSettings)
@@ -73,37 +61,24 @@ async def update_chat_settings(body: ChatSettings, request: Request) -> ChatSett
     each multi-field group is merged over its current values and only written when the body
     touched it, so a client tuning one preference can't reset the rest."""
     store = deps.settings_store(request)
-    if body.agent_request_limit is not None:
-        steps = await set_agent_request_limit(store, OPERATOR_ID, body.agent_request_limit)
-    else:
-        steps = await get_agent_request_limit(store, OPERATOR_ID)
+    if body.first_token_timeout_s is not None:
+        _ = await set_first_token_timeout(store, OPERATOR_ID, body.first_token_timeout_s)
     if body.inactivity_timeout_s is not None:
-        inactivity = await set_inactivity_timeout(store, OPERATOR_ID, body.inactivity_timeout_s)
-    else:
-        inactivity = await get_inactivity_timeout(store, OPERATOR_ID)
+        _ = await set_inactivity_timeout(store, OPERATOR_ID, body.inactivity_timeout_s)
     # `null` here means "remove the bound", so presence in the body — not a non-None
     # value — is what says the client touched it.
     if "wall_clock_timeout_s" in body.model_fields_set:
-        wall_clock = await set_wall_clock_timeout(store, OPERATOR_ID, body.wall_clock_timeout_s)
-    else:
-        wall_clock = await get_wall_clock_timeout(store, OPERATOR_ID)
+        _ = await set_wall_clock_timeout(store, OPERATOR_ID, body.wall_clock_timeout_s)
     # `null` removes the cap here too, so presence rather than a non-None value is what
     # says the client touched it.
     if "subagent_max_concurrent" in body.model_fields_set:
-        subagents = await set_subagent_limit(store, OPERATOR_ID, body.subagent_max_concurrent)
-    else:
-        subagents = await get_subagent_limit(store, OPERATOR_ID)
-
+        _ = await set_subagent_limit(store, OPERATOR_ID, body.subagent_max_concurrent)
     if body.work_summary_idle_minutes is not None:
-        idle_minutes = await set_work_summary_idle_minutes(
-            store, OPERATOR_ID, body.work_summary_idle_minutes
-        )
-    else:
-        idle_minutes = await get_work_summary_idle_minutes(store, OPERATOR_ID)
+        _ = await set_work_summary_idle_minutes(store, OPERATOR_ID, body.work_summary_idle_minutes)
 
-    auto = await get_auto_compact(store, OPERATOR_ID)
     if body.auto_compact_enabled is not None or body.auto_compact_threshold is not None:
-        auto = await set_auto_compact(
+        auto = await get_auto_compact(store, OPERATOR_ID)
+        _ = await set_auto_compact(
             store,
             OPERATOR_ID,
             AutoCompactSettings(
@@ -116,8 +91,8 @@ async def update_chat_settings(body: ChatSettings, request: Request) -> ChatSett
             ),
         )
 
-    context = await get_context_thresholds(store, OPERATOR_ID)
     if body.context_warn_threshold is not None or body.context_alert_threshold is not None:
+        context = await get_context_thresholds(store, OPERATOR_ID)
         warn = context.warn if body.context_warn_threshold is None else body.context_warn_threshold
         alert = (
             context.alert if body.context_alert_threshold is None else body.context_alert_threshold
@@ -137,5 +112,5 @@ async def update_chat_settings(body: ChatSettings, request: Request) -> ChatSett
                     f"(got warn {warn}, alert {alert})"
                 ),
             ) from exc
-        context = await set_context_thresholds(store, OPERATOR_ID, thresholds)
-    return _settings_response(auto, context, steps, inactivity, wall_clock, subagents, idle_minutes)
+        _ = await set_context_thresholds(store, OPERATOR_ID, thresholds)
+    return await _current(store)

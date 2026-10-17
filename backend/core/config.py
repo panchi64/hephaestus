@@ -86,15 +86,20 @@ class Settings(BaseSettings):
     # not feed this one — that caps how many may *exist*, which is about the operator's
     # attention and their bill; this caps how many may run, which is about the host.
     run_linked_concurrency: int = 3
-    # Off by default: a turn is already bounded by `agent_request_limit` (it cannot loop
-    # forever), so a wall clock mostly fires on a run that is legitimately slow — a local
-    # model, a long sandboxed tool call — which is precisely the run we want to let
-    # finish. It stays available as an opt-in lever for the gap neither other bound
-    # covers: the inactivity watchdog reads activity off the event stream, so a run that
-    # keeps *emitting* — a tool streaming progress, a model streaming tokens — refreshes
-    # the clock on every frame and never trips it, while spending no extra model requests.
+    # Off by default: a wall clock mostly fires on a run that is legitimately slow — a local
+    # model, a long sandboxed tool call — which is the run we want to let finish. It is an
+    # opt-in lever for the gap the inactivity watchdog leaves: that reads activity off the
+    # event stream, so a run that keeps *emitting* refreshes it on every frame.
     run_wall_clock_timeout_s: float | None = None
     run_inactivity_timeout_s: float | None = 120.0
+    # How long a model request may stream nothing before its first part. The inactivity
+    # clock is held open meanwhile, because reading a long prompt is silent: about 2s per
+    # 1k new tokens for a 27B model on Apple silicon, so a cold 50k-token thread waits
+    # around 100s. None leaves that wait to the inactivity bound.
+    first_token_timeout_s: float | None = 600.0
+    # One tool call's bound. A call holds the inactivity clock open while it runs (a VM
+    # bring-up or a build streams nothing), so this is what stops one that wedges.
+    tool_call_timeout_s: float | None = 1800.0
     # How long shutdown spends on any one drain — flushing a write-behind queue, waiting
     # for cancelled runs to unwind, closing a browser — before moving on. A stop that
     # waits forever on a stuck job is a Ctrl+C that has to be repeated, and the second one
@@ -107,16 +112,18 @@ class Settings(BaseSettings):
     # populated by manual config (the /models surface) today and the automatic
     # setup later. There is deliberately no env model seam.
 
-    # Agent bounds: max model requests per turn and optional per-turn
-    # tool-call cap. None disables the tool cap.
-    agent_request_limit: int = 25
-    agent_tool_calls_limit: int | None = None
+    # A turn has no request or tool-call budget; the loop guard and the timeouts bound it.
+    # How many times a turn re-sends a request a transient model error cut short (a
+    # dropped connection, a 5xx or 429, a stream that ended mid-call).
+    auto_continue_transient_max: int = 2
+    # How many times the model may retry a tool call whose arguments a tool rejected, and
+    # an answer that failed output validation, before the turn fails.
+    agent_tool_retries: int = 3
+    agent_output_retries: int = 2
 
     # `run_code` — the in-process Monty sandbox a model-written script calls tools from
     # (`agent/code_mode.py`). The duration and memory caps are per snippet. The call cap is
-    # how many tools one script may call; those calls also count toward
-    # `agent_tool_calls_limit`, so where that is set the script's cap is clamped under it
-    # rather than handed a budget the turn could never let it spend.
+    # how many tools one script may call.
     code_mode_max_duration_s: float = 30.0
     code_mode_max_memory_mb: int = 256
     code_mode_max_tool_calls: int = 25

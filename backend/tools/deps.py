@@ -25,6 +25,8 @@ from pydantic_ai import RunContext
 from core.container import ServiceContainer
 from runs import Run
 from services.agents.definition import UNRESTRICTED, ToolAccess
+from services.home.paths import Place
+from services.home.table import RunHome
 from services.permissions import (
     DEFAULT_PERMISSION,
     PermissionLevel,
@@ -32,8 +34,7 @@ from services.permissions import (
     TurnBoundary,
 )
 from services.search import DedupeSets
-from services.workspace import RunWorkspace
-from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
+from services.workspace import RunWorkspace, scratch_key
 
 
 def default_workspace_key(conversation_id: str | None, run: Run | None) -> str:
@@ -75,9 +76,14 @@ class RunDeps:
     # *conversation's* stored binding, never from the live request — switching the
     # active project must not change what an already-running thread is doing.
     project_id: str | None = None
-    # Where this run's file work happens. Mutable: `project_open_worktree` moves a chat
-    # from its sandbox to a worktree mid-turn, and the enabled gate reads it live.
-    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
+    # Whether this run works on its project in a worktree of its own. Mutable:
+    # `project_open_worktree` opens one mid-turn.
+    worktree: bool = False
+    # Whose write leases this run works under (`ConversationBinding.leases_from`).
+    leases_from: str | None = None
+    # Whether the operator's checkout is read-only to this run because the thread whose
+    # leases it holds works in a worktree (`ConversationBinding.checkout_read_only`).
+    checkout_read_only: bool = False
     # How far this run may go before it has to ask: "plan", "manual", "edit", "auto" or
     # "yolo" — the last of which is the operator saying it never has to.
     # Here because a tool is offered and executed inside a Run,
@@ -89,11 +95,23 @@ class RunDeps:
     # Never set by a construction site: it is a per-run cache, not an input, and it lives
     # here so it dies with the run instead of in a module-level dict.
     workspace: RunWorkspace | None = field(default=None, repr=False, compare=False)
+    # This run's home, memoised by `tools/home.py` and replaced when a write lease widens it.
+    home: RunHome | None = field(default=None, repr=False, compare=False)
     # The queries this run has already searched and the pages it has already fetched, so
     # the web tools can refuse a repeat before it costs a round trip. Per-run for the same
     # reason as `workspace` — and deliberately per *run* rather than per conversation:
     # "I already read this" is a fact about the investigation in flight, not a durable one.
     web_dedupe: DedupeSets = field(default_factory=DedupeSets, repr=False, compare=False)
+    # Whether another agent spawned this thread, so it is offered `subagent_report` and owes
+    # its parent a report (`tools/report.py`).
+    reports_to_parent: bool = False
+    # Set once this run has filed its report, and once it has been sent back for ending
+    # without one, so the reminder is given once and the next answer stands.
+    reported: bool = field(default=False, repr=False, compare=False)
+    report_reminded: bool = field(default=False, repr=False, compare=False)
+    # The projects and worktrees whose instruction files this run has handed over
+    # (`tools/briefing.py`).
+    briefed: set[Place] = field(default_factory=set[Place], repr=False, compare=False)
     # The key everything about this run's workspace hangs off: its sandbox session,
     # its preview, its staged artifacts. The conversation when there is one, else the
     # run (a stateless turn). A real field rather than a derived property because a
@@ -119,6 +137,12 @@ class RunDeps:
     def __post_init__(self) -> None:
         if not self.workspace_key:
             self.workspace_key = default_workspace_key(self.conversation_id, self.run)
+
+    @property
+    def scratch_key(self) -> str:
+        """The key of the scratch session this run works in: a sub-agent in a worktree of
+        its own shares the scratch of the thread that spawned it."""
+        return scratch_key(self.workspace_key)
 
 
 # A feature-contributed dynamic instruction (a manifest's `instructions` export): the
@@ -146,8 +170,9 @@ class PromptContextRequest:
     caps: ServiceContainer
     owner_id: str
     conversation_id: str | None
-    workspace_kind: WorkspaceKind
     project_id: str | None
+    #: Whether the turn works on its project in a worktree of its own.
+    worktree: bool
     #: This run's workspace key — a delegation's own, where it has one, so a sub-agent
     #: is described its fork rather than its parent's files.
     workspace_key: str

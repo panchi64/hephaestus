@@ -1,13 +1,5 @@
-"""One workspace-key convention, honoured by both workspace kinds.
-
-A workspace key has always been able to name a *delegation* of a workspace rather than the
-workspace itself — a forked sandbox is keyed ``<parent>/<child>`` — but only the sandbox
-half read it that way. The worktree half keyed off the conversation instead, which is why a
-delegated run in a project folder could be handed its own container and never its own checkout:
-its conversation does not hold the project, so it was refused as a rival for it.
-
-These hold the two halves of that: that the split is read the same way everywhere, and that
-an ordinary run — whose key *is* its conversation — resolves exactly as it did before.
+"""The workspace-key convention: ``<owner>/<delegation>`` names a sub-agent working in a
+worktree of its own, under the thread ``<owner>``, whose scratch it shares.
 """
 
 from __future__ import annotations
@@ -16,16 +8,14 @@ import asyncio
 from pathlib import Path
 from typing import final, override
 
-import pytest
-
 from services.projects.repo import WorktreeState, child_branch_for
 from services.projects.worktree import WorktreeManager
 from services.sandbox import LiveWork
 from services.workspace import (
-    RunWorkspace,
     WorkspaceSession,
     WorkspaceSessions,
     sandbox_workspace,
+    scratch_key,
     split_workspace_key,
 )
 
@@ -54,7 +44,7 @@ class TestSplittingAKey:
     def test_a_plain_key_names_its_own_workspace(self):
         assert split_workspace_key("c123") == ("c123", None)
 
-    def test_a_delegated_key_names_the_parents_workspace_and_the_delegation(self):
+    def test_a_delegated_key_names_the_owner_and_the_delegation(self):
         assert split_workspace_key("c123/w7") == ("c123", "w7")
 
     def test_an_empty_key_names_nothing(self):
@@ -67,103 +57,63 @@ class TestSplittingAKey:
         # *different* checkout than the conversation's own.
         assert split_workspace_key("c123/") == ("c123", None)
 
+    def test_a_delegation_works_in_its_owners_scratch(self):
+        assert scratch_key("c123/w7") == "c123"
+        assert scratch_key("c123") == "c123"
 
-class TestOpeningAChildCheckout:
-    async def _held(self, tmp_path: Path) -> tuple[Path, WorktreeManager, WorktreeState]:
+
+class TestReopeningAChildWorktree:
+    async def _cut(self, tmp_path: Path) -> tuple[WorktreeManager, WorktreeState, WorktreeState]:
         root = await _repo(tmp_path)
         manager = WorktreeManager(tmp_path / "worktrees")
         parent = await manager.acquire(
             project_id="p", root=root, base_ref="main", conversation_id="c1"
         )
-        return root, manager, parent
-
-    async def test_a_child_opens_beside_its_parent_without_taking_the_project(self, tmp_path: Path):
-        root, manager, parent = await self._held(tmp_path)
         _ = (parent.path / "hello.txt").write_text("mid-edit\n")
-
-        child = await manager.open_child(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
+        child = await manager.cut_child(
+            project_id="p", root=root, conversation_id="c1", delegation_id="d1", source=parent
         )
-
-        assert child.path != parent.path
-        assert child.branch == child_branch_for("c1", "d1")
-        # It opens on what the parent's transcript describes, not on the last commit.
-        assert (child.path / "hello.txt").read_text() == "mid-edit\n"
-        # And the parent still holds the project: a sub-agent working beside the thread
-        # that launched it is one conversation in two places, not a second thread.
-        assert manager.holder("p") == "c1"
+        return manager, parent, child
 
     async def test_reopening_keeps_the_childs_own_work(self, tmp_path: Path):
-        root, manager, _parent = await self._held(tmp_path)
-        child = await manager.open_child(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
-        )
+        manager, _parent, child = await self._cut(tmp_path)
         _ = (child.path / "wip.txt").write_text("half-done\n")
 
-        again = await manager.open_child(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
-        )
+        again = manager.reopen_child(project_id="p", conversation_id="c1", delegation_id="d1")
 
-        # THE assertion: a sub-agent resolves its workspace on every file-tool call, so
-        # the second answer has to be the same checkout with its work still in it.
+        # A sub-agent resolves its workspace on every file-tool call, so every answer has
+        # to be the same checkout with its work still in it.
         assert again.path == child.path
+        assert again.branch == child_branch_for("c1", "d1")
         assert (again.path / "wip.txt").read_text() == "half-done\n"
 
     async def test_reopening_does_not_commit_the_parent_again(self, tmp_path: Path):
-        root, manager, parent = await self._held(tmp_path)
-        _ = await manager.open_child(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
-        )
+        manager, parent, _child = await self._cut(tmp_path)
         before = await _log(parent.path)
 
         for _ in range(3):
-            _ = await manager.open_child(
-                project_id="p", root=root, conversation_id="c1", delegation_id="d1"
-            )
+            _ = manager.reopen_child(project_id="p", conversation_id="c1", delegation_id="d1")
 
-        # Cutting a fork commits the parent's working tree so the child opens on it.
-        # Doing that per resolution would be a commit per tool call on the operator's
-        # branch — which is the whole reason this is not just `fork`.
         assert await _log(parent.path) == before
 
-    async def test_two_children_of_one_parent_get_their_own_checkouts(self, tmp_path: Path):
-        root, manager, _parent = await self._held(tmp_path)
-
-        one = await manager.open_child(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d1"
+    async def test_two_children_of_one_parent_get_their_own_worktrees(self, tmp_path: Path):
+        manager, parent, one = await self._cut(tmp_path)
+        two = await manager.cut_child(
+            project_id="p",
+            root=tmp_path / "project",
+            conversation_id="c1",
+            delegation_id="d2",
+            source=parent,
         )
-        two = await manager.open_child(
-            project_id="p", root=root, conversation_id="c1", delegation_id="d2"
-        )
-
-        # Parallel sub-agents are the ordinary case now — the model launches several in
-        # one step — so two of them must never land in one working tree.
         assert one.path != two.path
-
-
-@final
-class _Work(LiveWork):
-    @property
-    @override
-    def is_terminal(self) -> bool:
-        return False
 
 
 @final
 class _FakeSession(WorkspaceSession):
     """Only what resolving a workspace asks of a session."""
 
-    def __init__(self, key: str, root: Path, *, ephemeral: bool = False) -> None:
-        self.key: str = key
+    def __init__(self, root: Path) -> None:
         self.root: Path = root
-        self._ephemeral: bool = ephemeral
-        self.holders: list[LiveWork | None] = []
-        self.touches: int = 0
-
-    @property
-    @override
-    def ephemeral(self) -> bool:
-        return self._ephemeral
 
     @override
     def ensure_workspace(self) -> Path:
@@ -178,121 +128,34 @@ class _FakeSession(WorkspaceSession):
     def write_file(self, relpath: str, content: bytes) -> None:
         raise AssertionError(f"unexpected call: write_file {relpath}")
 
-    @override
-    def hold(self, holder: LiveWork | None) -> None:
-        self.holders.append(holder)
-
-    @override
-    def touch(self) -> None:
-        self.touches += 1
-
 
 @final
 class _FakeSessions(WorkspaceSessions):
-    """A sandbox manager as `sandbox_workspace` uses one, counting what it was asked for.
-
-    Deliberately a fake rather than the real manager: the point of these is *which call*
-    a delegated key produces, and the real one wants a container runtime to answer.
-    """
+    """A sandbox manager as `sandbox_workspace` uses one, recording which keys it opened."""
 
     def __init__(self, tmp_path: Path) -> None:
         self._root: Path = tmp_path
-        self.sessions: dict[str, _FakeSession] = {}
         self.acquired: list[str] = []
-        self.forked: list[tuple[str, str]] = []
-
-    @override
-    def existing(self, key: str) -> _FakeSession | None:
-        return self.sessions.get(key)
 
     @override
     async def acquire(self, key: str, *, holder: LiveWork | None = None) -> _FakeSession:
         self.acquired.append(key)
-        session = self.sessions.setdefault(
-            key, _FakeSession(key, self._root / key.replace("/", "_"))
-        )
-        session.hold(holder)
-        return session
-
-    @override
-    async def fork(
-        self, parent_key: str, child_key: str, *, holder: LiveWork | None = None
-    ) -> _FakeSession:
-        if child_key in self.sessions:
-            raise AssertionError(f"already forked {child_key!r}")
-        self.forked.append((parent_key, child_key))
-        session = _FakeSession(child_key, self._root / child_key.replace("/", "_"), ephemeral=True)
-        session.hold(holder)
-        self.sessions[child_key] = session
-        return session
+        return _FakeSession(self._root / key)
 
 
-async def _open(
-    sessions: _FakeSessions, key: str, *, holder: LiveWork | None = None
-) -> RunWorkspace:
-    return await sandbox_workspace(sessions, key, holder=holder)
-
-
-class TestOpeningADelegatedSandbox:
-    """The sandbox half of the same convention.
-
-    The worktree half above was the one that had to be taught the key; this half was
-    always described as reading it, and did not. A delegated key through plain `acquire`
-    is the quiet failure: it answers with a session, so nothing raises — the sub-agent is
-    simply working in a copy of *nothing*, and the merge at the end finds no fork to land.
-    """
-
+class TestOpeningTheScratch:
     async def test_an_ordinary_key_is_the_conversations_own_session(self, tmp_path: Path):
         sessions = _FakeSessions(tmp_path)
+        _ = await sandbox_workspace(sessions, "c1")
+        assert sessions.acquired == ["c1"]
 
-        _ = await _open(sessions, "c1")
+    async def test_a_delegated_key_opens_its_owners_session(self, tmp_path: Path):
+        sessions = _FakeSessions(tmp_path)
+
+        workspace = await sandbox_workspace(sessions, "c1/s-ab12")
 
         assert sessions.acquired == ["c1"]
-        assert sessions.forked == []
-
-    async def test_a_delegated_key_is_a_fork_of_the_workspace_it_delegates_from(
-        self, tmp_path: Path
-    ):
-        sessions = _FakeSessions(tmp_path)
-
-        workspace = await _open(sessions, "c1/s-ab12")
-
-        assert sessions.forked == [("c1", "c1/s-ab12")]
-        # And never as a session of its own: that is the empty workspace.
-        assert sessions.acquired == []
-        assert workspace.kind == "sandbox"
-
-    async def test_resolving_it_again_reopens_the_same_fork(self, tmp_path: Path):
-        sessions = _FakeSessions(tmp_path)
-
-        first = await _open(sessions, "c1/s-ab12")
-        second = await _open(sessions, "c1/s-ab12")
-
-        # A delegated run resolves its workspace on every file-tool call, not once at
-        # launch — the fake raises on a second fork, which is what the real manager does.
-        assert sessions.forked == [("c1", "c1/s-ab12")]
-        assert first.root == second.root
-
-    async def test_reopening_claims_the_fork_for_the_run_using_it(self, tmp_path: Path):
-        sessions = _FakeSessions(tmp_path)
-        holder = _Work()
-
-        _ = await _open(sessions, "c1/s-ab12", holder=holder)
-        _ = await _open(sessions, "c1/s-ab12", holder=holder)
-
-        # Displacing a fork *deletes* it, nothing about a fork being sealed — so a copy
-        # left unclaimed between two of a sub-agent's tool calls is its work thrown away
-        # by the live-session cap.
-        assert sessions.sessions["c1/s-ab12"].holders == [holder, holder]
-
-    async def test_a_session_that_is_not_a_fork_is_never_adopted(self, tmp_path: Path):
-        sessions = _FakeSessions(tmp_path)
-        # Something non-ephemeral squatting the child key — adopting it would mean
-        # merging a whole conversation's workspace into another's when this ends.
-        sessions.sessions["c1/s-ab12"] = _FakeSession("c1/s-ab12", tmp_path / "squatter")
-
-        with pytest.raises(AssertionError):
-            _ = await _open(sessions, "c1/s-ab12")
+        assert workspace.root == tmp_path / "c1"
 
 
 async def _log(path: Path) -> str:

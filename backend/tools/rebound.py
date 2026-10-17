@@ -1,11 +1,10 @@
 """Toolsets whose tools are fixed but whose *backing object* is not.
 
-Several categories act on something a run resolves rather than the app: `files`, `shell`
-and `repo` on a directory, `browse` on a conversation's live browser. Categories are
-assembled once at app startup and shared by every conversation, so none of them can bake
-that in at construction. `files` and `repo` only need the run's workspace handed to them
-as ``ctx.workspace``; `shell` and `browse` hold per-binding state, so they are rebuilt per
-binding.
+Several categories act on something a run resolves rather than the app: `files` on the
+run's home, `repo` on its workspace, `browse` on a conversation's live browser. Categories
+are assembled once at app startup and shared by every conversation, so none of them can
+bake that in at construction. `files` and `repo` only need it handed to them as
+``ctx.workspace``; `browse` holds per-binding state, so it is rebuilt per binding.
 
 `AbstractToolset.for_run(ctx)` is not the hook for this, and it is worth saying why since
 it looks like it: the library does call it once per run, but a harness toolset's `for_run`
@@ -33,16 +32,14 @@ delegating the call alone would still act on the template. That is the whole tri
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
-from pathlib import Path
 from typing import cast, override
 
 from pydantic_ai import AbstractToolset, RunContext, Tool, ToolsetTool
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 
 from services.projects.worktree import WorktreeBusyError
-from services.workspace import RunWorkspace
 
 from .deps import RunDeps
 from .describe import registered_tools
@@ -50,16 +47,10 @@ from .harness_events import attributable
 from .workspace import run_workspace, unavailable
 
 # Bound toolsets are cached per key because building one registers every tool and
-# generates its schema — too much to repeat on each call. They hold no state beyond what
-# they were bound to, so conversations sharing one are independent. The cap keeps a
+# generates its schema — too much to repeat on each call. An evicted one is rebuilt on
+# its next use, so nothing that must outlive a call may live only in one. The cap keeps a
 # long-lived process from retaining an entry per conversation ever opened.
 _MAX_BOUND = 64
-
-#: A `call_tool` guard: raise (or return a string, by raising nothing and letting the
-#: caller proceed) before the bound toolset acts. Used for the approval gate on `shell`.
-#: Async because the same guard settles that category's OS fence, which resolves once per
-#: process behind a lock.
-type Guard = Callable[[str, RunContext[RunDeps], RunWorkspace], Awaitable[str | None]]
 
 
 class ReboundToolset(AbstractToolset[RunDeps]):
@@ -154,24 +145,8 @@ class ReboundToolset(AbstractToolset[RunDeps]):
 
 
 class WorkspaceToolset(ReboundToolset):
-    """A toolset dispatched against each run's workspace.
-
-    Every call sees the run's workspace as ``ctx.workspace``, which is all a harness
-    toolset needs. ``build`` is for toolsets that also hold per-directory state of their
-    own (the shell's process handles); without it the template serves every run.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        template: AbstractToolset[RunDeps],
-        build: Callable[[Path], AbstractToolset[RunDeps]] | None = None,
-        *,
-        guard: Guard | None = None,
-    ) -> None:
-        super().__init__(name, template)
-        self._build: Callable[[Path], AbstractToolset[RunDeps]] | None = build
-        self._guard: Guard | None = guard
+    """A toolset dispatched against each run's workspace, which every call sees as
+    ``ctx.workspace``."""
 
     @override
     async def resolve(
@@ -183,14 +158,5 @@ class WorkspaceToolset(ReboundToolset):
             return str(exc)
         if workspace is None:
             return unavailable(ctx.deps)
-        if self._guard is not None:
-            refusal = await self._guard(name, ctx, workspace)
-            if refusal is not None:
-                return refusal
-        build = self._build
-        bound = (
-            self._template
-            if build is None
-            else self.cached(str(workspace.root), lambda: build(workspace.root))
-        )
-        return bound, replace(ctx, workspace=Workspace(LocalWorkspaceBackend(workspace.root)))
+        backend = LocalWorkspaceBackend(workspace.root)
+        return self._template, replace(ctx, workspace=Workspace(backend))

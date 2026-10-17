@@ -33,12 +33,21 @@ from pydantic_ai import (
 from pydantic_ai.messages import ModelMessage, ModelRequestPart, ModelResponsePart
 
 from core.compaction_sections import SummarySection, summary_sections
+from core.diagnostics import is_platform_failure
+from core.envelopes import ContentPart, result_parts, split_envelopes
 from core.serde import jsonable
 from core.text import chars_to_tokens
 from services.answers import ASK_USER_TOOL, AnsweredQuestion, parse_answer, questions_of
 from services.commands.spec import Invocation
+from services.notices import notice_body
 from services.shapes import as_dict, as_list
-from services.subagents.report import direction_body, message_body, report_body, report_prose
+from services.subagents.report import (
+    direction_body,
+    message_body,
+    report_body,
+    report_prose,
+    report_sender,
+)
 
 if TYPE_CHECKING:  # a type, not a dependency — nothing here calls into the run substrate
     from runs import TurnOverhead
@@ -68,6 +77,10 @@ FILE_REFS_KEY = "file_refs"
 #: opposite directions and a sentinel is what settles them: one exact string, owned by the
 #: pair of functions on either side of it, rather than a parser trying to recognise prose.
 FILE_REFS_MARKER_OPEN = "[The operator referenced these files with @:"
+
+#: How the attachment marker opens (`agent/attachments.py`). Same contract as the `@`
+#: marker: it persists for regenerate and is never rendered; the files show as chips.
+ATTACHMENTS_MARKER_OPEN = "[Attached file(s):"
 
 #: Where the slash command a turn was sent with rides — the same metadata channel again,
 #: and the only one of the three the **backend** reads back rather than the operator.
@@ -110,6 +123,9 @@ class ToolView:
     args: dict[str, object]
     status: str = "running"  # "running" | "ok" | "error"
     result: object = None
+    # `result` split into text and envelope parts (`core/envelopes.py`), or None when it
+    # carries no envelope.
+    result_parts: list[ContentPart] | None = None
     error: str | None = None
     images: list[ToolImageView] = field(default_factory=list)
     # `ask_user` only — the questions this call asked and what the operator said to each,
@@ -121,6 +137,8 @@ class ToolView:
     # The `run_code` call this one was made from, when a script made it; None for a call
     # the model made directly. Rebuilt from that call's result (`_script_calls`).
     parent_tool_call_id: str | None = None
+    #: The failure was the platform's own fault (``core/diagnostics.py``).
+    platform: bool = False
 
 
 def _field(item: object, name: str) -> object:
@@ -169,12 +187,14 @@ def _script_calls(part: ToolReturnPart) -> list[ToolView]:
         if returned is None:
             view.status = "error"
             view.error = "The call raised before it returned."
-        elif _field(returned, "outcome") == "denied":
+        elif _field(returned, "outcome") in ("denied", "failed"):
             view.status = "error"
             view.error = flatten_content(_field(returned, "content"))
+            view.platform = is_platform_failure(view.error)
         else:
             view.status = "ok"
             view.result = jsonable(_field(returned, "content"))
+            view.result_parts = result_parts(view.result)
         views.append(view)
     return views
 
@@ -189,11 +209,21 @@ class MessageView:
     # has reported back, and the report reached the thread as the one shape the model has
     # for a message from outside itself. Left as "user" it would claim the operator typed
     # something they have not even read.
-    role: str  # "user" | "assistant" | "compaction" | "subagent"
+    #
+    # "notice" is a chassis notice (`services/notices.py`): `notice` names its kind and
+    # `content` is the body without the envelope.
+    role: str  # "user" | "assistant" | "compaction" | "subagent" | "notice"
     content: str = ""
     # On a "subagent" turn that is a message rather than a report, the handle of the agent
     # that sent it.
     author: str | None = None
+    # On a "subagent" turn that is a report, the handle of the agent that reported.
+    reporter: str | None = None
+    notice: str | None = None
+    # On a "user" turn whose text carried untrusted fences (an attachment's fallback text,
+    # a routine's previous-run fence): those fences in order, with `content` keeping only
+    # the surrounding text. None when there were none.
+    parts: list[ContentPart] | None = None
     tools: list[ToolView] = field(default_factory=list)
     timestamp: datetime | None = None
     # The model that produced this assistant turn (the last response's model_name —
@@ -645,19 +675,18 @@ def _compaction_reason(message: object) -> str | None:
     return reason if isinstance(reason, str) and reason else None
 
 
-def strip_file_refs_marker(text: str) -> str:
-    """The operator's own words, with the chassis's `@` block taken back off.
+def strip_chassis_markers(text: str) -> str:
+    """The operator's text with the chassis's attachment and `@` blocks taken back off.
 
-    The block is in the persisted turn on purpose — see ``FILE_REFS_MARKER_OPEN`` — and
-    the bubble it would otherwise show up in carries the operator's name. The references
-    are still reported, as chips, from the structured field beside this.
-
-    Splits on the sentinel rather than matching a shape, so a message that merely *talks*
-    about the marker is untouched unless it reproduces it exactly, and a marker whose
-    wording changes cannot quietly stop being stripped.
+    Both blocks persist on purpose (see ``FILE_REFS_MARKER_OPEN``), and the bubble they
+    would show in carries the operator's name. The files are still reported as chips from
+    the structured fields beside this. Both close the prompt, so everything from the first
+    sentinel on is chassis text. Splits on exact sentinels, so a message that only talks
+    about a marker is untouched unless it reproduces one.
     """
-    head, sep, _tail = text.partition(FILE_REFS_MARKER_OPEN)
-    return head.rstrip() if sep else text
+    found = [text.find(marker) for marker in (ATTACHMENTS_MARKER_OPEN, FILE_REFS_MARKER_OPEN)]
+    cut = min((at for at in found if at >= 0), default=-1)
+    return text[:cut].rstrip() if cut >= 0 else text
 
 
 def stamped_file_refs(message: object) -> list[str]:
@@ -800,6 +829,18 @@ def project_tree(
                 assistant = None
                 part = user_parts[0]
                 text = flatten_content(part.content)
+                notice = notice_body(text)
+                if notice is not None:
+                    views.append(
+                        MessageView(
+                            role="notice",
+                            notice=notice[0],
+                            content=notice[1],
+                            timestamp=part.timestamp,
+                            id=node_id,
+                        )
+                    )
+                    continue
                 # A sub-agent's report arrives in the one shape the model has for a
                 # message from outside itself, so on the way back out it would claim the
                 # operator typed it — and they have not even seen it. Recognised by the
@@ -830,10 +871,19 @@ def project_tree(
                     )
                     continue
                 body = report if report is not None else direction
+                content = strip_chassis_markers(text if body is None else body)
+                parts: list[ContentPart] | None = None
+                if report is None:
+                    split = split_envelopes(content, vouched_only=True)
+                    if any(piece.kind != "text" for piece in split):
+                        content = "\n\n".join(p.text for p in split if p.kind == "text")
+                        parts = [p for p in split if p.kind != "text"]
                 views.append(
                     MessageView(
                         role="subagent" if report is not None else "user",
-                        content=strip_file_refs_marker(text if body is None else body),
+                        reporter=None if report is None else report_sender(report),
+                        content=content,
+                        parts=parts,
                         timestamp=part.timestamp,
                         id=node_id,
                         file_refs=stamped_file_refs(message),
@@ -842,11 +892,18 @@ def project_tree(
                 continue
             # A tool-return request: stitch results into the open assistant turn.
             for part in message.parts:
-                if isinstance(part, ToolReturnPart):
+                if isinstance(part, ToolReturnPart) and part.outcome == "failed":
+                    tool = by_call.get(part.tool_call_id)
+                    if tool is not None:
+                        tool.status = "error"
+                        tool.error = flatten_content(part.content)
+                        tool.platform = is_platform_failure(tool.error)
+                elif isinstance(part, ToolReturnPart):
                     tool = by_call.get(part.tool_call_id)
                     if tool is not None:
                         tool.status = "ok"
                         tool.result = jsonable(part.content)
+                        tool.result_parts = result_parts(tool.result)
                         _attach_answers(tool)
                         # A script's own calls follow it on the turn, each naming it as
                         # its parent — the order a client nests them in.

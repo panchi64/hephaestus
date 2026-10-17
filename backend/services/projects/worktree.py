@@ -63,7 +63,10 @@ from core.fork import MergeReport
 
 from .diffstat import FileChange, file_changes
 from .fork import (
+    add_checkout_child,
     add_child_worktree,
+    apply_child,
+    child_changes,
     child_path_for,
     discard_children,
     merge_child_back,
@@ -225,128 +228,118 @@ class WorktreeManager:
                 + "Finish or merge that one first."
             )
 
-    def _require_held(self, project_id: str, conversation_id: str) -> None:
-        """Refuse a fork or a merge back unless this conversation is *holding* the
-        project. Called under the lock.
-
-        Holding it is the only thing that says what is checked out at ``path_for``:
-        `acquire` is what puts the shared worktree on this conversation's branch, and
-        both `merge` and `discard` hand the project back — leaving that checkout on
-        somebody else's branch, or detached. Forking from there would commit another
-        thread's working tree and cut the child from a stale branch; merging back would
-        land the delegated work on whatever happened to be checked out.
-        """
-        holder = self._holders.get(project_id)
-        if holder == conversation_id:
-            return
-        self._require_free(project_id, conversation_id)
-        raise WorktreeError(
-            "this conversation is not working in this project right now — open it for "
-            + "coding first, so a delegated agent forks from what it describes"
-        )
-
-    async def fork(
-        self, *, project_id: str, root: Path, conversation_id: str, delegation_id: str
+    async def cut_child(
+        self,
+        *,
+        project_id: str,
+        root: Path,
+        conversation_id: str,
+        delegation_id: str,
+        source: WorktreeState | None,
     ) -> WorktreeState:
-        """A delegated child's own checkout, cut from this conversation's branch.
+        """A sub-agent's own worktree, cut from ``source`` (a worktree its parent works
+        in, committed first) or, with no source, from the checkout as it stands now.
 
-        The parent is snapshotted first, so the child opens on the files the parent's
-        transcript describes — a child branched off the last commit would be handed a
-        tree that contradicts the instructions it was given. See
-        :mod:`services.projects.fork` for what "warm" costs and why.
+        ``conversation_id`` is the thread whose worktrees the child's is named under. The
+        returned ``base_ref`` is the commit the child starts at, which is what a later
+        merge diffs against.
         """
         async with self._lock:
-            self._require_held(project_id, conversation_id)
-            parent_path = self.path_for(project_id)
-            if not (parent_path / ".git").exists():
-                raise WorktreeError(
-                    "this conversation has no checkout to fork — it has not worked in "
-                    + "this project yet"
-                )
-            _ = await commit_worktree(parent_path, "Agent changes (forked from)")
             branch = child_branch_for(conversation_id, delegation_id)
             child = self.fork_path(project_id, conversation_id, delegation_id)
             child.parent.mkdir(parents=True, exist_ok=True)
-            await add_child_worktree(
-                root=root,
-                parent_path=parent_path,
-                child=child,
-                branch=branch,
-                parent_branch=branch_for(conversation_id),
-            )
-            # The holder map is untouched on purpose: a fork is the same conversation
-            # working in two places, not a second thread taking the checkout — and the
-            # conversation already holds it, which is what `_require_held` just said.
-            return WorktreeState(path=child, branch=branch, base_ref=branch_for(conversation_id))
+            if source is None:
+                if not await self.is_repo(root):
+                    raise WorktreeError(f"{root} is not a git repository")
+                await add_checkout_child(root=root, child=child, branch=branch)
+            else:
+                if not (source.path / ".git").exists():
+                    raise WorktreeError("the worktree to cut from is not open")
+                _ = await commit_worktree(source.path, "Agent changes (forked from)")
+                await add_child_worktree(
+                    root=root,
+                    parent_path=source.path,
+                    child=child,
+                    branch=branch,
+                    parent_branch=source.branch,
+                )
+            base = (await run_git_ok(child, "rev-parse", "HEAD")).strip()
+            return WorktreeState(path=child, branch=branch, base_ref=base)
 
-    async def open_child(
-        self, *, project_id: str, root: Path, conversation_id: str, delegation_id: str
+    def reopen_child(
+        self, *, project_id: str, conversation_id: str, delegation_id: str
     ) -> WorktreeState:
-        """A delegated child's checkout — cut on first use, reopened on every later one.
-
-        :meth:`fork` is the *event* of taking a copy; this is the question a sub-agent's run
-        asks on every file-tool call, and they are not the same question. Forking is already
-        idempotent in its result, but not in its side effects: it commits the parent's
-        working tree each time (so the child opens on what the parent's transcript
-        describes), and doing that on every resolution would litter the parent's branch with
-        a commit per tool call. While delegation blocked its parent's turn the two questions
-        collapsed into one — the fork was taken and handed straight to the child in the same
-        call — but a sub-agent that runs as its own Run resolves its workspace the way every
-        run does: repeatedly, and from scratch.
-
-        Keyed on the checkout on disk rather than on anything the process is holding, so it
-        answers the same way after a restart.
-        """
+        """A sub-agent's worktree as it stands, read off the disk so a restart changes
+        nothing. Raises ``WorktreeError`` once it has been merged or discarded."""
         child = self.fork_path(project_id, conversation_id, delegation_id)
-        if (child / ".git").exists():
-            return WorktreeState(
-                path=child,
-                branch=child_branch_for(conversation_id, delegation_id),
-                base_ref=branch_for(conversation_id),
-            )
-        return await self.fork(
-            project_id=project_id,
-            root=root,
-            conversation_id=conversation_id,
-            delegation_id=delegation_id,
+        if not (child / ".git").exists():
+            raise WorktreeError("this agent's worktree was merged or discarded")
+        return WorktreeState(
+            path=child,
+            branch=child_branch_for(conversation_id, delegation_id),
+            base_ref=branch_for(conversation_id),
         )
 
-    async def merge_back(
-        self, *, project_id: str, root: Path, conversation_id: str, delegation_id: str
+    async def merge_child(
+        self,
+        *,
+        project_id: str,
+        root: Path,
+        conversation_id: str,
+        delegation_id: str,
+        into: Path,
     ) -> MergeReport:
-        """Land a delegated child's branch in its **parent's** worktree.
-
-        Not in the operator's tree: that one is still only ever written by the merge
-        they press themselves. A conflict aborts and keeps the child intact — see
-        :func:`services.projects.fork.merge_child_back`.
-        """
+        """Merge a sub-agent's branch into the worktree at ``into`` and retire it; a
+        conflict aborts and keeps it (:func:`services.projects.fork.merge_child_back`)."""
         async with self._lock:
-            self._require_held(project_id, conversation_id)
-            child = self.fork_path(project_id, conversation_id, delegation_id)
-            if not (child / ".git").exists():
-                raise WorktreeError("that delegated checkout no longer exists")
-            return await merge_child_back(
-                root=root,
-                parent_path=self.path_for(project_id),
-                child=child,
-                branch=child_branch_for(conversation_id, delegation_id),
+            child = self.reopen_child(
+                project_id=project_id,
+                conversation_id=conversation_id,
+                delegation_id=delegation_id,
             )
+            return await merge_child_back(
+                root=root, parent_path=into, child=child.path, branch=child.branch
+            )
+
+    async def apply_child(
+        self,
+        *,
+        project_id: str,
+        root: Path,
+        conversation_id: str,
+        delegation_id: str,
+        base_ref: str,
+    ) -> MergeReport:
+        """Apply a sub-agent's changes since ``base_ref`` to the checkout at ``root``, then
+        retire it; a clash keeps it (:func:`services.projects.fork.apply_child`)."""
+        async with self._lock:
+            child = self.reopen_child(
+                project_id=project_id,
+                conversation_id=conversation_id,
+                delegation_id=delegation_id,
+            )
+            report = await apply_child(checkout=root, child=child.path, base_ref=base_ref)
+            if report.merged:
+                await remove_child_worktree(root=root, child=child.path, branch=child.branch)
+            return report
+
+    async def child_changes(
+        self, *, project_id: str, conversation_id: str, delegation_id: str, base_ref: str
+    ) -> MergeReport:
+        """What a sub-agent's worktree changed since ``base_ref``, committed first."""
+        async with self._lock:
+            child = self.reopen_child(
+                project_id=project_id,
+                conversation_id=conversation_id,
+                delegation_id=delegation_id,
+            )
+            return await child_changes(child=child.path, base_ref=base_ref)
 
     async def discard_child(
         self, *, project_id: str, root: Path, conversation_id: str, delegation_id: str
     ) -> None:
-        """Throw one delegated checkout away, whatever became of its work.
-
-        The delegation's own cleanup, and deliberately unconditional: the id naming this
-        child lives only in the call that asked for the fork, so a checkout left behind is
-        one nothing can ever reach again. A clean merge has already retired it, which is
-        why this is idempotent rather than an error.
-
-        Under the lock like every other mutator: one model response can carry two
-        delegations, and `worktree remove` racing another child's `merge` contends on
-        git's own ref and worktree admin locks — one of the two then fails, and a failed
-        merge is a second worker's work thrown away.
-        """
+        """Throw one sub-agent's worktree and branch away, whatever became of its work.
+        Idempotent, since a clean merge may already have retired it."""
         async with self._lock:
             await remove_child_worktree(
                 root=root,
@@ -521,6 +514,17 @@ class WorktreeManager:
             _ = await run_git(path, "checkout", "--detach")
             del self._holders[project_id]
         _ = await run_git(root, "branch", "-D", branch)
+
+    async def discard_children(self, root: Path, *, project_id: str, conversation_id: str) -> None:
+        """Throw away every sub-agent worktree named under this conversation, for a thread
+        deleted with no worktree of its own. Best-effort, like :meth:`discard`."""
+        async with self._lock:
+            await discard_children(
+                root=root,
+                worktrees_dir=self._root,
+                project_id=project_id,
+                conversation_id=conversation_id,
+            )
 
 
 def _stat_field(shortstat: str, word: str) -> int:

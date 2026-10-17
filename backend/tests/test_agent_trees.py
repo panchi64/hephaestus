@@ -9,11 +9,11 @@ import pytest
 from fastapi import FastAPI
 
 from agent.injected import injected_text
+from harness.manifests._inbox_dispatch import InboxDispatcher
 from harness.manifests._subagent_wake import SubagentWake
 from routes.deps import app_state
-from runs import RunRegistry
+from runs import QueuedMessage, RunRegistry
 from runs.events import now_utc
-from runs.run import QueuedMessage
 from services.agents import AgentDefinition, builtin_roster, lower_of
 from services.conversations import ConversationStore
 from services.subagents import LaunchedSubagent, SubagentParent, SubagentUnavailableError
@@ -322,7 +322,9 @@ class TestTheTreesWakeBudget:
             assert run is not None
             run.kind = "chat"
 
-            wake.observed(run)
+            dispatcher = app_state(app).inbox_dispatcher
+            assert isinstance(dispatcher, InboxDispatcher)
+            dispatcher.observed(run)
 
             assert wake.unattended_turns(root) == 0
             await _settle_thread(app, root)
@@ -414,11 +416,34 @@ class TestHowAReportNamesItself:
     def test_it_is_named_by_the_handle_with_the_spec_beside_it(self):
         from harness.manifests._subagent_wake import report_text
 
-        text = report_text("helper-function-finder", "explorer", "found it", None, None)
-        assert text.startswith("Sub-agent `helper-function-finder` (explorer) finished.")
+        text = report_text("done", "helper-function-finder", "explorer", "found it", None, None)
+        assert text.startswith("`helper-function-finder` (explorer): done.")
 
     def test_a_sub_agent_named_after_its_spec_is_not_named_twice(self):
         from harness.manifests._subagent_wake import report_text
 
-        text = report_text("explorer", "explorer", "found it", None, None)
-        assert text.startswith("Sub-agent `explorer` finished.")
+        text = report_text("done", "explorer", "explorer", "found it", None, None)
+        assert text.startswith("`explorer`: done.")
+
+    def test_finished_work_carries_no_recovery_hints(self):
+        from harness.manifests._subagent_wake import report_text
+
+        text = report_text("done", "explorer", "explorer", "found it", None, None)
+        assert "help:" not in text
+
+    def test_a_blocked_agent_tells_the_parent_how_to_answer_it(self):
+        from harness.manifests._subagent_wake import report_text
+
+        text = report_text("blocked", "migrate", "worker", "Which schema?", None, None)
+        assert text.startswith("`migrate` (worker): blocked.")
+        assert "Which schema?" in text
+        assert "  help: answer it with `agents_message` to `migrate`" in text
+
+    def test_a_failed_agent_leads_with_what_broke_then_how_to_recover(self):
+        from harness.manifests._subagent_wake import report_text
+
+        text = report_text(
+            "failed", "migrate", "worker", "got halfway", "it ended without reporting", None
+        )
+        error_at = text.index("error: it ended without reporting")
+        assert error_at < text.index("got halfway") < text.index("  help: spawn a fresh agent")

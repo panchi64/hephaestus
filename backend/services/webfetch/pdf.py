@@ -23,6 +23,8 @@ from core.net import header
 from core.ssrf import assert_public_url
 from services.upload_extraction import scan_pdf
 
+from .status import status_hint
+
 _MAX_REDIRECTS = 5
 
 
@@ -87,7 +89,10 @@ async def _download(
                     current = str(httpx.URL(current).join(location))
                     continue
                 if resp.status_code >= 400:
-                    raise WebFetchError(f"{url!r} returned HTTP {resp.status_code}")
+                    raise WebFetchError(
+                        f"{url!r} returned HTTP {resp.status_code}",
+                        hint=status_hint(resp.status_code),
+                    )
                 declared = header(resp.headers, "content-length")
                 if declared is not None and declared.isdigit() and int(declared) > max_bytes:
                     raise WebFetchError(

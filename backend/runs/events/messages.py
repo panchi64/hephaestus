@@ -1,4 +1,4 @@
-"""Queued-message events: the operator's (or a sub-agent's) mid-run messages."""
+"""Queued-message events: everything waiting in a conversation's inbox (``runs/inbox.py``)."""
 
 from __future__ import annotations
 
@@ -6,31 +6,20 @@ from typing import Literal
 
 from .base import Body
 
-#: Who a queued message came from. ``operator`` is somebody typing while a run is going;
-#: ``subagent`` is a sub-agent's report, delivered into the thread that launched it; and
-#: ``parent`` is the same link read the other way — the launching agent redirecting a
-#: sub-agent that is still working.
-#:
-#: All three ride the same road deliberately — the injection point already guarantees a
-#: queued message never interrupts an in-flight model stream, which is exactly what a
-#: report and a direction both need — but they must not *read* the same. A report rendered
-#: as the operator's own words is a transcript that lies about who said what, to the reader
-#: and to the model.
+#: Who a queued message came from: the operator, a sub-agent reporting back to the thread
+#: that launched it, another agent of the delegation tree, or the chassis itself (a notice
+#: such as the open-tasks reminder). It is also the delivery order: the inbox hands the
+#: model the operator's words first, then reports, then agent messages, then notices.
 #:
 #: This is the load-bearing answer to "who sent this". The envelope
 #: (``services/subagents/report.py``) is a label anyone who can type angle brackets could
 #: forge; this is structural and never arrives from outside.
-MessageSource = Literal["operator", "subagent", "agent"]
+MessageSource = Literal["operator", "subagent", "agent", "system"]
 
 
 class MessageQueued(Body):
-    """A message arrived while this run was still executing; it is queued for injection at
-    the run's next model-request boundary. ``text`` rides inline so a reattaching client
-    can rebuild the pending bubble purely from replay.
-
-    ``source`` says whose message it is. It defaults to ``operator``, so a client that
-    predates sub-agents reads every frame exactly as it did before. Additive to v1; no
-    bump."""
+    """A message entered the conversation's inbox. ``text`` rides inline so a reattaching
+    client can rebuild the pending row purely from replay. Additive to v1; no bump."""
 
     type: Literal["message.queued"] = "message.queued"
     message_id: str
@@ -38,6 +27,11 @@ class MessageQueued(Body):
     source: MessageSource = "operator"
     #: For a message from another agent, the handle it was sent from.
     sender: str | None = None
+    #: True for an operator message carrying attachments, file references or a command. It
+    #: is never injected into a running turn; it opens a turn of its own after this one.
+    turn: bool = False
+    #: For a ``system`` message, which notice it is (``open-tasks``).
+    notice: str | None = None
 
 
 class MessageEdited(Body):
@@ -76,6 +70,14 @@ class MessageHeld(Body):
     #: True when the hold went on, False when it came off. Both directions ride one event
     #: rather than two, because a client renders the message's state, not the transition.
     held: bool
+
+
+class InboxWaiting(Body):
+    """The operator stopped the turn, so the inbox holds everything until they send again
+    (``waiting`` True), or they did and it flows again (False). Additive to v1; no bump."""
+
+    type: Literal["inbox.waiting"] = "inbox.waiting"
+    waiting: bool
 
 
 class MessageInjected(Body):

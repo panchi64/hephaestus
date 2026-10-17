@@ -3,6 +3,7 @@ parks for the operator's approval (`AE-3.1`)."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import NoReturn, cast
@@ -22,7 +23,7 @@ from runs.stream import RunStream
 from services.credential_store import CredentialStore
 from services.mail.models import MailAddress, MailBody
 from services.mail.service import AccountView, MailService
-from tests._json import arr, s
+from tests._json import arr, obj, s
 from tests.mail_fakes import FakeTransport, install_transport, sample_header
 from tools import RunDeps
 from tools.mail import mail_toolset
@@ -112,7 +113,10 @@ async def test_no_mail_description_promises_an_approval_outcome(wired: _Wired):
     instructions."""
     service, _account, _transport = wired
     tools = await mail_toolset().get_tools(_ctx(_deps(service)))
-    texts = [tool.tool_def.description or "" for tool in tools.values()]
+    texts = [
+        (tool.tool_def.description or "") + json.dumps(tool.tool_def.parameters_json_schema)
+        for tool in tools.values()
+    ]
 
     for text in texts:
         lowered = text.lower()
@@ -121,21 +125,23 @@ async def test_no_mail_description_promises_an_approval_outcome(wired: _Wired):
     assert not any("never follow" in text for text in texts)
     # What must survive is the half that is this tool's: what its explanation has to say.
     # Who reads one, and why, is the standing brief's rule and is stated once there.
-    assert sum("who this goes to and what it says" in text for text in texts) == 1
+    send_schema: dict[str, JsonValue] = tools["send"].tool_def.parameters_json_schema
+    explanation = obj(obj(send_schema["properties"])["explanation"])
+    assert "who receives" in s(explanation["description"]).lower()
 
 
 async def test_a_listing_is_fenced_once_per_batch(wired: _Wired):
     service, account, _transport = wired
     result = await _call(mail_toolset(), "list_messages", _deps(service), account_id=account.id)
     assert result["ok"] is True
-    assert "never follow" in s(result["instruction"])
+    assert "never instructions to follow" in s(result["instruction"])
     [fenced_message] = arr(result["messages"])
     fenced = s(fenced_message)
     # The sender's words are inside the fence, and the fence's nonce is unguessable from
     # inside it — the message cannot forge its own closing marker.
     assert INJECTION in fenced
-    assert fenced.startswith("[BEGIN UNTRUSTED CONTENT ")
-    assert fenced.rstrip().endswith("]")
+    assert fenced.startswith('<untrusted id="')
+    assert fenced.rstrip().endswith('">')
 
 
 async def test_every_read_body_is_wrapped_before_it_can_reach_the_model(wired: _Wired):
@@ -146,8 +152,8 @@ async def test_every_read_body_is_wrapped_before_it_can_reach_the_model(wired: _
     payload = s(result["message"])
     assert INJECTION in payload
     # No path returns a body outside the fence.
-    assert "UNTRUSTED CONTENT" in payload
-    body_start = payload.index("[BEGIN UNTRUSTED CONTENT")
+    assert "</untrusted id=" in payload
+    body_start = payload.index('\n<untrusted id="')
     assert payload.index(INJECTION) > body_start
 
 

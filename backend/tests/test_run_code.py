@@ -44,7 +44,6 @@ from core.config import Settings
 from runs import Run, RunStream, ToolCompleted, ToolFailed, ToolProgress, ToolStarted
 from services.conversation_view import ToolView, project_tree
 from services.permissions import PermissionLevel, blocked_message
-from services.workspace_kind import WorkspaceKind
 from tools import RunDeps, build_agent_toolsets, core_categories
 
 from ._json import s
@@ -95,12 +94,10 @@ def _callable(tools: dict[str, ToolsetTool[RunDeps]]) -> set[str]:
     return set(_SIGNATURE.findall(tools[RUN_CODE].tool_def.description or ""))
 
 
-async def _script_catalog(
-    permission: PermissionLevel, kind: WorkspaceKind = "sandbox"
-) -> tuple[set[str], set[str]]:
+async def _script_catalog(permission: PermissionLevel) -> tuple[set[str], set[str]]:
     """``(what a script may call, what the model is offered directly)`` at this level."""
     categories = {**core_categories(), "x": _probe_category()}
-    deps = RunDeps(run=_run(), owner_id="operator", permission=permission, workspace_kind=kind)
+    deps = RunDeps(run=_run(), owner_id="operator", permission=permission)
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
     tools = await _wrapped(categories).get_tools(ctx)
     return set(_callable(tools)), set(tools) - {RUN_CODE}
@@ -129,11 +126,9 @@ class TestWhatAScriptMayCall:
             assert "plan_enter" in direct, level
 
     async def test_the_code_runners_stay_direct(self):
-        for kind in ("checkout", "worktree"):
-            folded, direct = await _script_catalog("yolo", kind)
-            assert "shell_run_command" in direct and "shell_run_command" not in folded
-            assert "shell_start_command" not in folded
         folded, direct = await _script_catalog("yolo")
+        assert "shell_run_command" in direct and "shell_run_command" not in folded
+        assert "shell_start_command" not in folded
         assert "code_execute" in direct and "code_execute" not in folded
 
     async def test_a_folded_tool_is_still_a_direct_call(self):
@@ -168,9 +163,9 @@ class TestWhatAScriptMayCall:
 
 
 class TestTheLimits:
-    def test_the_call_cap_sits_under_the_turns_own(self):
+    def test_the_call_cap_is_the_scripts_own(self):
         assert code_mode_limits(Settings()).max_tool_calls == 25
-        assert code_mode_limits(Settings(agent_tool_calls_limit=10)).max_tool_calls == 10
+        assert code_mode_limits(Settings(code_mode_max_tool_calls=10)).max_tool_calls == 10
 
 
 # --- a script's calls, end to end -------------------------------------------------------

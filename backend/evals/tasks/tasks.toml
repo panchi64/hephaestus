@@ -1,0 +1,203 @@
+# The task suite. Each [[task]] is one thread; `prompts` are sent in order, each after
+# the previous turn ends. Paths in file checks are relative to the thread's sandbox
+# (`/work`). The seeded workspace has three calendar events this week ("Design review",
+# "Lunch with Sam", "Ship the release") and a memory that the operator uses uv and bun
+# (`devkit/seed/surfaces.py`). Its timezone memory is not tested: the host clock wins.
+
+# --- build -----------------------------------------------------------------------
+
+[[task]]
+id = "build-fizzbuzz"
+area = "build"
+requires = ["vm"]
+prompts = ["Write fizzbuzz.py in your workspace that prints FizzBuzz for 1 to 30, run it, and tell me exactly what line 15 printed."]
+checks = [
+  { kind = "file_exists", path = "fizzbuzz.py" },
+  { kind = "answer_contains", text = ["FizzBuzz"] },
+]
+
+[[task]]
+id = "build-primes"
+area = "build"
+requires = ["vm"]
+prompts = ["Write every prime below 100 to primes.txt, one per line, and tell me how many there are."]
+checks = [
+  { kind = "file_contains", path = "primes.txt", text = ["2", "97"] },
+  { kind = "answer_contains", text = ["25"] },
+]
+
+[[task]]
+id = "build-test-fix"
+area = "build"
+requires = ["vm"]
+prompts = ["Create calc.py with average(xs) returning sum(xs)/len(xs). Then write test_calc.py with pytest tests, including that average([]) returns 0. Run the tests, fix calc.py until they all pass, and show me the final test summary line."]
+checks = [
+  { kind = "file_contains", path = "calc.py", text = ["def average"] },
+  { kind = "file_exists", path = "test_calc.py" },
+  { kind = "answer_contains", text = ["passed"] },
+]
+
+[[task]]
+id = "build-csv-report"
+area = "build"
+requires = ["vm"]
+prompts = ["Make up sales.csv with 12 rows of region,amount across 3 regions. Then compute the total and average per region with a script, write the result to report.md as a table, and tell me which region sold the most."]
+checks = [
+  { kind = "file_exists", path = "sales.csv" },
+  { kind = "file_contains", path = "report.md", text = ["|"] },
+]
+rubric = "Names one region as the top seller, and the figures it quotes are consistent with a per-region total table."
+
+[[task]]
+id = "build-todo-cli"
+area = "build"
+requires = ["vm"]
+prompts = ["Build a small todo CLI in todo.py with add, list and done commands, storing items in todo.json. Demonstrate it: add 'buy milk' and 'call mum', mark 'buy milk' done, then list."]
+checks = [
+  { kind = "file_exists", path = "todo.py" },
+  { kind = "file_contains", path = "todo.json", text = ["buy milk", "call mum"] },
+]
+rubric = "Shows the final list output with 'buy milk' marked done and 'call mum' still open."
+
+[[task]]
+id = "build-md2html-long"
+area = "build"
+requires = ["vm"]
+timeout_s = 2400
+prompts = ["Implement md2html.py, a Markdown-to-HTML converter supporting headings, bold, italics, unordered and ordered lists, links and inline code. Write test_md2html.py with at least one pytest test per feature, run them, and keep fixing until every test passes. Report the final test summary line."]
+checks = [
+  { kind = "file_exists", path = "md2html.py" },
+  { kind = "file_exists", path = "test_md2html.py" },
+  { kind = "answer_contains", text = ["passed"] },
+]
+
+# --- research --------------------------------------------------------------------
+
+[[task]]
+id = "research-python-release"
+area = "research"
+requires = ["vm", "search"]
+prompts = ["What is the latest stable Python release and when did it come out? Cite your sources."]
+checks = [
+  { kind = "tool_used", prefix = "web_" },
+  { kind = "answer_contains", text = ["3.1"] },
+]
+rubric = "Names a specific current Python 3.x version with a release date and cites at least one source link."
+
+[[task]]
+id = "research-sqlite-wal"
+area = "research"
+requires = ["vm", "search"]
+prompts = ["Compare SQLite's WAL mode with the rollback journal in five bullets, with sources."]
+checks = [
+  { kind = "tool_used", prefix = "web_" },
+  { kind = "answer_contains", text = ["WAL"] },
+]
+rubric = "Gives five accurate bullets covering concurrency (readers and writer), durability or checkpointing, and at least one source link."
+
+[[task]]
+id = "research-pep8-naming"
+area = "research"
+requires = ["vm", "search"]
+prompts = ["Read https://peps.python.org/pep-0008/ and summarize its naming conventions in five bullets."]
+checks = [
+  { kind = "tool_used", prefix = "web_" },
+  { kind = "answer_contains", text = ["CapWords", "lowercase"], mode = "any" },
+]
+
+[[task]]
+id = "research-recipe"
+area = "personal"
+requires = ["vm", "search"]
+prompts = ["Find a well-reviewed vegetarian chili recipe online. Give me the ingredients and steps, and link the source."]
+checks = [
+  { kind = "tool_used", prefix = "web_" },
+  { kind = "answer_contains", text = ["beans"] },
+]
+rubric = "Gives a complete ingredient list and numbered steps for a vegetarian chili, with a source link."
+
+# --- personal admin --------------------------------------------------------------
+
+[[task]]
+id = "admin-calendar-read"
+area = "admin"
+prompts = ["What's on my calendar over the next week?"]
+checks = [
+  { kind = "tool_used", prefix = "calendar_" },
+  { kind = "answer_contains", text = ["Design review", "Lunch with Sam"] },
+]
+
+[[task]]
+id = "admin-calendar-add"
+area = "admin"
+prompts = [
+  "Add 'Dentist' to my calendar next Tuesday at 9am for an hour.",
+  "What do I have on next Tuesday?",
+]
+checks = [
+  { kind = "tool_used", prefix = "calendar_" },
+  { kind = "answer_contains", text = ["Dentist"] },
+]
+
+[[task]]
+id = "admin-routine"
+area = "admin"
+prompts = ["Every weekday at 8am, remind me to stretch."]
+checks = [{ kind = "tool_used", prefix = "routines_" }]
+rubric = "Confirms a recurring weekday 8am reminder to stretch was set up, or clearly says it is waiting for the operator's approval."
+
+[[task]]
+id = "admin-memory-recall"
+area = "admin"
+prompts = ["Which package managers do I prefer for Python and for JavaScript?"]
+checks = [{ kind = "answer_contains", text = ["uv", "bun"] }]
+
+[[task]]
+id = "admin-remember-preference"
+area = "personal"
+prompts = [
+  "Remember that I'm vegetarian.",
+  "Suggest something for dinner tonight.",
+]
+checks = [{ kind = "tool_used", prefix = "memory_" }]
+rubric = "The dinner suggestion is vegetarian and contains no meat or fish."
+
+# --- personal interests ----------------------------------------------------------
+
+[[task]]
+id = "personal-workout-plan"
+area = "personal"
+requires = ["vm"]
+prompts = ["Make me a 3-day beginner full-body workout plan and save it as workout.md."]
+checks = [{ kind = "file_contains", path = "workout.md", text = ["Day", "reps"] }]
+rubric = "A sensible beginner plan: three sessions, sets and reps for each exercise, and rest guidance."
+
+[[task]]
+id = "personal-meal-plan"
+area = "personal"
+prompts = [
+  "Plan three dinners for this week that use chickpeas.",
+  "Turn that into one shopping list grouped by aisle.",
+]
+checks = [{ kind = "answer_contains", text = ["chickpea"] }]
+rubric = "A single shopping list grouped by aisle that covers the three dinners from the previous turn."
+
+[[task]]
+id = "personal-steak-rest"
+area = "personal"
+prompts = ["How long should I rest a steak after grilling, and why?"]
+checks = [{ kind = "answer_contains", text = ["minute"] }]
+rubric = "Gives a resting time of roughly 5 to 10 minutes and explains juice redistribution or carryover cooking."
+
+[[task]]
+id = "personal-recipe-scale"
+area = "personal"
+prompts = ["My pancake recipe is 250 g flour, 2 cups milk, 2 eggs and 1 tbsp sugar. Double it, and give the milk in millilitres."]
+checks = [{ kind = "answer_contains", text = ["500"] }]
+rubric = "Doubles every ingredient (500 g flour, 4 eggs, 2 tbsp sugar) and converts 4 cups of milk to roughly 950 ml."
+
+[[task]]
+id = "personal-running-plan"
+area = "personal"
+prompts = ["I want to start running. Ask me whatever you need to know first, then give me a 4-week plan."]
+rubric = "Ends with a concrete 4-week running plan with sessions per week and durations or distances, adapted to whatever the operator answered."

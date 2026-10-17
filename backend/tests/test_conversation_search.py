@@ -196,7 +196,7 @@ async def test_read_returns_transcript_for_owner():
     transcript = await search.read(OWNER, cid)
     assert transcript is not None
     assert "User: what is 2+2" in transcript.text
-    assert "Assistant: it is 4" in transcript.text
+    assert "Talos: it is 4" in transcript.text
     await store.stop()
 
 

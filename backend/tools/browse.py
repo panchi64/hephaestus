@@ -48,9 +48,10 @@ invisible: the next call re-attaches with the profile restored.
 
 from __future__ import annotations
 
-from typing import override
+from dataclasses import replace
+from typing import cast, override
 
-from pydantic_ai import AbstractToolset, RunContext
+from pydantic_ai import AbstractToolset, BinaryContent, RunContext, ToolReturn, ToolsetTool
 from pydantic_ai_harness.playwright import (
     EgressPolicy,
     PlaywrightBrowser,
@@ -132,7 +133,7 @@ class BrowserToolset(ReboundToolset):
         sessions = ctx.deps.caps.get_optional(BrowserSessionManager)
         if sessions is None:
             return _UNAVAILABLE
-        key = ctx.deps.workspace_key
+        key = ctx.deps.scratch_key
         live = await sessions.acquire(key, reopen=name in REOPENING_TOOLS)
         if live is None:
             return _CLOSED if sessions.closed(key) else _UNAVAILABLE
@@ -140,6 +141,40 @@ class BrowserToolset(ReboundToolset):
         # toolset would still be pointed at the dead one, so it is keyed by the session's
         # token rather than by the conversation.
         return self.cached(live.token, lambda: _toolset_for(live.session))
+
+    @override
+    async def call_tool(
+        self,
+        name: str,
+        tool_args: dict[str, object],
+        ctx: RunContext[RunDeps],
+        tool: ToolsetTool[RunDeps],
+    ) -> object:
+        result = await super().call_tool(name, tool_args, ctx, tool)
+        if name != "screenshot" or ctx.tool_call_id is None:
+            return result
+        return with_screenshot_handle(result, ctx.tool_call_id)
+
+
+def with_screenshot_handle(result: object, tool_call_id: str) -> object:
+    """A screenshot's return, told the id the answer embeds it by.
+
+    The frontend resolves `screenshot:<id>` against the tool call that took the image,
+    so the handle is the call id. Anything but an image-bearing return (an error, a
+    refusal) is passed through."""
+    if not isinstance(result, ToolReturn):
+        return result
+    shot = cast(ToolReturn[object], result)
+    content = shot.content if isinstance(shot.content, list) else [shot.content]
+    if not isinstance(shot.return_value, str) or not any(
+        isinstance(item, BinaryContent) for item in content
+    ):
+        return shot
+    handle = (
+        f"Screenshot id: {tool_call_id}. To show it to the operator, put "
+        f"![what it shows](screenshot:{tool_call_id}) in your answer."
+    )
+    return replace(shot, return_value=f"{shot.return_value}\n{handle}")
 
 
 def _toolset_for(session: PlaywrightBrowserSession) -> AbstractToolset[RunDeps]:
@@ -194,7 +229,7 @@ async def browse_instructions(ctx: RunContext[RunDeps]) -> str:
     full text in front of it.
     """
     sessions = ctx.deps.caps.get_optional(BrowserSessionManager)
-    if sessions is None or sessions.existing(ctx.deps.workspace_key) is None:
+    if sessions is None or sessions.existing(ctx.deps.scratch_key) is None:
         return ""
     harness = PlaywrightBrowser(policy=_policy()).get_instructions()(ctx)
     return f"{harness}\n\n{BROWSER_ADDENDUM}" if harness else BROWSER_ADDENDUM

@@ -10,8 +10,9 @@ from fastapi import HTTPException
 from pydantic import JsonValue
 
 from core.config import get_settings
-from routes.deps import app_state
+from routes.deps import OPERATOR_ID, app_state
 from services.conversations import ConversationStore
+from services.settings_store import TurnTuning
 
 from ._helpers import client_app, collect_sse_events, patch_model_resolution
 from ._json import arr, json_body, json_list, obj, s
@@ -131,42 +132,11 @@ async def test_chat_settings_rejects_an_unknown_field():
         assert resp.status_code == 422
 
 
-async def test_agent_request_limit_round_trip():
-    # The per-turn model-request ceiling is an operator setting: GET reports the config
-    # default until set, PUT overrides it, and the override persists.
+async def test_a_removed_budget_field_is_refused():
     async with client_app() as (client, _app):
-        got = await _settings(client)
-        assert got["agent_request_limit"] == get_settings().agent_request_limit
-
-        put = await client.put("/chat/settings", json={"agent_request_limit": 60})
-        assert put.status_code == 200
-        assert json_body(put)["agent_request_limit"] == 60
-
-        again = await _settings(client)
-        assert again["agent_request_limit"] == 60
-
-
-async def test_agent_request_limit_rejects_zero_and_negative():
-    # Floored at 1, unlike the token caps: a turn allowed zero model requests could
-    # never produce an answer, so 0 is nonsensical rather than merely minimal.
-    async with client_app() as (client, _app):
-        for bad in (0, -1):
-            resp = await client.put("/chat/settings", json={"agent_request_limit": bad})
+        for field in ("agent_request_limit", "auto_continue_max"):
+            resp = await client.put("/chat/settings", json={field: 10})
             assert resp.status_code == 422
-
-
-async def test_agent_request_limit_partial_update_leaves_others_unchanged():
-    # Tuning the step limit alone must not reset the auto-compaction overrides.
-    async with client_app() as (client, _app):
-        _ = await client.put(
-            "/chat/settings",
-            json={"auto_compact_enabled": False, "auto_compact_threshold": 0.6},
-        )
-        _ = await client.put("/chat/settings", json={"agent_request_limit": 40})
-        again = await _settings(client)
-        assert again["agent_request_limit"] == 40
-        assert again["auto_compact_enabled"] is False
-        assert again["auto_compact_threshold"] == 0.6
 
 
 async def test_auto_compact_settings_partial_update_leaves_others_unchanged():
@@ -197,9 +167,21 @@ async def test_inactivity_timeout_round_trip():
         assert again["inactivity_timeout_s"] == 300
 
 
+async def test_the_first_token_wait_reaches_the_turn():
+    async with client_app() as (client, app):
+        got = await _settings(client)
+        assert got["first_token_timeout_s"] == get_settings().first_token_timeout_s
+
+        put = await client.put("/chat/settings", json={"first_token_timeout_s": 900})
+        assert put.status_code == 200
+        assert json_body(put)["first_token_timeout_s"] == 900
+        tuned = await TurnTuning(app_state(app).settings_store).apply(get_settings(), OPERATOR_ID)
+        assert tuned.first_token_timeout_s == 900
+
+
 async def test_wall_clock_timeout_is_absent_until_the_operator_sets_one():
-    # The default is no bound at all: a turn is already capped by `agent_request_limit`, so
-    # a clock only ever stops a run that is legitimately slow.
+    # The default is no bound at all: a clock only ever stops a run that is legitimately
+    # slow.
     async with client_app() as (client, _app):
         got = await _settings(client)
         assert got["wall_clock_timeout_s"] is None
@@ -218,7 +200,7 @@ async def test_explicit_null_removes_the_wall_clock_bound():
     async with client_app() as (client, _app):
         _ = await client.put("/chat/settings", json={"wall_clock_timeout_s": 3600})
 
-        untouched = await client.put("/chat/settings", json={"agent_request_limit": 30})
+        untouched = await client.put("/chat/settings", json={"first_token_timeout_s": 900})
         assert json_body(untouched)["wall_clock_timeout_s"] == 3600
 
         cleared = await client.put("/chat/settings", json={"wall_clock_timeout_s": None})
@@ -245,7 +227,7 @@ async def test_explicit_null_removes_the_subagent_cap():
     async with client_app() as (client, _app):
         _ = await client.put("/chat/settings", json={"subagent_max_concurrent": 2})
 
-        untouched = await client.put("/chat/settings", json={"agent_request_limit": 30})
+        untouched = await client.put("/chat/settings", json={"first_token_timeout_s": 900})
         assert json_body(untouched)["subagent_max_concurrent"] == 2
 
         cleared = await client.put("/chat/settings", json={"subagent_max_concurrent": None})

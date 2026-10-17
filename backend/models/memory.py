@@ -40,13 +40,15 @@ class Memory(Table, table=True):
     owner_id: str = Field(index=True)
     # AEAD ciphertext of the memory text (the source of truth).
     content_enc: str
+    # AEAD ciphertext of the one-line catalog entry; None reads as the content's first line.
+    description_enc: str | None = None
     # AEAD ciphertext of the embedding (a JSON float array); None when the
     # embedding capability was unavailable at write time (keyword-only recall).
     embedding_enc: str | None = None
     # Embedding provenance for EMB-2: which model/space produced the vector.
     embedding_model: str | None = None
     embedding_dim: int | None = None
-    # Pinned memories are always included in recall (MEM-4).
+    # Pinned memories are listed in the main agent's instructions every turn (MEM-4).
     pinned: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow)

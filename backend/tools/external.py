@@ -31,10 +31,12 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import cast, override
 
+import httpx
 from pydantic_ai import AbstractToolset, CombinedToolset, FunctionToolset, RunContext
-from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, ToolFailed
 from pydantic_ai.toolsets import ToolsetTool
 
+from core.diagnostics import render_tool_error
 from core.exceptions import (
     DegradedCapabilityError,
     InvalidInputError,
@@ -133,7 +135,7 @@ class ExternalCategoryToolset(AbstractToolset[RunDeps]):
     ) -> object:
         route = self._routes.get(name)
         if route is None or self._inner is None:  # pragma: no cover - composed by get_tools
-            raise ModelRetry(f"{name} is no longer available.")
+            raise ModelRetry(render_tool_error(f"`{name}` is no longer available"))
         await self._gate(ctx, route)
         return cast(object, await self._inner.call_tool(name, tool_args, ctx, tool))
 
@@ -157,8 +159,14 @@ class ExternalCategoryToolset(AbstractToolset[RunDeps]):
             ctx.deps.owner_id, route.kind, route.source_id, route.tool_name
         )
         if not decision.enabled:
-            raise ModelRetry(
-                f"{route.tool_name} on {route.source_label} is disabled by the operator."
+            raise ToolFailed(
+                render_tool_error(
+                    f"{route.tool_name} on {route.source_label} is disabled by the operator",
+                    hints=[
+                        "do not call it again; reach the goal with another tool",
+                        "if nothing else can do it, ask the operator to enable it",
+                    ],
+                )
             )
         if not decision.trusted:
             raise ApprovalRequired()
@@ -273,9 +281,19 @@ def _connector_call(
         except (NotFoundError, InvalidInputError, DegradedCapabilityError, SSRFError) as exc:
             # The model can fix these by calling differently (a missing parameter, a
             # body where none is taken), so hand them back rather than failing the turn.
-            raise ModelRetry(str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - a transport failure is retryable too
-            raise ModelRetry(f"{connector.name} could not be reached: {exc}") from exc
+            raise ModelRetry(
+                render_tool_error(
+                    f"{connector.name} refused the call: {exc}",
+                    hints=["check the parameters against this tool's schema, then call again"],
+                )
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ModelRetry(
+                render_tool_error(
+                    f"{connector.name} could not be reached: {exc}",
+                    hints=["try once more; if it fails again, carry on without it"],
+                )
+            ) from exc
         # A connector's response is data from a third party, never instructions.
         return wrap_untrusted(f"HTTP {response.status}\n{response.body}", source=connector.name)
 

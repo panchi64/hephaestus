@@ -39,6 +39,7 @@ from pydantic_ai.messages import UserContent
 
 from core.untrusted import wrap_untrusted
 from models.upload import UploadStatus
+from services.conversation_view import ATTACHMENTS_MARKER_OPEN
 from services.sandbox import stage_attachment
 from services.uploads import UploadStore, UploadView
 from services.workspace import RunWorkspace
@@ -211,7 +212,7 @@ def _marker(staged: list[_Staged], workspace: RunWorkspace | None) -> str:
         "at the same path). To search a document's text semantically instead of reading "
         "it, use corpus_retrieve with its id."
     )
-    return f"[Attached file(s):\n{body}\n\n{guidance}]"
+    return f"{ATTACHMENTS_MARKER_OPEN}\n{body}\n\n{guidance}]"
 
 
 def _line(item: _Staged) -> str:

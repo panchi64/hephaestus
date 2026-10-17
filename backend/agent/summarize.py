@@ -49,7 +49,7 @@ from typing import Literal
 from pydantic_ai import ModelMessage, ModelRequest, UserPromptPart
 
 from core.config import Settings, get_settings
-from prompts.compaction import COMPACT_PREAMBLE
+from prompts.compaction import COMPACT_CLOSE, COMPACT_PREAMBLE
 from runs.events import CompactionReason
 from runs.overhead import TurnOverhead
 from services.conversation_view import estimate_footprint, estimate_tokens
@@ -283,7 +283,7 @@ async def compact_conversation(
     # replays and the operator reads, and it needs to announce itself as a summary in both
     # places. The same framed text rides the event, so the divider a live client draws and
     # the one a reload draws are the same string.
-    labelled = f"{COMPACT_PREAMBLE}\n\n{summary}"
+    labelled = f"{COMPACT_PREAMBLE}\n\n{summary}\n{COMPACT_CLOSE}"
     message_id = store.record_compaction(
         conversation_id,
         summary=labelled,

@@ -25,8 +25,7 @@ kinds of reach, not degrees of danger:
   later approval can take back, which is why it is its own class and not an external read.
 
 **Why the names are written out.** ``tools/`` sits above ``services/`` in the dependency
-order, so walking the live catalog from here would invert it — the same constraint
-``services/workspace_kind.py`` works under. The literal is not left to rot:
+order, so walking the live catalog from here would invert it. The literal is not left to rot:
 ``tests/test_tool_sensitivity.py`` pins it against the catalog a real run resolves, in both
 directions, so a renamed tool fails a test rather than silently losing its class.
 
@@ -134,6 +133,7 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "mail_list_accounts",
             "mail_list_messages",
             "mail_read",
+            "memory_open",
             "memory_recall",
             # The plan this thread is working from — a record we wrote and the operator
             # already read. Reading it reaches nothing.
@@ -143,7 +143,6 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "plugins_read",
             "project_active",
             "project_list",
-            "repo_inventory_agent_context",
             "routines_list",
             # Reading the status and output of a command someone else started. Starting
             # and stopping one are execution; asking what it printed is not.
@@ -153,6 +152,9 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # Reading transcripts the operator can open themselves reaches nothing.
             "agents_list",
             "agents_read",
+            # A spawned agent handing back its report. It ends the agent's own work and
+            # reaches nothing past the agent that spawned it.
+            "subagent_report",
             "tasks_read",
             # Retrieval over the network. The operator's machine and every service on it
             # are exactly as they were afterwards.
@@ -171,6 +173,7 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # it over `mail_reply`.
             "mail_draft_reply",
             "memory_remember",
+            "memory_update",
             # A branch and a checkout beside the operator's repository, which reach their
             # own folder only through a merge they press.
             "project_open_worktree",
@@ -187,6 +190,10 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # Stopping agents this thread spawned. Nothing new runs; the reach is that of
             # the spawn that was already allowed.
             "agents_stop",
+            # Landing or dropping a spawned agent's worktree: a write to the project this
+            # thread works in, the same reach as writing those files itself.
+            "agents_merge",
+            "agents_discard",
             # A plugin an agent writes is a draft: it runs only through `plugins_test`.
             "plugins_write",
             # A routine an agent drafts never fires until the operator approves it;
@@ -225,9 +232,8 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "agents_spawn",
             # A message can point another agent at any work its own catalog covers, and is
             # acted on after the sending turn has ended — the same statement as the spawn.
-            # Reachable at every level all the same (`permissions.COORDINATION_TOOLS`): the
-            # tool asks only when the message reaches an agent that can write from anywhere
-            # but below it.
+            # Both are reachable at every level all the same (`permissions.COORDINATION_TOOLS`):
+            # a spawned agent runs at its spawner's level, so each of its acts is held there.
             "agents_message",
             # Starts a routine's agent turn, with its pre-authorizations, after this one.
             "routines_run_now",

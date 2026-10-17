@@ -29,6 +29,7 @@ from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
 from services.commands import GROUPS, CatalogEntry
 from services.commands.store import CommandView
+from services.workspace import place_kind
 
 router = APIRouter(prefix="/commands", tags=["commands"])
 
@@ -142,12 +143,13 @@ async def list_commands(
     project is about to be picked, and a project chat starts in the project's folder.
     """
     if conversation_id is not None:
-        workspace_kind = (await deps.store(request).binding(conversation_id)).workspace_kind
+        binding = await deps.store(request).binding(conversation_id)
+        place = place_kind(binding.project_id, binding.worktree)
     else:
-        workspace_kind = "checkout" if project_id else "sandbox"
+        place = place_kind(project_id, worktree=False)
     entries = await deps.commands(request).catalog(
         OPERATOR_ID,
-        workspace_kind=workspace_kind,
+        place=place,
         has_conversation=conversation_id is not None,
         disabled_tools=await deps.disabled_tools(request),
         root=await deps.composer_root(request, project_id, conversation_id),

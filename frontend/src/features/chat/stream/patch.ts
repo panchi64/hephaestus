@@ -77,6 +77,26 @@ export function appendDelta(
   else blocks.push({ kind, id: nextId(kind), text });
 }
 
+/** Take the last `chars` of streamed `kind` text back off the trailing text and
+ *  reasoning blocks, dropping a block it empties. */
+export function retractDelta(
+  m: ChatMessage,
+  kind: "thinking" | "text",
+  chars: number,
+): void {
+  const blocks = m.blocks ?? [];
+  let left = chars;
+  for (let i = blocks.length - 1; i >= 0 && left > 0; i--) {
+    const block = blocks[i];
+    if (block.kind !== "text" && block.kind !== "thinking") break;
+    if (block.kind !== kind) continue;
+    const cut = Math.min(left, block.text.length);
+    block.text = block.text.slice(0, block.text.length - cut);
+    left -= cut;
+    if (!block.text) blocks.splice(i, 1);
+  }
+}
+
 /** The generic tool call for one id — a rail block's, or one nested on a script's card,
  *  since a script's calls report progress and settle by id like any other. */
 export function findTool(

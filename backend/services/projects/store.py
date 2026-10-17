@@ -29,11 +29,13 @@ directory would be exactly the kind of surprise this feature exists to avoid.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import ColumnElement, Engine, or_, update
+from sqlalchemy import ColumnElement, Engine, delete, or_, update
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from core.db import in_session
@@ -45,7 +47,14 @@ from models.corpus import CorpusSource
 from models.project import Project
 from models.subagent import SubagentRecord
 from models.task import ScheduledTask
+from models.thread_change import ThreadChange
+from models.thread_worktree import ThreadWorktree
 from services.settings_store import ACTIVE_PROJECT_KEY, SettingsStore
+
+from .slugs import slug_for
+
+#: How many times a registration picks a slug before a clash is reported.
+_SLUG_ATTEMPTS = 3
 
 #: Every entity that carries a `project_id`. Written out because there is no shared base
 #: class — each model declares `owner_id` inline too — and because deleting a project has
@@ -102,6 +111,8 @@ class RepoProbe:
 class ProjectView:
     id: str
     name: str
+    #: The project's folder in the agent's home, as `~/projects/<slug>`.
+    slug: str
     root_path: str
     git_initialized: bool
     base_ref: str
@@ -156,6 +167,9 @@ class ProjectStore:
         # failing to decrypt rather than by serving what it read while unlocked.
         self._roots: dict[str, dict[str, Path]] = {}
         vault.register_on_lock(self._roots.clear)
+        # owner → {project id: slug}, cleared by the same writes; a run's home reads it on
+        # every resolution.
+        self._slugs: dict[str, dict[str, str]] = {}
 
     @property
     def engine(self) -> Engine:
@@ -171,6 +185,7 @@ class ProjectStore:
         return ProjectView(
             id=row.id,
             name=row.name,
+            slug=row.slug,
             root_path=str(root),
             git_initialized=row.git_initialized,
             base_ref=row.base_ref,
@@ -209,9 +224,12 @@ class ProjectStore:
         sealed = self._vault.encrypt_str(str(resolved))
 
         def work(session: Session) -> Project:
+            taken = session.exec(select(Project.slug).where(Project.owner_id == owner_id)).all()
+            label = name.strip() or resolved.name
             row = Project(
                 owner_id=owner_id,
-                name=name.strip() or resolved.name,
+                name=label,
+                slug=slug_for(label, set(taken)),
                 root_path_enc=sealed,
             )
             session.add(row)
@@ -219,7 +237,14 @@ class ProjectStore:
             session.refresh(row)
             return row
 
-        created = await in_session(self._db, work)
+        # Two registrations can read the same taken slugs; the unique constraint refuses
+        # the second, which then picks again.
+        for _ in range(_SLUG_ATTEMPTS - 1):
+            with contextlib.suppress(IntegrityError):
+                created = await in_session(self._db, work)
+                break
+        else:
+            created = await in_session(self._db, work)
         self._forget(owner_id)
         return await self._view(created)
 
@@ -316,11 +341,32 @@ class ProjectStore:
         self._roots[owner_id] = roots
         return dict(roots)
 
+    async def slugs(self, owner_id: str) -> dict[str, str]:
+        """Each live project's id mapped to its folder name in the agent's home,
+        ``~/projects/<slug>``. Archived projects are not in the home."""
+        cached = self._slugs.get(owner_id)
+        if cached is not None:
+            return dict(cached)
+
+        def work(session: Session) -> list[tuple[str, str]]:
+            query = (
+                select(Project.id, Project.slug)
+                .where(Project.owner_id == owner_id)
+                .where(col(Project.archived).is_(False))
+            )
+            return list(session.exec(query).all())
+
+        slugs = dict(await in_session(self._db, work))
+        self._slugs[owner_id] = slugs
+        return dict(slugs)
+
     def _forget(self, owner_id: str) -> None:
-        """Drop this owner's memoised roots. Called by every write that can change what
-        :meth:`workspace_roots` answers — which includes :meth:`activate`, because the
-        map's *order* is part of the answer and touching ``last_opened_at`` reorders it."""
+        """Drop this owner's memoised roots and slugs. Called by every write that can change
+        what :meth:`workspace_roots` or :meth:`slugs` answers — which includes
+        :meth:`activate`, because the roots' *order* is part of the answer and touching
+        ``last_opened_at`` reorders it."""
         _ = self._roots.pop(owner_id, None)
+        _ = self._slugs.pop(owner_id, None)
 
     async def workspace_names(self, owner_id: str) -> dict[str, str]:
         """Each project id mapped to the **basename** of its directory.
@@ -382,6 +428,10 @@ class ProjectStore:
                     .where(col(model_cls.project_id) == row.id)
                     .values(project_id=None)
                 )
+            # A worktree of a project that no longer exists is nothing a thread can work in,
+            # and a change to its folder is nothing anyone can put back from here.
+            for gone in (ThreadWorktree, ThreadChange):
+                _ = session.exec(delete(gone).where(col(gone.project_id) == row.id))
             stored = session.get(Project, row.id)
             if stored is not None:
                 session.delete(stored)

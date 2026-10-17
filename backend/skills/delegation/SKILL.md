@@ -28,7 +28,7 @@ The agent never sees this conversation. The `task` must say:
 
 Name each agent for its job (`auth-route-reviewer`), so the tree reads as a plan.
 
-Use `isolate` when the agent will edit files while you keep editing yours. Its copy is merged back when it finishes.
+Use `worktree` when the agent will edit a project while you keep editing it yourself. It works on its own branch and worktree, and its work waits there for you.
 
 ## 4. Let them work
 
@@ -36,7 +36,7 @@ Issue every spawn together in one step, then carry on or end your turn. Reports 
 
 - When what you need from an agent changes, `agents_message` it with the amended brief rather than spawning a second one.
 - Agents in one tree can message each other: tell an agent the handle of a sibling whose result it needs. Any agent, read-only ones included, can message `parent` or `main` at any time to report something early.
-- A message across or down the tree to an agent that can write asks the operator first, as spawning one does. Messages up the tree and to read-only agents never ask.
+- Spawning and messaging never ask the operator. An agent you spawn may do what you may, at your permission level.
 - Stop an agent with `agents_stop` once its work is moot. It reports what it got through.
 
 ## 5. Check before you relay
@@ -44,3 +44,5 @@ Issue every spawn together in one step, then carry on or end your turn. Reports 
 Before concluding, call `agents_list` and treat anything still working as unread.
 
 Read each report as a claim, not a fact. Check what you can cheaply check: open the file it says it changed, run the test it says passes, follow the link it cites. Where two reports disagree, resolve it or say so. Never pass a report to the operator as your own finding without reading it, and say which parts you verified.
+
+An agent spawned with `worktree` reports the branch and the path its work is at (`~/worktrees/<project>-<name>`). Review the change there, run its checks, and fix what needs fixing in that worktree. Then `agents_merge` it to land it where you work, or `agents_discard` it. A merge that clashes changes nothing and names the files: bring its worktree in line with yours and merge again.

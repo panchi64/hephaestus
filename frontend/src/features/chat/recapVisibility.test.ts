@@ -30,7 +30,6 @@ function thread(over: Partial<ChatSummary> = {}): ChatSummary {
     messageCount: 8,
     workSummary:
       "Traced the sticky transcript to its follow rule and rewrote it.",
-    workspaceKind: "sandbox",
     ...over,
   };
 }

@@ -34,6 +34,7 @@ class AgentOut(BaseModel):
     id: str
     name: str
     description: str
+    agent_class: str
     instructions: str
     endpoint_id: str | None
     model: str | None
@@ -42,7 +43,6 @@ class AgentOut(BaseModel):
     deny_tools: list[str]
     permission_ceiling: str | None
     workspace: WorkspacePolicy
-    request_limit: int | None
     wall_clock_timeout_s: float | None
     can_delegate: bool
     max_depth: int | None
@@ -58,6 +58,7 @@ class AgentOut(BaseModel):
 class AgentWrite(BaseModel):
     name: str | None = None
     description: str | None = None
+    agent_class: str | None = None
     instructions: str | None = None
     endpoint_id: str | None = None
     model: str | None = None
@@ -65,7 +66,6 @@ class AgentWrite(BaseModel):
     deny_tools: list[str] | None = None
     permission_ceiling: PermissionLevel | None = None
     workspace: WorkspacePolicy | None = None
-    request_limit: int | None = None
     wall_clock_timeout_s: float | None = None
     can_delegate: bool | None = None
     max_depth: int | None = None
@@ -235,6 +235,7 @@ def _out(agent: AgentDefinition, *, active: bool) -> AgentOut:
         id=agent.id or f"{agent.source}:{agent.name}",
         name=agent.name,
         description=agent.description,
+        agent_class=agent.agent_class,
         instructions=agent.instructions,
         endpoint_id=agent.endpoint_id,
         model=agent.model,
@@ -242,7 +243,6 @@ def _out(agent: AgentDefinition, *, active: bool) -> AgentOut:
         deny_tools=sorted(agent.tools.deny),
         permission_ceiling=agent.permission_ceiling,
         workspace=agent.workspace,
-        request_limit=agent.request_limit,
         wall_clock_timeout_s=agent.wall_clock_timeout_s,
         can_delegate=agent.can_delegate,
         max_depth=agent.max_depth,

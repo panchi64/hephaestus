@@ -47,7 +47,6 @@ from runs import Run, RunStream
 from services.permissions import PERMISSION_LADDER, PermissionLevel
 from services.settings_store import SettingsStore
 from services.tool_policy import effective_disabled_tools
-from services.workspace_kind import WORKSPACE_TOOLS, WorkspaceKind
 from tools import RunDeps, build_agent_toolsets, core_categories
 
 from ._helpers import full_tool_categories
@@ -86,7 +85,17 @@ from .test_tool_policy import stub_offline
 #: fresh request from 36.6k to 46.0k characters at Auto. The library's own rendering — a
 #: full docstring per function — would have cost 23.6k on its own; bare signatures, with the
 #: prose left on the direct definition it repeats, is what brought it to 9.3k.
-CATALOG_CEILING_CHARS = 48_000
+#:
+#: **Raised a fifth time, from 48k, for one environment**: every thread has the shell as
+#: well as the code tools, where a sandbox thread used to have the code tools alone. It
+#: took a fresh request to 51.2k characters at Auto, net of the bash form of `code_execute`
+#: it replaced.
+#:
+#: **Raised a sixth time, from 52k, for the voice rewrite of every tool description**
+#: (`docs/voice.md` §12), where each says when to reach for it over its neighbors, what
+#: it returns and the mistakes it invites, and for the memory catalog's `memory_open` and
+#: `memory_update`. The operator put the model using its tools well above this cost.
+CATALOG_CEILING_CHARS = 74_000
 
 #: The same for the whole corpus — every dormant group revealed. Deferral moves a group's
 #: cost from every turn to the turns that want it; it does not make the group free, and a
@@ -94,8 +103,10 @@ CATALOG_CEILING_CHARS = 48_000
 #: Raised from 50k, then from 60k, then from 72k, alongside the ceiling above and for the
 #: same reasons; then from 82k for the dormant `agents` group (agents writing agents), and
 #: from 84k for the dormant `routines` group, whose schedule is one compact string rather
-#: than a nested object for that reason.
-CORPUS_CEILING_CHARS = 88_000
+#: than a nested object for that reason; then from 88k for the shell in every thread; then
+#: from 92k for the voice rewrite of every tool description and the memory catalog's two
+#: tools.
+CORPUS_CEILING_CHARS = 124_000
 
 
 def _dormant_categories() -> tuple[str, ...]:
@@ -106,10 +117,10 @@ def _dormant_categories() -> tuple[str, ...]:
 
 
 async def _catalog(
-    kind: WorkspaceKind, permission: PermissionLevel, *, scripts: bool = True
+    permission: PermissionLevel, *, scripts: bool = True
 ) -> tuple[tuple[int, int], tuple[int, int]]:
     """``((tools, chars) on a fresh request, (tools, chars) with every group revealed)`` for
-    a real run in this workspace and at this level — resolved through the composed toolset stack
+    a real run at this level — resolved through the composed toolset stack
     the engine hands the Agent, and through the same ``effective_disabled_tools`` every run
     path fills ``RunDeps.disabled_tools`` from. Re-deriving the withheld set here would
     measure a narrowing this file invented rather than the one the app performs, and would
@@ -130,7 +141,6 @@ async def _catalog(
         run=run,
         owner_id="operator",
         disabled_tools=disabled,
-        workspace_kind=kind,
         permission=permission,
     )
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
@@ -150,13 +160,13 @@ async def _catalog(
     )
 
 
-async def _corpus_chars(kind: WorkspaceKind, permission: PermissionLevel) -> int:
-    _, (_, chars) = await _catalog(kind, permission)
+async def _corpus_chars(permission: PermissionLevel) -> int:
+    _, (_, chars) = await _catalog(permission)
     return chars
 
 
 async def test_a_fresh_request_stays_inside_its_ceiling():
-    (count, chars), _ = await _catalog("sandbox", "auto")
+    (count, chars), _ = await _catalog("auto")
     assert count > 0
     assert chars < CATALOG_CEILING_CHARS, (
         f"a fresh request's tool catalog now costs {chars} characters "
@@ -166,7 +176,7 @@ async def test_a_fresh_request_stays_inside_its_ceiling():
 
 
 async def test_the_whole_corpus_stays_inside_its_ceiling():
-    _, (count, chars) = await _catalog("sandbox", "auto")
+    _, (count, chars) = await _catalog("auto")
     assert count > 0
     assert chars < CORPUS_CEILING_CHARS, (
         f"the tool corpus now costs {chars} characters "
@@ -178,7 +188,7 @@ async def test_the_whole_corpus_stays_inside_its_ceiling():
 async def test_the_dormant_groups_are_most_of_what_a_turn_no_longer_pays():
     """The saving is the whole reason the groups are dormant, so it is pinned rather than
     left to be re-derived from two ceilings that move independently."""
-    fresh, corpus = await _catalog("sandbox", "auto")
+    fresh, corpus = await _catalog("auto")
     assert fresh[1] < corpus[1] * 0.6, (
         f"a fresh request carries {fresh[1]} characters of the corpus' {corpus[1]} — "
         "deferral has stopped deferring most of what it used to"
@@ -189,13 +199,12 @@ async def test_plan_hands_the_model_a_fraction_of_the_catalog():
     # Measured over the corpus: the narrowing is the permission level withholding tools
     # outright, and reading it off the fresh request would net it against deferral, which
     # withholds for an unrelated reason and hands everything back on request.
-    for kind in WORKSPACE_TOOLS:
-        acting = await _corpus_chars(kind, "auto")
-        planning = await _corpus_chars(kind, "plan")
-        assert planning < acting * 0.6, (
-            f"{kind} at plan level costs {planning} characters against {acting} acting — "
-            "the read-only narrowing has stopped narrowing"
-        )
+    acting = await _corpus_chars("auto")
+    planning = await _corpus_chars("plan")
+    assert planning < acting * 0.6, (
+        f"the plan level costs {planning} characters against {acting} acting — "
+        "the read-only narrowing has stopped narrowing"
+    )
 
 
 async def test_only_plan_narrows_the_catalog():
@@ -208,7 +217,7 @@ async def test_only_plan_narrows_the_catalog():
     # description lists the tools the level clears unasked (`agent/code_mode.py`). So the
     # catalog is identical with it set aside, and the tool count is identical with it in.
     acting = {
-        level: await _catalog("sandbox", level, scripts=False)
+        level: await _catalog(level, scripts=False)
         for level in PERMISSION_LADDER
         if level != "plan"
     }
@@ -216,7 +225,7 @@ async def test_only_plan_narrows_the_catalog():
     counts: dict[PermissionLevel, tuple[int, int]] = {}
     for level in PERMISSION_LADDER:
         if level != "plan":
-            fresh, corpus = await _catalog("sandbox", level)
+            fresh, corpus = await _catalog(level)
             counts[level] = (fresh[0], corpus[0])
     assert len(set(counts.values())) == 1, counts
 

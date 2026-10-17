@@ -21,13 +21,17 @@ import asyncio
 import logging
 import secrets
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import override
 
 from pydantic_ai import RunContext
 
 from agent.summarize import resolve_auto_compact_policy
+from core.diagnostics import render_tool_error
+from core.exceptions import InvalidInputError, NotFoundError
 from harness.manifest import DormantCategory, HarnessContext
 from models.subagent import SubagentRecord
+from prompts.voice import CLASSES
 from routes.chat import compose_turn, resolve_turn_models
 from runs import RunRegistry, RunStatus
 from services.agents import (
@@ -39,22 +43,33 @@ from services.agents import (
 )
 from services.agents.definition import WorkspacePolicy
 from services.agents.thread import DELEGATION_TOOLS, may_delegate, resolve_thread_agent
-from services.conversations import ConversationBinding, ConversationStore
+from services.conversations import ConversationStore
 from services.offline import OfflineModeService
 from services.permissions import DEFAULT_PERMISSION, permission_level, stricter_permission
 from services.projects import ProjectStore, WorktreeManager
+from services.projects.repo import WorktreeError
+from services.projects.worktree import WorktreeBusyError
 from services.registry import ModelRegistry
 from services.settings_store import (
     SettingsStore,
-    get_agent_request_limit_override,
     get_context_thresholds,
     get_subagent_limit,
 )
-from services.subagent_store import SubagentStore
+from services.subagent_store import LIVE_STATUSES, SubagentStore
 from services.subagents.briefing import brief_for
+from services.subagents.callsigns import (
+    allocate,
+    fold,
+    next_serial,
+    resolve,
+    stem_of,
+    with_serial,
+)
 from services.subagents.launcher import (
     PARENT_ADDRESS,
     ROOT_HANDLE,
+    ChildWorktree,
+    FiledReport,
     LaunchedSubagent,
     Recipient,
     SubagentLauncher,
@@ -64,8 +79,7 @@ from services.subagents.launcher import (
 )
 from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
-from services.workspace import DELEGATION_SEP
-from services.workspace_kind import workspace_kind
+from services.workspace import DELEGATION_SEP, split_workspace_key
 from tools import InstructionProvider, RunDeps
 
 from ._subagent_wake import SubagentWake
@@ -78,9 +92,6 @@ SUBAGENT_KIND = "linked"
 
 #: How much of a task is kept as the conversation's name.
 _TITLE_MAX_CHARS = 80
-
-#: Isolation asked for at launch only ever moves a definition's own answer further apart.
-_ISOLATION_RANK: dict[WorkspacePolicy, int] = {"shared": 0, "isolated": 1, "own": 2}
 
 #: Words ``to`` reads as an address rather than a handle, so no agent may be called them.
 _RESERVED_HANDLES: frozenset[str] = frozenset({PARENT_ADDRESS, ROOT_HANDLE})
@@ -116,9 +127,9 @@ class ConversationSubagents(SubagentLauncher):
         self._offline: OfflineModeService = ctx.services.get(OfflineModeService)
         self._uploads: UploadStore = ctx.services.get(UploadStore)
         self._agents: AgentCatalog = ctx.services.get(AgentCatalog)
-        #: Handles chosen but not yet recorded, as (owner, root, handle). A launch picks its
-        #: name before a whole turn is composed and records it after, so concurrent
-        #: launches in one step consult these as well as the register.
+        #: Handles and folded callsigns chosen but not yet recorded, as (owner, root, name).
+        #: A launch picks its names before a whole turn is composed and records them after,
+        #: so concurrent launches in one step consult these as well as the register.
         self._reserved: set[tuple[str, str, str]] = set()
         self._reserve_lock: asyncio.Lock = asyncio.Lock()
 
@@ -133,7 +144,7 @@ class ConversationSubagents(SubagentLauncher):
         *,
         handle: str,
         parent: SubagentParent | None = None,
-        isolate: bool = False,
+        worktree: bool = False,
     ) -> LaunchedSubagent:
         task = task.strip()
         if not task:
@@ -143,20 +154,23 @@ class ConversationSubagents(SubagentLauncher):
         position = await self._position(owner_id, thread)
         await self._check_depth(owner_id, thread, position)
         await self._check_capacity(owner_id, position.root)
-        handle = await self._handle_for(owner_id, position.root, handle, agent)
+        handle, callsign = await self._names_for(owner_id, position.root, handle, agent)
         try:
             return await self._launch(
                 owner_id,
                 agent,
                 task,
                 handle=handle,
+                callsign=callsign,
                 parent=parent,
                 position=position,
-                isolate=isolate,
+                worktree=worktree,
             )
         finally:
             async with self._reserve_lock:
                 self._reserved.discard((owner_id, position.root, handle))
+                self._reserved.discard((owner_id, position.root, fold(callsign)))
+                self._reserved.discard((owner_id, position.root, fold(stem_of(callsign))))
 
     async def _launch(
         self,
@@ -165,9 +179,10 @@ class ConversationSubagents(SubagentLauncher):
         task: str,
         *,
         handle: str,
+        callsign: str,
         parent: SubagentParent,
         position: _Position,
-        isolate: bool,
+        worktree: bool,
     ) -> LaunchedSubagent:
         try:
             models = await resolve_turn_models(
@@ -207,48 +222,45 @@ class ConversationSubagents(SubagentLauncher):
                 + f"{'is' if len(withheld) == 1 else 'are'} switched off or unavailable."
             )
 
-        policy = _isolation(agent.workspace, isolate=isolate)
+        policy = _isolation(agent.workspace, worktree=worktree)
         delegation_id = f"s-{secrets.token_hex(4)}"
         base = parent.workspace_key or parent.conversation_id or ""
         if not base:
-            # Nothing to share means a workspace of its own; nothing to fork is a failure.
             if policy == "isolated":
                 raise SubagentUnavailableError(
-                    "This conversation has no workspace to give an agent its own copy "
-                    + "of. Spawn it without isolation, or do the work here."
+                    render_tool_error(
+                        "this run has no thread, so there is no project to cut a worktree from",
+                        hints=["spawn it without `worktree`, or do the work here"],
+                    )
                 )
             policy = "own"
+        base_ref = (
+            await self._cut_worktree(owner_id, parent, base, delegation_id)
+            if policy == "isolated"
+            else None
+        )
         workspace_key = _workspace_key(base, policy, delegation_id)
 
-        parent_kind = workspace_kind(parent.workspace_kind)
-        if policy == "isolated" and parent_kind == "checkout":
-            raise SubagentUnavailableError(
-                "This conversation works directly in the project's folder, which cannot "
-                + "be copied for an agent. Call `project_open_worktree` first, or spawn "
-                + "it without isolation."
-            )
-        child_kind = "sandbox" if policy == "own" else parent_kind
-        binding = ConversationBinding(
-            workspace_kind=child_kind,
-            project_id=parent.project_id,
-            permission=permission,
-            agent_name=agent.name,
-            tools=agent.tools,
-            permission_ceiling=permission,
-            workspace_key=workspace_key,
-        )
         thread = parent.conversation_id or ""
         conversation_id = await self._conversations.create_conversation(
             owner_id,
-            title=_title_for(handle, task),
+            title=_title_for(callsign, handle, task),
             project_id=parent.project_id,
-            workspace_kind=child_kind,
             permission=permission,
             agent_name=agent.name,
             parent_id=thread or None,
             workspace_key=workspace_key,
             # Hidden from the session list until the operator opens it.
             ephemeral=True,
+        )
+        # Read back the way every later turn of it reads it, so the worktree and leases
+        # it works under are one rule (`ConversationBinding.leases_from`).
+        stored = await self._conversations.binding(conversation_id)
+        binding = replace(
+            stored,
+            permission=permission,
+            tools=agent.tools,
+            permission_ceiling=permission,
         )
         root = position.root or thread
         self._wake.remember_root(conversation_id, root)
@@ -262,7 +274,7 @@ class ConversationSubagents(SubagentLauncher):
             dormant=DormantCategory.summaries(self._ctx.dormant_categories),
             instruction_providers=(
                 *self._ctx.instruction_providers,
-                _briefing(brief_for(agent.instructions, policy)),
+                _briefing(brief_for(agent.instructions, policy, agent.agent_class)),
             ),
             prompt_context_providers=self._ctx.prompt_context_providers,
             registry=self._runs,
@@ -270,11 +282,6 @@ class ConversationSubagents(SubagentLauncher):
             uploads=self._uploads,
             disabled_tools=disabled,
             binding=binding,
-            # A definition's limit is a request, folded under the operator's.
-            request_limit=lower_of(
-                agent.request_limit,
-                await get_agent_request_limit_override(self._settings, owner_id),
-            ),
             context_thresholds=await get_context_thresholds(self._settings, owner_id),
             auto_compact=await resolve_auto_compact_policy(self._settings, owner_id),
             owner_id=owner_id,
@@ -299,14 +306,14 @@ class ConversationSubagents(SubagentLauncher):
             parent_run_id=parent.run_id,
             spec_name=agent.name,
             handle=handle,
+            agent_class=agent.agent_class,
+            callsign=callsign,
             task=task,
             workspace_policy=policy,
             workspace_key=workspace_key,
             delegation_id=delegation_id if policy == "isolated" else None,
-            # Stored: the fork is landed from a terminal hook, long after the binding that
-            # knew these is out of reach.
-            workspace_kind=child_kind,
             project_id=parent.project_id,
+            base_ref=base_ref,
         )
         return LaunchedSubagent(
             subagent_id=created.run_id,
@@ -314,6 +321,8 @@ class ConversationSubagents(SubagentLauncher):
             run_id=created.run_id,
             name=agent.name,
             handle=handle,
+            callsign=callsign,
+            agent_class=agent.agent_class,
             task=task,
         )
 
@@ -343,32 +352,52 @@ class ConversationSubagents(SubagentLauncher):
         )
         return applied.agent
 
-    async def _handle_for(
+    async def _names_for(
         self, owner_id: str, root: str, requested: str, agent: AgentDefinition
-    ) -> str:
-        """The name this agent will answer to: normalised, unique in its tree, and claimed
-        before this returns, so concurrent launches cannot both take it. Suffixed rather
-        than refused on a clash — ``explorer-2`` is legible, and a failed launch costs a
-        retry."""
+    ) -> tuple[str, str]:
+        """The handle and callsign this agent will answer to, unique in its tree and claimed
+        before this returns, so concurrent launches cannot both take them. A handle is
+        suffixed rather than refused on a clash — ``explorer-2`` is legible, and a failed
+        launch costs a retry. Handles and callsigns share one namespace, so a reference
+        never fits one agent's handle and another's callsign."""
         try:
             base = normalize_agent_name(requested) if requested.strip() else agent.name
         except AgentNameError as exc:
             raise SubagentUnavailableError(str(exc)) from exc
         async with self._reserve_lock:
-            taken = await self._records.handles_in_tree(root, owner_id)
-            taken |= _RESERVED_HANDLES
-            taken |= {
-                handle
-                for owner, tree, handle in self._reserved
-                if owner == owner_id and tree == root
+            rows = await self._records.tree(root, owner_id)
+            reserved = {
+                name for owner, tree, name in self._reserved if owner == owner_id and tree == root
             }
-            chosen = base
+            handles = {fold(row.handle) for row in rows if row.handle}
+            stems = {fold(stem_of(row.callsign)) for row in rows if row.callsign}
+            live = {
+                fold(stem_of(row.callsign))
+                for row in rows
+                if row.callsign and row.status in LIVE_STATUSES
+            }
+            taken = handles | stems | reserved | _RESERVED_HANDLES
+            handle = base
             suffix = 2
-            while chosen in taken:
-                chosen = f"{base}-{suffix}"
+            while handle in taken:
+                handle = f"{base}-{suffix}"
                 suffix += 1
-            self._reserved.add((owner_id, root, chosen))
-            return chosen
+            stem = allocate(agent.agent_class, live | handles | reserved | {handle}, avoid=stems)
+            self._reserved.add((owner_id, root, handle))
+            if not stem:
+                return handle, ""
+            # A launch in flight has no row yet, so its claimed serial is counted from here.
+            pool = {fold(entry) for entry in CLASSES[agent.agent_class].callsigns}
+            claimed = [
+                name
+                for owner, _, name in self._reserved
+                if owner == owner_id and fold(stem_of(name)) in pool
+            ]
+            carried = await self._records.callsigns_of(owner_id, agent.agent_class)
+            callsign = with_serial(stem, next_serial([*carried, *claimed]))
+            self._reserved.add((owner_id, root, fold(stem)))
+            self._reserved.add((owner_id, root, fold(callsign)))
+            return handle, callsign
 
     async def _check_capacity(self, owner_id: str, root: str) -> None:
         """Refuse a launch that would put this tree over the operator's cap. An agent parked
@@ -385,6 +414,58 @@ class ConversationSubagents(SubagentLauncher):
             + "each one finishes. Carry on with whatever does not depend on them, or end "
             + "your turn."
         )
+
+    async def _cut_worktree(
+        self, owner_id: str, parent: SubagentParent, base: str, delegation_id: str
+    ) -> str:
+        """Cut a sub-agent's worktree from where its parent works, returning the commit
+        it starts at: the parent's own worktree, or the checkout as it stands."""
+        projects = self._ctx.services.get_optional(ProjectStore)
+        worktrees = self._ctx.services.get_optional(WorktreeManager)
+        if not parent.project_id:
+            raise SubagentUnavailableError(
+                render_tool_error(
+                    "this thread is not filed under a project, so there is no project to "
+                    + "cut a worktree from",
+                    hints=["spawn it without `worktree`; it shares your scratch either way"],
+                )
+            )
+        if projects is None or worktrees is None:
+            raise SubagentUnavailableError("Worktrees are unavailable in this deployment.")
+        holder, parent_delegation = split_workspace_key(base)
+        try:
+            project = await projects.get(owner_id, parent.project_id)
+            root = Path(project.root_path)
+            if parent_delegation is not None:
+                source = worktrees.reopen_child(
+                    project_id=parent.project_id,
+                    conversation_id=holder,
+                    delegation_id=parent_delegation,
+                )
+            elif parent.worktree:
+                source = await worktrees.acquire(
+                    project_id=parent.project_id,
+                    root=root,
+                    base_ref=project.base_ref,
+                    conversation_id=holder,
+                )
+            else:
+                source = None
+            state = await worktrees.cut_child(
+                project_id=parent.project_id,
+                root=root,
+                conversation_id=holder,
+                delegation_id=delegation_id,
+                source=source,
+            )
+        except (WorktreeError, WorktreeBusyError, InvalidInputError, NotFoundError) as exc:
+            raise SubagentUnavailableError(
+                render_tool_error(
+                    f"could not cut a worktree for it: {exc}",
+                    hints=["spawn it without `worktree` to have it work in your files"],
+                )
+            ) from exc
+        return state.base_ref
 
     # -- reaching agents in the tree -----------------------------------------------
 
@@ -438,6 +519,19 @@ class ConversationSubagents(SubagentLauncher):
         return found.label
 
     @override
+    async def file_report(
+        self, owner_id: str, conversation_id: str, run_id: str, report: FiledReport
+    ) -> str:
+        position = await self._position(owner_id, conversation_id)
+        if position.record is None:
+            raise SubagentUnavailableError(
+                "No agent spawned this thread, so there is nobody to report to."
+            )
+        self._wake.file(run_id, report)
+        parent = await self._records.by_child(position.record.parent_conversation_id)
+        return parent.handle if parent is not None else ROOT_HANDLE
+
+    @override
     async def read(self, owner_id: str, conversation_id: str, handle: str) -> SubagentView:
         position = await self._position(owner_id, conversation_id)
         view = self._live_view(await self._resolve(owner_id, position.root, handle))
@@ -479,6 +573,56 @@ class ConversationSubagents(SubagentLauncher):
         rows = await self._records.descendants(conversation_id, owner_id)
         return [self._live_view(row) for row in rows]
 
+    @override
+    async def worktrees(self, owner_id: str, conversation_id: str) -> list[ChildWorktree]:
+        rows = await self._records.descendants(conversation_id, owner_id)
+        own = (row for row in rows if row.parent_conversation_id == conversation_id)
+        found = (self._child_worktree(row) for row in own)
+        return [child for child in found if child is not None]
+
+    @override
+    async def worktree(self, owner_id: str, conversation_id: str, handle: str) -> ChildWorktree:
+        position = await self._position(owner_id, conversation_id)
+        row = await self._resolve(owner_id, position.root, handle)
+        if row.parent_conversation_id != conversation_id:
+            raise SubagentUnavailableError(
+                f"`{row.handle}` was not spawned by you, so its work is not yours to merge "
+                + "or discard. The agent that spawned it decides."
+            )
+        child = self._child_worktree(row)
+        if child is None:
+            raise SubagentUnavailableError(
+                f"`{row.handle}` has no worktree open: it worked in your files, or its "
+                + "worktree was already merged or discarded."
+            )
+        return child
+
+    def _child_worktree(self, row: SubagentRecord) -> ChildWorktree | None:
+        """A record's worktree, if it was spawned into one that is still on disk."""
+        worktrees = self._ctx.services.get_optional(WorktreeManager)
+        if worktrees is None or not row.delegation_id or not row.project_id:
+            return None
+        holder, named = split_workspace_key(row.workspace_key or "")
+        delegation = row.delegation_id
+        if named != delegation:
+            return None
+        try:
+            state = worktrees.reopen_child(
+                project_id=row.project_id, conversation_id=holder, delegation_id=delegation
+            )
+        except WorktreeError:
+            return None
+        return ChildWorktree(
+            handle=row.handle or row.spec_name,
+            conversation_id=row.child_conversation_id,
+            project_id=row.project_id,
+            path=state.path,
+            branch=state.branch,
+            base_ref=row.base_ref or state.base_ref,
+            holder_id=holder,
+            delegation_id=delegation,
+        )
+
     async def _position(self, owner_id: str, conversation_id: str) -> _Position:
         if not conversation_id:
             return _Position(root="", depth=0, record=None)
@@ -508,16 +652,9 @@ class ConversationSubagents(SubagentLauncher):
             current = await self._records.by_child(current.parent_conversation_id)
         return False
 
-    async def _resolve(self, owner_id: str, root: str, handle: str) -> SubagentRecord:
-        """The agent of this tree called ``handle``, or a refusal naming it back."""
-        address = _address(handle)
-        row = await self._records.by_handle(root, address, owner_id)
-        if row is None:
-            raise SubagentUnavailableError(
-                f"Nothing in your delegation tree is called {handle!r}. `agents_list` has "
-                + "every agent in it."
-            )
-        return row
+    async def _resolve(self, owner_id: str, root: str, reference: str) -> SubagentRecord:
+        """The agent of this tree a handle or callsign names, or a refusal naming it back."""
+        return resolve(reference, await self._records.tree(root, owner_id))
 
     def _live_view(self, row: SubagentRecord) -> SubagentView:
         """A stored row, corrected by the agent's running turn if it has one."""
@@ -546,20 +683,21 @@ def _address(to: str) -> str:
         return to.strip()
 
 
-def _isolation(declared: WorkspacePolicy, *, isolate: bool) -> WorkspacePolicy:
-    """Where this launch works. Isolation only ever increases over the definition's own."""
-    asked: WorkspacePolicy = "isolated" if isolate else declared
-    return asked if _ISOLATION_RANK[asked] > _ISOLATION_RANK[declared] else declared
+def _isolation(declared: WorkspacePolicy, *, worktree: bool) -> WorkspacePolicy:
+    """Where this launch works: in a worktree of its own when asked for one or when its
+    definition declares it, else where the definition says."""
+    return "isolated" if worktree else declared
 
 
 def _workspace_key(base: str, policy: WorkspacePolicy, delegation_id: str) -> str:
     """The key naming the workspace this agent works in. ``own`` is the empty key, which
-    every run reads as "my own conversation's"."""
+    every run reads as "my own conversation's"; a worktree of its own is named under the
+    thread at the top of the parent's workspace, whose scratch it shares."""
     if policy == "own":
         return ""
     if policy == "shared":
         return base
-    return f"{base}{DELEGATION_SEP}{delegation_id}"
+    return f"{split_workspace_key(base)[0]}{DELEGATION_SEP}{delegation_id}"
 
 
 def _briefing(text: str) -> InstructionProvider:
@@ -572,10 +710,10 @@ def _briefing(text: str) -> InstructionProvider:
     return provider
 
 
-def _title_for(handle: str, task: str) -> str:
-    """The agent's thread name: its handle and its task on one line."""
+def _title_for(callsign: str, handle: str, task: str) -> str:
+    """The agent's thread name, ``CALLSIGN · handle: task`` on one line."""
     folded = " ".join(task.split())
-    title = f"{handle}: {folded}"
+    title = f"{callsign} · {handle}: {folded}" if callsign else f"{handle}: {folded}"
     if len(title) <= _TITLE_MAX_CHARS:
         return title
     return title[: _TITLE_MAX_CHARS - 1] + "…"

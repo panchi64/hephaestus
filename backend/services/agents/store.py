@@ -28,9 +28,11 @@ from models.agent import Agent
 from models.conversation import Conversation
 from services.agents.definition import (
     DEFAULT_AGENT,
+    DEFAULT_CLASS,
     WORKSPACE_POLICIES,
     AgentDefinition,
     ToolAccess,
+    class_key,
     workspace_policy,
 )
 from services.agents.files import (
@@ -56,13 +58,13 @@ EDITABLE: frozenset[str] = frozenset(
     {
         "name",
         "description",
+        "agent_class",
         "instructions",
         "endpoint_id",
         "model",
         "tools",
         "permission_ceiling",
         "workspace",
-        "request_limit",
         "wall_clock_timeout_s",
         "can_delegate",
         "max_depth",
@@ -73,6 +75,7 @@ EDITABLE: frozenset[str] = frozenset(
 class _Columns(TypedDict):
     name: str
     description_enc: str
+    agent_class: str
     instructions_enc: str
     endpoint_id: str | None
     model: str | None
@@ -80,7 +83,6 @@ class _Columns(TypedDict):
     tools_deny_json: str | None
     permission_ceiling: str | None
     workspace: str
-    request_limit: int | None
     wall_clock_timeout_s: float | None
     can_delegate: bool
     max_depth: int | None
@@ -239,6 +241,7 @@ class AgentStore:
         return {
             "name": agent.name,
             "description_enc": self._vault.encrypt_str(agent.description),
+            "agent_class": agent.agent_class,
             "instructions_enc": self._vault.encrypt_str(agent.instructions),
             "endpoint_id": agent.endpoint_id,
             "model": agent.model,
@@ -248,7 +251,6 @@ class AgentStore:
             "tools_deny_json": json.dumps(sorted(agent.tools.deny)) if agent.tools.deny else None,
             "permission_ceiling": agent.permission_ceiling,
             "workspace": agent.workspace,
-            "request_limit": agent.request_limit,
             "wall_clock_timeout_s": agent.wall_clock_timeout_s,
             "can_delegate": agent.can_delegate,
             "max_depth": agent.max_depth,
@@ -261,6 +263,7 @@ class AgentStore:
             id=row.id,
             name=row.name,
             description=self._vault.decrypt_str(row.description_enc),
+            agent_class=class_key(row.agent_class) or DEFAULT_CLASS,
             instructions=self._vault.decrypt_str(row.instructions_enc),
             endpoint_id=row.endpoint_id,
             model=row.model,
@@ -269,7 +272,6 @@ class AgentStore:
             ),
             permission_ceiling=row.permission_ceiling,
             workspace=workspace_policy(row.workspace) or "shared",
-            request_limit=row.request_limit,
             wall_clock_timeout_s=row.wall_clock_timeout_s,
             can_delegate=row.can_delegate,
             max_depth=row.max_depth,
@@ -291,7 +293,13 @@ def _apply(agent: AgentDefinition, values: Mapping[str, object]) -> AgentDefinit
     if unknown:
         raise AgentValidationError(sorted(unknown)[0], "not a field an agent can set")
     known = {f.name for f in fields(AgentDefinition)}
-    return replace(agent, **{key: value for key, value in values.items() if key in known})
+    changes = {key: value for key, value in values.items() if key in known}
+    if "agent_class" in changes:
+        key = class_key(str(changes["agent_class"] or ""))
+        if key is None:
+            raise AgentValidationError("agent_class", "not an agent class")
+        changes["agent_class"] = key
+    return replace(agent, **changes)
 
 
 def _validated(agent: AgentDefinition) -> AgentDefinition:
@@ -318,13 +326,8 @@ def _validated(agent: AgentDefinition) -> AgentDefinition:
         )
     if agent.workspace not in WORKSPACE_POLICIES:
         raise AgentValidationError("workspace", "workspace is one of shared, isolated, own")
-    limits: dict[str, float | None] = {
-        "request_limit": agent.request_limit,
-        "wall_clock_timeout_s": agent.wall_clock_timeout_s,
-    }
-    for field_name, value in limits.items():
-        if value is not None and value <= 0:
-            raise AgentValidationError(field_name, "must be positive")
+    if agent.wall_clock_timeout_s is not None and agent.wall_clock_timeout_s <= 0:
+        raise AgentValidationError("wall_clock_timeout_s", "must be positive")
     if agent.max_depth is not None and agent.max_depth < 0:
         raise AgentValidationError("max_depth", "must not be negative")
     return replace(

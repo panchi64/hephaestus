@@ -58,7 +58,6 @@ from services.tool_sensitivity import (
     declared_sensitivity,
     sensitivity_of,
 )
-from services.workspace_kind import WORKSPACE_TOOLS
 from tools import RunDeps, build_agent_toolsets
 
 from ._helpers import (
@@ -66,6 +65,7 @@ from ._helpers import (
     collect_sse_events,
     full_tool_categories,
     patch_model_resolution,
+    settle,
 )
 from ._json import json_body, parse_json, s
 from .test_chat_concurrency_guards import patch_hanging_model
@@ -318,7 +318,7 @@ async def _resolved_kinds(permission: PermissionLevel) -> dict[str, str]:
         run=run,
         owner_id=OWNER,
         permission=permission,
-        workspace_kind="checkout",
+        project_id="proj-1",
         # Plan's catalog narrowing is `tool_policy`'s half and is tested there; apply it
         # here too so this resolves the stack a Plan run really resolves.
         disabled_tools=permission_disabled_tools(permission),
@@ -409,10 +409,10 @@ class TestTheThreadRemembers:
         await vault.setup("pw")
         return ConversationStore(engine, vault)
 
-    async def test_a_fresh_thread_starts_at_the_default_in_every_workspace(self, tmp_path: Path):
+    async def test_a_fresh_thread_starts_at_the_default_filed_or_not(self, tmp_path: Path):
         store = await self._store(tmp_path)
-        for kind in WORKSPACE_TOOLS:
-            conversation_id = await store.create_conversation(OWNER, workspace_kind=kind)
+        for project_id in (None, "p1"):
+            conversation_id = await store.create_conversation(OWNER, project_id=project_id)
             binding = await store.binding(conversation_id)
             assert binding.permission == DEFAULT_PERMISSION
 
@@ -423,13 +423,12 @@ class TestTheThreadRemembers:
 
     async def test_the_level_moves_and_the_rest_of_the_binding_does_not(self, tmp_path: Path):
         store = await self._store(tmp_path)
-        conversation_id = await store.create_conversation(
-            OWNER, workspace_kind="worktree", project_id="p1"
-        )
+        conversation_id = await store.create_conversation(OWNER, project_id="p1")
+        _ = await store.open_worktree(conversation_id)
         assert await store.set_permission_level(conversation_id, "manual") == "manual"
         binding = await store.binding(conversation_id)
         assert binding.permission == "manual"
-        assert binding.workspace_kind == "worktree"
+        assert binding.worktree
         assert binding.project_id == "p1"
 
     async def test_a_corrupt_stored_level_reads_as_the_strictest(self, tmp_path: Path):
@@ -516,9 +515,9 @@ class TestTheLiveControl:
             assert first_run is not None
             await first_run.wait()
 
-    async def test_a_rejected_send_leaves_the_level_alone(self, monkeypatch: pytest.MonkeyPatch):
-        """The other way a send gets no turn of its own: a busy thread answers 409 to a
-        send carrying attachments, because steering is text-only."""
+    async def test_a_queued_send_leaves_the_level_alone(self, monkeypatch: pytest.MonkeyPatch):
+        """A send into a busy thread queues rather than running at the level it asked for,
+        so the stored level stays what the running turn is running at."""
         hang, started = asyncio.Event(), asyncio.Event()
         patch_hanging_model(monkeypatch, hang, started)
         async with client_app() as (client, app):
@@ -529,7 +528,7 @@ class TestTheLiveControl:
             conversation_id = s(json_body(first)["conversation_id"])
             _ = await started.wait()
 
-            rejected = await client.post(
+            queued = await client.post(
                 "/chat",
                 json={
                     "prompt": "again",
@@ -538,14 +537,13 @@ class TestTheLiveControl:
                     "attachment_ids": [json_body(upload)["id"]],
                 },
             )
-            assert rejected.status_code == 409
+            assert queued.status_code == 202
+            assert json_body(queued)["queued_message_id"]
             detail = await client.get(f"/conversations/{conversation_id}")
             assert json_body(detail)["permission_level"] == "manual"
 
             hang.set()
-            first_run = app_state(app).runs.get(s(json_body(first)["run_id"]))
-            assert first_run is not None
-            await first_run.wait()
+            await settle(app)
 
     async def test_an_unknown_level_is_refused_at_the_edge(self, monkeypatch: pytest.MonkeyPatch):
         patch_model_resolution(monkeypatch, output_text="ok")

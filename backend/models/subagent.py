@@ -82,6 +82,10 @@ class SubagentRecord(Table, table=True):
     #: the task it describes, and it is why ``helper-function-finder`` is a handle and "find
     #: the helper that normalises the customer's billing address" is not.
     handle: str = Field(default="", index=True)
+    #: Its class's key in ``prompts.voice.CLASSES``, and the callsign drawn from that
+    #: class's pool for the operator to know it by. Empty on rows written before either.
+    agent_class: str = Field(default="")
+    callsign: str = Field(default="")
     #: What it was asked to do. User content (the agent's words about the operator's
     #: work), so sealed like every other piece of it.
     task_enc: str
@@ -97,22 +101,15 @@ class SubagentRecord(Table, table=True):
     #: Why it failed, sealed for the same reason the report is — a failure message quotes
     #: the work as readily as a success does.
     error_enc: str | None = Field(default=None)
-    #: How the sub-agent's workspace was taken, and the two names its teardown needs:
-    #: a sandbox fork is merged and purged by ``workspace_key``, a worktree fork by
-    #: (parent conversation, ``delegation_id``). Stored rather than re-derived, because an
-    #: id that lives only in the call that asked for the fork is how a checkout is
-    #: stranded — and that call is long over by the time the sub-agent ends.
+    #: Where the sub-agent works, and the names its worktree is found by: (the owner half
+    #: of ``workspace_key``, ``delegation_id``). Stored because the parent merges or
+    #: discards that worktree long after the launch that cut it.
     workspace_policy: str = Field(default="shared")
     workspace_key: str | None = Field(default=None)
     delegation_id: str | None = Field(default=None)
-    #: ``sandbox`` or ``worktree`` — which manager owns the copy, and therefore how it is
-    #: merged and discarded. Stored rather than re-derived from the mode at merge time: the
-    #: merge happens after the launching run is gone, and a thread's mode is immutable but
-    #: the code that maps one to a workspace kind is not.
-    workspace_kind: str | None = Field(default=None)
-    #: The project a worktree fork belongs to. Here for the same reason the kind is: the
-    #: merge runs from a terminal hook, long after the binding that knew this is gone.
     project_id: str | None = Field(default=None)
+    #: The commit the sub-agent's worktree was cut at, so a merge carries only its own work.
+    base_ref: str | None = Field(default=None)
     #: The child's own context footprint, written when it settles. The *live* figure comes
     #: off the running Run's metrics; this is what a card shows for a sub-agent that
     #: finished before the page was opened, and it is deliberately not written on every

@@ -275,6 +275,18 @@ describe("images", () => {
     }
   });
 
+  test("a screenshot reference parks its id and carries no src", () => {
+    const html = render("![the login page](screenshot:call_9-a)");
+    expect(html).toContain('data-local-ref="call_9-a"');
+    expect(html).toContain('alt="the login page"');
+    expect(html).not.toContain("src=");
+  });
+
+  test("a screenshot reference that isn't a bare id is its alt text", () => {
+    const html = render("![x](screenshot:a/../b)");
+    expect(html).not.toContain("<img");
+  });
+
   test("an alt cannot break out of its attribute", () => {
     const html = render('![a" onerror="alert(1)](https://pics.example/c.png)');
     expect(html).not.toContain('onerror="alert(1)"');

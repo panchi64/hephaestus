@@ -24,6 +24,7 @@ from agent.summarize import FoldFailed, NothingToFold, resolve_auto_compact_poli
 from agent.title import title_from_history
 from core.compaction_sections import SummarySection
 from core.config import get_settings
+from core.envelopes import ContentPart
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from routes import deps
 from routes.chat import thread_models, turn_scope
@@ -37,6 +38,7 @@ from services.conversations import (
     conversation_totals,
     last_request_usage,
 )
+from services.home.changes import ThreadChanges
 from services.permissions import DEFAULT_PERMISSION
 from services.settings_store import (
     get_auto_compact,
@@ -45,7 +47,6 @@ from services.settings_store import (
 )
 from services.task_list import tasks_payload
 from services.workspace_history import SnapshotView, snapshot_id_from_result
-from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +95,6 @@ class ConversationSummary(BaseModel):
     # is in memory and bounded, so a restart, or enough traffic to age the run out,
     # leaves this null. Null means "nothing known", never "nothing happened".
     last_outcome: str | None = None
-    # Where its file work happens: "sandbox", "checkout" or "worktree". On the listing so
-    # the rail can mark worktree threads without opening each one.
-    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     # The agent the thread runs, by name. Null is the default agent.
     agent_name: str | None = None
     # The thread that spawned this one, for an agent's thread the operator opened.
@@ -141,12 +139,15 @@ class ToolCallOut(BaseModel):
     args: dict[str, object]
     status: str
     result: object = None
+    result_parts: list[ContentPart] | None = None
     error: str | None = None
     images: list[ToolCallImageOut] = Field(default_factory=list)
     answers: list[ToolCallAnswerOut] = Field(default_factory=list)
     # The `run_code` call this one was made from, when a script made it — the same field
     # the live `tool.*` frames carry, so a reload nests the row where the stream did.
     parent_tool_call_id: str | None = None
+    # Same as `tool.failed`'s: the failure was the platform's own fault.
+    platform: bool = False
 
 
 class ViewVersionRefOut(BaseModel):
@@ -194,6 +195,13 @@ class MessageOut(BaseModel):
     content: str
     # The sending agent's handle, on a message one agent sent another.
     author: str | None = None
+    # The reporting agent's handle, on a sub-agent's report.
+    reporter: str | None = None
+    # `role == "notice"` only — the notice's kind; `content` is its body.
+    notice: str | None = None
+    # User turns whose text carried untrusted fences — those fences in order; `content`
+    # keeps the surrounding text. None elsewhere.
+    parts: list[ContentPart] | None = None
     tools: list[ToolCallOut] = []
     versions: list[ViewVersionRefOut] = []
     created_at: datetime | None = None
@@ -370,7 +378,6 @@ def _summary(
         model=view.model,
         activity=activity,
         last_outcome=last_outcome,
-        workspace_kind=view.workspace_kind,
         agent_name=view.agent_name,
         parent_id=view.parent_id,
         workspace=(workspaces or {}).get(view.project_id or ""),
@@ -407,6 +414,9 @@ def message_out(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut
         role=view.role,
         content=view.content,
         author=view.author,
+        reporter=view.reporter,
+        notice=view.notice,
+        parts=view.parts,
         tools=[
             ToolCallOut(
                 id=t.id,
@@ -414,6 +424,7 @@ def message_out(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut
                 args=t.args,
                 status=t.status,
                 result=t.result,
+                result_parts=t.result_parts,
                 error=t.error,
                 images=[ToolCallImageOut(media_type=i.media_type, data=i.data) for i in t.images],
                 answers=[
@@ -421,6 +432,7 @@ def message_out(view: MessageView, by_id: dict[str, SnapshotView]) -> MessageOut
                     for a in t.answers
                 ],
                 parent_tool_call_id=t.parent_tool_call_id,
+                platform=t.platform,
             )
             for t in view.tools
         ],
@@ -757,7 +769,10 @@ async def _settle_code_branch(request: Request, conversation_id: str, *, discard
     the delete. Only a real, countable diff stops it.
     """
     binding = await deps.store(request).binding(conversation_id)
-    if binding.workspace_kind != "worktree" or not binding.project_id:
+    if not binding.project_id:
+        return
+    if not binding.worktree:
+        await _discard_child_worktrees(request, binding.project_id, conversation_id)
         return
     try:
         project = await deps.projects(request).get(OPERATOR_ID, binding.project_id)
@@ -782,6 +797,17 @@ async def _settle_code_branch(request: Request, conversation_id: str, *, discard
         )
     await deps.worktrees(request).discard(
         root, project_id=binding.project_id, conversation_id=conversation_id
+    )
+
+
+async def _discard_child_worktrees(request: Request, project_id: str, conversation_id: str) -> None:
+    """Remove the worktrees of the sub-agents a deleted thread spawned into them."""
+    try:
+        project = await deps.projects(request).get(OPERATOR_ID, project_id)
+    except NotFoundError:
+        return
+    await deps.worktrees(request).discard_children(
+        Path(project.root_path), project_id=project_id, conversation_id=conversation_id
     )
 
 
@@ -815,6 +841,8 @@ async def delete_conversation(
             await image_orphans(request, conversation_id, message_id=None) if purge_images else []
         )
         await store.delete_conversation(conversation_id)
+        # Queued messages restate what was said to the thread; they go with it.
+        deps.registry(request).inbox(conversation_id, OPERATOR_ID).clear()
         await _purge_uploads(request, orphans)
         # Drop the conversation's View history (snapshots + any blob no other snapshot
         # needs), so the work doesn't linger encrypted on disk after the thread is gone.
@@ -823,6 +851,11 @@ async def delete_conversation(
         # restate what was asked for, so neither must outlive the thread.
         await deps.conversation_tasks(request).delete_for_conversation(OPERATOR_ID, conversation_id)
         await deps.plan_mode(request).delete_for_conversation(OPERATOR_ID, conversation_id)
+        # The originals of the project files it changed are the operator's content too;
+        # without the thread there is nothing to revert from.
+        changes = deps.capabilities(request).get_optional(ThreadChanges)
+        if changes is not None:
+            await changes.delete_for_conversation(OPERATOR_ID, conversation_id)
         # And the sub-agents it launched. Unlike everything else here they are not merely
         # stored state: a live one is a *running* model, spending the operator's money on
         # work for a thread that no longer exists and holding a slot against the cap, with
@@ -920,14 +953,8 @@ async def pin_message(
     """Pin or unpin a turn — a durable bookmark surfaced in the projection."""
     store = deps.store(request)
     _ = await _require_owned(request, conversation_id)
-    # A tree mutation like the others here — rejected while a run is live on this
-    # conversation, same as switch_version/rewind/delete_message.
-    deps.claim_conversation(request, conversation_id)
-    try:
-        if not await store.set_pin(conversation_id, message_id, body.pinned):
-            raise HTTPException(status_code=404, detail="message not found")
-    finally:
-        deps.release_conversation(request, conversation_id)
+    if not await store.set_pin(conversation_id, message_id, body.pinned):
+        raise HTTPException(status_code=404, detail="message not found")
 
 
 @router.post("/{conversation_id}/messages/{message_id}/rewind", response_model=ConversationDetail)
@@ -983,8 +1010,13 @@ async def _branch_the_fork(request: Request, source_id: str, forked_id: str) -> 
     what forking is supposed to preserve. Best-effort: a source that never cut a branch
     leaves the fork to create one normally on its first code turn.
     """
-    binding = await deps.store(request).binding(forked_id)
-    if binding.workspace_kind != "worktree" or not binding.project_id:
+    store = deps.store(request)
+    source = await store.binding(source_id)
+    if not source.worktree or not source.project_id:
+        return
+    _ = await store.open_worktree(forked_id)
+    binding = await store.binding(forked_id)
+    if not binding.project_id:
         return
     try:
         project = await deps.projects(request).get(OPERATOR_ID, binding.project_id)

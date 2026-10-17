@@ -20,9 +20,10 @@
  * prompt — a plain confirm otherwise. A failed probe falls back to the plain confirm and
  * keeps the images: an unreachable answer is not a licence to delete more.
  *
- * **Stop the run before removing what it is writing into.** Aborting the local SSE does
- * not stop the run server-side, so a thread deleted mid-turn would keep generating into a
- * conversation that no longer exists.
+ * **A thread with a live run is not deleted.** Aborting the local SSE does not stop the
+ * run server-side, so a thread deleted mid-turn would keep generating into a conversation
+ * that no longer exists. The menus disable the row ("Stop the turn first") rather than
+ * stopping the run on the operator's behalf.
  */
 
 import { createSignal, type Accessor } from "solid-js";
@@ -53,7 +54,7 @@ export function buildConversationTranscript(messages: ChatMessage[]): string {
           ? "Operator"
           : m.role === "compaction"
             ? "Context compacted"
-            : "Assistant";
+            : "Talos";
       const body =
         m.role === "assistant" ? assembleTranscript(m.blocks) : m.content;
       return `${label} · ${m.createdAt}\n${body}`;
@@ -111,8 +112,7 @@ async function resolveDeleteChoice(
  * meant opening it first.
  *
  * `createConversationActions` still wraps them, and keeps everything that is
- * genuinely about *the room*: the retitle throbber, stopping a live run, restaging
- * an empty composer. Nothing of that belongs to a row in a list. */
+ * genuinely about *the room*: the retitle throbber, restaging an empty composer. Nothing of that belongs to a row in a list. */
 
 /** The threads whose titles the backend is naming right now, keyed by id.
  *
@@ -161,15 +161,9 @@ export async function retitleConversation(
 
 /** Confirm and delete a thread. Resolves true only when it is actually gone, so a
  *  caller can decide what to reseat *after* the operator has agreed rather than
- *  before.
- *
- *  `beforeDelete` runs between the confirm and the call, for a caller that has to
- *  settle something first — the room stops a live run there, because aborting the
- *  local SSE does not stop the run server-side and a thread deleted mid-turn would
- *  keep generating into a conversation that no longer exists. */
+ *  before. Callers keep the row disabled while the thread has a live run. */
 export async function deleteConversationFlow(
   conversationId: string,
-  opts: { beforeDelete?: () => Promise<void> } = {},
 ): Promise<boolean> {
   const purgeImages = await resolveDeleteChoice(
     conversationId,
@@ -178,7 +172,6 @@ export async function deleteConversationFlow(
   );
   if (purgeImages === null) return false;
   try {
-    await opts.beforeDelete?.();
     await deleteConversation(conversationId, purgeImages);
     toast.success("Conversation deleted");
     return true;
@@ -193,9 +186,9 @@ export interface ConversationActionDeps {
   conversationId: () => string | null;
   /** The transcript, for the clipboard export. */
   messages: ChatMessage[];
-  /** Whether a turn is in flight — a delete has to stop it first. */
+  /** Whether a turn is in flight, which switches off every act that rewrites or
+   *  removes the thread. */
   sending: () => boolean;
-  cancel: () => Promise<void>;
   removeMessage: (messageId: string, purgeImages: boolean) => Promise<void>;
   /** The thread's browser, which an open marks as running. */
   browser: BrowserState;
@@ -244,7 +237,7 @@ export function createConversationActions(
    *  conversation it came from. */
   async function fork(messageId: string): Promise<void> {
     const id = deps.conversationId();
-    if (!id) return;
+    if (!id || deps.sending()) return;
     try {
       deps.onForked(await forkConversation(id, messageId));
       toast.success("Forked into a new conversation.");
@@ -281,27 +274,13 @@ export function createConversationActions(
 
   async function removeConversation(): Promise<void> {
     const id = deps.conversationId();
-    if (!id) return;
-    const deleted = await deleteConversationFlow(id, {
-      // Deleting a thread mid-stream must stop its generation: cancel the live
-      // run first (while it still exists) so the backend halts it, rather than
-      // leaving it generating into a conversation that's about to be gone —
-      // aborting the local SSE alone wouldn't stop the run server-side.
-      //
-      // `sending()` alone used to gate this, which was wrong the moment anything
-      // but the open thread could be deleted: it would cancel the operator's live
-      // run to delete some *other* conversation. The run only has to stop when the
-      // thread being removed is the one writing into it.
-      beforeDelete: async () => {
-        if (id === deps.conversationId() && deps.sending()) await deps.cancel();
-      },
-    });
-    if (deleted) deps.onDeleted();
+    if (!id || deps.sending()) return;
+    if (await deleteConversationFlow(id)) deps.onDeleted();
   }
 
   async function removeMessage(messageId: string): Promise<void> {
     const id = deps.conversationId();
-    if (!id) return;
+    if (!id || deps.sending()) return;
     const purgeImages = await resolveDeleteChoice(
       id,
       "Delete this message?",

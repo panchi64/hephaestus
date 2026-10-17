@@ -261,8 +261,7 @@ PROJECTIONS: dict[str, Projection] = {
         content=("explanation", "old_text", "new_text"),
     ),
     "code_execute": Projection(
-        "Runs a program in the conversation's sandbox",
-        identity=("language",),
+        "Runs a Python program in the conversation's sandbox",
         content=("code",),
     ),
 }

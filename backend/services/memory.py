@@ -4,8 +4,9 @@ The capability behind `MEM-*`. A memory is encrypted at rest (content + vector);
 recall is **hybrid**: cosine over embeddings (the "by meaning" path) and BM25 (the keyword
 path), fused with Reciprocal Rank Fusion on the memory-only :mod:`services.recall_index`.
 This satisfies `MEM-2`'s "recall by meaning, keyword fallback" in one pass: a memory with
-no vector contributes through the keyword signal alone. Pinned memories are always
-included (`MEM-4`).
+no vector contributes through the keyword signal alone. Pinned memories reach the agent
+through its instructions (`MEM-4`, ``tools/memory.memory_catalog_instructions``), so recall
+ranks them like any other.
 
 Embeddings are compared **only within the same model/space** (`EMB-2`): a memory
 embedded by a different model than the current one falls back to sparse, so a
@@ -45,17 +46,30 @@ class MemoryView:
 
     id: str
     content: str
+    description: str
     pinned: bool
     created_at: datetime
     updated_at: datetime
     has_embedding: bool
 
 
+#: How much of a memory's first line stands in for a description it was saved without.
+DESCRIPTION_FALLBACK_CHARS = 80
+
+
+@dataclass(frozen=True)
+class MemoryCatalog:
+    """The pinned memories as ``(id, description)`` pairs, and how many memories are not listed."""
+
+    pinned: list[tuple[str, str]]
+    others: int
+
+
 @dataclass(frozen=True)
 class RecallHit:
     memory: MemoryView
     score: float
-    # How it surfaced: semantic (dense only), keyword (sparse only), both, or pinned.
+    # How it surfaced: semantic (dense only), keyword (sparse only), or both.
     matched_by: str
 
 
@@ -126,11 +140,20 @@ class MemoryStore:
 
     # --- write path -------------------------------------------------------
 
-    async def remember(self, owner_id: str, content: str, *, pinned: bool = False) -> MemoryView:
+    async def remember(
+        self,
+        owner_id: str,
+        content: str,
+        *,
+        description: str | None = None,
+        pinned: bool = False,
+    ) -> MemoryView:
+        """Store a memory. A blank ``description`` reads as the content's first line."""
         model, dim, vector_enc = await self._embed_for_storage(owner_id, content)
         memory = Memory(
             owner_id=owner_id,
             content_enc=self._vault.encrypt_str(content),
+            description_enc=self._seal_description(description),
             embedding_enc=vector_enc,
             embedding_model=model,
             embedding_dim=dim,
@@ -140,7 +163,7 @@ class MemoryStore:
         def work(session: Session) -> MemoryView:
             session.add(memory)
             session.flush()
-            return self._to_view(memory, content)
+            return self._view(memory)
 
         return await in_session(self._engine, work)
 
@@ -150,8 +173,10 @@ class MemoryStore:
         memory_id: str,
         *,
         content: str | None = None,
+        description: str | None = None,
         pinned: bool | None = None,
     ) -> MemoryView:
+        """Change what is given; a blank ``description`` falls back to the first line."""
         _ = await self._require(owner_id, memory_id)
         # Re-embed only when the content actually changed (EMB-2 provenance).
         new_vector = (
@@ -164,12 +189,14 @@ class MemoryStore:
             if content is not None and new_vector is not None:
                 memory.content_enc = self._vault.encrypt_str(content)
                 memory.embedding_model, memory.embedding_dim, memory.embedding_enc = new_vector
+            if description is not None:
+                memory.description_enc = self._seal_description(description)
             if pinned is not None:
                 memory.pinned = pinned
             memory.updated_at = datetime.now(UTC)
             session.add(memory)
             session.flush()
-            return self._to_view(memory, self._vault.decrypt_str(memory.content_enc))
+            return self._view(memory)
 
         return await in_session(self._engine, work)
 
@@ -194,7 +221,7 @@ class MemoryStore:
                 .where(Memory.owner_id == owner_id)
                 .order_by(col(Memory.created_at).desc())
             ).all()
-            return [self._to_view(row, self._vault.decrypt_str(row.content_enc)) for row in rows]
+            return [self._view(row) for row in rows]
 
         return await in_session(self._engine, work)
 
@@ -210,17 +237,15 @@ class MemoryStore:
         return await in_session(self._engine, work)
 
     async def get(self, owner_id: str, memory_id: str) -> MemoryView:
-        memory = await self._require(owner_id, memory_id)
-        return self._to_view(memory, self._vault.decrypt_str(memory.content_enc))
+        return self._view(await self._require(owner_id, memory_id))
 
     async def recall(
         self, owner_id: str, query: str, *, limit: int = 5, since: datetime | None = None
     ) -> list[RecallHit]:
-        """Hybrid recall: dense (meaning) + sparse (keyword), fused, plus pins.
+        """Hybrid recall: dense (meaning) + sparse (keyword), fused.
 
         A degraded embedder (or a query that can't embed) collapses cleanly to
-        keyword-only — the `MEM-2` fallback. ``since`` drops memories older than it,
-        pins included."""
+        keyword-only — the `MEM-2` fallback. ``since`` drops memories older than it."""
         query_vec, query_model = await embed_query(self._embedder, owner_id, query)
         ranked = await self._index.search(
             self._collection,
@@ -232,30 +257,34 @@ class MemoryStore:
         ids = [hit.doc.id for hit in ranked]
 
         def work(session: Session) -> list[RecallHit]:
-            stmt = select(Memory).where(Memory.owner_id == owner_id)
-            stmt = stmt.where(or_(col(Memory.id).in_(ids), col(Memory.pinned).is_(True)))
-            if since is not None:
-                stmt = stmt.where(Memory.created_at >= since)
-            rows = {
-                row.id: row
-                for row in session.exec(stmt.order_by(col(Memory.created_at).desc())).all()
-            }
-            views = {
-                mid: self._to_view(row, self._vault.decrypt_str(row.content_enc))
-                for mid, row in rows.items()
-            }
-            hits = [
+            rows = session.exec(
+                select(Memory).where(Memory.owner_id == owner_id, col(Memory.id).in_(ids))
+            ).all()
+            views = {row.id: self._view(row) for row in rows}
+            return [
                 RecallHit(memory=views[hit.doc.id], score=hit.score, matched_by=hit.matched_by)
                 for hit in ranked
                 if hit.doc.id in views
             ]
-            present = {hit.memory.id for hit in hits}
-            hits.extend(
-                RecallHit(memory=views[mid], score=0.0, matched_by="pinned")
-                for mid, row in rows.items()
-                if row.pinned and mid not in present
-            )
-            return hits
+
+        return await in_session(self._engine, work)
+
+    async def catalog(self, owner_id: str, *, limit: int) -> MemoryCatalog:
+        """The pinned memories' index lines, sorted by id so the block keeps its bytes while
+        the set holds. Past ``limit`` the oldest pins drop out and are counted with the rest."""
+
+        def work(session: Session) -> MemoryCatalog:
+            total = session.exec(
+                select(func.count()).select_from(Memory).where(Memory.owner_id == owner_id)
+            ).one()
+            pinned = session.exec(
+                select(Memory)
+                .where(Memory.owner_id == owner_id, col(Memory.pinned).is_(True))
+                .order_by(col(Memory.created_at).desc())
+                .limit(limit)
+            ).all()
+            entries = sorted((row.id, self._description(row)) for row in pinned)
+            return MemoryCatalog(pinned=entries, others=total - len(entries))
 
         return await in_session(self._engine, work)
 
@@ -359,11 +388,23 @@ class MemoryStore:
     async def _require(self, owner_id: str, memory_id: str) -> Memory:
         return await get_owned(self._engine, Memory, memory_id, owner_id, what="memory")
 
-    @staticmethod
-    def _to_view(memory: Memory, content: str) -> MemoryView:
+    def _seal_description(self, description: str | None) -> str | None:
+        text = " ".join((description or "").split())
+        return self._vault.encrypt_str(text) if text else None
+
+    def _description(self, memory: Memory, content: str | None = None) -> str:
+        if memory.description_enc is not None:
+            return self._vault.decrypt_str(memory.description_enc)
+        text = content if content is not None else self._vault.decrypt_str(memory.content_enc)
+        lines = text.strip().splitlines()
+        return lines[0].strip()[:DESCRIPTION_FALLBACK_CHARS] if lines else ""
+
+    def _view(self, memory: Memory) -> MemoryView:
+        content = self._vault.decrypt_str(memory.content_enc)
         return MemoryView(
             id=memory.id,
             content=content,
+            description=self._description(memory, content),
             pinned=memory.pinned,
             created_at=memory.created_at,
             updated_at=memory.updated_at,

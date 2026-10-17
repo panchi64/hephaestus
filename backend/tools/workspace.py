@@ -2,7 +2,7 @@
 
 `services/workspace.py` holds the resolution; this is the half that reads it off
 `RunDeps` and the capability bag, so a tool asks one question and gets one answer rather
-than each reaching for `SandboxSessionManager` and branching on the workspace kind itself. Two
+than each reaching for `SandboxSessionManager` and branching on the binding itself. Two
 spellings, one answer: tools hold a `RunContext`, and the approval gate — which has to
 resolve the workspace *before* any tool has run, to judge a command's paths against the
 directory it will actually run in — holds only the run's deps.
@@ -18,12 +18,10 @@ from __future__ import annotations
 
 from pydantic_ai import RunContext
 
-from services.projects.checkout import CheckoutHolders
 from services.projects.store import ProjectStore
 from services.projects.worktree import WorktreeManager
 from services.sandbox import SandboxSessionManager
 from services.workspace import RunWorkspace, resolve_workspace
-from services.workspace_kind import is_project_folder
 
 from .deps import RunDeps
 
@@ -67,15 +65,14 @@ async def resolve_run_workspace(deps: RunDeps) -> RunWorkspace | None:
         return deps.workspace
 
     workspace = await resolve_workspace(
-        workspace_kind=deps.workspace_kind,
         project_id=deps.project_id,
+        worktree=deps.worktree,
         conversation_id=deps.conversation_id,
         workspace_key=deps.workspace_key,
         owner_id=deps.owner_id,
         sessions=deps.caps.get_optional(SandboxSessionManager),
         projects=deps.caps.get_optional(ProjectStore),
         worktrees=deps.caps.get_optional(WorktreeManager),
-        checkouts=deps.caps.get_optional(CheckoutHolders),
         # The run claims its session for as long as it lasts, not for the length of
         # one tool call: the live-session cap would otherwise be free to reap the guest copy
         # between two of them, dropping the live processes and system state around an
@@ -87,5 +84,5 @@ async def resolve_run_workspace(deps: RunDeps) -> RunWorkspace | None:
 
 
 def unavailable(deps: RunDeps) -> str:
-    """The right "no workspace" sentence for the kind of workspace the run is in."""
-    return NO_PROJECT if is_project_folder(deps.workspace_kind) else NO_WORKSPACE
+    """The right "no workspace" sentence for the place the run works in."""
+    return NO_PROJECT if deps.project_id is not None else NO_WORKSPACE

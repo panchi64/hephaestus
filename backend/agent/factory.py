@@ -26,6 +26,7 @@ from pydantic_ai import (
     DeferredToolRequests,
     RunContext,
 )
+from pydantic_ai.agent import AgentRetries
 from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.models import Model
 from pydantic_ai_harness import WarnOnCacheBusts
@@ -34,9 +35,10 @@ from core.timezone import local_zone_key
 from prompts.agent import (
     CURRENT_DATE,
     INSTRUCTIONS,
+    SPAWNED_INSTRUCTIONS,
+    SPAWNED_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
 )
-from prompts.workspace import CHECKOUT_WORKSPACE, WORKTREE_WORKSPACE
 from services.llm import TOOL_CALL_SETTINGS
 from services.permissions import permission_spec
 from tools import (
@@ -49,6 +51,7 @@ from tools import (
     tool_search_capability,
 )
 from tools.describe import category_names
+from tools.report import require_report
 
 from .code_mode import CodeModeLimits, code_mode_capability
 from .injections import AnnounceInjections, contributor_id
@@ -63,16 +66,16 @@ NO_DORMANT: Mapping[str, str] = MappingProxyType({})
 type TurnAgent = Agent[RunDeps, DeferredToolRequests | str]
 
 
-_WORKSPACE_POSTURE = {"checkout": CHECKOUT_WORKSPACE, "worktree": WORKTREE_WORKSPACE}
-
-
 def build_agent(
     model: Model,
     *,
+    spawned: bool = False,
     categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
     instruction_providers: Sequence[InstructionProvider] = (),
     dormant: Mapping[str, str] = NO_DORMANT,
     code_mode: CodeModeLimits | None = None,
+    retries: AgentRetries | None = None,
+    tool_call_timeout_s: float | None = None,
 ) -> TurnAgent:
     # Two prompt seams by durability: SYSTEM_PROMPT (identity/voice) is anchored in
     # history; INSTRUCTIONS (autonomy, tool posture, the treat-external-content-as-
@@ -94,9 +97,12 @@ def build_agent(
     agent = Agent(
         model,
         deps_type=RunDeps,
-        system_prompt=SYSTEM_PROMPT,
-        instructions=INSTRUCTIONS,
-        toolsets=build_agent_toolsets(categories, dormant=tuple(dormant)),
+        system_prompt=SPAWNED_SYSTEM_PROMPT if spawned else SYSTEM_PROMPT,
+        instructions=SPAWNED_INSTRUCTIONS if spawned else INSTRUCTIONS,
+        toolsets=build_agent_toolsets(
+            categories, dormant=tuple(dormant), call_timeout_s=tool_call_timeout_s
+        ),
+        retries=retries,
         # Parallel tool calling (see `services.llm.TOOL_CALL_SETTINGS`). Declared at
         # construction, not per-run on `agent.iter(...)`: a park stashes this agent on
         # the ParkedTurn, so every resume inherits it with nothing threaded through the
@@ -194,11 +200,6 @@ def build_agent(
     dormant_index = dormant_index_instructions(dormant, names_by_category)
     _ = agent.instructions(name=contributor_id(dormant_index))(dormant_index)
 
-    @agent.instructions(name="workspace_posture")
-    def _workspace_posture(ctx: RunContext[RunDeps]) -> str:
-        """What is true only in the operator's own files; "" in a sandbox."""
-        return _WORKSPACE_POSTURE.get(ctx.deps.workspace_kind, "")
-
     @agent.instructions(name="level")
     def _level_posture(ctx: RunContext[RunDeps]) -> str:
         """What the thread's permission level means for how the model works, read off the
@@ -243,4 +244,5 @@ def build_agent(
         stamp = f"{now:%A, %B} {now.day}, {now.year}"
         return CURRENT_DATE.format(date=stamp, zone=local_zone_key())
 
+    _ = agent.output_validator(require_report)
     return agent

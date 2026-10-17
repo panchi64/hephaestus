@@ -5,17 +5,14 @@
  * scrolls up to read back, and re-attach when they scroll near the bottom again. A floating
  * control jumps back down once they have scrolled far up.
  *
- * **Why a tick rather than a message count.** A turn streams for a long time without the
- * message list ever changing length: tokens land inside the last message's blocks. So the
- * follow effect is driven by a memo that sums everything that can grow — answer and
- * reasoning text, a tool's args/result/status, a host command's output — and re-runs on
- * every fragment rather than only when a turn starts or ends. The exact number is
- * meaningless; only that it changes matters.
+ * **Why the content's size drives it.** The transcript grows in ways no message field
+ * records: a stopped turn reloading with its failed call opened, an image decoding, a
+ * fold animating open. So the follow observes the content element's size, and a pinned
+ * view follows every growth whatever caused it.
  *
- * **Why `pinned` is untracked in the effect.** Only *new content* may scroll the view.
- * Reading `pinned` reactively would make re-attaching (by scrolling down) snap the view
- * itself, which takes the scroll away from the operator at the moment they were using it;
- * the next arriving fragment catches up instead.
+ * **Why re-attaching does not scroll.** Only growth moves the view. Snapping on
+ * re-attach would take the scroll away from the operator while they were using it; the
+ * next growth catches up instead.
  *
  * **Why detaching is decided by movement rather than by distance.** This used to yield
  * on position alone — within `ATTACHED_PX` of the bottom counted as attached, full stop —
@@ -25,21 +22,14 @@
  * could only escape by flicking hard enough to clear the whole threshold in one gesture,
  * which is precisely the complaint: the transcript felt locked to the newest step.
  *
- * So the rule is now *any upward movement the follow did not cause detaches it*, and the
- * threshold survives only as the way back in. That is decided from the outcome — where
- * the container ended up — rather than from input events, which is what keeps a wheel, a
- * trackpad, a dragged scrollbar, a Page Up and a touch drag all behaving the same without
- * this file knowing which one happened.
+ * So the rule is *any upward movement the operator made detaches it*, and the threshold
+ * survives only as the way back in. The movement is read from the outcome, so a wheel, a
+ * trackpad, a dragged scrollbar, a Page Up and a touch drag behave the same. Authorship is
+ * read from input: the browser also moves `scrollTop` up on its own, clamping it when a
+ * reloaded turn lays out shorter for a moment, and that must not let go of the follow.
  */
 
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  untrack,
-} from "solid-js";
-import type { ChatMessage } from "./model";
+import { createEffect, createSignal, onCleanup, untrack } from "solid-js";
 
 /** Scrolling back to within this many pixels of the bottom re-attaches the follow.
  *
@@ -57,73 +47,17 @@ const JUMP_PX = 240;
  *  deliberately almost nothing — the point of the rewrite is that there is no longer a
  *  distance an operator has to out-scroll. */
 const DRIFT_PX = 2;
-
-/**
- * Everything in the in-flight turn that can grow, added up.
- *
- * Pure and exported so the one thing that can silently break — a block kind whose
- * *mutations* aren't counted — is checkable without a DOM. The exact number is
- * meaningless; only that it changes when the turn does.
- *
- * **A block kind whose fields are filled in later needs a case of its own.** The
- * fallback arm adds a flat 1, which covers a block that arrives complete and never
- * changes again, and covers nothing else: a `review.completed` filling in the verdict on
- * a row `review.started` already pushed leaves the sum untouched, and the transcript sits
- * still while the row it is pinned to the bottom of grows underneath the fold.
- */
-export function streamTick(messages: ChatMessage[]): number {
-  const last = messages[messages.length - 1];
-  if (!last) return messages.length;
-  let n = messages.length + (last.content?.length ?? 0);
-  for (const b of last.blocks ?? []) {
-    switch (b.kind) {
-      case "thinking":
-      case "text":
-        n += b.text.length;
-        break;
-      case "tool":
-        n +=
-          b.tool.status.length +
-          b.tool.args.length +
-          (b.tool.result?.length ?? 0) +
-          (b.tool.error?.length ?? 0);
-        break;
-      case "host_command":
-        n +=
-          b.command.phase.length +
-          (b.command.stdout?.length ?? 0) +
-          (b.command.stderr?.length ?? 0);
-        break;
-      case "review":
-        // The row opens on `review.started` with only a summary and fills in on
-        // `review.completed` — a mutation, not a push — so every field the verdict
-        // arrives in has to be part of the sum or the expanded row never scrolls
-        // into view.
-        n +=
-          b.review.summary.length +
-          (b.review.decision?.length ?? 0) +
-          (b.review.stage?.length ?? 0) +
-          (b.review.reason?.length ?? 0) +
-          (b.review.risk?.length ?? 0) +
-          (b.review.authorization?.length ?? 0) +
-          (b.review.correctness?.length ?? 0);
-        break;
-      case "context":
-        // Pushed complete, but its text is what sets the row's height when the fold
-        // is open — counting it keeps a long injection from landing unnoticed.
-        n += b.injection.text.length;
-        break;
-      default:
-        n += 1; // approval / view chips: a new block is enough
-    }
-  }
-  return n;
-}
+/** A scroll this soon after the operator's last wheel, touch or key is theirs. Covers
+ *  smooth keyboard scrolling, which keeps moving after the keydown. */
+const INTENT_MS = 600;
 
 /** Where the container was, and where it is now. */
 export interface FollowReading {
   /** Whether the follow is currently attached. */
   pinned: boolean;
+  /** Whether the operator is scrolling: input on the transcript just now, or a held
+   *  pointer (a scrollbar drag). */
+  operator: boolean;
   /** `scrollTop` as of the previous reading — or as of the follow's own last write. */
   lastTop: number;
   /** `scrollHeight` as of the previous reading. */
@@ -139,9 +73,8 @@ export interface FollowReading {
  * Pure, and exported, because this is the whole of the behaviour worth testing and the
  * one rule that has been wrong before. Three cases, in this order:
  *
- * 1. **The container moved up and did not shrink.** The follow only ever scrolls *down*
- *    (to the bottom), so upward movement under a stable height is the operator, whatever
- *    device they used. Let go immediately — there is no minimum gesture.
+ * 1. **The operator moved the container up and it did not shrink.** Let go immediately;
+ *    there is no minimum gesture. An upward move nobody made is the browser clamping.
  * 2. **We are at the bottom.** Take the follow back. This is the only way in besides the
  *    jump control and starting a turn.
  * 3. **Neither.** Leave it as it was. Growing content moves the *bottom* away rather than
@@ -155,7 +88,8 @@ export interface FollowReading {
  */
 export function nextPinned(reading: FollowReading): boolean {
   const shrank = reading.height < reading.lastHeight;
-  if (!shrank && reading.top < reading.lastTop - DRIFT_PX) return false;
+  const movedUp = reading.top < reading.lastTop - DRIFT_PX;
+  if (reading.operator && !shrank && movedUp) return false;
   const distance = reading.height - reading.top - reading.clientHeight;
   if (distance < ATTACHED_PX) return true;
   return reading.pinned;
@@ -164,6 +98,8 @@ export function nextPinned(reading: FollowReading): boolean {
 export interface TranscriptFollow {
   /** `ref` for the scrolling transcript container. */
   ref: (el: HTMLDivElement) => void;
+  /** `ref` for the content inside the container; its growth drives the follow. */
+  contentRef: (el: HTMLElement) => void;
   /** `onScroll` for the same container. */
   onScroll: () => void;
   /** True once the operator has scrolled far enough up to want a way back. */
@@ -174,8 +110,8 @@ export interface TranscriptFollow {
    *  or `null` when this transcript does not hold it.
    *
    *  The detach is the substance, not a side effect. Scrolling somewhere up-thread while
-   *  the follow is still pinned does nothing the operator can see: the next message
-   *  change writes `scrollTop = scrollHeight` and puts them straight back at the bottom.
+   *  the follow is still pinned does nothing the operator can see: the next growth
+   *  writes `scrollTop = scrollHeight` and puts them straight back at the bottom.
    *  And it is the honest state anyway — looking at a turn above the tail is exactly what
    *  being un-pinned means, which is why the jump control appears afterwards. */
   scrollToMessage: (messageId: string) => HTMLElement | null;
@@ -184,7 +120,6 @@ export interface TranscriptFollow {
 }
 
 export function createTranscriptFollow(source: {
-  messages: ChatMessage[];
   sending: () => boolean;
   /** The open thread; a switch re-attaches and jumps to the latest message. */
   conversationId: () => string | null;
@@ -205,9 +140,37 @@ export function createTranscriptFollow(source: {
   // The container as of the last thing that moved it — a scroll the operator made, or
   // the follow's own write. `nextPinned` compares against these to tell the two apart:
   // recording the write here is what stops the follow reading its own scroll event back
-  // as movement, and is why no flag and no event-source sniffing is needed.
+  // as movement.
   let lastTop = 0;
   let lastHeight = 0;
+  let lastInput = Number.NEGATIVE_INFINITY;
+  let pointerHeld = false;
+  const noteInput = () => {
+    lastInput = performance.now();
+  };
+  const holdPointer = () => {
+    pointerHeld = true;
+  };
+  const releasePointer = () => {
+    pointerHeld = false;
+  };
+  const watchInput = (el: HTMLElement) => {
+    const passive = { passive: true };
+    el.addEventListener("wheel", noteInput, passive);
+    el.addEventListener("touchmove", noteInput, passive);
+    el.addEventListener("keydown", noteInput);
+    el.addEventListener("pointerdown", holdPointer);
+    window.addEventListener("pointerup", releasePointer);
+    window.addEventListener("pointercancel", releasePointer);
+    onCleanup(() => {
+      el.removeEventListener("wheel", noteInput);
+      el.removeEventListener("touchmove", noteInput);
+      el.removeEventListener("keydown", noteInput);
+      el.removeEventListener("pointerdown", holdPointer);
+      window.removeEventListener("pointerup", releasePointer);
+      window.removeEventListener("pointercancel", releasePointer);
+    });
+  };
   const followBottom = () => {
     if (frame !== null) return;
     frame = requestAnimationFrame(() => {
@@ -244,6 +207,7 @@ export function createTranscriptFollow(source: {
     setPinned(
       nextPinned({
         pinned: untrack(pinned),
+        operator: pointerHeld || performance.now() - lastInput < INTENT_MS,
         lastTop,
         lastHeight,
         top,
@@ -256,16 +220,15 @@ export function createTranscriptFollow(source: {
     lastHeight = height;
   };
 
-  // Ticks on every fragment that grows the in-flight turn, so the follow effect
-  // re-runs as content streams in, not only when a message is added.
-  const tick = createMemo(() => streamTick(source.messages));
-
-  createEffect(() => {
-    tick();
-    // untrack(pinned): only new content drives a scroll, so re-attaching by
-    // scrolling down doesn't itself snap — the next fragment catches up.
-    if (untrack(pinned)) followBottom();
-  });
+  let observer: ResizeObserver | undefined;
+  onCleanup(() => observer?.disconnect());
+  const observeContent = (el: HTMLElement) => {
+    observer?.disconnect();
+    observer = new ResizeObserver(() => {
+      if (pinned()) followBottom();
+    });
+    observer.observe(el);
+  };
 
   // The operator initiating a turn (send / regenerate / edit) re-attaches the
   // follow, so the new answer is tracked even if they had scrolled up.
@@ -285,7 +248,9 @@ export function createTranscriptFollow(source: {
   return {
     ref: (el) => {
       scrollEl = el;
+      watchInput(el);
     },
+    contentRef: observeContent,
     onScroll,
     showJump,
     jumpToLatest,

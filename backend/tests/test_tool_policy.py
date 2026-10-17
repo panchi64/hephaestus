@@ -43,7 +43,6 @@ from services.tool_policy import (
     unavailable_tools,
     vision_disabled_tools,
 )
-from services.workspace_kind import WORKSPACE_TOOLS, WorkspaceKind
 from tools import RunDeps, build_agent_toolsets
 from tools.catalog import tool_catalog
 
@@ -80,7 +79,7 @@ def _availability(app: FastAPI) -> tuple[CategoryAvailability, ...]:
     return app_state(app).category_availability
 
 
-async def agent_visible(disabled: frozenset[str], kind: WorkspaceKind = "sandbox") -> set[str]:
+async def agent_visible(disabled: frozenset[str]) -> set[str]:
     """Every tool name the composed stack the engine hands the Agent can resolve — not a
     re-derivation of the naming rule, so this is the ground truth the catalog is measured
     against.
@@ -90,7 +89,8 @@ async def agent_visible(disabled: frozenset[str], kind: WorkspaceKind = "sandbox
     them. Which of them a given request actually carries, and the library-owned
     ``search_tools`` that reveals the rest, are ``test_tool_search.py``'s subject."""
     run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
-    deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled, workspace_kind=kind)
+    # As a spawned thread, the one kind of run that is offered `subagent_report` as well.
+    deps = RunDeps(run=run, owner_id=OWNER, disabled_tools=disabled, reports_to_parent=True)
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
     return set(await build_agent_toolsets(full_tool_categories())[0].get_tools(ctx))
 
@@ -102,9 +102,7 @@ async def test_catalog_matches_the_names_the_agent_is_offered():
     # Pins the namespacing convention (`category_tool`) against what Pydantic AI's
     # prefixing actually produces: if the library ever changed it, every toggle in the
     # settings screen would quietly stop matching, and this fails instead.
-    offered: set[str] = set()
-    for kind in WORKSPACE_TOOLS:
-        offered |= await agent_visible(frozenset(), kind)
+    offered = await agent_visible(frozenset())
     assert {t.name for t in tool_catalog(full_tool_categories())} == offered
 
 
@@ -113,13 +111,16 @@ async def test_catalog_matches_the_names_the_agent_is_offered():
 # shrinks the agent's world without any other test noticing — this literal set is the
 # tripwire. A deliberate tool addition/removal updates this list in the same change.
 _PINNED_CATALOG = {
+    "agents_discard",
     "agents_list",
+    "agents_merge",
     "agents_message",
     "agents_publish",
     "agents_read",
     "agents_spawn",
     "agents_stop",
     "agents_write",
+    "subagent_report",
     "attachments_provision",
     "browse_click",
     "browse_console_messages",
@@ -165,8 +166,10 @@ _PINNED_CATALOG = {
     "mail_read",
     "mail_reply",
     "mail_send",
+    "memory_open",
     "memory_recall",
     "memory_remember",
+    "memory_update",
     "plan_enter",
     "plan_read",
     "plan_submit",
@@ -178,7 +181,6 @@ _PINNED_CATALOG = {
     "project_active",
     "project_list",
     "project_open_worktree",
-    "repo_inventory_agent_context",
     "routines_delete",
     "routines_list",
     "routines_run_now",
@@ -221,8 +223,9 @@ async def test_booted_app_assembles_the_same_catalog():
             "agents_write",
             "shell_run_command",
             "shell_start_command",
-            "agents_message",
-            "agents_spawn",
+            "files_write_file",
+            "files_edit_file",
+            "files_create_directory",
             "plugins_test",
             "routines_write",
             "routines_delete",
@@ -297,11 +300,6 @@ async def test_operator_and_offline_sets_union_rather_than_overwrite():
         "web_search",
         "web_fetch",
     }
-
-
-async def test_the_workspace_kind_is_not_folded_into_the_union():
-    disabled = await effective_disabled_tools(make_store(), stub_offline(frozenset()), OWNER)
-    assert not disabled & {"code_execute", "shell_run_command"}
 
 
 async def test_offline_alone_still_applies_with_no_operator_choices():

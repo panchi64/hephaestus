@@ -1,7 +1,7 @@
 import { Dynamic } from "solid-js/web";
-import type { JSX } from "solid-js";
+import { createMemo, type JSX } from "solid-js";
 import { cx } from "../cx";
-import { icons, type IconName } from "../icons/registry";
+import { icons, type IconEntry, type IconName } from "../icons/registry";
 
 export interface IconProps {
   name: IconName;
@@ -24,14 +24,21 @@ export interface IconProps {
  */
 export function Icon(props: IconProps): JSX.Element {
   const size = () => props.size ?? 16;
-  const entry = () => icons[props.name];
+  // A name can arrive from runtime data despite the type, and a missing glyph must
+  // leave an empty box rather than throw and take the surrounding render down.
+  const entry = createMemo((): IconEntry | undefined => {
+    if (Object.hasOwn(icons, props.name)) return icons[props.name];
+    if (import.meta.env.DEV)
+      console.warn(`Icon: no registry entry for ${String(props.name)}`);
+    return undefined;
+  });
   const grid = () => {
     const e = entry();
-    return typeof e === "function" ? 16 : e.viewBox;
+    return e === undefined || typeof e === "function" ? 16 : e.viewBox;
   };
   const glyph = () => {
     const e = entry();
-    return typeof e === "function" ? e : e.glyph;
+    return e === undefined || typeof e === "function" ? e : e.glyph;
   };
   return (
     <svg

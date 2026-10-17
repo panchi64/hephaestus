@@ -22,6 +22,7 @@ from typing import Literal
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from core.citations import Citation
+from core.diagnostics import render_tool_error
 from core.untrusted import new_nonce, unfence, untrusted_fence, untrusted_preamble
 from services import ranking
 from services.corpus import CorpusHit, CorpusIndex
@@ -143,7 +144,10 @@ def _since(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value)
     except ValueError:
         raise ModelRetry(
-            f"`since` must be an ISO date or datetime such as 2026-03-01, not {value!r}."
+            render_tool_error(
+                f"`since` is not an ISO date: {value!r}",
+                hints=["pass a date such as `2026-03-01`, or a datetime"],
+            )
         ) from None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
@@ -167,13 +171,34 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
         since: str | None = None,
         limit: int = 8,
     ) -> PlatformResults | str:
-        """Search everything outside this conversation: other conversations, memory,
-        files and uploads, work summaries, agent reports, routine outputs, skills, agents,
-        plugins.
+        """Searches everything the platform holds outside this conversation: other
+        conversations, memory, the operator's indexed files and uploads, work summaries,
+        sub-agent reports, routine outputs, and the catalogs of skills, agents and
+        plugins. Your context holds only this conversation, so this is how you reach the
+        rest.
 
-        Use it before saying you don't know, or asking what the operator may have told
-        you before. ``since`` is an ISO date. Open a hit's ``ref`` with
-        ``platform_read``. No hits means nothing matched; don't keep rephrasing."""
+        Use it before you say you don't know something, and before you ask the operator
+        anything they may have told you already. Use `web_search` for the public web
+        instead, and `corpus_retrieve` to search inside a file you already have the id of.
+
+        Returns up to `limit` hits ranked across sources, each with a `ref`, its
+        `source`, a title, an excerpt and a date. The excerpt is a fragment: open a hit
+        with `platform_read` before you rely on it or quote it. No hits means nothing
+        matched; conclude from that rather than rephrasing the same search.
+
+        A search confined to `memory` and the catalogs runs at once. Any other source
+        holds content the operator did not write, so the search pauses for their
+        approval first; name only the `sources` you need.
+
+        Args:
+            query: What you are looking for, in plain words. It matches by meaning and by
+                keyword.
+            sources: Which sources to search. Omit to search all of them.
+            since: An ISO date (`2026-03-01`) or datetime; only items from then on are
+                returned. The catalogs carry no dates, so they are skipped when this is
+                set.
+            limit: The most hits to return. Default 8.
+        """
         chosen = tuple(dict.fromkeys(sources or _ALL))
         after = _since(since)
         if not set(chosen) <= _UNGATED:
@@ -226,7 +251,16 @@ def platform_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool
     async def read(ctx: RunContext[RunDeps], ref: str) -> PlatformDocument | str:
-        """Open a ``platform_search`` hit in full by its ``ref``."""
+        """Opens one `platform_search` hit in full by its `ref`: a past conversation, a
+        memory, a file, a summary, a report or a routine's output, cut off after
+        40,000 characters.
+
+        A skill or plugin hit is not opened here; the result tells you which tool loads
+        it. An agent hit returns the agent's description and instructions.
+
+        Args:
+            ref: The `ref` exactly as the search hit gave it.
+        """
         deps = ctx.deps
         kind, _, name = ref.partition(":")
         if kind == "skill":

@@ -142,7 +142,6 @@ class NavigationMixin(StoreCore):
             owner_id,
             title=_forked_title(source.title if source is not None else None),
             project_id=binding.project_id,
-            workspace_kind=binding.workspace_kind,
             # The level rides along with the rest of the binding: a fork of a thread the
             # operator had dropped to Manual must not come back at the default.
             permission=binding.permission,

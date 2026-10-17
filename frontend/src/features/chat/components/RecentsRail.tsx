@@ -47,6 +47,7 @@ import { createRenameConversation } from "./RenameConversationModal";
 import { directoryLabel, useAddDirectory } from "../addDirectory";
 import { settled } from "~/lib/resource";
 import type { ChatActivity } from "../model";
+import { TURN_LOCK_HINT } from "../turnLock";
 import type { WorkspaceDirectory } from "../sessionGroups";
 import { SessionList, type WorkspaceStatus } from "./SessionList";
 
@@ -244,17 +245,13 @@ export function RecentsRail(props: {
         label: "Delete conversation",
         icon: "trash",
         danger: true,
+        // A thread with a live run is not deleted: the run would keep generating into
+        // a conversation that no longer exists. Nothing stops it on the operator's
+        // behalf, so the row says what to do first.
+        disabled: row?.activity !== undefined,
+        hint: TURN_LOCK_HINT,
         onSelect: () => {
-          void deleteConversationFlow(id, {
-            // The same guard the room's menu applies, and it has to be here too: this
-            // menu can delete the thread the operator is *currently streaming*, and
-            // aborting the local SSE would not stop the run server-side — it would
-            // keep generating into a conversation that no longer exists. Scoped to
-            // that thread, so deleting any other row never touches a run in flight.
-            beforeDelete: async () => {
-              if (id === currentId() && stream.sending()) await stream.cancel();
-            },
-          }).then((deleted) => {
+          void deleteConversationFlow(id).then((deleted) => {
             // Only the open thread's disappearance restages the composer. Deleting
             // some other row must leave the operator where they were — that is the
             // whole point of being able to act on a thread without opening it.

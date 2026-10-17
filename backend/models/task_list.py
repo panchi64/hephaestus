@@ -39,4 +39,8 @@ class ConversationTaskList(Table, table=True):
     # AEAD ciphertext of the JSON array of task items (id, content, status, active_form,
     # parent_id, depends_on).
     items_enc: str
+    # A sha256 over the sorted text of the open tasks the model was last reminded of, so the
+    # same open set is never raised twice. Sealed: a bare hash of short task text can be
+    # guessed back.
+    reminded_open_enc: str | None = Field(default=None)
     updated_at: datetime = Field(default_factory=utcnow, index=True)

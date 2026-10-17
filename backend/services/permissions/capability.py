@@ -48,16 +48,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
 from typing import Literal, cast
 
+from services.permissions.fence import Fence, HomeFence, escapes
 from services.permissions.projections import describe
-from services.permissions.shell_ast import (
-    ShellCommand,
-    escapes_workspace,
-    shell_reach,
-    strip_comments,
-)
+from services.permissions.shell_ast import ShellCommand, shell_reach, strip_comments
 from services.tool_sensitivity import EXTERNAL_PREFIX, Sensitivity, classified, sensitivity_of
 
 #: How far a shell command says it needs to reach, declared by the model on the call and
@@ -169,15 +164,16 @@ class Capability:
         return tuple(command.program for command in self.commands)
 
 
-#: Shell-shaped tools, by the argument carrying the command. `code_execute` is here for
-#: its `bash` language only — its `python` program is code, not a command line, and there
-#: is no grammar walk that bounds an interpreter.
+#: Shell-shaped tools, by the argument carrying the command.
 _COMMAND_ARG: dict[str, str] = {
     "shell_run_command": "command",
     "shell_start_command": "command",
     "code_run_host_command": "command",
-    "code_execute": "code",
 }
+
+#: The tool whose argument is a Python program run in the conversation's sandbox. The
+#: sandbox is the fence there, and no grammar walk bounds an interpreter.
+_PROGRAM_TOOL = "code_execute"
 
 #: The one tool whose entire security content is an argument *value*. Everything else here
 #: is described by its argument keys (see :func:`_arg_shape`), because a value may be a
@@ -232,12 +228,6 @@ def measured_against_root(tool: str) -> bool:
     return tool in _COMMAND_ARG or tool in _PATH_ARG
 
 
-#: Shell-shaped tools whose command runs inside the conversation's own sandbox. The
-#: sandbox is the fence there, so nothing about the command has to be understood for the
-#: act to be bounded — see :attr:`Capability.sandboxed`.
-_SANDBOXED_TOOLS = frozenset({"code_execute"})
-
-
 def declared_reach(tool: str, args: Mapping[str, object]) -> Reach | None:
     """How far this call says it needs to reach, or None when it said nothing.
 
@@ -263,7 +253,7 @@ def declared_reach(tool: str, args: Mapping[str, object]) -> Reach | None:
 
 
 def shell_capability(
-    tool: str, command: str, *, root: Path | None, reach: Reach | None = DEFAULT_REACH
+    tool: str, command: str, *, root: Fence | None, reach: Reach | None = DEFAULT_REACH
 ) -> Capability:
     """One shell command as a capability — the grammar walk, wrapped in the common shape.
 
@@ -274,7 +264,7 @@ def shell_capability(
     untouched, and the walk above still read the whole thing.
 
     **No root is a fact about the reading, not a permissive default.** Absolute and upward
-    paths already read as escapes without one (``escapes_workspace``), but a bare
+    paths already read as escapes without one (``fence.escapes``), but a bare
     `cat .env` names no directory at all, so nothing escapes and nothing is written — and
     a stage looking only at those fields would clear a command whose working directory
     this process never established. It is recorded as unread instead, which escalates the
@@ -293,6 +283,14 @@ def shell_capability(
     root = None if on_the_host else root
     walk = shell_reach(command, root=root)
     unplaced = () if root is not None else (_UNPLACED_ON_THE_HOST if on_the_host else _UNPLACED,)
+    # A command with no network that sees only the thread's scratch is held by the VM as
+    # a sandboxed program is, so it is bounded without its syntax being read.
+    in_scratch = (
+        isinstance(root, HomeFence)
+        and reach == "workspace"
+        and not walk.network
+        and root.scratch_only(command)
+    )
     return Capability(
         tool=tool,
         kind=ActionKind.SHELL,
@@ -304,12 +302,14 @@ def shell_capability(
         network=walk.network,
         escapes=walk.escapes,
         reach=reach,
-        sandboxed=tool in _SANDBOXED_TOOLS,
+        sandboxed=in_scratch,
         unbounded=(*walk.unbounded, *unplaced),
     )
 
 
-def capability_of(tool: str, args: Mapping[str, object], *, root: Path | None = None) -> Capability:
+def capability_of(
+    tool: str, args: Mapping[str, object], *, root: Fence | None = None
+) -> Capability:
     """The worst case of one deferred call to ``tool`` with ``args``.
 
     Total: every tool resolves to *something*, because a call that has arrived has to be
@@ -317,6 +317,19 @@ def capability_of(tool: str, args: Mapping[str, object], *, root: Path | None = 
     this module has no rule for is described by its name and the keys of its arguments —
     enough for a reviewer to judge, and never enough for the judge to clear.
     """
+    if tool == _PROGRAM_TOOL:
+        summary, detail = describe(
+            tool, args, fallback="Runs a Python program in the conversation's sandbox"
+        )
+        return Capability(
+            tool=tool,
+            kind=ActionKind.OPAQUE,
+            summary=summary,
+            detail=detail,
+            sandboxed=True,
+            unbounded=("an interpreter's program is not bounded by its arguments",),
+        )
+
     command_arg = _COMMAND_ARG.get(tool)
     if command_arg is not None:
         return _command_capability(tool, args, command_arg, root)
@@ -385,7 +398,7 @@ def capability_of(tool: str, args: Mapping[str, object], *, root: Path | None = 
 
 
 def _command_capability(
-    tool: str, args: Mapping[str, object], command_arg: str, root: Path | None
+    tool: str, args: Mapping[str, object], command_arg: str, root: Fence | None
 ) -> Capability:
     command = _text_arg(args, command_arg)
     if command is None:
@@ -395,25 +408,6 @@ def _command_capability(
             summary=f"Runs {tool} with no command given",
             unbounded=("the call carries no command to read",),
         )
-    if tool == "code_execute" and args.get("language", "python") != "bash":
-        language = args.get("language", "python")
-        summary, detail = describe(
-            tool,
-            # The schema default filled in, for the reason `declared_reach` fills in its
-            # own: an omitted argument is not an absent fact but the value the tool will
-            # run under, and both the review row and the reviewer are describing what is
-            # about to happen rather than what was typed.
-            {**args, "language": language},
-            fallback="Runs a program in the conversation's sandbox",
-        )
-        return Capability(
-            tool=tool,
-            kind=ActionKind.OPAQUE,
-            summary=summary,
-            detail=detail,
-            sandboxed=True,
-            unbounded=("an interpreter's program is not bounded by its arguments",),
-        )
     # `network` on the returned capability is the grammar walk's own — a URL named in the
     # command. There is no tool argument left to widen it with: egress is no longer a flag
     # on the run, so the workspace reaches what its allowlist names and adding to that list
@@ -422,7 +416,7 @@ def _command_capability(
 
 
 def _file_capability(
-    tool: str, args: Mapping[str, object], path_arg: str, root: Path | None
+    tool: str, args: Mapping[str, object], path_arg: str, root: Fence | None
 ) -> Capability:
     path = _text_arg(args, path_arg)
     if path is None:
@@ -437,7 +431,7 @@ def _file_capability(
         kind=ActionKind.FILE,
         summary=f"Writes to {path}",
         writes=(path,),
-        escapes=(path,) if escapes_workspace(root, path) else (),
+        escapes=(path,) if escapes(root, path, write=True) else (),
     )
 
 

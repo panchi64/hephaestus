@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
 
-from core.config import get_settings
+from core.config import Settings, get_settings
 from core.db import in_session
 from models._fields import utcnow
 from models.app_setting import AppSetting
@@ -46,11 +46,6 @@ WORK_SUMMARY_IDLE_MINUTES_MAX = 1440
 CONTEXT_WARN_THRESHOLD_KEY = "chat.context_warn_threshold"
 CONTEXT_ALERT_THRESHOLD_KEY = "chat.context_alert_threshold"
 
-# The agent's per-turn model-request ceiling (agent/turn.py's `UsageLimits`): the
-# operator's runtime override of `agent_request_limit`. Every model round-trip spends
-# one, so this is what a tool-heavy turn actually runs out of.
-AGENT_REQUEST_LIMIT_KEY = "chat.agent_request_limit"
-
 # The run substrate's inactivity watchdog (runs/registry.py): the operator's runtime
 # override of `run_inactivity_timeout_s` — how long a run may go without emitting an
 # event before it is stopped. Long generations (a big file write, a slow first token)
@@ -66,6 +61,11 @@ INACTIVITY_TIMEOUT_KEY = "chat.inactivity_timeout_s"
 # operator turned it off, which must not fall back to the config default.
 WALL_CLOCK_TIMEOUT_KEY = "chat.wall_clock_timeout_s"
 _DISABLED = ""
+
+# How long a turn waits for a model's first streamed token (`first_token_timeout_s`): a
+# local model reading a long cold prompt is silent for minutes, and how many depends on the
+# operator's hardware.
+FIRST_TOKEN_TIMEOUT_KEY = "chat.first_token_timeout_s"
 
 # How many sub-agents may be running for the operator at once (services/subagents/). Unset
 # means no cap, which is the default and the honest one: the model launches these to *save*
@@ -147,45 +147,6 @@ class SettingsStore:
         await in_session(self._db, work)
 
 
-async def get_agent_request_limit(store: SettingsStore, owner_id: str) -> int:
-    """The operator's per-turn model-request ceiling — the runtime override if set (and
-    valid), else the config default. Unlike the token caps this one is floored at 1, not
-    0: a turn allowed zero model requests could never answer at all, so a stored 0 (or a
-    corrupted value) falls back to the default rather than bricking every turn.
-
-    This is the *effective* number, for the surface that shows the operator what their
-    setting is. A turn composes with :func:`get_agent_request_limit_override` instead,
-    because it has to tell an answer the operator chose from one nobody did."""
-    return await get_agent_request_limit_override(store, owner_id) or (
-        get_settings().agent_request_limit
-    )
-
-
-async def get_agent_request_limit_override(store: SettingsStore, owner_id: str) -> int | None:
-    """The operator's per-turn ceiling **only if they set one**, else None.
-
-    The distinction is load-bearing where a sub-agent spec carries a floor of its own: a floor may
-    raise a default nobody chose, but it must not overrule a number the operator explicitly lowered
-    — otherwise the settings page says 10 while a sub-agent runs at 60. Collapsing "unset" into the
-    config default here would make those two cases indistinguishable downstream."""
-    raw = await store.get(owner_id, AGENT_REQUEST_LIMIT_KEY)
-    if raw is None:
-        return None
-    # A stored 0, negative or non-numeric value is corruption rather than intent, and
-    # reads as unset — the same fallback every other getter in this module makes, phrased
-    # as "the operator has not given us a usable number".
-    value = _positive_int_or(raw, 0)
-    return value or None
-
-
-async def set_agent_request_limit(store: SettingsStore, owner_id: str, value: int) -> int:
-    """Persist the operator's per-turn model-request ceiling. Returns the stored value.
-    The ``ge=1`` body field at the route is what rejects a nonsensical one; a stray
-    sub-1 value stored here would simply be ignored by the getter."""
-    await store.set(owner_id, AGENT_REQUEST_LIMIT_KEY, str(value))
-    return value
-
-
 async def get_subagent_limit(store: SettingsStore, owner_id: str) -> int | None:
     """How many sub-agents may run at once, or ``None`` for no cap.
 
@@ -250,6 +211,33 @@ async def set_wall_clock_timeout(
     the two before calling this."""
     await store.set(owner_id, WALL_CLOCK_TIMEOUT_KEY, _DISABLED if value is None else str(value))
     return value
+
+
+async def get_first_token_timeout(store: SettingsStore, owner_id: str) -> float | None:
+    """The operator's first-token wait in seconds, else the config default (which a deploy
+    may set to None, leaving that wait to the inactivity watchdog)."""
+    raw = await store.get(owner_id, FIRST_TOKEN_TIMEOUT_KEY)
+    return _positive_float_or(raw, get_settings().first_token_timeout_s)
+
+
+async def set_first_token_timeout(store: SettingsStore, owner_id: str, value: float) -> float:
+    await store.set(owner_id, FIRST_TOKEN_TIMEOUT_KEY, str(value))
+    return value
+
+
+class TurnTuning:
+    """The operator's bounds on how a turn waits, as the engine applies them; the one
+    slice of the settings store a run reads."""
+
+    def __init__(self, store: SettingsStore) -> None:
+        self._store: SettingsStore = store
+
+    async def apply(self, settings: Settings, owner_id: str) -> Settings:
+        return settings.model_copy(
+            update={
+                "first_token_timeout_s": await get_first_token_timeout(self._store, owner_id),
+            }
+        )
 
 
 def _int_or(raw: str | None, default: int) -> int:

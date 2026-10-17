@@ -12,21 +12,27 @@ from pydantic_ai import ModelMessage
 from services.agents.definition import UNRESTRICTED, ToolAccess
 from services.commands.spec import Invocation
 from services.permissions import DEFAULT_PERMISSION, PermissionLevel
-from services.workspace_kind import DEFAULT_WORKSPACE_KIND, WorkspaceKind
 
 
 @dataclass(frozen=True)
 class ConversationBinding:
-    """How a thread works: where its file work happens, and how far the model may go on
+    """How a thread works: the project it is filed under, and how far the model may go on
     its own.
 
     Read as one record because the parts are only meaningful together: a worktree with no
-    project is nonsense, and a run that resolved its workspace from the conversation but
+    project is nonsense, and a run that resolved its project from the conversation but
     its permission level from somewhere else would be two threads wearing one name.
     """
 
-    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     project_id: str | None = None
+    #: Whether the thread works on its project in a worktree of its own.
+    worktree: bool = False
+    #: Whose write leases a spawned agent works under, and only reads: the thread at the
+    #: top of its workspace. None is the thread's own, which it may add to.
+    leases_from: str | None = None
+    #: Whether the operator's checkout of the project is read-only to this thread because
+    #: the thread whose leases it holds works on that project in a worktree.
+    checkout_read_only: bool = False
     permission: PermissionLevel = DEFAULT_PERMISSION
     #: The agent the thread runs, by name. None is the default agent.
     agent_name: str | None = None
@@ -37,6 +43,8 @@ class ConversationBinding:
     permission_ceiling: PermissionLevel | None = None
     #: The workspace its turns work in. Empty is the thread's own.
     workspace_key: str = ""
+    #: Whether another agent spawned this thread, which then owes that agent a report.
+    spawned: bool = False
 
 
 @dataclass(frozen=True)
@@ -98,9 +106,6 @@ class ConversationSummaryView:
     # The model the conversation last ran on (the most recent response's
     # model_name). None for a conversation with no answer yet.
     model: str | None = None
-    # Where its file work happens. On the listing so the rail can mark worktree threads
-    # without opening each one.
-    workspace_kind: WorkspaceKind = DEFAULT_WORKSPACE_KIND
     # The project the thread is filed under, or None for an unfiled thread. The id, not the
     # path — the route resolves it to a directory basename, which is the only part of a
     # host path a listing should ever carry.

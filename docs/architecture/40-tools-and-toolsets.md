@@ -63,12 +63,14 @@ The deps object is assembled once per turn by the turn loop (`agent/turn.py`) an
 
 ```python
 # tools/toolsets.py — the entire access policy, as built.
-def build_agent_toolsets(categories=None) -> list[AbstractToolset[RunDeps]]:
-    cats = dict(categories) if categories is not None else default_categories()
+def build_agent_toolsets(categories=None, dormant=(), *, call_timeout_s=None):
+    cats = dict(categories) if categories is not None else core_categories()
     prefixed  = [ts.prefixed(name) for name, ts in cats.items()]   # stable category_tool names
     combined  = CombinedToolset(prefixed)                          # one catalog, all categories
-    return [combined.filtered(_enabled_gate)                       # drop operator-disabled tools
-                    .prepared(_approval_gate)]                     # mark what the level can't run
+    stack = (combined.filtered(_enabled_gate)                      # drop operator-disabled tools
+                     .prepared(_approval_gate)                     # mark what the level can't run
+                     .prepared(_describe))                         # restate in catalog names
+    return [RecoveringToolset(stack, call_timeout_s=call_timeout_s)]  # a raise is a result
 ```
 
 Read as a pipeline, against the README's idealized stack:
@@ -82,6 +84,9 @@ CombinedToolset(builtin + memory + code + … MCP/integrations as they land)
   #                              call to the engine's decision point instead of running it
   #                              (services/permissions). Only ever *adds* a gate: a tool that
   #                              defers on its own account keeps doing so at every level.
+  → RecoveringToolset          #              an unexpected exception becomes a ToolFailed the
+  #                              model reads, worded by core/diagnostics.py; each call holds
+  #                              the run's keepalive under a per-call timeout (D126)
   # no privilege gate          — single operator, no tiers (D14): there is no tier to filter on
   # no relevance pre-filter    — D3: a capable native-tool-call model discerns from the full
   #                              gated catalog; AE-4.2 is trivially met (every tool always present).
@@ -162,7 +167,7 @@ Approval is **consent, not containment**: a misjudged click, a destructive comma
 | Extra contract | — | `domains` + a `reason` in the model's own words; the domain is remembered for the workspace once approved, the *act of widening* never is | a plain-language **`explanation`** arg, shown to the operator, describing what it does and its effect on the host (`AE-3.4`) |
 | If capability absent | returns "code execution is unavailable" — the model adapts | reports no allowlist is configured | n/a |
 | In a sub-agent's run | available | **withheld** — a child has nobody to ask | **withheld** |
-| In a project folder (checkout or worktree) | **withheld** — the folder is the one workspace, and the fenced shell is the one way to run in it (`services/workspace_kind.py`) | **withheld** — a grant widens a workspace's allowlist at the VM's egress gateway, and a project folder has no such workspace; a command declared `host` is fenced by the host confinement, which reads `egress_allowed_domains` alone | **withheld** — the fenced shell already is that path |
+| In a thread filed under a project | available — it runs in the thread's scratch, and the shell works on the project (D129) | available | available |
 
 The inversion is the point: **routine code-exec has no approval friction at all**, and the approval prompts are the genuine exits — changing the operator's host, and reaching somewhere nobody approved.
 
@@ -174,8 +179,8 @@ The inversion is the point: **routine code-exec has no approval friction at all*
 | No host filesystem / process / environment reach | unchanged | each command runs under bubblewrap as uid 1100 inside the platform VM, only `spec.env` passed; the data dir, vault, uploads and `$HOME` never enter the VM |
 | Walls inside the box | **relaxed (D78)** | the box is not root, so a read-only root bought nothing the unprivileged user did not; caps are the `sandbox_memory` / `sandbox_cpus` / `sandbox_pids_limit` settings. Compute and installing packages must not feel restricted |
 | Network | **reshaped (D78)** | not "off by default" and no per-call `network=True` switch. A sandbox command has no network except through the VM's **allowlisting egress gateway** on the host (`services/vm/egress.py`). One list feeds both fences, not one per fence: the gateway reads `egress_allowed_domains` plus whatever `code_request_egress` widened for *that* workspace (`services/egress.py`) |
-| Execution outside the VM | **fenced (D78)** | the approved host command (and the host shell) runs under seatbelt/bubblewrap confinement (`host.py`) reading that **same** `egress_allowed_domains` — credential paths and the data dir unreadable. It degrades with `confined:false` where confinement cannot initialise, since the operator approved *this* command. Project-chat shell commands do not run here: they run in the platform VM (`services/sandbox/project_shell.py`) |
-| A sub-agent's workspace | **shared, or forked on request (D91)** | it works in the launching thread's own workspace by default — a sub-agent the thread is waiting on should work where the work is. `isolate` gives it its own copy (sandbox) or child worktree, merged back through a three-way merge that reports conflicts rather than overwriting. Isolation only ever increases: a spec written to stay out of the way cannot be talked into the operator's files |
+| Execution outside the VM | **fenced (D78)** | the approved host command runs under seatbelt/bubblewrap confinement (`host.py`) reading that **same** `egress_allowed_domains` — credential paths and the data dir unreadable. It degrades with `confined:false` where confinement cannot initialise, since the operator approved *this* command. Shell commands do not run here: they run in the platform VM, in the agent's home (`services/sandbox/home_shell.py`); only one declared `host` runs on the operator's machine, unfenced, after approval |
+| A sub-agent's workspace | **shared, or a worktree of its own on request (D135)** | it works in the launching thread's files by default, with the parent's write access. `worktree` gives it its own branch and worktree of the parent's project, sharing the parent's scratch; its work waits there until the parent reviews it and calls `agents_merge` (a git merge into the parent's worktree, or file changes on the checkout that can be put back) or `agents_discard`. A definition declaring `isolated` always gets one |
 | Fails closed, never to host | unchanged | with the platform VM disabled (`vm_enabled`) no `SandboxSessionManager` is registered in the capability bag, and `code_execute` reports the capability unavailable (`XC-DEG-*`) |
 
 Code runs in one shared platform microVM (`services/vm`, smolvm/QEMU), which also hosts SearXNG and web fetch's headless Chromium. Outputs return explicitly (stdout/stderr + copied-out files); nothing escapes as a side effect. The operator's own terminal (`SHELL-*`) is unchanged and **agent-unreachable** — the agent's paths to the host are the explained-approval tool and, in a code thread, the fenced shell.

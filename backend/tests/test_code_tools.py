@@ -346,8 +346,7 @@ async def test_pid_cap_hint_is_distinguished_from_plain_nonzero(monkeypatch: pyt
 async def test_missing_module_hint_states_the_exact_install_mechanics():
     # The failure mode this guards: the model knows it must install but botches the
     # mechanics (hallucinated pip flags, an install folded into the failing call). The
-    # registries are reachable already, so the hint is a plain install and nothing else —
-    # no network flag to get wrong.
+    # install is a shell command, which needs the `network` reach to fetch the package.
     stderr = (
         "Traceback (most recent call last):\n"
         '  File "<string>", line 1, in <module>\n'
@@ -356,7 +355,8 @@ async def test_missing_module_hint_states_the_exact_install_mechanics():
     failing = SandboxResult(exit_code=1, stdout="", stderr=stderr)
     hint = await _hint(failing)
     assert "pip install matplotlib" in hint
-    assert "network" not in hint.lower()
+    assert "shell" in hint and "reach `network`" in hint
+    assert "--" not in hint.replace(" — ", " ")
 
 
 async def test_a_blocked_host_points_at_the_egress_request():

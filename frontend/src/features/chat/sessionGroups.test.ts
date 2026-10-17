@@ -18,7 +18,6 @@ function session(id: string, extra: Partial<ChatSummary> = {}): ChatSummary {
     // rows are filed by recency of the last turn, never by when the thread opened.
     createdAt: "2026-08-01T00:00:00Z",
     messageCount: 2,
-    workspaceKind: "sandbox",
     ...extra,
   };
 }

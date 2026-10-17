@@ -64,7 +64,7 @@ class TestCatalog:
         async with client_app() as (_client, app):
             registry = _registry(app)
             entries = await registry.catalog(
-                "operator", workspace_kind="sandbox", has_conversation=True
+                "operator", place="sandbox", has_conversation=True
             )
             sources = {e.spec.source for e in entries}
             assert "action" in sources
@@ -76,7 +76,7 @@ class TestCatalog:
             names = {
                 e.spec.name
                 for e in await registry.catalog(
-                    "operator", workspace_kind="sandbox", has_conversation=False
+                    "operator", place="sandbox", has_conversation=False
                 )
             }
             assert "compact" not in names
@@ -89,7 +89,7 @@ class TestCatalog:
             registry = _registry(app)
             entries = await registry.catalog(
                 "operator",
-                workspace_kind="sandbox",
+                place="sandbox",
                 has_conversation=True,
                 disabled_tools={LAUNCH_TOOL},
             )
@@ -105,7 +105,7 @@ class TestCatalog:
 
             async def skill_names() -> set[str]:
                 entries = await registry.catalog(
-                    "operator", workspace_kind="sandbox", has_conversation=True
+                    "operator", place="sandbox", has_conversation=True
                 )
                 return {e.spec.name for e in entries if e.spec.source == "skill"}
 
@@ -124,7 +124,7 @@ class TestResolve:
         async with client_app() as (_client, app):
             registry = _registry(app)
             spec = await registry.resolve(
-                "operator", "reviewer", workspace_kind="sandbox", has_conversation=True
+                "operator", "reviewer", place="sandbox", has_conversation=True
             )
             assert spec is not None
             assert spec.source == "agent"
@@ -134,7 +134,7 @@ class TestResolve:
         async with client_app() as (_client, app):
             registry = _registry(app)
             spec = await registry.resolve(
-                "operator", "agent:test-runner", workspace_kind="sandbox", has_conversation=True
+                "operator", "agent:test-runner", place="sandbox", has_conversation=True
             )
             assert spec is not None
             # The command name hyphenates; the roster name it launches does not.
@@ -145,7 +145,7 @@ class TestResolve:
             registry = _registry(app)
             assert (
                 await registry.resolve(
-                    "operator", "not-a-command", workspace_kind="sandbox", has_conversation=True
+                    "operator", "not-a-command", place="sandbox", has_conversation=True
                 )
                 is None
             )
@@ -159,7 +159,7 @@ class TestResolve:
                 await registry.resolve(
                     "operator",
                     "compact",
-                    workspace_kind="sandbox",
+                    place="sandbox",
                     has_conversation=False,
                 )
                 is None
@@ -241,5 +241,5 @@ class TestExpansion:
         assert "Check the diff." in block
         # The untrusted fence tells the model not to follow what is inside it, and a
         # template the operator invoked is precisely what they want followed.
-        assert "UNTRUSTED" not in block
+        assert "<untrusted" not in block
         assert "the auth route" in block

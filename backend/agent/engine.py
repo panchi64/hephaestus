@@ -75,6 +75,7 @@ from services.conversations import (
     ConversationBinding,
     ConversationStore,
 )
+from services.settings_store import TurnTuning
 from services.tool_policy import vision_disabled_tools
 from services.uploads import UploadStore
 from tools import (
@@ -115,6 +116,13 @@ from .verify import should_verify, verify_and_correct
 logger = logging.getLogger(__name__)
 
 
+async def _tuned(capabilities: ServiceContainer, owner_id: str) -> Settings:
+    """The config, with the operator's own bounds on how a turn waits and carries on."""
+    settings = get_settings()
+    tuning = capabilities.get_optional(TurnTuning)
+    return settings if tuning is None else await tuning.apply(settings, owner_id)
+
+
 def turn_agent(
     model: Model,
     *,
@@ -122,6 +130,7 @@ def turn_agent(
     dormant: Mapping[str, str] = NO_DORMANT,
     instruction_providers: Sequence[InstructionProvider] = (),
     settings: Settings,
+    binding: ConversationBinding = DEFAULT_BINDING,
 ) -> TurnAgent:
     """The agent a chat turn runs on — and the one its compaction summary is written on.
 
@@ -131,10 +140,13 @@ def turn_agent(
     fold composes its agent here too, rather than a lookalike that could drift."""
     return build_agent(
         model,
+        spawned=binding.spawned,
         categories=categories,
         instruction_providers=instruction_providers,
         dormant=dormant,
         code_mode=code_mode_limits(settings),
+        retries={"tools": settings.agent_tool_retries, "output": settings.agent_output_retries},
+        tool_call_timeout_s=settings.tool_call_timeout_s,
     )
 
 
@@ -179,6 +191,7 @@ async def fold_now(
         instruction_providers=instruction_providers,
         dormant=dormant,
         settings=settings,
+        binding=binding,
     )
     ctx = build_compaction_context(
         store=store,
@@ -232,7 +245,6 @@ def build_chat_orchestrator(
     auto_compact: AutoCompactPolicy | None = None,
     disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
     binding: ConversationBinding = DEFAULT_BINDING,
-    request_limit: int | None = None,
     workspace_key: str = "",
 ) -> Orchestrator:
     """Build the orchestrator for one chat turn (one always-agent path).
@@ -288,11 +300,6 @@ def build_chat_orchestrator(
     of a fresh thread is auto-named; ``title_settings`` carries the model's
     reasoning-off settings so the namer runs fast.
 
-    ``request_limit`` is the turn's model-round-trip ceiling — the operator's setting
-    when the caller resolved one, else the config default. It bounds the *whole* turn,
-    grant-resume and mid-run-steering continuations included, so a steady drip of
-    steering messages can't extend it.
-
     ``binding`` is the thread's binding (its workspace kind, project and level), read off
     the conversation by the caller. It decides where this turn's file work happens
     (``services/workspace.py``) and which workspace tools the gate offers.
@@ -317,7 +324,7 @@ def build_chat_orchestrator(
     """
 
     async def orchestrate(run: Run) -> None:
-        settings = get_settings()
+        settings = await _tuned(capabilities, run.owner_id)
         run.context_window = context_window
         run.context_thresholds = context_thresholds
         # The gauge's fold mark comes off the *same* policy object the trigger reads, so
@@ -335,6 +342,7 @@ def build_chat_orchestrator(
             instruction_providers=instruction_providers,
             dormant=dormant,
             settings=settings,
+            binding=binding,
         )
         announced: set[str] = set()
 
@@ -470,6 +478,8 @@ def build_chat_orchestrator(
             store=store,
             conversation_id=conversation_id,
         )
+        if setup.stop_notice is not None:
+            _ = run.messages.take_stop_notice()
 
         try:
             turn = await drive_turn(
@@ -486,7 +496,6 @@ def build_chat_orchestrator(
                 vision=vision,
                 partial_history_ref=partial_history_ref,
                 store=store,
-                request_limit=request_limit,
                 compaction=setup.compaction,
                 turn_start=setup.turn_start,
                 workspace_key=workspace_key,
@@ -527,7 +536,6 @@ def build_chat_orchestrator(
                         vision=vision,
                         partial_history_ref=partial_history_ref,
                         store=store,
-                        request_limit=request_limit,
                         drop_ref=drop_ref,
                         # The correction cannot fold, so it is skipped outright when the
                         # window has no room left for it. Measured against the same share
@@ -648,7 +656,7 @@ def build_resume_orchestrator(
     """
 
     async def orchestrate(run: Run) -> None:
-        settings = get_settings()
+        settings = await _tuned(capabilities, run.owner_id)
         # `calls` carries values rather than verdicts — Pydantic AI wraps each one in a
         # `ToolReturn`, so the operator's answer lands in history as that call's own
         # result and the model reads it exactly as it would any other tool's.
@@ -690,9 +698,6 @@ def build_resume_orchestrator(
                 binding=parked.binding,
                 partial_history_ref=partial_history_ref,
                 store=store,
-                # The ceiling the parked turn was running under — a resume continues
-                # under the same one rather than reverting to the config default.
-                request_limit=parked.request_limit,
                 # And what it may fold with, so a resume that overruns the window recovers
                 # exactly as the original turn would have. A turn that parked *inside* a
                 # verifier correction carries a drop range indexed into the pre-fold

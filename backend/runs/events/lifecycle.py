@@ -69,13 +69,19 @@ class AnswerDelta(Body):
     text: str
 
 
+class AnswerRetracted(Body):
+    """The last ``text_chars`` of answer and ``thinking_chars`` of reasoning streamed were
+    from a model request that failed and is being sent again; they are not the answer."""
+
+    type: Literal["answer.retracted"] = "answer.retracted"
+    text_chars: int
+    thinking_chars: int
+
+
 class LimitNotice(Body):
     type: Literal["limit.notice"] = "limit.notice"
-    # "steps" | "tool_calls" | "tokens" | "time" | "loop" | "verify" | "context" | "search"
-    # ("context" = the model's context window was exceeded; the run stops, it isn't degraded.
-    # "search" was the deep-research pipeline's two-empty-rounds abort; nothing emits it now
-    # that research is an ordinary thread, and it stays in the vocabulary because removing a
-    # value a client already handles is a narrowing, which this protocol does not do.)
+    # "time" | "loop" | "verify" | "context" | "continue" (not a stop: a transient model
+    # error is being retried). "context" means the model's context window was exceeded.
     limit: str
     message: str
     # The stop marker this notice announces, when the bound also blocked the turn — the

@@ -56,6 +56,9 @@ logger = logging.getLogger(__name__)
 render_tasks = render_plan
 
 
+_OPEN = frozenset({TaskStatus.pending, TaskStatus.in_progress})
+
+
 def _dump(items: list[TaskItem]) -> str:
     return json.dumps([item.model_dump(mode="json") for item in items])
 
@@ -121,6 +124,52 @@ class ConversationTasks:
         except VaultLocked, VaultError:
             logger.debug("task list unreadable for %s: vault locked", conversation_id)
             return []
+
+    async def open_tasks(self, owner_id: str, conversation_id: str) -> list[TaskItem]:
+        """The steps still pending or in progress."""
+        items = await self.items(owner_id, conversation_id)
+        return [item for item in items if item.status in _OPEN]
+
+    async def reminded_open(self, owner_id: str, conversation_id: str) -> str | None:
+        """The fingerprint of the open set the model was last reminded of."""
+
+        def work(session: Session) -> str | None:
+            row = session.exec(
+                select(ConversationTaskList)
+                .where(ConversationTaskList.owner_id == owner_id)
+                .where(ConversationTaskList.conversation_id == conversation_id)
+            ).first()
+            return row.reminded_open_enc if row else None
+
+        sealed = await in_session(self._db, work)
+        if sealed is None:
+            return None
+        try:
+            return self._vault.decrypt_str(sealed)
+        except VaultLocked, VaultError:
+            return None
+
+    async def mark_reminded(self, owner_id: str, conversation_id: str, fingerprint: str) -> None:
+        """Record the open set the model was reminded of; no stored list, or a locked
+        vault, means no write."""
+        try:
+            sealed = self._vault.encrypt_str(fingerprint)
+        except VaultLocked:
+            return
+
+        def work(session: Session) -> None:
+            row = session.exec(
+                select(ConversationTaskList)
+                .where(ConversationTaskList.owner_id == owner_id)
+                .where(ConversationTaskList.conversation_id == conversation_id)
+            ).first()
+            if row is None:
+                return
+            row.reminded_open_enc = sealed
+            session.add(row)
+
+        async with self.lock_for(conversation_id):
+            await in_session(self._db, work)
 
     async def delete_for_conversation(self, owner_id: str, conversation_id: str) -> None:
         """Drop a thread's task list when the thread goes.

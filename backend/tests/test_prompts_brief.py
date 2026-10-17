@@ -21,17 +21,20 @@ from pydantic_ai.models.test import TestModel
 from agent.factory import build_agent
 from core.container import ServiceContainer
 from core.timezone import local_zone_key
-from prompts.agent import SYSTEM_PROMPT
+from prompts.agent import INSTRUCTIONS, SPAWNED_INSTRUCTIONS, SYSTEM_PROMPT
 from prompts.levels import AUTO_LEVEL, MANUAL_LEVEL, PLAN_LEVEL
-from prompts.workspace import CHECKOUT_WORKSPACE, WORKTREE_WORKSPACE
 from runs import Run, RunStream
 from services.permissions import PermissionLevel
-from services.workspace_kind import WorkspaceKind
 from tools.builtin import builtin_toolset
 from tools.deps import RunDeps
 
 
-async def _brief(*, kind: WorkspaceKind = "sandbox", permission: PermissionLevel = "edit") -> str:
+async def _brief(
+    *,
+    project_id: str | None = None,
+    permission: PermissionLevel = "edit",
+    spawned: bool = False,
+) -> str:
     """The instructions a turn in this thread would actually ship with.
 
     Driven through a real agent rather than read off the registries, because the thing
@@ -43,10 +46,10 @@ async def _brief(*, kind: WorkspaceKind = "sandbox", permission: PermissionLevel
         owner_id="operator",
         caps=ServiceContainer(),
         conversation_id="conv-1",
-        workspace_kind=kind,
+        project_id=project_id,
         permission=permission,
     )
-    agent = build_agent(TestModel(), categories={})
+    agent = build_agent(TestModel(), categories={}, spawned=spawned)
     result = await agent.run("hello", deps=deps)
     requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
     return "\n".join(m.instructions or "" for m in requests)
@@ -83,12 +86,11 @@ class TestTheLevelPart:
         self,
     ):
         """Auto is every fresh thread's level, and the tools that take a `reach` are the
-        shell's — which only a project-folder thread is offered
-        (`services/workspace_kind.WORKSPACE_TOOLS`). So the fragment has to be true in a
-        sandbox thread too: it asks the model to answer the question *where a tool
-        asks it*, rather than asserting that every command carries one."""
-        for kind in ("sandbox", "checkout", "worktree"):
-            assert AUTO_LEVEL in await _brief(kind=kind, permission="auto")
+        shell's, which an operator may switch off. So the fragment asks the model to
+        answer the question *where a tool asks it*, rather than asserting that every
+        command carries one."""
+        for project_id in (None, "proj-1"):
+            assert AUTO_LEVEL in await _brief(project_id=project_id, permission="auto")
         assert "Where a tool asks how far a command needs to reach" in AUTO_LEVEL
         assert "Every shell command" not in AUTO_LEVEL
 
@@ -106,23 +108,16 @@ class TestTheLevelPart:
         assert "on purpose" in PLAN_LEVEL
 
 
-class TestTheWorkspacePart:
-    async def test_only_a_project_folder_claims_the_files_are_the_operators(self):
-        assert CHECKOUT_WORKSPACE in await _brief(kind="checkout")
-        assert WORKTREE_WORKSPACE in await _brief(kind="worktree")
-        sandbox = await _brief(kind="sandbox")
-        assert CHECKOUT_WORKSPACE not in sandbox
-        assert WORKTREE_WORKSPACE not in sandbox
+class TestTheHomePart:
+    async def test_every_thread_is_told_the_same_home(self):
+        """One home for every thread, so the head of the request is the same bytes in a
+        project thread and an unfiled one, and the engine's cached prefix carries over."""
+        assert await _brief(project_id="proj-1") == await _brief(project_id=None)
 
-    async def test_each_project_folder_gets_its_own_fragment(self):
-        assert WORKTREE_WORKSPACE not in await _brief(kind="checkout")
-        assert CHECKOUT_WORKSPACE not in await _brief(kind="worktree")
-
-    async def test_the_path_link_rule_left_the_system_prompt(self):
-        """It renders a control only when the files are the operator's own, so in a sandbox
-        thread the same syntax produces a link that opens nothing."""
-        assert "opens that file in their editor" in CHECKOUT_WORKSPACE
-        assert "opens that file in their editor" in WORKTREE_WORKSPACE
+    async def test_the_path_link_rule_names_which_paths_open(self):
+        """A project or worktree path renders a control; a scratch path opens nothing."""
+        assert "opens that file in the operator's" in INSTRUCTIONS
+        assert "scratch opens nothing" in INSTRUCTIONS
         assert "editor" not in SYSTEM_PROMPT
 
 
@@ -134,6 +129,20 @@ class TestTheSystemPrompt:
         lowered = SYSTEM_PROMPT.lower()
         for claim in ("pip", "immutable", "apt", "home directory"):
             assert claim not in lowered
+
+
+class TestASpawnedThread:
+    async def test_it_ships_the_shared_rules_without_the_ones_only_talos_keeps(self):
+        """A sub-agent has nobody to post beats to, push back on or ask, and a rule about
+        how the operator names agents is noise in its head."""
+        brief = await _brief(spawned=True)
+        assert SPAWNED_INSTRUCTIONS in brief
+        for talos_only in ("`plan_enter`", "`builtin_ask_user`", "brief beats", "BRAX"):
+            assert talos_only in INSTRUCTIONS
+            assert talos_only not in brief
+
+    async def test_a_thread_nobody_spawned_keeps_talos_rules(self):
+        assert INSTRUCTIONS in await _brief()
 
 
 class TestTheDateLine:

@@ -11,7 +11,12 @@ import {
   commandReason,
   toTerminalOutcome,
 } from "../../data/hostCommands";
-import { startedTool, stringifyResult, toolImages } from "../../data/messages";
+import {
+  startedTool,
+  stringifyResult,
+  toContentParts,
+  toolImages,
+} from "../../data/messages";
 import type { HostCommand } from "../../model";
 import { isTerminalTool } from "../../toolPresentation";
 import { describeToolResult } from "../../toolSummary";
@@ -119,6 +124,7 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
         if (t) {
           t.status = "ok";
           t.result = stringifyResult(ev.result);
+          t.resultParts = toContentParts(ev.result_parts);
           t.outcome = describeToolResult(ev.name, ev.result);
           t.progress = undefined; // the run is over — drop the spin-up note
           t.images = toolImages(ev.images);
@@ -146,6 +152,7 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
         if (t) {
           t.status = "error";
           t.error = ev.error;
+          t.platform = ev.platform || undefined;
           t.progress = undefined; // the run is over — drop the spin-up note
         }
       });

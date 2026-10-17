@@ -79,7 +79,6 @@ export function AgentDetailScreen(props: {
       { label: "Denied tools", value: list(a.denyTools) },
       { label: "Permission ceiling", value: a.permissionCeiling ?? "None" },
       { label: "Workspace", value: a.workspace },
-      { label: "Request limit", value: a.requestLimit ?? "No limit" },
       {
         label: "Wall-clock timeout",
         value:

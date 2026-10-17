@@ -15,6 +15,7 @@ import {
   hasReasoning,
   reasoningText,
 } from "../blocks";
+import { TURN_LOCK_HINT, useTurnLocked } from "../turnLock";
 
 /** The one hover/focus reveal in a turn: metadata and actions surface together on
  *  the same gesture. The mechanics live in `~/ui`'s `REVEAL_ON_GROUP_HOVER`,
@@ -55,6 +56,9 @@ export function MessageActions(props: {
 }): JSX.Element {
   const m = () => props.message;
   const isAssistant = () => m().role === "assistant";
+  // Every act that rewrites the recorded thread waits for the turn to be stopped.
+  const locked = useTurnLocked();
+  const lock = () => ({ disabled: locked(), hint: TURN_LOCK_HINT });
 
   const overflowItems = (): MenuItem[] => [
     // Lead with the turn's primary act: edit for the operator's own message,
@@ -64,6 +68,7 @@ export function MessageActions(props: {
           {
             label: "Edit",
             icon: "pen",
+            ...lock(),
             onSelect: () => props.onEdit?.(),
           } satisfies MenuItem,
         ]
@@ -73,6 +78,7 @@ export function MessageActions(props: {
           {
             label: "Regenerate",
             icon: "refresh",
+            ...lock(),
             onSelect: () => props.onRegenerate?.(),
           } satisfies MenuItem,
         ]
@@ -82,6 +88,7 @@ export function MessageActions(props: {
           {
             label: "Rewind to here",
             icon: "chevron-up",
+            ...lock(),
             onSelect: () => props.onRewind?.(),
           } satisfies MenuItem,
         ]
@@ -94,6 +101,7 @@ export function MessageActions(props: {
           {
             label: "Fork from here",
             icon: "branch",
+            ...lock(),
             onSelect: () => props.onFork?.(),
           } satisfies MenuItem,
         ]
@@ -110,6 +118,7 @@ export function MessageActions(props: {
             label: "Delete",
             icon: "trash",
             danger: true,
+            ...lock(),
             onSelect: () => props.onDelete?.(),
           } satisfies MenuItem,
         ]

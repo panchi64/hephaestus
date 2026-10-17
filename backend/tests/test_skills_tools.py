@@ -163,7 +163,7 @@ async def test_open_refuses_a_draft_the_same_way_as_an_unknown_name():
 
     with pytest.raises(ModelRetry) as caught:
         _ = await _invoke("open", _ctx(skill_deps(skills=store)), "secret-draft")
-    assert "secret-draft" not in str(caught.value).split("Available skills:")[1]
+    assert "secret-draft" not in str(caught.value).split("available skills:")[1]
     assert "release-notes" in str(caught.value)
 
 
@@ -250,8 +250,8 @@ async def test_edit_replaces_one_span():
 @pytest.mark.parametrize(
     ("body", "old", "expected"),
     [
-        ("one two", "missing", "was not found"),
-        ("dup dup", "dup", "matched 2 places"),
+        ("one two", "missing", "is not in that skill"),
+        ("dup dup", "dup", "matches 2 places"),
     ],
 )
 async def test_edit_retries_with_a_precise_reason(body: str, old: str, expected: str):
@@ -372,7 +372,7 @@ async def test_edit_refuses_a_draft_the_same_way_open_does():
             "edit", _ctx(skill_deps(skills=store)), "secret-draft", "private", "public", "why"
         )
     message = str(caught.value)
-    assert "No published skill named" in message
-    assert "secret-draft" not in message.split("Available skills:")[1]
+    assert "no published skill named" in message
+    assert "secret-draft" not in message.split("published skills:")[1]
     # …and the draft is untouched.
     assert (await store.get(OWNER, draft.id)).body == "do the private thing"

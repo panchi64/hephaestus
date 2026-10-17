@@ -17,41 +17,9 @@ import {
   DEFAULT_WALL_CLOCK_S,
   wallClockMinutes,
 } from "../model";
-
-/** One preference's title and its explanation — the shape every block in this panel
- *  opens with. Extracted at the fourth copy: the wording is all that ever differed,
- *  and four hand-repeated `label`/`micro dim` pairs are four chances for one of them
- *  to drift to a different tone. */
-function SettingHeader(props: {
-  title: string;
-  children: JSX.Element;
-}): JSX.Element {
-  return (
-    <Stack gap={1}>
-      <Text variant="label" tone="default">
-        {props.title}
-      </Text>
-      <Text variant="micro" tone="dim">
-        {props.children}
-      </Text>
-    </Stack>
-  );
-}
+import { NumberSetting, SettingHeader, wholeNumber } from "./NumberSetting";
 
 const Rule = (): JSX.Element => <div class="border-line border-t" />;
-
-/** A whole number within `[min, max]`, or null when the field can't supply one —
- *  every editable value in this panel is one. `Number("")` is 0, so a blanked field has
- *  to be rejected explicitly rather than read as zero. */
-function wholeNumber(
-  raw: string,
-  { min = 1, max = Number.MAX_SAFE_INTEGER } = {},
-): number | null {
-  const n = Number(raw.trim());
-  if (raw.trim() === "" || !Number.isInteger(n) || n < min || n > max)
-    return null;
-  return n;
-}
 
 /** This panel's policy for a bound that isn't set: fall back to the shared seed, so
  *  switching the limit on and pressing Save writes something sensible instead of erroring
@@ -67,14 +35,6 @@ function minutesOr(seconds: number | null): number {
    backend resource and saves back to it. */
 export function ChatSection(): JSX.Element {
   const chatSettings = useChatSettings();
-  // How many model round-trips one turn may spend. Every tool call costs one, so this is
-  // the ceiling a long tool-using turn actually stops at.
-  const [stepLimit, setStepLimit] = createSignal("");
-  const [savingSteps, setSavingSteps] = createSignal(false);
-  // How long (seconds) a run may go silent before the watchdog stops it — the bound a
-  // long generation (a big write, a slow first token) needs raised to stay alive.
-  const [timeoutS, setTimeoutS] = createSignal("");
-  const [savingTimeout, setSavingTimeout] = createSignal(false);
   // How long (minutes) a run may take in total, however busy it is. Off unless the
   // operator switches it on — the step limit is what bounds a runaway turn, so this
   // exists for the case nothing else covers: a run that keeps emitting and so never
@@ -117,8 +77,6 @@ export function ChatSection(): JSX.Element {
   createEffect(() => {
     const s = chatSettings();
     if (!s) return;
-    setStepLimit(String(s.agentRequestLimit));
-    setTimeoutS(String(s.inactivityTimeoutS));
     setWallClockOn(s.wallClockTimeoutS !== null);
     setWallClockMin(String(minutesOr(s.wallClockTimeoutS)));
     setSubagentCapOn(s.subagentMaxConcurrent !== null);
@@ -129,43 +87,6 @@ export function ChatSection(): JSX.Element {
     setWarnPct(String(Math.round(s.contextWarnThreshold * 100)));
     setAlertPct(String(Math.round(s.contextAlertThreshold * 100)));
   });
-  const saveSteps = async () => {
-    const n = wholeNumber(stepLimit());
-    // Floored at 1: a turn allowed zero model requests could never answer at all.
-    if (n === null) {
-      toast.error("Enter a whole number of steps (1 or more).");
-      return;
-    }
-    setSavingSteps(true);
-    try {
-      const saved = await saveChatSettings({ agentRequestLimit: n });
-      setStepLimit(String(saved.agentRequestLimit));
-      toast.success("Step limit updated");
-    } catch {
-      toast.error("Unable to update the step limit.");
-    } finally {
-      setSavingSteps(false);
-    }
-  };
-  const saveTimeout = async () => {
-    // Whole seconds, above 0: a 0 bound would stop every turn immediately, and the
-    // backend rejects it too.
-    const n = wholeNumber(timeoutS());
-    if (n === null) {
-      toast.error("Enter whole seconds (1 or more).");
-      return;
-    }
-    setSavingTimeout(true);
-    try {
-      const saved = await saveChatSettings({ inactivityTimeoutS: n });
-      setTimeoutS(String(saved.inactivityTimeoutS));
-      toast.success("Inactivity timeout updated");
-    } catch {
-      toast.error("Unable to update the inactivity timeout.");
-    } finally {
-      setSavingTimeout(false);
-    }
-  };
   const saveWallClock = async () => {
     // Off sends `null` — a value the backend acts on (remove the bound), not an omission.
     // The minutes field is only read when the switch is on, so a blank one can't block
@@ -293,60 +214,41 @@ export function ChatSection(): JSX.Element {
     <Panel label="Chat">
       <Show when={chatSettings()} fallback={<LoadingText />}>
         <Stack gap={3}>
-          <SettingHeader title="Step limit per turn">
-            How many times the model may be called within a single turn. Every
-            tool call spends one, so a long research or multi-step turn is what
-            runs this out — raise it for work that needs many steps, lower it to
-            stop a runaway turn sooner. Mid-run messages you send continue the
-            same turn and share its budget.
-          </SettingHeader>
-          <Row gap={2} align="center">
-            <div class="w-48">
-              <Input
-                type="number"
-                inputMode="numeric"
-                min="1"
-                value={stepLimit()}
-                onInput={(e) => setStepLimit(e.currentTarget.value)}
-                placeholder="25"
-              />
-            </div>
-            <Button
-              variant="primary"
-              disabled={savingSteps()}
-              onClick={() => void saveSteps()}
-            >
-              {savingSteps() ? "Saving…" : "Save"}
-            </Button>
-          </Row>
+          <NumberSetting
+            title="Inactivity timeout"
+            stored={chatSettings()?.inactivityTimeoutS ?? null}
+            placeholder="120"
+            invalid="Enter whole seconds (1 or more)."
+            noun="Inactivity timeout"
+            save={async (n) =>
+              (await saveChatSettings({ inactivityTimeoutS: n }))
+                .inactivityTimeoutS
+            }
+          >
+            How long a run may go without producing anything before it is
+            stopped, in seconds. A long generation — a big file write, a long
+            tool call — needs more than the default; raise it so a slow turn
+            isn't cut off, or lower it to bail on a stuck one sooner.
+          </NumberSetting>
 
           <Rule />
 
-          <SettingHeader title="Inactivity timeout">
-            How long a run may go without producing anything before it is
-            stopped, in seconds. A long generation — a big file write, a slow
-            first token — needs more than the default; raise it so a slow turn
-            isn't cut off, or lower it to bail on a stuck one sooner.
-          </SettingHeader>
-          <Row gap={2} align="center">
-            <div class="w-48">
-              <Input
-                type="number"
-                inputMode="numeric"
-                min="1"
-                value={timeoutS()}
-                onInput={(e) => setTimeoutS(e.currentTarget.value)}
-                placeholder="120"
-              />
-            </div>
-            <Button
-              variant="primary"
-              disabled={savingTimeout()}
-              onClick={() => void saveTimeout()}
-            >
-              {savingTimeout() ? "Saving…" : "Save"}
-            </Button>
-          </Row>
+          <NumberSetting
+            title="First-token wait"
+            stored={chatSettings()?.firstTokenTimeoutS ?? null}
+            placeholder="600"
+            invalid="Enter whole seconds (1 or more)."
+            noun="First-token wait"
+            save={async (n) =>
+              (await saveChatSettings({ firstTokenTimeoutS: n }))
+                .firstTokenTimeoutS
+            }
+          >
+            How long a turn waits, in seconds, for the model to start answering
+            while it reads the prompt. A local model reading a long thread can
+            be silent for minutes; the inactivity timeout does not count that
+            wait. Raise it if long threads stop before the first word.
+          </NumberSetting>
 
           <Rule />
 

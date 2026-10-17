@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import subprocess
+import threading
+import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,3 +105,51 @@ def test_a_build_that_never_finishes_times_out(monkeypatch: pytest.MonkeyPatch):
 
     with pytest.raises(VMError, match="timed out"):
         provision(guest, ["bash", "/root/provision.sh"], timeout_s=0.05, on_step=lambda _: None)
+
+
+def test_a_stopped_build_ends_its_wait_at_once():
+    guest = _BuildingGuest(itertools.repeat("\n"))
+    cancel = threading.Event()
+    cancel.set()
+    started = time.monotonic()
+    with pytest.raises(VMError, match="stopped"):
+        provision(
+            guest,
+            ["bash", "/root/provision.sh"],
+            timeout_s=600,
+            on_step=lambda _: None,
+            cancel=cancel,
+        )
+    assert time.monotonic() - started < 1.0
+
+
+async def test_a_boot_still_running_does_not_hold_up_its_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The boot runs on a daemon thread: a cancelled wait returns at once, and the thread
+    left finishing cannot keep the interpreter from exiting."""
+    release = threading.Event()
+
+    def slow_boot(_self: SmolvmDriver) -> None:
+        _ = release.wait(30)
+
+    monkeypatch.setattr(SmolvmDriver, "_boot_fresh", slow_boot)
+    driver = SmolvmDriver(
+        state_dir=tmp_path,
+        cpus=1,
+        memory_mb=512,
+        disk_gb=1,
+        boot_timeout_s=1,
+        provision_timeout_s=1,
+    )
+    booting = asyncio.create_task(driver.boot())
+    await asyncio.sleep(0.05)
+    [thread] = [t for t in threading.enumerate() if t.name == "platform-vm-boot"]
+    assert thread.daemon
+    started = time.monotonic()
+    _ = booting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await booting
+    assert time.monotonic() - started < 1.0
+    release.set()
+    thread.join(timeout=5)

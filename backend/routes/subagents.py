@@ -47,6 +47,7 @@ from routes import deps
 from routes.conversations import TaskOut
 from routes.deps import OPERATOR_ID
 from services.subagents import SubagentLauncher, SubagentView
+from services.subagents.callsigns import class_display
 from services.subagents.report import ReportStructure, report_prose, report_structure
 from services.task_list import tasks_payload
 
@@ -66,6 +67,10 @@ class Subagent(BaseModel):
     #: What the launching agent called this one, and the only name it knows it by. Unique
     #: within the thread, which ``name`` is not: three ``explorer`` cards are three handles.
     handle: str
+    #: The operator's name for it (``BRAX``) and its class's display name (``Tripodes``).
+    #: Both empty on a sub-agent launched before classes existed.
+    callsign: str
+    agent_class: str
     task: str
     #: ``running`` | ``blocked`` | ``done`` | ``failed`` | ``cancelled``. The first two are
     #: live; a blocked one is waiting on the operator rather than on the machine.
@@ -119,6 +124,8 @@ def _card(view: SubagentView, tasks: list[TaskOut], opened: bool) -> Subagent:
         run_id=view.run_id,
         name=view.name,
         handle=view.handle,
+        callsign=view.callsign,
+        agent_class=class_display(view.agent_class),
         task=view.task,
         parent_conversation_id=view.parent_conversation_id,
         depth=view.depth,

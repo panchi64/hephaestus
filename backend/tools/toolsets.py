@@ -45,7 +45,6 @@ from pydantic_ai import AbstractToolset, CombinedToolset, RunContext, ToolDefini
 from services.permissions import beyond_scope
 from services.tool_policy import permission_disabled_tools
 from services.tool_sensitivity import declared_sensitivity
-from services.workspace_kind import workspace_disabled_tools
 
 from .builtin import builtin_toolset
 from .code import code_toolset
@@ -57,11 +56,13 @@ from .describe import (
     category_names,
     describe,
 )
+from .files import GATED_TOOLS as _FILES_GATED
 from .files import files_toolset
 from .harness_events import own_harness_events
 from .plan import GATED_TOOLS as _PLAN_GATED
 from .plan import plan_toolset
-from .repo import repo_toolset
+from .recover import RecoveringToolset, TolerantTools
+from .report import REPORT_TOOL
 from .shell import GATED_TOOLS as _SHELL_GATED
 from .shell import shell_toolset
 from .tasks import tasks_toolset
@@ -72,7 +73,7 @@ from .tasks import tasks_toolset
 #: manifest; the core ones have no manifest, so they are collected here and seeded into
 #: `app.state.gated_tools` at assembly. A name missing from that union is missing from the
 #: operator's approval-scope vocabulary, which is what makes a grant possible.
-CORE_GATED_TOOLS: frozenset[str] = _SHELL_GATED | _PLAN_GATED
+CORE_GATED_TOOLS: frozenset[str] = _SHELL_GATED | _PLAN_GATED | _FILES_GATED
 
 
 def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
@@ -80,18 +81,20 @@ def _enabled_gate(ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
 
     ``disabled_tools`` is the union of everything settled for the whole turn
     (``services/tool_policy.py``), and ``tool_access`` is what the run's agent is offered at
-    all. The **level** and the **workspace kind** can both move
-    inside a turn (``tools/plan.py`` narrows and widens the level; ``project_open_worktree``
-    moves the workspace), so they are read live on every request rather than folded into
-    that union, where they could be added and never correctly taken back out.
+    all. The **level** can move inside a turn (``tools/plan.py`` narrows and widens it), so
+    it is read live on every request rather than folded into that union, where it could be
+    added and never correctly taken back out.
     """
     name = tool_def.name
     deps = ctx.deps
+    if name == REPORT_TOOL:
+        # A contract rather than a capability: no setting or level may take away the way a
+        # spawned agent finishes, and no other thread has anyone to report to.
+        return deps.reports_to_parent
     return (
         name not in deps.disabled_tools
         and deps.tool_access.permits(name)
         and name not in permission_disabled_tools(deps.permission)
-        and name not in workspace_disabled_tools(deps.workspace_kind)
     )
 
 
@@ -169,17 +172,15 @@ def core_categories() -> dict[str, AbstractToolset[RunDeps]]:
         # every level, `plan` the written document a Plan-level turn submits for approval.
         "tasks": tasks_toolset(),
         "plan": plan_toolset(),
-        # The worktree's two categories. Registered unconditionally like every other and
-        # withheld live from sandbox runs (`services/workspace_kind.py`) — one catalog, so
-        # the operator's settings list and the agent's real stack cannot diverge.
         "shell": shell_toolset(),
-        "repo": repo_toolset(),
     }
 
 
 def build_agent_toolsets(
     categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
     dormant: Collection[str] = (),
+    *,
+    call_timeout_s: float | None = None,
 ) -> list[AbstractToolset[RunDeps]]:
     """Compose the gated, namespaced toolset stack handed to the Agent.
 
@@ -194,12 +195,15 @@ def build_agent_toolsets(
     enters the search corpus and cannot be revealed by naming its group; the approval
     gate and the describing pass run outside it too, so a tool that arrives on reveal
     carries the same ``unapproved`` kind and the same rewritten description it would
-    have carried had it never been dormant.
+    have carried had it never been dormant. ``call_timeout_s`` bounds each call
+    (``recover.py``).
     """
     cats = dict(categories) if categories is not None else core_categories()
     deferred = frozenset(dormant)
     prefixed = [
-        toolset.prefixed(name).defer_loading() if name in deferred else toolset.prefixed(name)
+        TolerantTools(toolset).prefixed(name).defer_loading()
+        if name in deferred
+        else TolerantTools(toolset).prefixed(name)
         for name, toolset in cats.items()
     ]
     combined = CombinedToolset(prefixed)
@@ -229,5 +233,7 @@ def build_agent_toolsets(
     # step needs the one before it: the gate classifies by the `category_tool` name the
     # prefixing produces, there is no point gating a tool the filter already took away,
     # and the rewrite resolves a description's cross-references against those same
-    # namespaced names (`describe.py`).
-    return [combined.filtered(_enabled_gate).prepared(_approval_gate).prepared(_describe)]
+    # namespaced names (`describe.py`). Recovery wraps all of it, so a call that raises is
+    # reported to the model whatever layer it raised in.
+    stack = combined.filtered(_enabled_gate).prepared(_approval_gate).prepared(_describe)
+    return [RecoveringToolset(stack, call_timeout_s=call_timeout_s)]

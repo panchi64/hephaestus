@@ -23,10 +23,12 @@ import hashlib
 import json
 import logging
 import math
+import os
 import secrets
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -58,6 +60,55 @@ _GUEST_ENV = (
     "HOME=/root",
     "LANG=C.UTF-8",
 )
+#: Where Homebrew puts e2fsprogs, which it installs keg-only: off PATH, so smolvm would
+#: report the tools missing on a machine that has them.
+_KEG_SBINS = (
+    Path("/opt/homebrew/opt/e2fsprogs/sbin"),
+    Path("/usr/local/opt/e2fsprogs/sbin"),
+)
+
+
+#: How long a stop lets a build save its partial disk before ending its VM outright.
+_STOP_BUILD_WAIT_S = 20.0
+
+
+async def _on_daemon_thread(work: Callable[[], None]) -> None:
+    """Run ``work`` on a daemon thread and wait for it. Cancelling the wait leaves the
+    thread to finish on its own, without holding up the interpreter's exit."""
+    loop = asyncio.get_running_loop()
+    done: asyncio.Future[None] = loop.create_future()
+
+    def settle(error: BaseException | None) -> None:
+        if done.done():
+            return
+        if error is None:
+            done.set_result(None)
+        else:
+            done.set_exception(error)
+
+    def target() -> None:
+        error: BaseException | None = None
+        try:
+            work()
+        except BaseException as exc:
+            error = exc
+        with suppress(RuntimeError):  # the loop closed while the work ran
+            _ = loop.call_soon_threadsafe(settle, error)
+
+    threading.Thread(target=target, name="platform-vm-boot", daemon=True).start()
+    await done
+
+
+def _find_disk_tools() -> None:
+    """Put a keg-only e2fsprogs on PATH when e2fsck is not already there.
+
+    smolvm looks the tools up with ``which`` when it grows a disk, in this process."""
+    if shutil.which("e2fsck") is not None:
+        return
+    for sbin in _KEG_SBINS:
+        if (sbin / "e2fsck").is_file():
+            os.environ["PATH"] = os.pathsep.join([str(sbin), os.environ.get("PATH", "")])
+            return
 
 
 @dataclass(frozen=True)
@@ -105,6 +156,13 @@ class SmolvmDriver:
         self.phase: str | None = None
         #: The provisioning step a build is on.
         self.step: str | None = None
+        #: Set by :meth:`stop` to end a boot or build still under way.
+        self._cancel: threading.Event = threading.Event()
+        #: Clear while a boot's thread is running.
+        self._idle: threading.Event = threading.Event()
+        self._idle.set()
+        #: The provisioning VM of a build in progress, so a stop can end it.
+        self._building: SmolVM | None = None
 
     @property
     def _smolvm_dir(self) -> Path:
@@ -115,10 +173,33 @@ class SmolvmDriver:
         return self._state / "current-vm"
 
     async def boot(self) -> None:
-        await asyncio.to_thread(self._boot)
+        """Boot, building the image first if there is none.
+
+        On a daemon thread rather than the default executor: the executor's threads are
+        joined when the interpreter exits, so a half-hour image build still running would
+        hold a Ctrl+C until it finished.
+        """
+        self._cancel.clear()
+        self._idle.clear()
+        await _on_daemon_thread(self._boot)
 
     async def stop(self) -> None:
-        await asyncio.to_thread(self._stop)
+        await asyncio.to_thread(self._stop_all)
+
+    def _stop_all(self) -> None:
+        """End a boot or build under way, then the VM. A build is given a moment to save
+        its partial disk for the next attempt; past that its provisioning VM is stopped
+        outright, which never leaves one running behind."""
+        self._cancel.set()
+        if not self._idle.wait(_STOP_BUILD_WAIT_S):
+            building = self._building
+            if building is not None:
+                with suppress(SmolVMError, OSError):
+                    _ = building.stop()
+                with suppress(SmolVMError, OSError):
+                    building.delete()
+            _ = self._idle.wait(_STOP_BUILD_WAIT_S)
+        self._stop()
 
     async def alive(self) -> bool:
         if self._vm is None:
@@ -170,10 +251,12 @@ class SmolvmDriver:
         self.step = step
 
     def _boot(self) -> None:
+        _find_disk_tools()
         try:
             self._boot_fresh()
         finally:
             self.phase = self.step = None
+            self._idle.set()
 
     def _boot_fresh(self) -> None:
         self._stop()
@@ -279,6 +362,7 @@ class SmolvmDriver:
                 )
         except SmolVMError as exc:
             raise VMError(f"could not create the provisioning VM: {exc}") from exc
+        self._building = vm
         try:
             _ = vm.start(boot_timeout=self._boot_timeout_s)
             _ = vm.wait_for_ready(timeout=self._boot_timeout_s)
@@ -289,7 +373,13 @@ class SmolvmDriver:
             if self._ca_bundle is not None:
                 argv.append("/root/extra-ca.crt")
             try:
-                provision(vm, argv, timeout_s=self._provision_timeout_s, on_step=self._on_step)
+                provision(
+                    vm,
+                    argv,
+                    timeout_s=self._provision_timeout_s,
+                    on_step=self._on_step,
+                    cancel=self._cancel,
+                )
             except VMError:
                 self._keep_partial(vm)
                 raise
@@ -299,6 +389,7 @@ class SmolvmDriver:
         except SmolVMError as exc:
             raise VMError(f"building the platform VM image failed: {exc}") from exc
         finally:
+            self._building = None
             with suppress(SmolVMError, OSError):
                 vm.delete()
         shutil.rmtree(target, ignore_errors=True)
@@ -347,10 +438,16 @@ class _Guest(Protocol):
 
 
 def provision(
-    vm: _Guest, argv: list[str], *, timeout_s: float, on_step: Callable[[str], None]
+    vm: _Guest,
+    argv: list[str],
+    *,
+    timeout_s: float,
+    on_step: Callable[[str], None],
+    cancel: threading.Event | None = None,
 ) -> None:
     """Run the provision script detached in the guest and follow its log, so a build that
-    takes many minutes reports each step it reaches."""
+    takes many minutes reports each step it reaches. ``cancel`` set ends the wait."""
+    stop = cancel if cancel is not None else threading.Event()
     script = shlex.join(argv)
     _ = vm.run(
         _guest_command(
@@ -368,7 +465,8 @@ def provision(
     deadline = time.monotonic() + timeout_s
     last_step = ""
     while time.monotonic() < deadline:
-        time.sleep(_PROVISION_POLL_S)
+        if stop.wait(_PROVISION_POLL_S):
+            raise VMError("the image build was stopped; the next start resumes it")
         probe = vm.run(
             _guest_command(
                 [

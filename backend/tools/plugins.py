@@ -24,6 +24,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 from pydantic_core import SchemaValidator, core_schema
 
+from core.diagnostics import render_rejection, render_tool_error
 from core.untrusted import wrap_untrusted
 from services.egress import EgressPolicy
 from services.plugins import (
@@ -46,7 +47,10 @@ from .describe import registered_tools
 GATED_TOOLS: frozenset[str] = frozenset({"plugins_test"})
 
 _UNAVAILABLE = "Plugins cannot be written in this deployment."
-_NO_VM = "Plugins run in the platform VM, which is not running right now."
+_NO_VM = render_tool_error(
+    "plugins run in the platform VM, which is not running right now",
+    hints=["carry on without this plugin, and tell the operator if the task needs it"],
+)
 _READ_MAX_CHARS = 200_000
 _ANY_ARGS = SchemaValidator(core_schema.any_schema())
 
@@ -61,8 +65,10 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         files: dict[str, str],
         remove: list[str] | None = None,
     ) -> dict[str, object]:
-        """Draft a plugin (tools written in Python that run in the platform VM) or
-        revise its draft. `files` maps paths to their full new text; `remove` deletes.
+        """Drafts a plugin, a set of tools written in Python that run in the platform VM,
+        or revises its draft. Write one when the operator wants a lasting capability the
+        platform lacks, such as a client for an API they use; for a one-off task, write
+        and run the code directly instead.
 
         `plugin.yaml` sits beside the modules:
 
@@ -78,13 +84,22 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
                 sensitivity: read          # or workspace_write, external_effect
                 parameters: {type: object, properties: {city: {type: string}}}
 
-        A tool function takes its parameters as keyword arguments (it may be async) and
-        returns JSON-able data. A secret's env var holds a placeholder that becomes the
-        value only in the URL or headers of HTTPS requests to its host.
-
+        A tool function takes its parameters as keyword arguments, may be async, and
+        returns data that serializes to JSON. A secret's environment variable holds a
+        placeholder that becomes the real value only in the URL or headers of an HTTPS
+        request to its declared host, so the plugin never sees the secret itself.
         `agents/<name>.md` and `skills/<name>/SKILL.md` add agents and skills.
 
-        It stays a draft until the operator publishes it; check it with `plugins_test`.
+        It stays a draft until the operator publishes it, and only then are its tools
+        offered. Run each tool with `plugins_test` before you tell the operator it is
+        ready, and name any secret in `secrets_unset` that they still have to fill in.
+
+        Returns the plugin's `name`, its `tools`, and `secrets_unset`.
+
+        Args:
+            name: The plugin's name, in lowercase.
+            files: Each path mapped to its full new text. Files you leave out are kept.
+            remove: Paths to delete from the draft.
         """
         store = ctx.deps.caps.get_optional(PluginStore)
         if store is None:
@@ -100,7 +115,7 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
         try:
             view = await store.write_draft(ctx.deps.owner_id, name, changes, source="agent")
         except PluginValidationError as exc:
-            raise ModelRetry(f"That plugin was rejected ({exc.field}): {exc}") from None
+            raise ModelRetry(render_rejection("the plugin", exc)) from None
         manifest = view.current
         return {
             "ok": True,
@@ -116,14 +131,21 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
     async def read(
         ctx: RunContext[RunDeps], name: str, version: Literal["current", "published"] = "current"
     ) -> dict[str, object]:
-        """A plugin's files: its draft when it has one (`current`), or the version its
-        tools run (`published`)."""
+        """Returns a plugin's files, with whether it is `published` and whether it
+        `has_draft`. Read it before revising a plugin, so your changes start from what is
+        there.
+
+        Args:
+            name: The plugin's name.
+            version: `current` for the draft when there is one, else the published
+                version; `published` for the version its tools run now.
+        """
         store = ctx.deps.caps.get_optional(PluginStore)
         if store is None:
             return {"ok": False, "error": _UNAVAILABLE}
         view = await store.get_by_name(ctx.deps.owner_id, name.strip().lower())
         if view is None:
-            raise ModelRetry(f"There is no plugin called {name!r}.")
+            raise _no_such_plugin(name)
         which = "active" if version == "published" else "current"
         files = await store.files(ctx.deps.owner_id, view.id, which)
         texts: dict[str, str] = {}
@@ -144,29 +166,42 @@ def plugins_toolset() -> AbstractToolset[RunDeps]:
     async def test(
         ctx: RunContext[RunDeps], name: str, tool: str, args: dict[str, object] | None = None
     ) -> dict[str, object]:
-        """Run one of a plugin's tools with `args`: its draft when it has one, else the
-        published version. It reaches only the hosts it declares that this conversation
-        may also reach."""
+        """Runs one of a plugin's tools, from its draft when it has one, else from the
+        published version, and returns its `result` or `error` and any `log` output.
+
+        Use it to check a draft before telling the operator it works. The run reaches
+        only the hosts the plugin declares that this conversation may also reach, so a
+        host missing from either list fails here; ask for the conversation's side with
+        `code_request_egress`. A test that would send the operator's secrets asks them
+        first.
+
+        Args:
+            name: The plugin's name.
+            tool: The tool's name within the plugin, as `plugin.yaml` declares it.
+            args: The tool's arguments, as its `parameters` schema describes them.
+        """
         store = ctx.deps.caps.get_optional(PluginStore)
         runtime = ctx.deps.caps.get_optional(PluginRuntime)
         if store is None or runtime is None:
             return {"ok": False, "error": _UNAVAILABLE}
         view = await store.get_by_name(ctx.deps.owner_id, name.strip().lower())
         if view is None:
-            raise ModelRetry(f"There is no plugin called {name!r}.")
+            raise _no_such_plugin(name)
         manifest = view.current
         chosen = manifest.tool(tool)
         if chosen is None:
             raise ModelRetry(
-                f"{view.name} has no tool {tool!r}; it has "
-                + f"{', '.join(t.name for t in manifest.tools)}."
+                render_tool_error(
+                    f"{view.name} has no tool {tool!r}",
+                    hints=[f"its tools: {', '.join(t.name for t in manifest.tools)}"],
+                )
             )
         secrets = await _secrets(store, ctx.deps.owner_id, view.id, manifest)
         if secrets and not ctx.tool_call_approved:
             raise ApprovalRequired()
         policy = ctx.deps.caps.get_optional(EgressPolicy)
         reachable: frozenset[str] = (
-            await policy.allowed_for(ctx.deps.workspace_key) if policy else frozenset()
+            await policy.allowed_for(ctx.deps.scratch_key) if policy else frozenset()
         )
         hosts = [host for host in manifest.egress if host in reachable]
         files = await store.files(ctx.deps.owner_id, view.id, "current")
@@ -219,7 +254,7 @@ class PluginsToolset(WrapperToolset[RunDeps]):
                     parameters_json_schema=route.tool.parameters,
                     metadata={SENSITIVITY_METADATA_KEY: route.tool.sensitivity.value},
                 ),
-                max_retries=2,
+                max_retries=ctx.max_retries,
                 args_validator=_ANY_ARGS,
             )
         return tools
@@ -238,10 +273,16 @@ class PluginsToolset(WrapperToolset[RunDeps]):
         store = ctx.deps.caps.get_optional(PluginStore)
         runtime = ctx.deps.caps.get_optional(PluginRuntime)
         if store is None or runtime is None:
-            raise ModelRetry(f"{name} is no longer available.")
+            raise ModelRetry(render_tool_error(f"`{name}` is no longer available"))
         problem = _first_problem(Draft202012Validator(route.tool.parameters), tool_args)
         if problem is not None:
-            raise ModelRetry(f"Those arguments do not fit {name}: {problem}")
+            raise ModelRetry(
+                render_tool_error(
+                    f"those arguments do not fit `{name}`",
+                    cause=problem,
+                    hints=["call it again with arguments that match its schema"],
+                )
+            )
         secrets = await _secrets(store, ctx.deps.owner_id, route.plugin_id, route.manifest)
         return await _run(
             runtime,
@@ -267,6 +308,15 @@ class PluginsToolset(WrapperToolset[RunDeps]):
                         routes[name] = _Route(view.id, view.active, files, tool)
         self._routes = routes
         return routes
+
+
+def _no_such_plugin(name: str) -> ModelRetry:
+    return ModelRetry(
+        render_tool_error(
+            f"there is no plugin called {name!r}",
+            hints=["`platform_search` over the `plugins` source lists the published ones"],
+        )
+    )
 
 
 def _first_problem(validator: Validator, args: JsonValue) -> str | None:

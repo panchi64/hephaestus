@@ -30,6 +30,8 @@ class Agent(Table, table=True):
     owner_id: str = Field(index=True)
     name: str = Field(index=True)
     description_enc: str
+    # A key of ``prompts.voice.CLASSES``.
+    agent_class: str = Field(default="tripodes")
     instructions_enc: str
     endpoint_id: str | None = Field(default=None)
     model: str | None = Field(default=None)
@@ -38,7 +40,6 @@ class Agent(Table, table=True):
     tools_deny_json: str | None = Field(default=None)
     permission_ceiling: str | None = Field(default=None)
     workspace: str = Field(default="shared")
-    request_limit: int | None = Field(default=None)
     wall_clock_timeout_s: float | None = Field(default=None)
     can_delegate: bool = Field(default=False)
     max_depth: int | None = Field(default=None)

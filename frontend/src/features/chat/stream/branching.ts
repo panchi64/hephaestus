@@ -14,9 +14,11 @@
  * implementation of the branch arithmetic is exactly the kind of thing that agrees with the
  * backend until the day it doesn't.
  *
- * **Cancel first, then mutate.** A live fold keeps patching the message it was streaming
+ * **Never while a run is live.** A live fold keeps patching the message it was streaming
  * into, so an op that replaces the store while a run is open would leave the fold writing
- * to a message that no longer exists. Every reseating op therefore stops the run first.
+ * to a message that no longer exists. Every one of these declines instead, the controls
+ * are disabled with the same condition, and nothing here cancels a run on the operator's
+ * behalf. A run this client is not driving reaches the backend's 409, which shows it.
  */
 
 import { reconcile, type SetStoreFunction } from "solid-js/store";
@@ -81,7 +83,6 @@ export interface BranchingContext extends TranscriptStore {
   overrideSelection: () => ModelSelection | null | undefined;
   driveRun: (runId: string, assistantId: string) => Promise<void>;
   reattachToLiveRun: (conversationId: string) => Promise<void>;
-  cancel: () => Promise<void>;
   onTurnComplete?: () => void;
 }
 
@@ -125,11 +126,12 @@ export function createBranchingOps(ctx: BranchingContext) {
    *  ordering the fold depends on. */
   const compacting = createInFlight<string>();
 
-  /** A 409 means the backend already has a run on this thread. Surface the one that is
-   *  actually in flight instead of leaving the operator's action to vanish. */
-  function handleBusy(err: unknown): boolean {
+  /** A 409 is a turn this client is not driving (one the inbox started, another tab):
+   *  the controls only know this client's own runs. Say so, and show that turn rather
+   *  than leaving the click unanswered. */
+  function surfaceBusy(err: unknown): boolean {
     if (!isApiError(err) || err.status !== 409) return false;
-    toast.error("A response is still in progress in this conversation.");
+    toast.warn("A turn is running in this thread. Stop it first.");
     ctx.setSending(false);
     const id = ctx.conversationId();
     if (id) void ctx.reattachToLiveRun(id);
@@ -169,7 +171,7 @@ export function createBranchingOps(ctx: BranchingContext) {
       ctx.setMessages(reconcile([...ctx.messages.slice(0, i), reset]));
       await ctx.driveRun(created.run_id, messageId);
     } catch (err) {
-      if (handleBusy(err)) return;
+      if (surfaceBusy(err)) return;
       toastError(err, "Unable to regenerate the answer.");
       ctx.setSending(false);
     }
@@ -225,7 +227,7 @@ export function createBranchingOps(ctx: BranchingContext) {
       );
       await ctx.driveRun(created.run_id, assistantId);
     } catch (err) {
-      if (handleBusy(err)) return;
+      if (surfaceBusy(err)) return;
       toastError(err, "Unable to submit the edit.");
       ctx.setSending(false);
     }
@@ -238,18 +240,16 @@ export function createBranchingOps(ctx: BranchingContext) {
     index: number,
   ): Promise<void> {
     const conversationId = ctx.conversationId();
-    if (conversationId === null) return;
-    // Stop any live run first: the reseat below replaces the store, and a still-
-    // streaming foldEvent would keep patching a message the reseat removed.
-    if (ctx.sending()) await ctx.cancel();
+    // The reseat below replaces the store, and a still-streaming foldEvent would keep
+    // patching a message it removed; the controls are disabled while a run is live.
+    if (conversationId === null || ctx.sending()) return;
     try {
       const detail = await api.post<ConversationDetailDTO>(
         `/conversations/${conversationId}/messages/${messageId}/version`,
         { index },
       );
-      // Aimed, because the cancel above can hold this for as long as a run takes to
-      // stop. `onTurnComplete` stays unconditional: it refreshes the rail, which is
-      // about the thread that answered rather than the one on screen.
+      // `onTurnComplete` stays unconditional: it refreshes the rail, which is about
+      // the thread that answered rather than the one on screen.
       reseatIfCurrent(conversationId, detail);
       ctx.onTurnComplete?.();
     } catch (err) {
@@ -260,8 +260,7 @@ export function createBranchingOps(ctx: BranchingContext) {
   /** Rewind the thread to end at a turn; the operator's next send branches. */
   async function rewind(messageId: string): Promise<void> {
     const conversationId = ctx.conversationId();
-    if (conversationId === null) return;
-    if (ctx.sending()) await ctx.cancel();
+    if (conversationId === null || ctx.sending()) return;
     try {
       const detail = await api.post<ConversationDetailDTO>(
         `/conversations/${conversationId}/messages/${messageId}/rewind`,
@@ -295,20 +294,14 @@ export function createBranchingOps(ctx: BranchingContext) {
    *  store the operator just watched fill with an identical one. */
   async function compactNow(): Promise<void> {
     const conversationId = ctx.conversationId();
-    if (conversationId === null) return;
-    // The claim covers the cancel below as well as the POST, and is taken before either:
-    // a guard read after an await is not a guard. Two presses during a live run would
-    // both see an unclaimed thread, both wait out the cancel and both POST, and the
-    // second would meet the first one's conversation claim as a busy error for a fold
-    // asked for once. The failure is reported inside the task so `run` resolves rather
-    // than rejecting — every caller of a fold treats it as fire-and-forget.
+    if (conversationId === null || ctx.sending()) return;
+    // The claim is taken before the first await: a guard read after an await is not a
+    // guard. The failure is reported inside the task so `run` resolves rather than
+    // rejecting — every caller of a fold treats it as fire-and-forget.
     await compacting.run(conversationId, async () => {
       try {
-        if (ctx.sending()) await ctx.cancel();
-        // Guarded like any other run the room drives: a send during the fold goes down
-        // the steering path — which the backend refuses for a fold, and says so —
-        // rather than the new-turn path, whose 409 would reattach onto this very run
-        // and take its drive away from it.
+        // Guarded like any other run the room drives, so a send during the fold
+        // queues instead of starting a turn.
         ctx.setSending(true);
         const started = await api.post<ChatCreatedDTO>(
           `/conversations/${conversationId}/compact`,
@@ -321,7 +314,6 @@ export function createBranchingOps(ctx: BranchingContext) {
         await ctx.driveRun(started.run_id, "");
       } catch (err) {
         ctx.setSending(false);
-        if (handleBusy(err)) return;
         toastError(err, "Unable to compact this conversation.");
       }
     });
@@ -334,8 +326,7 @@ export function createBranchingOps(ctx: BranchingContext) {
     purgeImages = false,
   ): Promise<void> {
     const conversationId = ctx.conversationId();
-    if (conversationId === null) return;
-    if (ctx.sending()) await ctx.cancel();
+    if (conversationId === null || ctx.sending()) return;
     try {
       const q = purgeImages ? "?purgeImages=true" : "";
       const detail = await api.del<ConversationDetailDTO>(

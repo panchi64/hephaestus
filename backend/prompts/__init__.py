@@ -10,9 +10,8 @@ Two domains:
 - the **main agent** — :mod:`prompts.agent` (its ``SYSTEM_PROMPT``, identity and
   voice anchored in history; its ``INSTRUCTIONS``, autonomy, tool posture and
   safety guardrails re-asserted fresh every turn; the date line; the verifier's
-  nudge), plus the two files holding what is true of *this thread* rather than of
-  every thread: :mod:`prompts.workspace` (whose files it works in) and
-  :mod:`prompts.levels` (how far the model may go before it asks).
+  nudge), plus :mod:`prompts.levels`, what is true of *this thread* rather than of
+  every thread: how far the model may go before it asks.
 - :mod:`prompts.utility` — the cheap background calls (the thread **namer**, the
   deliverable **judge**) that run on the utility model.
 - :mod:`prompts.compaction` — the request that asks the main model to fold its own

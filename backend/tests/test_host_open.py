@@ -220,6 +220,27 @@ class TestOpenRoute:
             assert json_body(resp)["path"] == str(root / "src/app.py")
             assert opened == [root / "src/app.py"]
 
+    async def test_a_file_named_by_its_home_path_opens_from_its_project(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        opened = self._records(monkeypatch)
+        async with client_app() as (client, _app):
+            root = tmp_path / "acme-api"
+            (root / "src").mkdir(parents=True)
+            _ = (root / "src/app.py").write_text("x")
+            _ = await client.post("/projects/ensure", json={"rootPath": str(root)})
+
+            for path in ("~/projects/acme-api/src/app.py", "projects/acme-api/src/app.py"):
+                resp = await client.post("/host/open", json={"path": path})
+                assert resp.status_code == 200, resp.text
+            assert opened == [root / "src/app.py"] * 2
+            # The home path is read inside the project it names, so it cannot climb out.
+            resp = await client.post(
+                "/host/open", json={"path": "~/projects/acme-api/../../etc/passwd"}
+            )
+            assert resp.status_code in (403, 404), resp.text
+            assert len(opened) == 2
+
     async def test_a_path_outside_every_project_is_a_403(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):

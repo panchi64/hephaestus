@@ -19,7 +19,7 @@ Search the catalog first (`platform_search`, sources `agents`). Improving or reu
 - `tools`: the tools or categories it needs (`files`, `shell`, `web_search`). Fewer tools make a sharper agent. Leave it unset only for a generalist.
 - `deny_tools`: tools to withhold even though a category grants them.
 - `permission_ceiling`: the most it may do without asking. Use read-only for anything that only investigates.
-- `workspace`: `shared` works in the spawner's files; `isolated` works on a copy merged back when it finishes; `own` has a workspace of its own.
+- `workspace`: `shared` works in the spawner's files; `isolated` works on a branch and worktree of its own, which the spawner reviews and merges; `own` has a scratch of its own.
 - `can_delegate`: only when the role genuinely fans out further.
 
 ## 3. Hand it over

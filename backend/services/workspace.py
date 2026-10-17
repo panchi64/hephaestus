@@ -1,14 +1,14 @@
-"""One answer to "where does this run's file work happen".
+"""One answer to "which folder is this run's own place".
 
-The file tools, `code_execute` or the shell, attachment staging and the skills bundler all
-act on one resolved value, so the agent never edits a file it cannot run:
+Attachment staging, the skills bundler, the project's agents and commands and the
+thread's home all read one resolved value:
 
-    workspace "sandbox"  → the conversation's own workspace, at ``/work`` in the VM
-    workspace "checkout" → the project's own folder, on the host, on its current branch
-    workspace "worktree" → the project's git worktree, on the host, by absolute path
+    "sandbox"  → the conversation's scratch, at ``/work`` in the VM
+    "checkout" → the project the thread is filed under, on the host, on its current branch
+    "worktree" → the thread's own git worktree of that project, on the host
 
-Which of the two a run gets is the conversation's ``workspace_kind``
-(``services/workspace_kind.py``).
+Which one a run gets follows from its binding: a worktree if the thread opened one, else
+the project it is filed under, else its scratch.
 
 :class:`RunWorkspace` carries both halves — the host directory to act on, and
 :meth:`RunWorkspace.display`, the path *string the model is told*. Those differ in a
@@ -26,9 +26,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
-from services.projects.checkout import CheckoutHolders
+from services.home.paths import HOME
 from services.projects.repo import run_git
 from services.projects.store import ProjectStore
 from services.projects.worktree import WorktreeBusyError, WorktreeManager
@@ -38,9 +38,18 @@ from services.sandbox import (
     SandboxSessionManager,
 )
 from services.sandbox.base import contained_path
-from services.workspace_kind import WorkspaceKind
 
 logger = logging.getLogger(__name__)
+
+#: What a run's own place is (see the module note).
+type PlaceKind = Literal["sandbox", "checkout", "worktree"]
+
+
+def place_kind(project_id: str | None, worktree: bool) -> PlaceKind:
+    """What a thread's own place is, from its binding."""
+    if project_id is None:
+        return "sandbox"
+    return "worktree" if worktree else "checkout"
 
 #: Where a conversation's sandbox workspace appears inside the VM. The model is
 #: told this, never the host path — the host path means nothing in the guest.
@@ -62,28 +71,15 @@ class WorkspaceFiles(Protocol):
 
 
 class WorkspaceSession(WorkspaceFiles, Protocol):
-    """The slice of a sandbox session that resolving a workspace reads and claims."""
-
-    @property
-    def ephemeral(self) -> bool: ...
+    """The slice of a sandbox session that resolving a workspace reads."""
 
     def ensure_workspace(self) -> Path: ...
-
-    def hold(self, holder: LiveWork | None) -> None: ...
-
-    def touch(self) -> None: ...
 
 
 class WorkspaceSessions(Protocol):
     """The slice of the sandbox manager that resolving a workspace opens sessions through."""
 
-    def existing(self, key: str) -> WorkspaceSession | None: ...
-
     async def acquire(self, key: str, *, holder: LiveWork | None = None) -> WorkspaceSession: ...
-
-    async def fork(
-        self, parent_key: str, child_key: str, *, holder: LiveWork | None = None
-    ) -> WorkspaceSession: ...
 
 
 class HostFiles:
@@ -113,10 +109,13 @@ class RunWorkspace:
     """This run's workspace: the host directory, and how a path in it is named aloud."""
 
     root: Path
-    kind: WorkspaceKind
+    kind: PlaceKind
     files: WorkspaceFiles
     #: The branch a worktree run is working on; None in a sandbox.
     branch: str | None = None
+    #: Where the agent's home holds this folder (``~/projects/<slug>`` or
+    #: ``~/worktrees/<slug>``); None in a sandbox.
+    home_path: str | None = None
 
     @property
     def stage_prefix(self) -> str:
@@ -127,11 +126,14 @@ class RunWorkspace:
     def display(self, relpath: str) -> str:
         """The path string the model is given for ``relpath``.
 
-        The one place the sandbox's guest path is translated, so a marker, a tool result
-        and a staged skill can never name the same file three different ways.
+        The one place a workspace path is put in the home's terms, so a marker, a tool
+        result and a staged skill can never name the same file three different ways.
         """
+        rel = relpath.lstrip("/")
         if self.kind == "sandbox":
-            return f"{SANDBOX_MOUNT}/{relpath.lstrip('/')}"
+            return f"{SANDBOX_MOUNT}/{rel}"
+        if self.home_path is not None:
+            return f"{self.home_path}/{rel}"
         return str(self.root / relpath)
 
 
@@ -146,59 +148,13 @@ async def sandbox_workspace(
     of its tool calls. The files would survive that — a reap leaves them alone — but the
     live process and system state around them would not.
 
-    A key naming a *delegation* resolves to a fork of the workspace it delegates from,
-    rather than to a session of its own. Read here rather than left to the caller for the
-    reason the worktree half reads it: a delegated run resolves its workspace on every
-    file-tool call, and a plain `acquire` on a delegated key would quietly hand back an
-    empty workspace — a sub-agent working in a copy of nothing, and a merge at the end
-    with no fork to land."""
-    owner, delegation = split_workspace_key(workspace_key)
-    session = (
-        await _delegated_session(sessions, owner, workspace_key, holder=holder)
-        if delegation is not None
-        else await sessions.acquire(workspace_key, holder=holder)
-    )
+    A key naming a delegation is a sub-agent in a worktree of its own, which shares the
+    scratch of the thread it delegates from."""
+    session = await sessions.acquire(scratch_key(workspace_key), holder=holder)
     return RunWorkspace(root=session.ensure_workspace(), kind="sandbox", files=session)
 
 
-async def _delegated_session(
-    sessions: WorkspaceSessions,
-    parent_key: str,
-    child_key: str,
-    *,
-    holder: LiveWork | None,
-) -> WorkspaceSession:
-    """A delegated agent's workspace — forked on first use, reopened on every later one.
-
-    ``fork`` is the *event* of taking the copy, and refuses a key it has already forked;
-    this is the question a delegated run asks on every file-tool call, and they are not the
-    same question. While delegation blocked its parent's turn the two collapsed into one —
-    the copy was taken and handed straight to the child inside a single call — but a
-    sub-agent runs as its own Run and resolves its workspace the way every run does:
-    repeatedly, and from scratch. The counterpart to ``WorktreeManager.open_child``, keyed
-    the same way and there for the same reason.
-
-    Claiming the reused fork matters more here than it does for an ordinary session:
-    displacing a fork *deletes* it, nothing about a fork being sealed, so a copy nobody has
-    claimed is a sub-agent's work the live-session cap may throw away mid-run.
-    """
-    taken = sessions.existing(child_key)
-    if taken is not None and taken.ephemeral:
-        taken.touch()
-        taken.hold(holder)
-        return taken
-    # Either nothing yet, or something that is not a fork sitting under this key. `fork`
-    # takes the copy in the first case and refuses in the second, which is the honest
-    # answer — adopting a non-fork would mean merging a whole conversation's workspace
-    # into another's when the sub-agent ends.
-    return await sessions.fork(parent_key, child_key, holder=holder)
-
-
 #: What separates a workspace's owner from one delegation of it in a workspace key.
-#:
-#: The convention is not new — a forked sandbox has always been keyed ``<parent>/<child>``
-#: — but it used to be honoured by one workspace kind and ignored by the other, which is
-#: why a delegated run could be given its own workspace and never its own checkout.
 DELEGATION_SEP = "/"
 
 
@@ -206,13 +162,15 @@ def split_workspace_key(workspace_key: str) -> tuple[str, str | None]:
     """A workspace key as *whose* workspace, and *which delegation* of it.
 
     ``"c123"`` → ``("c123", None)``: the conversation's own.
-    ``"c123/w7"`` → ``("c123", "w7")``: a delegated child of it.
-
-    One reading of the key, shared by both kinds, so a sub-agent cannot end up with a
-    workspace forked from its parent and a checkout that is its parent's own.
+    ``"c123/w7"`` → ``("c123", "w7")``: a sub-agent of it working in worktree ``w7``.
     """
     owner, separator, delegation = workspace_key.partition(DELEGATION_SEP)
     return owner, (delegation or None) if separator else None
+
+
+def scratch_key(workspace_key: str) -> str:
+    """The key of the scratch a workspace key works in: a delegation shares its owner's."""
+    return split_workspace_key(workspace_key)[0]
 
 
 async def worktree_workspace(
@@ -229,18 +187,15 @@ async def worktree_workspace(
     Idempotent per conversation, and refused (`WorktreeBusyError`) while another code
     conversation holds the project — one checkout, one thread at a time.
 
-    ``delegation_id`` asks for a *delegated child* of that checkout instead: its own
-    worktree on its own branch, cut from the holder's. The holder is still the
-    conversation named above — a fork is one conversation working in two places, not a
-    second thread taking the checkout — which is what lets a sub-agent work beside the
-    thread that launched it rather than being refused as a rival for it.
+    ``delegation_id`` names a sub-agent's own worktree instead, cut when it was spawned
+    and named under the conversation above.
     """
     project = await projects.get(owner_id, project_id)
     root = Path(project.root_path)
+    home_path = await project_home_path(projects, owner_id, project_id, group="worktrees")
     if delegation_id is not None:
-        state = await worktrees.open_child(
+        state = worktrees.reopen_child(
             project_id=project_id,
-            root=root,
             conversation_id=conversation_id,
             delegation_id=delegation_id,
         )
@@ -250,6 +205,7 @@ async def worktree_workspace(
             kind="worktree",
             files=HostFiles(state.path),
             branch=state.branch,
+            home_path=home_path,
         )
     state = await worktrees.acquire(
         project_id=project_id,
@@ -263,7 +219,21 @@ async def worktree_workspace(
         kind="worktree",
         files=HostFiles(state.path),
         branch=state.branch,
+        home_path=home_path,
     )
+
+
+async def project_home_path(
+    projects: ProjectStore,
+    owner_id: str,
+    project_id: str,
+    *,
+    group: Literal["projects", "worktrees"] = "projects",
+) -> str | None:
+    """Where the agent's home holds this project, or a thread's worktree of it, or None
+    when it has no slug."""
+    slug = (await projects.slugs(owner_id)).get(project_id)
+    return f"{HOME}/{group}/{slug}" if slug else None
 
 
 def prepare_worktree_workspace(path: Path) -> None:
@@ -290,32 +260,31 @@ def prepare_worktree_workspace(path: Path) -> None:
 
 async def resolve_workspace(
     *,
-    workspace_kind: str,
     project_id: str | None,
+    worktree: bool,
     conversation_id: str | None,
     workspace_key: str,
     owner_id: str,
     sessions: SandboxSessionManager | None,
     projects: ProjectStore | None,
     worktrees: WorktreeManager | None,
-    checkouts: CheckoutHolders | None = None,
     holder: LiveWork | None = None,
 ) -> RunWorkspace | None:
-    """This run's workspace, or None when there isn't one.
+    """This run's own place, or None when there isn't one: its worktree, else the project
+    it is filed under, else its scratch.
 
     Takes explicit handles rather than a `RunContext` because it is called from both
     sides of a turn: from inside a run (through `tools/workspace.py`) and at composition
     time, before the run exists, to stage attachments. One resolution, two entry points.
 
     Returns None rather than raising, for the two shapes of "no workspace" the callers
-    already handle: a project workspace without the pieces it needs, and a sandbox that
-    will not open. A busy worktree or checkout is *not* one of those — that is a real
-    conflict the operator has to see, so `WorktreeBusyError` propagates.
+    already handle: a project without the pieces it needs, and a sandbox that will not
+    open. A busy worktree is *not* one of those — that is a real conflict the operator has
+    to see, so `WorktreeBusyError` propagates.
     """
-    if workspace_kind == "checkout":
-        if projects is None or checkouts is None or not project_id or not conversation_id:
+    if project_id and not worktree:
+        if projects is None:
             return None
-        owner_conversation, _ = split_workspace_key(workspace_key)
         try:
             project = await projects.get(owner_id, project_id)
         except Exception:
@@ -324,17 +293,22 @@ async def resolve_workspace(
         root = Path(project.root_path)
         if not root.is_dir():
             return None
-        await checkouts.acquire(project_id, owner_conversation or conversation_id, holder)
         prepare_worktree_workspace(root)
         code, out, _ = await run_git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
         branch = out.strip() if code == 0 and out.strip() else None
-        return RunWorkspace(root=root, kind="checkout", files=HostFiles(root), branch=branch)
-    if workspace_kind == "worktree":
+        return RunWorkspace(
+            root=root,
+            kind="checkout",
+            files=HostFiles(root),
+            branch=branch,
+            home_path=await project_home_path(projects, owner_id, project_id),
+        )
+    if project_id and worktree:
         # Never fall back to the sandbox. A worktree run that quietly got a sandbox
         # workspace would edit files its shell tools are refused access to, and nothing
         # would say why — the failure the one-workspace rule exists to prevent. No
         # worktree means no workspace, and the tool layer says so in words.
-        if projects is None or worktrees is None or not project_id or not conversation_id:
+        if projects is None or worktrees is None or not conversation_id:
             return None
         # Which checkout, read off the workspace key rather than off the conversation.
         # For every ordinary run the two say the same thing (a run's key *is* its

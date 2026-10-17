@@ -6,12 +6,10 @@ Two verbs reached through ``RunDeps``: ``search`` over
 to Markdown). No logic here — it lives in the services. The results are typed dataclasses
 Pydantic AI serializes for the model, already untrusted-wrapped by the service.
 
-Failure handling leans on the engine: a *recoverable* fetch failure (a blocked or
-unreadable URL) raises :class:`ModelRetry`, so Pydantic AI feeds the reason back
-and the model tries a different source — bounded by the tool's retry budget. A
-*missing* capability (web not wired, or no provider configured) returns a plain
-message instead, the same graceful-degradation shape as the memory tools — a retry
-can't fix it.
+An unreadable URL raises ``ToolFailed``: the model reads why and picks another source,
+and since the same fetch would fail again it spends no retry budget. A blocked address
+and a missing capability (web not wired, or no provider configured) return the same
+diagnostic text as a plain result, the graceful-degradation shape of the memory tools.
 
 **A repeat is refused before it costs anything.** A thread that reads widely — a research
 thread most of all — loops: it re-asks a search it already ran, or re-fetches a page whose
@@ -33,8 +31,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic_ai import FunctionToolset, ModelRetry, RunContext
+from pydantic_ai import FunctionToolset, RunContext, ToolFailed
 
+from core.diagnostics import render_tool_error
 from core.exceptions import DegradedCapabilityError, SSRFError, WebFetchError
 from services.search import DedupeSets, SearchResults, SearchService
 from services.webfetch import BrowserFetcher, FetchedPage
@@ -59,12 +58,27 @@ def web_toolset() -> FunctionToolset[RunDeps]:
         limit: int = 5,
         time_range: Literal["day", "week", "month", "year"] | None = None,
     ) -> SearchResults | str:
-        """Search the web for a query and return ranked results (title, URL, snippet).
+        """Searches the public web and returns ranked results, each with a title, URL and
+        snippet, and `published` when the engine knows the page's date.
 
-        Use `time_range` to restrict results to recent pages when the question is
-        time-sensitive; `published` on a result is its publication date when the engine
-        knew it. No results means the search ran but found nothing — conclude from
-        that rather than retrying the same query."""
+        Use it for anything current, public or outside what you know for certain, and
+        check rather than answer from memory when a fact may have changed. For what the
+        platform already holds (past conversations, memory, the operator's files), use
+        `platform_search` instead.
+
+        A snippet is the engine's excerpt, not the page: read a result with `web_fetch`
+        before you rely on it or cite it. No results means the search ran and found
+        nothing; conclude from that rather than retrying the same query. Repeating a
+        search already run in this turn returns nothing new, so ask a different question
+        or read a result you have.
+
+        Args:
+            query: What to search for, phrased as you would type it into a search
+                engine.
+            limit: The most results to return. Default 5.
+            time_range: Restrict results to pages from the last day, week, month or
+                year, for a question about recent events.
+        """
         svc = ctx.deps.caps.get_optional(SearchService)
         if svc is None:
             return "Web search is unavailable."
@@ -87,22 +101,36 @@ def web_toolset() -> FunctionToolset[RunDeps]:
             raise
         return results
 
-    @toolset.tool(retries=2)
+    @toolset.tool
     async def fetch(
         ctx: RunContext[RunDeps], url: str, offset: int = 0, goal: str | None = None
     ) -> FetchedPage | str:
-        """Fetch a single web page and return its main content as Markdown.
+        """Fetches one web page, renders it, and returns its main content as Markdown.
 
-        Use after `web_search` to read a result in full. State the information you are
-        looking for in `goal` — on large pages the result is then distilled to what's
-        relevant to it; omit `goal` (or pass `offset`) to read the raw text. Fetching
-        returns up to a fixed token budget of the page; when the result ends with a
-        truncation notice, call `web_fetch` again with the same `url` and the `offset` the
-        notice gives to continue reading (dynamic pages may shift slightly between calls).
-        If a URL can't be fetched you will be told why — pick a different source."""
+        Use it to read a `web_search` result in full, or a URL the operator gave you. To
+        click, fill a form, sign in or read a page that only appears after interaction,
+        load the `browse` tools instead.
+
+        A long page comes back up to a fixed budget, ending in a truncation notice; call
+        again with the same `url` and the `offset` the notice gives to read on. A page
+        that renders dynamically may shift slightly between those calls. Fetching a URL
+        already read in this turn returns nothing new, so look back at it in your
+        context. When a URL cannot be read you are told why; pick another source rather
+        than trying variants of the same address.
+
+        Args:
+            url: The full URL, including `https://`.
+            offset: Where to resume a truncated page, as its truncation notice gives it.
+            goal: What you are looking for on the page. On a large page the result is
+                then distilled to what is relevant to it. Omit it, or page with
+                `offset`, to read the raw text.
+        """
         svc = ctx.deps.caps.get_optional(BrowserFetcher)
         if svc is None:
-            return "Web fetch is unavailable."
+            return render_tool_error(
+                "web fetch is unavailable in this deployment",
+                hints=["answer from search results and what you know, and say so"],
+            )
         dedupe = ctx.deps.web_dedupe
         # `offset` is how a truncated page is continued, so a paging call is a different
         # read of the same URL rather than a repeat of one — and takes no key at all.
@@ -120,11 +148,19 @@ def web_toolset() -> FunctionToolset[RunDeps]:
             # A refused target is a hard boundary, not a "try again" — tell the model
             # plainly so it moves on instead of probing variants of a blocked address.
             _release(dedupe, claim)
-            return f"Refused: {exc}"
+            return render_tool_error(
+                f"refused to fetch {url}: {exc}",
+                hints=["this address is blocked; do not try variants of it, use another source"],
+            )
         except WebFetchError as exc:
-            # Recoverable: the page couldn't be read — let the model pick another source.
+            # Terminal for this URL: the same fetch would fail again, so the model is told
+            # to move on rather than asked to retry.
             _release(dedupe, claim)
-            raise ModelRetry(str(exc)) from exc
+            raise ToolFailed(
+                render_tool_error(
+                    f"could not read {url}: {exc}", hints=[exc.hint or "pick a different source"]
+                )
+            ) from exc
         except BaseException:
             _release(dedupe, claim)
             raise

@@ -103,19 +103,24 @@ class EditCreate(BaseModel):
 class ChatCreated(BaseModel):
     run_id: str
     conversation_id: str
-    # Set when the conversation already had a live run and this message was queued
-    # into it (to be injected at the run's next model-request boundary) instead of
-    # starting a new run. Additive — a plain send never carries it.
-    queued_message_id: str | None = None
+
+
+class ChatQueued(BaseModel):
+    """A send into a busy conversation: it went into the inbox instead of starting a run."""
+
+    conversation_id: str
+    queued_message_id: str
+    # The run it queued behind, or None when the thread is held by something about to
+    # start one (a regenerate's claim).
+    run_id: str | None = None
 
 
 class ChatSettings(BaseModel):
     """Operator-tunable chat preferences. The ``auto_compact*`` fields tune conversation
     compaction — the product's one context reduction: fold older *turns* into a
-    summary the thread's own model writes once the context window fills.
-    ``agent_request_limit`` is how many model round-trips one turn may spend before it
-    stops. They're optional on a PUT — an omitted one is left unchanged — and always
-    populated on a GET. snake_case out, matching the rest of the ``/chat`` surface.
+    summary the thread's own model writes once the context window fills. They're optional
+    on a PUT — an omitted one is left unchanged — and always populated on a GET.
+    snake_case out, matching the rest of the ``/chat`` surface.
 
     On a PUT, ``wall_clock_timeout_s`` is the one field where ``null`` is a *value* (no
     bound) rather than an omission, so the handler reads ``model_fields_set`` for it
@@ -154,20 +159,19 @@ class ChatSettings(BaseModel):
     # against the *merged* values in the PUT, since either may be omitted.
     context_warn_threshold: float | None = Field(default=None, gt=0, lt=1)
     context_alert_threshold: float | None = Field(default=None, gt=0, le=1)
-    # ``ge=1``, not ``ge=0``: a turn allowed zero model requests could never produce an
-    # answer, so 0 is a nonsensical value to accept rather than merely a minimal one.
-    agent_request_limit: int | None = Field(default=None, ge=1)
+    # How long a turn waits for the model's first token, in seconds: the silent stretch
+    # while a local model reads a long prompt. A deploy-level ``None`` leaves that wait to
+    # the inactivity watchdog.
+    first_token_timeout_s: float | None = Field(default=None, gt=0)
     # The inactivity watchdog's bound in seconds: how long a run may go without emitting
     # an event before it is stopped. ``gt=0`` (a 0 bound would stop every turn
     # immediately); the config default applies when the operator hasn't set one, and a
     # deploy-level ``None`` disables the watchdog entirely.
     inactivity_timeout_s: float | None = Field(default=None, gt=0)
     # The wall-clock bound in seconds: how long a run may take in total, however busy it
-    # is. Off unless the operator sets one — a turn is already bounded by
-    # `agent_request_limit`, so a wall clock mostly stops runs that are merely slow. What
-    # it does catch is a run that keeps emitting (a tool streaming progress, a model
-    # streaming tokens) and so refreshes the inactivity watchdog forever without spending
-    # a model request. ``gt=0`` for the same reason as above; ``null`` removes the bound.
+    # is. Off unless the operator sets one; it catches a run that keeps emitting (a tool
+    # streaming progress, a model streaming tokens) and so refreshes the inactivity
+    # watchdog forever. ``gt=0`` for the same reason as above; ``null`` removes the bound.
     wall_clock_timeout_s: float | None = Field(default=None, gt=0)
     # How many sub-agents the agent may have running at once. ``null`` is *no cap*, which
     # is the default — so this is the second field where ``null`` is a value rather than an

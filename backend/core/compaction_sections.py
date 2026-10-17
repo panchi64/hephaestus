@@ -30,10 +30,13 @@ from pydantic import BaseModel
 
 from prompts.compaction import (
     COMPACT_ANCHORS_SECTION,
+    COMPACT_CLOSE,
     COMPACT_MARKER,
     COMPACT_PREAMBLE,
     COMPACT_SECTIONS,
     COMPACT_TOOLS_SECTION,
+    LEGACY_COMPACT_MARKER,
+    LEGACY_COMPACT_PREAMBLE,
 )
 
 # Sections are asked for as `## Name` lines; anything else in the text is body. A model
@@ -54,7 +57,17 @@ _SECTION_KEYS = tuple(re.sub(r"[^a-z0-9]+", " ", name.lower()).strip() for name 
 # Anchors heading (the prompt allows omission), and then the first `## Anchors` in the text
 # is one the fenced page wrote — lifting *those* lines forward would launder an injection
 # into every later checkpoint, verbatim, forever.
-_FENCE_MARKER = re.compile(r"\[(?:BEGIN|END) UNTRUSTED CONTENT\b[^\]]*\]")
+#
+# Matches the square-bracket shape too: checkpoints stored before the tag switch carry it.
+_FENCE_MARKER = re.compile(
+    r"\[(?P<legacy>BEGIN|END) UNTRUSTED CONTENT\b[^\]]*\]|<(?P<close>/)?untrusted\b[^>]*>"
+)
+
+
+def _opens(marker: re.Match[str]) -> bool:
+    """Whether a ``_FENCE_MARKER`` match opens a fence rather than closing one."""
+    legacy = marker.group("legacy")
+    return legacy == "BEGIN" if legacy else marker.group("close") is None
 
 
 def section_key(name: str) -> str:
@@ -121,7 +134,7 @@ def without_fenced(text: str) -> str:
     for line in text.splitlines():
         marker = _FENCE_MARKER.search(line)
         if marker is not None:
-            fenced = marker.group().startswith("[BEGIN")
+            fenced = _opens(marker)
             continue
         if not fenced:
             out.append(line)
@@ -143,11 +156,7 @@ def _fenced_content(body: str) -> str:
     err-long rule from the other side."""
     lines = body.splitlines()
     begin = next(
-        (
-            i
-            for i, line in enumerate(lines)
-            if (m := _FENCE_MARKER.search(line)) and m.group().startswith("[BEGIN")
-        ),
+        (i for i, line in enumerate(lines) if (m := _FENCE_MARKER.search(line)) and _opens(m)),
         None,
     )
     if begin is None:
@@ -158,7 +167,7 @@ def _fenced_content(body: str) -> str:
         (
             i
             for i, line in enumerate(lines[begin + 1 :], start=begin + 1)
-            if (m := _FENCE_MARKER.search(line)) and m.group().startswith("[END")
+            if (m := _FENCE_MARKER.search(line)) and not _opens(m)
         ),
         len(lines),
     )
@@ -183,16 +192,19 @@ class SummarySection(BaseModel):
     voice: Literal["prose", "machine"] = "prose"
 
 
-def strip_preamble(text: str) -> str:
-    """``text`` without the ``COMPACT_PREAMBLE`` the store wrote in front of it.
+def is_checkpoint(text: str) -> bool:
+    """Whether ``text`` is a stored compaction summary, in the tagged or the legacy form."""
+    return text.lstrip().startswith((COMPACT_MARKER, LEGACY_COMPACT_MARKER))
 
-    The preamble is addressed to the *model* — it exists because the checkpoint is replayed
-    as a user-shaped message and would otherwise read as something the operator typed. The
-    operator's own transcript already knows what the divider is, so repeating it there is
-    plumbing on screen. Falls back to the marker line alone, which is all a checkpoint
-    stored before the preamble's second line existed carries."""
-    body = text.strip()
-    for prefix in (COMPACT_PREAMBLE, COMPACT_MARKER):
+
+def strip_preamble(text: str) -> str:
+    """``text`` without the label the store wrapped it in.
+
+    The label is addressed to the model; the operator's transcript already draws the
+    divider. Legacy checkpoints carry the bracketed marker, some without the note line."""
+    body = text.strip().removesuffix(COMPACT_CLOSE).rstrip()
+    prefixes = (COMPACT_PREAMBLE, LEGACY_COMPACT_PREAMBLE, COMPACT_MARKER, LEGACY_COMPACT_MARKER)
+    for prefix in prefixes:
         if body.startswith(prefix):
             return body[len(prefix) :].strip()
     return body

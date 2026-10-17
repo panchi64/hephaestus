@@ -6,9 +6,10 @@ import {
   onMount,
   type JSX,
 } from "solid-js";
-import { ScrollFade, Stack, Text, cx } from "~/ui";
+import { ScrollFade, Text, cx } from "~/ui";
 import type { SummarySection } from "~/lib/stream";
 import { CompactionRow as Row } from "./CompactionRow";
+import { QuotedBlock } from "./QuotedBlock";
 
 /** What the model is left holding after a fold — one ruled row per section.
  *
@@ -58,17 +59,11 @@ export function CompactionSummary(props: {
             when={section.untrusted}
             fallback={<SectionBody section={section} />}
           >
-            {/* Bordered and labelled: the same "this came from outside" the fence makes
-                to the model, in the form the operator reads. The border and the words
-                both carry it — colour never carries a distinction alone. `Stack` rather
-                than a bare div because `Text` is inline: the attribution has to sit
-                *above* the quote, not run into its first line. */}
-            <Stack gap={1} class="border-line border-l pl-2">
-              <Text variant="micro" tone="dim">
-                Quoted from tool output — not this workspace's own words
-              </Text>
+            {/* The same "this came from outside" the fence makes to the model, in the
+                form the operator reads. */}
+            <QuotedBlock>
               <SectionBody section={section} />
-            </Stack>
+            </QuotedBlock>
           </Show>
         </Row>
       )}

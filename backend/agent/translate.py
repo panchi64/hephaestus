@@ -16,7 +16,9 @@ the library doesn't know about them; we emit them here and in the engine.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 
 from pydantic_ai import (
@@ -37,6 +39,8 @@ from pydantic_ai import (
 )
 
 from core.citations import Citable
+from core.diagnostics import is_platform_failure
+from core.envelopes import result_parts
 from core.serde import jsonable
 from runs import (
     AnswerDelta,
@@ -61,7 +65,7 @@ from .emit import (
     OverheadMeasured,
     PrefixWatched,
 )
-from .meta import LoopBreaker
+from .meta import FirstTokenTimeout, LoopBreaker
 
 #: How much of a source's snippet rides the wire. A citation is a *pointer* — the text
 #: that lets the operator recognise the source, not a second copy of it. The full passage
@@ -150,6 +154,7 @@ def on_chassis_event(event: object, run: Run) -> bool:
                     name=name,
                     error=event.error,
                     parent_tool_call_id=event.parent_tool_call_id,
+                    platform=is_platform_failure(event.error),
                 )
             )
         else:
@@ -192,11 +197,13 @@ def _emit_result(
     result — pixels, today. It rides the frame beside the call id, so the warm render
     pairs an image to its call exactly; the cold projection has to recover the same
     pairing positionally (see ``_attach_tool_images``)."""
+    result = jsonable(content)
     _ = run.emit(
         ToolCompleted(
             tool_call_id=tool_call_id,
             name=name,
-            result=jsonable(content),
+            result=result,
+            result_parts=result_parts(result),
             images=[
                 ToolImage(media_type=image.media_type, data=image.data)
                 for image in tool_images(user_content)
@@ -206,6 +213,22 @@ def _emit_result(
     )
     for citation in citations_from_tool_result(content):
         _ = run.emit(citation)
+
+
+def _answer(run: Run, text: str) -> None:
+    run.answer_started = True  # pins the endpoint past this point (AE-5.3)
+    run.step_text_chars += len(text)
+    _ = run.emit(AnswerDelta(text=text))
+
+
+def _thinking(run: Run, text: str) -> None:
+    run.step_thinking_chars += len(text)
+    _ = run.emit(ThinkingDelta(text=text))
+
+
+def _settle_step(run: Run) -> None:
+    run.step_text_chars = 0
+    run.step_thinking_chars = 0
 
 
 def _on_model_event(event: object, run: Run, mark_first_token: Callable[[], None]) -> None:
@@ -227,17 +250,15 @@ def _on_model_event(event: object, run: Run, mark_first_token: Callable[[], None
     if isinstance(event, PartStartEvent):
         part = event.part
         if isinstance(part, TextPart) and part.content:
-            run.answer_started = True  # pins the endpoint past this point (AE-5.3)
-            _ = run.emit(AnswerDelta(text=part.content))
+            _answer(run, part.content)
         elif isinstance(part, ThinkingPart) and part.content:
-            _ = run.emit(ThinkingDelta(text=part.content))
+            _thinking(run, part.content)
     elif isinstance(event, PartDeltaEvent):
         delta = event.delta
         if isinstance(delta, TextPartDelta) and delta.content_delta:
-            run.answer_started = True  # pins the endpoint past this point (AE-5.3)
-            _ = run.emit(AnswerDelta(text=delta.content_delta))
+            _answer(run, delta.content_delta)
         elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
-            _ = run.emit(ThinkingDelta(text=delta.content_delta))
+            _thinking(run, delta.content_delta)
     # PartEndEvent / FinalResultEvent carry no domain signal we surface — tool
     # execution is reported from the CallToolsNode.
 
@@ -287,6 +308,16 @@ def on_tool_event(
                     error=part.model_response(),
                 )
             )
+        elif part.outcome == "failed":
+            error = str(part.content)
+            _ = run.emit(
+                ToolFailed(
+                    tool_call_id=part.tool_call_id,
+                    name=part.tool_name,
+                    error=error,
+                    platform=is_platform_failure(error),
+                )
+            )
         else:
             _emit_result(
                 run,
@@ -305,6 +336,7 @@ async def stream_agent_run[DepsT](
     loop_breaker: LoopBreaker | None = None,
     on_step: Callable[[list[ModelMessage]], None] | None = None,
     on_request_node: Callable[[ModelRequestNode[DepsT, object]], None] | None = None,
+    first_token_timeout_s: float | None = None,
 ) -> None:
     """Iterate the AgentRun's graph nodes, emitting our events as they happen.
 
@@ -317,7 +349,9 @@ async def stream_agent_run[DepsT](
     ``on_request_node``, if given, is called with each yielded ``ModelRequestNode``
     *before* it streams — the request isn't in flight yet and hasn't been appended
     to the history, so the callback may still amend ``node.request.parts`` (the
-    engine injects mid-run operator messages here).
+    engine injects mid-run operator messages here). ``first_token_timeout_s`` bounds the
+    silent wait before each request's first streamed part, raising
+    :class:`FirstTokenTimeout`; None leaves that wait to the inactivity watchdog.
 
     Wall-clock is collected into ``run.timer`` as the nodes are walked: this is the
     only place that sees both node boundaries, so it is where the stopwatch belongs,
@@ -331,12 +365,34 @@ async def stream_agent_run[DepsT](
             if on_request_node is not None:
                 on_request_node(node)
             step += 1
+            _settle_step(run)
             _ = run.emit(StepStarted(index=step))
-            with timer.model_request() as mark_first_token:
-                async with node.stream(agent_run.ctx) as stream:
-                    async for event in stream:
-                        if not on_chassis_event(event, run):
-                            _on_model_event(event, run, mark_first_token)
+            # Until the first part streams, the server is reading the prompt: silent, and
+            # on a local model minutes long for a cold one. The keepalive keeps the
+            # inactivity watchdog from reading that as a stall; the first-token bound is
+            # what stops a server that never answers.
+            waiting = AsyncExitStack()
+            if first_token_timeout_s is not None:
+                await waiting.enter_async_context(run.keepalive())
+            deadline = asyncio.timeout(first_token_timeout_s)
+            try:
+                async with deadline:
+                    with timer.model_request() as mark_first_token:
+                        async with node.stream(agent_run.ctx) as stream:
+                            async for event in stream:
+                                if on_chassis_event(event, run):
+                                    continue
+                                if deadline.when() is not None:
+                                    deadline.reschedule(None)
+                                    await waiting.aclose()
+                                _on_model_event(event, run, mark_first_token)
+            except TimeoutError as exc:
+                if deadline.expired() and first_token_timeout_s is not None:
+                    raise FirstTokenTimeout(first_token_timeout_s) from exc
+                raise
+            finally:
+                await waiting.aclose()
+            _settle_step(run)
             _ = run.emit(StepCompleted(index=step))
             # The request's non-conversation weight (the brief + the tool schemas) and the
             # brief's named contributors both arrive as capability events at the head of

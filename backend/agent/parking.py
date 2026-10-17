@@ -115,10 +115,6 @@ class ParkedTurn:
     # stamped on that write; there is nothing left for the resume to carry. None for a
     # turn that opened on a request already in the tree (a regenerate).
     prompt_message_id: str | None = None
-    # The turn's model-request budget (the operator's setting, else the config default),
-    # carried so the resume continues under the same ceiling the original turn ran with
-    # rather than silently reverting to the default. None ⇒ resolve from config.
-    request_limit: int | None = None
     # The thread's binding, carried rather than re-read on resume. A resume that
     # defaulted it to Normal would hand a parked code turn a different filesystem than the
     # one it parked in — and the permission level rides along for the same reason it is
@@ -196,7 +192,6 @@ async def park_for_input(
     notifications: ParkNotifier | None = None,
     store: ConversationStore | None = None,
     conversation_id: str | None = None,
-    request_limit: int | None = None,
     binding: ConversationBinding = DEFAULT_BINDING,
     vision: bool = True,
     compaction: CompactionContext | None = None,
@@ -276,7 +271,6 @@ async def park_for_input(
             requests,
             announced,
             settled=settled,
-            request_limit=request_limit,
             binding=binding,
             vision=vision,
             compaction=compaction,

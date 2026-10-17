@@ -74,10 +74,8 @@ def _noop_toolset() -> FunctionToolset[RunDeps]:
 
 
 def _bounds_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Zero the tool-call ceiling, so the first call the model reaches for stops the turn."""
-    monkeypatch.setattr(
-        engine, "get_settings", lambda: Settings(agent_request_limit=25, agent_tool_calls_limit=0)
-    )
+    """Set the loop guard so the first call the model reaches for stops the turn."""
+    monkeypatch.setattr(engine, "get_settings", lambda: Settings(loop_repeat_threshold=1))
 
 
 def _calls_noop() -> FunctionModel:
@@ -249,7 +247,7 @@ async def test_content_is_encrypted_at_rest(tmp_path: Path):
 async def test_blocked_turn_persists_with_its_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    # A tool-calls bound tripped after the model already committed to a call: the
+    # The loop guard tripped after the model already committed to a call: the
     # turn stops blocked, but what ran (the tool-call response) is real conversation
     # content — persist it, tagged with why it stopped, so a reload shows the same
     # marker the live stream rendered rather than a turn that silently never happened.
@@ -274,10 +272,7 @@ async def test_blocked_turn_persists_with_its_reason(
     views = await store.messages_view(conv)
     assert views[0].role == "user"
     assert views[-1].role == "assistant"
-    # The marker names the bound that tripped — one of this run's own per-turn budgets.
-    # A bare "usage limit reached" would read as a provider rate limit and send the
-    # operator looking for an account quota that has nothing to do with the stop.
-    reason = "this run hit its tool-call limit for a single turn and stopped"
+    reason = "stopped: repeated an action without making progress"
     assert views[-1].blocked_reason == reason
 
     # Reload parity: a cold store rehydrates the same marker from the DB.
@@ -333,7 +328,12 @@ async def test_wall_clock_timeout_persists_the_partial_turn(tmp_path: Path):
     await cold.stop()
 
 
-async def test_inactivity_timeout_in_setup_window_persists_the_prompt(tmp_path: Path):
+async def test_inactivity_timeout_in_setup_window_persists_the_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # With no first-token bound the wait for a first token is the inactivity clock's again,
+    # which is the stop this test needs in the pre-model window.
+    monkeypatch.setattr(engine, "get_settings", lambda: Settings(first_token_timeout_s=None))
     # The inactivity clock starts at run start and is refreshed only by events. If it
     # trips in the pre-model window — the model never produced a first token — the turn
     # has no response, only the operator's own request. Without the fix, the stop would
@@ -591,16 +591,15 @@ async def test_cancel_parked_run_persists_the_parked_turn(tmp_path: Path):
 
 
 async def test_unhandled_exception_persists_the_partial_turn_and_errors(tmp_path: Path):
-    # Anything that escapes `drive_turn` besides its specific bound catches (here: a
-    # tool raising a plain exception) must not silently drop the operator's own prompt
-    # (and whatever the turn had already produced) from persistence — the orchestrator's
+    # Anything that escapes `drive_turn` besides its specific bound catches (here: the
+    # model itself raising; a tool's exception is recovered and never gets this far) must
+    # not silently drop the operator's own prompt from persistence. The orchestrator's
     # broad `except Exception` flushes it, carrying a legible marker, before the
     # registry's own generic handler records the run as `error`.
-    toolset: FunctionToolset[RunDeps] = FunctionToolset()
-
-    @toolset.tool_plain(metadata={"sensitivity": "read"})
-    def boom() -> int:
-        raise RuntimeError("tool exploded")
+    async def explode(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        if messages:
+            raise RuntimeError("model exploded")
+        yield ""
 
     store, db_engine = await _fresh_store(tmp_path)
     await store.start()
@@ -608,9 +607,8 @@ async def test_unhandled_exception_persists_the_partial_turn_and_errors(tmp_path
 
     reg = RunRegistry()
     orch = build_chat_orchestrator(
-        "call the tool",
-        model=TestModel(call_tools=["x_boom"]),
-        categories={"x": toolset},
+        "say something",
+        model=FunctionModel(stream_function=explode),
         store=store,
         conversation_id=conv,
     )

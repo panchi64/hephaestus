@@ -13,7 +13,12 @@
  * transcript knowing.
  */
 
-import type { ContextWindow, RunMetrics, SummarySection } from "~/lib/stream";
+import type {
+  ContentPartWire,
+  ContextWindow,
+  RunMetrics,
+  SummarySection,
+} from "~/lib/stream";
 import type {
   ChatActivity,
   ChatOutcome,
@@ -51,12 +56,10 @@ export interface ConversationSummaryDTO {
    *  `activity` above, not a replacement — both can be set at once, and `activity` is
    *  the one that wins while it is. */
   last_outcome?: ChatOutcome | null;
-  /** Where the thread works (`sandbox`, `checkout` or `worktree`), the basename of the
-   *  directory a checkout or worktree thread works in, and the project the thread is scoped to. All on the
-   *  *listing* because the rail files threads under their project. The id is what it
-   *  files *by* — the rail lists every directory, not only the ones holding threads, and
-   *  two of them can share a basename. */
-  workspace_kind?: string | null;
+  /** The basename of the directory of the project the thread is filed under, and that
+   *  project's id. Both on the *listing* because the rail files threads under their
+   *  project. The id is what it files *by* — the rail lists every directory, not only the
+   *  ones holding threads, and two of them can share a basename. */
   workspace?: string | null;
   project_id?: string | null;
   /** The custom agent the thread runs as; null is the default agent. */
@@ -80,18 +83,24 @@ export interface ToolCallAnswerDTO {
   text?: string | null;
 }
 
+export type ContentPartDTO = ContentPartWire;
+
 export interface ToolCallDTO {
   id: string;
   name: string;
   args: Record<string, unknown>;
   status: ToolInvocation["status"];
   result?: unknown;
+  /** The result split into typed parts; `result` stays the raw payload. */
+  result_parts?: ContentPartDTO[] | null;
   error?: string | null;
   images?: ToolImageDTO[];
   /** Non-empty only on a settled `ask_user` call. */
   answers?: ToolCallAnswerDTO[];
   /** The `run_code` call this one was made from, when a script made it. */
   parent_tool_call_id?: string | null;
+  /** The failure was the platform's own fault. Absent from older backends. */
+  platform?: boolean;
 }
 
 /** An inline View chip re-attached to the message that minted it — references the
@@ -123,11 +132,18 @@ export interface MessageDTO {
    *  thread's earlier turns were folded into, carried in `content`. "subagent" is a
    *  report from one the agent launched, which arrived as a request message and is not
    *  the operator speaking. */
-  role: "user" | "assistant" | "compaction" | "subagent";
+  role: "user" | "assistant" | "compaction" | "subagent" | "notice";
   content: string;
+  /** User turns: the non-text parts (attachment fallback text, a routine's previous-run
+   *  fence) split out of the operator's bubble, which `content` then holds alone. */
+  parts?: ContentPartDTO[] | null;
+  /** On a `notice` row: its kind, e.g. `open-tasks`. `content` is the notice body. */
+  notice?: string | null;
   /** On a `subagent` row: the handle of the agent that sent it, when it is a message
    *  one agent sent another rather than a report. */
   author?: string | null;
+  /** On a `subagent` row that is a report: the handle of the agent that reported. */
+  reporter?: string | null;
   tools: ToolCallDTO[];
   versions?: MessageVersionRefDTO[];
   created_at?: string | null;
@@ -287,7 +303,35 @@ export interface ApprovalOutcomeDTO {
 export interface ChatCreatedDTO {
   run_id: string;
   conversation_id: string;
-  /** Set when the send was queued into the conversation's already-live run
-   *  (mid-run steering) instead of starting a new one. */
-  queued_message_id?: string | null;
+}
+
+/** A send on a busy conversation: the backend queued it in the inbox rather than
+ *  starting a turn. `run_id` is the live run, or null when none is running. */
+export interface ChatQueuedDTO {
+  conversation_id: string;
+  queued_message_id: string;
+  run_id: string | null;
+}
+
+export type ChatSendDTO = ChatCreatedDTO | ChatQueuedDTO;
+
+export type InboxSourceDTO = "operator" | "subagent" | "agent" | "system";
+
+export interface InboxMessageDTO {
+  id: string;
+  text: string;
+  source: InboxSourceDTO;
+  sender: string | null;
+  held: boolean;
+  turn: boolean;
+  notice: string | null;
+  queued_at: string;
+}
+
+export interface InboxDTO {
+  messages: InboxMessageDTO[];
+  waiting_for_operator: boolean;
+  agents_paused: boolean;
+  /** The run on the thread, if one is live. */
+  run_id: string | null;
 }

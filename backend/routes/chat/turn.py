@@ -159,7 +159,6 @@ def compose_turn(
     command: Invocation | None = None,
     ephemeral: bool = False,
     auto_compact: AutoCompactPolicy | None = None,
-    request_limit: int | None = None,
     context_thresholds: ContextThresholds = DEFAULT_CONTEXT_THRESHOLDS,
     inactivity_timeout_s: float | None | Unset = UNSET,
     wall_clock_timeout_s: float | None | Unset = UNSET,
@@ -214,8 +213,6 @@ def compose_turn(
         vision=vision,
         # The operator's conversation-compaction policy; absent ⇒ the config defaults.
         auto_compact=auto_compact,
-        # The operator's per-turn model-request ceiling; absent ⇒ the config default.
-        request_limit=request_limit,
         # While offline mode is active the web services are down, so hide the web
         # tools from the agent rather than let it discover they're unavailable.
         disabled_tools=disabled_tools,

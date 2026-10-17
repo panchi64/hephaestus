@@ -7,18 +7,38 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import override
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from core.db import in_session
 from core.exceptions import NotFoundError
 from models.conversation import Conversation
+from models.thread_worktree import ThreadWorktree
 from runs.overhead import TurnOverhead
 from services.permissions import PermissionLevel, permission_level
 from services.sealing import open_sealed
-from services.workspace_kind import workspace_kind
+from services.workspace import DELEGATION_SEP
 
 from .core import StoreCore
 from .records import ConversationBinding
+
+
+def _has_worktree(session: Session, conversation_id: str) -> bool:
+    row = session.exec(
+        select(ThreadWorktree.id).where(ThreadWorktree.conversation_id == conversation_id)
+    ).first()
+    return row is not None
+
+
+def _lease_root(session: Session, conversation: Conversation) -> str | None:
+    """The thread a spawned agent's leases are read from, or None for a thread of its own."""
+    if conversation.parent_id is None:
+        return None
+    key = conversation.workspace_key or ""
+    if key:
+        return key.partition(DELEGATION_SEP)[0]
+    parent = session.get(Conversation, conversation.parent_id)
+    parent_key = (parent.workspace_key or "") if parent is not None else ""
+    return parent_key.partition(DELEGATION_SEP)[0] or conversation.parent_id
 
 
 class MetadataMixin(StoreCore):
@@ -106,21 +126,36 @@ class MetadataMixin(StoreCore):
         A missing conversation reads as an unfiled sandbox thread at the default level,
         which is the same answer a stateless turn gets and the safe one: a sandbox never
         touches the host.
+
+        A spawned agent works under the leases of the thread at the top of its workspace,
+        so it may write what that thread may. It works in that thread's worktree when it
+        shares its files, and in a worktree of its own when its key names a delegation.
         """
 
         def work(session: Session) -> ConversationBinding:
             conversation = session.get(Conversation, conversation_id)
             if conversation is None:
                 return ConversationBinding()
-            # Both columns are plain strings, so an unrecognised value (a restored backup
-            # from a future version, a hand-edited row) is normalised towards the answer
-            # that does least.
+            holder, delegated, _ = (conversation.workspace_key or "").partition(DELEGATION_SEP)
+            filed = conversation.project_id is not None
+            if delegated:
+                worktree = filed
+            else:
+                worktree = filed and _has_worktree(session, holder or conversation_id)
+            leases_from = _lease_root(session, conversation)
+            # The level is a plain string, so an unrecognised value (a restored backup from
+            # a future version, a hand-edited row) is normalised towards the answer that
+            # does least.
             return ConversationBinding(
-                workspace_kind=workspace_kind(conversation.workspace_kind),
                 project_id=conversation.project_id,
+                worktree=worktree,
+                leases_from=leases_from,
+                checkout_read_only=leases_from is not None
+                and _has_worktree(session, leases_from),
                 permission=permission_level(conversation.permission_level),
                 agent_name=conversation.agent_name,
                 workspace_key=conversation.workspace_key or "",
+                spawned=conversation.parent_id is not None,
             )
 
         return await in_session(self._engine, work)
@@ -142,7 +177,8 @@ class MetadataMixin(StoreCore):
         return await in_session(self._engine, work)
 
     async def open_worktree(self, conversation_id: str) -> bool:
-        """Move this thread from its project's folder to its own worktree. One-way.
+        """Record that this thread works on its project in a worktree of its own, until
+        :meth:`close_worktree`.
 
         False when the thread does not exist or has no project to check out.
         """
@@ -151,10 +187,31 @@ class MetadataMixin(StoreCore):
             conversation = session.get(Conversation, conversation_id)
             if conversation is None or conversation.project_id is None:
                 return False
-            conversation.workspace_kind = "worktree"
+            held = session.exec(
+                select(ThreadWorktree).where(ThreadWorktree.conversation_id == conversation_id)
+            ).first()
+            if held is None:
+                session.add(
+                    ThreadWorktree(
+                        owner_id=conversation.owner_id,
+                        conversation_id=conversation_id,
+                        project_id=conversation.project_id,
+                    )
+                )
             return True
 
         return await in_session(self._engine, work)
+
+    async def close_worktree(self, conversation_id: str) -> None:
+        """Forget this thread's worktree, once it is merged or discarded."""
+
+        def work(session: Session) -> None:
+            for row in session.exec(
+                select(ThreadWorktree).where(ThreadWorktree.conversation_id == conversation_id)
+            ).all():
+                session.delete(row)
+
+        await in_session(self._engine, work)
 
     async def set_permission_level(self, conversation_id: str, level: str) -> PermissionLevel:
         """Move this thread to ``level``, returning what it is now.

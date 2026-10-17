@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ChatMessage, HostCommandBlock } from "../model";
-import { upsertHost } from "./patch";
+import { appendDelta, retractDelta, upsertHost } from "./patch";
 
 /** The terminal on `m`, for reading assertions off. */
 function terminal(m: ChatMessage) {
@@ -55,4 +55,17 @@ test("a denied terminal stays denied whatever the tool reports next", () => {
   });
   expect(terminal(m)).toMatchObject({ phase: "denied" });
   expect(terminal(m)?.stdout).toBeUndefined();
+});
+
+test("a retried request's streamed text is taken back before the retry streams", () => {
+  const m = turn();
+  appendDelta(m, "text", "Earlier answer. ");
+  appendDelta(m, "thinking", "half a thought");
+  appendDelta(m, "text", "half an ans");
+  retractDelta(m, "text", "half an ans".length);
+  retractDelta(m, "thinking", "half a thought".length);
+  appendDelta(m, "text", "the full answer");
+  expect(m.blocks).toMatchObject([
+    { kind: "text", text: "Earlier answer. the full answer" },
+  ]);
 });

@@ -140,15 +140,16 @@ def tool_search_capability(
 #: stays loaded, and the rule about loading before refusing are all in the standing index
 #: — one copy each, and the index is the thing the model reads *before* it knows there is
 #: a tool to call.
-_TOOL_DESCRIPTION = "Load tools that are not currently in your list."
+_TOOL_DESCRIPTION = "Loads tools that are not in your list yet, and returns the ones it loaded."
 
 #: The library's default here tells the model to use "specific words likely to appear in
 #: tool names or descriptions" — the one thing it cannot do, since a dormant group's names
 #: and descriptions are exactly what has been withheld from it. This says what actually
 #: resolves: the group name first, a description of the work as the fallback.
 _QUERIES_DESCRIPTION = (
-    "A group's name loads every tool in that group. When you do not know which group "
-    "holds what you need, describe the work instead and the closest tools are loaded."
+    "A group's name, such as `browse`, loads every tool in that group. When you do not "
+    "know which group holds what you need, describe the work instead and the closest "
+    "tools are loaded."
 )
 
 
@@ -205,6 +206,6 @@ you have loaded it, which is what keeps this conversation small:
 
 {groups}
 
-Call search_tools with a group's name to load it. The whole group arrives at once and \
+Call `search_tools` with a group's name to load it. The whole group arrives at once and \
 stays for the rest of the conversation. Load a group when the work needs it, instead of \
 telling the operator there is no way to do something."""

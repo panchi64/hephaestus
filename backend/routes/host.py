@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from routes import deps
 from routes.deps import OPERATOR_ID
 from services import host_open, host_picker
+from services.home.paths import HOME, HomePathError, absolute, parse
 from services.host_picker import PickerAvailability, PickMode
 
 router = APIRouter(prefix="/host", tags=["host"])
@@ -100,6 +101,30 @@ async def _searchable_roots(request: Request) -> list[Path]:
     return out
 
 
+async def _home_project(request: Request, path: str) -> tuple[list[Path], str] | None:
+    """The folder and in-project path a path in the agent's home names, when it names a
+    registered project (``~/projects/<slug>/…``, its own folder) or a worktree of one
+    (``~/worktrees/<slug>/…``); None for anything else."""
+    try:
+        target = parse(absolute(path, cwd=HOME))
+    except HomePathError:
+        return None
+    if target.place.kind not in ("projects", "worktrees") or not target.rel:
+        return None
+    projects = deps.projects(request)
+    slugs = await projects.slugs(OPERATOR_ID)
+    project_id = next((pid for pid, slug in slugs.items() if slug == target.place.name), None)
+    if project_id is None:
+        return None
+    root = (await projects.workspace_roots(OPERATOR_ID)).get(project_id)
+    if root is None:
+        return None
+    if target.place.kind == "projects":
+        return [root], target.rel
+    worktree = deps.worktrees(request).path_for(project_id)
+    return ([worktree] if worktree.is_dir() else []), target.rel
+
+
 @router.post("/open", response_model=OpenResult)
 async def open_in_editor(request: Request, body: OpenRequest) -> OpenResult:
     """Open a file from the operator's projects in whatever their machine opens it with.
@@ -111,7 +136,12 @@ async def open_in_editor(request: Request, body: OpenRequest) -> OpenResult:
     inside them the host would *run* rather than show: the agent writes into those roots,
     so being contained is no evidence that the file at the end is a file to read.
     """
-    target = host_open.resolve_within(await _searchable_roots(request), body.path)
+    in_home = await _home_project(request, body.path)
+    if in_home is not None:
+        roots, rel = in_home
+        target = host_open.resolve_within(roots, rel)
+    else:
+        target = host_open.resolve_within(await _searchable_roots(request), body.path)
     try:
         await host_open.open_path(target)
     except RuntimeError as exc:

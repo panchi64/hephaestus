@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from services.home.backend import Mount
+from services.home.paths import SCRATCH
+from services.home.table import RunHome
 from services.permissions import Reach
-
-BRANCH = "hephaestus/thread-1"
+from tools import shell as shell_tool
 
 
 class TestWhereTheToolRunsACommand:
@@ -14,19 +16,14 @@ class TestWhereTheToolRunsACommand:
     `host` leaves the platform VM — an explicit yes that the approver was shown.
 
     The availability of the VM is deliberately not one of the inputs here. A chat with no
-    running VM refuses the shell tools outright (`_guard`), so by the time this function
-    runs there is always a VM to route to — which is what keeps "cleared or not, the
-    command runs in the VM" a statement with no exceptions in it.
+    running VM refuses the shell tools outright, so by the time this function runs there
+    is always a VM to route to — which is what keeps "cleared or not, the command runs in
+    the VM" a statement with no exceptions in it.
     """
 
     def _boundary(self, tmp_path: Path, command: str, *, reach: Reach):
-        from services.workspace import HostFiles, RunWorkspace
-        from tools import shell as shell_tool
-
-        workspace = RunWorkspace(
-            root=tmp_path, kind="worktree", files=HostFiles(tmp_path), branch=BRANCH
-        )
-        boundary = shell_tool.boundary("run_command", command, reach, workspace)
+        home = RunHome(mounts=(Mount(SCRATCH, tmp_path, writable=True),), default=SCRATCH, key="t")
+        boundary = shell_tool.boundary("run_command", command, reach, home, SCRATCH.path)
         assert boundary.reach == reach
         assert boundary.fenced is (boundary.where == "vm")
         assert (boundary.reason is None) is boundary.fenced
