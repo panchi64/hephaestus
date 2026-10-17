@@ -190,6 +190,7 @@ class TestPlanNarrowsTheCatalog:
             "code_execute",
             "files_write_file",
             "mail_send",
+            "memory_forget",
             "memory_remember",
             "shell_run_command",
             "vault_get_entry",

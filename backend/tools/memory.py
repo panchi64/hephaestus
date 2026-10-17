@@ -2,9 +2,13 @@
 
 Memory works like the skill catalog: pinned memories reach every turn's instructions as
 ``id: description`` lines (:func:`memory_catalog_instructions`), ``open`` returns one
-memory's full text, and ``recall`` searches the rest. Every verb is a pass-through to
-:class:`~services.memory.MemoryStore` reached via ``RunDeps``, the same service the REST
-routes call.
+memory's full text, and ``recall`` searches the rest. ``list``, ``audit``, ``update``,
+``consolidate`` and ``forget`` let the agent keep the set tidy. Every verb is a
+pass-through to :class:`~services.memory.MemoryStore` reached via ``RunDeps``, the same
+service the REST routes call.
+
+``forget`` and ``consolidate`` delete memories, so they always ask first; the approval
+card's explanation is built from the stored descriptions, not from the model's arguments.
 
 If memory isn't wired into the run, the tools say so rather than failing — the model
 adapts (graceful degradation).
@@ -14,6 +18,7 @@ from __future__ import annotations
 
 from cryptography.exceptions import InvalidTag
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
+from pydantic_ai.exceptions import ApprovalRequired
 
 from core.diagnostics import render_tool_error
 from core.exceptions import NotFoundError
@@ -22,6 +27,8 @@ from prompts.memory import MEMORY_CATALOG, MEMORY_OTHERS, MEMORY_PINNED_LIMIT
 from services.memory import MemoryCatalog, MemoryStore, MemoryView
 
 from .deps import RunDeps
+
+GATED_TOOLS: frozenset[str] = frozenset({"memory_forget", "memory_consolidate"})
 
 _UNAVAILABLE = "Memory is unavailable."
 
@@ -45,6 +52,14 @@ def _entry(view: MemoryView) -> dict[str, object]:
         "content": view.content,
         "pinned": view.pinned,
     }
+
+
+def _index_entry(view: MemoryView) -> dict[str, object]:
+    return {"id": view.id, "description": view.description, "pinned": view.pinned}
+
+
+def _ask(explanation: str) -> ApprovalRequired:
+    return ApprovalRequired(metadata={"explanation": explanation})
 
 
 def memory_toolset() -> FunctionToolset[RunDeps]:
@@ -101,7 +116,8 @@ def memory_toolset() -> FunctionToolset[RunDeps]:
 
         Use it when the operator revises something memory holds ("call me Fran, not
         Francisco"), so the old version stops steering you. Pass only what changes;
-        ``content`` replaces the whole text. Pin by `memory_remember`'s rule."""
+        ``content`` replaces the whole text. Pin by `memory_remember`'s rule. To fold
+        several memories into one, use `memory_consolidate`."""
         store = ctx.deps.caps.get_optional(MemoryStore)
         if store is None:
             return {"error": _UNAVAILABLE}
@@ -133,6 +149,102 @@ def memory_toolset() -> FunctionToolset[RunDeps]:
             }
             for h in hits
         ]
+
+    @toolset.tool(name="list")
+    async def list_memories(
+        ctx: RunContext[RunDeps], pinned_only: bool = False, offset: int = 0, limit: int = 50
+    ) -> dict[str, object]:
+        """Page through every memory, newest first, without content. For reviewing memory
+        as a whole; to answer a question, use `memory_recall`."""
+        store = ctx.deps.caps.get_optional(MemoryStore)
+        if store is None:
+            return {"error": _UNAVAILABLE}
+        views = await store.list_memories(ctx.deps.owner_id)
+        if pinned_only:
+            views = [v for v in views if v.pinned]
+        page = views[max(offset, 0) : max(offset, 0) + max(limit, 0)]
+        return {"total": len(views), "memories": [_index_entry(v) for v in page]}
+
+    @toolset.tool
+    async def audit(ctx: RunContext[RunDeps]) -> list[dict[str, object]]:
+        """Find groups of near-duplicate memories, to merge with `memory_consolidate` or
+        prune with `memory_forget`."""
+        store = ctx.deps.caps.get_optional(MemoryStore)
+        if store is None:
+            return [{"error": _UNAVAILABLE}]
+        groups = await store.audit(ctx.deps.owner_id)
+        if not groups:
+            return []
+        views = {v.id: v for v in await store.list_memories(ctx.deps.owner_id)}
+        return [
+            {
+                "similarity": round(g.similarity, 3),
+                "memories": [_index_entry(views[i]) for i in g.memory_ids if i in views],
+            }
+            for g in groups
+        ]
+
+    @toolset.tool
+    async def forget(ctx: RunContext[RunDeps], id: str) -> str:
+        """Delete a memory that is obsolete or that the operator asks you to forget; to
+        correct one, use `memory_update`. Asks the operator first."""
+        store = ctx.deps.caps.get_optional(MemoryStore)
+        if store is None:
+            return _UNAVAILABLE
+        try:
+            view = await store.get(ctx.deps.owner_id, id)
+        except NotFoundError:
+            raise _unknown(id) from None
+        if not ctx.tool_call_approved:
+            raise _ask(f"Forget memory “{view.description}”")
+        await store.delete(ctx.deps.owner_id, id)
+        return f"Forgot {id}."
+
+    @toolset.tool
+    async def consolidate(
+        ctx: RunContext[RunDeps],
+        keep: str,
+        merge: list[str],
+        content: str,
+        description: str,
+        pinned: bool | None = None,
+    ) -> dict[str, object]:
+        """Merge memories: ``keep`` is rewritten with ``content`` and ``description``,
+        which must carry everything worth keeping, and every ``merge`` id is deleted.
+        Unset ``pinned`` keeps any pin. Asks the operator first."""
+        store = ctx.deps.caps.get_optional(MemoryStore)
+        if store is None:
+            return {"error": _UNAVAILABLE}
+        if not merge or keep in merge:
+            raise ModelRetry(
+                render_tool_error(
+                    "`merge` must list at least one id other than `keep`",
+                    hints=["`keep` is the memory that survives; `merge` holds the rest"],
+                )
+            )
+        descriptions: list[str] = []
+        for memory_id in [keep, *merge]:
+            try:
+                descriptions.append((await store.get(ctx.deps.owner_id, memory_id)).description)
+            except NotFoundError:
+                raise _unknown(memory_id) from None
+        if not ctx.tool_call_approved:
+            kept, *folded = descriptions
+            raise _ask(f"Merge into “{kept}” and delete: " + "; ".join(f"“{d}”" for d in folded))
+        try:
+            view = await store.consolidate(
+                ctx.deps.owner_id,
+                keep,
+                merge,
+                content=content,
+                description=description,
+                pinned=pinned,
+            )
+        except NotFoundError:
+            raise ModelRetry(
+                render_tool_error("a memory was deleted while waiting for approval")
+            ) from None
+        return _entry(view)
 
     return toolset
 

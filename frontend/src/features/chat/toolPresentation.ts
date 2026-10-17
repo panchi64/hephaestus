@@ -221,6 +221,22 @@ const TOOLS: Record<string, ToolEntry> = {
     label: "Update memory",
     keys: ["description", "id"],
   },
+  memory_list: {
+    icon: "database",
+    label: "List memories",
+    noun: ["memory", "memories"],
+  },
+  memory_audit: {
+    icon: "database",
+    label: "Audit memory",
+    noun: ["group", "groups"],
+  },
+  memory_forget: { icon: "database", label: "Forget memory", keys: ["id"] },
+  memory_consolidate: {
+    icon: "database",
+    label: "Merge memories",
+    keys: ["description", "keep"],
+  },
 
   tasks_read: { icon: "note", label: "Read tasks", noun: ["task", "tasks"] },
   tasks_update_statuses: { icon: "note", label: "Task statuses" },

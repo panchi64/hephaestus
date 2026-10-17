@@ -219,6 +219,27 @@ async def test_audit_flags_near_duplicates():
     assert len(groups[0].memory_ids) == 2
 
 
+async def test_consolidate_is_atomic_and_reembeds():
+    store = await _setup(FakeEmbedder())
+    keep = await store.remember(OWNER, "I drive a car")
+    other = await store.remember(OWNER, "my vehicle")
+
+    with pytest.raises(NotFoundError):
+        _ = await store.consolidate(
+            OWNER, keep.id, [other.id, "nope"], content="I have a cat", description="d"
+        )
+    assert {v.id for v in await store.list_memories(OWNER)} == {keep.id, other.id}
+    assert (await store.get(OWNER, keep.id)).content == "I drive a car"
+
+    merged = await store.consolidate(
+        OWNER, keep.id, [other.id], content="I have a cat", description="Pet"
+    )
+    assert merged.pinned is False
+    assert [v.id for v in await store.list_memories(OWNER)] == [keep.id]
+    hits = await store.recall(OWNER, "kitten")
+    assert hits[0].memory.id == keep.id and hits[0].matched_by in ("semantic", "both")
+
+
 async def test_get_unknown_memory_is_not_found():
     store = await _setup(FakeEmbedder())
     with pytest.raises(NotFoundError):

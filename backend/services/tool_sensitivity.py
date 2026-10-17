@@ -133,6 +133,8 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             "mail_list_accounts",
             "mail_list_messages",
             "mail_read",
+            "memory_audit",
+            "memory_list",
             "memory_open",
             "memory_recall",
             # The plan this thread is working from — a record we wrote and the operator
@@ -172,6 +174,9 @@ SENSITIVITY_CLASSES: Mapping[Sensitivity, frozenset[str]] = {
             # draft never reaches the mail server, which is the whole point of preferring
             # it over `mail_reply`.
             "mail_draft_reply",
+            # Both delete, so both also gate themselves on every call.
+            "memory_consolidate",
+            "memory_forget",
             "memory_remember",
             "memory_update",
             # A branch and a checkout beside the operator's repository, which reach their

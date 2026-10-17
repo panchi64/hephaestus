@@ -8,10 +8,12 @@ from pathlib import Path
 from pydantic_ai import (
     FunctionToolset,
     ModelMessage,
+    RunContext,
     ToolApproved,
     ToolDenied,
     ToolReturnPart,
 )
+from pydantic_ai.exceptions import ApprovalRequired as AskFirst
 from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.models.test import TestModel
 
@@ -19,9 +21,10 @@ from agent import ParkedTurn, build_chat_orchestrator, build_resume_orchestrator
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import Run, RunRegistry, RunStatus, ToolCompleted
+from runs import ApprovalRequired, Run, RunRegistry, RunStatus, ToolCompleted
 from services.conversations import ConversationBinding
 from services.notifications import NotificationService
+from services.tool_sensitivity import SENSITIVITY_METADATA_KEY, Sensitivity
 from tools import RunDeps
 
 from ._helpers import bodies_of, parked_turn, run_bodies
@@ -152,6 +155,30 @@ async def test_park_notifies_approval_needed(tmp_path: Path):
     assert items[0].conversation_id == "c1"
     assert "delete_thing" in items[0].title
     await service.stop()
+
+
+async def test_a_self_gated_tools_metadata_explanation_reaches_the_card():
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
+
+    @toolset.tool(metadata={SENSITIVITY_METADATA_KEY: Sensitivity.READ.value})
+    def forget(ctx: RunContext[RunDeps], name: str) -> str:
+        if not ctx.tool_call_approved:
+            raise AskFirst(metadata={"explanation": f"Forget “{name}”"})
+        return "gone"
+
+    reg = RunRegistry()
+    orch = build_chat_orchestrator(
+        "forget it",
+        model=TestModel(custom_output_text="done"),
+        categories={"danger": toolset},
+        binding=ConversationBinding(permission="edit"),
+    )
+    run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
+    await run.wait()
+
+    assert run.status is RunStatus.awaiting_input
+    (asked,) = bodies_of(run, ApprovalRequired)
+    assert asked.explanation is not None and asked.explanation.startswith("Forget “")
 
 
 async def test_grant_short_circuit_resolves_a_dangling_notification(tmp_path: Path):

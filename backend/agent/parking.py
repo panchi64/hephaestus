@@ -207,10 +207,12 @@ async def park_for_input(
             continue
         pending_names.add(call.tool_name)
         args = call.args_as_dict()
-        # A tool may hand the operator a plain-language explanation via an
-        # `explanation` argument (the host-execution path requires one); surface
-        # it as a distinct field so the client need not parse it out of the args.
+        # A plain-language explanation comes from an `explanation` argument (the
+        # host-execution path requires one) or, for a tool that writes its own from
+        # stored state, from the `ApprovalRequired` metadata.
         explanation = args.get("explanation")
+        if not isinstance(explanation, str):
+            explanation = requests.metadata.get(call.tool_call_id, {}).get("explanation")
         _ = run.emit(
             ApprovalRequired(
                 tool_call_id=call.tool_call_id,

@@ -76,6 +76,10 @@ describe("what came back", () => {
     );
     expect(describeToolResult("memory_recall", [{}])).toBe("1 memory");
     expect(describeToolResult("files_find_files", [{}, {}])).toBe("2 matches");
+    expect(describeToolResult("memory_audit", [{}, {}])).toBe("2 groups");
+    expect(
+      describeToolResult("memory_list", { total: 12, memories: [{}, {}] }),
+    ).toBe("2 memories");
   });
 
   test("a revealed group is counted in tools, not in bare results", () => {

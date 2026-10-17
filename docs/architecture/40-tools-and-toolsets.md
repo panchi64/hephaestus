@@ -108,7 +108,7 @@ Two deliberate omissions, each a settled decision rather than an oversight:
 | Category | Tools (today) | Backing capability | Status |
 |---|---|---|---|
 | `builtin` | `now` | — (starter category so the stack has something to compose) | ✅ built |
-| `memory` | `remember`, `recall` | `services/memory` (hybrid recall, `MEM-*`) | ✅ built |
+| `memory` | `remember`, `open`, `recall`, `list`, `audit`, `update`, `consolidate`, `forget` | `services/memory` (hybrid recall, `MEM-*`) | ✅ built |
 | `platform` | `search`, `read` | `services/corpus` over every source, plus the skill, agent and plugin catalogs (D118) | ✅ built |
 | `code` | `execute`, `request_egress`, `run_host_command` | `services/sandbox` + `services/egress` (`XC-SEC-7`) | ✅ built |
 | `view` | `view_show` (file → version, or serve → live head), `view_close` | `services/artifacts` (version store) + `services/sandbox` (live head) | ✅ built |

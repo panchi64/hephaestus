@@ -25,7 +25,7 @@ from sqlalchemy import Engine, func, or_
 from sqlmodel import Session, col, select
 
 from core.db import get_owned, in_session
-from core.exceptions import DegradedCapabilityError
+from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
 from models.memory import Memory
 from services.embeddings import (
@@ -210,6 +210,52 @@ class MemoryStore:
 
         await in_session(self._engine, work)
 
+    async def consolidate(
+        self,
+        owner_id: str,
+        keep_id: str,
+        merge_ids: list[str],
+        *,
+        content: str,
+        description: str,
+        pinned: bool | None = None,
+    ) -> MemoryView:
+        """Rewrite ``keep_id`` as the merged memory and delete ``merge_ids``, in one commit.
+
+        ``pinned=None`` pins the result if any of the merged memories was pinned.
+
+        Raises:
+            ValueError: ``merge_ids`` is empty or contains ``keep_id``.
+            NotFoundError: one of the ids is not the owner's memory; nothing changes.
+        """
+        if not merge_ids:
+            raise ValueError("nothing to merge")
+        if keep_id in merge_ids:
+            raise ValueError(f"{keep_id!r} is both kept and merged")
+        ids = [keep_id, *dict.fromkeys(merge_ids)]
+        model, dim, vector_enc = await self._embed_for_storage(owner_id, content)
+
+        def work(session: Session) -> MemoryView:
+            rows: list[Memory] = []
+            for memory_id in ids:
+                row = session.get(Memory, memory_id)
+                if row is None or row.owner_id != owner_id:
+                    raise NotFoundError(f"memory {memory_id!r} not found")
+                rows.append(row)
+            kept, *merged = rows
+            kept.content_enc = self._vault.encrypt_str(content)
+            kept.description_enc = self._seal_description(description)
+            kept.embedding_model, kept.embedding_dim, kept.embedding_enc = model, dim, vector_enc
+            kept.pinned = any(row.pinned for row in rows) if pinned is None else pinned
+            kept.updated_at = datetime.now(UTC)
+            session.add(kept)
+            for row in merged:
+                session.delete(row)
+            session.flush()
+            return self._view(kept)
+
+        return await in_session(self._engine, work)
+
     # --- read path --------------------------------------------------------
 
     async def list_memories(self, owner_id: str) -> list[MemoryView]:
@@ -292,7 +338,7 @@ class MemoryStore:
         """Flag near-duplicate memories for consolidation (`MEM-3`).
 
         Pairs whose embeddings exceed ``threshold`` cosine similarity are grouped.
-        Detection only — the operator decides what to merge or delete."""
+        Detection only: merging or deleting is a separate, deliberate call."""
 
         def work(session: Session) -> list[DuplicateGroup]:
             rows = session.exec(select(Memory).where(Memory.owner_id == owner_id)).all()

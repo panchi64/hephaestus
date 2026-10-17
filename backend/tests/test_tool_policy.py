@@ -166,6 +166,10 @@ _PINNED_CATALOG = {
     "mail_read",
     "mail_reply",
     "mail_send",
+    "memory_audit",
+    "memory_consolidate",
+    "memory_forget",
+    "memory_list",
     "memory_open",
     "memory_recall",
     "memory_remember",
@@ -229,6 +233,8 @@ async def test_booted_app_assembles_the_same_catalog():
             "plugins_test",
             "routines_write",
             "routines_delete",
+            "memory_forget",
+            "memory_consolidate",
         }
         # ...and every one of them is a real, registered tool, so the operator's scope
         # list can actually offer it.
