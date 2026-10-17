@@ -138,13 +138,25 @@ class ManagedSearxng:
             logger.info("search: no platform VM — managed web search unavailable")
             return
         _ = await vm.wait_ready(float("inf"))
+        proxy = vm.layout.platform_proxy
         try:
-            await vm.put_text(_SETTINGS_PATH, self.settings(vm.layout.platform_proxy))
+            await vm.put_text(_SETTINGS_PATH, self.settings(proxy))
             await vm.stop_service(_SERVICE)
             await vm.start_service(
                 _SERVICE,
                 _USER,
-                ["env", f"SEARXNG_SETTINGS_PATH={_SETTINGS_PATH}", _PYTHON, "-m", "searx.webapp"],
+                [
+                    "env",
+                    f"SEARXNG_SETTINGS_PATH={_SETTINGS_PATH}",
+                    # The guest has no DNS. SearXNG's plugins fetch before `outgoing.proxies`
+                    # applies, and a direct request hangs in the resolver until startup aborts.
+                    f"HTTPS_PROXY=http://{proxy}",
+                    f"HTTP_PROXY=http://{proxy}",
+                    "NO_PROXY=127.0.0.1,localhost",
+                    _PYTHON,
+                    "-m",
+                    "searx.webapp",
+                ],
             )
             host_port = await vm.forward(_PORT)
         except VMError as exc:
