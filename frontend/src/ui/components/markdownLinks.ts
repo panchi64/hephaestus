@@ -1,5 +1,6 @@
 import type { MarkedExtension } from "marked";
 import { hostLabel } from "~/lib/format";
+import { localImageRef } from "./localImages";
 
 /**
  * Anchors for the `marked` pipeline (see Markdown.tsx) — the single place a link
@@ -295,8 +296,15 @@ export const markedLinks: MarkedExtension = {
       return path === null ? inner : openPathHtml(path, inner, token.title);
     },
     image(token) {
-      const href = safeHref(token.href);
       const alt = token.text ?? "";
+      const local = localImageRef(token.href);
+      if (local !== null)
+        return [
+          `<img data-local-ref="${escapeAttr(local)}"`,
+          ` alt="${escapeAttr(alt)}"`,
+          ` class="heph-local-image">`,
+        ].join("");
+      const href = safeHref(token.href);
       // An image the operator can't see is worth its caption; an image we can't
       // vouch for is worth nothing. `mailto:` is not an image address either.
       if (href === null || !isExternalHref(href)) return escapeText(alt);

@@ -20,7 +20,8 @@ import type { ConversationActions } from "../conversationActions";
 import type { createChatStream } from "../stream/chatStream";
 import type { TranscriptFollow } from "../transcriptScroll";
 import type { ChatViewport } from "../useChatViewport";
-import { TurnLockContext } from "../turnLock";
+import { screenshotIndex } from "../screenshots";
+import { TranscriptContexts } from "./TranscriptContexts";
 import { InboxRows } from "./InboxRows";
 import { MessageItem } from "./MessageItem";
 
@@ -60,6 +61,8 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
   // sits at the tail, so counting it would dim the entire thread the moment a fold
   // starts — including the recent turns the fold is about to keep verbatim — and then
   // un-dim them when it lands. It has folded nothing yet.
+  const screenshots = createMemo(() => screenshotIndex(props.stream.messages));
+
   const foldedThrough = createMemo(() => {
     let last = -1;
     props.stream.messages.forEach((m, i) => {
@@ -92,7 +95,10 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
   });
 
   return (
-    <TurnLockContext.Provider value={props.stream.sending}>
+    <TranscriptContexts
+      sending={props.stream.sending}
+      screenshots={screenshots}
+    >
       <div class="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={props.scroll.ref}
@@ -123,7 +129,7 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
           {/* The measure goes on the CONTENT, not on the scroll container:
             the container has to keep its full width so its scrollbar sits
             at the edge of the pane. */}
-          <div class={props.measure}>
+          <div ref={props.scroll.contentRef} class={props.measure}>
             {/* One malformed block must not cost the operator the composer,
               the thread list, or the text they were typing — scope a throw
               in the message tree to the scroll region. Switching threads
@@ -238,6 +244,6 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
           </Button>
         </Show>
       </div>
-    </TurnLockContext.Provider>
+    </TranscriptContexts>
   );
 }

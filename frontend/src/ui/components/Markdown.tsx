@@ -15,6 +15,7 @@ import { openHostPath } from "~/lib/hostOpen";
 import { markedLinks } from "./markdownLinks";
 import { markedMath } from "./markdownMath";
 import { markedMermaid } from "./markdownMermaid";
+import { hydrateLocalImages, type LocalImageResolver } from "./localImages";
 import { hydrateRemoteImages } from "./remoteImages";
 import { disposeMermaid, hydrateMermaid } from "./hydrateMermaid";
 
@@ -35,6 +36,8 @@ export interface MarkdownProps {
    *  read in a narrow pane where full-size headings outshout the pane's own title.
    *  Body text keeps the reading size. Default false. */
   dense?: boolean;
+  /** Resolves `![…](screenshot:<id>)`. Without it such an image shows its caption. */
+  resolveLocalImage?: LocalImageResolver;
 }
 
 marked.setOptions({ gfm: true, breaks: true });
@@ -143,6 +146,7 @@ export function Markdown(props: MarkdownProps): JSX.Element {
     "copyCode",
     "streamStable",
     "dense",
+    "resolveLocalImage",
   ]);
   const proseClass = (): string =>
     cx("heph-prose", local.dense && "heph-prose-dense", local.class);
@@ -185,6 +189,7 @@ export function Markdown(props: MarkdownProps): JSX.Element {
     // parse), so gating it on a code-affordance flag would leave the image blank
     // for any caller that turned copy buttons off.
     hydrateRemoteImages(ref);
+    hydrateLocalImages(ref, local.resolveLocalImage);
     // Same reasoning, one construct along: `markdownMermaid` emits an empty
     // placeholder so the parse stays synchronous and mermaid stays out of the
     // bundle, which leaves the drawing itself to this pass. Unconditional and

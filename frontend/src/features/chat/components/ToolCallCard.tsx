@@ -16,6 +16,7 @@ import { Branch } from "./Branch";
 import { CommandBoundary, FenceNote } from "./CommandBoundary";
 import { EnvelopeRow } from "./EnvelopeRow";
 import { ProcessRow, Sep, createAdoptedOpen } from "./ProcessRow";
+import { ToolScreenshots } from "./ToolScreenshots";
 
 /** The family glyph carries the call's state as well as its kind, so a column of
  *  rows reads at a glance by shape and tone before a word is parsed.
@@ -216,37 +217,10 @@ export function ToolCallCard(props: {
           </For>
         )}
       </Show>
-      {/* What the call saw, on the card rather than behind it: a screenshot is the
-          whole point of the call that took it, and a picture the operator has to
-          expand a row to find is a picture they will not look at. It sits *outside*
-          the Collapse and grows when the card opens, so the bytes are in the DOM once
-          — at rest it is a strip tall enough to recognise the page, opened it is the
-          frame at the card's full width. */}
-      <Show when={props.tool.images?.length}>
-        <div class="flex flex-col gap-1 px-2 pb-2">
-          <For each={props.tool.images}>
-            {(image, index) => (
-              <img
-                /* Top-anchored: a page is recognised by its header, so a strip that
-                   cropped from the middle would show the operator the least
-                   identifying part of it. */
-                class="w-full border border-line object-cover object-top"
-                classList={{ "max-h-28": !open() }}
-                /* A screenshot arrives as base64 in the block, so the bytes are in
-                   the DOM the moment the turn renders. There is no fetch to defer,
-                   which is why there is no `loading="lazy"` here — it has nothing to
-                   postpone for a `data:` URI. Decoding those bytes IS real work
-                   though, and a long transcript can hold dozens, so `async` is what
-                   keeps it off the frame the turn lands on. */
-                decoding="async"
-                src={`data:${image.mediaType};base64,${image.data}`}
-                alt={`What ${props.tool.name} saw${
-                  (props.tool.images?.length ?? 0) > 1 ? `, ${index() + 1}` : ""
-                }`}
-              />
-            )}
-          </For>
-        </div>
+      <Show when={props.tool.images?.length ? props.tool.images : undefined}>
+        {(images) => (
+          <ToolScreenshots images={images()} toolName={props.tool.name} />
+        )}
       </Show>
       <Collapse open={open()}>
         <div class="flex flex-col gap-1 px-2 py-2">

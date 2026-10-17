@@ -41,6 +41,11 @@ from core.vault import Vault
 from models.corpus import CorpusChunk
 from models.upload import Upload, UploadStatus
 from runs import Run, RunRegistry, RunStatus, RunStream
+from services.conversation_view import (
+    ATTACHMENTS_MARKER_OPEN,
+    FILE_REFS_MARKER_OPEN,
+    strip_chassis_markers,
+)
 from services.conversations import ConversationStore, install_persisted_attachments
 from services.corpus.chunk_store import CorpusChunkStore
 from services.corpus.folder import FolderAdapter
@@ -386,6 +391,17 @@ def test_install_collapses_to_text_when_no_binary_survives():
     assert isinstance(part.content, str)  # no binary → collapsed back to one string
     assert part.content.startswith("summarize this")
     assert "Attached file(s)" in part.content
+
+
+def test_the_bubble_shows_only_what_the_operator_typed():
+    # Flattened the way the projection reads a persisted turn: the prompt, the attachment
+    # marker, then the `@` block.
+    text = (
+        f"summarize this {ATTACHMENTS_MARKER_OPEN}\n- a.pdf → /work/attachments/a.pdf]"
+        f" {FILE_REFS_MARKER_OPEN}\n- src/app.py]"
+    )
+    assert strip_chassis_markers(text) == "summarize this"
+    assert strip_chassis_markers("no markers here") == "no markers here"
 
 
 # --- the engine: full live content, capped persisted content ----------------

@@ -20,7 +20,7 @@ interface MessageAttachmentsProps {
 const isImage = (u: Upload | undefined): boolean =>
   (u?.mime ?? "").startsWith("image/");
 
-/** A single inline image thumbnail. Resolves its own thumbnail bytes through the
+/** A single inline image preview at its own aspect. Resolves its preview bytes through the
  *  auth-gated path (an `<img>` can't carry a bearer); clicking opens the shared
  *  Lightbox over the turn's images. Carries the KB-excluded marker so a withheld
  *  image still reads as withheld from the thread (matching the chip it replaced). */
@@ -30,7 +30,7 @@ function ImageThumb(props: {
   kbExcluded: boolean;
   onOpen: () => void;
 }): JSX.Element {
-  const src = useAuthedBlobUrl(() => `/uploads/${props.id}/thumbnail`);
+  const src = useAuthedBlobUrl(() => `/uploads/${props.id}/thumbnail?size=512`);
   return (
     <button
       type="button"
@@ -42,8 +42,8 @@ function ImageThumb(props: {
         src={src()}
         error={src.error !== undefined}
         alt={props.name}
-        fit="cover"
-        class="h-24 w-24"
+        fit="natural"
+        class="max-h-80 max-w-80 min-h-24 min-w-24"
       />
       <Show when={props.kbExcluded}>
         <span
@@ -60,7 +60,7 @@ function ImageThumb(props: {
 
 /** Read-only attachments on a sent user turn. Resolves each id against the uploads
  *  seam (the single source of truth — current KB membership, not a stale copy):
- *  image uploads render as inline thumbnails opening a shared Lightbox, everything
+ *  image uploads render as inline previews opening a shared Lightbox, everything
  *  else as a filename chip linking to the file (a since-deleted upload reads as an
  *  error chip). Until the seam resolves nothing is classified — otherwise every id,
  *  images included, would briefly look "missing" and flash as error chips. */
@@ -79,7 +79,7 @@ export function MessageAttachments(
   const resolving = (): boolean =>
     uploads.loading && settled(uploads) === undefined;
 
-  // Partition by media type: images get inline thumbnails, the rest stay chips.
+  // Partition by media type: images get inline previews, the rest stay chips.
   const images = createMemo(() =>
     props.ids.filter((id) => isImage(byId().get(id))),
   );

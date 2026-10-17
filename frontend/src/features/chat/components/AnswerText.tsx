@@ -6,6 +6,7 @@ import {
   type JSX,
 } from "solid-js";
 import { Caret, Markdown } from "~/ui";
+import { useScreenshotSrc } from "../screenshots";
 import { INTERVAL_SEED, nextInterval } from "../streamReveal";
 import {
   applyReveal,
@@ -36,6 +37,7 @@ export function AnswerText(props: {
   streaming?: boolean;
 }): JSX.Element {
   const live = () => Boolean(props.active && props.streaming);
+  const screenshotSrc = useScreenshotSrc();
 
   /* Latched, and this is what stops the screen flashing when a run finishes.
      `Markdown` renders a *different element* for `streamStable` than for its
@@ -126,7 +128,11 @@ export function AnswerText(props: {
             block instead, and leaves nothing to do at the end. The buttons are
             hidden until their block is hovered, so nothing appears mid-stream
             either. */}
-        <Markdown class="inline" streamStable={streamStable()}>
+        <Markdown
+          class="inline"
+          streamStable={streamStable()}
+          resolveLocalImage={screenshotSrc}
+        >
           {props.text}
         </Markdown>
       </div>

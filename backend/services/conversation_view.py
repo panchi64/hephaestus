@@ -78,6 +78,10 @@ FILE_REFS_KEY = "file_refs"
 #: pair of functions on either side of it, rather than a parser trying to recognise prose.
 FILE_REFS_MARKER_OPEN = "[The operator referenced these files with @:"
 
+#: How the attachment marker opens (`agent/attachments.py`). Same contract as the `@`
+#: marker: it persists for regenerate and is never rendered; the files show as chips.
+ATTACHMENTS_MARKER_OPEN = "[Attached file(s):"
+
 #: Where the slash command a turn was sent with rides — the same metadata channel again,
 #: and the only one of the three the **backend** reads back rather than the operator.
 #:
@@ -671,19 +675,18 @@ def _compaction_reason(message: object) -> str | None:
     return reason if isinstance(reason, str) and reason else None
 
 
-def strip_file_refs_marker(text: str) -> str:
-    """The operator's own words, with the chassis's `@` block taken back off.
+def strip_chassis_markers(text: str) -> str:
+    """The operator's text with the chassis's attachment and `@` blocks taken back off.
 
-    The block is in the persisted turn on purpose — see ``FILE_REFS_MARKER_OPEN`` — and
-    the bubble it would otherwise show up in carries the operator's name. The references
-    are still reported, as chips, from the structured field beside this.
-
-    Splits on the sentinel rather than matching a shape, so a message that merely *talks*
-    about the marker is untouched unless it reproduces it exactly, and a marker whose
-    wording changes cannot quietly stop being stripped.
+    Both blocks persist on purpose (see ``FILE_REFS_MARKER_OPEN``), and the bubble they
+    would show in carries the operator's name. The files are still reported as chips from
+    the structured fields beside this. Both close the prompt, so everything from the first
+    sentinel on is chassis text. Splits on exact sentinels, so a message that only talks
+    about a marker is untouched unless it reproduces one.
     """
-    head, sep, _tail = text.partition(FILE_REFS_MARKER_OPEN)
-    return head.rstrip() if sep else text
+    found = [text.find(marker) for marker in (ATTACHMENTS_MARKER_OPEN, FILE_REFS_MARKER_OPEN)]
+    cut = min((at for at in found if at >= 0), default=-1)
+    return text[:cut].rstrip() if cut >= 0 else text
 
 
 def stamped_file_refs(message: object) -> list[str]:
@@ -868,7 +871,7 @@ def project_tree(
                     )
                     continue
                 body = report if report is not None else direction
-                content = strip_file_refs_marker(text if body is None else body)
+                content = strip_chassis_markers(text if body is None else body)
                 parts: list[ContentPart] | None = None
                 if report is None:
                     split = split_envelopes(content, vouched_only=True)

@@ -127,7 +127,6 @@ export function ChatRoomScreen(): JSX.Element {
   // Follow the stream: pinned to the bottom while the answer arrives, yielding the
   // moment the operator scrolls up to read back (see `transcriptScroll.ts`).
   const transcript = createTranscriptFollow({
-    messages: stream.messages,
     sending: stream.sending,
     conversationId: currentId,
   });

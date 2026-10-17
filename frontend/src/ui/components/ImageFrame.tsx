@@ -14,8 +14,9 @@ export interface ImageFrameProps {
   /** Already-resolved image source (e.g. a blob URL). Undefined while it resolves. */
   src: string | undefined;
   alt: string;
-  /** object-fit: cover crops to fill, contain letterboxes. Default cover. */
-  fit?: "cover" | "contain";
+  /** cover crops to fill, contain letterboxes, natural sizes the frame to the image
+   *  within the `max-h-*`/`max-w-*` the class sets. Default cover. */
+  fit?: "cover" | "contain" | "natural";
   /** Force the LOADING state even with a src present (e.g. mid-refetch). */
   loading?: boolean;
   /** The upstream fetch failed (the auth'd blob couldn't resolve — deleted upload,
@@ -75,10 +76,16 @@ export function ImageFrame(props: ImageFrameProps): JSX.Element {
             <img
               src={src()}
               alt={local.alt}
-              class={cx(
-                "h-full w-full",
-                local.fit === "contain" ? "object-contain" : "object-cover",
-              )}
+              class={
+                local.fit === "natural"
+                  ? "block max-h-[inherit] max-w-full"
+                  : cx(
+                      "h-full w-full",
+                      local.fit === "contain"
+                        ? "object-contain"
+                        : "object-cover",
+                    )
+              }
               onError={() => setErrored(true)}
             />
           )}
