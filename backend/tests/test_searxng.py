@@ -161,6 +161,9 @@ async def test_bring_up_writes_settings_starts_the_service_and_forwards_its_port
         assert "json" in text
         (name, _user, argv) = vm.services[0]
         assert name == "searxng" and "searx.webapp" in argv
+        # Requests made before `outgoing.proxies` applies must also leave through the proxy.
+        proxy_env = f"HTTPS_PROXY=http://{vm.layout.platform_proxy}"
+        assert argv.index(proxy_env) < argv.index("searx.webapp")
         assert vm.named("forward") == [("forward", 8888)]
         # Settings land before the service starts, and the service before its port is forwarded.
         order = [c[0] for c in vm.calls]
