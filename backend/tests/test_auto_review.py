@@ -27,6 +27,7 @@ from pydantic_ai import (
     DeferredToolRequests,
     FunctionToolset,
     ModelMessage,
+    RunContext,
     ToolApproved,
     ToolDenied,
 )
@@ -68,6 +69,7 @@ from services.home.backend import Mount
 from services.home.paths import HOME, SCRATCH, Place
 from services.home.table import RunHome
 from services.permissions import (
+    PERMISSION_LADDER,
     ActionKind,
     Authorization,
     Decision,
@@ -1159,6 +1161,48 @@ class TestTheOpeningRequestIsAlwaysRead:
         assert isinstance(budget, ReviewBudget)
         assert budget.limit == get_settings().review_max_per_turn
 
+    async def test_the_gate_rules_at_the_level_the_turn_has_moved_to(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        # `plan_enter` and an approved plan move the level mid-turn. Ruled at the level the
+        # turn opened with, a plan submitted after `plan_enter` at Auto went to the
+        # reviewer, and calls after an approval in a Plan-opened turn were refused.
+        from core.config import get_settings
+
+        seen: dict[str, object] = {}
+
+        async def capturing(
+            _run: Run, approvals: Sequence[ToolCallPart], **kwargs: object
+        ) -> tuple[dict[str, ToolApproved | ToolDenied], list[ToolCallPart]]:
+            seen.update(kwargs)
+            return {call.tool_call_id: ToolApproved() for call in approvals}, []
+
+        monkeypatch.setattr(agent_turn, "settle_deferred", capturing)
+        toolset = _gated_categories()["danger"]
+
+        @toolset.tool
+        def move_level(ctx: RunContext[RunDeps]) -> str:
+            ctx.deps.permission = "plan"
+            return "moved"
+
+        run = Run(id="r5", kind="chat", owner_id=OWNER, stream=RunStream())
+        agent = Agent(
+            TestModel(custom_output_text="done"),
+            output_type=[str, DeferredToolRequests],
+            toolsets=[toolset],
+            deps_type=RunDeps,
+        )
+        _ = await drive_turn(
+            run,
+            agent,
+            settings=get_settings(),
+            prompt="delete the thing",
+            announced=set(),
+            binding=ConversationBinding(permission="auto"),
+            turn_start=TurnStart(0),
+        )
+        assert seen["permission"] == "plan"
+
     async def test_a_correction_reviews_against_the_same_opening_request(
         self, monkeypatch: pytest.MonkeyPatch
     ):
@@ -1599,6 +1643,28 @@ class TestTheSettledPile:
         settled, manual = await _settle("auto", [_call("mail_send", "c1")])
         assert settled == {}
         assert [call.tool_call_id for call in manual] == ["c1"]
+
+    @pytest.mark.parametrize("level", PERMISSION_LADDER)
+    async def test_a_plan_approval_always_reaches_the_operator(
+        self, level: PermissionLevel, monkeypatch: pytest.MonkeyPatch
+    ):
+        # A reviewer that would clear anything and the widest grant there is: approving a
+        # plan raises the thread's level, so neither may answer it.
+        seen: list[ReviewRequest] = []
+
+        async def reviewer(request: ReviewRequest) -> ReviewVerdict | None:
+            seen.append(request)
+            return verdict("low")
+
+        monkeypatch.setattr(gating, "resolve_reviewer", _resolver(reviewer))
+        grants = _grant_store()
+        _ = await grants.grant(OWNER, CONV, "plan_submit", decisive=True)
+        settled, manual = await _settle(
+            level, [_call("plan_submit", "c1")], caps=ServiceContainer.of(grants)
+        )
+        assert settled == {}
+        assert [call.tool_call_id for call in manual] == ["c1"]
+        assert seen == []
 
     async def test_a_grant_at_auto_is_reviewed_rather_than_waved_through(
         self, monkeypatch: pytest.MonkeyPatch

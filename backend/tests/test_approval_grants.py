@@ -29,6 +29,7 @@ from models.approval_grant import ApprovalGrant
 from runs import Orchestrator, Run, RunRegistry, RunStatus, RunStream
 from services.approval_grants import (
     COMMAND_SCOPED_TOOLS,
+    ONCE_ONLY_TOOLS,
     ApprovalGrantStore,
     GrantInfo,
     covered_by_grant,
@@ -37,6 +38,7 @@ from services.approval_grants import (
 )
 from services.conversations import ConversationBinding
 from services.permissions import DEFAULT_PERMISSION, PERMISSION_LEVELS, PermissionLevel
+from services.plan_mode import PLAN_SUBMIT_TOOL
 from tools import RunDeps, build_agent_toolsets
 from tools.corpus import corpus_toolset
 from tools.memory import memory_toolset
@@ -162,6 +164,18 @@ async def test_a_whole_tool_grant_re_grants_rather_than_duplicating():
     _ = await s.grant(OWNER, CONV, "corpus_retrieve")
     _ = await s.grant(OWNER, CONV, "corpus_retrieve")
     assert len(await s.list(OWNER, CONV)) == 1
+
+
+def test_no_grant_covers_a_plan_approval():
+    # Approving a plan raises the thread's level. A row that got written anyway, even the
+    # wider decisive one, must not stand in for the operator.
+    assert PLAN_SUBMIT_TOOL in ONCE_ONLY_TOOLS
+    granted = [
+        GrantInfo(
+            tool_name=PLAN_SUBMIT_TOOL, expires_at=utcnow() + timedelta(hours=1), decisive=True
+        )
+    ]
+    assert grant_width(PLAN_SUBMIT_TOOL, {}, granted) == "none"
 
 
 # --- the engine auto-approves a granted tool --------------------------------

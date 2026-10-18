@@ -291,8 +291,8 @@ def stricter_permission(a: str, b: str) -> PermissionLevel:
 # business interrupting it, and a read-only turn that could not record what it had worked
 # out would have no way to finish. The **plan tools** are how a Plan-level turn ends at all:
 # `plan_enter` only ever narrows what the thread may do, `plan_read` reaches nothing, and
-# `plan_submit` — the one that raises the level — is held by its own `requires_approval`
-# marking rather than by this gate, so the operator still decides. Withholding it here
+# `plan_submit` — the one that raises the level — parks itself by raising `ApprovalRequired`
+# and is answered only by the operator (:data:`OPERATOR_ONLY_TOOLS`). Withholding it here
 # instead would leave Plan with no exit and the exemption is what makes the mode work.
 #
 # The whole surviving surface is listed rather than the writes alone, so the exemption reads
@@ -317,6 +317,10 @@ PLANNING_TOOLS = frozenset(
 # its spawner's level and its own ceiling, so every act it takes is asked about at a level
 # the spawner already holds.
 COORDINATION_TOOLS = frozenset({"agents_spawn", "agents_message"})
+
+#: Tools whose deferred call only the operator may answer, at every level. Approving a plan
+#: raises the thread's level, so no level, review or standing grant may approve it for them.
+OPERATOR_ONLY_TOOLS = frozenset({"plan_submit"})
 
 #: Every tool the level gate never elevates.
 LEVEL_EXEMPT_TOOLS = PLANNING_TOOLS | COORDINATION_TOOLS

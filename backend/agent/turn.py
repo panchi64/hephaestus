@@ -463,7 +463,9 @@ async def drive_turn(
             conversation_id=conversation_id,
             deps=deps,
             messages=messages,
-            permission=binding.permission,
+            # The live level, not the turn's opening one: `plan_enter` and an approved plan
+            # move it mid-turn (`tools/plan.retarget`).
+            permission=deps.permission,
             # Where this turn's own messages begin, so the review is given the request
             # that opened it however many tool round trips have run since.
             turn_start=turn_start,
