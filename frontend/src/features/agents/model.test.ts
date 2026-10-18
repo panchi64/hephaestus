@@ -132,7 +132,9 @@ describe("agentDisplayName", () => {
 });
 
 describe("classDisplay", () => {
-  const classes = [{ key: "kourai", display: "Kourai", role: "Research" }];
+  const classes = [
+    { key: "kourai", display: "Kourai", role: "Research", assignable: true },
+  ];
 
   it("reads a key as its class's name, and the key itself when unlisted", () => {
     expect(classDisplay(classes, "kourai")).toBe("Kourai");

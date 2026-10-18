@@ -54,11 +54,20 @@ DEFAULT_AGENT = "default"
 #: The class an agent belongs to when its definition names none.
 DEFAULT_CLASS = "tripodes"
 
+#: Classes no operator-written agent may take: there is one Talos, the built-in default,
+#: and the helpers are a voice rather than an agent anyone runs.
+UNASSIGNABLE_CLASSES: frozenset[str] = frozenset({"talos", "keledones"})
+
 
 def class_key(raw: str) -> str | None:
     """``raw`` (a class key or display name, any case) as a key of ``CLASSES``, or None."""
     key = raw.strip().lower().replace("ē", "e")
     return key if key in CLASSES else None
+
+
+def agent_display_name(name: str | None) -> str:
+    """What the operator reads for an agent: the default one is Talos."""
+    return CLASSES["talos"].display if not name or name == DEFAULT_AGENT else name
 
 
 @dataclass(frozen=True)

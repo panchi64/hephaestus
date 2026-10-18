@@ -2,6 +2,7 @@ import {
   Show,
   createEffect,
   createMemo,
+  createResource,
   createSignal,
   on,
   onCleanup,
@@ -24,6 +25,7 @@ import {
   consumePendingDraft,
   consumeRequestedSession,
   entrySessionId,
+  fetchOwnCallsign,
   mainChat,
   refreshSessions,
   titleReveals,
@@ -278,7 +280,16 @@ export function ChatRoomScreen(): JSX.Element {
   // wide it is, whether it renders as an aside or a sheet, and where focus goes when
   // it closes. It is a concern of its own, so it lives in one.
   const browser = createBrowserState(currentId, browserOpenedSeq);
+  const [ownCallsign] = createResource(
+    () => {
+      const id = currentId();
+      const parentId = currentSummary()?.parentId;
+      return id && parentId ? ([id, parentId] as const) : undefined;
+    },
+    ([id, parentId]) => fetchOwnCallsign(id, parentId),
+  );
   const speaker = (): string =>
+    (currentSummary()?.parentId ? settled(ownCallsign) : undefined) ??
     agentDisplayName(threadAgentName(currentSummary()?.agentName));
   const viewport = useChatViewport(currentId, {
     ...stream,
@@ -651,7 +662,11 @@ export function ChatRoomScreen(): JSX.Element {
               </Show>
               <Composer
                 autofocus
-                placeholder={`Message ${agentDisplayName(agentValue())}…`}
+                placeholder={`Message ${
+                  agentChoice() === undefined
+                    ? speaker()
+                    : agentDisplayName(agentValue())
+                }…`}
                 streaming={stream.sending()}
                 queued={stream.sending() && stream.runQueue() !== null}
                 onStop={(correction) => void stopRun(correction)}

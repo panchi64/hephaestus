@@ -31,11 +31,13 @@ export function NewAgentDialog(props: {
   const [busy, setBusy] = createSignal(false);
   const classes = useAgentClasses();
   const classOptions = () =>
-    (settled(classes) ?? []).map((c) => ({
-      value: c.key,
-      label: c.display,
-      description: c.role,
-    }));
+    (settled(classes) ?? [])
+      .filter((c) => c.assignable)
+      .map((c) => ({
+        value: c.key,
+        label: c.display,
+        description: c.role,
+      }));
 
   createEffect(() => {
     if (!props.open) return;
@@ -46,8 +48,17 @@ export function NewAgentDialog(props: {
     setFormError("");
   });
 
+  // No Create before the catalog lands: the class would go out unseen.
   const canSubmit = () =>
-    name().trim() !== "" && description().trim() !== "" && !busy();
+    name().trim() !== "" &&
+    description().trim() !== "" &&
+    classOptions().length > 0 &&
+    !busy();
+  const classHint = (): string =>
+    errors().agent_class ??
+    (classes.error
+      ? agentErrorMessage(classes.error, "Could not load the agent classes.")
+      : "Fixes its role, how it reports, and the sound of its callsign.");
 
   async function submit(): Promise<void> {
     if (!canSubmit()) return;
@@ -123,11 +134,8 @@ export function NewAgentDialog(props: {
           options={classOptions()}
           value={agentClass()}
           onChange={setAgentClass}
-          invalid={Boolean(errors().agent_class)}
-          hint={
-            errors().agent_class ??
-            "Fixes its role, how it reports, and the sound of its callsign."
-          }
+          invalid={Boolean(errors().agent_class || classes.error)}
+          hint={classHint()}
           disabled={busy()}
         />
         <Show when={formError()}>

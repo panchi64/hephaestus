@@ -26,6 +26,7 @@ import {
 import {
   agentDisplayName,
   agentSourceTag,
+  classSpec,
   isAwaitingPublish,
   type Agent,
 } from "../model";
@@ -70,7 +71,7 @@ export function AgentDetailScreen(props: {
   /** Read-only even while editing: the agent's file carries `class:`, and one value
    *  edited in two places is how they drift. */
   const classOf = (a: Agent): string => {
-    const spec = settled(classes)?.find((c) => c.key === a.agentClass);
+    const spec = classSpec(settled(classes) ?? [], a.agentClass);
     return spec ? `${spec.display} — ${spec.role}` : a.agentClass;
   };
 

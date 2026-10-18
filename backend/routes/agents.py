@@ -19,7 +19,7 @@ from routes import deps
 from routes.deps import OPERATOR_ID
 from routes.revisions import add_revision_routes
 from services.agents import BUILTIN, AgentDefinition, ToolAccess, project_agents
-from services.agents.definition import AgentSource, WorkspacePolicy
+from services.agents.definition import UNASSIGNABLE_CLASSES, AgentSource, WorkspacePolicy
 from services.agents.files import render_agent_file
 from services.permissions import PermissionLevel
 
@@ -92,18 +92,20 @@ class AgentClassOut(BaseModel):
     key: str
     display: str
     role: str
-
-
-#: Helpers are a voice, not an agent anyone runs, so no agent can take their class.
-_UNASSIGNABLE_CLASSES: frozenset[str] = frozenset({"keledones"})
+    #: Whether an agent the operator writes may take it; the built-ins may hold the rest.
+    assignable: bool
 
 
 @router.get("/classes", response_model=list[AgentClassOut])
 async def list_agent_classes() -> list[AgentClassOut]:
     return [
-        AgentClassOut(key=spec.key, display=spec.display, role=spec.role)
+        AgentClassOut(
+            key=spec.key,
+            display=spec.display,
+            role=spec.role,
+            assignable=spec.key not in UNASSIGNABLE_CLASSES,
+        )
         for spec in CLASSES.values()
-        if spec.key not in _UNASSIGNABLE_CLASSES
     ]
 
 

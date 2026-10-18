@@ -32,6 +32,11 @@ export function AgentsDirectoryScreen(props: {
   const agents = (): Agent[] => settled(agentsResource) ?? [];
   const classesResource = useAgentClasses();
   const classes = (): AgentClass[] => settled(classesResource) ?? [];
+  /** Empty for Talos, whose class is its name. */
+  const classLabel = (agent: Agent): string => {
+    const display = classDisplay(classes(), agent.agentClass);
+    return display === agentDisplayName(agent.name) ? "" : display;
+  };
   const loadError = (): string | null =>
     agentsResource.error
       ? agentErrorMessage(agentsResource.error, "Could not load agents.")
@@ -122,7 +127,14 @@ export function AgentsDirectoryScreen(props: {
       items={agents()}
       loadError={loadError()}
       sorts={{
-        name: { label: "Name", compare: compareByName },
+        name: {
+          label: "Name",
+          compare: (a, b) =>
+            compareByName(
+              { name: agentDisplayName(a.name) },
+              { name: agentDisplayName(b.name) },
+            ),
+        },
         source: { label: "Source", compare: compareAgentsBySource },
       }}
       initialSort="name"
@@ -145,16 +157,12 @@ export function AgentsDirectoryScreen(props: {
       rowLabel={(agent) => agentDisplayName(agent.name)}
       rowRight={(agent) => (
         <>
-          {/* Talos's class is its name; saying it twice tells the operator nothing. */}
-          <Show
-            when={
-              classDisplay(classes(), agent.agentClass) !==
-              agentDisplayName(agent.name)
-            }
-          >
-            <Text variant="micro" tone="dim">
-              {classDisplay(classes(), agent.agentClass)}
-            </Text>
+          <Show when={classLabel(agent)}>
+            {(label) => (
+              <Text variant="micro" tone="dim">
+                {label()}
+              </Text>
+            )}
           </Show>
           <Show when={agentSourceTag(agent.source)}>
             {(tag) => <StatusFlag status="idle">{tag()}</StatusFlag>}

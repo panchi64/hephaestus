@@ -65,6 +65,15 @@ export interface AgentClass {
   /** Its mythic name (`Kourai`). */
   display: string;
   role: string;
+  /** Whether an agent the operator writes may take it; Talos and the helpers are not. */
+  assignable: boolean;
+}
+
+export function classSpec(
+  classes: readonly AgentClass[],
+  key: string,
+): AgentClass | undefined {
+  return classes.find((c) => c.key === key);
 }
 
 /** A class key's display name, or the key itself until the catalog has loaded. */
@@ -72,7 +81,7 @@ export function classDisplay(
   classes: readonly AgentClass[],
   key: string,
 ): string {
-  return classes.find((c) => c.key === key)?.display ?? key;
+  return classSpec(classes, key)?.display ?? key;
 }
 
 /** Lowercase letters, digits, hyphens and underscores. */

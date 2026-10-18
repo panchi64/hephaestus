@@ -18,6 +18,7 @@ from harness.run_terminal import RunTerminalDispatcher
 from routes import notifications as notifications_routes
 from routes.deps import OPERATOR_ID
 from runs import Run, RunStatus
+from services.agents.definition import agent_display_name
 from services.conversations import ConversationStore
 from services.mail import MailService
 from services.notification_channels import default_channels
@@ -86,7 +87,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         try:
             summary = await conversations.get_summary(run.conversation_id, OPERATOR_ID)
             title = summary.title if summary is not None and summary.title else "this conversation"
-            agent = summary.agent_name if summary is not None and summary.agent_name else "Talos"
+            agent = agent_display_name(summary.agent_name if summary is not None else None)
             if run.status is RunStatus.error:
                 _ = await notifications.notify(
                     OPERATOR_ID,

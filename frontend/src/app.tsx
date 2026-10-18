@@ -5,6 +5,7 @@ import { ThemeProvider, Toaster, ConfirmHost } from "~/ui";
 import { usePageTitle } from "~/app/usePageTitle";
 import { useFavicon } from "~/app/useFavicon";
 import { AppSplash } from "~/app/AppSplash";
+import { useSession } from "~/lib/stores/session";
 import "./app.css";
 
 /**
@@ -22,9 +23,17 @@ export default function App() {
       root={(props) => {
         usePageTitle();
         useFavicon();
+        const session = useSession();
         return (
           <ThemeProvider>
-            <Suspense fallback={<AppSplash label="Waking Talos…" />}>
+            <Suspense
+              fallback={
+                // A cold load before unlock keeps boot's label: nothing is waking yet.
+                <AppSplash
+                  label={session.isAuthenticated ? "Waking Talos…" : undefined}
+                />
+              }
+            >
               {props.children}
             </Suspense>
             <Toaster />
