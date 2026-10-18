@@ -475,14 +475,14 @@ class Settings(BaseSettings):
 
     # Auto-titling: name a fresh thread from its first exchange (a best-effort
     # reasoning-off utility call). On by default; the operator can rename either way.
-    # The title call is best-effort and bounded by `title_timeout_s` so a slow or
-    # stuck utility model can't hold the run open. `title_max_tokens` is the output
-    # cap: reasoning is requested off, but a runtime that ignores the lever (e.g.
-    # LM Studio + Qwen) reasons anyway, so the cap must leave room for a `<think>`
-    # block plus the title. The auto path runs concurrently and is awaited before the
-    # run finalizes, so it stays tight; the manual re-title spans every operator turn
-    # (a longer think block) and is a deliberate, awaited operator action, so it gets
-    # a wider budget and its own longer timeout.
+    # The auto path runs beside the answer and never holds the run open; its
+    # `title_timeout_s` starts when the answer is written, because a one-slot server
+    # queues the title behind it. `title_max_tokens` is the output cap: reasoning is
+    # requested off, but a runtime that ignores the lever (e.g. LM Studio + Qwen)
+    # reasons anyway, so the cap must leave room for a `<think>` block plus the title.
+    # The manual re-title spans every operator turn (a longer think block) and is a
+    # deliberate, awaited operator action, so it gets a wider budget and its own longer
+    # timeout.
     title_enabled: bool = True
     title_timeout_s: float = 20.0
     title_max_tokens: int = 2048

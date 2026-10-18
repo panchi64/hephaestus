@@ -34,6 +34,7 @@ import type { TaskItem } from "~/lib/stream";
 import type { PlanDocument } from "../model";
 import { toast } from "~/ui";
 import { CONTINUE_PROMPT } from "../data/constants";
+import { collectLateTitle } from "../data/conversations";
 import { refreshSessions } from "../data/sessions";
 import type { ChatSendDTO, ConversationDetailDTO } from "../data/wire";
 import type {
@@ -109,6 +110,9 @@ export interface ChatStreamOptions {
    *  server-side. Seeds a reattach on a cold read (e.g. a page reload mid-stream)
    *  so the live answer continues instead of the thread rendering reply-less. */
   activeRun?: () => ActiveRun | null | undefined;
+  /** Whether the loaded conversation has no stored title yet: a reattached run on it
+   *  may be the first turn, whose auto-title can land after the run ends. */
+  untitled?: () => boolean | undefined;
   /** The loaded conversation's workspace snapshots (git-style history), seeded
    *  alongside its messages so the viewport shows them before the next turn. */
   initialSnapshots?: () => ViewSnapshotRef[] | undefined;
@@ -131,8 +135,9 @@ export function createChatStream(
   const [errored, setErrored] = createSignal(false);
   // A brand-new thread is auto-named during its first turn; this drives a "working"
   // throbber on the title from that turn's start until the name lands
-  // (`conversation.titled`, which the reveal then animates) or the turn ends without
-  // one. Backend-owned outcome — the frontend only reflects the in-flight window.
+  // (`conversation.titled`, which the reveal then animates), or, when naming outlasts
+  // the turn, until the backend says it has finished (`awaitLateTitle` in the drive).
+  // Backend-owned outcome — the frontend only reflects the in-flight window.
   const [titlePending, setTitlePending] = createSignal(false);
   // The latest run's context-window state, as derived by the backend. Null until
   // a run reports it against a known window (loaded history carries none), which
@@ -282,7 +287,9 @@ export function createChatStream(
     foldEvent,
     setSending,
     setErrored,
+    titlePending,
     setTitlePending,
+    collectTitle: collectLateTitle,
     deliveryDue: () => deliveryDue(steering.inbox()),
     followQueued: (due) => followQueued(due),
     conversationId: () => activeConversationId,
@@ -640,6 +647,8 @@ export function createChatStream(
     if (untrack(() => messages.some((m) => m.runId === ar.id && !m.streaming)))
       return;
     reattachedRunId = ar.id;
+    if (!options.ephemeral && untrack(() => options.untitled?.()))
+      setTitlePending(true);
     void drive.reattachRun(ar.id, attachOptions(ar));
   });
 

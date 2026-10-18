@@ -98,6 +98,10 @@ class Run:
     # heartbeat can't drift slower than the bound it exists to stay inside.
     inactivity_timeout_s: float | None = None
     task: asyncio.Task[None] | None = None
+    # Work the run started that may finish after it ends (an auto-title still being
+    # written when the answer was). Held so the loop's weak reference is not the only one,
+    # and so the registry can wait on it or stop it.
+    afterwork: set[asyncio.Task[None]] = field(default_factory=set)
     cancel_requested: bool = False
     metrics: RunMetrics | None = None
     # The active model's context window, when known — set by the orchestrator so
@@ -292,6 +296,16 @@ class Run:
         Callers that need "finished for good" must check ``is_terminal`` afterwards."""
         if self.task is not None:
             await asyncio.shield(self.task)
+
+    def outlive(self, task: asyncio.Task[None]) -> None:
+        """Let ``task`` run on past this run's end (see ``afterwork``)."""
+        self.afterwork.add(task)
+        task.add_done_callback(self.afterwork.discard)
+
+    async def settle_afterwork(self, timeout_s: float | None = None) -> None:
+        """Wait, at most ``timeout_s``, for the work this run left running."""
+        if self.afterwork:
+            _ = await asyncio.wait(list(self.afterwork), timeout=timeout_s)
 
 
 # An orchestrator drives one Run: it emits events and may call ``run.block()``

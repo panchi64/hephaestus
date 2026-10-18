@@ -47,7 +47,10 @@ export interface RunDriveDeps {
   foldEvent: (assistantId: string, ev: RunEvent, epoch: number) => void;
   setSending: (value: boolean) => void;
   setErrored: (value: boolean) => void;
+  titlePending: Accessor<boolean>;
   setTitlePending: (value: boolean) => void;
+  /** Reveal the thread's auto-title once the backend has finished writing it. */
+  collectTitle: (conversationId: string) => Promise<void>;
   /** Whether the run's events left something queued that a turn will be started for. */
   deliveryDue: () => boolean;
   /** Read the inbox again, and pick up the turn the backend starts for what was queued
@@ -103,6 +106,30 @@ export function seatAfterPrompt(
   if (!promptMessageId) return null;
   const at = messages.findIndex((m) => m.id === promptMessageId);
   return at < 0 ? null : at + 1;
+}
+
+/** Settle the title throbber when a run ends. A thread still waiting on its name keeps
+ *  it while the backend finishes, since a name that lands after the run's stream closed
+ *  is never announced on it. The clear only applies if the operator is still on that
+ *  thread: switching away cleared it already, and another thread may now own it. */
+export async function awaitLateTitle(
+  conversationId: string | null,
+  deps: Pick<
+    RunDriveDeps,
+    "titlePending" | "setTitlePending" | "collectTitle" | "conversationId"
+  >,
+): Promise<void> {
+  if (!deps.titlePending() || conversationId === null) {
+    deps.setTitlePending(false);
+    return;
+  }
+  try {
+    await deps.collectTitle(conversationId);
+  } catch {
+    // Cosmetic: the rail picks the name up on its next refresh.
+  } finally {
+    if (deps.conversationId() === conversationId) deps.setTitlePending(false);
+  }
 }
 
 export interface RunDrive {
@@ -244,8 +271,8 @@ export function createRunDrive(deps: RunDriveDeps): RunDrive {
         // have emptied the queue into the turn this has to go looking for.
         const due = deps.deliveryDue();
         deps.setSending(false);
-        deps.setTitlePending(false); // turn ended — clear even if no title landed
         const conversationId = deps.conversationId();
+        void awaitLateTitle(conversationId, deps);
         // Keyed on the id the first turn created rather than on `wasNew`: when a
         // reattach took this turn over, the drive that sees it end is not the one that
         // started it, and the thread's id would never have been adopted.

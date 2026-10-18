@@ -710,6 +710,8 @@ export interface ActiveRun {
 export interface ChatSession {
   id: string;
   title: string;
+  /** No stored title yet, so `title` is the derived fallback. */
+  untitled: boolean;
   messages: ChatMessage[];
   /** Context-window state reconstructed from the thread's last turn, or null
    *  when unavailable. Seeds the header meter on load. */

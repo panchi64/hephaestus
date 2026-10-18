@@ -16,7 +16,7 @@ See docs/architecture/README.md (Pillars I & II).
 from __future__ import annotations
 
 from . import events
-from .endpoint_gate import Endpoint, EndpointGate
+from .endpoint_gate import Endpoint, EndpointGate, outside_lease
 from .events import (
     DEFAULT_CONTEXT_THRESHOLDS,
     INJECTED_TEXT_LIMIT,
@@ -104,6 +104,7 @@ __all__ = [
     "LaneLimits",
     "Endpoint",
     "EndpointGate",
+    "outside_lease",
     "LANE_BY_KIND",
     "CHAT_TURN_KINDS",
     "lane_for",

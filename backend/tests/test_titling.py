@@ -32,9 +32,11 @@ from agent.title import (
 from core.config import Settings
 from core.db import init_db, make_engine
 from core.vault import Vault
-from runs import EventBody, Run, RunRegistry, RunStatus
+from runs import ConversationTitled, EventBody, Run, RunRegistry, RunStatus
 from services.conversations import ConversationStore
 from tools import RunDeps
+
+from ._helpers import first_body
 
 
 async def _unlocked_vault(tmp_path: Path) -> Vault:
@@ -53,6 +55,12 @@ async def _fresh_store(tmp_path: Path) -> ConversationStore:
 
 def _bodies(run: Run) -> list[EventBody]:
     return [e.body for e in run.stream.replay()]
+
+
+async def _settled_title(run: Run, store: ConversationStore, conversation_id: str) -> str | None:
+    await asyncio.wait_for(run.settle_afterwork(), timeout=2)
+    summary = await store.get_summary(conversation_id, "operator")
+    return summary.title if summary is not None else None
 
 
 # --- sanitization -----------------------------------------------------------
@@ -160,7 +168,7 @@ async def test_generate_title_applies_max_tokens_override():
 # --- engine wiring ----------------------------------------------------------
 
 
-async def test_first_turn_emits_and_persists_title(tmp_path: Path):
+async def test_first_turn_persists_title(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     conv = await store.create_conversation("operator")  # untitled
     reg = RunRegistry()
@@ -176,18 +184,11 @@ async def test_first_turn_emits_and_persists_title(tmp_path: Path):
     run = reg.submit(kind="chat", owner_id="operator", orchestrator=orch)
     _ = await run.wait()
 
-    titled = [b for b in _bodies(run) if b.type == "conversation.titled"]
-    assert len(titled) == 1
-    assert titled[0].conversation_id == conv
-    assert titled[0].title == "Japan Trip Plan"
-
-    # Emitted before the run ends, so a still-open stream carries it.
+    assert await _settled_title(run, store, conv) == "Japan Trip Plan"
+    # Announced at most once, and only while the stream was open.
     types = [b.type for b in _bodies(run)]
-    assert types.index("conversation.titled") < types.index("run.ended")
-
-    # And it was persisted, not just announced.
-    summary = await store.get_summary(conv, "operator")
-    assert summary is not None and summary.title == "Japan Trip Plan"
+    assert types.count("conversation.titled") <= 1
+    assert types[-1] == "run.ended"
     await store.stop()
 
 
@@ -209,11 +210,13 @@ async def test_continued_turn_is_not_retitled(tmp_path: Path):
 
     first = run_turn("first message")
     _ = await first.wait()
+    assert await _settled_title(first, store, conv) == "Some Title"
     second = run_turn("second message")
     _ = await second.wait()
 
     # Only the opening turn names the thread; the continuation does not re-title.
-    assert any(b.type == "conversation.titled" for b in _bodies(first))
+    assert not second.afterwork
+    assert await _settled_title(second, store, conv) == "Some Title"
     assert not any(b.type == "conversation.titled" for b in _bodies(second))
     await store.stop()
 
@@ -291,8 +294,8 @@ async def test_parked_first_turn_is_titled_exactly_once(tmp_path: Path):
     # resumes to completion — it must be named exactly once across the two halves. The
     # concurrent namer usually gets there first (a thread waiting on an approval shows
     # its name rather than sitting "Untitled" while the operator decides); when the park
-    # beats it, the resume names it from history instead. Either way: one announcement,
-    # never two, and never a name persisted without one.
+    # beats it, the resume names it from history instead, after the run. Either way: one
+    # name, and never two announcements.
     store = await _fresh_store(tmp_path)
     conv = await store.create_conversation("operator")
 
@@ -346,12 +349,11 @@ async def test_parked_first_turn_is_titled_exactly_once(tmp_path: Path):
     _ = await run.wait()
     assert run.status is RunStatus.done
 
-    # Named on the same stream, exactly once across both halves — `set_title_if_absent`
-    # is the guard that stops the resume re-announcing what the concurrent namer already did.
+    # `set_title_if_absent` is the guard that stops the resume re-announcing what the
+    # concurrent namer already did.
+    assert await _settled_title(run, store, conv) == "Deleting The Thing"
     titled = [b for b in _bodies(run) if b.type == "conversation.titled"]
-    assert len(titled) == 1 and titled[0].title == "Deleting The Thing"
-    summary = await store.get_summary(conv, "operator")
-    assert summary is not None and summary.title == "Deleting The Thing"
+    assert len(titled) <= 1
     await store.stop()
 
 
@@ -359,7 +361,7 @@ async def test_titling_runs_concurrently_with_the_answer(tmp_path: Path):
     # Titling is kicked off up-front and overlaps the answer rather than following
     # it, so it adds no post-answer "writing" tail. Proven structurally: the answer
     # only completes once titling has begun — a deadlock unless the two run
-    # concurrently — yet the title is still announced before the run ends.
+    # concurrently.
     store = await _fresh_store(tmp_path)
     conv = await store.create_conversation("operator")
     reg = RunRegistry()
@@ -386,10 +388,7 @@ async def test_titling_runs_concurrently_with_the_answer(tmp_path: Path):
     _ = await run.wait()
 
     assert run.status is RunStatus.done
-    titled = [b for b in _bodies(run) if b.type == "conversation.titled"]
-    assert len(titled) == 1 and titled[0].title == "Concurrent Title"
-    types = [b.type for b in _bodies(run)]
-    assert types.index("conversation.titled") < types.index("run.ended")
+    assert await _settled_title(run, store, conv) == "Concurrent Title"
     await store.stop()
 
 
@@ -438,6 +437,9 @@ async def test_title_is_announced_while_the_answer_is_still_streaming(
     types = [b.type for b in _bodies(run)]
     # The name landed before the answer's last token, not after the whole turn.
     assert types.index("conversation.titled") < len(types) - 1 - types[::-1].index("answer.delta")
+    titled = first_body(run, ConversationTitled)
+    assert titled.conversation_id == conv
+    assert titled.title == "Named Mid Answer"
     await store.stop()
 
 

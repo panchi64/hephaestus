@@ -173,6 +173,7 @@ export function mainChat(): MainChat {
         // Same lockstep: the in-flight run of the loaded thread, for a cold-read
         // reattach (a page reload mid-stream).
         activeRun: fromLoaded((s) => s.activeRun),
+        untitled: fromLoaded((s) => s.untitled),
         // Same lockstep: the loaded thread's git-style snapshot history.
         initialSnapshots: fromLoaded((s) => s.snapshots),
         // Read only when a send creates the conversation.

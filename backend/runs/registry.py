@@ -18,6 +18,8 @@ from contextlib import suppress
 from enum import Enum
 from uuid import uuid4
 
+from core.tasks import STOP_TIMEOUT_S
+
 from .endpoint_gate import Endpoint, EndpointGate
 from .events import EventBody, LimitNotice, RunEnded, RunError, RunQueued, RunStarted, now_utc
 from .inbox import NO_JOURNAL, ConversationInbox, InboxJournal
@@ -396,6 +398,25 @@ class RunRegistry:
             _, stuck = await asyncio.wait(pending, timeout=timeout_s)
             if stuck:
                 logger.warning("runs: %d run(s) still unwinding after %.1fs", len(stuck), timeout_s)
+        # Afterwork writes through the same stores, so it stops while they are still live.
+        afterwork = [task for run in self._runs.values() for task in run.afterwork]
+        for task in afterwork:
+            _ = task.cancel()
+        if afterwork:
+            _ = await asyncio.wait(afterwork, timeout=STOP_TIMEOUT_S)
+
+    async def settle_afterwork(
+        self, conversation_id: str, owner_id: str, timeout_s: float | None = None
+    ) -> None:
+        """Wait, at most ``timeout_s``, for work this conversation's runs left running."""
+        afterwork = [
+            task
+            for run in self._runs.values()
+            if run.owner_id == owner_id and run.conversation_id == conversation_id
+            for task in run.afterwork
+        ]
+        if afterwork:
+            _ = await asyncio.wait(afterwork, timeout=timeout_s)
 
     async def resume(
         self,
@@ -645,8 +666,9 @@ class RunRegistry:
             logger.exception("runs: on_terminal hook failed for run %s", run.id)
 
     def _evict_old(self) -> None:
-        """Bound memory: drop the oldest terminal runs past the retention cap."""
-        terminal = [r for r in self._runs.values() if r.is_terminal]
+        """Bound memory: drop the oldest terminal runs past the retention cap. A run with
+        afterwork still going is kept, since it holds the only reference to that work."""
+        terminal = [r for r in self._runs.values() if r.is_terminal and not r.afterwork]
         overflow = len(terminal) - self._max_retained
         if overflow <= 0:
             return

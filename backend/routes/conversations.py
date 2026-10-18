@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from agent.engine import fold_now
+from agent.naming import late_title_wait_s
 from agent.summarize import FoldFailed, NothingToFold, resolve_auto_compact_policy
 from agent.title import title_from_history
 from core.compaction_sections import SummarySection
@@ -594,6 +595,20 @@ async def rename_conversation(
         activity=_activity(request, conversation_id),
         last_outcome=_outcomes(request).get(conversation_id),
     )
+
+
+class TitleOut(BaseModel):
+    title: str | None
+
+
+@router.get("/{conversation_id}/title", response_model=TitleOut)
+async def await_auto_title(conversation_id: str, request: Request) -> TitleOut:
+    """The thread's title, once an auto-title still being generated after its run ended
+    has landed or given up. The run stream is closed by then, so a client that saw the
+    run end untitled holds this one request open instead of polling the listing."""
+    await deps.registry(request).settle_afterwork(conversation_id, OPERATOR_ID, late_title_wait_s())
+    summary = await _require_owned(request, conversation_id)
+    return TitleOut(title=summary.title)
 
 
 @router.post("/{conversation_id}/retitle", response_model=ConversationSummary)
