@@ -126,6 +126,7 @@ async def verify_and_correct(
         correcting=True,
         # The correction is this turn continuing, so it works where the turn worked.
         workspace_key=workspace_key,
+        reported=turn.reported,
     )
     if run.status is RunStatus.awaiting_input:
         # The correction needs approval: carry the drop range on the parked turn

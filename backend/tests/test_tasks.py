@@ -37,7 +37,7 @@ from core.vault import Vault
 from models.task_list import ConversationTaskList
 from runs import EventBody, Run, RunRegistry, RunStatus, RunStream, TasksUpdated
 from services.conversations import ConversationBinding
-from services.subagents import FiledReport, SubagentLauncher, SubagentView
+from services.subagents import FiledReport, SubagentLauncher
 from services.task_list import ConversationTasks, ConversationTaskStore
 from tools import RunDeps, build_agent_toolsets, harness_events_capability
 from tools.report import report_toolset
@@ -291,13 +291,13 @@ def test_the_rename_map_is_a_bijection_over_the_allowlist():
 
 
 class _Launcher:
-    """One spawned agent below every thread, in ``status``; a filed report is accepted."""
+    """Every thread has a report to come while ``out``; a filed report is accepted."""
 
-    def __init__(self, status: str) -> None:
-        self.status: str = status
+    def __init__(self, *, out: bool) -> None:
+        self.out: bool = out
 
-    async def below(self, _owner_id: str, _conversation_id: str) -> list[SubagentView]:
-        return [SubagentView("s1", "child", "r1", "worker", "fixer", "fix it", self.status)]
+    async def awaiting_reports(self, _owner_id: str, _conversation_id: str) -> bool:
+        return self.out
 
     async def file_report(
         self, _owner_id: str, _conversation_id: str, _run_id: str, _report: FiledReport
@@ -356,16 +356,13 @@ async def test_no_conversation_or_no_capability_raises_nothing(tasks: Conversati
     assert await open_tasks_notice(ServiceContainer(), OWNER, "conv-1") is None
 
 
-@pytest.mark.parametrize("status", ["running", "blocked"])
-async def test_agents_still_out_hold_the_notice_for_a_later_stop(
-    tasks: ConversationTasks, status: str
-):
+async def test_a_report_to_come_holds_the_notice_for_a_later_stop(tasks: ConversationTasks):
     await _store(tasks).set_items(_items("collect the reports"))
-    launcher = _Launcher(status)
+    launcher = _Launcher(out=True)
     caps = _caps(tasks, launcher)
     assert await open_tasks_notice(caps, OWNER, "conv-1") is None
 
-    launcher.status = "done"
+    launcher.out = False
     notice = await open_tasks_notice(caps, OWNER, "conv-1")
     assert notice is not None and "collect the reports (pending)" in notice
 
@@ -430,19 +427,19 @@ async def test_the_turn_continues_once_for_open_steps_and_not_again(tasks: Conve
 async def test_a_parent_waiting_on_its_agents_ends_the_turn_unprompted(
     tasks: ConversationTasks,
 ):
-    launcher = _Launcher("running")
+    launcher = _Launcher(out=True)
     waiting = await _run_with_list(tasks, _WRITE_LIST, launcher=launcher)
     assert waiting.status is RunStatus.done
     assert _notices(waiting) == []
 
-    launcher.status = "done"
+    launcher.out = False
     woken = await _run_with_list(tasks, launcher=launcher)
     assert _notices(woken) == ["message.injected"]
 
 
 async def test_a_spawned_agent_that_reported_is_not_reopened(tasks: ConversationTasks):
     run = await _run_with_list(
-        tasks, _WRITE_LIST, _REPORT, launcher=_Launcher("done"), spawned=True
+        tasks, _WRITE_LIST, _REPORT, launcher=_Launcher(out=False), spawned=True
     )
     assert run.status is RunStatus.done
     assert _notices(run) == []

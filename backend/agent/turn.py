@@ -89,6 +89,8 @@ class TurnResult:
     # human-readable reason, carried through to `finalize` so it can persist a
     # marker on the turn's branch node (see `ConversationStore.record`).
     blocked_reason: str | None = None
+    # Whether a spawned agent filed its report during the turn.
+    reported: bool = False
 
 
 def turn_deps(
@@ -186,6 +188,7 @@ async def drive_turn(
     turn_start: TurnStart | None = None,
     correcting: bool = False,
     workspace_key: str = "",
+    reported: bool = False,
 ) -> TurnResult:
     """Drive one turn to its end: an answer, a park, or a stop at a bound.
 
@@ -201,7 +204,8 @@ async def drive_turn(
     (a stateless run, or compaction switched off). ``correcting`` marks a verifier's
     corrective re-attempt, where a fold is refused: the correction's drop range is a pair
     of absolute indices into the pre-fold history, and folding underneath it would leave
-    the persist dropping two messages that are no longer the ones it meant."""
+    the persist dropping two messages that are no longer the ones it meant. ``reported``
+    carries a spawned agent's filed report into that re-attempt, which is the same turn."""
     # ONE review budget for the whole turn: at the Auto level every hop's deferred calls
     # are reviewed, and a model that keeps reaching past the level's ceiling would
     # otherwise spend a utility-model round trip per call for as long as the turn runs.
@@ -219,6 +223,7 @@ async def drive_turn(
         turn_start=turn_start,
         review_budget=review_budget,
     )
+    deps.reported = reported
     # A turn may run as several segments: the initial model pass, then a continuation
     # for each batch of deferred calls a conversation grant auto-approves. They share
     # ONE no-progress guard and ONE usage accumulator, so a granted tool the model keeps
@@ -427,9 +432,9 @@ async def drive_turn(
                 and not deps.reported
                 and not run.messages.has_deliverable()
             ):
-                open_tasks_raised = True
                 notice = await open_tasks_notice(caps, run.owner_id, conversation_id)
                 if notice is not None:
+                    open_tasks_raised = True
                     _ = run.messages.enqueue(notice, source="system", notice="open-tasks")
             # The model finished, but something queued while it was working: instead of
             # ending the run, continue it with the queued text as the next user
@@ -451,7 +456,7 @@ async def drive_turn(
                 deferred_results = None
                 continue
             answer = output if isinstance(output, str) else None
-            return TurnResult(answer=answer, messages=messages)
+            return TurnResult(answer=answer, messages=messages, reported=deps.reported)
 
         # Rule on each deferred *approval* — grants, then the level, then Auto's review.
         # The rules and their announcement live in `gating.py`; what is left here is what

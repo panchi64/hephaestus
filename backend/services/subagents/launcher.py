@@ -241,6 +241,11 @@ class SubagentLauncher(ABC):
         """Every agent below a thread, at any depth, newest first — the panel's read."""
 
     @abstractmethod
+    async def awaiting_reports(self, owner_id: str, conversation_id: str) -> bool:
+        """Whether an agent this thread spawned itself still has a turn under way, so a
+        report to the thread is still to come."""
+
+    @abstractmethod
     async def worktrees(self, owner_id: str, conversation_id: str) -> list[ChildWorktree]:
         """The open worktrees of the agents this thread spawned itself."""
 
