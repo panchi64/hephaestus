@@ -200,55 +200,58 @@ export function DashboardScreen(): JSX.Element {
   };
 
   return (
-    <div class="flex min-h-full flex-col gap-8 pt-4">
-      <PageHeader
-        title={greeting}
-        assetId="HEPH-HUD-00.1 EDITION 02"
-        actions={
-          <Show
-            when={alertReason()}
-            fallback={
-              <StatusFlag status={overallStatus()} dot>
-                {overallLabel()}
-              </StatusFlag>
-            }
-          >
-            {(reason) => (
-              <Tooltip label={reason()} side="left">
+    <div class="flex min-h-full flex-col gap-8">
+      {/* The greeting and composer take the height the panels don't need, centred in
+          it: the open space frames the one thing to do here, while the panels below
+          stay at their content height (§1.1, volume is hierarchy). */}
+      <div class="flex flex-1 flex-col justify-center gap-6 py-6">
+        <PageHeader
+          title={greeting}
+          assetId="HEPH-HUD-00.1 EDITION 02"
+          actions={
+            <Show
+              when={alertReason()}
+              fallback={
                 <StatusFlag status={overallStatus()} dot>
                   {overallLabel()}
                 </StatusFlag>
-              </Tooltip>
-            )}
-          </Show>
-        }
-      />
+              }
+            >
+              {(reason) => (
+                <Tooltip label={reason()} side="left">
+                  <StatusFlag status={overallStatus()} dot>
+                    {overallLabel()}
+                  </StatusFlag>
+                </Tooltip>
+              )}
+            </Show>
+          }
+        />
 
-      {/* Composer — the focal point. It is the only card on this screen that lights
+        {/* Composer — the focal point. It is the only card on this screen that lights
           its accent on focus, which is what makes "start typing" the obvious move on
           arrival (§6.2).
 
-          The dot field's falloff is centred where this lands (`DotField`'s `focusY`
-          in AppShell); move the composer and move that too. */}
-      <Composer
-        size="lg"
-        title="New thread · ready"
-        autofocus
-        storageKey="home-new"
-        placeholder="Ask anything, request a summary, or describe a task…"
-        onSend={handleStart}
-        attachments={attachments}
-        menu={commands}
-        sendBlocked={sendBlockedReason()}
-        // The shared picker, same slot as the docked composer in a room: two copies
-        // of a control bound to one backend value drift.
-        trailing={<ModelPicker />}
-      />
+          The dot field's falloff is centred where this lands (`.heph-dot-field`'s
+          focus, 50% × 46% of the column); move the composer and move that too. */}
+        <Composer
+          size="lg"
+          title="New thread · ready"
+          autofocus
+          storageKey="home-new"
+          placeholder="Ask anything, request a summary, or describe a task…"
+          onSend={handleStart}
+          attachments={attachments}
+          menu={commands}
+          sendBlocked={sendBlockedReason()}
+          // The shared picker, same slot as the docked composer in a room: two copies
+          // of a control bound to one backend value drift.
+          trailing={<ModelPicker />}
+        />
+      </div>
 
-      {/* The columns take the height left under the composer, so the panels fill the
-          page and the system strip sits at its foot. */}
-      <div class="flex flex-1 flex-col gap-6">
-        <div class="grid min-h-80 flex-1 grid-cols-1 gap-6 lg:grid-cols-3">
+      <div class="flex flex-col gap-4">
+        <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {/* Recent threads — the launchpad's navigation; default brightness. */}
           <Panel label="Recent threads" bare>
             <Show

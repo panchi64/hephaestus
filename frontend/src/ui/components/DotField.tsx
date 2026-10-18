@@ -2,8 +2,6 @@ import { splitProps, type JSX } from "solid-js";
 import { cx } from "../cx";
 
 export interface DotFieldProps {
-  /** How far down the page the falloff centres, as a CSS length. Defaults to 50%. */
-  focusY?: string;
   class?: string;
 }
 
@@ -18,12 +16,6 @@ export interface DotFieldProps {
  *
  *  Decorative, so `aria-hidden` and `pointer-events: none`. */
 export function DotField(props: DotFieldProps): JSX.Element {
-  const [local] = splitProps(props, ["focusY", "class"]);
-  return (
-    <div
-      class={cx("heph-dot-field", local.class)}
-      style={local.focusY ? { "--dot-field-y": local.focusY } : undefined}
-      aria-hidden="true"
-    />
-  );
+  const [local] = splitProps(props, ["class"]);
+  return <div class={cx("heph-dot-field", local.class)} aria-hidden="true" />;
 }
