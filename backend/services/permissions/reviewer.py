@@ -46,9 +46,10 @@ type Authorization = Literal["explicitly_no", "neutral", "explicitly_yes"]
 #: here because the grant store (``services/approval_grants.py``) sits above this package.
 type GrantWidth = Literal["none", "command", "tool"]
 
-#: Who approved an earlier call in the conversation. Only ``operator`` and ``grant`` are
-#: the operator's word; ``review`` is an earlier Auto ruling, which authorizes nothing.
-type ApprovedBy = Literal["operator", "grant", "review"]
+#: Who approved an earlier call in the conversation. Only ``operator`` is the operator's
+#: word; ``review`` is an earlier Auto ruling, which authorizes nothing. Grants are not
+#: recorded: a live grant reaches the review directly, and a revoked one must not linger.
+type ApprovedBy = Literal["operator", "review"]
 
 
 class ReviewVerdict(BaseModel):

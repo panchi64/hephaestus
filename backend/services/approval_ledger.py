@@ -1,17 +1,17 @@
 """The conversation's approved calls, as the Auto level's decision model reads them.
 
 Recorded where an approval is settled: by the operator on resume (``routes/runs.py``), and
-by a grant or an Auto review at the deferred split (``agent/gating.py``). Calls the
-structural judge clears are not recorded.
+by an Auto review that cleared a call on its own grounds (``agent/gating.py``). Grants and
+structural clearances are not recorded.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
 
-from sqlalchemy import Engine
+from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import Engine, delete
 from sqlmodel import Session, col, select
 
 from core.db import in_session
@@ -20,7 +20,7 @@ from models.approved_call import ApprovedCall
 from services.permissions import capability_of
 from services.permissions.reviewer import ApprovedBy, PriorApproval
 
-_APPROVERS: frozenset[str] = frozenset({"operator", "grant", "review"})
+_APPROVED_BY: TypeAdapter[ApprovedBy] = TypeAdapter(ApprovedBy)
 
 
 @dataclass(frozen=True)
@@ -47,8 +47,10 @@ class ApprovalLedger:
         self._vault: Vault = vault
 
     async def record(
-        self, owner_id: str, conversation_id: str, entries: Sequence[LedgerEntry]
+        self, owner_id: str, conversation_id: str, entries: Sequence[LedgerEntry], *, keep: int
     ) -> None:
+        """Append ``entries`` and drop the conversation's rows beyond the latest ``keep``,
+        which is all :meth:`recent` is ever asked for."""
         if not entries:
             return
         rows = [
@@ -65,6 +67,20 @@ class ApprovalLedger:
 
         def work(session: Session) -> None:
             session.add_all(rows)
+            session.flush()
+            kept = select(ApprovedCall.id).where(
+                ApprovedCall.owner_id == owner_id,
+                ApprovedCall.conversation_id == conversation_id,
+            )
+            kept = kept.order_by(
+                col(ApprovedCall.created_at).desc(), col(ApprovedCall.id).desc()
+            ).limit(max(keep, 0))
+            _ = session.exec(
+                delete(ApprovedCall)
+                .where(col(ApprovedCall.owner_id) == owner_id)
+                .where(col(ApprovedCall.conversation_id) == conversation_id)
+                .where(col(ApprovedCall.id).not_in(kept.scalar_subquery()))
+            )
 
         await in_session(self._engine, work)
 
@@ -89,10 +105,16 @@ class ApprovalLedger:
             PriorApproval(
                 tool_name=row.tool_name,
                 summary=self._vault.decrypt_str(row.summary_enc),
-                # An unknown word reads as the weakest approver, which authorizes nothing.
-                approved_by=cast(
-                    "ApprovedBy", row.approved_by if row.approved_by in _APPROVERS else "review"
-                ),
+                approved_by=_approved_by(row.approved_by),
             )
             for row in reversed(rows)
         ]
+
+
+def _approved_by(stored: str) -> ApprovedBy:
+    """The stored approver, or ``review``, which authorizes nothing, for any word outside
+    ``ApprovedBy``."""
+    try:
+        return _APPROVED_BY.validate_python(stored)
+    except ValidationError:
+        return "review"

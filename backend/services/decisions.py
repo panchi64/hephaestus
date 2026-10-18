@@ -81,14 +81,16 @@ _RESPONSE = TypeAdapter(_Response)
 
 
 def decisions_url(base_url: str) -> str:
-    """Where an endpoint serves decisions. The path of ``base_url`` is ignored: an
-    endpoint configured at ``…/v1`` for chat serves decisions beside it, not under it."""
+    """Where an endpoint serves decisions. A trailing ``/v1`` is dropped, since an endpoint
+    configured at ``…/v1`` for chat serves decisions beside it; any prefix before it (a
+    reverse proxy's path) is kept."""
     parts = urlsplit(base_url)
     origin = f"{parts.scheme}://{parts.netloc}"
     host = parts.hostname or ""
     if host == "openrouter.ai" or host.endswith(".openrouter.ai"):
         return f"{origin}/api/alpha/decisions"
-    return f"{origin}/v1/systemone"
+    prefix = parts.path.rstrip("/").removesuffix("/v1")
+    return f"{origin}{prefix}/v1/systemone"
 
 
 def _wire(question: Question) -> dict[str, JsonValue]:
@@ -162,12 +164,18 @@ async def ask(
     return {name: answers[name] for name in questions}
 
 
-async def probe(spec: EndpointSpec, *, client: httpx.AsyncClient | None = None) -> None:
+#: The question name the bind-time probe asks, so a scripted server can tell it apart.
+PROBE_QUESTION = "probe"
+
+
+async def probe(
+    spec: EndpointSpec, *, timeout_s: float, client: httpx.AsyncClient | None = None
+) -> None:
     """One real question, so a chat-only server is rejected when the role is bound."""
     _ = await ask(
         spec,
         "The sky is blue.",
-        {"probe": Noul("Does the text describe a colour?")},
-        timeout_s=15.0,
+        {PROBE_QUESTION: Noul("Does the text describe a colour?")},
+        timeout_s=timeout_s,
         client=client,
     )

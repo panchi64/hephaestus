@@ -36,9 +36,10 @@ export interface EndpointInput {
 /** The roles that resolve against an ordered fallback chain — the Models pane's
  *  ENDPOINTS tab (`FallbackChainsSection`) is what orders them. `main` is
  *  absent because it is single-endpoint: its card overwrites the whole binding,
- *  exactly as the top-bar picker does. The binding shape
+ *  exactly as the top-bar picker does; `decision` is absent because only the
+ *  head of its chain is ever asked. The binding shape
  *  (`RoleBinding`/`RoleBindings`) is owned by `~/lib/stores/models`. */
-export const BINDABLE_ROLES = ["utility", "embedding", "decision"] as const;
+export const BINDABLE_ROLES = ["utility", "embedding"] as const;
 
 /** Progress of a background re-embed (after the embedding model changes). The
  *  vectors of every memory + chat message are re-embedded into the new model's

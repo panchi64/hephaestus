@@ -80,7 +80,6 @@ from services.permissions import (
 )
 from services.permissions.decision_questions import build_state
 from services.permissions.decision_reviewer import make_decision_reviewer
-from services.permissions.decision_scoring import Thresholds
 from services.permissions.projections import PROJECTIONS
 from services.permissions.reviewer import Reviewer, ReviewUnavailable, ScoredVerdict
 from services.sandbox.thread_shells import ThreadShells
@@ -371,8 +370,7 @@ class TestItFailsClosed:
         async with httpx.AsyncClient(transport=httpx.MockTransport(never_answers)) as client:
             reviewer = make_decision_reviewer(
                 EndpointSpec(base_url="http://127.0.0.1:8080/v1", model="d"),
-                thresholds=Thresholds.from_settings(Settings()),
-                timeout_s=0.05,
+                settings=Settings(review_timeout_s=0.05),
                 client=client,
             )
             assert isinstance(await reviewer(ReviewRequest(capability=RISKY)), ReviewUnavailable)

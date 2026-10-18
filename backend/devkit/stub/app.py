@@ -28,6 +28,7 @@ from pydantic import BaseModel, JsonValue
 from devkit.stub.embeddings import embed as embed_text
 from devkit.stub.scripts import Scenario, ScriptBook, last_user_prompt
 from devkit.stub.wire import Reply, ToolCall, completion, stream
+from services.decisions import PROBE_QUESTION
 
 #: The model id the stub advertises and the seeded endpoint binds to.
 MODEL_ID = "hephaestus-stub"
@@ -142,9 +143,11 @@ def create_stub() -> FastAPI:
     async def decide(body: dict[str, JsonValue]) -> dict[str, JsonValue]:
         # The decision wire (`services/decisions.py`). By default every action is low risk
         # and requested, so Auto clears it; a pushed override replaces named answers once.
+        # The bind-time probe never takes one, so rebinding cannot eat a scripted review.
         book.requests.append(body)
         questions = body.get("questions")
-        override = decisions.pop(0) if decisions else {}
+        probing = isinstance(questions, dict) and PROBE_QUESTION in questions
+        override = decisions.pop(0) if decisions and not probing else {}
         answers: dict[str, JsonValue] = {}
         for name, question in (questions if isinstance(questions, dict) else {}).items():
             answers[name] = override.get(name) or _default_answer(name, question)

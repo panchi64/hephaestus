@@ -18,6 +18,7 @@ from pydantic_ai.messages import ToolCallPart
 
 from agent import ParkedTurn, build_resume_orchestrator
 from agent.gating import GrantApproved
+from core.config import get_settings
 from routes import deps
 from runs import (
     AnsweredQuestionOut,
@@ -533,5 +534,6 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
                 for decision in body.decisions
                 if decision.approved
             ],
+            keep=get_settings().review_ledger_entries,
         )
     return ApprovalOutcome(granted=[list(scope) for _, scope, _ in to_grant], unscoped=unscoped)

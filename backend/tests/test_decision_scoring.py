@@ -6,9 +6,9 @@ import pytest
 
 from core.config import Settings
 from services.decisions import Answer, NoulAnswer, ScoreAnswer
-from services.permissions.decision_scoring import MISMATCH_NOTE, Thresholds, score
+from services.permissions.decision_scoring import MISMATCH_NOTE, score
 
-T = Thresholds.from_settings(Settings())
+T = Settings()
 
 
 def answers(
@@ -34,11 +34,11 @@ class TestRisk:
         assert score(answers(), T).verdict.risk == "low"
 
     def test_a_small_chance_of_the_irreversible_is_enough(self):
-        verdict = score(answers(levels=(0.3, 0.3, 0.0, T.destroy_min)), T).verdict
+        verdict = score(answers(levels=(0.3, 0.3, 0.0, T.decision_destroy_min)), T).verdict
         assert verdict.risk == "too_destructive"
 
     def test_just_under_the_destroy_bar_is_not_unrecoverable(self):
-        verdict = score(answers(levels=(0.7, 0.0, 0.0, T.destroy_min - 0.01)), T).verdict
+        verdict = score(answers(levels=(0.7, 0.0, 0.0, T.decision_destroy_min - 0.01)), T).verdict
         assert verdict.risk != "too_destructive"
 
     def test_a_tail_on_the_upper_levels_is_high_even_when_the_mean_is_low(self):
@@ -50,7 +50,7 @@ class TestRisk:
         assert score(answers(levels=(0.1, 0.9, 0.0, 0.0)), T).verdict.risk == "high"
 
     def test_anything_outward_is_high_whatever_the_levels_say(self):
-        assert score(answers(outward=T.outward_max), T).verdict.risk == "high"
+        assert score(answers(outward=T.decision_outward_max), T).verdict.risk == "high"
 
 
 class TestAuthorization:
@@ -58,11 +58,11 @@ class TestAuthorization:
         assert score(answers(), T).verdict.authorization == "explicitly_yes"
 
     def test_a_lukewarm_request_is_neutral(self):
-        verdict = score(answers(requested=T.requested_min - 0.01), T).verdict
+        verdict = score(answers(requested=T.decision_requested_min - 0.01), T).verdict
         assert verdict.authorization == "neutral"
 
     def test_a_refusal_outranks_a_request(self):
-        verdict = score(answers(requested=0.99, refused=T.refused_min), T).verdict
+        verdict = score(answers(requested=0.99, refused=T.decision_refused_min), T).verdict
         assert verdict.authorization == "explicitly_no"
 
     @pytest.mark.parametrize("refused", [0.2, 0.3, 0.49])
@@ -70,7 +70,7 @@ class TestAuthorization:
         assert score(answers(refused=refused), T).verdict.authorization == "neutral"
 
     def test_an_act_aimed_at_the_wrong_thing_is_not_a_yes(self):
-        verdict = score(answers(mismatch=T.mismatch_max), T).verdict
+        verdict = score(answers(mismatch=T.decision_mismatch_max), T).verdict
         assert verdict.authorization == "neutral"
         assert verdict.correctness == MISMATCH_NOTE
 

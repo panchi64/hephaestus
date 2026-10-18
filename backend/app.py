@@ -398,7 +398,6 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
         state.credentials,
         state.settings_store,
         state.approval_grants,
-        state.approval_ledger,
         state.egress,
         state.api_tokens,
         platform_vm,

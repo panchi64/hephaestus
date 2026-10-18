@@ -58,6 +58,7 @@ def _json(body: object, status: int = 200) -> Callable[[httpx.Request], httpx.Re
     [
         ("http://127.0.0.1:8080/v1", "http://127.0.0.1:8080/v1/systemone"),
         ("http://localhost:8080", "http://localhost:8080/v1/systemone"),
+        ("https://gpu.lan/llama/v1/", "https://gpu.lan/llama/v1/systemone"),
         ("https://openrouter.ai/api/v1", "https://openrouter.ai/api/alpha/decisions"),
     ],
 )
@@ -146,5 +147,5 @@ async def test_an_unreachable_server_is_refused():
 async def test_the_probe_asks_one_question():
     seen: list[httpx.Request] = []
     async with _client(_json({"answers": {"probe": {"noul": 0.99}}}), seen) as client:
-        await decisions.probe(LOCAL, client=client)
+        await decisions.probe(LOCAL, timeout_s=5, client=client)
     assert list(obj(obj(JSON.validate_json(seen[0].content))["questions"])) == ["probe"]

@@ -41,6 +41,9 @@ async def test_overview_empty_workspace():
     assert caps["chat_model"]["detail"] == "no provider configured"
     assert caps["chat_model"]["remediation_href"] == "/models"
     assert caps["embeddings"]["status"] == "warn"
+    # Auto still works without one, by asking: degraded, with somewhere to fix it.
+    assert caps["decision_model"]["status"] == "warn"
+    assert caps["decision_model"]["remediation_href"] == "/models"
     assert caps["sandbox"]["status"] == "warn"
     assert caps["sandbox"]["detail"] == "disabled"
     # Web search is managed (SearXNG in the platform VM); with no VM in tests it degrades

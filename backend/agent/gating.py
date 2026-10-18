@@ -65,7 +65,6 @@ from services.approval_grants import (
 )
 from services.approval_ledger import ApprovalLedger, LedgerEntry
 from services.permissions import (
-    ApprovedBy,
     Decision,
     GrantWidth,
     PriorApproval,
@@ -82,7 +81,6 @@ from services.permissions import (
     review_transcript,
 )
 from services.permissions.decision_reviewer import make_decision_reviewer
-from services.permissions.decision_scoring import Thresholds
 from services.permissions.fence import Fence
 from services.registry import ModelRegistry
 from services.sandbox.thread_shells import ThreadShells
@@ -198,7 +196,6 @@ async def settle_deferred(
     # ALLOW can come from a grant or from a level that allows outright, and only the first
     # is revocable.
     ruled = [(call, *_by_level(permission, call, granted)) for call in approvals]
-    ledger = caps.get_optional(ApprovalLedger)
     reviewed = await review_batch(
         run,
         [call for call, decision, _ in ruled if decision is Decision.REVIEW],
@@ -206,11 +203,7 @@ async def settle_deferred(
         deps=deps,
         messages=messages,
         grants=granted,
-        prior=(
-            await ledger.recent(run.owner_id, conversation_id, get_settings().review_ledger_entries)
-            if ledger is not None and conversation_id is not None
-            else ()
-        ),
+        conversation_id=conversation_id,
         turn_start=turn_start,
         budget=budget,
     )
@@ -222,10 +215,9 @@ async def settle_deferred(
         if outcome is not None:
             decision = outcome.decision
         if decision is Decision.ALLOW:
-            approver = _approver(outcome, grant_backed=grant_backed)
-            if approver is not None:
+            if _reviewed_on_its_own(outcome):
                 approved.append(
-                    LedgerEntry.of(call.tool_call_id, call.tool_name, call.args_as_dict(), approver)
+                    LedgerEntry.of(call.tool_call_id, call.tool_name, call.args_as_dict(), "review")
                 )
             # Reviewed, resting on a grant, or given by a level that asks nobody — and
             # which of the three is recorded, because only the grant is still worth
@@ -255,19 +247,19 @@ async def settle_deferred(
             )
         else:
             manual.append(call)
+    ledger = caps.get_optional(ApprovalLedger)
     if ledger is not None and conversation_id is not None:
-        await ledger.record(run.owner_id, conversation_id, approved)
+        await ledger.record(
+            run.owner_id, conversation_id, approved, keep=get_settings().review_ledger_entries
+        )
     return settled, manual
 
 
-def _approver(outcome: ReviewOutcome | None, *, grant_backed: bool) -> ApprovedBy | None:
-    """Who an allow is recorded under in the ledger, or None for one that says nothing
-    about the operator's wishes: a structural clearance, or a level that asks nobody."""
-    if outcome is None:
-        return "grant" if grant_backed else None
-    if outcome.stage != "reviewer":
-        return None
-    return "grant" if outcome.by_grant else "review"
+def _reviewed_on_its_own(outcome: ReviewOutcome | None) -> bool:
+    """Whether the decision model cleared the call without leaning on a grant: the only
+    allow the ledger records here. A grant reaches the review directly, and a structural
+    clearance or a level's own allow says nothing about the operator's wishes."""
+    return outcome is not None and outcome.stage == "reviewer" and not outcome.by_grant
 
 
 def _by_level(
@@ -310,7 +302,7 @@ async def review_batch(
     deps: RunDeps,
     messages: list[ModelMessage],
     grants: Sequence[GrantInfo] = (),
-    prior: Sequence[PriorApproval] = (),
+    conversation_id: str | None = None,
     turn_start: TurnBoundary | None = None,
     budget: ReviewBudget | None = None,
 ) -> dict[str, ReviewOutcome]:
@@ -333,6 +325,12 @@ async def review_batch(
         return {}
     settings = get_settings()
     reviewer = await resolve_reviewer(caps, run.owner_id)
+    ledger = caps.get_optional(ApprovalLedger)
+    prior = (
+        await ledger.recent(run.owner_id, conversation_id, settings.review_ledger_entries)
+        if ledger is not None and conversation_id is not None
+        else []
+    )
     transcript = review_transcript(
         messages, turn_start=turn_start, limit=settings.review_transcript_entries
     )
@@ -418,13 +416,7 @@ async def resolve_reviewer(caps: ServiceContainer, owner_id: str) -> Reviewer | 
     except (DegradedCapabilityError, NotFoundError) as exc:
         logger.info("auto review unavailable: no decision model (%s)", exc)
         return None
-    settings = get_settings()
-    return make_decision_reviewer(
-        spec,
-        thresholds=Thresholds.from_settings(settings),
-        timeout_s=settings.review_timeout_s,
-        client=registry.http_client,
-    )
+    return make_decision_reviewer(spec, settings=get_settings(), client=registry.http_client)
 
 
 async def review_call(

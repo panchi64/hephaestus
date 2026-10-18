@@ -139,41 +139,29 @@ export function ModelsScreen(): JSX.Element {
     }
   };
 
-  const pickEmbedding = async (value: string) => {
+  /** Binds `role` to the picked endpoint and model, naming it `name` in the toasts. */
+  const bindPicked = async (role: string, name: string, value: string) => {
     const sel = decodeModelValue(value);
     if (!sel) return;
     try {
       const reindexStarted = await setRoleBinding(
-        "embedding",
-        chainHeadedBy("embedding", sel.endpointId),
+        role,
+        chainHeadedBy(role, sel.endpointId),
         sel.model,
       );
       if (reindexStarted)
         toast.info("Re-embedding memories and chats for the new model…");
-      else toast.success(`Search & memory model set to ${sel.model}.`);
+      else toast.success(`${name} set to ${sel.model}.`);
     } catch (e) {
       toast.error(
-        isApiError(e) ? e.detail : "Unable to set the search & memory model.",
+        isApiError(e) ? e.detail : `Unable to set the ${name.toLowerCase()}.`,
       );
     }
   };
-
-  const pickDecision = async (value: string) => {
-    const sel = decodeModelValue(value);
-    if (!sel) return;
-    try {
-      await setRoleBinding(
-        "decision",
-        chainHeadedBy("decision", sel.endpointId),
-        sel.model,
-      );
-      toast.success(`Decision model set to ${sel.model}.`);
-    } catch (e) {
-      toast.error(
-        isApiError(e) ? e.detail : "Unable to set the decision model.",
-      );
-    }
-  };
+  const pickEmbedding = (value: string) =>
+    bindPicked("embedding", "Search & memory model", value);
+  const pickDecision = (value: string) =>
+    bindPicked("decision", "Decision model", value);
 
   return (
     <Stack gap={6}>

@@ -28,10 +28,10 @@ from core.config import Settings
 from devkit.stub import MODEL_ID, create_stub
 from devkit.stub.embeddings import DIMENSIONS, embed
 from devkit.stub.scripts import REQUEST_LOG_LIMIT
+from services.decisions import probe
 from services.endpoint_spec import EndpointSpec
 from services.permissions import ReviewRequest, ScoredVerdict, capability_of
 from services.permissions.decision_reviewer import make_decision_reviewer
-from services.permissions.decision_scoring import Thresholds
 
 from ._json import arr, obj, parse_json
 
@@ -319,8 +319,7 @@ async def _decide_through_the_stub(*overrides: Mapping[str, object]) -> object:
             assert pushed.status_code == 200
         reviewer = make_decision_reviewer(
             EndpointSpec(base_url="http://stub/v1", model=MODEL_ID),
-            thresholds=Thresholds.from_settings(Settings()),
-            timeout_s=5,
+            settings=Settings(),
             client=client,
         )
         capability = capability_of("mail_send", {"to": "a@b.c"})
@@ -331,6 +330,17 @@ async def test_the_stub_clears_an_action_by_default():
     result = await _decide_through_the_stub()
     assert isinstance(result, ScoredVerdict)
     assert (result.verdict.risk, result.verdict.authorization) == ("low", "explicitly_yes")
+
+
+async def test_the_bind_probe_leaves_a_pushed_override_for_the_review():
+    app = create_stub()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as client:
+        _ = await client.post("http://stub/_stub/decisions", json=[{"refused": {"noul": 0.9}}])
+        await probe(
+            EndpointSpec(base_url="http://stub/v1", model=MODEL_ID), timeout_s=5, client=client
+        )
+        pending = await client.post("http://stub/_stub/decisions", json=[])
+    assert parse_json(pending.content) == {"pending": 1}
 
 
 async def test_a_pushed_decision_overrides_the_named_answers_once():

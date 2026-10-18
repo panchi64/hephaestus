@@ -24,6 +24,6 @@ class ApprovedCall(Table, table=True):
     tool_call_id: str
     tool_name: str
     summary_enc: str
-    # "operator", "grant" or "review" (`services/approval_ledger.py`).
+    # "operator" or "review" (`services/approval_ledger.py`).
     approved_by: str
     created_at: datetime = Field(default_factory=utcnow, index=True)

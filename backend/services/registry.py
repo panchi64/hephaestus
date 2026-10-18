@@ -26,6 +26,7 @@ from pydantic_ai.settings import ModelSettings
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 
+from core.config import get_settings
 from core.db import get_owned, in_session
 from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.vault import Vault
@@ -329,6 +330,7 @@ class ModelRegistry:
             try:
                 await decisions.probe(
                     self._to_spec(endpoints[0], role, model_override=model),
+                    timeout_s=get_settings().review_timeout_s,
                     client=self._http_client,
                 )
             except DegradedCapabilityError as exc:
