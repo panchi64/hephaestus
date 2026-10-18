@@ -11,7 +11,7 @@ export interface Greeting {
 
 export const GREETINGS: readonly Greeting[] = [
   { when: "morning", text: "Good morning. What are we working on?" },
-  { when: "morning", text: "Morning. Everything is where you left it." },
+  { when: "morning", text: "Morning. What's on the list?" },
   { when: "morning", text: "Good morning. Where would you like to start?" },
   { when: "morning", text: "Morning. What's first?" },
   { when: "afternoon", text: "Good afternoon. What needs doing?" },

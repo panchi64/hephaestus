@@ -32,6 +32,7 @@ from services.agents.definition import (
     WORKSPACE_POLICIES,
     AgentDefinition,
     ToolAccess,
+    assignable_class_key,
     class_key,
     workspace_policy,
 )
@@ -295,7 +296,7 @@ def _apply(agent: AgentDefinition, values: Mapping[str, object]) -> AgentDefinit
     known = {f.name for f in fields(AgentDefinition)}
     changes = {key: value for key, value in values.items() if key in known}
     if "agent_class" in changes:
-        key = class_key(str(changes["agent_class"] or ""))
+        key = assignable_class_key(str(changes["agent_class"] or ""))
         if key is None:
             raise AgentValidationError("agent_class", "not an agent class")
         changes["agent_class"] = key

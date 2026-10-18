@@ -1,4 +1,4 @@
-import { For, Show, Suspense, type JSX } from "solid-js";
+import { For, Index, Show, Suspense, type JSX } from "solid-js";
 import { createListView, type SortDef, type SortDir } from "~/lib/list";
 import { useTabParam } from "~/lib/useTabParam";
 import {
@@ -238,20 +238,22 @@ export function LibraryDirectory<T extends LibraryEntry>(
               when={props.groups}
               fallback={<For each={view.items()}>{row}</For>}
             >
+              {/* `Index`: the grouping builds fresh group objects on every change, so
+                  keying sections by reference would remount every row with them. */}
               {(groups) => (
-                <For each={groups()(view.items())}>
+                <Index each={groups()(view.items())}>
                   {(group) => (
                     <section>
                       <div class="flex items-baseline gap-3 px-3 pt-4 pb-1">
-                        <Text variant="plate">{group.label}</Text>
+                        <Text variant="plate">{group().label}</Text>
                         <Text variant="micro" tone="dim" class="truncate">
-                          {group.note}
+                          {group().note}
                         </Text>
                       </div>
-                      <For each={group.items}>{row}</For>
+                      <For each={group().items}>{row}</For>
                     </section>
                   )}
-                </For>
+                </Index>
               )}
             </Show>
           </Show>

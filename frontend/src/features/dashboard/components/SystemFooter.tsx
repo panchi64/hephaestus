@@ -1,15 +1,14 @@
 import { For, Show, type JSX, type Resource as SolidResource } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { Marquee, Resource, StatusDot, Text, Tooltip } from "~/ui";
-import { degraded } from "../activity";
-import type { Overview, SystemStat } from "../model";
+import type { CapabilityHealth, Overview, SystemStat } from "../model";
 
-/** The launchpad's last lines: ambient facts and a nominal count, then only the
- *  capabilities that are degraded. A healthy panel is a count, not a grid of dark
- *  cells (§10.15's failure mode), so the footer is grayscale unless something is
- *  wrong. All of it is machine output: mono, `micro`, no surface (§2, §10.2). */
+/** Ambient facts and a nominal count, then only the degraded capabilities, so the
+ *  footer is grayscale unless something is wrong (§10.15). */
 export function SystemFooter(props: {
   overview: SolidResource<Overview>;
+  /** The degraded capabilities, alerts first, as the screen already derived them. */
+  degraded: CapabilityHealth[];
   onRetry: () => void;
   band: (o: Overview) => SystemStat[];
 }): JSX.Element {
@@ -22,7 +21,7 @@ export function SystemFooter(props: {
         loading={<span class="block h-4" />}
       >
         {(o) => {
-          const lit = () => degraded(o().capabilities);
+          const lit = () => props.degraded;
           return (
             <div class="flex flex-col gap-2">
               <div class="flex min-w-0 items-center justify-between gap-6">

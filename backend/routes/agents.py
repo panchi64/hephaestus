@@ -19,7 +19,12 @@ from routes import deps
 from routes.deps import OPERATOR_ID
 from routes.revisions import add_revision_routes
 from services.agents import BUILTIN, AgentDefinition, ToolAccess, project_agents
-from services.agents.definition import AgentSource, WorkspacePolicy
+from services.agents.definition import (
+    DEFAULT_CLASS,
+    ROOT_CLASS,
+    AgentSource,
+    WorkspacePolicy,
+)
 from services.agents.files import render_agent_file
 from services.permissions import PermissionLevel
 
@@ -29,8 +34,6 @@ add_revision_routes(router, deps.agent_store)
 _IMPORT_MAX_BYTES = 64 * 1024
 
 _READ_ONLY_SOURCES: frozenset[str] = frozenset({"builtin", "project", "plugin"})
-
-_HELPER_CLASS = "keledones"
 
 
 class AgentOut(BaseModel):
@@ -51,6 +54,8 @@ class AgentOut(BaseModel):
     max_depth: int | None
     #: Whether other agents may delegate to it.
     delegable: bool
+    #: Whether it is on the launch roster now: delegable, published and not shadowed.
+    launchable: bool
     #: Tools without which delegating to it is refused.
     required: list[str]
     source: AgentSource
@@ -66,14 +71,18 @@ class AgentClassOut(BaseModel):
     role: str
     #: Callsign stems; empty for a class whose agents are never addressed by one.
     callsigns: list[str]
-    #: Whether an agent may be given this class. Helper voices are never agents.
+    #: Whether an agent may be given this class.
     assignable: bool
+    #: The class of the agent the operator talks to, at the root of every tree.
+    root: bool
 
 
 class AgentClasses(BaseModel):
     classes: list[AgentClassOut]
     #: The installation's delegation depth limit, for an agent that sets none.
     max_depth: int
+    #: The class a new agent gets when it names none.
+    default_class: str
 
 
 class AgentWrite(BaseModel):
@@ -118,11 +127,13 @@ async def list_agent_classes(request: Request) -> AgentClasses:
                 display=spec.display,
                 role=spec.role,
                 callsigns=list(spec.callsigns),
-                assignable=spec.key != _HELPER_CLASS,
+                assignable=spec.assignable,
+                root=spec.key == ROOT_CLASS,
             )
             for spec in CLASSES.values()
         ],
         max_depth=deps.settings(request).agent_max_depth,
+        default_class=DEFAULT_CLASS,
     )
 
 
@@ -286,6 +297,7 @@ def _out(agent: AgentDefinition, *, active: bool) -> AgentOut:
         can_delegate=agent.can_delegate,
         max_depth=agent.max_depth,
         delegable=agent.delegable,
+        launchable=agent.delegable and agent.published and active,
         required=sorted(agent.required),
         source=agent.source,
         published=agent.published,

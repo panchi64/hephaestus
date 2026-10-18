@@ -20,7 +20,26 @@ async def test_the_classes_are_listed_in_order_with_the_depth_limit():
     assignable = {s(c["key"]): c["assignable"] for c in classes}
     assert assignable["keledones"] is False
     assert assignable["kourai"] is True
+    assert [c["key"] for c in classes if c["root"]] == ["talos"]
     assert body["max_depth"] == limit
+    assert body["default_class"] == "tripodes"
+
+
+async def test_a_helper_class_cannot_be_given_to_an_agent():
+    async with client_app() as (client, _app):
+        resp = await client.post("/agents", json={**_BODY, "agent_class": "keledones"})
+    assert resp.status_code == 422
+    assert obj(json_body(resp)["detail"])["field"] == "agent_class"
+
+
+async def test_only_a_published_delegable_agent_is_launchable():
+    async with client_app() as (client, _app):
+        listed = json_list(await client.get("/agents"))
+        draft = json_body(await client.post("/agents", json=_BODY))
+    by_id = {s(obj(a)["id"]): obj(a) for a in listed}
+    assert by_id["builtin:explorer"]["launchable"] is True
+    assert by_id["builtin:default"]["launchable"] is False
+    assert draft["launchable"] is False
 
 
 async def test_a_builtin_lists_its_required_tools():

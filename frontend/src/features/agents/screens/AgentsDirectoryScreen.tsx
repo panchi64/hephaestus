@@ -13,13 +13,10 @@ import {
 } from "../data";
 import {
   agentHierarchy,
-  classLabel,
-  compareAgentsByClass,
   compareAgentsBySource,
   agentSourceTag,
   isAwaitingPublish,
   type Agent,
-  type AgentClass,
 } from "../model";
 import { AgentStateFlags } from "../components/AgentStateFlags";
 import { NewAgentDialog } from "../components/NewAgentDialog";
@@ -32,7 +29,14 @@ export function AgentsDirectoryScreen(props: {
   const agentsResource = useAgents();
   const agents = (): Agent[] => settled(agentsResource) ?? [];
   const classesResource = useAgentClasses();
-  const classes = (): AgentClass[] => settled(classesResource)?.classes ?? [];
+  // Until the class table arrives (or if it can't), the list stays flat rather than
+  // filing every agent under an unknown class.
+  const grouping = () => {
+    const table = settled(classesResource)?.classes;
+    return table
+      ? (visible: Agent[]) => agentHierarchy(visible, table)
+      : undefined;
+  };
   const loadError = (): string | null =>
     agentsResource.error
       ? agentErrorMessage(agentsResource.error, "Could not load agents.")
@@ -125,12 +129,8 @@ export function AgentsDirectoryScreen(props: {
       sorts={{
         name: { label: "Name", compare: compareByName },
         source: { label: "Source", compare: compareAgentsBySource },
-        class: {
-          label: "Class",
-          compare: (a, b) => compareAgentsByClass(classes())(a, b),
-        },
       }}
-      groups={(visible) => agentHierarchy(visible, classes())}
+      groups={grouping()}
       initialSort="name"
       initialDir="asc"
       bandExtra={[
@@ -150,9 +150,6 @@ export function AgentsDirectoryScreen(props: {
       emptyCreateHint="Create an agent or import an agent file."
       rowRight={(agent) => (
         <>
-          <StatusFlag status="idle">
-            {classLabel(agent.agentClass, classes()).toUpperCase()}
-          </StatusFlag>
           <Show when={agentSourceTag(agent.source)}>
             {(tag) => <StatusFlag status="idle">{tag()}</StatusFlag>}
           </Show>

@@ -31,7 +31,7 @@ from services.agents.definition import (
     AgentDefinition,
     ToolAccess,
     WorkspacePolicy,
-    class_key,
+    assignable_class_key,
     workspace_policy,
 )
 from services.permissions import PERMISSION_LEVELS, STRICTEST_PERMISSION
@@ -270,9 +270,9 @@ def _declared_class(fields: dict[str, object], *, name: str) -> str:
     declared = _text(fields.get("class"), field="class")
     if not declared:
         return DEFAULT_CLASS
-    key = class_key(declared)
+    key = assignable_class_key(declared)
     if key is None:
-        known = ", ".join(spec.key for spec in CLASSES.values())
+        known = ", ".join(spec.key for spec in CLASSES.values() if spec.assignable)
         raise AgentFileError(f"agent {name!r} names unknown class {declared!r}; use one of {known}")
     return key
 

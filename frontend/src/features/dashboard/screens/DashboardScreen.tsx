@@ -1,10 +1,16 @@
-import { createMemo, createSignal, type JSX } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  untrack,
+  type JSX,
+} from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { Composer, toast, type Status } from "~/ui";
 import { overviewBand, useActiveRuns, useOverview } from "../data";
 import type { CapabilityHealth } from "../model";
 import { buildActivity, degraded, homeDigest } from "../activity";
-import { pickGreeting } from "../greetings";
+import { dayPartOf, pickGreeting } from "../greetings";
 import { HomePlate } from "../components/HomePlate";
 import { ActivityLedger } from "../components/ActivityLedger";
 import { SystemFooter } from "../components/SystemFooter";
@@ -32,6 +38,7 @@ import {
 import { stagedProjectId } from "~/lib/stores/stagedProject";
 import { settled } from "~/lib/resource";
 import { readLS, writeLS } from "~/lib/storage";
+import { useNow } from "~/lib/useNow";
 
 const ACTIVITY_LIMIT = 8;
 
@@ -53,12 +60,8 @@ function overallStatus(caps: readonly CapabilityHealth[]): Status {
   return "nominal";
 }
 
-/** The launchpad as a desk: one column on a reading measure, holding the greeting plate,
- *  the composer, the activity ledger and the system footer, all on one left edge.
- *  The composer is the only framed object; everything else is bare (§10.2).
- *
- *  The screen's licensed moment (§11.1) is the dot field, drawn behind the shell's
- *  content column (`isDotFieldRoute`), centred where the composer lands. */
+/** The launchpad. Its licensed moment (§11.1) is the dot field, drawn behind the
+ *  shell's content column (`isDotFieldRoute`), centred where the composer lands. */
 export function DashboardScreen(): JSX.Element {
   const navigate = useNavigate();
   const { data: overview, refetch: refetchOverview } = useOverview();
@@ -67,32 +70,38 @@ export function DashboardScreen(): JSX.Element {
   // Files attached on the launchpad ride into the conversation's first turn.
   const attachments = createComposerAttachments();
 
-  const greeting = pickGreeting(new Date(), readLS(GREETING_KEY));
-  writeLS(GREETING_KEY, greeting);
-  const today = DATE_FORMAT.format(new Date()).replaceAll(",", "");
+  // A minute is fine enough for the date, the time of day and the failure window, and
+  // keeps a page left open overnight from showing yesterday.
+  const now = useNow(60_000);
+  const dayPart = createMemo(() => dayPartOf(new Date(now())));
+  // Re-drawn only when the day part turns, so the line never changes under the eye.
+  const greeting = createMemo(() => {
+    void dayPart();
+    return untrack(() => pickGreeting(new Date(now()), readLS(GREETING_KEY)));
+  });
+  createEffect(() => writeLS(GREETING_KEY, greeting()));
+  const today = createMemo(() =>
+    DATE_FORMAT.format(new Date(now())).replaceAll(",", ""),
+  );
 
   // `settled` throughout: `/runs` re-polls every 15s, and a tracked read of a
   // refetching resource would suspend the whole route on every poll.
   const caps = () => settled(overview)?.capabilities ?? [];
+  const lit = createMemo(() => degraded(caps()));
   const activity = createMemo(() =>
-    buildActivity(sessions() ?? [], settled(runs) ?? [], ACTIVITY_LIMIT),
+    buildActivity(sessions() ?? [], settled(runs) ?? [], ACTIVITY_LIMIT, now()),
   );
 
-  const digest = () => {
-    const list = sessions() ?? [];
-    const live = settled(runs) ?? [];
-    return homeDigest({
-      running: live.filter((r) => r.status !== "awaiting_input").length,
-      waiting: list.filter((s) => s.activity === "awaiting_input").length,
-      failed: activity().items.filter((i) => i.state === "error").length,
-      critical: degraded(caps()).filter((c) => c.critical),
+  const digest = () =>
+    homeDigest({
+      ...activity().counts,
+      critical: lit().filter((c) => c.critical),
     });
-  };
 
   const plateStatus = () => {
     const s = overallStatus(caps());
     if (s === "nominal") return undefined;
-    const triggering = degraded(caps()).filter((c) =>
+    const triggering = lit().filter((c) =>
       s === "warn" ? c.critical : c.status === "alert",
     );
     return {
@@ -104,7 +113,7 @@ export function DashboardScreen(): JSX.Element {
 
   const eyebrow = () => {
     const o = settled(overview);
-    return o ? `HEPH ${o.version} · ${today}` : undefined;
+    return o ? `HEPH ${o.version} · ${today()}` : undefined;
   };
 
   /**
@@ -153,12 +162,11 @@ export function DashboardScreen(): JSX.Element {
   };
 
   return (
-    // Centred vertically as one block, so the whitespace frames the desk evenly; a
-    // long ledger simply fills the page and scrolls.
+    // Centred as one block; a long ledger fills the page and scrolls.
     <div class="mx-auto flex min-h-full w-full max-w-[880px] flex-col justify-center py-8">
       <HomePlate
         eyebrow={eyebrow()}
-        greeting={greeting}
+        greeting={greeting()}
         digest={digest()}
         status={plateStatus()}
       />
@@ -189,6 +197,7 @@ export function DashboardScreen(): JSX.Element {
       <div class="mt-8">
         <SystemFooter
           overview={overview}
+          degraded={lit()}
           onRetry={refetchOverview}
           band={(o) =>
             overviewBand(o, selectedModelLabel(), effectiveContextWindow())

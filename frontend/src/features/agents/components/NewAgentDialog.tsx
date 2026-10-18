@@ -8,11 +8,7 @@ import {
   createAgent,
   useAgentClasses,
 } from "../data";
-import {
-  AGENT_DESCRIPTION_MAX,
-  AGENT_NAME_PATTERN,
-  DEFAULT_NEW_CLASS,
-} from "../model";
+import { AGENT_DESCRIPTION_MAX, AGENT_NAME_PATTERN } from "../model";
 
 type Errors = Partial<Record<"name" | "description" | "agent_class", string>>;
 
@@ -25,12 +21,19 @@ export function NewAgentDialog(props: {
 }): JSX.Element {
   const [name, setName] = createSignal("");
   const [description, setDescription] = createSignal("");
-  const [agentClass, setAgentClass] = createSignal(DEFAULT_NEW_CLASS);
+  // Unset means the backend's default class, which is also what the picker shows.
+  const [agentClass, setAgentClass] = createSignal<string | undefined>();
   const classesResource = useAgentClasses();
   const classOptions = () =>
     (settled(classesResource)?.classes ?? [])
       .filter((c) => c.assignable)
       .map((c) => ({ value: c.key, label: c.display, description: c.role }));
+  const shownClass = () =>
+    agentClass() ?? settled(classesResource)?.defaultClass;
+  const classHint = () =>
+    classesResource.error
+      ? "Classes couldn't be loaded, so it gets the default class. Edit its file to change it later."
+      : "What kind of work it does. Talos is the agent you talk to; the others are launched by it.";
   const [errors, setErrors] = createSignal<Errors>({});
   const [formError, setFormError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -39,7 +42,7 @@ export function NewAgentDialog(props: {
     if (!props.open) return;
     setName("");
     setDescription("");
-    setAgentClass(DEFAULT_NEW_CLASS);
+    setAgentClass(undefined);
     setErrors({});
     setFormError("");
   });
@@ -118,15 +121,12 @@ export function NewAgentDialog(props: {
         />
         <Select
           label="Class"
-          value={agentClass()}
+          value={shownClass()}
           onChange={setAgentClass}
           options={classOptions()}
           disabled={busy()}
           invalid={!!errors().agent_class}
-          hint={
-            errors().agent_class ??
-            "What kind of work it does. Talos is the agent you talk to; the others are launched by it."
-          }
+          hint={errors().agent_class ?? classHint()}
         />
         <Show when={formError()}>
           <Text variant="micro" tone="alert">

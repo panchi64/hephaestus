@@ -32,6 +32,8 @@ export interface Agent {
   canDelegate: boolean;
   maxDepth: number | null;
   delegable: boolean;
+  /** On the launch roster now: delegable, published and not shadowed. */
+  launchable: boolean;
   /** Tools without which delegating to it is refused. */
   required: string[];
   source: AgentSource;
@@ -67,6 +69,8 @@ export interface AgentClass {
   callsigns: string[];
   /** Whether an agent may be given this class. */
   assignable: boolean;
+  /** The class of the agent the operator talks to, at the root of every tree. */
+  root: boolean;
 }
 
 export interface AgentClasses {
@@ -74,15 +78,11 @@ export interface AgentClasses {
   classes: AgentClass[];
   /** The installation's delegation depth, for an agent that sets none. */
   maxDepth: number;
+  /** The class a new agent gets when it names none. */
+  defaultClass: string;
 }
 
 export const DEFAULT_AGENT_NAME = "default";
-
-/** The root class: the agent the operator talks to. */
-export const ROOT_CLASS = "talos";
-
-/** The class a new agent gets, matching the backend's default for an agent file. */
-export const DEFAULT_NEW_CLASS = "tripodes";
 
 /** Lowercase letters, digits, hyphens and underscores. */
 export const AGENT_NAME_PATTERN = /^[a-z0-9_-]+$/;
@@ -133,22 +133,20 @@ export function agentHierarchy<T extends Pick<Agent, "name" | "agentClass">>(
   classes: readonly AgentClass[],
 ): LibraryGroup<T>[] {
   const known = new Set(classes.map((c) => c.key));
-  const groups = classes.map((c) => ({
-    key: c.key,
-    label: c.display,
-    note:
-      c.key === ROOT_CLASS
-        ? "The agent you talk to. It launches the others."
-        : c.role,
-    items: agents.filter((a) => a.agentClass === c.key),
-  }));
-  const root = groups.find((g) => g.key === ROOT_CLASS);
-  if (root) {
-    root.items = [
-      ...root.items.filter((a) => a.name === DEFAULT_AGENT_NAME),
-      ...root.items.filter((a) => a.name !== DEFAULT_AGENT_NAME),
-    ];
-  }
+  const groups = classes.map((c) => {
+    const members = agents.filter((a) => a.agentClass === c.key);
+    return {
+      key: c.key,
+      label: c.display,
+      note: c.root ? "The agent you talk to. It launches the others." : c.role,
+      items: c.root
+        ? [
+            ...members.filter((a) => a.name === DEFAULT_AGENT_NAME),
+            ...members.filter((a) => a.name !== DEFAULT_AGENT_NAME),
+          ]
+        : members,
+    };
+  });
   const unknown = [
     ...new Set(
       agents.map((a) => a.agentClass).filter((key) => !known.has(key)),
@@ -170,21 +168,10 @@ export function classLabel(
   return classes?.find((c) => c.key === key)?.display ?? key;
 }
 
-/** Hierarchy order of a class, unknown keys last. */
-export function compareAgentsByClass(
-  classes: readonly AgentClass[],
-): (a: Agent, b: Agent) => number {
-  const rank = (key: string) => {
-    const i = classes.findIndex((c) => c.key === key);
-    return i === -1 ? classes.length : i;
-  };
-  return (a, b) => rank(a.agentClass) - rank(b.agentClass);
-}
-
 /** How a class's agents are addressed: the first few callsign stems with a serial. */
 export function callsignSummary(cls: AgentClass | undefined): string {
   if (!cls) return "—";
-  if (cls.key === ROOT_CLASS) return "None. Addressed as Talos";
+  if (cls.root) return `None. Addressed as ${cls.display}`;
   if (cls.callsigns.length === 0) return "None. Not addressed";
   return `${cls.callsigns
     .slice(0, 3)
@@ -192,21 +179,22 @@ export function callsignSummary(cls: AgentClass | undefined): string {
     .join(" · ")} · …`;
 }
 
-/** Who may launch this agent as a sub-agent. */
+/** Who may launch this agent as a sub-agent, and why not when no one can. */
 export function launchedBySummary(agent: Agent): string {
-  if (agent.agentClass === ROOT_CLASS || !agent.delegable) {
-    return "Not launched by other agents";
-  }
-  return "Talos, or any agent that can delegate";
+  if (agent.launchable) return "Talos, or any agent that can delegate";
+  if (!agent.delegable) return "Not launched by other agents";
+  if (!agent.published) return "Not launched until published";
+  return "Not launched: a same-named agent takes precedence";
 }
 
-/** Whether, and how deep, this agent hands work to others. */
+/** Whether, and how deep, this agent hands work to others. The backend bounds the
+ *  agent's own limit by the installation's, so the lower of the two is what holds. */
 export function delegationSummary(
   agent: Agent,
   installMaxDepth: number,
 ): string {
   if (!agent.canDelegate) return "No";
-  const depth = agent.maxDepth ?? installMaxDepth;
+  const depth = Math.min(agent.maxDepth ?? installMaxDepth, installMaxDepth);
   return `Yes · up to ${depth} ${depth === 1 ? "level" : "levels"} below`;
 }
 

@@ -21,6 +21,7 @@ const cls = (key: string, callsigns: string[] = []): AgentClass => ({
   role: `${key} work`,
   callsigns,
   assignable: key !== "keledones",
+  root: key === "talos",
 });
 
 const CLASSES = [
@@ -75,19 +76,22 @@ describe("class summaries", () => {
     expect(callsignSummary(CLASSES[4])).toBe("None. Not addressed");
   });
 
-  it("says who launches an agent", () => {
+  it("says who launches an agent, and why no one can", () => {
     expect(launchedBySummary(agent())).toBe(
       "Talos, or any agent that can delegate",
     );
-    expect(launchedBySummary(agent({ delegable: false }))).toBe(
-      "Not launched by other agents",
-    );
-    expect(launchedBySummary(agent({ agentClass: "talos" }))).toBe(
-      "Not launched by other agents",
+    expect(
+      launchedBySummary(agent({ delegable: false, launchable: false })),
+    ).toBe("Not launched by other agents");
+    expect(
+      launchedBySummary(agent({ published: false, launchable: false })),
+    ).toBe("Not launched until published");
+    expect(launchedBySummary(agent({ active: false, launchable: false }))).toBe(
+      "Not launched: a same-named agent takes precedence",
     );
   });
 
-  it("resolves an unset depth to the installation's limit", () => {
+  it("caps the depth at the installation's limit", () => {
     expect(delegationSummary(agent(), 3)).toBe("No");
     expect(delegationSummary(agent({ canDelegate: true }), 3)).toBe(
       "Yes · up to 3 levels below",
@@ -95,6 +99,9 @@ describe("class summaries", () => {
     expect(
       delegationSummary(agent({ canDelegate: true, maxDepth: 1 }), 3),
     ).toBe("Yes · up to 1 level below");
+    expect(
+      delegationSummary(agent({ canDelegate: true, maxDepth: 5 }), 3),
+    ).toBe("Yes · up to 3 levels below");
   });
 });
 
@@ -115,6 +122,7 @@ function agent(over: Partial<Agent> = {}): Agent {
     canDelegate: false,
     maxDepth: null,
     delegable: true,
+    launchable: true,
     required: [],
     source: "user",
     published: true,

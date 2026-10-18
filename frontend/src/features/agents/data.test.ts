@@ -23,6 +23,7 @@ const dto: AgentOut = {
   can_delegate: true,
   max_depth: 2,
   delegable: false,
+  launchable: false,
   required: ["web_search"],
   source: "builtin",
   published: true,

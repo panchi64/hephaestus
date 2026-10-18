@@ -3,6 +3,7 @@
 
 import type { ChatSummary } from "~/features/chat/model";
 import { resolveRunState, type RunState } from "~/features/chat/runState";
+import { parseInstant } from "~/lib/format";
 import type { ActiveRun, CapabilityHealth } from "./model";
 
 export interface ActivityItem {
@@ -16,14 +17,30 @@ export interface ActivityItem {
   state?: RunState;
   /** The live run's start, for its clock. */
   startedAt?: string;
+  /** What the live run is doing or waiting on, in the backend's words. */
+  detail?: string;
   updatedAt?: string;
+}
+
+export interface ActivityCounts {
+  /** Live runs not waiting on the operator: running or queued. */
+  running: number;
+  waiting: number;
+  /** Threads whose last run failed within `FAILURE_WINDOW_MS`. */
+  failed: number;
 }
 
 export interface Activity {
   items: ActivityItem[];
   /** Every thread and stateless run, before the limit. */
   total: number;
+  /** Over every row, not only the shown ones, so the digest agrees with the ledger. */
+  counts: ActivityCounts;
 }
+
+/** A failure stops being news after a day: `lastOutcome` outlives the operator
+ *  having read it, and there is no read state to clear it with. */
+export const FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const LIVE_RANK: Record<string, number> = {
   awaiting_input: 0,
@@ -37,33 +54,40 @@ function liveRank(state: RunState | undefined): number {
     : Number.POSITIVE_INFINITY;
 }
 
-function newestFirst(a?: string, b?: string): number {
-  return (b ?? "").localeCompare(a ?? "");
+function instant(iso: string | undefined): number {
+  const t = iso ? parseInstant(iso) : NaN;
+  return Number.isNaN(t) ? 0 : t;
 }
 
 /** Live work first (awaiting you, then running, then queued), then threads by their
- *  last update. A stateless agent run has no thread, so it is its own row. */
+ *  last update. A stateless agent run has no thread, so it is its own row. A run whose
+ *  thread is not in `sessions` (a sub-agent's hidden one) is neither shown nor counted. */
 export function buildActivity(
   sessions: readonly ChatSummary[],
   runs: readonly ActiveRun[],
   limit: number,
+  now: number,
 ): Activity {
   const runFor = new Map(
     runs
       .filter((r) => r.conversationId)
       .map((r) => [r.conversationId!, r] as const),
   );
-  const threads: ActivityItem[] = sessions.map((s) => ({
-    key: s.id,
-    conversationId: s.id,
-    title: s.title,
-    agentName: s.agentName,
-    workspace: s.workspace,
-    model: s.model,
-    state: resolveRunState(s.activity, s.lastOutcome),
-    startedAt: s.activity ? runFor.get(s.id)?.startedAt : undefined,
-    updatedAt: s.updatedAt,
-  }));
+  const threads: ActivityItem[] = sessions.map((s) => {
+    const run = s.activity ? runFor.get(s.id) : undefined;
+    return {
+      key: s.id,
+      conversationId: s.id,
+      title: s.title,
+      agentName: s.agentName,
+      workspace: s.workspace,
+      model: s.model,
+      state: resolveRunState(s.activity, s.lastOutcome),
+      startedAt: run?.startedAt,
+      detail: run?.detail || undefined,
+      updatedAt: s.updatedAt,
+    };
+  });
   const stateless: ActivityItem[] = runs
     .filter((r) => !r.conversationId)
     .map((r) => ({
@@ -71,13 +95,23 @@ export function buildActivity(
       title: r.label,
       state: r.status,
       startedAt: r.startedAt,
+      detail: r.detail || undefined,
     }));
   const all = [...threads, ...stateless].sort(
     (a, b) =>
       liveRank(a.state) - liveRank(b.state) ||
-      newestFirst(a.updatedAt ?? a.startedAt, b.updatedAt ?? b.startedAt),
+      instant(b.updatedAt ?? b.startedAt) - instant(a.updatedAt ?? a.startedAt),
   );
-  return { items: all.slice(0, limit), total: all.length };
+  const counts: ActivityCounts = {
+    running: all.filter((i) => i.state === "running" || i.state === "queued")
+      .length,
+    waiting: all.filter((i) => i.state === "awaiting_input").length,
+    failed: all.filter(
+      (i) =>
+        i.state === "error" && now - instant(i.updatedAt) < FAILURE_WINDOW_MS,
+    ).length,
+  };
+  return { items: all.slice(0, limit), total: all.length, counts };
 }
 
 /** Degraded capabilities, alerts before warnings. */
@@ -108,11 +142,7 @@ function count(n: number): string {
   return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
-export interface DigestInput {
-  /** Live runs not waiting on the operator: running or queued. */
-  running: number;
-  waiting: number;
-  failed: number;
+export interface DigestInput extends ActivityCounts {
   /** Degraded capabilities the backend marks critical. */
   critical: readonly Pick<CapabilityHealth, "label" | "status">[];
 }
@@ -135,7 +165,7 @@ export function homeDigest(input: DigestInput): string {
   }
   if (failed > 0) {
     parts.push(
-      `${count(failed)} ${failed === 1 ? "thread" : "threads"} ended in an error.`,
+      `${count(failed)} ${failed === 1 ? "thread" : "threads"} ended in an error in the last day.`,
     );
   }
   for (const cap of critical) {

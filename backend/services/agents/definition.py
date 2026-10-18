@@ -55,10 +55,20 @@ DEFAULT_AGENT = "default"
 DEFAULT_CLASS = "tripodes"
 
 
+#: The class of the agent the operator talks to, at the root of every delegation tree.
+ROOT_CLASS = "talos"
+
+
 def class_key(raw: str) -> str | None:
     """``raw`` (a class key or display name, any case) as a key of ``CLASSES``, or None."""
     key = raw.strip().lower().replace("ē", "e")
     return key if key in CLASSES else None
+
+
+def assignable_class_key(raw: str) -> str | None:
+    """:func:`class_key`, but None for a class an agent may not declare."""
+    key = class_key(raw)
+    return key if key is not None and CLASSES[key].assignable else None
 
 
 @dataclass(frozen=True)

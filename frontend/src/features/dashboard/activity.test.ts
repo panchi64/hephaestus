@@ -1,7 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import type { ChatSummary } from "~/features/chat/model";
 import type { ActiveRun, CapabilityHealth } from "./model";
-import { buildActivity, degraded, homeDigest } from "./activity";
+import {
+  FAILURE_WINDOW_MS,
+  buildActivity,
+  degraded,
+  homeDigest,
+} from "./activity";
+
+const NOW = Date.parse("2026-10-18T13:00:00Z");
 
 function thread(over: Partial<ChatSummary> & { id: string }): ChatSummary {
   return {
@@ -47,6 +54,7 @@ describe("buildActivity", () => {
       ],
       [],
       10,
+      NOW,
     );
     expect(items.map((i) => i.key)).toEqual([
       "waiting",
@@ -68,11 +76,14 @@ describe("buildActivity", () => {
           id: "r1",
           conversationId: "a",
           startedAt: "2026-10-18T11:00:00Z",
+          detail: "step 3",
         }),
       ],
       10,
+      NOW,
     );
     expect(items[0]!.startedAt).toBe("2026-10-18T11:00:00Z");
+    expect(items[0]!.detail).toBe("step 3");
     expect(items[1]!.state).toBe("error");
     expect(items[1]!.startedAt).toBeUndefined();
   });
@@ -88,6 +99,7 @@ describe("buildActivity", () => {
         }),
       ],
       10,
+      NOW,
     );
     expect(total).toBe(2);
     expect(items[0]).toMatchObject({
@@ -102,9 +114,56 @@ describe("buildActivity", () => {
     const sessions = Array.from({ length: 12 }, (_, i) =>
       thread({ id: `t${i}` }),
     );
-    const { items, total } = buildActivity(sessions, [], 8);
+    const { items, total } = buildActivity(sessions, [], 8, NOW);
     expect(items).toHaveLength(8);
     expect(total).toBe(12);
+  });
+
+  it("orders by instant, not by how the timestamp is written", () => {
+    const { items } = buildActivity(
+      [
+        thread({ id: "zoned", updatedAt: "2026-10-18T10:00:00Z" }),
+        thread({ id: "fractional", updatedAt: "2026-10-18T10:00:00.500Z" }),
+      ],
+      [],
+      10,
+      NOW,
+    );
+    expect(items.map((i) => i.key)).toEqual(["fractional", "zoned"]);
+  });
+
+  it("counts every row, but not the hidden threads of sub-agent runs", () => {
+    const sessions = [
+      ...Array.from({ length: 10 }, (_, i) => thread({ id: `t${i}` })),
+      thread({ id: "live", activity: "running" }),
+      thread({ id: "ask", activity: "awaiting_input" }),
+    ];
+    const { counts } = buildActivity(
+      sessions,
+      [
+        run({ id: "r1", conversationId: "live" }),
+        run({ id: "r2", conversationId: "hidden-sub-agent" }),
+        run({ id: "r3", label: "Nightly backfill", status: "queued" }),
+      ],
+      3,
+      NOW,
+    );
+    expect(counts).toEqual({ running: 2, waiting: 1, failed: 0 });
+  });
+
+  it("counts a failure only within the window", () => {
+    const recent = new Date(NOW - 1000).toISOString();
+    const stale = new Date(NOW - FAILURE_WINDOW_MS - 1000).toISOString();
+    const { counts } = buildActivity(
+      [
+        thread({ id: "new", lastOutcome: "error", updatedAt: recent }),
+        thread({ id: "old", lastOutcome: "error", updatedAt: stale }),
+      ],
+      [],
+      10,
+      NOW,
+    );
+    expect(counts.failed).toBe(1);
   });
 });
 
@@ -147,7 +206,7 @@ describe("homeDigest", () => {
         ],
       }),
     ).toBe(
-      "Nothing is running. One thread ended in an error. Chat model is unavailable. Embeddings is degraded.",
+      "Nothing is running. One thread ended in an error in the last day. Chat model is unavailable. Embeddings is degraded.",
     );
   });
 

@@ -2,6 +2,7 @@ import { Show, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { MetClock, StatusDot, StatusFlag, Text, cx } from "~/ui";
 import { relativeTime } from "~/lib/format";
+import { useNow } from "~/lib/useNow";
 import { runStateSpec } from "~/features/chat/runState";
 import type { ActivityItem } from "../activity";
 
@@ -18,11 +19,17 @@ export function ActivityRow(props: {
   item: ActivityItem;
   onOpen?: () => void;
 }): JSX.Element {
+  // Relative times only need to age by the minute, on the ticker the page shares.
+  const now = useNow(60_000);
   const spec = () =>
     props.item.state ? runStateSpec(props.item.state) : undefined;
   const loud = () => spec()?.loud ?? false;
   const ticking = () =>
     props.item.state === "running" && props.item.startedAt !== undefined;
+  // A live run says what it is doing; at rest the row says where it ran.
+  const where = () =>
+    (spec()?.live && props.item.detail) ||
+    [props.item.workspace, props.item.model].filter(Boolean).join(" · ");
 
   return (
     <Dynamic
@@ -35,11 +42,7 @@ export function ActivityRow(props: {
         props.onOpen && "hover:bg-raised focus-visible:bg-raised",
       )}
     >
-      <StatusDot
-        status={loud() ? spec()!.status : "idle"}
-        pulse={ticking()}
-        label={spec()?.spoken}
-      />
+      <StatusDot status={loud() ? spec()!.status : "idle"} pulse={ticking()} />
       <span class="flex min-w-0 items-baseline gap-2">
         <Text
           variant="body"
@@ -55,9 +58,13 @@ export function ActivityRow(props: {
             </Text>
           )}
         </Show>
+        {/* The square is colour alone, so the state is said in words too (§12). */}
+        <Show when={spec()}>
+          {(s) => <span class="sr-only">{`, ${s().spoken}`}</span>}
+        </Show>
       </span>
       <Text variant="micro" tone="dim" class="hidden truncate md:block">
-        {[props.item.workspace, props.item.model].filter(Boolean).join(" · ")}
+        {where()}
       </Text>
       <span class="flex justify-end whitespace-nowrap">
         <Show
@@ -70,7 +77,9 @@ export function ActivityRow(props: {
             when={loud() && spec()}
             fallback={
               <Text variant="micro" tone="dim">
-                {props.item.updatedAt ? relativeTime(props.item.updatedAt) : ""}
+                {props.item.updatedAt
+                  ? relativeTime(props.item.updatedAt, new Date(now()))
+                  : ""}
               </Text>
             }
           >

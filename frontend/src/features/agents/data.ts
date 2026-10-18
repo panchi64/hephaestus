@@ -29,6 +29,7 @@ export interface AgentOut {
   can_delegate: boolean;
   max_depth: number | null;
   delegable: boolean;
+  launchable: boolean;
   required: string[];
   source: AgentSource;
   published: boolean;
@@ -53,6 +54,7 @@ export function toAgent(dto: AgentOut): Agent {
     canDelegate: dto.can_delegate,
     maxDepth: dto.max_depth,
     delegable: dto.delegable,
+    launchable: dto.launchable,
     required: dto.required,
     source: dto.source,
     published: dto.published,
@@ -102,6 +104,7 @@ export function refreshAgents(): void {
 interface AgentClassesOut {
   classes: AgentClass[];
   max_depth: number;
+  default_class: string;
 }
 
 let classesRequest: Promise<AgentClasses> | null = null;
@@ -111,7 +114,11 @@ let classesRequest: Promise<AgentClasses> | null = null;
 function fetchAgentClasses(): Promise<AgentClasses> {
   classesRequest ??= api
     .get<AgentClassesOut>("/agents/classes")
-    .then((dto) => ({ classes: dto.classes, maxDepth: dto.max_depth }))
+    .then((dto) => ({
+      classes: dto.classes,
+      maxDepth: dto.max_depth,
+      defaultClass: dto.default_class,
+    }))
     .catch((err: unknown) => {
       classesRequest = null;
       throw err;
