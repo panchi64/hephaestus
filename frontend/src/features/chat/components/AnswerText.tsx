@@ -1,6 +1,7 @@
 import {
   Show,
   createEffect,
+  createMemo,
   createSignal,
   onCleanup,
   type JSX,
@@ -8,6 +9,7 @@ import {
 import { Caret, Markdown } from "~/ui";
 import { useScreenshotSrc } from "../screenshots";
 import { INTERVAL_SEED, nextInterval } from "../streamReveal";
+import { stableStreamSource } from "../streamTail";
 import {
   applyReveal,
   createRevealState,
@@ -58,6 +60,10 @@ export function AnswerText(props: {
   createEffect(() => {
     if (live()) setStreamStable(true);
   });
+  // While live, the unstable tail is held back so nothing on screen changes shape.
+  const source = createMemo(() =>
+    live() ? stableStreamSource(props.text) : props.text,
+  );
 
   let host: HTMLDivElement | undefined;
   // The reveal's carry-over between deltas — which block is being wrapped, that block's
@@ -82,6 +88,8 @@ export function AnswerText(props: {
   createEffect(() => {
     // Read the source so this effect re-runs on every delta (the value itself
     // is not needed — the DOM Markdown just committed is what gets walked).
+    // Every delta, not every change to `source()`: a held line leaves the shown text
+    // unchanged for several deltas, and the reveal still has to advance through them.
     void props.text;
     // A passage that never streamed (history, a settled turn) schedules nothing
     // and renders instantly. One that has streamed keeps going for a final pass
@@ -133,12 +141,14 @@ export function AnswerText(props: {
           streamStable={streamStable()}
           resolveLocalImage={screenshotSrc}
         >
-          {props.text}
+          {source()}
         </Markdown>
       </div>
+      {/* Zero-height, so the caret arriving and leaving moves nothing below it. */}
       <Show when={live()}>
-        {" "}
-        <Caret class="text-bright" />
+        <div class="h-0 overflow-visible">
+          <Caret class="text-bright" />
+        </div>
       </Show>
     </div>
   );

@@ -6,6 +6,7 @@ import {
   groupBlocks,
   planTurnLayout,
   runningTools,
+  workLogStateKey,
 } from "./blocks";
 import type {
   AssistantBlock,
@@ -132,17 +133,50 @@ describe("parallel tool calls stay visible while they run", () => {
     ).toEqual(["worklog", "t"]);
   });
 
-  test("a settled batch's fold keys on where it starts", () => {
-    const items = planTurnLayout(
-      groupBlocks([
-        tool("a", "web_search", "ok"),
-        tool("b", "web_search", "ok"),
-        tool("c", "web_search", "ok"),
-        text("t"),
-      ]),
-      { streaming: true },
-    );
-    expect(layoutItemKey(items[0])).toBe("w:a");
+  test("a fold keys on its place among the turn's folds, not its first row", () => {
+    const blocks = [
+      tool("a", "web_search", "ok"),
+      tool("b", "web_search", "ok"),
+      text("t"),
+      tool("c", "web_search", "ok"),
+      text("u"),
+    ];
+    const keys = planTurnLayout(groupBlocks(blocks)).map(layoutItemKey);
+    expect(keys).toEqual(["w:0", "g:t", "w:1", "g:u"]);
+    // Dropping the log's first row (a reseat losing live-only context) keeps the key.
+    const reseated = planTurnLayout(groupBlocks(blocks.slice(1)));
+    expect(layoutItemKey(reseated[0])).toBe("w:0");
+  });
+
+  test("a log's open state keys on its first row a reload keeps", () => {
+    const context: AssistantBlock = {
+      kind: "context",
+      id: "ctx-1",
+      injection: {
+        contributor: "plan",
+        placement: "prompt",
+        tokens: 1,
+        text: "",
+        truncated: false,
+      },
+    };
+    const logs = (blocks: AssistantBlock[]) =>
+      planTurnLayout(groupBlocks(blocks)).flatMap((item) =>
+        item.type === "worklog" ? [workLogStateKey(item)] : [],
+      );
+    const live = logs([
+      context,
+      text("t"),
+      tool("c", "web_search", "ok"),
+      text("u"),
+    ]);
+    const reseated = logs([
+      text("t"),
+      tool("c", "web_search", "ok"),
+      text("u"),
+    ]);
+    expect(live).toEqual(["w:0", "g:c"]);
+    expect(reseated).toEqual(["g:c"]);
   });
 });
 

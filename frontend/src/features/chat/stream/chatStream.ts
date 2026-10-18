@@ -26,7 +26,7 @@
  * every other.
  */
 
-import { createEffect, createSignal, on, untrack } from "solid-js";
+import { batch, createEffect, createSignal, on, untrack } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 import { api } from "~/lib/api";
 import { effectiveSelection, type ModelSelection } from "~/lib/stores/models";
@@ -46,12 +46,13 @@ import type {
 } from "../model";
 import { createApprovalOps } from "./approvals";
 import { createThreadBinding } from "./binding";
+import { toMessage } from "../data/messages";
 import {
   createBranchingOps,
   reseatFromDetail,
-  reseatMessagesFromDetail,
   type TranscriptStore,
 } from "./branching";
+import { adoptLiveIdentity } from "./reseatIdentity";
 import { attachOptions, createRunDrive } from "./drive";
 import {
   createFolder,
@@ -199,8 +200,21 @@ export function createChatStream(
   const store: TranscriptStore = { setMessages, setUsage, setSnapshots };
   const reseat = (detail: ConversationDetailDTO) =>
     reseatFromDetail(store, detail);
-  const reseatMessages = (detail: ConversationDetailDTO) =>
-    reseatMessagesFromDetail(store, detail);
+  // The reseat after a run: the finished turn takes the backend's ids in place first,
+  // so reconciling updates it rather than remounting it.
+  const reseatMessages = (detail: ConversationDetailDTO) => {
+    const next = detail.messages.map(toMessage);
+    const renames = adoptLiveIdentity(messages, next);
+    batch(() => {
+      if (renames.length)
+        setMessages(
+          produce((m) => {
+            for (const [i, id] of renames) m[i].id = id;
+          }),
+        );
+      setMessages(reconcile(next));
+    });
+  };
 
   const patchById = createPatchById(messages, setMessages);
 
