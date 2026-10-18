@@ -28,7 +28,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
 from devkit.instance import DevInstance, resolve
 from devkit.prompts import render as render_prompt
@@ -40,6 +40,11 @@ from .record import Run, Sample, SubagentRecord, Timeline, Turn
 from .spec import FIXTURES_DIR, KEY_FILE, PROJECT_TOKEN, RUNS_DIR, Scenario, load_scenarios
 
 _POLL_S = 15.0
+_DELIVERY_POLL_S = 5.0
+
+#: The run kind the inbox starts to hand a thread its sub-agents' reports.
+_WAKE_KIND = "wake"
+_LIVE = frozenset({"running", "blocked"})
 
 
 class _Binding(BaseModel):
@@ -84,7 +89,15 @@ class _ChatSettings(BaseModel):
     work_summary_idle_minutes: int
 
 
+class _RunView(BaseModel):
+    id: str
+    kind: str
+    created_at: datetime
+    conversation_id: str | None = Field(default=None, alias="conversationId")
+
+
 _BINDINGS: TypeAdapter[dict[str, _Binding]] = TypeAdapter(dict[str, _Binding])
+_RUNS: TypeAdapter[list[_RunView]] = TypeAdapter(list[_RunView])
 _MEMORIES: TypeAdapter[list[_Memory]] = TypeAdapter(list[_Memory])
 
 
@@ -149,9 +162,13 @@ class Collector:
             permission_level=scenario.permission_level,
             project_id=project_id if conversation_id is None else None,
         )
-        turn = Turn(prompt=prompt)
-        timeline = Timeline(turn)
-        settler = Settler(self.client, run_id, approve=scenario.approve == "all")
+        return await self._follow(scenario, run_id, Turn(prompt=prompt)), conversation_id
+
+    async def _follow(self, scenario: Scenario, run_id: str, turn: Turn) -> Turn:
+        """Record one run into ``turn``, answering what it parks on, until it ends."""
+        approve = scenario.approve == "all"
+        timeline = Timeline(turn, approve=approve)
+        settler = Settler(self.client, run_id, approve=approve)
         started = time.monotonic()
 
         async def follow() -> None:
@@ -165,7 +182,39 @@ class Collector:
         except TimeoutError:
             turn.detail = f"no terminal event after {scenario.timeout_s:.0f}s"
         turn.wall_s = round(time.monotonic() - started, 1)
-        return turn, conversation_id
+        return turn
+
+    async def deliveries(self, scenario: Scenario, record: Sample, conversation_id: str) -> None:
+        """Wait out the thread's sub-agents, recording each run that delivers a report.
+
+        A report reaches the parent as a separate ``wake`` run the inbox starts once the
+        child ends, so the reply that relays it is only seen by following those runs."""
+        deadline = time.monotonic() + scenario.timeout_s
+        followed: set[str] = set()
+        while True:
+            response = await self.http.get("/runs", params={"active": "false"})
+            wakes = sorted(
+                (
+                    run
+                    for run in _read(response, _RUNS)
+                    if run.kind == _WAKE_KIND
+                    and run.conversation_id == conversation_id
+                    and run.id not in followed
+                ),
+                key=lambda run: run.created_at,
+            )
+            for run in wakes:
+                followed.add(run.id)
+                turn = await self._follow(scenario, run.id, Turn(prompt="", delivery=True))
+                record.turns.append(turn)
+            await self._subagents(record, conversation_id)
+            live = [a for a in record.subagents if a.status in _LIVE]
+            if not live and not wakes:
+                return
+            if time.monotonic() > deadline:
+                record.problem = f"sub-agents still live after {scenario.timeout_s:.0f}s"
+                return
+            await asyncio.sleep(_DELIVERY_POLL_S)
 
     async def sample(self, scenario: Scenario, number: int) -> Sample:
         record = Sample(scenario=scenario.id, sample=number)
@@ -186,7 +235,7 @@ class Collector:
                     record.problem = f"turn {len(record.turns)} ended {turn.ended}"
                     break
             if record.conversation_id:
-                await self._subagents(record, record.conversation_id)
+                await self.deliveries(scenario, record, record.conversation_id)
         except httpx.HTTPError as exc:
             record.problem = f"{type(exc).__name__}: {exc}"
         finally:

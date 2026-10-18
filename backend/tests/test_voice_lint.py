@@ -9,20 +9,20 @@ from evals.voice.lint import Flag, lint_reply
 # docs/voice.md §13, verbatim: on-voice by definition, so they must raise nothing.
 CALIBRATION = [
     "Rollback journal copies each page *before* changing it, then writes the database in "
-    "place; a crash rolls back from the copy. Writers block readers.\n\n"
-    "WAL does the inverse: changes append to a separate `-wal` file and the database is "
-    "updated later at checkpoint. Readers keep reading the old pages while one writer "
-    "appends, so concurrency is far better. The cost is an extra file and occasional "
-    "checkpoint stalls.\n\nFor your setup (one process, many async readers), WAL is the "
-    "right call.",
+    + "place; a crash rolls back from the copy. Writers block readers.\n\n"
+    + "WAL does the inverse: changes append to a separate `-wal` file and the database is "
+    + "updated later at checkpoint. Readers keep reading the old pages while one writer "
+    + "appends, so concurrency is far better. The cost is an extra file and occasional "
+    + "checkpoint stalls.\n\nFor your setup (one process, many async readers), WAL is the "
+    + "right call.",
     "Found it. `conftest.py` shares one engine across tests, so each test inherits the last "
-    "one's open transaction. I've switched it to a per-test engine, and the suite is green, "
-    "all 214. Ran it twice to be sure nothing else is hiding in there.",
+    + "one's open transaction. I've switched it to a per-test engine, and the suite is green, "
+    + "all 214. Ran it twice to be sure nothing else is hiding in there.",
     "Before I do: the live database at `data/app.db` is at revision `a41c`. Regenerating "
-    "gives the history new IDs, so Alembic will no longer recognize that database and the "
-    "next upgrade will try to recreate tables that already exist.\n\nIf what you want is a "
-    "clean history, I can squash everything up to `a41c` into one baseline migration and "
-    "stamp the database. Same result, and nothing breaks. Squash, or delete anyway?",
+    + "gives the history new IDs, so Alembic will no longer recognize that database and the "
+    + "next upgrade will try to recreate tables that already exist.\n\nIf what you want is a "
+    + "clean history, I can squash everything up to `a41c` into one baseline migration and "
+    + "stamp the database. Same result, and nothing breaks. Squash, or delete anyway?",
     "It's past two. The tests will still be passing in the morning; I checked.",
 ]
 

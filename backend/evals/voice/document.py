@@ -36,7 +36,10 @@ def _tool_line(tool: Tool) -> str:
 
 
 def _turn(turn: Turn, index: int) -> list[str]:
-    out = [f"#### Turn {index}", "", "**Operator:**", "", _quote(turn.prompt), ""]
+    if turn.delivery:
+        out = [f"#### Turn {index}", "", "*A sub-agent's report reached Talos.*", ""]
+    else:
+        out = [f"#### Turn {index}", "", "**Operator:**", "", _quote(turn.prompt), ""]
     if turn.ended != "done":
         out += [f"*Turn ended `{turn.ended}`{f': {turn.detail}' if turn.detail else ''}.*", ""]
     final = turn.final_reply()
@@ -55,9 +58,10 @@ def _turn(turn: Turn, index: int) -> list[str]:
                 case Question(questions=questions, options=options):
                     for question, choices in zip(questions, options, strict=True):
                         out.append(f"- **question:** {question} — options: {' | '.join(choices)}")
-                case Approval(name=name, summary=summary, explanation=explanation):
+                case Approval(name=name, summary=summary, explanation=explanation, refused=refused):
                     reason = f" — {explanation}" if explanation else ""
-                    out.append(f"- **approval** `{name}`: {summary}{reason}")
+                    decision = f"refused by the eval: {refused}" if refused else "approved"
+                    out.append(f"- **approval** `{name}` ({decision}): {summary}{reason}")
                 case Error(message=message):
                     out.append(f"- **run error:** {message}")
                 case _:

@@ -56,7 +56,7 @@ def test_a_project_token_without_a_fixture_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "s.toml"
     _ = path.write_text(
         '[[scenario]]\nid = "x"\nvoice = "talos"\nabout = "a"\n'
-        'prompts = ["look at {project}"]\ndimensions = ["shape"]\nexpect = ["§5"]\n'
+        + 'prompts = ["look at {project}"]\ndimensions = ["shape"]\nexpect = ["§5"]\n'
     )
     with pytest.raises(ValueError, match="no fixture"):
         _ = load_scenarios(path)

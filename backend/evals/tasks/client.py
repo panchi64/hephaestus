@@ -17,6 +17,19 @@ _EVENT: TypeAdapter[EventBody] = TypeAdapter(EventBody)
 #: How long a settle waits for the run to actually park after the first approval event.
 _PARK_WAIT_S = 30.0
 
+#: Tools whose effects stay inside the instance's VM and data dir. An eval runs unattended,
+#: so anything else (the operator's machine, mail, calendar, vault, browser) is refused.
+_VM_TOOL_PREFIXES = ("shell_", "files_", "code_execute", "plan_", "tasks_", "project_")
+
+#: Worded as an operator's decline, so the reply under grading doesn't relay eval plumbing.
+_HOST_REFUSAL = "Declined. Work from what you can reach in your own workspace."
+_POLICY_REFUSAL = "Not allowed in this task; find another way."
+
+
+def eval_may_approve(body: ApprovalRequired) -> bool:
+    """Whether an unattended eval may approve this call: VM-only tools, never host reach."""
+    return body.name.startswith(_VM_TOOL_PREFIXES) and body.args.get("reach") != "host"
+
 
 class _Created(BaseModel):
     run_id: str
@@ -64,9 +77,9 @@ class Frame:
 class DevClient:
     """One client per task run; the instance runs without auth, so no token is sent."""
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._http: httpx.AsyncClient = httpx.AsyncClient(
-            base_url=base_url, timeout=httpx.Timeout(30.0, read=None)
+            base_url=base_url, timeout=httpx.Timeout(30.0, read=None), transport=transport
         )
 
     async def aclose(self) -> None:
@@ -124,13 +137,14 @@ class DevClient:
     async def settle(
         self,
         run_id: str,
-        approvals: list[str],
+        approvals: list[ApprovalRequired],
         questions: dict[str, int],
         *,
         approve: bool,
     ) -> None:
         """Answer everything the run parked on, once it has parked.
 
+        Under ``approve`` a call is still refused when :func:`eval_may_approve` rejects it.
         ``questions`` maps each ``ask_user`` call to how many questions it asked; each is
         answered with the model's first offered option, or a note to use its judgement.
         """
@@ -143,12 +157,8 @@ class DevClient:
             if asyncio.get_running_loop().time() > deadline:
                 return
             await asyncio.sleep(0.5)
-        refusal = None if approve else "Not allowed in this task; find another way."
         body = _Settlement(
-            decisions=[
-                _Decision(tool_call_id=call_id, approved=approve, message=refusal)
-                for call_id in approvals
-            ],
+            decisions=[_decide(call, approve=approve) for call in approvals],
             answers=[
                 _Answer(tool_call_id=call_id, replies=[_Reply()] * count)
                 for call_id, count in questions.items()
@@ -160,6 +170,20 @@ class DevClient:
         _ = response.raise_for_status()
 
 
+def refusal(call: ApprovalRequired, *, approve: bool) -> str | None:
+    """The note a parked call is refused with, or None when it is approved."""
+    if not approve:
+        return _POLICY_REFUSAL
+    if not eval_may_approve(call):
+        return _HOST_REFUSAL
+    return None
+
+
+def _decide(call: ApprovalRequired, *, approve: bool) -> _Decision:
+    message = refusal(call, approve=approve)
+    return _Decision(tool_call_id=call.tool_call_id, approved=message is None, message=message)
+
+
 class Settler:
     """Answers whatever one run parks on, batch by batch, under one approval policy."""
 
@@ -167,13 +191,13 @@ class Settler:
         self._client: DevClient = client
         self._run_id: str = run_id
         self._approve: bool = approve
-        self._approvals: list[str] = []
+        self._approvals: list[ApprovalRequired] = []
         self._questions: dict[str, int] = {}
         self._task: asyncio.Task[None] | None = None
 
     def park(self, body: ApprovalRequired | QuestionAsked) -> None:
         if isinstance(body, ApprovalRequired):
-            self._approvals.append(body.tool_call_id)
+            self._approvals.append(body)
         else:
             self._questions[body.tool_call_id] = len(body.questions)
         if self._task is None or self._task.done():

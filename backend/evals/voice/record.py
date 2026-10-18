@@ -7,6 +7,7 @@ from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from evals.tasks.client import refusal
 from runs.events.approvals import ApprovalRequired, QuestionAsked
 from runs.events.lifecycle import AnswerDelta, AnswerRetracted, RunEnded, RunError
 from runs.events.plan import TasksUpdated
@@ -54,6 +55,8 @@ class Approval(_Model):
     name: str
     summary: str
     explanation: str | None = None
+    #: The note the eval refused it with; None when it was approved.
+    refused: str | None = None
 
 
 class Error(_Model):
@@ -68,6 +71,8 @@ type Segment = Annotated[
 
 class Turn(_Model):
     prompt: str
+    #: A run the inbox started to hand Talos a sub-agent's report, not an operator turn.
+    delivery: bool = False
     segments: list[Segment] = Field(default_factory=list)
     #: The run's terminal outcome, ``error``, or ``timeout`` when no terminal event came.
     ended: str = "timeout"
@@ -136,8 +141,9 @@ def _excerpt(value: object) -> str:
 class Timeline:
     """Builds one turn's segments from its event bodies, in order."""
 
-    def __init__(self, turn: Turn) -> None:
+    def __init__(self, turn: Turn, *, approve: bool = True) -> None:
         self.turn: Turn = turn
+        self._approve: bool = approve
         self._tools: dict[str, Tool] = {}
 
     def feed(self, body: EventBody) -> None:
@@ -183,7 +189,12 @@ class Timeline:
                 )
             case ApprovalRequired():
                 segments.append(
-                    Approval(name=body.name, summary=body.summary, explanation=body.explanation)
+                    Approval(
+                        name=body.name,
+                        summary=body.summary,
+                        explanation=body.explanation,
+                        refused=refusal(body, approve=self._approve),
+                    )
                 )
             case RunEnded():
                 self.turn.ended = body.outcome
