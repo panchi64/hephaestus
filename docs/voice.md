@@ -213,6 +213,7 @@ Helpers write what the operator reads in passing: thread titles, work summaries,
 - **Work summaries:** 2–3 sentences, past tense: what was asked, what was done, where it stands, naming the actual files, commands and errors.
 - **Mail drafts** match the operator's own writing style, not Talos's. A draft is the operator speaking.
 - **Parsers and judges** (calendar, routines, triage, permission review, the answer judge) have no voice. They are exact, terse and structured.
+- **The home greeting** is fixed UI copy in Talos's own voice (`frontend/src/features/dashboard/greetings.ts`), drawn at random by time of day. Each line is short and claims nothing about system state, and §9 applies.
 
 ---
 

@@ -3,6 +3,8 @@ import { api, downloadContent, isApiError } from "~/lib/api";
 import { ALL_PROJECTS, getProjectScope } from "~/lib/api/projectScope";
 import type {
   Agent,
+  AgentClass,
+  AgentClasses,
   AgentSource,
   AgentWorkspace,
   AgentWrite,
@@ -15,6 +17,7 @@ export interface AgentOut {
   id: string;
   name: string;
   description: string;
+  agent_class: string;
   instructions: string;
   endpoint_id: string | null;
   model: string | null;
@@ -26,6 +29,7 @@ export interface AgentOut {
   can_delegate: boolean;
   max_depth: number | null;
   delegable: boolean;
+  required: string[];
   source: AgentSource;
   published: boolean;
   active: boolean;
@@ -37,6 +41,7 @@ export function toAgent(dto: AgentOut): Agent {
     id: dto.id,
     name: dto.name,
     description: dto.description,
+    agentClass: dto.agent_class,
     instructions: dto.instructions,
     endpointId: dto.endpoint_id,
     model: dto.model,
@@ -48,6 +53,7 @@ export function toAgent(dto: AgentOut): Agent {
     canDelegate: dto.can_delegate,
     maxDepth: dto.max_depth,
     delegable: dto.delegable,
+    required: dto.required,
     source: dto.source,
     published: dto.published,
     active: dto.active,
@@ -89,6 +95,33 @@ export function useAgents(
 
 export function refreshAgents(): void {
   setListTick((n) => n + 1);
+}
+
+/* ── Classes ──────────────────────────────────────────────────────────────── */
+
+interface AgentClassesOut {
+  classes: AgentClass[];
+  max_depth: number;
+}
+
+let classesRequest: Promise<AgentClasses> | null = null;
+
+/** The class table is fixed for the life of the backend, so one request serves every
+ *  screen; a failed one is dropped so the next mount retries. */
+function fetchAgentClasses(): Promise<AgentClasses> {
+  classesRequest ??= api
+    .get<AgentClassesOut>("/agents/classes")
+    .then((dto) => ({ classes: dto.classes, maxDepth: dto.max_depth }))
+    .catch((err: unknown) => {
+      classesRequest = null;
+      throw err;
+    });
+  return classesRequest;
+}
+
+export function useAgentClasses(): Resource<AgentClasses> {
+  const [data] = createResource(fetchAgentClasses);
+  return data;
 }
 
 /* ── Detail ───────────────────────────────────────────────────────────────── */

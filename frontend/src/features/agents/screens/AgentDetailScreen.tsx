@@ -20,9 +20,18 @@ import {
   refreshAgentDetail,
   setAgentPublished,
   updateAgent,
+  useAgentClasses,
   useAgentDetail,
 } from "../data";
-import { agentSourceTag, isAwaitingPublish, type Agent } from "../model";
+import {
+  agentSourceTag,
+  callsignSummary,
+  classLabel,
+  delegationSummary,
+  isAwaitingPublish,
+  launchedBySummary,
+  type Agent,
+} from "../model";
 import { AgentStateFlags } from "../components/AgentStateFlags";
 import { ModelPicker, type ModelChoice } from "../components/ModelPicker";
 
@@ -38,8 +47,8 @@ function metaOf(a: Agent): string {
   return parts.join(" · ");
 }
 
-/** An agent's read view. The agent's file is edited in place; the model, which
- *  the file does not carry, is picked on the Overview while editing. */
+/** An agent's read view. The agent's file is edited in place, its `class:` included;
+ *  the model, which the file does not carry, is picked on the Overview while editing. */
 export function AgentDetailScreen(props: {
   id: string;
   onBack: () => void;
@@ -51,6 +60,7 @@ export function AgentDetailScreen(props: {
     resource.error
       ? agentErrorMessage(resource.error, "Could not load this agent.")
       : null;
+  const classesResource = useAgentClasses();
   const [modelDraft, setModelDraft] = createSignal<ModelChoice | null>(null);
 
   const choiceOf = (a: Agent): ModelChoice =>
@@ -61,7 +71,30 @@ export function AgentDetailScreen(props: {
   };
 
   function propertiesOf(a: Agent, editing: boolean): LibraryProperty[] {
+    const tree = settled(classesResource);
+    const cls = tree?.classes.find((c) => c.key === a.agentClass);
     return [
+      {
+        label: "Class",
+        value: (
+          <span>
+            {classLabel(a.agentClass, tree?.classes)}
+            <Show when={cls}>
+              {(c) => (
+                <Text variant="micro" tone="dim" class="ml-2">
+                  {c().role}
+                </Text>
+              )}
+            </Show>
+          </span>
+        ),
+      },
+      { label: "Callsign", value: callsignSummary(cls) },
+      { label: "Launched by", value: launchedBySummary(a) },
+      {
+        label: "Delegates",
+        value: tree ? delegationSummary(a, tree.maxDepth) : "—",
+      },
       { label: "Source", value: agentSourceTag(a.source) ?? "USER" },
       {
         label: "Model",
@@ -77,6 +110,7 @@ export function AgentDetailScreen(props: {
         value: a.tools === null ? "Every tool" : list(a.tools),
       },
       { label: "Denied tools", value: list(a.denyTools) },
+      { label: "Required tools", value: list(a.required) },
       { label: "Permission ceiling", value: a.permissionCeiling ?? "None" },
       { label: "Workspace", value: a.workspace },
       {
@@ -85,12 +119,6 @@ export function AgentDetailScreen(props: {
           a.wallClockTimeoutS === null
             ? "No timeout"
             : `${a.wallClockTimeoutS} s`,
-      },
-      {
-        label: "Can delegate",
-        value: a.canDelegate
-          ? `Yes · max depth ${a.maxDepth ?? "default"}`
-          : "No",
       },
     ];
   }

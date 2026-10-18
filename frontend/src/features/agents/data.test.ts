@@ -11,6 +11,7 @@ const dto: AgentOut = {
   id: "builtin:default",
   name: "default",
   description: "The default agent",
+  agent_class: "talos",
   instructions: "",
   endpoint_id: null,
   model: null,
@@ -22,6 +23,7 @@ const dto: AgentOut = {
   can_delegate: true,
   max_depth: 2,
   delegable: false,
+  required: ["web_search"],
   source: "builtin",
   published: true,
   active: true,
@@ -38,6 +40,8 @@ describe("toAgent", () => {
     expect(agent.canDelegate).toBe(true);
     expect(agent.maxDepth).toBe(2);
     expect(agent.editable).toBe(false);
+    expect(agent.agentClass).toBe("talos");
+    expect(agent.required).toEqual(["web_search"]);
   });
 });
 

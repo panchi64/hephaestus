@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
+from prompts.voice import CLASSES
+from routes.deps import app_state
+
 from ._helpers import client_app
-from ._json import json_body, json_list, obj, s
+from ._json import arr, json_body, json_list, obj, s
 
 _BODY = {"name": "scout", "description": "Looks around.", "instructions": "Look around."}
+
+
+async def test_the_classes_are_listed_in_order_with_the_depth_limit():
+    async with client_app() as (client, app):
+        body = json_body(await client.get("/agents/classes"))
+        limit = app_state(app).settings.agent_max_depth
+    classes = [obj(c) for c in arr(body["classes"])]
+    assert [c["key"] for c in classes] == list(CLASSES)
+    assignable = {s(c["key"]): c["assignable"] for c in classes}
+    assert assignable["keledones"] is False
+    assert assignable["kourai"] is True
+    assert body["max_depth"] == limit
+
+
+async def test_a_builtin_lists_its_required_tools():
+    async with client_app() as (client, _app):
+        researcher = json_body(await client.get("/agents/builtin:researcher"))
+        explorer = json_body(await client.get("/agents/builtin:explorer"))
+    assert researcher["required"] == ["web_fetch", "web_search"]
+    assert explorer["required"] == []
 
 
 async def test_the_builtins_are_listed_read_only():

@@ -75,8 +75,9 @@ export function AppShell(props: { children: JSX.Element }): JSX.Element {
               root, and the field's own `mask` makes it one — as an ancestor it
               would leave every glass surface on the page blurring nothing. Both
               siblings below are positioned, so paint order is DOM order and the
-              field stays underneath. */}
-          <DotField />
+              field stays underneath. The focus is where the launchpad's
+              composer sits in the column. */}
+          <DotField focusY="24%" />
         </Show>
         {/* No rule under the top bar (§7). It is already a distinct region by
             position and by what it holds; a full-width hairline across every

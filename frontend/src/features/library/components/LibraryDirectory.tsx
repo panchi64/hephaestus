@@ -28,6 +28,7 @@ import {
   LIBRARY_TAB_VALUES,
   searchText,
   type LibraryEntry,
+  type LibraryGroup,
   type LibraryTab,
 } from "../model";
 
@@ -58,6 +59,8 @@ export interface LibraryDirectoryProps<T extends LibraryEntry> {
   /** Everything on the right of a row except the `…` menu. */
   rowRight: (item: T) => JSX.Element;
   menuItems: (item: T) => MenuItem[];
+  /** Splits the searched, sorted rows into headed sections; without it the list is flat. */
+  groups?: (visible: T[]) => LibraryGroup<T>[];
   /** Hint shown under an empty unfiltered list. */
   emptyCreateHint: string;
   /** The create dialog, rendered once beside the list. */
@@ -65,8 +68,8 @@ export interface LibraryDirectoryProps<T extends LibraryEntry> {
 }
 
 /** The directory both Skills and Agents render: header with Import / New,
- *  instrument band, All / Published / Draft tabs, search + sort, and a flat row
- *  list. What differs between them arrives as props and render slots. */
+ *  instrument band, All / Published / Draft tabs, search + sort, and a row list,
+ *  flat or grouped. What differs between them arrives as props and render slots. */
 export function LibraryDirectory<T extends LibraryEntry>(
   props: LibraryDirectoryProps<T>,
 ): JSX.Element {
@@ -87,6 +90,35 @@ export function LibraryDirectory<T extends LibraryEntry>(
     initialSort: props.initialSort,
     initialDir: props.initialDir,
   });
+
+  const row = (item: T) => (
+    <ListRow
+      label={item.name}
+      leading={props.icon}
+      onClick={() => props.onOpen(item)}
+      right={
+        <span class="flex shrink-0 items-center gap-3">
+          {props.rowRight(item)}
+          {/* Stop row navigation when interacting with the menu. */}
+          <span
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <Menu
+              trigger={
+                <span class="px-1 text-dim hover:text-bright">
+                  <Text variant="micro">···</Text>
+                </span>
+              }
+              items={props.menuItems(item)}
+            />
+          </span>
+        </span>
+      }
+    />
+  );
 
   const emptyHint = (): string => {
     if (view.isFiltered()) return `No ${props.nouns} match your search.`;
@@ -202,36 +234,26 @@ export function LibraryDirectory<T extends LibraryEntry>(
               />
             }
           >
-            <For each={view.items()}>
-              {(item) => (
-                <ListRow
-                  label={item.name}
-                  leading={props.icon}
-                  onClick={() => props.onOpen(item)}
-                  right={
-                    <span class="flex shrink-0 items-center gap-3">
-                      {props.rowRight(item)}
-                      {/* Stop row navigation when interacting with the menu. */}
-                      <span
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                      >
-                        <Menu
-                          trigger={
-                            <span class="px-1 text-dim hover:text-bright">
-                              <Text variant="micro">···</Text>
-                            </span>
-                          }
-                          items={props.menuItems(item)}
-                        />
-                      </span>
-                    </span>
-                  }
-                />
+            <Show
+              when={props.groups}
+              fallback={<For each={view.items()}>{row}</For>}
+            >
+              {(groups) => (
+                <For each={groups()(view.items())}>
+                  {(group) => (
+                    <section>
+                      <div class="flex items-baseline gap-3 px-3 pt-4 pb-1">
+                        <Text variant="plate">{group.label}</Text>
+                        <Text variant="micro" tone="dim" class="truncate">
+                          {group.note}
+                        </Text>
+                      </div>
+                      <For each={group.items}>{row}</For>
+                    </section>
+                  )}
+                </For>
               )}
-            </For>
+            </Show>
           </Show>
         </Suspense>
       </Panel>

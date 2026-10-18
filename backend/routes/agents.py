@@ -14,6 +14,7 @@ from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFil
 from pydantic import BaseModel
 
 from core.exceptions import AgentValidationError, NotFoundError
+from prompts.voice import CLASSES
 from routes import deps
 from routes.deps import OPERATOR_ID
 from routes.revisions import add_revision_routes
@@ -28,6 +29,8 @@ add_revision_routes(router, deps.agent_store)
 _IMPORT_MAX_BYTES = 64 * 1024
 
 _READ_ONLY_SOURCES: frozenset[str] = frozenset({"builtin", "project", "plugin"})
+
+_HELPER_CLASS = "keledones"
 
 
 class AgentOut(BaseModel):
@@ -48,11 +51,29 @@ class AgentOut(BaseModel):
     max_depth: int | None
     #: Whether other agents may delegate to it.
     delegable: bool
+    #: Tools without which delegating to it is refused.
+    required: list[str]
     source: AgentSource
     published: bool
     #: Whether its name resolves to this definition rather than to one that shadows it.
     active: bool
     editable: bool
+
+
+class AgentClassOut(BaseModel):
+    key: str
+    display: str
+    role: str
+    #: Callsign stems; empty for a class whose agents are never addressed by one.
+    callsigns: list[str]
+    #: Whether an agent may be given this class. Helper voices are never agents.
+    assignable: bool
+
+
+class AgentClasses(BaseModel):
+    classes: list[AgentClassOut]
+    #: The installation's delegation depth limit, for an agent that sets none.
+    max_depth: int
 
 
 class AgentWrite(BaseModel):
@@ -85,6 +106,24 @@ async def list_agents(request: Request, project_id: str | None = None) -> list[A
         _out(agent, active=effective.get(agent.name) == agent)
         for agent in (*BUILTIN, *declared, *contributed, *stored)
     ]
+
+
+@router.get("/classes", response_model=AgentClasses)
+async def list_agent_classes(request: Request) -> AgentClasses:
+    """Every agent class in hierarchy order, Talos first."""
+    return AgentClasses(
+        classes=[
+            AgentClassOut(
+                key=spec.key,
+                display=spec.display,
+                role=spec.role,
+                callsigns=list(spec.callsigns),
+                assignable=spec.key != _HELPER_CLASS,
+            )
+            for spec in CLASSES.values()
+        ],
+        max_depth=deps.settings(request).agent_max_depth,
+    )
 
 
 @router.get("/{agent_id}", response_model=AgentOut)
@@ -247,6 +286,7 @@ def _out(agent: AgentDefinition, *, active: bool) -> AgentOut:
         can_delegate=agent.can_delegate,
         max_depth=agent.max_depth,
         delegable=agent.delegable,
+        required=sorted(agent.required),
         source=agent.source,
         published=agent.published,
         active=active,

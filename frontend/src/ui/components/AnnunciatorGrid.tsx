@@ -17,6 +17,8 @@ export interface AnnunciatorCell {
 
 export interface AnnunciatorGridProps {
   cells: AnnunciatorCell[];
+  /** Caps every breakpoint's column count, for a grid set in a narrow column. */
+  maxColumns?: number;
   class?: string;
 }
 
@@ -72,9 +74,11 @@ function isLit(status: Status): boolean {
  *  ruled-grid border of §7.
  */
 export function AnnunciatorGrid(props: AnnunciatorGridProps): JSX.Element {
-  const [local] = splitProps(props, ["cells", "class"]);
+  const [local] = splitProps(props, ["cells", "maxColumns", "class"]);
 
   const n = () => local.cells.length;
+  const cols = (tierMax: number) =>
+    columnsFor(n(), Math.min(tierMax, local.maxColumns ?? tierMax));
 
   return (
     // Collapsed borders rather than `gap-px` over a filled container. A filled container
@@ -87,9 +91,9 @@ export function AnnunciatorGrid(props: AnnunciatorGridProps): JSX.Element {
     <div
       class={cx("heph-annunciator", local.class)}
       style={{
-        "--ann-cols-sm": columnsFor(n(), 4),
-        "--ann-cols-lg": columnsFor(n(), 6),
-        "--ann-cols-xl": columnsFor(n(), 8),
+        "--ann-cols-sm": cols(4),
+        "--ann-cols-lg": cols(6),
+        "--ann-cols-xl": cols(8),
       }}
     >
       <For each={local.cells}>

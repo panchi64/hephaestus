@@ -6,6 +6,7 @@
  *  show.
  */
 
+import type { LibraryGroup } from "~/features/library";
 import type { Status } from "~/ui";
 
 export type AgentSource = "builtin" | "project" | "user" | "agent" | "plugin";
@@ -17,6 +18,8 @@ export interface Agent {
   id: string;
   name: string;
   description: string;
+  /** A key of the backend's class table (`AgentClass.key`). */
+  agentClass: string;
   instructions: string;
   endpointId: string | null;
   model: string | null;
@@ -29,6 +32,8 @@ export interface Agent {
   canDelegate: boolean;
   maxDepth: number | null;
   delegable: boolean;
+  /** Tools without which delegating to it is refused. */
+  required: string[];
   source: AgentSource;
   published: boolean;
   /** False when a same-named agent of higher precedence shadows it, or it is unpublished. */
@@ -40,6 +45,7 @@ export interface Agent {
 export interface AgentWrite {
   name?: string;
   description?: string;
+  agent_class?: string;
   instructions?: string;
   endpoint_id?: string | null;
   model?: string | null;
@@ -52,7 +58,31 @@ export interface AgentWrite {
   max_depth?: number | null;
 }
 
+/** One class of automaton (`docs/voice.md` §2), as `GET /agents/classes` sends it. */
+export interface AgentClass {
+  key: string;
+  display: string;
+  role: string;
+  /** Callsign stems; empty for a class addressed by name or not at all. */
+  callsigns: string[];
+  /** Whether an agent may be given this class. */
+  assignable: boolean;
+}
+
+export interface AgentClasses {
+  /** In hierarchy order: Talos first. */
+  classes: AgentClass[];
+  /** The installation's delegation depth, for an agent that sets none. */
+  maxDepth: number;
+}
+
 export const DEFAULT_AGENT_NAME = "default";
+
+/** The root class: the agent the operator talks to. */
+export const ROOT_CLASS = "talos";
+
+/** The class a new agent gets, matching the backend's default for an agent file. */
+export const DEFAULT_NEW_CLASS = "tripodes";
 
 /** Lowercase letters, digits, hyphens and underscores. */
 export const AGENT_NAME_PATTERN = /^[a-z0-9_-]+$/;
@@ -90,6 +120,94 @@ const SOURCE_ORDER: readonly AgentSource[] = [
 /** Orders by where an agent came from — built-in first, plugins last. */
 export function compareAgentsBySource(a: Agent, b: Agent): number {
   return SOURCE_ORDER.indexOf(a.source) - SOURCE_ORDER.indexOf(b.source);
+}
+
+/* ── Classes and the delegation tree ──────────────────────────────────────── */
+
+/** Agents under their class, in hierarchy order: Talos (with `default` first) at the
+ *  root, then each sub-agent class. Classes with no agent are left out; an agent whose
+ *  class the table doesn't know goes last under its raw key. Order within a group is
+ *  otherwise the caller's. */
+export function agentHierarchy<T extends Pick<Agent, "name" | "agentClass">>(
+  agents: readonly T[],
+  classes: readonly AgentClass[],
+): LibraryGroup<T>[] {
+  const known = new Set(classes.map((c) => c.key));
+  const groups = classes.map((c) => ({
+    key: c.key,
+    label: c.display,
+    note:
+      c.key === ROOT_CLASS
+        ? "The agent you talk to. It launches the others."
+        : c.role,
+    items: agents.filter((a) => a.agentClass === c.key),
+  }));
+  const root = groups.find((g) => g.key === ROOT_CLASS);
+  if (root) {
+    root.items = [
+      ...root.items.filter((a) => a.name === DEFAULT_AGENT_NAME),
+      ...root.items.filter((a) => a.name !== DEFAULT_AGENT_NAME),
+    ];
+  }
+  const unknown = [
+    ...new Set(
+      agents.map((a) => a.agentClass).filter((key) => !known.has(key)),
+    ),
+  ].map((key) => ({
+    key,
+    label: key,
+    note: "Not a class this backend knows.",
+    items: agents.filter((a) => a.agentClass === key),
+  }));
+  return [...groups, ...unknown].filter((g) => g.items.length > 0);
+}
+
+/** The class's display name, or the raw key when the table doesn't know it. */
+export function classLabel(
+  key: string,
+  classes: readonly AgentClass[] | undefined,
+): string {
+  return classes?.find((c) => c.key === key)?.display ?? key;
+}
+
+/** Hierarchy order of a class, unknown keys last. */
+export function compareAgentsByClass(
+  classes: readonly AgentClass[],
+): (a: Agent, b: Agent) => number {
+  const rank = (key: string) => {
+    const i = classes.findIndex((c) => c.key === key);
+    return i === -1 ? classes.length : i;
+  };
+  return (a, b) => rank(a.agentClass) - rank(b.agentClass);
+}
+
+/** How a class's agents are addressed: the first few callsign stems with a serial. */
+export function callsignSummary(cls: AgentClass | undefined): string {
+  if (!cls) return "—";
+  if (cls.key === ROOT_CLASS) return "None. Addressed as Talos";
+  if (cls.callsigns.length === 0) return "None. Not addressed";
+  return `${cls.callsigns
+    .slice(0, 3)
+    .map((stem) => `${stem}-nn`)
+    .join(" · ")} · …`;
+}
+
+/** Who may launch this agent as a sub-agent. */
+export function launchedBySummary(agent: Agent): string {
+  if (agent.agentClass === ROOT_CLASS || !agent.delegable) {
+    return "Not launched by other agents";
+  }
+  return "Talos, or any agent that can delegate";
+}
+
+/** Whether, and how deep, this agent hands work to others. */
+export function delegationSummary(
+  agent: Agent,
+  installMaxDepth: number,
+): string {
+  if (!agent.canDelegate) return "No";
+  const depth = agent.maxDepth ?? installMaxDepth;
+  return `Yes · up to ${depth} ${depth === 1 ? "level" : "levels"} below`;
 }
 
 export type AgentState = "published" | "draft" | "shadowed";

@@ -45,6 +45,8 @@ import {
 import { stagedProjectId } from "~/lib/stores/stagedProject";
 import { toast } from "~/ui";
 import { settled } from "~/lib/resource";
+import { readLS, writeLS } from "~/lib/storage";
+import { pickGreeting } from "../greetings";
 
 /** Overall status for the header flag. Any down capability is an alert; a
  *  degraded *critical* capability is a warning. Non-critical degradations
@@ -71,6 +73,8 @@ function annunciatorSummary(caps: CapabilityHealth[]): string {
 
 const RECENT_LIMIT = 6;
 
+const GREETING_KEY = "heph.home.greeting";
+
 /** Status → chip tone for an in-flight run. A parked run awaiting the operator's
  *  decision gets the warn accent — the others read as plain ambient activity. */
 const RUN_STATUS_TONE: Record<ActiveRun["status"], Status> = {
@@ -79,9 +83,9 @@ const RUN_STATUS_TONE: Record<ActiveRun["status"], Status> = {
   awaiting_input: "warn",
 };
 
-/** Home overview as a launchpad: a centered composer to start work, recent threads to
- *  resume it, the event sequencer, the caution & warning panel, and a subtle facts
- *  strip. Every panel reflects real backend state — the composer/threads via the chat
+/** Home overview as a launchpad: a greeting and a full-width composer to start work,
+ *  then recent threads, the event sequencer and the caution & warning panel in three
+ *  columns, and a subtle facts strip. Every panel reflects real backend state — the composer/threads via the chat
  *  seam, the facts band + capability health via `/overview`, the sequencer via `/runs`.
  *
  *  The screen's **licensed moment** (§11.1) is the dot field, and this screen does not
@@ -98,6 +102,9 @@ export function DashboardScreen(): JSX.Element {
   // Files attached on the launchpad ride into the conversation's first turn.
   const attachments = createComposerAttachments();
 
+  const greeting = pickGreeting(new Date(), readLS(GREETING_KEY));
+  writeLS(GREETING_KEY, greeting);
+
   // The resume target: the newest still-warm thread (or none).
   const entryId = createMemo(() => {
     const list = sessions();
@@ -109,6 +116,7 @@ export function DashboardScreen(): JSX.Element {
   // `/runs` re-polls every 15s, so a tracked `runs()` here would throw the whole route
   // to the shell's fallback on every poll.
   const activeCount = () => settled(runs)?.length ?? 0;
+  const settledOverview = () => settled(overview);
 
   const overallStatus = (): Status => {
     const o = overview();
@@ -194,8 +202,7 @@ export function DashboardScreen(): JSX.Element {
   return (
     <div class="flex min-h-full flex-col gap-6">
       <PageHeader
-        title="Hephaestus"
-        subtitle="Self-hosted agent platform — your models, your data, your hardware."
+        title={greeting}
         assetId="HEPH-HUD-00.1 EDITION 02"
         actions={
           <Show
@@ -217,37 +224,31 @@ export function DashboardScreen(): JSX.Element {
         }
       />
 
-      {/* Composer — the focal point, vertically centered in the free space. It
-          is the only card on this screen that lights its accent on focus, which
-          is what makes "start typing" the obvious move on arrival (§6.2).
+      {/* Composer — the focal point. It is the only card on this screen that lights
+          its accent on focus, which is what makes "start typing" the obvious move on
+          arrival (§6.2).
 
           The dot field's falloff is centred where this lands (`.heph-dot-field`'s
-          focus, 50% × 46% of the column); move the composer and move that too. */}
-      <div class="flex min-h-0 flex-1 items-center justify-center py-8">
-        <div class="w-full max-w-3xl">
-          <Composer
-            size="lg"
-            title="New thread · ready"
-            autofocus
-            storageKey="home-new"
-            placeholder="Ask anything, request a summary, or describe a task…"
-            onSend={handleStart}
-            attachments={attachments}
-            menu={commands}
-            sendBlocked={sendBlockedReason()}
-            // Same slot, same component as the docked composer in a room: the
-            // launchpad's picker was a second inline copy of the shared one, and two
-            // copies of a control bound to one backend value is how they drift.
-            trailing={<ModelPicker />}
-          />
-        </div>
-      </div>
+          focus in theme.css); move the composer and move that too. */}
+      <Composer
+        size="lg"
+        title="New thread · ready"
+        autofocus
+        storageKey="home-new"
+        placeholder="Ask anything, request a summary, or describe a task…"
+        onSend={handleStart}
+        attachments={attachments}
+        menu={commands}
+        sendBlocked={sendBlockedReason()}
+        // The shared picker, same slot as the docked composer in a room: two copies
+        // of a control bound to one backend value drift.
+        trailing={<ModelPicker />}
+      />
 
-      {/* Bottom-aligned: recent threads + in-flight, then the system strip. */}
       <div class="flex flex-col gap-4">
-        <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div class="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-3">
           {/* Recent threads — the launchpad's navigation; default brightness. */}
-          <Panel label="Recent threads" bare class="lg:col-span-2">
+          <Panel label="Recent threads" bare>
             <Show
               when={recent().length}
               fallback={
@@ -258,7 +259,7 @@ export function DashboardScreen(): JSX.Element {
                 />
               }
             >
-              <div class="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
+              <div class="flex flex-col gap-1">
                 <For each={recent()}>
                   {(s) => (
                     <RecentThreadCard
@@ -282,7 +283,6 @@ export function DashboardScreen(): JSX.Element {
               state it does not own. */}
           <ConsoleGroup
             label="Sequence"
-            class="lg:col-span-1"
             right={
               <Text variant="plate" tone="dim">
                 {/* `settled`, never `runs()`: a tracked read of a refetching resource
@@ -347,29 +347,28 @@ export function DashboardScreen(): JSX.Element {
               )}
             </Resource>
           </ConsoleGroup>
-        </div>
 
-        {/* Both panels below read `/overview`, so they share ONE `Resource`. Two of
-            them over one resource renders its loading arm twice and, on failure, two
-            stacked error rows with two retry buttons for a single fetch. */}
-        <Resource
-          data={overview}
-          onRetry={refetchOverview}
-          errorMessage="Telemetry unavailable"
-        >
-          {(o) => (
-            <>
-              {/* Caution & warning (§10.15) — the capability health that used to be a
-                  row of equally-bright dots on the system strip. */}
-              <ConsoleGroup
-                label="Caution & warning"
-                right={
-                  <Text variant="plate" tone="dim">
-                    {annunciatorSummary(o().capabilities)}
-                  </Text>
-                }
-              >
+          {/* Caution & warning (§10.15) — capability health. It owns the one `Resource`
+              over `/overview`, so loading and failure show once, here; the system strip
+              below reads the same fetch through `settled` and simply waits. */}
+          <ConsoleGroup
+            label="Caution & warning"
+            right={
+              <Text variant="plate" tone="dim">
+                {settledOverview()
+                  ? annunciatorSummary(settledOverview()!.capabilities)
+                  : "—"}
+              </Text>
+            }
+          >
+            <Resource
+              data={overview}
+              onRetry={refetchOverview}
+              errorMessage="Telemetry unavailable"
+            >
+              {(o) => (
                 <AnnunciatorGrid
+                  maxColumns={2}
                   cells={o().capabilities.map((c) => ({
                     label: c.label,
                     status: c.status,
@@ -377,21 +376,24 @@ export function DashboardScreen(): JSX.Element {
                     href: c.remediationHref,
                   }))}
                 />
-              </ConsoleGroup>
+              )}
+            </Resource>
+          </ConsoleGroup>
+        </div>
 
-              {/* System strip — most subtle; compact, marquees only if it overflows.
-                  Facts only now: anything that can be *wrong* is on the annunciator
-                  grid above, where it can be seen rather than skimmed past. */}
-              <SystemStrip
-                band={overviewBand(
-                  o(),
-                  selectedModelLabel(),
-                  effectiveContextWindow(),
-                )}
-              />
-            </>
+        {/* System strip — most subtle; compact, marquees only if it overflows. Facts
+            only: anything that can be *wrong* is on the annunciator grid. */}
+        <Show when={settledOverview()}>
+          {(o) => (
+            <SystemStrip
+              band={overviewBand(
+                o(),
+                selectedModelLabel(),
+                effectiveContextWindow(),
+              )}
+            />
           )}
-        </Resource>
+        </Show>
       </div>
     </div>
   );

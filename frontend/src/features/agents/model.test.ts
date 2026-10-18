@@ -1,20 +1,109 @@
 import { describe, expect, it } from "bun:test";
 import {
+  agentHierarchy,
   agentState,
   agentToSend,
   agentSourceTag,
+  callsignSummary,
   compareAgentsBySource,
+  delegationSummary,
   isAwaitingPublish,
+  launchedBySummary,
   pickableAgents,
   threadAgentName,
   type Agent,
+  type AgentClass,
 } from "./model";
+
+const cls = (key: string, callsigns: string[] = []): AgentClass => ({
+  key,
+  display: key.charAt(0).toUpperCase() + key.slice(1),
+  role: `${key} work`,
+  callsigns,
+  assignable: key !== "keledones",
+});
+
+const CLASSES = [
+  cls("talos"),
+  cls("kourai", ["KYRĒ", "LYXĒ", "MYRĒ", "SYLĒ"]),
+  cls("tripodes", ["TIKK"]),
+  cls("khryseos", ["SKAR"]),
+  cls("keledones"),
+];
+
+describe("agentHierarchy", () => {
+  it("puts Talos at the root with default first, then classes in table order", () => {
+    const agents = [
+      agent({ name: "worker", agentClass: "tripodes" }),
+      agent({ name: "concierge", agentClass: "talos" }),
+      agent({ name: "reviewer", agentClass: "khryseos" }),
+      agent({ name: "default", agentClass: "talos" }),
+      agent({ name: "explorer", agentClass: "kourai" }),
+    ];
+    const groups = agentHierarchy(agents, CLASSES);
+    expect(groups.map((g) => g.key)).toEqual([
+      "talos",
+      "kourai",
+      "tripodes",
+      "khryseos",
+    ]);
+    expect(groups[0]!.items.map((a) => a.name)).toEqual([
+      "default",
+      "concierge",
+    ]);
+    expect(groups[1]!.note).toBe("kourai work");
+  });
+
+  it("keeps the caller's order inside a group and files unknown classes last", () => {
+    const groups = agentHierarchy(
+      [
+        agent({ name: "b", agentClass: "kourai" }),
+        agent({ name: "odd", agentClass: "mystery" }),
+        agent({ name: "a", agentClass: "kourai" }),
+      ],
+      CLASSES,
+    );
+    expect(groups.map((g) => g.key)).toEqual(["kourai", "mystery"]);
+    expect(groups[0]!.items.map((a) => a.name)).toEqual(["b", "a"]);
+  });
+});
+
+describe("class summaries", () => {
+  it("shows three callsign stems, and none for Talos or an unaddressed class", () => {
+    expect(callsignSummary(CLASSES[1])).toBe("KYRĒ-nn · LYXĒ-nn · MYRĒ-nn · …");
+    expect(callsignSummary(CLASSES[0])).toBe("None. Addressed as Talos");
+    expect(callsignSummary(CLASSES[4])).toBe("None. Not addressed");
+  });
+
+  it("says who launches an agent", () => {
+    expect(launchedBySummary(agent())).toBe(
+      "Talos, or any agent that can delegate",
+    );
+    expect(launchedBySummary(agent({ delegable: false }))).toBe(
+      "Not launched by other agents",
+    );
+    expect(launchedBySummary(agent({ agentClass: "talos" }))).toBe(
+      "Not launched by other agents",
+    );
+  });
+
+  it("resolves an unset depth to the installation's limit", () => {
+    expect(delegationSummary(agent(), 3)).toBe("No");
+    expect(delegationSummary(agent({ canDelegate: true }), 3)).toBe(
+      "Yes · up to 3 levels below",
+    );
+    expect(
+      delegationSummary(agent({ canDelegate: true, maxDepth: 1 }), 3),
+    ).toBe("Yes · up to 1 level below");
+  });
+});
 
 function agent(over: Partial<Agent> = {}): Agent {
   return {
     id: "a1",
     name: "reviewer",
     description: "Reviews diffs",
+    agentClass: "khryseos",
     instructions: "Be terse.",
     endpointId: null,
     model: null,
@@ -26,6 +115,7 @@ function agent(over: Partial<Agent> = {}): Agent {
     canDelegate: false,
     maxDepth: null,
     delegable: true,
+    required: [],
     source: "user",
     published: true,
     active: true,
