@@ -17,6 +17,8 @@ export interface Agent {
   id: string;
   name: string;
   description: string;
+  /** Its class key (`tripodes`), which fixes its role, voice and callsigns. */
+  agentClass: string;
   instructions: string;
   endpointId: string | null;
   model: string | null;
@@ -40,6 +42,7 @@ export interface Agent {
 export interface AgentWrite {
   name?: string;
   description?: string;
+  agent_class?: string;
   instructions?: string;
   endpoint_id?: string | null;
   model?: string | null;
@@ -53,6 +56,24 @@ export interface AgentWrite {
 }
 
 export const DEFAULT_AGENT_NAME = "default";
+
+/** The class a new agent takes when none is picked; mirrors the backend's default. */
+export const DEFAULT_AGENT_CLASS = "tripodes";
+
+export interface AgentClass {
+  key: string;
+  /** Its mythic name (`Kourai`). */
+  display: string;
+  role: string;
+}
+
+/** A class key's display name, or the key itself until the catalog has loaded. */
+export function classDisplay(
+  classes: readonly AgentClass[],
+  key: string,
+): string {
+  return classes.find((c) => c.key === key)?.display ?? key;
+}
 
 /** Lowercase letters, digits, hyphens and underscores. */
 export const AGENT_NAME_PATTERN = /^[a-z0-9_-]+$/;
@@ -128,6 +149,11 @@ export function pickableAgents(agents: readonly Agent[]): Agent[] {
 /** The thread's agent name as stored: null means the default. */
 export function threadAgentName(stored: string | null | undefined): string {
   return stored ?? DEFAULT_AGENT_NAME;
+}
+
+/** What the interface calls an agent: the default one is Talos. */
+export function agentDisplayName(name: string): string {
+  return name === DEFAULT_AGENT_NAME ? "Talos" : name;
 }
 
 /**

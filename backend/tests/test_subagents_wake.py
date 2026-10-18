@@ -414,7 +414,7 @@ class TestTheRunawayRail:
             _ = await wake.deliver("operator", conversation_id, "two")
 
             listed, unread = await notifications.list_notifications("operator")
-            paused = [n for n in listed if n.title == "Agents paused for you"]
+            paused = [n for n in listed if n.title == "Sub-agents paused for you"]
             assert len(paused) == 1
             assert paused[0].conversation_id == conversation_id
             assert unread == before + 1

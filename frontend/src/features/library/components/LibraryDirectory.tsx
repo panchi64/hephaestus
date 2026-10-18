@@ -55,6 +55,8 @@ export interface LibraryDirectoryProps<T extends LibraryEntry> {
   /** Absent where items are not created by hand; the New button is omitted. */
   onNew?: () => void;
   onOpen: (item: T) => void;
+  /** A row's label, when it is not the item's name. */
+  rowLabel?: (item: T) => string;
   /** Everything on the right of a row except the `…` menu. */
   rowRight: (item: T) => JSX.Element;
   menuItems: (item: T) => MenuItem[];
@@ -205,7 +207,7 @@ export function LibraryDirectory<T extends LibraryEntry>(
             <For each={view.items()}>
               {(item) => (
                 <ListRow
-                  label={item.name}
+                  label={props.rowLabel?.(item) ?? item.name}
                   leading={props.icon}
                   onClick={() => props.onOpen(item)}
                   right={

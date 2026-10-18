@@ -108,7 +108,7 @@ export function SkillDetailScreen(props: {
       refreshRevisions();
       toast.success(
         next
-          ? "Published — the agent can see this skill now."
+          ? "Published — Talos can see this skill now."
           : "Unpublished — back to draft.",
       );
     } catch (err) {

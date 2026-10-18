@@ -74,7 +74,7 @@ export const PIN_HINT =
 
 /** Why the pin control is off for a draft. */
 export const PIN_DRAFT_HINT =
-  "Publish the skill first — a draft is never shown to the agent.";
+  "Publish the skill first — a draft is never shown to Talos.";
 
 export function skillStatusLabel(published: boolean): string {
   return published ? "PUBLISHED" : "DRAFT";

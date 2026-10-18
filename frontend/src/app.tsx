@@ -24,7 +24,9 @@ export default function App() {
         useFavicon();
         return (
           <ThemeProvider>
-            <Suspense fallback={<AppSplash />}>{props.children}</Suspense>
+            <Suspense fallback={<AppSplash label="Waking Talos…" />}>
+              {props.children}
+            </Suspense>
             <Toaster />
             <ConfirmHost />
           </ThemeProvider>

@@ -340,7 +340,7 @@ async def test_reports_no_turn_can_carry_wait_for_the_operator_and_go_with_their
         await settle(app)
 
         assert dispatcher.stalled(conversation_id)
-        assert notices.count("Agents paused for you") == 1
+        assert notices.count("Sub-agents paused for you") == 1
         inbox = app_state(app).runs.inbox(conversation_id, OPERATOR_ID)
         assert len(inbox.messages) == 2
 

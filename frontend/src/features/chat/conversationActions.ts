@@ -44,7 +44,10 @@ import type { ChatMessage } from "./model";
  *  role and content in order, assistant turns including their tool calls/
  *  results via `assembleTranscript` (same shaping as per-message COPY
  *  MESSAGE), separated by rules so the export reads as a transcript. */
-export function buildConversationTranscript(messages: ChatMessage[]): string {
+export function buildConversationTranscript(
+  messages: ChatMessage[],
+  speaker: string,
+): string {
   return messages
     .map((m) => {
       // A compaction divider is neither party's words — label it as the chassis note it
@@ -54,7 +57,7 @@ export function buildConversationTranscript(messages: ChatMessage[]): string {
           ? "Operator"
           : m.role === "compaction"
             ? "Context compacted"
-            : "Talos";
+            : speaker;
       const body =
         m.role === "assistant" ? assembleTranscript(m.blocks) : m.content;
       return `${label} · ${m.createdAt}\n${body}`;
@@ -186,6 +189,8 @@ export interface ConversationActionDeps {
   conversationId: () => string | null;
   /** The transcript, for the clipboard export. */
   messages: ChatMessage[];
+  /** The name the export gives the agent's turns. */
+  speaker: () => string;
   /** Whether a turn is in flight, which switches off every act that rewrites or
    *  removes the thread. */
   sending: () => boolean;
@@ -301,7 +306,7 @@ export function createConversationActions(
     removeMessage,
     copyTranscript: () =>
       copyToClipboard(
-        buildConversationTranscript(deps.messages),
+        buildConversationTranscript(deps.messages, deps.speaker()),
         "Conversation",
       ),
   };

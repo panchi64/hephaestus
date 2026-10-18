@@ -1,6 +1,6 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
-import { StatusFlag, confirm, toast } from "~/ui";
+import { StatusFlag, Text, confirm, toast } from "~/ui";
 import { compareByName, LibraryDirectory } from "~/features/library";
 import {
   agentErrorMessage,
@@ -8,13 +8,17 @@ import {
   exportAgent,
   importAgent,
   setAgentPublished,
+  useAgentClasses,
   useAgents,
 } from "../data";
 import {
+  agentDisplayName,
+  classDisplay,
   compareAgentsBySource,
   agentSourceTag,
   isAwaitingPublish,
   type Agent,
+  type AgentClass,
 } from "../model";
 import { AgentStateFlags } from "../components/AgentStateFlags";
 import { NewAgentDialog } from "../components/NewAgentDialog";
@@ -26,6 +30,8 @@ export function AgentsDirectoryScreen(props: {
 }): JSX.Element {
   const agentsResource = useAgents();
   const agents = (): Agent[] => settled(agentsResource) ?? [];
+  const classesResource = useAgentClasses();
+  const classes = (): AgentClass[] => settled(classesResource) ?? [];
   const loadError = (): string | null =>
     agentsResource.error
       ? agentErrorMessage(agentsResource.error, "Could not load agents.")
@@ -136,8 +142,20 @@ export function AgentsDirectoryScreen(props: {
       onNew={() => setNewOpen(true)}
       onOpen={(agent) => props.onOpen(agent.id)}
       emptyCreateHint="Create an agent or import an agent file."
+      rowLabel={(agent) => agentDisplayName(agent.name)}
       rowRight={(agent) => (
         <>
+          {/* Talos's class is its name; saying it twice tells the operator nothing. */}
+          <Show
+            when={
+              classDisplay(classes(), agent.agentClass) !==
+              agentDisplayName(agent.name)
+            }
+          >
+            <Text variant="micro" tone="dim">
+              {classDisplay(classes(), agent.agentClass)}
+            </Text>
+          </Show>
           <Show when={agentSourceTag(agent.source)}>
             {(tag) => <StatusFlag status="idle">{tag()}</StatusFlag>}
           </Show>

@@ -14,6 +14,7 @@ from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFil
 from pydantic import BaseModel
 
 from core.exceptions import AgentValidationError, NotFoundError
+from prompts.voice import CLASSES
 from routes import deps
 from routes.deps import OPERATOR_ID
 from routes.revisions import add_revision_routes
@@ -84,6 +85,25 @@ async def list_agents(request: Request, project_id: str | None = None) -> list[A
     return [
         _out(agent, active=effective.get(agent.name) == agent)
         for agent in (*BUILTIN, *declared, *contributed, *stored)
+    ]
+
+
+class AgentClassOut(BaseModel):
+    key: str
+    display: str
+    role: str
+
+
+#: Helpers are a voice, not an agent anyone runs, so no agent can take their class.
+_UNASSIGNABLE_CLASSES: frozenset[str] = frozenset({"keledones"})
+
+
+@router.get("/classes", response_model=list[AgentClassOut])
+async def list_agent_classes() -> list[AgentClassOut]:
+    return [
+        AgentClassOut(key=spec.key, display=spec.display, role=spec.role)
+        for spec in CLASSES.values()
+        if spec.key not in _UNASSIGNABLE_CLASSES
     ]
 
 

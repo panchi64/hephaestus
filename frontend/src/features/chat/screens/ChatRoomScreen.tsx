@@ -50,7 +50,7 @@ import { PermissionControl } from "../components/PermissionControl";
 import { AgentControl } from "../components/AgentControl";
 import { ProjectControl } from "../components/ProjectControl";
 import { useAgents } from "~/features/agents/data";
-import { threadAgentName } from "~/features/agents/model";
+import { agentDisplayName, threadAgentName } from "~/features/agents/model";
 import { ThreadRecap } from "../components/ThreadRecap";
 import { TranscriptView } from "../components/TranscriptView";
 import { ModelPicker } from "~/app/ModelPicker";
@@ -278,8 +278,11 @@ export function ChatRoomScreen(): JSX.Element {
   // wide it is, whether it renders as an aside or a sheet, and where focus goes when
   // it closes. It is a concern of its own, so it lives in one.
   const browser = createBrowserState(currentId, browserOpenedSeq);
+  const speaker = (): string =>
+    agentDisplayName(threadAgentName(currentSummary()?.agentName));
   const viewport = useChatViewport(currentId, {
     ...stream,
+    speaker,
     browser,
     branch: branch.latest,
     changes: threadChanges.changes.latest,
@@ -327,6 +330,7 @@ export function ChatRoomScreen(): JSX.Element {
   const actions = createConversationActions({
     conversationId: currentId,
     messages: stream.messages,
+    speaker,
     sending: stream.sending,
     removeMessage: stream.removeMessage,
     browser,
@@ -647,6 +651,7 @@ export function ChatRoomScreen(): JSX.Element {
               </Show>
               <Composer
                 autofocus
+                placeholder={`Message ${agentDisplayName(agentValue())}…`}
                 streaming={stream.sending()}
                 queued={stream.sending() && stream.runQueue() !== null}
                 onStop={(correction) => void stopRun(correction)}

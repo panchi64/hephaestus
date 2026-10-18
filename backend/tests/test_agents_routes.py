@@ -41,6 +41,24 @@ async def test_creating_makes_an_inactive_draft():
         assert body["id"] == fetched["id"]
 
 
+async def test_the_class_catalog_lists_every_class_an_agent_can_take():
+    async with client_app() as (client, _app):
+        listed = json_list(await client.get("/agents/classes"))
+    keys = [s(obj(c)["key"]) for c in listed]
+    assert keys[0] == "talos"
+    assert "tripodes" in keys
+    assert "keledones" not in keys
+    assert all(s(obj(c)["role"]) for c in listed)
+
+
+async def test_an_agent_takes_the_class_it_is_given():
+    async with client_app() as (client, _app):
+        made = json_body(await client.post("/agents", json={**_BODY, "agent_class": "Kourai"}))
+        assert made["agent_class"] == "kourai"
+        changed = await client.patch(f"/agents/{s(made['id'])}", json={"agent_class": "khryseos"})
+        assert json_body(changed)["agent_class"] == "khryseos"
+
+
 async def test_bad_input_is_a_422_naming_the_field():
     async with client_app() as (client, _app):
         for body, field in (
