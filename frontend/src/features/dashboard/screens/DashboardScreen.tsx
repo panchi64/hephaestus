@@ -200,7 +200,7 @@ export function DashboardScreen(): JSX.Element {
   };
 
   return (
-    <div class="flex min-h-full flex-col gap-6">
+    <div class="flex min-h-full flex-col gap-8 pt-4">
       <PageHeader
         title={greeting}
         assetId="HEPH-HUD-00.1 EDITION 02"
@@ -228,8 +228,8 @@ export function DashboardScreen(): JSX.Element {
           its accent on focus, which is what makes "start typing" the obvious move on
           arrival (§6.2).
 
-          The dot field's falloff is centred where this lands (`.heph-dot-field`'s
-          focus in theme.css); move the composer and move that too. */}
+          The dot field's falloff is centred where this lands (`DotField`'s `focusY`
+          in AppShell); move the composer and move that too. */}
       <Composer
         size="lg"
         title="New thread · ready"
@@ -245,8 +245,10 @@ export function DashboardScreen(): JSX.Element {
         trailing={<ModelPicker />}
       />
 
-      <div class="flex flex-col gap-4">
-        <div class="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-3">
+      {/* The columns take the height left under the composer, so the panels fill the
+          page and the system strip sits at its foot. */}
+      <div class="flex flex-1 flex-col gap-6">
+        <div class="grid min-h-80 flex-1 grid-cols-1 gap-6 lg:grid-cols-3">
           {/* Recent threads — the launchpad's navigation; default brightness. */}
           <Panel label="Recent threads" bare>
             <Show
