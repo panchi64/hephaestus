@@ -175,8 +175,8 @@ def compose_turn(
     No failure path after the caller's conversation mutation — ``prompt is None``
     is a regenerate (re-run from a history that already ends in the user request).
     ``ephemeral`` threads (e.g. the compare panes) are hidden from the listing and
-    show no title, so auto-titling them is invisible work that only holds the run
-    open after the answer — skip it by passing no title model.
+    show no title, so auto-titling them is invisible work that only takes a turn on the
+    endpoint — skip it by passing no title model.
 
     ``kind`` says who asked for the turn — the operator (``chat``, the default), the
     scheduler (``task``), or the agent itself (``linked``). Every one of them composes the

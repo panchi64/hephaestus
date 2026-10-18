@@ -104,7 +104,7 @@ from .naming import (
     discard_title,
     maybe_title,
     reap_title,
-    settle_title,
+    release_title,
 )
 from .parking import DEFAULT_BINDING, ParkedTurn
 from .prelude import TurnSetup, prepare_turn, record_prompt
@@ -207,7 +207,7 @@ async def fold_now(
         ),
         settings=settings,
     )
-    assert ctx is not None  # noqa: S101 — a store and a conversation always make one
+    assert ctx is not None  # a store and a conversation always make one
     result = await fold(run, ctx, reason="manual")
     if isinstance(result, CompactionOutcome):
         run.prior_timings = await store.timings(conversation_id)
@@ -563,9 +563,8 @@ def build_chat_orchestrator(
                 ),
             )
             # Disarm the flush hooks now the turn is recorded: a wall-clock/inactivity bound
-            # or a cancel landing during the post-answer title window (below) must not
-            # re-run `finalize` and double-record the turn (or stamp a spurious stop on a
-            # completed answer).
+            # or a cancel landing during the awaits below must not re-run `finalize` and
+            # double-record the turn (or stamp a spurious stop on a completed answer).
             flush.disarm()
             flush.done = True
 
@@ -588,11 +587,10 @@ def build_chat_orchestrator(
                 if isinstance(run.parked_payload, ParkedTurn):
                     run.parked_payload.title = setup.title_ctx
             else:
-                # The namer started up-front announces itself the moment the name lands
-                # (typically well before the answer does); this only waits for a still-
-                # running one so the event is emitted before the orchestrator returns
-                # (run.ended) and the open stream carries it.
-                await settle_title(setup.title_namer)
+                # A namer still running finishes without the run; cleared so the
+                # `finally` below does not reap it.
+                release_title(run, setup.title_namer)
+                setup.title_namer = None
 
             # What this turn's requests weighed besides the conversation, written onto
             # the thread for its own next cold load — neither the brief nor the schemas
@@ -712,8 +710,7 @@ def build_resume_orchestrator(
             )
             finalize(run, turn, store=store, context=parked_context(parked, turn_start))
             # Disarm the flush hooks now the turn is recorded — a bound or cancel
-            # landing during the title window below must not re-finalize (see the
-            # chat orchestrator).
+            # landing after this must not re-finalize (see the chat orchestrator).
             flush.disarm()
             flush.done = True
 
@@ -728,7 +725,7 @@ def build_resume_orchestrator(
             else:
                 # A first turn that parked then resumed to completion is still the
                 # opening exchange — name it (persist_from == 0 means no prior turns).
-                await maybe_title(
+                maybe_title(
                     run,
                     title=parked.title,
                     store=store,

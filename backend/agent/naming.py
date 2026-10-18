@@ -3,18 +3,25 @@
 ``title.py`` is the model call — given some messages, produce a short name. This is
 everything around it: when a thread is eligible to be named, the two paths that name one,
 persisting the result without ever clobbering a name the operator chose, and announcing it
-on the run's stream.
+on the run's stream while that stream is still open.
 
 Two paths, because the two orchestrators reach completion differently:
 
 - A **fresh chat turn** starts the namer up front (:func:`start_title`), concurrently with
-  the answer, and announces the moment the name lands — so naming adds no post-answer
-  delay. The trade is that the task outlives the awaited turn, and abandoning it needs
-  care: before the name exists, cancelling costs nothing; past that point the persist and
-  the emit must not be split, or the name reaches the database but never the client.
-  :class:`Namer` carries exactly that distinction.
+  the answer, and announces the moment the name lands. Abandoning it needs care: before
+  the name exists, cancelling costs nothing; past that point the persist and the emit must
+  not be split, or the name reaches the database but never the client. :class:`Namer`
+  carries exactly that distinction.
 - A **resumed turn** has no prompt in hand and no window to overlap with, so it names
   afterwards from the just-persisted history (:func:`maybe_title`).
+
+**The run never waits for its name.** An endpoint that serves one request at a time
+queues the title behind the answer, so a run that awaited it would end late, and a budget
+counted from the send would be spent in that queue. The namer's budget starts when the
+answer is written, and a namer still working then finishes as the run's afterwork
+(:func:`release_title`); its name is persisted, and a client that saw the run end without
+one waits up to :func:`late_title_wait_s` for it. The namer runs outside the run's
+endpoint lease, so the gate counts its request even after the lease moves on.
 
 Best-effort throughout: a failure here leaves a thread untitled, which is a cosmetic loss,
 and must never disturb a finished turn.
@@ -31,12 +38,16 @@ from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
 from core.config import get_settings
-from runs import ConversationTitled, Run
+from runs import ConversationTitled, Run, outside_lease
 from services.conversations import ConversationStore
 
 from .title import generate_title, title_from_history
 
 logger = logging.getLogger(__name__)
+
+# Past the title call's own budget: reading the history before it and persisting the
+# name after it need a moment too.
+_LATE_TITLE_SLACK_S = 5.0
 
 
 @dataclass(frozen=True)
@@ -59,14 +70,26 @@ async def approval_conversation_title(
     if store is not None and conversation_id is not None:
         try:
             summary = await store.get_summary(conversation_id, owner_id)
-        except Exception:  # noqa: BLE001 — a title lookup must not block the notify
+        except Exception:  # a title lookup must not block the notify
             summary = None
         if summary is not None and summary.title:
             return summary.title
     return "this conversation"
 
 
-async def maybe_title(
+def late_title_wait_s() -> float:
+    """How long a namer still running after its run can take to land or give up."""
+    return get_settings().title_timeout_s + _LATE_TITLE_SLACK_S
+
+
+def _log_failure(conversation_id: str | None, exc: Exception) -> None:
+    if isinstance(exc, TimeoutError):
+        logger.warning("auto-titling timed out for %s", conversation_id)
+    else:
+        logger.warning("auto-titling failed for %s", conversation_id, exc_info=exc)
+
+
+def maybe_title(
     run: Run,
     *,
     title: TitleContext | None,
@@ -74,37 +97,29 @@ async def maybe_title(
     conversation_id: str | None,
     is_first_turn: bool,
 ) -> None:
-    """Auto-name a fresh conversation from the operator's opening message.
+    """Name a first turn that parked for approval, once it has resumed to completion.
 
-    The resume path's namer: a first turn that parked for approval is named once it
-    resumes to completion. The user's first message is read from the just-persisted
-    history rather than threaded in (the resume has no ``prompt`` in hand). The
-    initial chat orchestrator instead titles concurrently via :func:`start_title` /
-    :func:`start_title` so it adds no post-answer delay. The title reflects what the operator
-    asked — the assistant's reply is deliberately not fed to the namer. Guards:
-
-    - ``is_first_turn`` (no prior messages) is the cheap pre-filter that skips the
-      model call on continuation turns;
-    - :meth:`ConversationStore.set_title_if_absent` is the authoritative guard —
-      it fills only a blank title, so an operator-named thread is never clobbered,
-      and we announce ``conversation.titled`` only when it actually set the name.
-
-    Emitted before the orchestrator returns (before ``run.ended``) so the open
-    stream carries it. Best-effort throughout: any failure leaves the thread
-    untitled without disturbing the finished turn."""
+    Reads the operator's opening message from the just-persisted history, because the
+    resume has no ``prompt`` in hand. ``is_first_turn`` is the cheap pre-filter that
+    skips the model call on continuation turns. Runs detached, so the resumed run ends
+    without waiting for it."""
     if not is_first_turn or title is None or store is None or conversation_id is None:
         return
-    try:
-        name = await title_from_history(
-            title.model,
-            await store.history(conversation_id),
-            reasoning_off=title.settings,
-            timeout_s=get_settings().title_timeout_s,
-            max_tokens=get_settings().title_max_tokens,
-        )
-        await announce_title(run, name, store=store, conversation_id=conversation_id)
-    except Exception:  # noqa: BLE001 — titling is best-effort, not turn-critical
-        logger.warning("auto-titling failed for %s", conversation_id, exc_info=True)
+
+    async def _name() -> None:
+        try:
+            name = await title_from_history(
+                title.model,
+                await store.history(conversation_id),
+                reasoning_off=title.settings,
+                timeout_s=get_settings().title_timeout_s,
+                max_tokens=get_settings().title_max_tokens,
+            )
+            await announce_title(run, name, store=store, conversation_id=conversation_id)
+        except Exception as exc:  # titling is best-effort, not turn-critical
+            _log_failure(conversation_id, exc)
+
+    run.outlive(asyncio.create_task(_name(), context=outside_lease()))
 
 
 async def announce_title(
@@ -118,13 +133,32 @@ async def announce_title(
 
     :meth:`ConversationStore.set_title_if_absent` is the authoritative guard — it
     fills only a blank title, so an operator-named thread is never clobbered, and
-    ``conversation.titled`` is announced only when it actually set the name. Shared
-    by both the concurrent (:func:`start_title`) and resume (:func:`maybe_title`)
-    paths."""
+    ``conversation.titled`` is announced only when it actually set the name, and only
+    while the run's stream is open. A name that lands after the run ended is read
+    from the store instead."""
     if not name or store is None or conversation_id is None:
         return
-    if await store.set_title_if_absent(conversation_id, name):
+    if await store.set_title_if_absent(conversation_id, name) and not run.stream.closed:
         _ = run.emit(ConversationTitled(conversation_id=conversation_id, title=name))
+
+
+@dataclass
+class _Budget:
+    """The title call's time limit. It runs only once the turn has stopped using the
+    endpoint, because a one-slot server serves the title after the turn's own requests;
+    until then the run's own bounds cover it."""
+
+    seconds: float
+    running: bool = False
+    scope: asyncio.Timeout | None = None
+
+    def deadline(self) -> float | None:
+        return asyncio.get_running_loop().time() + self.seconds if self.running else None
+
+    def start(self) -> None:
+        self.running = True
+        if self.scope is not None and not self.scope.expired():
+            self.scope.reschedule(self.deadline())
 
 
 @dataclass(frozen=True)
@@ -136,6 +170,7 @@ class Namer:
 
     task: asyncio.Task[None]
     announcing: asyncio.Event
+    budget: _Budget
 
 
 def start_title(
@@ -151,30 +186,31 @@ def start_title(
 
     Titling needs only the operator's opening message, which a first turn already has
     in ``prompt`` — so there's no need to wait for the answer (or persistence) first.
-    The task persists and emits ``conversation.titled`` **itself**, rather than handing
-    a name back for the orchestrator to announce after the turn: the utility call
+    The task persists and emits ``conversation.titled`` **itself**: the utility call
     typically resolves in a second or two, and deferring the announcement to the end of
-    a long tool-using turn would leave the operator staring at an unnamed thread for the
-    whole run even though the name was ready almost immediately. :func:`_settle_title`
-    only waits for this task to finish before ``run.ended``, so the open stream still
-    carries the event.
+    a long tool-using turn would leave the thread unnamed for the whole run.
 
-    Returns ``None`` when titling is off or there is nothing to name from. The call stays
-    bounded by ``title_timeout_s``, and is best-effort throughout: any failure leaves the
-    thread untitled without disturbing the turn."""
+    Returns ``None`` when titling is off or there is nothing to name from. The call is
+    bounded by ``title_timeout_s`` from :func:`release_title` on, and best-effort
+    throughout: any failure leaves the thread untitled without disturbing the turn."""
     if title is None or not prompt:
         return None
     announcing = asyncio.Event()
+    budget = _Budget(get_settings().title_timeout_s)
 
     async def _name() -> None:
         try:
-            name = await generate_title(
-                title.model,
-                prompt,
-                reasoning_off=title.settings,
-                timeout_s=get_settings().title_timeout_s,
-                max_tokens=get_settings().title_max_tokens,
-            )
+            try:
+                async with asyncio.timeout_at(budget.deadline()) as scope:
+                    budget.scope = scope
+                    name = await generate_title(
+                        title.model,
+                        prompt,
+                        reasoning_off=title.settings,
+                        max_tokens=get_settings().title_max_tokens,
+                    )
+            finally:
+                budget.scope = None
             # Set synchronously with the announce that follows — no await between, so an
             # abandoning caller either sees this before the persist begins (safe to
             # cancel) or waits the announce out. Torn in half instead — cancelled between
@@ -185,22 +221,27 @@ def start_title(
             announcing.set()
             await announce_title(run, name, store=store, conversation_id=conversation_id)
         except asyncio.CancelledError:
-            raise  # a park/cancel abandoning the name (see `_discard_title`)
-        except Exception:  # noqa: BLE001 — titling is best-effort, not turn-critical
-            logger.warning("auto-titling failed for %s", conversation_id, exc_info=True)
+            raise  # a park/cancel abandoning the name (see `discard_title`)
+        except Exception as exc:  # titling is best-effort, not turn-critical
+            _log_failure(conversation_id, exc)
 
-    return Namer(task=asyncio.create_task(_name()), announcing=announcing)
+    return Namer(
+        task=asyncio.create_task(_name(), context=outside_lease()),
+        announcing=announcing,
+        budget=budget,
+    )
 
 
-async def settle_title(namer: Namer | None) -> None:
-    """Wait for the concurrent namer to finish before the orchestrator returns, so a
-    name that lands in the last moments of the turn still rides the open stream (the
-    task announces it itself — see :func:`start_title`). Usually already done by the
-    time the answer is; swallows the task's own failure, which it has already logged."""
-    if namer is None:
+def release_title(run: Run, namer: Namer | None) -> None:
+    """Let a namer still running when the turn's answer is written finish as ``run``'s
+    afterwork.
+
+    Its budget starts here: on an endpoint that serves one request at a time, the title
+    has been queued behind this turn's own requests until now."""
+    if namer is None or namer.task.done():
         return
-    with suppress(Exception):
-        await namer.task
+    namer.budget.start()
+    run.outlive(namer.task)
 
 
 async def discard_title(namer: Namer | None) -> None:
@@ -212,7 +253,8 @@ async def discard_title(namer: Namer | None) -> None:
     if namer is None or namer.task.done():
         return
     if namer.announcing.is_set():
-        await settle_title(namer)
+        with suppress(Exception):  # already logged by the namer
+            await namer.task
         return
     _ = namer.task.cancel()
     with suppress(asyncio.CancelledError):
@@ -230,7 +272,7 @@ async def reap_title(namer: Namer | None) -> None:
         else:
             # Past `announcing` there is no model call left to abandon, only the
             # write and the emit, which must not be split. Left detached, it
-            # would race the stream close in `RunRegistry._run`'s finally and
+            # would race the stream close in `RunRegistry._execute`'s finally and
             # lose `conversation.titled` — the name reaching the database but
             # never the client. Shielded so an unwinding *cancellation* still
             # leaves the task alive to finish its write; on that path the await

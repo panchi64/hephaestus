@@ -1,7 +1,8 @@
 /**
  * Auto-title reveals.
  *
- * When the backend names a fresh thread it streams `conversation.titled` on the run. The
+ * When the backend names a fresh thread it streams `conversation.titled` on the run, or,
+ * when the name lands after the run ended, hands it to `collectLateTitle`. The
  * title is also persisted (the session list picks it up on the next refresh), but the
  * operator never asked for it — so the UI *types it out* rather than snapping it in. The
  * freshly-named title is held here, keyed by conversation id; the header and its sidebar

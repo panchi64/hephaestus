@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { toActiveRun } from "../data/summaries";
 import type { ChatMessage } from "../model";
-import { attachOptions, seatAfterPrompt } from "./drive";
+import { attachOptions, awaitLateTitle, seatAfterPrompt } from "./drive";
 
 /**
  * Where a reattached run's streaming answer goes.
@@ -63,5 +63,52 @@ describe("attaching to a run the detail reports", () => {
       last_seq: 0,
     });
     expect(run?.promptMessageId).toBeNull();
+  });
+});
+
+describe("a title still being written when the run ends", () => {
+  const titleDeps = (pending: boolean, onThread: () => string | null) => {
+    const seen = { pending, collected: [] as string[] };
+    return {
+      seen,
+      deps: {
+        titlePending: () => seen.pending,
+        setTitlePending: (v: boolean) => void (seen.pending = v),
+        collectTitle: async (id: string) => void seen.collected.push(id),
+        conversationId: onThread,
+      },
+    };
+  };
+
+  test("is collected, and the throbber holds until it is", async () => {
+    const { seen, deps } = titleDeps(true, () => "c1");
+    const settled = awaitLateTitle("c1", deps);
+    expect(seen.pending).toBe(true);
+    await settled;
+    expect(seen.collected).toEqual(["c1"]);
+    expect(seen.pending).toBe(false);
+  });
+
+  test("a thread that already has its name asks for nothing", async () => {
+    const { seen, deps } = titleDeps(false, () => "c1");
+    await awaitLateTitle("c1", deps);
+    expect(seen.collected).toEqual([]);
+  });
+
+  test("does not clear the throbber of a thread the operator moved to", async () => {
+    // The thread the operator moved to set the throbber for its own first turn.
+    const { seen, deps } = titleDeps(true, () => null);
+    await awaitLateTitle("c1", deps);
+    expect(seen.collected).toEqual(["c1"]);
+    expect(seen.pending).toBe(true);
+  });
+
+  test("a failed collect still lets the throbber go", async () => {
+    const { seen, deps } = titleDeps(true, () => "c1");
+    deps.collectTitle = async () => {
+      throw new Error("offline");
+    };
+    await awaitLateTitle("c1", deps);
+    expect(seen.pending).toBe(false);
   });
 });

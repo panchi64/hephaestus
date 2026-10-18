@@ -36,6 +36,7 @@ async function fetchSession(id: string): Promise<ChatSession> {
   return {
     id: dto.id,
     title: deriveTitle(dto),
+    untitled: dto.title === null,
     messages: dto.messages.map(toMessage),
     context: dto.context,
     stats: dto.stats ? toStats(dto.stats) : null,
@@ -86,6 +87,16 @@ export async function regenerateTitle(id: string): Promise<void> {
     {},
   );
   if (summary.title) revealTitle(id, summary.title);
+  refreshSessions();
+}
+
+/** Reveal an auto-title still being written when its run ended. The backend holds the
+ *  request until that title lands or gives up, so this resolves once either way. */
+export async function collectLateTitle(id: string): Promise<void> {
+  const { title } = await api.get<{ title: string | null }>(
+    `/conversations/${id}/title`,
+  );
+  if (title) revealTitle(id, title);
   refreshSessions();
 }
 
