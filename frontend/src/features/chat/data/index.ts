@@ -86,6 +86,7 @@ export {
 } from "./changes";
 
 export {
+  fetchOwnCallsign,
   fetchSubagents,
   isLive,
   openSubagentThread,

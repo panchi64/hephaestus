@@ -41,6 +41,32 @@ async def test_creating_makes_an_inactive_draft():
         assert body["id"] == fetched["id"]
 
 
+async def test_the_class_catalog_marks_the_classes_an_agent_can_take():
+    async with client_app() as (client, _app):
+        listed = json_list(await client.get("/agents/classes"))
+    assignable = {s(obj(c)["key"]): obj(c)["assignable"] for c in listed}
+    assert assignable["tripodes"] is True
+    assert assignable["talos"] is False
+    assert assignable["keledones"] is False
+    assert all(s(obj(c)["role"]) for c in listed)
+
+
+async def test_an_agent_takes_the_class_it_is_given():
+    async with client_app() as (client, _app):
+        made = json_body(await client.post("/agents", json={**_BODY, "agent_class": "Kourai"}))
+        assert made["agent_class"] == "kourai"
+        changed = await client.patch(f"/agents/{s(made['id'])}", json={"agent_class": "khryseos"})
+        assert json_body(changed)["agent_class"] == "khryseos"
+
+
+async def test_an_agent_cannot_take_a_reserved_class():
+    async with client_app() as (client, _app):
+        for reserved in ("talos", "Kēlēdones"):
+            resp = await client.post("/agents", json={**_BODY, "agent_class": reserved})
+            assert resp.status_code == 422
+            assert obj(json_body(resp)["detail"])["field"] == "agent_class"
+
+
 async def test_bad_input_is_a_422_naming_the_field():
     async with client_app() as (client, _app):
         for body, field in (

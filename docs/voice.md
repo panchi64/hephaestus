@@ -273,7 +273,20 @@ This register appears at most once in a long while. Its rarity is what makes it 
 
 ---
 
-## 14. Writing a new prompt
+## 14. The cast in the interface
+
+The interface's own copy follows `design-system.md`, but it names the forge's cast the same way the models do. **The interface names; it never narrates.** Where it would say "the agent", it uses a name. It adds no metaphor, no lore and no line in Talos's voice that a model didn't write.
+
+- **Who the operator is talking to.** The default agent is shown as **Talos**, everywhere its stored name `default` would appear, and lists and searches sort it as Talos too. A thread that runs as another agent shows that agent's name instead, and a sub-agent's own thread shows its callsign. The composer placeholder, the empty-state hints in the thread's panels and the transcript export all follow the thread's agent. `agentDisplayName` (frontend, `features/agents/model.ts`) and `agent_display_name` (backend, `services/agents/definition.py`) apply the one mapping.
+- **Copy outside any thread** says Talos only where Talos alone is meant (pinned memories). Copy that reaches every agent says so ("Talos and your agents" for published skills), and copy about every agent's machinery (tools, connectors, search, the VM browser) stays plural and generic.
+- **Classes.** Every agent row shows its class, and an agent's detail shows the class with its role. A new agent is created with a class. After that, the class is edited through the agent file's `class:` key. No agent the operator writes can take the Talos or Kēlēdones class: there is one Talos, and the helpers are not agents.
+- **Sub-agents.** They appear as `CALLSIGN · Class` (§3). A hint that explains delegation may call them automatons once.
+- **Licensed moments** (design-system §11.1) may carry one line of identity: the launchpad's subtitle and its `Talos · ready` plate, and the splash's "Waking Talos…" once the workspace is unlocked.
+- **Platform notices** (paused sub-agents, a held message, a finished or failed run) use the helper register of §11: third person, specific, composed, and naming the agent where it is known.
+
+---
+
+## 15. Writing a new prompt
 
 1. Compose the head from `prompts/voice.py`: the forge, the agent's class, and the shared rules that apply to it. Don't restate them in prose.
 2. Write only what is specific to this agent or tool, in the §12 house style.

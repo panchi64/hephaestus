@@ -179,7 +179,7 @@ export function ComposerField(props: ComposerFieldProps): JSX.Element {
         rows={1}
         // No chord here: SEND already carries it, and at a docked width the longer
         // placeholder wrapped the resting field onto a second row.
-        placeholder={props.placeholder ?? "Message the agent…"}
+        placeholder={props.placeholder ?? "Write a message…"}
         aria-label={props.ariaLabel}
         disabled={props.disabled}
         role={props.tokens ? "combobox" : undefined}

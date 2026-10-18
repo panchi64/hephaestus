@@ -273,6 +273,7 @@ function FileList(props: {
 export function DiffSurface(props: {
   branch: () => BranchState | null | undefined;
   onChanged: () => void;
+  speaker: string;
   fontStep?: number;
   softWrap?: boolean;
 }): JSX.Element {
@@ -309,8 +310,7 @@ export function DiffSurface(props: {
   const discard = async (b: BranchState): Promise<void> => {
     const ok = await confirm({
       title: "Discard this branch?",
-      detail:
-        "Everything the agent changed in this conversation is thrown away. Your own working tree is untouched either way.",
+      detail: `Everything ${props.speaker} changed in this conversation is thrown away. Your own working tree is untouched either way.`,
       confirmLabel: "Discard",
       tone: "alert",
     });

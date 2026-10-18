@@ -14,11 +14,12 @@ from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFil
 from pydantic import BaseModel
 
 from core.exceptions import AgentValidationError, NotFoundError
+from prompts.voice import CLASSES
 from routes import deps
 from routes.deps import OPERATOR_ID
 from routes.revisions import add_revision_routes
 from services.agents import BUILTIN, AgentDefinition, ToolAccess, project_agents
-from services.agents.definition import AgentSource, WorkspacePolicy
+from services.agents.definition import UNASSIGNABLE_CLASSES, AgentSource, WorkspacePolicy
 from services.agents.files import render_agent_file
 from services.permissions import PermissionLevel
 
@@ -84,6 +85,27 @@ async def list_agents(request: Request, project_id: str | None = None) -> list[A
     return [
         _out(agent, active=effective.get(agent.name) == agent)
         for agent in (*BUILTIN, *declared, *contributed, *stored)
+    ]
+
+
+class AgentClassOut(BaseModel):
+    key: str
+    display: str
+    role: str
+    #: Whether an agent the operator writes may take it; the built-ins may hold the rest.
+    assignable: bool
+
+
+@router.get("/classes", response_model=list[AgentClassOut])
+async def list_agent_classes() -> list[AgentClassOut]:
+    return [
+        AgentClassOut(
+            key=spec.key,
+            display=spec.display,
+            role=spec.role,
+            assignable=spec.key not in UNASSIGNABLE_CLASSES,
+        )
+        for spec in CLASSES.values()
     ]
 
 

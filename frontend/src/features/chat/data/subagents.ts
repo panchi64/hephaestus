@@ -151,6 +151,17 @@ export async function fetchSubagents(
   }
 }
 
+/** What a sub-agent's own thread calls it: its callsign, or its handle on a row written
+ *  before callsigns. Read from the parent's roster, which is the only place it is kept. */
+export async function fetchOwnCallsign(
+  conversationId: string,
+  parentId: string,
+): Promise<string | undefined> {
+  const read = await fetchSubagents(parentId);
+  const own = read.subagents.find((s) => s.conversationId === conversationId);
+  return own ? own.callsign || own.handle : undefined;
+}
+
 /** Cancel one agent's run. Resolves false when the backend refused it. */
 export async function stopSubagent(runId: string): Promise<boolean> {
   try {

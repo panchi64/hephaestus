@@ -223,7 +223,10 @@ class InboxDispatcher:
                 owner_id,
                 "system",
                 "Queued message could not start",
-                body=f"Your queued message was set aside because it could not start: {reason}",
+                body=(
+                    f"Your queued message could not start ({reason}), so it is held. "
+                    + "Edit or release it to try again."
+                ),
                 conversation_id=conversation_id,
             )
         except Exception:
@@ -340,19 +343,17 @@ class InboxDispatcher:
         if notifications is None:
             return
         cause = (
-            f"The agents of this thread took {WAKE_CHAIN_LIMIT} turns without you."
+            f"This thread's sub-agents ran {WAKE_CHAIN_LIMIT} turns without you, so their "
+            + "reports are held."
             if reason is None
-            else f"Their reports could not start a turn: {reason}."
+            else f"This thread's sub-agent reports could not start a turn: {reason}."
         )
         try:
             _ = await notifications.notify(
                 owner_id,
                 "system",
-                "Agents paused for you",
-                body=(
-                    f"{cause} Their reports are waiting; send anything in this thread to "
-                    + "release them."
-                ),
+                "Sub-agents paused for you",
+                body=f"{cause} Write anything in this thread to release them.",
                 conversation_id=root,
             )
         except Exception:

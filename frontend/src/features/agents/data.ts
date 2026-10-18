@@ -3,6 +3,7 @@ import { api, downloadContent, isApiError } from "~/lib/api";
 import { ALL_PROJECTS, getProjectScope } from "~/lib/api/projectScope";
 import type {
   Agent,
+  AgentClass,
   AgentSource,
   AgentWorkspace,
   AgentWrite,
@@ -15,6 +16,7 @@ export interface AgentOut {
   id: string;
   name: string;
   description: string;
+  agent_class: string;
   instructions: string;
   endpoint_id: string | null;
   model: string | null;
@@ -37,6 +39,7 @@ export function toAgent(dto: AgentOut): Agent {
     id: dto.id,
     name: dto.name,
     description: dto.description,
+    agentClass: dto.agent_class,
     instructions: dto.instructions,
     endpointId: dto.endpoint_id,
     model: dto.model,
@@ -89,6 +92,27 @@ export function useAgents(
 
 export function refreshAgents(): void {
   setListTick((n) => n + 1);
+}
+
+/* ── Classes ──────────────────────────────────────────────────────────────── */
+
+/** The classes an agent can take. They ship with the backend, so one read serves the
+ *  whole session. */
+let classesRead: Promise<AgentClass[]> | undefined;
+
+function readClasses(): Promise<AgentClass[]> {
+  classesRead ??= api
+    .get<AgentClass[]>("/agents/classes")
+    .catch((err: unknown) => {
+      classesRead = undefined;
+      throw err;
+    });
+  return classesRead;
+}
+
+export function useAgentClasses(): Resource<AgentClass[]> {
+  const [data] = createResource(readClasses);
+  return data;
 }
 
 /* ── Detail ───────────────────────────────────────────────────────────────── */

@@ -20,9 +20,16 @@ import {
   refreshAgentDetail,
   setAgentPublished,
   updateAgent,
+  useAgentClasses,
   useAgentDetail,
 } from "../data";
-import { agentSourceTag, isAwaitingPublish, type Agent } from "../model";
+import {
+  agentDisplayName,
+  agentSourceTag,
+  classSpec,
+  isAwaitingPublish,
+  type Agent,
+} from "../model";
 import { AgentStateFlags } from "../components/AgentStateFlags";
 import { ModelPicker, type ModelChoice } from "../components/ModelPicker";
 
@@ -60,8 +67,17 @@ export function AgentDetailScreen(props: {
     return d !== null && (d.endpointId !== a.endpointId || d.model !== a.model);
   };
 
+  const classes = useAgentClasses();
+  /** Read-only even while editing: the agent's file carries `class:`, and one value
+   *  edited in two places is how they drift. */
+  const classOf = (a: Agent): string => {
+    const spec = classSpec(settled(classes) ?? [], a.agentClass);
+    return spec ? `${spec.display} — ${spec.role}` : a.agentClass;
+  };
+
   function propertiesOf(a: Agent, editing: boolean): LibraryProperty[] {
     return [
+      { label: "Class", value: classOf(a) },
       { label: "Source", value: agentSourceTag(a.source) ?? "USER" },
       {
         label: "Model",
@@ -171,7 +187,7 @@ export function AgentDetailScreen(props: {
             backLabel="Agents"
             onBack={props.onBack}
             icon="layers"
-            name={a().name}
+            name={agentDisplayName(a().name)}
             meta={metaOf(a())}
             flags={
               <>

@@ -5,6 +5,8 @@ import {
   agentSourceTag,
   compareAgentsBySource,
   isAwaitingPublish,
+  agentDisplayName,
+  classDisplay,
   pickableAgents,
   threadAgentName,
   type Agent,
@@ -15,6 +17,7 @@ function agent(over: Partial<Agent> = {}): Agent {
     id: "a1",
     name: "reviewer",
     description: "Reviews diffs",
+    agentClass: "khryseos",
     instructions: "Be terse.",
     endpointId: null,
     model: null,
@@ -118,5 +121,23 @@ describe("agentToSend", () => {
     expect(threadAgentName(null)).toBe("default");
     expect(threadAgentName(undefined)).toBe("default");
     expect(threadAgentName("reviewer")).toBe("reviewer");
+  });
+});
+
+describe("agentDisplayName", () => {
+  it("calls the default agent Talos and every other by its name", () => {
+    expect(agentDisplayName("default")).toBe("Talos");
+    expect(agentDisplayName("reviewer")).toBe("reviewer");
+  });
+});
+
+describe("classDisplay", () => {
+  const classes = [
+    { key: "kourai", display: "Kourai", role: "Research", assignable: true },
+  ];
+
+  it("reads a key as its class's name, and the key itself when unlisted", () => {
+    expect(classDisplay(classes, "kourai")).toBe("Kourai");
+    expect(classDisplay(classes, "tripodes")).toBe("tripodes");
   });
 });

@@ -1,6 +1,6 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
-import { StatusFlag, confirm, toast } from "~/ui";
+import { StatusFlag, Text, confirm, toast } from "~/ui";
 import { compareByName, LibraryDirectory } from "~/features/library";
 import {
   agentErrorMessage,
@@ -8,13 +8,17 @@ import {
   exportAgent,
   importAgent,
   setAgentPublished,
+  useAgentClasses,
   useAgents,
 } from "../data";
 import {
+  agentDisplayName,
+  classDisplay,
   compareAgentsBySource,
   agentSourceTag,
   isAwaitingPublish,
   type Agent,
+  type AgentClass,
 } from "../model";
 import { AgentStateFlags } from "../components/AgentStateFlags";
 import { NewAgentDialog } from "../components/NewAgentDialog";
@@ -26,6 +30,13 @@ export function AgentsDirectoryScreen(props: {
 }): JSX.Element {
   const agentsResource = useAgents();
   const agents = (): Agent[] => settled(agentsResource) ?? [];
+  const classesResource = useAgentClasses();
+  const classes = (): AgentClass[] => settled(classesResource) ?? [];
+  /** Empty for Talos, whose class is its name. */
+  const classLabel = (agent: Agent): string => {
+    const display = classDisplay(classes(), agent.agentClass);
+    return display === agentDisplayName(agent.name) ? "" : display;
+  };
   const loadError = (): string | null =>
     agentsResource.error
       ? agentErrorMessage(agentsResource.error, "Could not load agents.")
@@ -116,7 +127,14 @@ export function AgentsDirectoryScreen(props: {
       items={agents()}
       loadError={loadError()}
       sorts={{
-        name: { label: "Name", compare: compareByName },
+        name: {
+          label: "Name",
+          compare: (a, b) =>
+            compareByName(
+              { name: agentDisplayName(a.name) },
+              { name: agentDisplayName(b.name) },
+            ),
+        },
         source: { label: "Source", compare: compareAgentsBySource },
       }}
       initialSort="name"
@@ -136,8 +154,16 @@ export function AgentsDirectoryScreen(props: {
       onNew={() => setNewOpen(true)}
       onOpen={(agent) => props.onOpen(agent.id)}
       emptyCreateHint="Create an agent or import an agent file."
+      rowLabel={(agent) => agentDisplayName(agent.name)}
       rowRight={(agent) => (
         <>
+          <Show when={classLabel(agent)}>
+            {(label) => (
+              <Text variant="micro" tone="dim">
+                {label()}
+              </Text>
+            )}
+          </Show>
           <Show when={agentSourceTag(agent.source)}>
             {(tag) => <StatusFlag status="idle">{tag()}</StatusFlag>}
           </Show>

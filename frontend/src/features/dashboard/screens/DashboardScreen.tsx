@@ -195,7 +195,7 @@ export function DashboardScreen(): JSX.Element {
     <div class="flex min-h-full flex-col gap-6">
       <PageHeader
         title="Hephaestus"
-        subtitle="Self-hosted agent platform — your models, your data, your hardware."
+        subtitle="Talos and the forge's automatons, on your models, your data, your hardware."
         assetId="HEPH-HUD-00.1 EDITION 02"
         actions={
           <Show
@@ -227,7 +227,7 @@ export function DashboardScreen(): JSX.Element {
         <div class="w-full max-w-3xl">
           <Composer
             size="lg"
-            title="New thread · ready"
+            title="Talos · ready"
             autofocus
             storageKey="home-new"
             placeholder="Ask anything, request a summary, or describe a task…"
