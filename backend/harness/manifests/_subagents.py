@@ -574,10 +574,19 @@ class ConversationSubagents(SubagentLauncher):
         return [self._live_view(row) for row in rows]
 
     @override
+    async def awaiting_reports(self, owner_id: str, conversation_id: str) -> bool:
+        # Off the live runs, not the stored status: a row settled as `blocked` waits on
+        # this thread, and a row whose settle failed reads `running` until a restart.
+        rows = await self._records.children(conversation_id, owner_id)
+        return any(
+            self._runs.active_run_for(row.child_conversation_id, owner_id) is not None
+            for row in rows
+        )
+
+    @override
     async def worktrees(self, owner_id: str, conversation_id: str) -> list[ChildWorktree]:
-        rows = await self._records.descendants(conversation_id, owner_id)
-        own = (row for row in rows if row.parent_conversation_id == conversation_id)
-        found = (self._child_worktree(row) for row in own)
+        rows = await self._records.children(conversation_id, owner_id)
+        found = (self._child_worktree(row) for row in rows)
         return [child for child in found if child is not None]
 
     @override

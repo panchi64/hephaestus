@@ -193,6 +193,19 @@ class SubagentStore:
 
         return await in_session(self._db, work)
 
+    async def children(self, conversation_id: str, owner_id: str) -> list[SubagentRecord]:
+        """The agents a thread spawned itself, newest first."""
+
+        def work(session: Session) -> list[SubagentRecord]:
+            rows = session.exec(
+                select(SubagentRecord)
+                .where(SubagentRecord.owner_id == owner_id)
+                .where(SubagentRecord.parent_conversation_id == conversation_id)
+            ).all()
+            return sorted(rows, key=lambda row: row.started_at, reverse=True)
+
+        return await in_session(self._db, work)
+
     async def descendants(self, conversation_id: str, owner_id: str) -> list[SubagentRecord]:
         """Every agent below a thread, at any depth, newest first."""
 

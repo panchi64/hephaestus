@@ -34,6 +34,7 @@ from pydantic import TypeAdapter
 from prompts.voice import CLASSES
 from routes.chat import compose_turn
 from routes.deps import app_state
+from runs import Run
 from services.agents import AgentDefinition, builtin_roster
 from services.projects.repo import run_git_ok
 from services.settings_store import set_subagent_limit
@@ -445,6 +446,78 @@ class TestTheRegister:
             # that is never coming.
             assert row.status == "cancelled"
             assert row.ended_at is not None
+
+
+async def _record_child(records: SubagentStore, parent: str, child: str) -> str:
+    subagent_id = f"child-{uuid4().hex}"
+    await records.record(
+        subagent_id=subagent_id,
+        owner_id="operator",
+        parent_conversation_id=parent,
+        root_conversation_id=parent,
+        depth=1,
+        child_conversation_id=child,
+        run_id=f"run-{uuid4().hex}",
+        parent_run_id=None,
+        spec_name="explorer",
+        handle=f"h-{uuid4().hex[:8]}",
+        task="look",
+        workspace_policy="shared",
+        workspace_key=parent,
+        delegation_id=None,
+    )
+    return subagent_id
+
+
+class TestAwaitingReports:
+    """What holds a thread's open-tasks notice: a turn under way in an agent it spawned."""
+
+    def _while_running(self, app: FastAPI, conversation_id: str) -> tuple[Run, asyncio.Event]:
+        release = asyncio.Event()
+
+        async def hold(_run: Run) -> None:
+            _ = await release.wait()
+
+        # Not a chat kind, so the wake hook leaves it alone when it ends.
+        run = app_state(app).runs.submit(
+            kind="probe", owner_id="operator", orchestrator=hold, conversation_id=conversation_id
+        )
+        return run, release
+
+    async def test_a_child_is_awaited_only_while_its_turn_runs(self):
+        async with client_app() as (_client, app):
+            launcher = launcher_of(app)
+            parent, child = f"p-{uuid4().hex}", f"c-{uuid4().hex}"
+            _ = await _record_child(records_of(app), parent, child)
+            # The row reads `running` with no run behind it, as one whose settle failed does.
+            assert not await launcher.awaiting_reports("operator", parent)
+
+            run, release = self._while_running(app, child)
+            assert await launcher.awaiting_reports("operator", parent)
+            release.set()
+            await run.wait()
+            assert not await launcher.awaiting_reports("operator", parent)
+
+    async def test_a_child_that_reported_blocked_is_waiting_on_its_parent(self):
+        async with client_app() as (_client, app):
+            records = records_of(app)
+            parent = f"p-{uuid4().hex}"
+            row = await _record_child(records, parent, f"c-{uuid4().hex}")
+            await records.settle(row, status="blocked", summary="which branch?")
+            assert not await launcher_of(app).awaiting_reports("operator", parent)
+
+    async def test_a_grandchild_reports_to_its_own_parent_alone(self):
+        async with client_app() as (_client, app):
+            launcher, records = launcher_of(app), records_of(app)
+            parent, child, grandchild = (f"{n}-{uuid4().hex}" for n in ("p", "c", "g"))
+            _ = await _record_child(records, parent, child)
+            _ = await _record_child(records, child, grandchild)
+
+            run, release = self._while_running(app, grandchild)
+            assert not await launcher.awaiting_reports("operator", parent)
+            assert await launcher.awaiting_reports("operator", child)
+            release.set()
+            await run.wait()
 
 
 class TestTheCap:

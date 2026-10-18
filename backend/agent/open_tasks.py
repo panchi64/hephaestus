@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 
 from core.container import ServiceContainer
+from services.subagents import SubagentLauncher
 from services.task_list import ConversationTasks
 
 
@@ -17,6 +18,11 @@ async def open_tasks_notice(
         return None
     still_open = await tasks.open_tasks(owner_id, conversation_id)
     if not still_open:
+        return None
+    # Ending the turn is how an agent waits on the agents it spawned, and their reports wake
+    # it. Leave the open set unmarked so the stop after the last report still raises it.
+    launcher = caps.get_optional(SubagentLauncher)
+    if launcher is not None and await launcher.awaiting_reports(owner_id, conversation_id):
         return None
     # Over the steps' text, not their ids: a model that rewrites the same list gets new ids.
     fingerprint = hashlib.sha256(
