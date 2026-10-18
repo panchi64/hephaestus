@@ -166,9 +166,9 @@ async def test_a_whole_tool_grant_re_grants_rather_than_duplicating():
     assert len(await s.list(OWNER, CONV)) == 1
 
 
-def test_no_grant_covers_a_plan_approval():
-    # Approving a plan raises the thread's level. A row that got written anyway, even the
-    # wider decisive one, must not stand in for the operator.
+async def test_no_grant_covers_a_plan_approval():
+    # A row that got written anyway, even the wider decisive one, must neither cover the
+    # call nor be listed as in force.
     assert PLAN_SUBMIT_TOOL in ONCE_ONLY_TOOLS
     granted = [
         GrantInfo(
@@ -176,6 +176,9 @@ def test_no_grant_covers_a_plan_approval():
         )
     ]
     assert grant_width(PLAN_SUBMIT_TOOL, {}, granted) == "none"
+    s = _store(3600)
+    _ = await s.grant(OWNER, CONV, PLAN_SUBMIT_TOOL, decisive=True)
+    assert await s.list(OWNER, CONV) == []
 
 
 # --- the engine auto-approves a granted tool --------------------------------

@@ -366,9 +366,10 @@ class ApprovalGrantStore:
             # Expiry is compared in Python (tz-normalized) so a SQLite-naive round-trip
             # can't break the comparison; a SQL `WHERE expires_at > now` would. Lapsed
             # rows are pruned opportunistically on read so the table can't grow without
-            # bound — a bulk delete by id, idempotent under a concurrent prune.
+            # bound — a bulk delete by id, idempotent under a concurrent prune. A row on a
+            # once-only tool covers nothing, so it is pruned too rather than listed.
             for r in rows:
-                if as_utc(r.expires_at) > now:
+                if as_utc(r.expires_at) > now and r.tool_name not in ONCE_ONLY_TOOLS:
                     live.append(
                         GrantInfo(
                             tool_name=r.tool_name,

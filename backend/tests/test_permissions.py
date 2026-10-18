@@ -254,8 +254,6 @@ class TestTheDecisionMatrix:
 
     @pytest.mark.parametrize("level", PERMISSION_LADDER)
     def test_a_plan_approval_is_put_to_the_operator_at_every_level(self, level: str):
-        # Approving a plan raises the thread's level, so neither Auto's review nor Yolo's
-        # standing yes may give it.
         assert decide(level, "plan_submit") is Decision.ASK
 
     def test_auto_sends_the_same_calls_to_review_instead(self):

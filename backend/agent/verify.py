@@ -117,7 +117,7 @@ async def verify_and_correct(
         caps=caps,
         conversation_id=conversation_id,
         disabled_tools=disabled_tools,
-        binding=binding,
+        binding=turn.binding or binding,
         vision=vision,
         partial_history_ref=partial_history_ref,
         store=store,
@@ -142,4 +142,9 @@ async def verify_and_correct(
             clean_drop=clean_drop,
             blocked_reason=corrected.blocked_reason,
         )
-    return TurnResult(answer=corrected.answer, messages=corrected.messages, clean_drop=clean_drop)
+    return TurnResult(
+        answer=corrected.answer,
+        messages=corrected.messages,
+        clean_drop=clean_drop,
+        binding=corrected.binding,
+    )
