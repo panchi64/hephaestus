@@ -22,6 +22,7 @@ from services.agents import BUILTIN, AgentDefinition, ToolAccess, project_agents
 from services.agents.definition import (
     DEFAULT_CLASS,
     ROOT_CLASS,
+    UNASSIGNABLE_CLASSES,
     AgentSource,
     WorkspacePolicy,
 )
@@ -71,7 +72,7 @@ class AgentClassOut(BaseModel):
     role: str
     #: Callsign stems; empty for a class whose agents are never addressed by one.
     callsigns: list[str]
-    #: Whether an agent may be given this class.
+    #: Whether an agent the operator writes may take it; the built-ins may hold the rest.
     assignable: bool
     #: The class of the agent the operator talks to, at the root of every tree.
     root: bool
@@ -127,7 +128,7 @@ async def list_agent_classes(request: Request) -> AgentClasses:
                 display=spec.display,
                 role=spec.role,
                 callsigns=list(spec.callsigns),
-                assignable=spec.assignable,
+                assignable=spec.key not in UNASSIGNABLE_CLASSES,
                 root=spec.key == ROOT_CLASS,
             )
             for spec in CLASSES.values()

@@ -12,6 +12,7 @@ import {
   useAgents,
 } from "../data";
 import {
+  agentDisplayName,
   agentHierarchy,
   compareAgentsBySource,
   agentSourceTag,
@@ -127,7 +128,14 @@ export function AgentsDirectoryScreen(props: {
       items={agents()}
       loadError={loadError()}
       sorts={{
-        name: { label: "Name", compare: compareByName },
+        name: {
+          label: "Name",
+          compare: (a, b) =>
+            compareByName(
+              { name: agentDisplayName(a.name) },
+              { name: agentDisplayName(b.name) },
+            ),
+        },
         source: { label: "Source", compare: compareAgentsBySource },
       }}
       groups={grouping()}
@@ -148,6 +156,7 @@ export function AgentsDirectoryScreen(props: {
       onNew={() => setNewOpen(true)}
       onOpen={(agent) => props.onOpen(agent.id)}
       emptyCreateHint="Create an agent or import an agent file."
+      rowLabel={(agent) => agentDisplayName(agent.name)}
       rowRight={(agent) => (
         <>
           <Show when={agentSourceTag(agent.source)}>

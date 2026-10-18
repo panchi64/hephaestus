@@ -35,6 +35,7 @@ describe("toAgent", () => {
   it("renames the snake_case wire fields and keeps nulls as nulls", () => {
     const agent = toAgent(dto);
     expect(agent.denyTools).toEqual(["bash"]);
+    expect(agent.agentClass).toBe("talos");
     expect(agent.permissionCeiling).toBe("edit");
     expect(agent.wallClockTimeoutS).toBeNull();
     expect(agent.tools).toBeNull();

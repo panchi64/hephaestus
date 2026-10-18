@@ -29,10 +29,10 @@ from models.conversation import Conversation
 from services.agents.definition import (
     DEFAULT_AGENT,
     DEFAULT_CLASS,
+    UNASSIGNABLE_CLASSES,
     WORKSPACE_POLICIES,
     AgentDefinition,
     ToolAccess,
-    assignable_class_key,
     class_key,
     workspace_policy,
 )
@@ -296,9 +296,11 @@ def _apply(agent: AgentDefinition, values: Mapping[str, object]) -> AgentDefinit
     known = {f.name for f in fields(AgentDefinition)}
     changes = {key: value for key, value in values.items() if key in known}
     if "agent_class" in changes:
-        key = assignable_class_key(str(changes["agent_class"] or ""))
+        key = class_key(str(changes["agent_class"] or ""))
         if key is None:
             raise AgentValidationError("agent_class", "not an agent class")
+        if key in UNASSIGNABLE_CLASSES:
+            raise AgentValidationError("agent_class", "not a class an agent you write can take")
         changes["agent_class"] = key
     return replace(agent, **changes)
 

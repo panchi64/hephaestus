@@ -56,6 +56,9 @@ export interface LibraryDirectoryProps<T extends LibraryEntry> {
   /** Absent where items are not created by hand; the New button is omitted. */
   onNew?: () => void;
   onOpen: (item: T) => void;
+  /** A row's label, when it is not the item's name. Search matches it instead of the
+   *  name; a `sorts` entry by name should compare it too. */
+  rowLabel?: (item: T) => string;
   /** Everything on the right of a row except the `…` menu. */
   rowRight: (item: T) => JSX.Element;
   menuItems: (item: T) => MenuItem[];
@@ -83,9 +86,11 @@ export function LibraryDirectory<T extends LibraryEntry>(
   const publishedCount = () => props.items.filter((i) => i.published).length;
   const draftCount = () => props.items.length - publishedCount();
 
+  const label = (item: T): string => props.rowLabel?.(item) ?? item.name;
   const view = createListView({
     source: () => filterByTab(props.items, tab()),
-    search: searchText,
+    search: (item) =>
+      searchText({ name: label(item), description: item.description }),
     sorts: props.sorts,
     initialSort: props.initialSort,
     initialDir: props.initialDir,
@@ -93,7 +98,7 @@ export function LibraryDirectory<T extends LibraryEntry>(
 
   const row = (item: T) => (
     <ListRow
-      label={item.name}
+      label={label(item)}
       leading={props.icon}
       onClick={() => props.onOpen(item)}
       right={

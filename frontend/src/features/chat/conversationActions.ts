@@ -29,7 +29,7 @@
 import { createSignal, type Accessor } from "solid-js";
 import { isApiError } from "~/lib/api";
 import { confirm, confirmChoice, copyToClipboard, toast } from "~/ui";
-import { assembleTranscript } from "./blocks";
+import { buildConversationTranscript } from "./transcriptExport";
 import {
   deleteConversation,
   fetchOrphanImageAttachments,
@@ -39,28 +39,6 @@ import {
 } from "./data";
 import type { BrowserState } from "./browserState";
 import type { ChatMessage } from "./model";
-
-/** Flatten the whole thread to plain text for COPY CONVERSATION — each turn's
- *  role and content in order, assistant turns including their tool calls/
- *  results via `assembleTranscript` (same shaping as per-message COPY
- *  MESSAGE), separated by rules so the export reads as a transcript. */
-export function buildConversationTranscript(messages: ChatMessage[]): string {
-  return messages
-    .map((m) => {
-      // A compaction divider is neither party's words — label it as the chassis note it
-      // is rather than attributing the summary to the assistant.
-      const label =
-        m.role === "user"
-          ? "Operator"
-          : m.role === "compaction"
-            ? "Context compacted"
-            : "Talos";
-      const body =
-        m.role === "assistant" ? assembleTranscript(m.blocks) : m.content;
-      return `${label} · ${m.createdAt}\n${body}`;
-    })
-    .join("\n\n---\n\n");
-}
 
 /** Gate a delete that may strand image attachments. Probes the backend for the
  *  images this delete would orphan; if any, raises the 3-way keep/purge prompt,
@@ -186,6 +164,8 @@ export interface ConversationActionDeps {
   conversationId: () => string | null;
   /** The transcript, for the clipboard export. */
   messages: ChatMessage[];
+  /** The name the export gives the agent's turns. */
+  speaker: () => string;
   /** Whether a turn is in flight, which switches off every act that rewrites or
    *  removes the thread. */
   sending: () => boolean;
@@ -301,7 +281,7 @@ export function createConversationActions(
     removeMessage,
     copyTranscript: () =>
       copyToClipboard(
-        buildConversationTranscript(deps.messages),
+        buildConversationTranscript(deps.messages, deps.speaker()),
         "Conversation",
       ),
   };

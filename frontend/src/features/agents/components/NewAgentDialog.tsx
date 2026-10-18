@@ -23,20 +23,19 @@ export function NewAgentDialog(props: {
   const [description, setDescription] = createSignal("");
   // Unset means the backend's default class, which is also what the picker shows.
   const [agentClass, setAgentClass] = createSignal<string | undefined>();
-  const classesResource = useAgentClasses();
-  const classOptions = () =>
-    (settled(classesResource)?.classes ?? [])
-      .filter((c) => c.assignable)
-      .map((c) => ({ value: c.key, label: c.display, description: c.role }));
-  const shownClass = () =>
-    agentClass() ?? settled(classesResource)?.defaultClass;
-  const classHint = () =>
-    classesResource.error
-      ? "Classes couldn't be loaded, so it gets the default class. Edit its file to change it later."
-      : "What kind of work it does. Talos is the agent you talk to; the others are launched by it.";
   const [errors, setErrors] = createSignal<Errors>({});
   const [formError, setFormError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const classes = useAgentClasses();
+  const classOptions = () =>
+    (settled(classes)?.classes ?? [])
+      .filter((c) => c.assignable)
+      .map((c) => ({
+        value: c.key,
+        label: c.display,
+        description: c.role,
+      }));
+  const shownClass = () => agentClass() ?? settled(classes)?.defaultClass;
 
   createEffect(() => {
     if (!props.open) return;
@@ -47,8 +46,17 @@ export function NewAgentDialog(props: {
     setFormError("");
   });
 
+  // No Create before the catalog lands: the class would go out unseen.
   const canSubmit = () =>
-    name().trim() !== "" && description().trim() !== "" && !busy();
+    name().trim() !== "" &&
+    description().trim() !== "" &&
+    classOptions().length > 0 &&
+    !busy();
+  const classHint = (): string =>
+    errors().agent_class ??
+    (classes.error
+      ? agentErrorMessage(classes.error, "Could not load the agent classes.")
+      : "Fixes its role, how it reports, and the sound of its callsign.");
 
   async function submit(): Promise<void> {
     if (!canSubmit()) return;
@@ -59,7 +67,7 @@ export function NewAgentDialog(props: {
       const agent = await createAgent({
         name: name().trim(),
         description: description().trim(),
-        agent_class: agentClass(),
+        agent_class: shownClass(),
       });
       props.onCreated(agent.id);
     } catch (err) {
@@ -121,12 +129,12 @@ export function NewAgentDialog(props: {
         />
         <Select
           label="Class"
+          options={classOptions()}
           value={shownClass()}
           onChange={setAgentClass}
-          options={classOptions()}
+          invalid={Boolean(errors().agent_class || classes.error)}
+          hint={classHint()}
           disabled={busy()}
-          invalid={!!errors().agent_class}
-          hint={errors().agent_class ?? classHint()}
         />
         <Show when={formError()}>
           <Text variant="micro" tone="alert">

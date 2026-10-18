@@ -24,9 +24,10 @@ import {
   useAgentDetail,
 } from "../data";
 import {
+  agentDisplayName,
   agentSourceTag,
   callsignSummary,
-  classLabel,
+  classSpec,
   delegationSummary,
   isAwaitingPublish,
   launchedBySummary,
@@ -72,13 +73,15 @@ export function AgentDetailScreen(props: {
 
   function propertiesOf(a: Agent, editing: boolean): LibraryProperty[] {
     const tree = settled(classesResource);
-    const cls = tree?.classes.find((c) => c.key === a.agentClass);
+    const cls = classSpec(tree?.classes, a.agentClass);
     return [
+      // Read-only even while editing: the agent's file carries `class:`, and one value
+      // edited in two places is how they drift.
       {
         label: "Class",
         value: (
           <span>
-            {classLabel(a.agentClass, tree?.classes)}
+            {cls?.display ?? a.agentClass}
             <Show when={cls}>
               {(c) => (
                 <Text variant="micro" tone="dim" class="ml-2">
@@ -199,7 +202,7 @@ export function AgentDetailScreen(props: {
             backLabel="Agents"
             onBack={props.onBack}
             icon="layers"
-            name={a().name}
+            name={agentDisplayName(a().name)}
             meta={metaOf(a())}
             flags={
               <>

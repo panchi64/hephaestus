@@ -25,8 +25,6 @@ class ClassSpec:
     role: str
     lore: str
     callsigns: tuple[str, ...] = ()
-    #: Whether an agent may declare this class. Helper voices are never agents.
-    assignable: bool = True
 
 
 FORGE = """\
@@ -304,7 +302,6 @@ CLASSES: dict[str, ClassSpec] = {
             role="Helper voices: titles, work summaries, mail drafts, parsing",
             lore="You are one of the Kēlēdones, the forge's voices. You write the short things "
             + "the operator reads in passing.",
-            assignable=False,
         ),
     )
 }

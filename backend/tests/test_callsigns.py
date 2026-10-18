@@ -176,9 +176,10 @@ class TestClasses:
     def test_a_display_name_with_macrons_is_read(self):
         assert class_key("Kēlēdones") == "keledones"
 
-    def test_a_helper_class_fails_the_file(self):
-        text = "---\nname: scout\ndescription: Looks.\nclass: Kēlēdones\n---\n\nLook.\n"
-        with pytest.raises(AgentFileError, match="unknown class 'Kēlēdones'"):
+    @pytest.mark.parametrize("declared", ["Talos", "Kēlēdones"])
+    def test_a_reserved_class_fails_the_file(self, declared: str):
+        text = f"---\nname: scout\ndescription: Looks.\nclass: {declared}\n---\n\nLook.\n"
+        with pytest.raises(AgentFileError, match=f"reserved class '{declared}'"):
             _ = parse_agent_file(text, name="scout")
 
     def test_an_unknown_class_fails_the_file_naming_the_classes(self):

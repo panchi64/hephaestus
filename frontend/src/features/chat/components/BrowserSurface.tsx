@@ -89,6 +89,7 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 export function BrowserSurface(props: {
   conversationId: () => string | null;
   browser: BrowserState;
+  speaker: string;
 }): JSX.Element {
   const [status, setStatus] = createSignal<Status>("connecting");
   const [shown, setShown] = createSignal<Shown | null>(null);
@@ -501,7 +502,7 @@ export function BrowserSurface(props: {
               <EmptyState
                 icon="link"
                 message="No browser session"
-                hint="Open one to watch and drive the agent's browser here."
+                hint={`Open one to watch and drive ${props.speaker}'s browser here.`}
                 action={
                   <Button
                     variant="default"

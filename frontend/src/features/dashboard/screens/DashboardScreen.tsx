@@ -178,7 +178,7 @@ export function DashboardScreen(): JSX.Element {
       <div class="mt-6">
         <Composer
           size="lg"
-          title="New thread · ready"
+          title="Talos · ready"
           autofocus
           storageKey="home-new"
           placeholder="Ask anything, request a summary, or describe a task…"

@@ -18,7 +18,7 @@ export interface Agent {
   id: string;
   name: string;
   description: string;
-  /** A key of the backend's class table (`AgentClass.key`). */
+  /** Its class key (`tripodes`), which fixes its role, voice and callsigns. */
   agentClass: string;
   instructions: string;
   endpointId: string | null;
@@ -63,11 +63,12 @@ export interface AgentWrite {
 /** One class of automaton (`docs/voice.md` §2), as `GET /agents/classes` sends it. */
 export interface AgentClass {
   key: string;
+  /** Its mythic name (`Kourai`). */
   display: string;
   role: string;
   /** Callsign stems; empty for a class addressed by name or not at all. */
   callsigns: string[];
-  /** Whether an agent may be given this class. */
+  /** Whether an agent the operator writes may take it; Talos and the helpers are not. */
   assignable: boolean;
   /** The class of the agent the operator talks to, at the root of every tree. */
   root: boolean;
@@ -83,6 +84,21 @@ export interface AgentClasses {
 }
 
 export const DEFAULT_AGENT_NAME = "default";
+
+export function classSpec(
+  classes: readonly AgentClass[] | undefined,
+  key: string,
+): AgentClass | undefined {
+  return classes?.find((c) => c.key === key);
+}
+
+/** A class key's display name, or the key itself until the catalog has loaded. */
+export function classDisplay(
+  classes: readonly AgentClass[] | undefined,
+  key: string,
+): string {
+  return classSpec(classes, key)?.display ?? key;
+}
 
 /** Lowercase letters, digits, hyphens and underscores. */
 export const AGENT_NAME_PATTERN = /^[a-z0-9_-]+$/;
@@ -160,14 +176,6 @@ export function agentHierarchy<T extends Pick<Agent, "name" | "agentClass">>(
   return [...groups, ...unknown].filter((g) => g.items.length > 0);
 }
 
-/** The class's display name, or the raw key when the table doesn't know it. */
-export function classLabel(
-  key: string,
-  classes: readonly AgentClass[] | undefined,
-): string {
-  return classes?.find((c) => c.key === key)?.display ?? key;
-}
-
 /** How a class's agents are addressed: the first few callsign stems with a serial. */
 export function callsignSummary(cls: AgentClass | undefined): string {
   if (!cls) return "—";
@@ -234,6 +242,11 @@ export function pickableAgents(agents: readonly Agent[]): Agent[] {
 /** The thread's agent name as stored: null means the default. */
 export function threadAgentName(stored: string | null | undefined): string {
   return stored ?? DEFAULT_AGENT_NAME;
+}
+
+/** What the interface calls an agent: the default one is Talos. */
+export function agentDisplayName(name: string): string {
+  return name === DEFAULT_AGENT_NAME ? "Talos" : name;
 }
 
 /**
