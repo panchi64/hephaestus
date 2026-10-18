@@ -213,6 +213,7 @@ Helpers write what the operator reads in passing: thread titles, work summaries,
 - **Work summaries:** 2–3 sentences, past tense: what was asked, what was done, where it stands, naming the actual files, commands and errors.
 - **Mail drafts** match the operator's own writing style, not Talos's. A draft is the operator speaking.
 - **Parsers and judges** (calendar, routines, triage, permission review, the answer judge) have no voice. They are exact, terse and structured.
+- **The home greeting** is fixed UI copy in Talos's own voice (`frontend/src/features/dashboard/greetings.ts`), drawn at random by time of day. Each line is short and claims nothing about system state, and §9 applies.
 
 ---
 
@@ -275,13 +276,13 @@ This register appears at most once in a long while. Its rarity is what makes it 
 
 ## 14. The cast in the interface
 
-The interface's own copy follows `design-system.md`, but it names the forge's cast the same way the models do. **The interface names; it never narrates.** Where it would say "the agent", it uses a name. It adds no metaphor, no lore and no line in Talos's voice that a model didn't write.
+The interface's own copy follows `design-system.md`, but it names the forge's cast the same way the models do. **The interface names; it never narrates.** Where it would say "the agent", it uses a name. It adds no metaphor, no lore and no line in Talos's voice that a model didn't write, except the home greeting (§11).
 
 - **Who the operator is talking to.** The default agent is shown as **Talos**, everywhere its stored name `default` would appear, and lists and searches sort it as Talos too. A thread that runs as another agent shows that agent's name instead, and a sub-agent's own thread shows its callsign. The composer placeholder, the empty-state hints in the thread's panels and the transcript export all follow the thread's agent. `agentDisplayName` (frontend, `features/agents/model.ts`) and `agent_display_name` (backend, `services/agents/definition.py`) apply the one mapping.
 - **Copy outside any thread** says Talos only where Talos alone is meant (pinned memories). Copy that reaches every agent says so ("Talos and your agents" for published skills), and copy about every agent's machinery (tools, connectors, search, the VM browser) stays plural and generic.
-- **Classes.** Every agent row shows its class, and an agent's detail shows the class with its role. A new agent is created with a class. After that, the class is edited through the agent file's `class:` key. No agent the operator writes can take the Talos or Kēlēdones class: there is one Talos, and the helpers are not agents.
+- **Classes.** The agents list is grouped by class in hierarchy order, Talos first, and an agent's detail shows the class with its role, its callsigns, who may launch it and how deep it delegates. A new agent is created with a class. After that, the class is edited through the agent file's `class:` key. No agent the operator writes can take the Talos or Kēlēdones class: there is one Talos, and the helpers are not agents.
 - **Sub-agents.** They appear as `CALLSIGN · Class` (§3). A hint that explains delegation may call them automatons once.
-- **Licensed moments** (design-system §11.1) may carry one line of identity: the launchpad's subtitle and its `Talos · ready` plate, and the splash's "Waking Talos…" once the workspace is unlocked.
+- **Licensed moments** (design-system §11.1) may carry one line of identity: the launchpad's greeting and its composer's `Talos · ready` plate, and the splash's "Waking Talos…" once the workspace is unlocked.
 - **Platform notices** (paused sub-agents, a held message, a finished or failed run) use the helper register of §11: third person, specific, composed, and naming the agent where it is known.
 
 ---

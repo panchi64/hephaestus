@@ -2,10 +2,47 @@
 
 from __future__ import annotations
 
+from prompts.voice import CLASSES
+from routes.deps import app_state
+
 from ._helpers import client_app
-from ._json import json_body, json_list, obj, s
+from ._json import arr, json_body, json_list, obj, s
 
 _BODY = {"name": "scout", "description": "Looks around.", "instructions": "Look around."}
+
+
+async def test_the_classes_are_listed_in_order_with_the_depth_limit():
+    async with client_app() as (client, app):
+        body = json_body(await client.get("/agents/classes"))
+        limit = app_state(app).settings.agent_max_depth
+    classes = [obj(c) for c in arr(body["classes"])]
+    assert [c["key"] for c in classes] == list(CLASSES)
+    assignable = {s(c["key"]): c["assignable"] for c in classes}
+    assert assignable["tripodes"] is True
+    assert assignable["talos"] is False
+    assert assignable["keledones"] is False
+    assert all(s(c["role"]) for c in classes)
+    assert [c["key"] for c in classes if c["root"]] == ["talos"]
+    assert body["max_depth"] == limit
+    assert body["default_class"] == "tripodes"
+
+
+async def test_only_a_published_delegable_agent_is_launchable():
+    async with client_app() as (client, _app):
+        listed = json_list(await client.get("/agents"))
+        draft = json_body(await client.post("/agents", json=_BODY))
+    by_id = {s(obj(a)["id"]): obj(a) for a in listed}
+    assert by_id["builtin:explorer"]["launchable"] is True
+    assert by_id["builtin:default"]["launchable"] is False
+    assert draft["launchable"] is False
+
+
+async def test_a_builtin_lists_its_required_tools():
+    async with client_app() as (client, _app):
+        researcher = json_body(await client.get("/agents/builtin:researcher"))
+        explorer = json_body(await client.get("/agents/builtin:explorer"))
+    assert researcher["required"] == ["web_fetch", "web_search"]
+    assert explorer["required"] == []
 
 
 async def test_the_builtins_are_listed_read_only():
@@ -39,16 +76,6 @@ async def test_creating_makes_an_inactive_draft():
         assert body["deny_tools"] == ["shell"]
         fetched = json_body(await client.get(f"/agents/{s(body['id'])}"))
         assert body["id"] == fetched["id"]
-
-
-async def test_the_class_catalog_marks_the_classes_an_agent_can_take():
-    async with client_app() as (client, _app):
-        listed = json_list(await client.get("/agents/classes"))
-    assignable = {s(obj(c)["key"]): obj(c)["assignable"] for c in listed}
-    assert assignable["tripodes"] is True
-    assert assignable["talos"] is False
-    assert assignable["keledones"] is False
-    assert all(s(obj(c)["role"]) for c in listed)
 
 
 async def test_an_agent_takes_the_class_it_is_given():

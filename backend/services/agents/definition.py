@@ -54,9 +54,12 @@ DEFAULT_AGENT = "default"
 #: The class an agent belongs to when its definition names none.
 DEFAULT_CLASS = "tripodes"
 
+#: The class of the agent the operator talks to, at the root of every delegation tree.
+ROOT_CLASS = "talos"
+
 #: Classes no operator-written agent may take: there is one Talos, the built-in default,
 #: and the helpers are a voice rather than an agent anyone runs.
-UNASSIGNABLE_CLASSES: frozenset[str] = frozenset({"talos", "keledones"})
+UNASSIGNABLE_CLASSES: frozenset[str] = frozenset({ROOT_CLASS, "keledones"})
 
 
 def class_key(raw: str) -> str | None:
@@ -67,7 +70,7 @@ def class_key(raw: str) -> str | None:
 
 def agent_display_name(name: str | None) -> str:
     """What the operator reads for an agent: the default one is Talos."""
-    return CLASSES["talos"].display if not name or name == DEFAULT_AGENT else name
+    return CLASSES[ROOT_CLASS].display if not name or name == DEFAULT_AGENT else name
 
 
 @dataclass(frozen=True)

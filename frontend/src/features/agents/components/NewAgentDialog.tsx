@@ -8,11 +8,7 @@ import {
   createAgent,
   useAgentClasses,
 } from "../data";
-import {
-  AGENT_DESCRIPTION_MAX,
-  AGENT_NAME_PATTERN,
-  DEFAULT_AGENT_CLASS,
-} from "../model";
+import { AGENT_DESCRIPTION_MAX, AGENT_NAME_PATTERN } from "../model";
 
 type Errors = Partial<Record<"name" | "description" | "agent_class", string>>;
 
@@ -25,25 +21,27 @@ export function NewAgentDialog(props: {
 }): JSX.Element {
   const [name, setName] = createSignal("");
   const [description, setDescription] = createSignal("");
-  const [agentClass, setAgentClass] = createSignal(DEFAULT_AGENT_CLASS);
+  // Unset means the backend's default class, which is also what the picker shows.
+  const [agentClass, setAgentClass] = createSignal<string | undefined>();
   const [errors, setErrors] = createSignal<Errors>({});
   const [formError, setFormError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const classes = useAgentClasses();
   const classOptions = () =>
-    (settled(classes) ?? [])
+    (settled(classes)?.classes ?? [])
       .filter((c) => c.assignable)
       .map((c) => ({
         value: c.key,
         label: c.display,
         description: c.role,
       }));
+  const shownClass = () => agentClass() ?? settled(classes)?.defaultClass;
 
   createEffect(() => {
     if (!props.open) return;
     setName("");
     setDescription("");
-    setAgentClass(DEFAULT_AGENT_CLASS);
+    setAgentClass(undefined);
     setErrors({});
     setFormError("");
   });
@@ -69,7 +67,7 @@ export function NewAgentDialog(props: {
       const agent = await createAgent({
         name: name().trim(),
         description: description().trim(),
-        agent_class: agentClass(),
+        agent_class: shownClass(),
       });
       props.onCreated(agent.id);
     } catch (err) {
@@ -132,7 +130,7 @@ export function NewAgentDialog(props: {
         <Select
           label="Class"
           options={classOptions()}
-          value={agentClass()}
+          value={shownClass()}
           onChange={setAgentClass}
           invalid={Boolean(errors().agent_class || classes.error)}
           hint={classHint()}

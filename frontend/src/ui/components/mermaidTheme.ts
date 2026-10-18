@@ -287,7 +287,7 @@ export function themeSignature(theme: DiagramTheme): string {
  * The three emphases a node may carry, in the order they outrank each other.
  *
  * `alert` and `caution` are the severity ladder — a solid fill and a tint of the
- * same weight relationship the annunciator grid uses. `focus` is the one node
+ * weight relationship §10.15 gives caution and warning. `focus` is the one node
  * the diagram is *about*, and it is last precisely because it is the one that
  * gets dropped when a diagram would otherwise show three accent hues at once.
  */
@@ -635,7 +635,7 @@ const RESERVED_LINE = " ";
 /**
  * Give every node a second line whether or not it uses one.
  *
- * The annunciator grid's rule, applied to a diagram: a cell is the legend and
+ * A caution-and-warning cell's rule, applied to a diagram: a cell is the legend and
  * the reason it is lit, and the second line is reserved either way — so a node
  * changing state changes its *contents* and never its size. Without this, a node
  * that gains a severity reason grows by a line and shoves the whole layout

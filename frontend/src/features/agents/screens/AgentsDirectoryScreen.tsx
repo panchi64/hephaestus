@@ -1,6 +1,6 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { settled } from "~/lib/resource";
-import { StatusFlag, Text, confirm, toast } from "~/ui";
+import { StatusFlag, confirm, toast } from "~/ui";
 import { compareByName, LibraryDirectory } from "~/features/library";
 import {
   agentErrorMessage,
@@ -13,12 +13,11 @@ import {
 } from "../data";
 import {
   agentDisplayName,
-  classDisplay,
+  agentHierarchy,
   compareAgentsBySource,
   agentSourceTag,
   isAwaitingPublish,
   type Agent,
-  type AgentClass,
 } from "../model";
 import { AgentStateFlags } from "../components/AgentStateFlags";
 import { NewAgentDialog } from "../components/NewAgentDialog";
@@ -31,11 +30,13 @@ export function AgentsDirectoryScreen(props: {
   const agentsResource = useAgents();
   const agents = (): Agent[] => settled(agentsResource) ?? [];
   const classesResource = useAgentClasses();
-  const classes = (): AgentClass[] => settled(classesResource) ?? [];
-  /** Empty for Talos, whose class is its name. */
-  const classLabel = (agent: Agent): string => {
-    const display = classDisplay(classes(), agent.agentClass);
-    return display === agentDisplayName(agent.name) ? "" : display;
+  // Until the class table arrives (or if it can't), the list stays flat rather than
+  // filing every agent under an unknown class.
+  const grouping = () => {
+    const table = settled(classesResource)?.classes;
+    return table
+      ? (visible: Agent[]) => agentHierarchy(visible, table)
+      : undefined;
   };
   const loadError = (): string | null =>
     agentsResource.error
@@ -137,6 +138,7 @@ export function AgentsDirectoryScreen(props: {
         },
         source: { label: "Source", compare: compareAgentsBySource },
       }}
+      groups={grouping()}
       initialSort="name"
       initialDir="asc"
       bandExtra={[
@@ -157,13 +159,6 @@ export function AgentsDirectoryScreen(props: {
       rowLabel={(agent) => agentDisplayName(agent.name)}
       rowRight={(agent) => (
         <>
-          <Show when={classLabel(agent)}>
-            {(label) => (
-              <Text variant="micro" tone="dim">
-                {label()}
-              </Text>
-            )}
-          </Show>
           <Show when={agentSourceTag(agent.source)}>
             {(tag) => <StatusFlag status="idle">{tag()}</StatusFlag>}
           </Show>
