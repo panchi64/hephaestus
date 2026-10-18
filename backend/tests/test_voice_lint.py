@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from evals.voice.lint import Flag, lint_reply
+from prompts.agent import EXAMPLES
 
 # docs/voice.md §13, verbatim: on-voice by definition, so they must raise nothing.
 CALIBRATION = [
@@ -27,6 +31,18 @@ CALIBRATION = [
 ]
 
 
+VOICE_DOC = Path(__file__).parents[2] / "docs" / "voice.md"
+
+
+def _example_replies() -> list[str]:
+    """Each quoted reply in Talos's prompt examples, as one string."""
+    replies: list[str] = []
+    for block in re.finditer(r"(?:^>.*\n?)+", EXAMPLES, re.M):
+        lines = [line.removeprefix(">").strip() for line in block.group(0).splitlines()]
+        replies.append("\n".join(lines).strip())
+    return replies
+
+
 def rules(text: str) -> set[str]:
     return {flag.rule for flag in lint_reply(text)}
 
@@ -34,6 +50,24 @@ def rules(text: str) -> set[str]:
 @pytest.mark.parametrize("reply", CALIBRATION)
 def test_calibration_samples_raise_nothing(reply: str) -> None:
     assert lint_reply(reply) == []
+
+
+def test_the_prompt_examples_raise_nothing_and_match_the_doc() -> None:
+    replies = _example_replies()
+    assert len(replies) == 4
+    doc = VOICE_DOC.read_text()
+    for reply in replies:
+        assert lint_reply(reply) == [], reply
+        for line in filter(None, reply.splitlines()):
+            assert f"> {line}" in doc, line
+
+
+@pytest.mark.parametrize(
+    "ending",
+    ["If you'd like, I can also add benchmarks.", "Want me to set that up?", "Hope that helps!"],
+)
+def test_the_off_voice_endings_the_prompt_names_are_flagged(ending: str) -> None:
+    assert rules(f"Done.\n\n{ending}") & {"trailing-offer", "stock-closer"}
 
 
 @pytest.mark.parametrize(

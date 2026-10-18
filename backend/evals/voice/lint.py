@@ -74,8 +74,7 @@ _OPENER = re.compile(
     re.I,
 )
 _CLOSER = _words(
-    "i hope this helps",
-    "hope this helps",
+    r"(?:i )?hope (?:this|that) helps",
     r"let me know if",
     r"feel free to",
     r"happy to help",
