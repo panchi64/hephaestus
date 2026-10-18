@@ -46,6 +46,9 @@ class Reply:
 
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+    #: Streamed as ``reasoning_content`` deltas ahead of the text, the field DeepSeek-style
+    #: servers use and Pydantic AI reads as thinking. The non-streaming body omits it.
+    reasoning: str = ""
 
     @property
     def finish_reason(self) -> str:
@@ -126,6 +129,10 @@ def stream(model: str, reply: Reply, *, request_id: str, include_usage: bool) ->
     and a stub that never sent one would never reveal that.
     """
     yield _chunk(model, request_id, delta={"role": "assistant"}, finish_reason=None)
+
+    if reply.reasoning:
+        for piece in _split(reply.reasoning, _TEXT_CHUNK):
+            yield _chunk(model, request_id, delta={"reasoning_content": piece}, finish_reason=None)
 
     if reply.text:
         for piece in _split(reply.text, _TEXT_CHUNK):

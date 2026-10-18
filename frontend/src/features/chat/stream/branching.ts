@@ -41,25 +41,14 @@ export interface TranscriptStore {
   setSnapshots: Setter<ViewSnapshotRef[]>;
 }
 
-/** Replace only the messages with the backend's active path — the reseat a finished run
- *  takes, whose window reading and snapshots its own events already kept current. The
- *  same mapper the cold read uses, which is the point: a reseat has to produce exactly
- *  the transcript a reload would. */
-export function reseatMessagesFromDetail(
-  store: Pick<TranscriptStore, "setMessages">,
-  detail: ConversationDetailDTO,
-): void {
-  store.setMessages(reconcile(detail.messages.map(toMessage)));
-}
-
-/** Replace the transcript with the backend's active path. Shared by the branching ops
- *  and by the controller's own reconciliation points, so a reload, a version switch and
- *  a recovered stale decision all land on the identical shape. */
+/** Replace the transcript with the backend's active path, through the same mapper the
+ *  cold read uses, so a reload, a version switch and a recovered stale decision all land
+ *  on the identical shape. */
 export function reseatFromDetail(
   store: TranscriptStore,
   detail: ConversationDetailDTO,
 ): void {
-  reseatMessagesFromDetail(store, detail);
+  store.setMessages(reconcile(detail.messages.map(toMessage)));
   // The active path moved (version switch / rewind / delete), so the window
   // state moves with it.
   store.setUsage(detail.context);

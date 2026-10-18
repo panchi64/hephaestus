@@ -15,6 +15,7 @@ import {
   layoutItemKey,
   liveToolGroupIds,
   planTurnLayout,
+  workLogStateKey,
   type LayoutItem,
 } from "../blocks";
 import type { ViewItem } from "../viewport/viewItems";
@@ -50,18 +51,13 @@ export function TurnBlocks(
     planTurnLayout(groups(), { streaming: props.streaming }),
   );
 
-  /* `<For>` is REFERENCE-keyed, and `planTurnLayout` mints fresh objects on
-     every call — so iterating it directly made every row of the turn new on
-     every recompute, and the whole turn was torn down and re-rendered. That
-     happened on each new block, and again when `streaming` flipped at the end of
-     a run (the plan reads it, to keep the live tail out of a work log). The
-     second one is a full redraw of the turn at the moment the operator starts
-     reading it.
+  /* `<For>` is reference-keyed and `planTurnLayout` mints fresh objects on every
+     call, including when `streaming` flips at the end of a run. Iterating the
+     plan directly would redraw the whole turn on every recompute.
 
-     So iterate stable KEYS — strings compare by value, so an unchanged row is
-     unchanged — and look the item up through a memo, which keeps the row's props
-     live. A row is now created once and only genuinely new or regrouped rows
-     move. */
+     So iterate stable keys, which compare by value, and look each item up through
+     a memo that keeps the row's props live: a row is created once, and only new or
+     regrouped rows move. */
   const keys = createMemo(() => layout().map(layoutItemKey));
   const byKey = createMemo(
     () =>
@@ -97,10 +93,10 @@ export function TurnBlocks(
     return ids;
   });
 
-  // Each work log's open state lives here, keyed by its run's first-block id (a
-  // stable id), so it survives the `<For>` remount when a streaming delta
-  // rebuilds `layout()`. Toggling the turn-level expand/collapse-all wipes the
-  // per-log overrides so the global control re-takes command of every log.
+  // Each work log's open state lives here, keyed by `workLogStateKey`, so it survives
+  // a rebuilt `layout()` and the reseat after a run. Toggling the turn-level
+  // expand/collapse-all wipes the per-log overrides so the global control re-takes
+  // command of every log.
   const [openLogs, setOpenLogs] = createSignal<Record<string, boolean>>({});
   createEffect(
     on(
@@ -117,14 +113,11 @@ export function TurnBlocks(
 
   /* Whether a row should materialize as it arrives.
 
-     Latched at mount, and deliberately NOT reactive. A live turn's blocks appear
-     one at a time — reasoning, then a tool call, then the answer — and each one
-     popping into place is the jolt between the operator's message and the
-     model's reply. A turn read from history mounts all of its rows at once, and
-     animating those would be a whole transcript moving on load, which §8
-     forbids. Reading `streaming` reactively would be worse still: the wrapper
-     element would change when the run ended and flash the entire turn, which is
-     the bug just fixed one component over. */
+     Latched at mount, and deliberately not reactive. A live turn's blocks appear
+     one at a time, and each one popping into place would jolt the reply. A turn
+     read from history mounts all of its rows at once, and animating those would
+     be a whole transcript moving on load, which §8 forbids. Read reactively, the
+     wrapper element would change when the run ended and flash the entire turn. */
   const revealRows = untrack(() => Boolean(props.streaming));
 
   return (
@@ -170,12 +163,12 @@ export function TurnBlocks(
               {(l) => (
                 <WorkLog
                   entries={l().entries}
-                  open={logOpen(l().entries[0].group.id)}
-                  onToggle={() => toggleLog(l().entries[0].group.id)}
+                  open={logOpen(workLogStateKey(l()))}
+                  onToggle={() => toggleLog(workLogStateKey(l()))}
                   top={top()}
                   forceOpen={props.forceOpen}
-                  /* A live call is pinned inside the log now rather than lifted
-                     out of it, so the trunk's light has to reach in here too. */
+                  /* A live call is pinned inside the log rather than lifted out
+                     of it, so the trunk's light has to reach in here too. */
                   activeIds={activeIds()}
                   streaming={props.streaming}
                   onResolveHostCommands={props.onResolveHostCommands}
@@ -187,8 +180,7 @@ export function TurnBlocks(
             </Show>
           );
           /* A plain fade, not a rise: a work log is a continuous trunk of
-             hairlines, and anything that moved would drag the trunk with it. Materializing in place says "this arrived"
-             without disturbing the structure it arrived into. */
+             hairlines, and anything that moved would drag the trunk with it. */
           return revealRows ? <Reveal>{row}</Reveal> : row;
         }}
       </For>

@@ -61,6 +61,7 @@ import { useChatViewport } from "../useChatViewport";
 import { createThreadChanges } from "../branchState";
 import { createSubagentsState } from "../subagentsState";
 import { createTranscriptFollow } from "../transcriptScroll";
+import { isNamedInPlace } from "../stream/binding";
 import { createRenameConversation } from "../components/RenameConversationModal";
 import { createComposerCommands } from "../commands/useComposerCommands";
 import { createComposerFileRefs } from "../files/useFileRefs";
@@ -125,11 +126,14 @@ export function ChatRoomScreen(): JSX.Element {
       : undefined;
   });
 
-  // Follow the stream: pinned to the bottom while the answer arrives, yielding the
-  // moment the operator scrolls up to read back (see `transcriptScroll.ts`).
+  // A send seats the operator's message at the top and the reply grows under a still
+  // view (see `transcriptScroll.ts`).
   const transcript = createTranscriptFollow({
     sending: stream.sending,
     conversationId: currentId,
+    boundId: stream.conversationId,
+    anchorTurnId: () =>
+      stream.messages.findLast((m) => m.role === "user")?.id ?? null,
   });
 
   // Header reflects the thread on screen (messages resolve through the seam).
@@ -308,8 +312,7 @@ export function ChatRoomScreen(): JSX.Element {
   const attachments = createComposerAttachments();
   createEffect(
     on(currentId, (id, prev) => {
-      if (prev === null && id !== null && id === stream.conversationId())
-        return;
+      if (isNamedInPlace(id, prev, stream.conversationId())) return;
       attachments.clear();
     }),
   );

@@ -1,20 +1,7 @@
-import {
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  on,
-  type JSX,
-} from "solid-js";
-import { Collapse, Text, cx } from "~/ui";
+import { Show, createMemo, type JSX } from "solid-js";
+import { Collapse, Text } from "~/ui";
 import { THINK_ICON } from "../workShape";
 import { ProcessRow, Sep, createAdoptedOpen } from "./ProcessRow";
-
-/** The animation that plays when the stage clears. The component waits for this
- *  by name rather than holding a duration of its own — the timing lives in
- *  `--motion-stage`, and a copy here would be a second number to keep in sync
- *  with a token that exists precisely so there is only one. */
-const CLEAR_ANIMATION = "heph-stage-clear";
 
 /** How much of the trace the collapsed row shows. The same slot a tool row's
  *  `detail` fills — what this step was *about* — so a column of thinks and calls
@@ -32,9 +19,8 @@ const PEEK_CHARS = 90;
  *  and out of frame and the newest is always at the bottom. It never eases:
  *  this is the machine register (§8), so tokens land hard as they arrive.
  *
- *  **Resolved.** The layer fades out (the human register — the interface
- *  clearing the stage, not a control responding) and what remains is a collapsed
- *  disclosure holding the full trace, available but out of the way.
+ *  **Resolved.** The layer gives way in one frame to a collapsed disclosure
+ *  holding the full trace, which fades in where the wall stood.
  *
  *  `open` (expand-all / collapse-all) wins over both when defined. */
 export function ReasoningBlock(props: {
@@ -48,20 +34,7 @@ export function ReasoningBlock(props: {
   // Its own, adopting an explicit expand-all/collapse-all; local toggles work between
   // two of those.
   const { open, toggle } = createAdoptedOpen(props);
-  // True through the fade-out, after the stream has stopped — the live layer
-  // stays mounted so it has something to animate from.
-  const [fading, setFading] = createSignal(false);
-
   const live = (): boolean => Boolean(props.active && props.streaming);
-
-  // Clear the stage exactly on the live -> settled edge. The layer stays mounted
-  // until the animation reports itself finished (see `onAnimationEnd` below).
-  createEffect(
-    on(live, (now, prev) => {
-      if (!prev || now) return;
-      setFading(true);
-    }),
-  );
 
   /* The trace's opening line, flattened — a trace is paragraphs of prose and the
      row is one line, so newlines have to go or the row's height follows the
@@ -88,11 +61,8 @@ export function ReasoningBlock(props: {
 
   return (
     <Show
-      when={live() || fading()}
+      when={live()}
       fallback={
-        // The wall fades to the background, then the settled row fades in where
-        // it stood — above the response — so the handoff reads as one movement
-        // rather than as a block being swapped out.
         <div class="heph-fade-in">
           <ProcessRow
             open={open()}
@@ -138,22 +108,9 @@ export function ReasoningBlock(props: {
           That edge is the wall's own border, not the trunk's. The wall has no
           socket for its branch's elbow to land on, so the elbow lands on this
           border instead: trunk, elbow and edge together as one path into the
-          wall. It returns to a hairline as the stage clears, and grows and
-          shrinks with it, since it is the stage's own box. */}
-      <div
-        class={cx(
-          "border-l pl-3 transition-colors",
-          live() ? "border-info" : "border-line",
-        )}
-      >
-        <div
-          class="heph-reasoning-stage"
-          data-clearing={fading() ? "" : undefined}
-          aria-hidden="true"
-          onAnimationEnd={(e) => {
-            if (e.animationName === CLEAR_ANIMATION) setFading(false);
-          }}
-        >
+          wall, growing with the stage since it is the stage's own box. */}
+      <div class="border-l border-info pl-3">
+        <div class="heph-reasoning-stage" aria-hidden="true">
           <div class="heph-reasoning">
             <div class="heph-reasoning-tail">{props.reasoning}</div>
           </div>

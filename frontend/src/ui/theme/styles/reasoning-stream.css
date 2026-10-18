@@ -87,28 +87,15 @@
   overflow: visible;
 }
 
-/* THE STAGE the wall plays on, and the two states it moves between.
-
-   Height is `--reasoning-h` and the region *travels* that distance rather than
-   appearing and vanishing at it: opening, the transcript makes room; clearing,
-   it closes the space back up as the wall fades. A region this large popping in
-   and out is a jump the reader has to absorb twice per turn.
-
-   Both directions are one token each — `--reasoning-h` for the distance and
-   `--motion-stage` for the time — so retiming or resizing the state change is a
-   token edit, and nothing has to be kept in sync with it. In particular the
-   component does NOT hold a matching duration: it waits for `animationend`, so
-   there is no second copy of this number to drift. */
+/* THE STAGE the wall plays on. It opens by travelling to `--reasoning-h`, at the
+   foot of the turn where nothing below it is being read. It does not travel back:
+   the answer starts beneath it, and a stage closing over 320ms would slide that
+   text up while the operator reads it, so it swaps to the settled row in a frame. */
 .heph-reasoning-stage {
   position: relative;
   height: var(--reasoning-h);
   overflow: hidden;
   animation: heph-stage-open var(--motion-stage) var(--ease) both;
-}
-/* Swapping the NAME (rather than adding a class with its own animation) is what
-   lets the close start cleanly from the open state's end. */
-.heph-reasoning-stage[data-clearing] {
-  animation-name: heph-stage-clear;
 }
 @keyframes heph-stage-open {
   from {
@@ -118,15 +105,5 @@
   to {
     height: var(--reasoning-h);
     opacity: 1;
-  }
-}
-@keyframes heph-stage-clear {
-  from {
-    height: var(--reasoning-h);
-    opacity: 1;
-  }
-  to {
-    height: 0;
-    opacity: 0;
   }
 }

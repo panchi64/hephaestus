@@ -1,119 +1,70 @@
 /**
- * Following the stream — the transcript's one piece of genuinely stateful behaviour.
+ * How the transcript scrolls — the one piece of genuinely stateful behaviour it has.
  *
- * Keep the view pinned to the bottom while an answer arrives, yield the moment the operator
- * scrolls up to read back, and re-attach when they scroll near the bottom again. A floating
- * control jumps back down once they have scrolled far up.
+ * **Read in place.** A send seats the operator's message at the top of the view and
+ * reserves the screen below it, so the reply grows downward under a still view. Nothing
+ * scrolls on the operator's behalf while it streams; once the reply runs past the bottom
+ * edge, the jump control offers the rest, and taking it follows the end from there.
  *
- * **Why the content's size drives it.** The transcript grows in ways no message field
- * records: a stopped turn reloading with its failed call opened, an image decoding, a
- * fold animating open. So the follow observes the content element's size, and a pinned
- * view follows every growth whatever caused it.
+ * **The anchor.** Whenever the view is not following the bottom, one element — the live
+ * answer if any of it is on screen, else the topmost visible turn — is held at the same
+ * viewport offset. Reasoning clearing, a fold, the progress rail leaving or an image
+ * decoding above it are corrected in the same frame, before paint, whatever caused them.
  *
- * **Why re-attaching does not scroll.** Only growth moves the view. Snapping on
- * re-attach would take the scroll away from the operator while they were using it; the
- * next growth catches up instead.
- *
- * **Why detaching is decided by movement rather than by distance.** This used to yield
- * on position alone — within `ATTACHED_PX` of the bottom counted as attached, full stop —
- * and that made the bottom of a streaming transcript impossible to leave. A scroll-up
- * smaller than the threshold left the follow attached, so the next fragment (milliseconds
- * later, on the very next frame) put the view straight back at the bottom. The operator
- * could only escape by flicking hard enough to clear the whole threshold in one gesture,
- * which is precisely the complaint: the transcript felt locked to the newest step.
- *
- * So the rule is *any upward movement the operator made detaches it*, and the threshold
- * survives only as the way back in. The movement is read from the outcome, so a wheel, a
- * trackpad, a dragged scrollbar, a Page Up and a touch drag behave the same. Authorship is
- * read from input: the browser also moves `scrollTop` up on its own, clamping it when a
- * reloaded turn lays out shorter for a moment, and that must not let go of the follow.
+ * **The follow.** Opening a thread, or taking the jump control, pins the view to the
+ * bottom: late layout (images, a reloaded turn's failure opening) keeps the newest turn in
+ * view, and a long run can be watched at its end. Any upward scroll the operator makes
+ * lets go. A send lets go of the opening pin but keeps one the operator took
+ * (`nextFollow`).
  */
 
-import { createEffect, createSignal, onCleanup, untrack } from "solid-js";
+import { createEffect, createSignal, on, onCleanup, untrack } from "solid-js";
+import { isNamedInPlace } from "./stream/binding";
+import {
+  firstReaching,
+  nextFollow,
+  nextPinned,
+  pickAnchor,
+  roomFor,
+  type FollowEvent,
+} from "./transcriptScrollRules";
 
-/** Scrolling back to within this many pixels of the bottom re-attaches the follow.
- *
- *  It is a *re-attachment* threshold only. It used to double as the detachment rule —
- *  anything inside it counted as attached — which is what made a small scroll-up
- *  impossible: the follow simply undid it on the next frame. Nothing reads this to
- *  decide whether to let go any more. */
-const ATTACHED_PX = 80;
 /** Past roughly one screenful the jump-to-latest control appears. */
 const JUMP_PX = 240;
-/** Upward movement under this many pixels is rounding, not a gesture.
- *
- *  Sub-pixel layout and the browser's own clamping move `scrollTop` by fractions on
- *  their own; anything above that came from the operator, however small. Two pixels is
- *  deliberately almost nothing — the point of the rewrite is that there is no longer a
- *  distance an operator has to out-scroll. */
-const DRIFT_PX = 2;
+/** While a turn streams, this much unseen text below the view raises "New text below". */
+const NEW_BELOW_PX = 24;
 /** A scroll this soon after the operator's last wheel, touch or key is theirs. Covers
  *  smooth keyboard scrolling, which keeps moving after the keydown. */
 const INTENT_MS = 600;
-
-/** Where the container was, and where it is now. */
-export interface FollowReading {
-  /** Whether the follow is currently attached. */
-  pinned: boolean;
-  /** Whether the operator is scrolling: input on the transcript just now, or a held
-   *  pointer (a scrollbar drag). */
-  operator: boolean;
-  /** `scrollTop` as of the previous reading — or as of the follow's own last write. */
-  lastTop: number;
-  /** `scrollHeight` as of the previous reading. */
-  lastHeight: number;
-  top: number;
-  height: number;
-  clientHeight: number;
-}
-
-/**
- * Whether the follow should still be attached, given how the container just moved.
- *
- * Pure, and exported, because this is the whole of the behaviour worth testing and the
- * one rule that has been wrong before. Three cases, in this order:
- *
- * 1. **The operator moved the container up and it did not shrink.** Let go immediately;
- *    there is no minimum gesture. An upward move nobody made is the browser clamping.
- * 2. **We are at the bottom.** Take the follow back. This is the only way in besides the
- *    jump control and starting a turn.
- * 3. **Neither.** Leave it as it was. Growing content moves the *bottom* away rather than
- *    moving the view, so a detached transcript stays detached while an answer streams on
- *    underneath it.
- *
- * The shrink guard in case 1 exists because closing a fold can take `scrollHeight` below
- * `scrollTop`, and the browser then clamps the view upward on its own. That is the one
- * upward movement the operator did not ask for, and reading it as a gesture would drop
- * the follow every time a work log collapsed.
- */
-export function nextPinned(reading: FollowReading): boolean {
-  const shrank = reading.height < reading.lastHeight;
-  const movedUp = reading.top < reading.lastTop - DRIFT_PX;
-  if (reading.operator && !shrank && movedUp) return false;
-  const distance = reading.height - reading.top - reading.clientHeight;
-  if (distance < ATTACHED_PX) return true;
-  return reading.pinned;
-}
+/** Frames to wait for a just-sent message to render before seating it. */
+const SEAT_ATTEMPTS = 4;
 
 export interface TranscriptFollow {
   /** `ref` for the scrolling transcript container. */
   ref: (el: HTMLDivElement) => void;
-  /** `ref` for the content inside the container; its growth drives the follow. */
+  /** `ref` for the content inside the container; its size changes drive the follow
+   *  and the anchor. Must not carry `room()`, or growth inside the room goes unseen. */
   contentRef: (el: HTMLElement) => void;
+  /** `ref` for a zero-height marker after the last turn: where the content ends, as
+   *  opposed to where the reserved room ends. */
+  endRef: (el: HTMLElement) => void;
   /** `onScroll` for the same container. */
   onScroll: () => void;
-  /** True once the operator has scrolled far enough up to want a way back. */
+  /** Minimum height, in px, for the element wrapping the content — the room a send
+   *  reserves below the operator's message — or null for none. */
+  room: () => number | null;
+  /** Whether the jump control is up. */
   showJump: () => boolean;
-  /** Re-attach the follow and scroll to the newest turn. */
+  /** Whether it is up because the streaming reply has run past the bottom edge. */
+  newBelow: () => boolean;
+  /** The jump control: scroll to the end and follow it, through later sends too, until
+   *  the operator scrolls up. */
+  followLatest: () => void;
+  /** Scroll to the end and follow its growth, without changing what a send does. */
   jumpToLatest: () => void;
   /** Bring one turn into view and **detach the follow**, answering with its element —
-   *  or `null` when this transcript does not hold it.
-   *
-   *  The detach is the substance, not a side effect. Scrolling somewhere up-thread while
-   *  the follow is still pinned does nothing the operator can see: the next growth
-   *  writes `scrollTop = scrollHeight` and puts them straight back at the bottom.
-   *  And it is the honest state anyway — looking at a turn above the tail is exactly what
-   *  being un-pinned means, which is why the jump control appears afterwards. */
+   *  or `null` when this transcript does not hold it. Detaching first matters: a pinned
+   *  follow would put the operator straight back at the bottom on the next growth. */
   scrollToMessage: (messageId: string) => HTMLElement | null;
   /** The container itself, for the keymap's focus targets. */
   element: () => HTMLDivElement | undefined;
@@ -123,38 +74,182 @@ export function createTranscriptFollow(source: {
   sending: () => boolean;
   /** The open thread; a switch re-attaches and jumps to the latest message. */
   conversationId: () => string | null;
+  /** The thread the stream is bound to, which tells a new thread being named after its
+   *  first run from a switch to another thread. */
+  boundId: () => string | null;
+  /** The newest operator message, which a send seats at the top of the view. */
+  anchorTurnId: () => string | null;
 }): TranscriptFollow {
   let scrollEl: HTMLDivElement | undefined;
+  let contentEl: HTMLElement | undefined;
+  let endEl: HTMLElement | undefined;
   const [pinned, setPinned] = createSignal(true);
-  const [showJump, setShowJump] = createSignal(false);
+  let chosen = false;
+  const apply = (event: FollowEvent) => {
+    const next = nextFollow({ pinned: untrack(pinned), chosen }, event);
+    chosen = next.chosen;
+    setPinned(next.pinned);
+  };
+  const [below, setBelow] = createSignal(0);
+  const [room, setRoom] = createSignal<number | null>(null);
+  // The turn the room is sized for, and its offset into the content when last measured.
+  let roomEl: HTMLElement | null = null;
+  let roomOffset = 0;
 
-  // At most one scroll per frame.
-  //
-  // `scrollTop = scrollHeight` reads a value the browser can only answer by laying the
-  // whole transcript out, then writes back into that same layout — so scheduling one per
-  // *token* made every fragment of a long answer force a synchronous reflow of every
-  // turn above it. A frame is the finest granularity the operator can perceive anyway,
-  // and tokens arrive several to a frame, so coalescing here costs nothing visible and
-  // takes the flush off the delta path.
-  let frame: number | null = null;
-  // The container as of the last thing that moved it — a scroll the operator made, or
-  // the follow's own write. `nextPinned` compares against these to tell the two apart:
-  // recording the write here is what stops the follow reading its own scroll event back
-  // as movement.
+  // The container as of the last thing that moved it, so `nextPinned` can tell the
+  // operator's scroll from one this module wrote.
   let lastTop = 0;
   let lastHeight = 0;
   let lastInput = Number.NEGATIVE_INFINITY;
   let pointerHeld = false;
-  const noteInput = () => {
-    lastInput = performance.now();
+
+  let anchor: HTMLElement | null = null;
+  let anchorTop = 0;
+
+  // The scroller's padding belongs to the overlays (title above, dock fade below), so
+  // the readable view is the box inside it. Re-read on resize: the title inset moves.
+  let insetTop = 0;
+  let insetBottom = 0;
+  const readInsets = (el: HTMLElement) => {
+    const style = getComputedStyle(el);
+    insetTop = parseFloat(style.paddingTop) || 0;
+    insetBottom = parseFloat(style.paddingBottom) || 0;
   };
-  const holdPointer = () => {
-    pointerHeld = true;
+  const view = (el: HTMLElement): { top: number; bottom: number } => {
+    const rect = el.getBoundingClientRect();
+    return { top: rect.top + insetTop, bottom: rect.bottom - insetBottom };
   };
-  const releasePointer = () => {
-    pointerHeld = false;
+
+  const noteMove = (el: HTMLElement) => {
+    lastTop = el.scrollTop;
+    lastHeight = el.scrollHeight;
   };
+  const measureBelow = (el: HTMLElement) => {
+    if (!endEl) return;
+    setBelow(Math.max(0, endEl.getBoundingClientRect().top - view(el).bottom));
+  };
+
+  /** Turn roots from the first one reaching into the view, each followed by the live
+   *  answer inside it — document order, so `pickAnchor` reads them top-down. */
+  const candidates = (
+    el: HTMLElement,
+    top: number,
+    bottom: number,
+  ): HTMLElement[] => {
+    const turns = el.querySelectorAll<HTMLElement>("[data-message-id]");
+    const from = firstReaching(
+      turns.length,
+      (i) => turns[i].getBoundingClientRect().bottom,
+      top,
+    );
+    const out: HTMLElement[] = [];
+    for (let i = from; i < turns.length; i++) {
+      const turn = turns[i];
+      if (turn.getBoundingClientRect().top >= bottom) break;
+      out.push(turn);
+      const live = turn.querySelector<HTMLElement>("[data-live-answer]");
+      if (live) out.push(live);
+    }
+    return out;
+  };
+  const recordAnchor = (el: HTMLElement) => {
+    const { top, bottom } = view(el);
+    const els = candidates(el, top, bottom);
+    const boxes = els.map((c) => {
+      const rect = c.getBoundingClientRect();
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        live: c.hasAttribute("data-live-answer"),
+      };
+    });
+    const i = pickAnchor(boxes, top, bottom);
+    anchor = i >= 0 ? els[i] : null;
+    anchorTop = i >= 0 ? boxes[i].top : 0;
+  };
+  /** After a correction, keep the anchor while it is still on screen — re-picking
+   *  when the run ends would hand it to the turn above just as the progress rail
+   *  collapses over the answer. A live answer coming into view still takes it over. */
+  const refreshAnchor = (el: HTMLElement) => {
+    const { top, bottom } = view(el);
+    const onScreen = (c: HTMLElement | null): c is HTMLElement => {
+      if (!c?.isConnected) return false;
+      const rect = c.getBoundingClientRect();
+      return rect.bottom > top && rect.top < bottom;
+    };
+    const live = el.querySelector<HTMLElement>("[data-live-answer]");
+    const next = onScreen(live) ? live : onScreen(anchor) ? anchor : null;
+    if (!next) return recordAnchor(el);
+    // The same anchor keeps its target offset: re-reading it here would bank every
+    // sub-pixel drift `settle` declined to correct, and a collapse is many of those.
+    if (next === anchor) return;
+    anchor = next;
+    anchorTop = next.getBoundingClientRect().top;
+  };
+
+  const turnEl = (id: string | null): HTMLElement | null =>
+    id
+      ? (scrollEl?.querySelector<HTMLElement>(
+          `[data-message-id="${CSS.escape(id)}"]`,
+        ) ?? null)
+      : null;
+
+  const offsetOf = (turn: HTMLElement): number =>
+    contentEl
+      ? turn.getBoundingClientRect().top - contentEl.getBoundingClientRect().top
+      : 0;
+  const layoutRoom = (el: HTMLElement, turn: HTMLElement) => {
+    roomEl = turn;
+    roomOffset = offsetOf(turn);
+    setRoom(roomFor(roomOffset, el.clientHeight, insetTop, insetBottom));
+  };
+  /** Re-size the room for its turn, or drop it once that turn is gone. A turn
+   *  re-rendered under a new id is found again where it was; finding only an earlier
+   *  one means the seated turn was deleted or rewound away. */
+  const keepRoom = (el: HTMLElement) => {
+    if (!roomEl) return;
+    let turn: HTMLElement | null = roomEl;
+    if (!turn.isConnected) {
+      const latest = turnEl(source.anchorTurnId());
+      turn = latest && offsetOf(latest) >= roomOffset - 1 ? latest : null;
+    }
+    if (turn) return layoutRoom(el, turn);
+    roomEl = null;
+    setRoom(null);
+  };
+
+  /** Run after any layout change: follow the bottom, or put the anchor back where it
+   *  was. Called from a ResizeObserver, so the write lands before paint. */
+  const settle = () => {
+    if (!scrollEl) return;
+    keepRoom(scrollEl);
+    if (untrack(pinned)) {
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+      noteMove(scrollEl);
+      measureBelow(scrollEl);
+      return;
+    }
+    if (anchor?.isConnected) {
+      const drift = anchor.getBoundingClientRect().top - anchorTop;
+      if (Math.abs(drift) >= 0.5) {
+        scrollEl.scrollTop += drift;
+        noteMove(scrollEl);
+      }
+    }
+    refreshAnchor(scrollEl);
+    measureBelow(scrollEl);
+  };
+
   const watchInput = (el: HTMLElement) => {
+    const noteInput = () => {
+      lastInput = performance.now();
+    };
+    const holdPointer = () => {
+      pointerHeld = true;
+    };
+    const releasePointer = () => {
+      pointerHeld = false;
+    };
     const passive = { passive: true };
     el.addEventListener("wheel", noteInput, passive);
     el.addEventListener("touchmove", noteInput, passive);
@@ -171,88 +266,144 @@ export function createTranscriptFollow(source: {
       window.removeEventListener("pointercancel", releasePointer);
     });
   };
-  const followBottom = () => {
-    if (frame !== null) return;
-    frame = requestAnimationFrame(() => {
-      frame = null;
-      if (!scrollEl) return;
-      scrollEl.scrollTop = scrollEl.scrollHeight;
-      lastTop = scrollEl.scrollTop;
-      lastHeight = scrollEl.scrollHeight;
+
+  /** Reserve the room under the operator's newest message and scroll it to the top.
+   *  A send flips `sending` before its turn is in the DOM, so this waits a frame or few. */
+  let seatFrame: number | null = null;
+  const seatTurn = (attempt = 0) => {
+    if (seatFrame !== null) cancelAnimationFrame(seatFrame);
+    seatFrame = requestAnimationFrame(() => {
+      seatFrame = null;
+      const turn = turnEl(source.anchorTurnId());
+      if (!scrollEl || !turn) {
+        if (attempt < SEAT_ATTEMPTS) seatTurn(attempt + 1);
+        return;
+      }
+      readInsets(scrollEl);
+      layoutRoom(scrollEl, turn);
+      scrollEl.scrollTop +=
+        turn.getBoundingClientRect().top - view(scrollEl).top;
+      noteMove(scrollEl);
+      recordAnchor(scrollEl);
+      measureBelow(scrollEl);
     });
   };
-  onCleanup(() => {
-    if (frame !== null) cancelAnimationFrame(frame);
-  });
-  const jumpToLatest = () => {
-    setPinned(true);
-    setShowJump(false);
-    followBottom();
+
+  // A swap that leaves every observed size unchanged can still move the anchor, and no
+  // ResizeObserver reports it, so any change to the content also settles once, on the
+  // next frame. Mutations stop while a run waits on a tool, and so does this.
+  let settleFrame: number | null = null;
+  const settleSoon = () => {
+    if (settleFrame !== null) return;
+    settleFrame = requestAnimationFrame(() => {
+      settleFrame = null;
+      settle();
+    });
   };
+
+  const observers: { disconnect: () => void }[] = [];
+  onCleanup(() => {
+    observers.forEach((o) => o.disconnect());
+    if (seatFrame !== null) cancelAnimationFrame(seatFrame);
+    if (settleFrame !== null) cancelAnimationFrame(settleFrame);
+  });
+  const observe = (el: HTMLElement, onResize: () => void) => {
+    const observer = new ResizeObserver(onResize);
+    observer.observe(el);
+    observers.push(observer);
+  };
+
+  const jumpToLatest = () => {
+    apply("jump");
+    settle();
+  };
+  const followLatest = () => {
+    apply("follow");
+    settle();
+  };
+
   const scrollToMessage = (messageId: string): HTMLElement | null => {
-    const el = scrollEl?.querySelector<HTMLElement>(
-      `[data-message-id="${CSS.escape(messageId)}"]`,
-    );
+    const el = turnEl(messageId);
     if (!el) return null;
-    // Detach *before* scrolling: `followBottom` coalesces to a frame, so a pinned follow
-    // scheduled by the same message change would otherwise land after this and win.
-    setPinned(false);
-    setShowJump(true);
+    apply("letGo");
     el.scrollIntoView({ block: "center", behavior: "smooth" });
     return el;
   };
+
   const onScroll = () => {
     if (!scrollEl) return;
-    const { scrollTop: top, scrollHeight: height, clientHeight } = scrollEl;
-    setPinned(
-      nextPinned({
-        pinned: untrack(pinned),
-        operator: pointerHeld || performance.now() - lastInput < INTENT_MS,
-        lastTop,
-        lastHeight,
-        top,
-        height,
-        clientHeight,
-      }),
-    );
-    setShowJump(height - top - clientHeight > JUMP_PX);
+    const { scrollTop: top, scrollHeight: height } = scrollEl;
+    // The event this module's own write provokes arrives at the position it wrote;
+    // re-picking then would hand the anchor away from the text it just held still.
+    const ours = Math.abs(top - lastTop) < 1;
+    const keep = nextPinned({
+      pinned: untrack(pinned),
+      operator: pointerHeld || performance.now() - lastInput < INTENT_MS,
+      lastTop,
+      lastHeight,
+      top,
+      height,
+    });
+    if (!keep) apply("letGo");
     lastTop = top;
     lastHeight = height;
+    if (ours) refreshAnchor(scrollEl);
+    else recordAnchor(scrollEl);
+    measureBelow(scrollEl);
   };
 
-  let observer: ResizeObserver | undefined;
-  onCleanup(() => observer?.disconnect());
-  const observeContent = (el: HTMLElement) => {
-    observer?.disconnect();
-    observer = new ResizeObserver(() => {
-      if (pinned()) followBottom();
-    });
-    observer.observe(el);
-  };
-
-  // The operator initiating a turn (send / regenerate / edit) re-attaches the
-  // follow, so the new answer is tracked even if they had scrolled up.
   let wasSending = false;
   createEffect(() => {
     const sending = source.sending();
-    if (sending && !wasSending) jumpToLatest();
+    if (sending && !wasSending) {
+      apply("send");
+      if (!chosen) seatTurn();
+    }
     wasSending = sending;
   });
 
-  // Switching threads re-attaches and jumps to the latest message.
-  createEffect(() => {
-    source.conversationId();
-    jumpToLatest();
-  });
+  createEffect(
+    on(source.conversationId, (id, prev) => {
+      if (isNamedInPlace(id, prev, untrack(source.boundId))) return;
+      setRoom(null);
+      roomEl = null;
+      anchor = null;
+      apply("open");
+      settle();
+    }),
+  );
 
   return {
     ref: (el) => {
       scrollEl = el;
       watchInput(el);
+      readInsets(el);
+      observe(el, () => {
+        readInsets(el);
+        settle();
+      });
     },
-    contentRef: observeContent,
+    contentRef: (el) => {
+      contentEl = el;
+      observe(el, settle);
+      const mutations = new MutationObserver(settleSoon);
+      mutations.observe(el, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+      });
+      observers.push(mutations);
+    },
+    endRef: (el) => {
+      endEl = el;
+    },
     onScroll,
-    showJump,
+    room,
+    showJump: () =>
+      below() > JUMP_PX || (source.sending() && below() > NEW_BELOW_PX),
+    newBelow: () => source.sending() && below() > NEW_BELOW_PX,
+    followLatest,
     jumpToLatest,
     scrollToMessage,
     element: () => scrollEl,

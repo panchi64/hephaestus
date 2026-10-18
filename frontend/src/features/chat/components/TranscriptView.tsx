@@ -76,10 +76,9 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
   // screen above — see `foldAnchor.ts`.
   //
   // The scroll goes through the follow (`scrollToMessage`) rather than straight to the
-  // DOM, because the follow is pinned to the bottom and would otherwise put the operator
-  // right back there on the next message change. The flash is the same "found it" marker
-  // the design system already carries: scrolling alone puts the turn on screen without
-  // saying which of them was the point.
+  // DOM, because a pinned follow would put the operator right back at the bottom on the
+  // next growth. The flash is the same "found it" marker the design system already
+  // carries: scrolling alone puts the turn on screen without saying which was the point.
   createEffect(() => {
     const id = pendingFoldAnchor();
     if (id === null) return;
@@ -118,8 +117,11 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
            `py-3` is the breathing room; a pad beyond the band would be a strip
            of bare page between the conversation and the composer. The scroll
            padding matches the top so a turn scrolled into view (a settled
-           fold) lands below the title rather than under it. */
-          class="min-h-0 flex-1 overflow-y-auto px-4 outline-none transition-colors"
+           fold) lands below the title rather than under it.
+
+           Native scroll anchoring is off: `transcriptScroll.ts` keeps its own
+           anchor, and two correcting the same shift would double it. */
+          class="min-h-0 flex-1 overflow-y-auto px-4 outline-none transition-colors [overflow-anchor:none]"
           style={{
             "padding-top": `calc(${props.insetTop()}px + var(--scroll-fade-band))`,
             "scroll-padding-top": `calc(${props.insetTop()}px + var(--scroll-fade-band))`,
@@ -128,106 +130,118 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
         >
           {/* The measure goes on the CONTENT, not on the scroll container:
             the container has to keep its full width so its scrollbar sits
-            at the edge of the pane. */}
-          <div ref={props.scroll.contentRef} class={props.measure}>
-            {/* One malformed block must not cost the operator the composer,
+            at the edge of the pane. The room a send reserves sits on this
+            wrapper, not on the observed content inside it. */}
+          <div
+            class={props.measure}
+            style={{
+              "min-height":
+                props.scroll.room() === null
+                  ? undefined
+                  : `${props.scroll.room()}px`,
+            }}
+          >
+            <div ref={props.scroll.contentRef}>
+              {/* One malformed block must not cost the operator the composer,
               the thread list, or the text they were typing — scope a throw
               in the message tree to the scroll region. Switching threads
               resets it. */}
-            <ErrorBoundary
-              message="This conversation failed to render"
-              resetKey={props.conversationId}
-            >
-              <Show
-                when={props.stream.messages.length}
-                fallback={
-                  <Switch
-                    fallback={
-                      <EmptyState
-                        icon="chat"
-                        message="Start a conversation"
-                        hint="Ask a question, request a summary, or describe a task to begin."
-                      />
-                    }
-                  >
-                    <Match when={props.history() === "loading"}>
-                      <div class="px-4 py-8 text-center">
-                        <LoadingText label="Loading conversation…" />
-                      </div>
-                    </Match>
-                    <Match when={props.history() === "error"}>
-                      <ErrorState
-                        message="This conversation could not be loaded"
-                        hint="Check the connection, then try again."
-                        onRetry={props.onRetryHistory}
-                      />
-                    </Match>
-                  </Switch>
-                }
+              <ErrorBoundary
+                message="This conversation failed to render"
+                resetKey={props.conversationId}
               >
-                <For each={props.stream.messages}>
-                  {(message, index) => (
-                    <MessageItem
-                      message={message}
-                      dimmed={index() < foldedThrough()}
-                      subagentCallsign={
-                        message.role === "subagent"
-                          ? props.viewport
-                              .subagents()
-                              .find(
-                                (s) =>
-                                  s.handle ===
-                                  (message.author ?? message.reporter),
-                              )?.callsign
-                          : undefined
+                <Show
+                  when={props.stream.messages.length}
+                  fallback={
+                    <Switch
+                      fallback={
+                        <EmptyState
+                          icon="chat"
+                          message="Start a conversation"
+                          hint="Ask a question, request a summary, or describe a task to begin."
+                        />
                       }
-                      onResolveHostCommands={props.stream.resolveHostCommands}
-                      onRegenerate={() =>
-                        void props.stream.regenerate(message.id)
-                      }
-                      onContinue={() =>
-                        void props.stream.continueTurn(message.id)
-                      }
-                      onCompactAndRetry={() =>
-                        void props.stream.compactAndContinue(message.id)
-                      }
-                      compacting={props.stream.compacting()}
-                      onEditMessage={(id, text) =>
-                        void props.stream.edit(id, text)
-                      }
-                      onSwitchVersion={(id, i) =>
-                        void props.stream.switchVersion(id, i)
-                      }
-                      onTogglePin={() =>
-                        void props.stream.toggleMessagePin(message.id)
-                      }
-                      onOpenInView={props.viewport.openViewTo}
-                      viewItems={props.viewport.items}
-                      seenKey={() => props.viewport.state().seen.view ?? null}
-                      onReattach={() => {
-                        if (message.runId)
-                          void props.stream.reattachRun(message.runId, {
-                            fromSeq: props.stream.lastSeq(),
-                          });
-                      }}
-                      onRewind={() => void props.stream.rewind(message.id)}
-                      onFork={() => void props.actions.fork(message.id)}
-                      onDelete={() =>
-                        void props.actions.removeMessage(message.id)
-                      }
-                    />
-                  )}
-                </For>
-              </Show>
-              {/* Queued behind the running turn: dimmed, at the foot, where it will
+                    >
+                      <Match when={props.history() === "loading"}>
+                        <div class="px-4 py-8 text-center">
+                          <LoadingText label="Loading conversation…" />
+                        </div>
+                      </Match>
+                      <Match when={props.history() === "error"}>
+                        <ErrorState
+                          message="This conversation could not be loaded"
+                          hint="Check the connection, then try again."
+                          onRetry={props.onRetryHistory}
+                        />
+                      </Match>
+                    </Switch>
+                  }
+                >
+                  <For each={props.stream.messages}>
+                    {(message, index) => (
+                      <MessageItem
+                        message={message}
+                        dimmed={index() < foldedThrough()}
+                        subagentCallsign={
+                          message.role === "subagent"
+                            ? props.viewport
+                                .subagents()
+                                .find(
+                                  (s) =>
+                                    s.handle ===
+                                    (message.author ?? message.reporter),
+                                )?.callsign
+                            : undefined
+                        }
+                        onResolveHostCommands={props.stream.resolveHostCommands}
+                        onRegenerate={() =>
+                          void props.stream.regenerate(message.id)
+                        }
+                        onContinue={() =>
+                          void props.stream.continueTurn(message.id)
+                        }
+                        onCompactAndRetry={() =>
+                          void props.stream.compactAndContinue(message.id)
+                        }
+                        compacting={props.stream.compacting()}
+                        onEditMessage={(id, text) =>
+                          void props.stream.edit(id, text)
+                        }
+                        onSwitchVersion={(id, i) =>
+                          void props.stream.switchVersion(id, i)
+                        }
+                        onTogglePin={() =>
+                          void props.stream.toggleMessagePin(message.id)
+                        }
+                        onOpenInView={props.viewport.openViewTo}
+                        viewItems={props.viewport.items}
+                        seenKey={() => props.viewport.state().seen.view ?? null}
+                        onReattach={() => {
+                          if (message.runId)
+                            void props.stream.reattachRun(message.runId, {
+                              fromSeq: props.stream.lastSeq(),
+                            });
+                        }}
+                        onRewind={() => void props.stream.rewind(message.id)}
+                        onFork={() => void props.actions.fork(message.id)}
+                        onDelete={() =>
+                          void props.actions.removeMessage(message.id)
+                        }
+                      />
+                    )}
+                  </For>
+                </Show>
+                {/* Queued behind the running turn: dimmed, at the foot, where it will
                 land. */}
-              <InboxRows
-                inbox={props.stream.inbox()}
-                onEdit={(id, text) => void props.stream.editQueued(id, text)}
-                onWithdraw={(id) => void props.stream.withdrawQueued(id)}
-                onHold={(id, held) => void props.stream.holdQueued(id, held)}
-              />
-            </ErrorBoundary>
+                <InboxRows
+                  inbox={props.stream.inbox()}
+                  onEdit={(id, text) => void props.stream.editQueued(id, text)}
+                  onWithdraw={(id) => void props.stream.withdrawQueued(id)}
+                  onHold={(id, held) => void props.stream.holdQueued(id, held)}
+                />
+              </ErrorBoundary>
+              <div ref={props.scroll.endRef} aria-hidden="true" />
+            </div>
           </div>
         </div>
         <Show when={props.scroll.showJump()}>
@@ -235,12 +249,12 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
             variant="default"
             size="sm"
             leading="chevron-down"
-            onClick={props.scroll.jumpToLatest}
+            onClick={props.scroll.followLatest}
             // `bottom-8` clears the dock's fade band, which reaches up over this
             // region's last 28px and would otherwise frost the button's lower half.
             class="absolute bottom-8 left-1/2 -translate-x-1/2 bg-surface"
           >
-            Jump to latest
+            {props.scroll.newBelow() ? "New text below" : "Jump to latest"}
           </Button>
         </Show>
       </div>
