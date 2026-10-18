@@ -89,6 +89,9 @@ class TurnResult:
     # human-readable reason, carried through to `finalize` so it can persist a
     # marker on the turn's branch node (see `ConversationStore.record`).
     blocked_reason: str | None = None
+    #: The binding an answered turn ended under, carrying any level `plan_enter` or an
+    #: approved plan moved it to, so a verifier correction continues at that level.
+    binding: ConversationBinding | None = None
 
 
 def turn_deps(
@@ -449,7 +452,11 @@ async def drive_turn(
                 deferred_results = None
                 continue
             answer = output if isinstance(output, str) else None
-            return TurnResult(answer=answer, messages=messages)
+            return TurnResult(
+                answer=answer,
+                messages=messages,
+                binding=replace(binding, permission=deps.permission),
+            )
 
         # Rule on each deferred *approval* — grants, then the level, then Auto's review.
         # The rules and their announcement live in `gating.py`; what is left here is what
@@ -463,7 +470,9 @@ async def drive_turn(
             conversation_id=conversation_id,
             deps=deps,
             messages=messages,
-            permission=binding.permission,
+            # The live level, not the turn's opening one: `plan_enter` and an approved plan
+            # move it mid-turn (`tools/plan.retarget`).
+            permission=deps.permission,
             # Where this turn's own messages begin, so the review is given the request
             # that opened it however many tool round trips have run since.
             turn_start=turn_start,
@@ -480,7 +489,9 @@ async def drive_turn(
                 notifications=caps.get_optional(NotificationService),
                 store=store,
                 conversation_id=conversation_id,
-                binding=binding,
+                # At the live level: the resume must stay in plan mode after a revision
+                # request, not reopen at the level this turn started with.
+                binding=replace(binding, permission=deps.permission),
                 vision=vision,
                 # Carried so a resume can recover from an overflow the way this turn would
                 # have: the operator may take hours to answer, and the thread they come

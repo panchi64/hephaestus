@@ -36,6 +36,7 @@ from services.conversations import ConversationBinding, ConversationStore
 from services.permissions import (
     ACTING_PERMISSIONS,
     DEFAULT_PERMISSION,
+    PERMISSION_LADDER,
     PERMISSION_LEVELS,
     PERMISSIONS,
     PLANNING_TOOLS,
@@ -250,6 +251,10 @@ class TestTheDecisionMatrix:
         # A workspace write does not reach this decision at Edit at all — the toolset
         # never marks it, so the model's call simply runs (see the elevation tests).
         assert not beyond_scope("edit", WORKSPACE_WRITE)
+
+    @pytest.mark.parametrize("level", PERMISSION_LADDER)
+    def test_a_plan_approval_is_put_to_the_operator_at_every_level(self, level: str):
+        assert decide(level, "plan_submit") is Decision.ASK
 
     def test_auto_sends_the_same_calls_to_review_instead(self):
         for tool in (HOST_EXEC, EXTERNAL_EFFECT, SECRET, UNCLASSIFIED):

@@ -65,7 +65,12 @@ from core.db import in_session, upsert
 from core.serde import as_utc
 from models._fields import new_id, utcnow
 from models.approval_grant import ApprovalGrant
-from services.permissions import GrantWidth, command_prefixes, declared_reach
+from services.permissions import (
+    OPERATOR_ONLY_TOOLS,
+    GrantWidth,
+    command_prefixes,
+    declared_reach,
+)
 
 #: The tools whose grant is scoped to a command rather than to the whole tool — the ones
 #: whose call carries the command line the operator is really answering. Named as literals
@@ -82,13 +87,11 @@ _COMMAND_ARGUMENT = "command"
 _WORDS = TypeAdapter(list[str])
 
 #: Tools no grant may ever cover, whatever scope was asked for. A grant auto-approves a
-#: *tool name*, and nothing narrower — so a standing one on the egress request would not
-#: mean "this domain again", it would mean every domain the agent goes on to name, which
-#: is the whole of what the fence is for. The domain the operator did approve is
-#: remembered separately, by the egress policy; what stays per call is the act of adding
-#: one. Lives here, next to the store, because both writers of a grant must consult it —
-#: the approve route and a scheduled task's pre-authorization.
-ONCE_ONLY_TOOLS = frozenset({"code_request_egress"})
+#: *tool name*, and nothing narrower — so a standing one on the egress request would mean
+#: every domain the agent goes on to name (the approved domain is remembered by the egress
+#: policy instead), and one on a plan approval would let the agent raise its own level.
+#: Both writers of a grant consult it, and :func:`grant_width` ignores any row on one.
+ONCE_ONLY_TOOLS = frozenset({"code_request_egress"}) | OPERATOR_ONLY_TOOLS
 
 
 @dataclass(frozen=True)
@@ -215,7 +218,7 @@ def grant_width(
     than its tool's own — the last two are how the same leading words stop running inside
     the fence, which is most of what the operator was agreeing to.
     """
-    if tool_name is None:
+    if tool_name is None or tool_name in ONCE_ONLY_TOOLS:
         return "none"
     on_tool = [grant for grant in grants if grant.tool_name == tool_name]
     if not on_tool:
@@ -363,9 +366,10 @@ class ApprovalGrantStore:
             # Expiry is compared in Python (tz-normalized) so a SQLite-naive round-trip
             # can't break the comparison; a SQL `WHERE expires_at > now` would. Lapsed
             # rows are pruned opportunistically on read so the table can't grow without
-            # bound — a bulk delete by id, idempotent under a concurrent prune.
+            # bound — a bulk delete by id, idempotent under a concurrent prune. A row on a
+            # once-only tool covers nothing, so it is pruned too rather than listed.
             for r in rows:
-                if as_utc(r.expires_at) > now:
+                if as_utc(r.expires_at) > now and r.tool_name not in ONCE_ONLY_TOOLS:
                     live.append(
                         GrantInfo(
                             tool_name=r.tool_name,
