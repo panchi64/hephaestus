@@ -17,22 +17,17 @@ import {
   unwrapAll,
 } from "./answerReveal";
 
-/** Slack past the last character's `REVEAL_MS` before the terminal flush unwraps it —
- *  two frames at 60Hz, enough that the fade is over on any display rather than merely
- *  over according to the clock. */
+/** Slack after the last fade before the terminal flush: two frames at 60 Hz, so the
+ *  fade is over on screen and not only by the clock. */
 const FLUSH_SLACK_MS = 32;
 
 /** A passage of the answer — full-width and bright. The active, still-streaming
- *  passage carries the caret, resolves each arriving character in on its own
- *  schedule (§8, human register), and defers code-copy enhancement until it
- *  settles.
+ *  passage carries the caret and resolves each arriving character in on its own
+ *  schedule (§8, human register).
  *
- *  `streamStable` while live keeps the DOM of every settled block, so only the
- *  trailing block re-parses per delta — which is what stops KaTeX/markdown
- *  flicker. It is also why the reveal is scheduled in absolute time: that
- *  re-parse destroys anything mid-animation, and only a character that knows
- *  when it *started* can pick its fade back up rather than restarting it. See
- *  `streamReveal.ts`. */
+ *  The reveal is scheduled in absolute time because each delta re-parses the trailing
+ *  block and destroys anything mid-animation; a character that knows when it started
+ *  resumes its fade. See `streamReveal.ts`. */
 export function AnswerText(props: {
   text: string;
   active?: boolean;
@@ -41,21 +36,10 @@ export function AnswerText(props: {
   const live = () => Boolean(props.active && props.streaming);
   const screenshotSrc = useScreenshotSrc();
 
-  /* Latched, and this is what stops the screen flashing when a run finishes.
-     `Markdown` renders a *different element* for `streamStable` than for its
-     default path — it has to, since Solid's `innerHTML` prop can't coexist with
-     rendered children on one node. Passing `live()` straight through therefore
-     flipped that flag at the exact moment the answer completed, and Solid tore
-     down the entire rendered answer and rebuilt it: a full re-parse, a fresh
-     DOM, KaTeX re-rendered, every `pre` and `table` re-wrapped. On a long answer
-     that is a visible flash at the worst possible moment — the instant the
-     operator starts reading.
-
-     Once a passage has streamed it keeps the block path forever. The two paths
-     render the same content (the block path exists to replicate the prose
-     cascade at the block-wrapper level), so there is nothing to switch back
-     for. A message that never streamed — history, a settled turn — never takes
-     the block path at all, which is the cheaper read for a long transcript. */
+  // Latched: once a passage has streamed it keeps the block path. `Markdown` renders a
+  // different element per path, so flipping the flag as the run ends would rebuild the
+  // whole answer, a visible flash just as the operator starts reading. A message that
+  // never streamed never takes the block path.
   const [streamStable, setStreamStable] = createSignal(live());
   createEffect(() => {
     if (live()) setStreamStable(true);
@@ -66,37 +50,26 @@ export function AnswerText(props: {
   );
 
   let host: HTMLDivElement | undefined;
-  // The reveal's carry-over between deltas — which block is being wrapped, that block's
-  // schedule, and when each earlier block's wrappers may come out. A message that
-  // arrives complete (history, a settled turn) never runs a pass and so never animates.
+  // A message that arrives complete never runs a pass, so never animates.
   const reveal = createRevealState();
-  // Running estimate of the gap between deltas, which is what the stagger is
-  // paced against — see `streamReveal.ts`. Seeded rather than measured from the
-  // first delta, since there is nothing to measure against yet.
+  // Running estimate of the gap between deltas, which paces the stagger. Seeded,
+  // since the first delta has nothing to measure against.
   let interval = INTERVAL_SEED;
   let lastDelta = 0;
-  // The terminal flush. A settled block gives its wrappers back on the delta after it
-  // stops being the trailing one, but the LAST block of an answer never stops being
-  // trailing — no further delta arrives to notice — so without this every answer keeps
-  // its final block's spans forever. Re-armed on every delta and cleared on cleanup, so
-  // it only ever fires once the text has actually stopped.
+  // The terminal flush. A block gives its wrappers back on the delta after it stops
+  // trailing, but the last block never does, so this unwraps it once the text stops.
+  // Re-armed on every delta.
   let flush: ReturnType<typeof setTimeout> | null = null;
   onCleanup(() => {
     if (flush !== null) clearTimeout(flush);
   });
 
   createEffect(() => {
-    // Read the source so this effect re-runs on every delta (the value itself
-    // is not needed — the DOM Markdown just committed is what gets walked).
     // Every delta, not every change to `source()`: a held line leaves the shown text
-    // unchanged for several deltas, and the reveal still has to advance through them.
+    // unchanged for several deltas, and the reveal still advances through them.
     void props.text;
-    // A passage that never streamed (history, a settled turn) schedules nothing
-    // and renders instantly. One that has streamed keeps going for a final pass
-    // after `live()` drops: the run's last characters land in the same tick the
-    // stream closes, and bailing here made them the one part of the answer that
-    // appeared without resolving — a pop right at the end of an otherwise smooth
-    // reveal.
+    // A passage that streamed gets one more pass after `live()` drops, because its
+    // last characters land in the tick the stream closes.
     if (!host || (!live() && !reveal.seeded)) return;
     // Let Markdown commit its own DOM for this delta first.
     queueMicrotask(() => {
@@ -106,9 +79,7 @@ export function AnswerText(props: {
       lastDelta = now;
       applyReveal(host, reveal, now, interval);
 
-      // Arm the flush for just after the last scheduled character finishes. A frame of
-      // slack past that rather than exactly on it: unwrapping is what ends the fade
-      // visually, and ending it a frame early is a visible snap.
+      // Unwrapping ends the fade visually, so firing a frame early is a visible snap.
       if (flush !== null) clearTimeout(flush);
       const end = revealEndsAt(reveal) || now;
       flush = setTimeout(
@@ -124,18 +95,9 @@ export function AnswerText(props: {
   return (
     <div>
       <div ref={host} class="inline">
-        {/* `copyCode` stays on THROUGHOUT, including while streaming. It used to
-            be gated on `!live()` to save a DOM scan per delta, but that gate was
-            paid for at the worst moment: flipping it on completion ran the
-            enhancement pass over a finished answer, and that pass *physically
-            moves* every `pre` and `table` — out of the tree and back inside a
-            wrapper. Re-laying-out and re-rasterizing every code block the
-            instant the answer settles is a redraw the operator sees.
-
-            Enhancing as we go does the same work incrementally on the trailing
-            block instead, and leaves nothing to do at the end. The buttons are
-            hidden until their block is hovered, so nothing appears mid-stream
-            either. */}
+        {/* `copyCode` stays on while streaming. Turning it on at the end would move
+            every `pre` and `table` into a wrapper just as the operator starts
+            reading; the buttons stay hidden until hover. */}
         <Markdown
           class="inline"
           streamStable={streamStable()}
