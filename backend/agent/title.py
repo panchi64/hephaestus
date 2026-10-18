@@ -33,6 +33,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
 from core.text import strip_think_blocks
+from core.untrusted import wrap_untrusted
 from prompts.utility import TITLE_INSTRUCTIONS
 
 from .meta import make_utility_agent
@@ -181,7 +182,9 @@ async def generate_title(
     if max_tokens is not None:
         settings["max_tokens"] = max_tokens
     agent = make_utility_agent(model, output_type=str, instructions=TITLE_INSTRUCTIONS)
-    user = prompt[:excerpt]
+    # Fenced so a message addressed to the assistant ("what are you?") reads as text to
+    # name rather than a question for the namer to answer.
+    user = wrap_untrusted(prompt[:excerpt], source="operator messages")
     try:
         run = agent.run(user, model_settings=settings)
         # asyncio.TimeoutError is an Exception subclass (caught below); CancelledError

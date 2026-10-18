@@ -184,6 +184,11 @@ async def test_a_background_command_reports_status_and_streams_as_fields(tmp_pat
     assert stopped is not None and stopped.status == "stopped"
 
 
+def test_a_denied_command_says_not_to_reach_it_another_way():
+    with pytest.raises(PermissionError, match="Don't reach the same effect"):
+        shell_runner.check_command("rm logs/app.log.2")
+
+
 async def test_an_unknown_background_id_is_none_rather_than_a_sentence(tmp_path: Path):
     # The prose for it belongs where the rest of this tool's prose is; the runner's
     # answer is the absence itself, which a caller cannot mistake for output.

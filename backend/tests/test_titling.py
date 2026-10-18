@@ -157,6 +157,25 @@ async def test_generate_title_applies_max_tokens_override():
     assert captured[0].get("max_tokens") == 4096
 
 
+async def test_generate_title_fences_the_operator_text():
+    # Unfenced, a question addressed to the assistant gets answered instead of named.
+    prompts: list[str] = []
+
+    async def capture(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        prompts.extend(
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        )
+        return ModelResponse(parts=[TextPart("Talos's identity and role")])
+
+    _ = await generate_title(FunctionModel(capture), "what are you?")
+    assert len(prompts) == 1
+    assert '<untrusted id="' in prompts[0] and "what are you?" in prompts[0]
+
+
 # --- engine wiring ----------------------------------------------------------
 
 

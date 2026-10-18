@@ -441,7 +441,10 @@ def check_command(command: str) -> None:
     except ValueError:
         return
     if tokens and tokens[0] in _DENIED_COMMANDS:
-        raise PermissionError(f"Command {tokens[0]!r} is denied.")
+        raise PermissionError(
+            f"Command {tokens[0]!r} is denied. Don't reach the same effect through another "
+            + "command or an interpreter; tell the operator what you needed it for."
+        )
 
 
 def _stream_files(prefix: str) -> tuple[IO[bytes], IO[bytes]]:
