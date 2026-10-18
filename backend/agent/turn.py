@@ -420,9 +420,11 @@ async def drive_turn(
         # either one alone means there is more of this turn to run.
         if not (isinstance(output, DeferredToolRequests) and (output.approvals or output.calls)):
             # About to stop with nothing else to take: an open task list gets one word first.
+            # Not after a spawned agent's report, which told it to end without another word.
             if (
                 not open_tasks_raised
                 and conversation_id is not None
+                and not deps.reported
                 and not run.messages.has_deliverable()
             ):
                 open_tasks_raised = True

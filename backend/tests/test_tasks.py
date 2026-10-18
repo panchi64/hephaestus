@@ -36,8 +36,11 @@ from core.db import init_db, make_engine
 from core.vault import Vault
 from models.task_list import ConversationTaskList
 from runs import EventBody, Run, RunRegistry, RunStatus, RunStream, TasksUpdated
+from services.conversations import ConversationBinding
+from services.subagents import FiledReport, SubagentLauncher, SubagentView
 from services.task_list import ConversationTasks, ConversationTaskStore
 from tools import RunDeps, build_agent_toolsets, harness_events_capability
+from tools.report import report_toolset
 from tools.tasks import tasks_toolset
 
 OWNER = "operator"
@@ -287,9 +290,26 @@ def test_the_rename_map_is_a_bijection_over_the_allowlist():
     assert {LOCAL[upstream] for upstream in UPSTREAM.values()} == set(UPSTREAM)
 
 
-def _caps(tasks: ConversationTasks) -> ServiceContainer:
+class _Launcher:
+    """One spawned agent below every thread, in ``status``; a filed report is accepted."""
+
+    def __init__(self, status: str) -> None:
+        self.status: str = status
+
+    async def below(self, _owner_id: str, _conversation_id: str) -> list[SubagentView]:
+        return [SubagentView("s1", "child", "r1", "worker", "fixer", "fix it", self.status)]
+
+    async def file_report(
+        self, _owner_id: str, _conversation_id: str, _run_id: str, _report: FiledReport
+    ) -> str:
+        return "parent"
+
+
+def _caps(tasks: ConversationTasks, launcher: _Launcher | None = None) -> ServiceContainer:
     caps = ServiceContainer()
     caps.add(tasks, as_type=ConversationTasks)
+    if launcher is not None:
+        caps.add(launcher, as_type=SubagentLauncher)
     return caps
 
 
@@ -336,26 +356,55 @@ async def test_no_conversation_or_no_capability_raises_nothing(tasks: Conversati
     assert await open_tasks_notice(ServiceContainer(), OWNER, "conv-1") is None
 
 
-def _answer(*, write_list: bool) -> StreamFunctionDef:
+@pytest.mark.parametrize("status", ["running", "blocked"])
+async def test_agents_still_out_hold_the_notice_for_a_later_stop(
+    tasks: ConversationTasks, status: str
+):
+    await _store(tasks).set_items(_items("collect the reports"))
+    launcher = _Launcher(status)
+    caps = _caps(tasks, launcher)
+    assert await open_tasks_notice(caps, OWNER, "conv-1") is None
+
+    launcher.status = "done"
+    notice = await open_tasks_notice(caps, OWNER, "conv-1")
+    assert notice is not None and "collect the reports (pending)" in notice
+
+
+type _Call = tuple[str, dict[str, object]]
+
+_WRITE_LIST: _Call = ("tasks_write", {"items": [{"content": "ship it"}]})
+_REPORT: _Call = ("subagent_report", {"status": "done", "report": "shipped"})
+
+
+def _answer(*calls: _Call) -> StreamFunctionDef:
+    """Makes ``calls`` one per model request, then answers."""
+
     async def stream_fn(
         messages: list[ModelMessage], _info: AgentInfo
     ) -> AsyncIterator[str | DeltaToolCalls]:
-        if write_list and not any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
-            args = {"items": [{"content": "ship it"}]}
-            yield {0: DeltaToolCall(name="tasks_write", json_args=json.dumps(args))}
+        made = sum(isinstance(p, ToolReturnPart) for m in messages for p in m.parts)
+        if made < len(calls):
+            name, args = calls[made]
+            yield {0: DeltaToolCall(name=name, json_args=json.dumps(args))}
         else:
             yield "done"
 
     return stream_fn
 
 
-async def _run_with_list(tasks: ConversationTasks, *, write_list: bool) -> Run:
+async def _run_with_list(
+    tasks: ConversationTasks,
+    *calls: _Call,
+    launcher: _Launcher | None = None,
+    spawned: bool = False,
+) -> Run:
     orch = build_chat_orchestrator(
         "go",
-        model=FunctionModel(stream_function=_answer(write_list=write_list)),
-        categories={"tasks": tasks_toolset()},
-        capabilities=_caps(tasks),
+        model=FunctionModel(stream_function=_answer(*calls)),
+        categories={"tasks": tasks_toolset(), "subagent": report_toolset()},
+        capabilities=_caps(tasks, launcher),
         conversation_id="conv-e2e",
+        binding=ConversationBinding(spawned=spawned),
     )
     run = RunRegistry().submit(kind="chat", owner_id=OWNER, orchestrator=orch)
     await run.wait()
@@ -367,12 +416,33 @@ def _notices(run: Run) -> list[str]:
 
 
 async def test_the_turn_continues_once_for_open_steps_and_not_again(tasks: ConversationTasks):
-    first = await _run_with_list(tasks, write_list=True)
+    first = await _run_with_list(tasks, _WRITE_LIST)
     assert first.status is RunStatus.done
     assert _notices(first) == ["message.injected"]
     assert [b.type for b in _bodies(first)].count("step.started") == 3
     assert [b.type for b in _bodies(first)].count("run.ended") == 1
 
-    second = await _run_with_list(tasks, write_list=False)
+    second = await _run_with_list(tasks)
     assert second.status is RunStatus.done
     assert _notices(second) == []
+
+
+async def test_a_parent_waiting_on_its_agents_ends_the_turn_unprompted(
+    tasks: ConversationTasks,
+):
+    launcher = _Launcher("running")
+    waiting = await _run_with_list(tasks, _WRITE_LIST, launcher=launcher)
+    assert waiting.status is RunStatus.done
+    assert _notices(waiting) == []
+
+    launcher.status = "done"
+    woken = await _run_with_list(tasks, launcher=launcher)
+    assert _notices(woken) == ["message.injected"]
+
+
+async def test_a_spawned_agent_that_reported_is_not_reopened(tasks: ConversationTasks):
+    run = await _run_with_list(
+        tasks, _WRITE_LIST, _REPORT, launcher=_Launcher("done"), spawned=True
+    )
+    assert run.status is RunStatus.done
+    assert _notices(run) == []
