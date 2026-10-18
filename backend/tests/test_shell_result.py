@@ -186,7 +186,37 @@ async def test_a_background_command_reports_status_and_streams_as_fields(tmp_pat
 
 def test_a_denied_command_says_not_to_reach_it_another_way():
     with pytest.raises(PermissionError, match="Don't reach the same effect"):
-        shell_runner.check_command("rm logs/app.log.2")
+        shell_runner.check_command("mkfs /dev/sda1")
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cd x && reboot", "FOO=1 /sbin/shutdown now", "ls; rm a", "true | xargs rm", "ls\nrm a"],
+)
+def test_every_part_of_a_chained_command_is_checked(command: str):
+    with pytest.raises(PermissionError, match="is denied"):
+        shell_runner.check_command(command)
+
+
+@pytest.mark.parametrize("command", ["echo rm", "grep -r rm .", "git rm --cached x"])
+def test_a_denied_name_as_an_argument_passes(command: str):
+    shell_runner.check_command(command)
+
+
+@pytest.mark.parametrize("command", ["rm -rf build", "rmdir x", "cd a && rm b"])
+def test_the_vm_lets_deletions_through_to_the_permission_layer(command: str):
+    shell_runner.check_command(command, denied=shell_runner.VM_DENIED_COMMANDS)
+
+
+@pytest.mark.parametrize("command", ["rm -rf /", "rm -rf ~/projects", "cd x && rm -r $HOME/"])
+def test_the_vm_refuses_deleting_a_whole_tree(command: str):
+    with pytest.raises(PermissionError, match="'rm' is denied"):
+        shell_runner.check_command(command, denied=shell_runner.VM_DENIED_COMMANDS)
+
+
+def test_the_vm_still_refuses_the_rest():
+    with pytest.raises(PermissionError, match="'mkfs' is denied"):
+        shell_runner.check_command("mkfs x", denied=shell_runner.VM_DENIED_COMMANDS)
 
 
 async def test_an_unknown_background_id_is_none_rather_than_a_sentence(tmp_path: Path):

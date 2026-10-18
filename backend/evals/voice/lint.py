@@ -81,6 +81,8 @@ _CLOSER = _words(
     r"don'?t hesitate",
     r"anything else",
     r"happy coding",
+    r"i'?ll be here when",
+    r"right here if you need",
 )
 _OFFER = _words(
     r"would you like me to",
@@ -90,6 +92,10 @@ _OFFER = _words(
     r"if you'?d like",
     r"i can also",
     r"i could also",
+    r"if you want,? (?:me to|i can|i could)",
+    r"say the word",
+    r"just let me know",
+    r"tell me\b[^.?!]{0,120}\band i'?ll",
 )
 _HEDGE = _words(
     "i think",

@@ -54,6 +54,7 @@ from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.shell import Shell
 
 from core.diagnostics import render_tool_error
+from services.home.paths import HOME
 
 from .process import filtered_env, kill_tree, spawn_confined, terminate_tree
 
@@ -75,6 +76,28 @@ _PROGRESS_MAX_CHARS = 200_000
 #: harness rather than restated: it is a guardrail against a slip, not a boundary, and two
 #: copies of a guardrail is one copy that stops being updated when the other grows an entry.
 _DENIED_COMMANDS: frozenset[str] = frozenset(Shell().denied_commands)
+
+#: In the VM a deletion is a recoverable workspace write: the permission layer rules on it,
+#: not a name check the model can walk around with an interpreter.
+VM_DENIED_COMMANDS: frozenset[str] = _DENIED_COMMANDS - {"rm", "rmdir"}
+
+#: Shell operators that start a new command, as `shlex` splits them with punctuation on.
+_SEPARATORS = frozenset({"&&", "||", ";", "|", "|&", "&", "(", ")"})
+
+#: Programs that run the next word as the command, so the next word is the one to check.
+_WRAPPERS = frozenset({"env", "exec", "nohup", "time", "command", "nice", "sudo", "xargs"})
+
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+#: A deletion aimed at the whole filesystem or home is refused even where `rm` is allowed:
+#: it is the slip the guardrail exists for, and the VM syncs project deletions back.
+_DELETERS = frozenset({"rm", "rmdir"})
+_WHOLE_TREES = frozenset(
+    f"{root}{sub}{tail}"
+    for root in ("~", "$HOME", "${HOME}", HOME)
+    for sub in ("", "/projects", "/worktrees")
+    for tail in ("", "/", "/*")
+) | {"/", "/*"}
 
 #: Programs that want a terminal. Here they would not fail — they would hang until the
 #: timeout, spending the turn on nothing.
@@ -414,7 +437,7 @@ class HostShell:
         return truncate_tail(text, self._max_output_chars)
 
 
-def check_command(command: str) -> None:
+def check_command(command: str, *, denied: frozenset[str] = _DENIED_COMMANDS) -> None:
     """Refuse what this shell will not run at all, before anything is spawned. Best-effort,
     and not the boundary: a determined agent walks around a name check with an interpreter.
     The boundary is the permission layer in front of it."""
@@ -436,15 +459,35 @@ def check_command(command: str) -> None:
         ) from exc
     if _INTERACTIVE.match(command.strip()):
         raise PermissionError(f"Interactive commands are not allowed. Command: {command!r}")
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return
-    if tokens and tokens[0] in _DENIED_COMMANDS:
+    if (program := _first_denied(command, denied)) is not None:
         raise PermissionError(
-            f"Command {tokens[0]!r} is denied. Don't reach the same effect through another "
+            f"Command {program!r} is denied. Don't reach the same effect through another "
             + "command or an interpreter; tell the operator what you needed it for."
         )
+
+
+def _first_denied(command: str, denied: frozenset[str]) -> str | None:
+    """The first program in any part of ``command`` (``a && b``, ``a; b``, ``a | b``) that
+    is in ``denied``. A command that does not tokenize passes, as the shell will say why."""
+    lexer = shlex.shlex(command.replace("\n", ";"), posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    program: str | None = None
+    for token in tokens:
+        if token in _SEPARATORS:
+            program = None
+        elif program is None:
+            if _ASSIGNMENT.match(token) or token in _WRAPPERS:
+                continue
+            program = os.path.basename(token)
+            if program in denied:
+                return program
+        elif program in _DELETERS and token in _WHOLE_TREES:
+            return program
+    return None
 
 
 def _stream_files(prefix: str) -> tuple[IO[bytes], IO[bytes]]:
