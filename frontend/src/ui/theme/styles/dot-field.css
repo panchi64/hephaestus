@@ -5,8 +5,9 @@
    holds still while the rail is dragged. A conic gradient paints the square:
    everything but the quadrant above-left of (1px, 1px) is transparent.
 
-   The focus is where the launchpad composer centres in the column across
-   window heights (≈46%); the 404 plate sits at 50%, inside the falloff's core.
+   The focus is where the launchpad composer centres in the column: ≈40% with a
+   full activity ledger under it, ≈45% with a short one, because the desk is
+   centred as one block. The 404 plate sits at 50%, inside the falloff's core.
    `closest-side` reaches zero at the nearest edge on each axis, so no edge and
    no corner carries a dot. */
 .heph-dot-field {
@@ -21,7 +22,7 @@
   background-size: var(--space-6) var(--space-6);
   background-attachment: fixed;
   mask-image: radial-gradient(
-    closest-side at 50% 46%,
+    closest-side at 50% 42%,
     #000 30%,
     rgb(0 0 0 / 0.4) 65%,
     transparent 100%
