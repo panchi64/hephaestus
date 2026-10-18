@@ -332,13 +332,13 @@ class Settings(BaseSettings):
     review_max_per_turn: int = 12
     review_ledger_entries: int = 20
     # Thresholds over the decision model's probabilities (`decision_scoring.py`).
-    # `too_destructive` at P(irreversible) >= destroy_min. `low` needs the weighted risk
-    # position <= low_position_max, at most low_tail_max on the two upper levels, and
-    # P(outward) < outward_max. `explicitly_yes` needs P(requested) >= requested_min,
+    # `too_destructive` at P(irreversible) >= destroy_min. `low` needs at most
+    # low_tail_max on the two upper levels, at most low_irreversible_max on the top one,
+    # and P(outward) < outward_max. `explicitly_yes` needs P(requested) >= requested_min,
     # P(refused) < refused_clear_max and P(mismatch) < mismatch_max.
     decision_destroy_min: float = 0.35
-    decision_low_position_max: float = 0.8
     decision_low_tail_max: float = 0.2
+    decision_low_irreversible_max: float = 0.1
     decision_outward_max: float = 0.5
     decision_refused_min: float = 0.5
     decision_requested_min: float = 0.8

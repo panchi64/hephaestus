@@ -15,12 +15,14 @@ from typing import Annotated
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, model_validator
 
 from core.exceptions import DegradedCapabilityError
 from services.endpoint_spec import EndpointSpec
 
 type Probability = Annotated[float, Field(ge=0.0, le=1.0)]
+
+_KEYED: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 
 
 class DecisionUnavailable(DegradedCapabilityError):
@@ -66,8 +68,30 @@ class ChoiceAnswer(BaseModel):
 class ScoreAnswer(BaseModel):
     #: The probability-weighted level index, so it can be fractional.
     score: float
+    #: Per level, lowest first.
     probabilities: list[Probability]
     confidence: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _levels_in_order(cls, data: object) -> object:
+        """The Jev wire keys each level's probability by its position (``{"0": p, …}``); a
+        map keyed by level name is read through ``legend`` (position → name)."""
+        if not isinstance(data, dict):
+            return data
+        raw = _KEYED.validate_python(data)
+        probabilities = raw.get("probabilities")
+        if not isinstance(probabilities, dict):
+            return raw
+        keys = [str(i) for i in range(len(probabilities))]
+        legend = raw.get("legend")
+        if not all(key in probabilities for key in keys) and isinstance(legend, dict):
+            keys = [name if isinstance(name := legend.get(key), str) else key for key in keys]
+        try:
+            ordered: list[JsonValue] = [probabilities[key] for key in keys]
+        except KeyError as exc:
+            raise ValueError("score probabilities must be keyed by level position") from exc
+        return {**raw, "probabilities": ordered}
 
 
 type Answer = NoulAnswer | ChoiceAnswer | ScoreAnswer
@@ -78,6 +102,35 @@ class _Response(BaseModel):
 
 
 _RESPONSE = TypeAdapter(_Response)
+
+
+class _ErrorMessage(BaseModel):
+    message: str
+
+
+class _ErrorBody(BaseModel):
+    """OpenAI-style ``{"error": {"message"}}``, a bare ``{"error": "…"}``, or ``{"detail"}``."""
+
+    error: _ErrorMessage | str | None = None
+    detail: str | None = None
+
+
+_ERROR_BODY = TypeAdapter(_ErrorBody)
+_SAID_MAX = 200
+
+
+def _said(response: httpx.Response) -> str:
+    """What the server said about a failed call, short and on one line, so a bind that fails
+    can tell the operator why."""
+    if response.status_code == 501:
+        return " (the model is not a decision model)"
+    try:
+        body = _ERROR_BODY.validate_json(response.content)
+    except ValidationError:
+        return ""
+    error = body.error.message if isinstance(body.error, _ErrorMessage) else body.error
+    message = " ".join((error or body.detail or "").split())
+    return f": {message[:_SAID_MAX]}" if message else ""
 
 
 def decisions_url(base_url: str) -> str:
@@ -149,8 +202,7 @@ async def ask(
         raise DecisionUnavailable(f"couldn't reach the decision endpoint {url!r}") from exc
     if response.status_code != 200:
         raise DecisionUnavailable(
-            f"the decision endpoint {url!r} answered {response.status_code}"
-            + (" (the model is not a decision model)" if response.status_code == 501 else "")
+            f"the decision endpoint {url!r} answered {response.status_code}{_said(response)}"
         )
     try:
         parsed = _RESPONSE.validate_json(response.content)

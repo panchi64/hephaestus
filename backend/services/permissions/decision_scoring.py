@@ -35,8 +35,8 @@ def score(answers: Mapping[str, Answer], settings: Settings) -> ScoredVerdict:
     if levels[-1] >= settings.decision_destroy_min:
         risk = "too_destructive"
     elif (
-        risk_answer.score <= settings.decision_low_position_max
-        and sum(levels[2:]) <= settings.decision_low_tail_max
+        sum(levels[2:]) <= settings.decision_low_tail_max
+        and levels[-1] <= settings.decision_low_irreversible_max
         and outward < settings.decision_outward_max
     ):
         risk = "low"

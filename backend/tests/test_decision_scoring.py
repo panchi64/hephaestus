@@ -46,8 +46,13 @@ class TestRisk:
         verdict = score(answers(levels=(0.65, 0.1, 0.25, 0.0)), T).verdict
         assert verdict.risk == "high"
 
-    def test_a_middling_position_is_high(self):
-        assert score(answers(levels=(0.1, 0.9, 0.0, 0.0)), T).verdict.risk == "high"
+    def test_a_confident_recoverable_change_is_low(self):
+        assert score(answers(levels=(0.05, 0.9, 0.05, 0.0)), T).verdict.risk == "low"
+
+    def test_a_chance_of_the_irreversible_is_never_low(self):
+        irreversible = T.decision_low_irreversible_max + 0.01
+        verdict = score(answers(levels=(0.0, 1 - irreversible, 0.0, irreversible)), T).verdict
+        assert verdict.risk == "high"
 
     def test_anything_outward_is_high_whatever_the_levels_say(self):
         assert score(answers(outward=T.decision_outward_max), T).verdict.risk == "high"

@@ -31,7 +31,13 @@ QUESTIONS: dict[str, Question] = {
 GOOD_ANSWERS: dict[str, object] = {
     "yes": {"noul": 0.9},
     "team": {"choice": "tech", "probabilities": {"billing": 0.2, "tech": 0.8}},
-    "level": {"score": 1.2, "probabilities": [0.1, 0.6, 0.3], "confidence": 0.4},
+    "level": {
+        "type": "score",
+        "score": 1.2,
+        "confidence": 0.4,
+        "legend": {"0": "Fine", "1": "Bad", "2": "Awful"},
+        "probabilities": {"0": 0.1, "1": 0.6, "2": 0.3},
+    },
 }
 GOOD = {"answers": GOOD_ANSWERS}
 
@@ -84,7 +90,16 @@ async def test_it_sends_the_model_the_state_the_questions_and_the_key():
     assert seen[0].headers["Authorization"] == "Bearer k"
     assert answers["yes"] == NoulAnswer(noul=0.9)
     assert isinstance(answers["team"], ChoiceAnswer)
-    assert isinstance(answers["level"], ScoreAnswer)
+    level = answers["level"]
+    assert isinstance(level, ScoreAnswer)
+    assert level.probabilities == [0.1, 0.6, 0.3]
+
+
+async def test_score_probabilities_are_also_read_as_a_list():
+    level = {"score": 1.2, "probabilities": [0.1, 0.6, 0.3]}
+    async with _client(_json({"answers": {**GOOD_ANSWERS, "level": level}}), []) as client:
+        answers = await decisions.ask(LOCAL, None, QUESTIONS, timeout_s=5, client=client)
+    assert answers["level"] == ScoreAnswer(score=1.2, probabilities=[0.1, 0.6, 0.3])
 
 
 async def test_a_keyless_local_server_gets_no_auth_header():
@@ -119,6 +134,15 @@ LOCAL = EndpointSpec(base_url="http://127.0.0.1:8080/v1", model="kev")
             {"answers": {**GOOD_ANSWERS, "level": {"score": 1.0, "probabilities": [1.0]}}},
             id="wrong-level-count",
         ),
+        pytest.param(
+            {
+                "answers": {
+                    **GOOD_ANSWERS,
+                    "level": {"score": 1.0, "probabilities": {"1": 0.2, "2": 0.5, "3": 0.3}},
+                }
+            },
+            id="levels-not-keyed-from-zero",
+        ),
         pytest.param({"choices": []}, id="chat-shaped"),
     ],
 )
@@ -133,6 +157,37 @@ async def test_a_failing_status_is_refused(status: int):
     async with _client(_json({}, status), []) as client:
         with pytest.raises(DecisionUnavailable, match=str(status)):
             _ = await decisions.ask(LOCAL, None, QUESTIONS, timeout_s=5, client=client)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            {"error": {"message": "There are no\ndownloaded decision models."}}, id="openai"
+        ),
+        pytest.param({"error": "There are no downloaded decision models."}, id="bare"),
+        pytest.param({"detail": "There are no downloaded decision models."}, id="detail"),
+    ],
+)
+async def test_a_refusal_carries_what_the_server_said(body: object):
+    async with _client(_json(body, 400), []) as client:
+        with pytest.raises(
+            DecisionUnavailable, match="answered 400: There are no downloaded decision models"
+        ):
+            _ = await decisions.ask(LOCAL, None, QUESTIONS, timeout_s=5, client=client)
+
+
+async def test_score_probabilities_keyed_by_level_name_are_read_through_the_legend():
+    level = {
+        "score": 1.2,
+        "legend": {"0": "Fine", "1": "Bad", "2": "Awful"},
+        "probabilities": {"Awful": 0.3, "Fine": 0.1, "Bad": 0.6},
+    }
+    async with _client(_json({"answers": {**GOOD_ANSWERS, "level": level}}), []) as client:
+        answers = await decisions.ask(LOCAL, None, QUESTIONS, timeout_s=5, client=client)
+    level_answer = answers["level"]
+    assert isinstance(level_answer, ScoreAnswer)
+    assert level_answer.probabilities == [0.1, 0.6, 0.3]
 
 
 async def test_an_unreachable_server_is_refused():

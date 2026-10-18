@@ -182,10 +182,10 @@ def _default_answer(name: str, question: JsonValue) -> JsonValue:
     criteria = question.get("criteria") if isinstance(question, dict) else None
     if kind == "score":
         levels = len(criteria) if isinstance(criteria, list) else 2
-        probabilities: list[JsonValue] = [0.0] * levels
-        probabilities[0] = 0.9
+        probabilities: dict[str, JsonValue] = {str(i): 0.0 for i in range(levels)}
+        probabilities["0"] = 0.9
         if levels > 1:
-            probabilities[1] = 0.1
+            probabilities["1"] = 0.1
         return {"score": 0.1, "probabilities": probabilities, "confidence": 0.8}
     if kind == "choice":
         options = list(criteria) if isinstance(criteria, dict) else []
