@@ -801,17 +801,17 @@ Keep:
 
 Everything above is texture the eye skips. The ground under every page is texture too, but it is the one texture that knows what the platform is doing.
 
-**What it is.** An ordered dither on a 2px cell (half the base unit): each cell lit or unlit against a 4×4 Bayer threshold, drawn one canvas pixel per cell and scaled up hard (`DitherField`, `ui/theme/dither.ts`). About a quarter to a third of the cells are lit at rest, and a lit cell is `--dither-on` (`#0d0d0d` on Ink, `#f4f4f4` on Paper), barely off the ground. Fine and dense at that contrast, it reads as a tone with a grain rather than as dots. You see it if you look for it.
+**What it is.** An ordered dither on a 2px cell (half the base unit): each cell lit or unlit against a 4×4 Bayer threshold, shaded on the GPU one canvas pixel per cell and scaled up hard (`DitherField`, its constants in `ui/theme/dither.ts`, the shader in `ui/theme/dither-shader.ts`). Without WebGL it draws nothing and the page keeps its plain ground. About a quarter to a third of the cells are lit at rest, and a lit cell is `--dither-on` (`#0d0d0d` on Ink, `#f4f4f4` on Paper), barely off the ground. Fine and dense at that contrast, it reads as a tone with a grain rather than as dots. You see it if you look for it.
 
 **Where it is.** Behind every page, the auth screens and the 404 included, mounted once at the app root under everything in flow. The rail is glass over it (`.heph-rail-glass`), so it reads through as a blur. Opaque objects occlude it on purpose: panels, console groups, instrument bands and the composer keep their `bg-surface`, so the field shows only in the gaps between them and never runs through a column of numbers. Dialogs, drawers, menus and toasts sit above it.
 
 **What it says.**
 
 - **Load.** The density steps up one notch per live thread, two for a thread waiting on the operator, up to five steps. It steps, it never fades: load is the machine's state (§8).
-- **Events.** A ring of denser cells travels out from where an event happened and is gone in 2.4s. A thread starting, finishing, failing or asking starts at its rail row (at the park dock for an ask on the open thread, at the rail's edge for a row folded or scrolled away). A reminder, a task outcome or a system notice starts at the bell.
-- **Hue.** A ring's crest leans `--dither-tint` of the way toward the event's accent (12% on Ink, 8% on Paper). Near the ground that is a hint of hue and no more, which is what keeps it inside §5's rules: the field never carries a colour on its own, only the faint echo of one already said elsewhere.
+- **Events.** An event leaves the grain alone: no cell turns on or off for it, and nothing moves. A broad, soft patch around where it happened (a gaussian of about 120px) leans its lit cells toward the event's accent, easing in over 0.6s and gone by 5s. A thread starting, finishing, failing or asking glows at its rail row (at the park dock for an ask on the open thread, at the rail's edge for a row folded or scrolled away). A reminder, a task outcome or a system notice glows at the bell.
+- **Hue.** At its centre and peak a glow leans `--dither-tint` of the way toward the accent (4% on Ink, 3% on Paper), falling smoothly to nothing with distance and age, so it has no edge. Near the ground that is a suggestion of hue and no more, which is what keeps it inside §5's rules: the field never carries a colour on its own, only the faint echo of one already said elsewhere.
 
-**It drifts.** A slow low-frequency weather moves the density while the tab is visible: the one stated exception to §8's "nothing runs while the operator is not looking". It redraws in 100ms hard steps (the machine register), stops when the tab is hidden, and under reduced motion holds a still frame with no drift and no rings, changing only when load steps.
+**It drifts.** A slow low-frequency weather moves the density while the tab is visible: the one stated exception to §8's "nothing runs while the operator is not looking". It redraws in hard steps (the machine register): every 250ms for the drift alone, every 100ms while a glow is alive. It stops when the tab is hidden, and under reduced motion holds a still frame with no drift and no glows, changing only when load steps.
 
 **Nothing in it is an instrument, and nothing in it is a figure.** It is density and nothing else: no marks, no readouts, no shapes. Registration marks on a background read as the interface measuring something, and diegetic detail that *implies a readout* is a lie about what the product is doing. The same goes for anything mythic or pictorial — schematics, maps, veins, horizons: the background is a material, not an illustration.
 
@@ -875,7 +875,7 @@ Everything above is texture the eye skips. The ground under every page is textur
   --accent-nominal: #34d67f;  --accent-warn: #f2a93b;
   --accent-alert: #ff5c5c;    --accent-info: #5aa2ff;
   --accent-queue: #b48cff;
-  --dither-on: #0d0d0d;  --dither-tint: 12%;   /* the ambient field, §11.1 */
+  --dither-on: #0d0d0d;  --dither-tint: 4%;    /* the ambient field, §11.1 */
   /* Each carries a 1px hairline ring first — the surface's edge, folded into the
      shadow so it costs no layout (§6). Floating things only. */
   --shadow-1: 0 0 0 1px rgb(255 255 255 / 0.05), 0 1px 2px rgb(0 0 0 / 0.6);
@@ -892,7 +892,7 @@ Everything above is texture the eye skips. The ground under every page is textur
   --accent-nominal: #0e7a46;  --accent-warn: #9a6510;
   --accent-alert: #c0342b;    --accent-info: #0f5fa8;
   --accent-queue: #6a3fb5;
-  --dither-on: #f4f4f4;  --dither-tint: 8%;
+  --dither-on: #f4f4f4;  --dither-tint: 3%;
   --shadow-1: 0 0 0 1px rgb(0 0 0 / 0.07), 0 1px 2px rgb(0 0 0 / 0.05),
     0 1px 1px rgb(0 0 0 / 0.04);
   --shadow-2: 0 0 0 1px rgb(0 0 0 / 0.08), 0 12px 32px -8px rgb(0 0 0 / 0.16),

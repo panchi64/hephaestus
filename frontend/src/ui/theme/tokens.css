@@ -182,7 +182,7 @@
      quieter than any rule drawn on top of it. `--dither-tint` is how far a ring's
      crest leans toward its event's accent: near black, a hint of hue and no more. */
   --dither-on: #0d0d0d;
-  --dither-tint: 12%;
+  --dither-tint: 4%;
   --line: #212121;
   --line-strong: #333333;
   --text-dim: #6e6e6e; /* 3.9:1 on bg */
@@ -262,7 +262,7 @@
   /* Shallower than Ink, and a lighter tint: dark marks on a light ground read far
      more readily than light marks on black, and Paper's accents are darker. */
   --dither-on: #f4f4f4;
-  --dither-tint: 8%;
+  --dither-tint: 3%;
   --line: #e4e4e1;
   --line-strong: #cfcfcb;
   --text-dim: #8a8a85; /* 3.5:1 on bg */

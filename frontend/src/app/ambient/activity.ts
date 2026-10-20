@@ -32,7 +32,7 @@ export function activityLoad(rows: readonly ChatSummary[]): number {
   return load;
 }
 
-/** The transitions between two reads of the thread list that the field rings for.
+/** The transitions between two reads of the thread list that the field glows for.
  *  With no previous read there is nothing to compare, so the first list fires nothing. */
 export function diffActivity(
   prev: Snapshot | undefined,

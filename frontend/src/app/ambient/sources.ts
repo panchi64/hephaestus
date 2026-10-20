@@ -22,8 +22,8 @@ function railEdge(): Point {
   return { x: rail.right, y: rail.top + rail.height / 2 };
 }
 
-/** A thread's ring starts at its rail row. A row folded away or scrolled out of the
- *  rail starts it at the rail's edge instead. An ask on the open thread starts at the
+/** A thread's glow sits at its rail row. A row folded away or scrolled out of the
+ *  rail puts it at the rail's edge instead. An ask on the open thread sits at the
  *  park dock, which is where the operator answers it. */
 export function threadSource(threadId: string, asking: boolean): Point {
   const row = anchor(`thread:${threadId}`);
@@ -53,7 +53,7 @@ export function isOpenThread(threadId: string): boolean {
   return openRow()?.dataset.ambientSource === `thread:${threadId}`;
 }
 
-/** The open thread's source. A thread just started has no row yet, so its ring starts
+/** The open thread's source. A thread just started has no row yet, so its glow sits
  *  at the composer the operator sent from. */
 export function openThreadSource(asking: boolean): Point {
   const name = openRow()?.dataset.ambientSource;

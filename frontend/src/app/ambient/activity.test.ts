@@ -32,7 +32,7 @@ describe("diffActivity", () => {
     expect(pulses).toEqual([]);
   });
 
-  test("each transition rings in its tone", () => {
+  test("each transition glows in its tone", () => {
     const { snapshot } = diffActivity(undefined, [
       row("start"),
       row("ask", { activity: "running" }),

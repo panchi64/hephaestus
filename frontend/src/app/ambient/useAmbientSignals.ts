@@ -13,39 +13,39 @@ import {
   threadSource,
 } from "./sources";
 
-/** Kinds that ring from the bell. Approvals and run outcomes are already rung from the
- *  thread list, at the thread's own row. */
+/** Kinds that glow at the bell. Approvals and run outcomes already glow at
+ *  the thread list, at the thread's own row. */
 const BELL_KINDS: ReadonlySet<NotificationKind> = new Set([
   "reminder",
   "task_outcome",
   "system",
 ]);
 
-/** How long the open thread's own ring stands in for the thread list's. The list is
+/** How long the open thread's own glow stands in for the thread list's. The list is
  *  re-read when a send starts, usually before the backend has registered the run, so
  *  it reports the start one poll later. */
-const OWN_RING_MS = 30_000;
+const OWN_GLOW_MS = 30_000;
 
 /** Feeds the ambient field from the open thread's stream, the thread list and the
  *  notification feed. Call once, inside the authenticated shell. */
 export function useAmbientSignals(): void {
   const sessions = useChatSessions();
   const notifications = useNotifications();
-  const ownRang = new Map<PulseTone, number>();
+  const ownGlowed = new Map<PulseTone, number>();
 
   // Signed out, nothing is running as far as the field can say.
   onCleanup(() => setAmbientLoad(0));
 
-  const ringOpenThread = (tone: PulseTone): void => {
-    ownRang.set(tone, performance.now());
+  const glowOpenThread = (tone: PulseTone): void => {
+    ownGlowed.set(tone, performance.now());
     const at = openThreadSource(tone === "warn");
     pushPulse(at.x, at.y, tone);
   };
   createEffect(
-    on(chatBusy, (busy) => busy && ringOpenThread("info"), { defer: true }),
+    on(chatBusy, (busy) => busy && glowOpenThread("info"), { defer: true }),
   );
   createEffect(
-    on(awaitingInput, (waiting) => waiting && ringOpenThread("warn"), {
+    on(awaitingInput, (waiting) => waiting && glowOpenThread("warn"), {
       defer: true,
     }),
   );
@@ -64,10 +64,10 @@ export function useAmbientSignals(): void {
     previous = snapshot;
     const now = performance.now();
     for (const p of pulses) {
-      const own = ownRang.get(p.tone);
+      const own = ownGlowed.get(p.tone);
       if (
         own !== undefined &&
-        now - own < OWN_RING_MS &&
+        now - own < OWN_GLOW_MS &&
         isOpenThread(p.threadId)
       )
         continue;

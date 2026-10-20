@@ -1,87 +1,62 @@
 import { describe, expect, test } from "bun:test";
 import {
-  DENSITY_MAX,
-  LOAD_CAP,
-  RING_LIFE_MS,
-  density,
+  GLOW_LIFE_MS,
+  GLOW_REACH,
+  MAX_PULSES,
+  PULSE_TONES,
+  livePulses,
   mixRgb,
-  ring,
-  shade,
-  threshold,
   type Pulse,
 } from "./dither";
+import { FRAGMENT_SHADER } from "./dither-shader";
 
-const pulse = (over: Partial<Pulse> = {}): Pulse => ({
-  id: 1,
-  at: 0,
+const pulse = (id: number, at: number): Pulse => ({
+  id,
+  at,
   x: 0,
   y: 0,
   tone: "info",
-  ...over,
 });
 
-describe("threshold", () => {
-  test("a 4×4 tile holds sixteen distinct levels inside (0, 1)", () => {
-    const levels = new Set<number>();
-    for (let y = 0; y < 4; y++)
-      for (let x = 0; x < 4; x++) levels.add(threshold(x, y));
-    expect(levels.size).toBe(16);
-    for (const v of levels) {
-      expect(v).toBeGreaterThan(0);
-      expect(v).toBeLessThan(1);
-    }
+describe("livePulses", () => {
+  test("drops glows that have not started or have finished", () => {
+    const now = 10_000;
+    const kept = livePulses(
+      [
+        pulse(1, now - GLOW_LIFE_MS - 1),
+        pulse(2, now - 100),
+        pulse(3, now + 50),
+      ],
+      now,
+    );
+    expect(kept.map((p) => p.id)).toEqual([2]);
   });
 
-  test("tiles repeat", () => {
-    expect(threshold(5, 6)).toBe(threshold(1, 2));
-  });
-});
-
-describe("density", () => {
-  test("rises one step per live run and stops at the cap", () => {
-    const at = (load: number) => density(10, 10, 0, load);
-    expect(at(1)).toBeGreaterThan(at(0));
-    expect(at(LOAD_CAP + 3)).toBe(at(LOAD_CAP));
-  });
-
-  test("a fractional load lands on the step below it", () => {
-    expect(density(3, 4, 0, 2.9)).toBe(density(3, 4, 0, 2));
-  });
-
-  test("never passes the ceiling", () => {
-    for (let x = 0; x < 200; x += 7)
-      expect(density(x, x, x, 99)).toBeLessThanOrEqual(DENSITY_MAX);
+  test("keeps the newest, in arrival order", () => {
+    const list = Array.from({ length: 12 }, (_, i) => pulse(i, 1000 + i));
+    const kept = livePulses(list, 1100, 8);
+    expect(kept.map((p) => p.id)).toEqual([4, 5, 6, 7, 8, 9, 10, 11]);
   });
 });
 
-describe("ring", () => {
-  test("is zero before it starts and once its life is over", () => {
-    expect(ring(0, 0, -1, pulse())).toBe(0);
-    expect(ring(0, 0, RING_LIFE_MS + 1, pulse())).toBe(0);
+describe("the shader", () => {
+  test("takes its sizes and glow reach from the constants", () => {
+    expect(FRAGMENT_SHADER).toContain(`uniform vec4 uPulses[${MAX_PULSES}]`);
+    expect(FRAGMENT_SHADER).toContain(
+      `uniform vec3 uPalette[${PULSE_TONES.length}]`,
+    );
+    expect(FRAGMENT_SHADER).toContain(GLOW_LIFE_MS.toFixed(4));
+    expect(FRAGMENT_SHADER).toContain((2 * GLOW_REACH ** 2).toFixed(4));
   });
 
-  test("is zero far from its band", () => {
-    expect(ring(2000, 0, 100, pulse())).toBe(0);
+  test("decides which cells are lit before any glow is read", () => {
+    expect(FRAGMENT_SHADER.indexOf("bayer4(cell)")).toBeLessThan(
+      FRAGMENT_SHADER.indexOf("uPulses[i]"),
+    );
   });
 
-  test("peaks on its band, which travels outward", () => {
-    const early = ring(48, 0, 100, pulse());
-    expect(early).toBeGreaterThan(0);
-    expect(ring(48, 0, 1000, pulse())).toBe(0);
-    expect(ring(480, 0, 1000, pulse())).toBeGreaterThan(0);
-  });
-});
-
-describe("shade", () => {
-  test("an unlit cell stays unlit with no pulses and no load", () => {
-    // threshold(1, 2) is the tile's top level, above any resting density.
-    expect(shade(1, 2, 0, 0, 0, [])).toBe(-1);
-  });
-
-  test("a lit cell on a ring's crest takes the ring's tone", () => {
-    const p = pulse({ tone: "alert" });
-    // Cell (24, 0) is centred at x = 49px, on the band at 100ms (48px).
-    expect(shade(24, 0, 0, 100, 0, [p])).toBe(4);
+  test("interpolates no bare integers into float expressions", () => {
+    expect(FRAGMENT_SHADER).not.toMatch(/\$\{|undefined|NaN/);
   });
 });
 
