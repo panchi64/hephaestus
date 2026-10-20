@@ -109,15 +109,20 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
            covers this, and a white rule around the transcript was exactly
            the kind of border the system dropped.
 
-           THE VERTICAL INSETS ARE THE OVERLAYS', and nothing more. Both ends of
-           this region sit under something — the title laid over the top, the
-           composer dock's fade reaching up over the bottom — and each inset is
-           exactly what clears it: the title block's measured height plus one
-           fade band at the top, one band at the bottom. The last turn's own
-           `py-3` is the breathing room; a pad beyond the band would be a strip
-           of bare page between the conversation and the composer. The scroll
-           padding matches the top so a turn scrolled into view (a settled
-           fold) lands below the title rather than under it.
+           Both ends dissolve through a mask rather than an overlay, so the text
+           fades out over the ambient field (§11.1) and the field itself is never
+           blurred or tinted: hidden under the title, then one fade band below
+           it, and one band at the foot above the composer dock.
+
+           THE VERTICAL INSETS ARE THE MASK'S, and nothing more: the title block's
+           measured height plus one band at the top, one band at the bottom. The
+           last turn's own `py-3` is the breathing room; a pad beyond the band
+           would be a strip of bare page between the conversation and the
+           composer. The scroll padding matches the top so a turn scrolled into
+           view (a settled fold) lands below the title rather than under it.
+
+           The mask makes this a backdrop root: a glass surface inside the
+           transcript frosts only the transcript.
 
            Native scroll anchoring is off: `transcriptScroll.ts` keeps its own
            anchor, and two correcting the same shift would double it. */
@@ -126,6 +131,7 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
             "padding-top": `calc(${props.insetTop()}px + var(--scroll-fade-band))`,
             "scroll-padding-top": `calc(${props.insetTop()}px + var(--scroll-fade-band))`,
             "padding-bottom": "var(--scroll-fade-band)",
+            "mask-image": `linear-gradient(to bottom, transparent ${props.insetTop()}px, black calc(${props.insetTop()}px + var(--scroll-fade-band)), black calc(100% - var(--scroll-fade-band)), transparent)`,
           }}
         >
           {/* The measure goes on the CONTENT, not on the scroll container:

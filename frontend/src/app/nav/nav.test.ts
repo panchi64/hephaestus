@@ -17,7 +17,6 @@ import {
   areaForPath,
   flattenNav,
   isConnectedRoute,
-  isDotFieldRoute,
   isFlushRoute,
   itemForPath,
 } from "./index";
@@ -152,32 +151,6 @@ describe("isFlushRoute", () => {
     // Whatever hangs off it is still the chat room, so the framing has to follow —
     // which is why this asks `matchesHref` rather than comparing strings.
     expect(isFlushRoute("/chat/anything")).toBe(true);
-  });
-});
-
-describe("isDotFieldRoute", () => {
-  test("the launchpad carries the field", () => {
-    expect(isDotFieldRoute("/")).toBe(true);
-  });
-
-  test("no working surface does", () => {
-    // The ration is the rule, not a default: a screen full of content read
-    // against a dot grid is the failure §11.1 exists to prevent.
-    expect(isDotFieldRoute("/chat")).toBe(false);
-    expect(isDotFieldRoute("/rag")).toBe(false);
-    expect(isDotFieldRoute("/email")).toBe(false);
-  });
-
-  test("a detail route does NOT inherit its parent's field", () => {
-    // The one rule this list does not share with FLUSH_TOP_ROUTES, and the fixture
-    // is the only thing that can show it: against the real list (`/` alone) exact
-    // and prefix matching agree, so `isDotFieldRoute("/anything")` is false under
-    // either and proves nothing. `matchesHref("/docs/drafts", "/docs")` is true, so
-    // swapping the implementation to `matchesHref` fails exactly this assertion —
-    // which is the regression the ration exists to prevent, a whole section of
-    // content-bearing detail pages handed the field because one page earned it.
-    expect(isDotFieldRoute("/docs", ["/docs"])).toBe(true);
-    expect(isDotFieldRoute("/docs/drafts", ["/docs"])).toBe(false);
   });
 });
 

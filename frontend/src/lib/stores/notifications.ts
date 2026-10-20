@@ -48,6 +48,9 @@ const [connectionState, setConnectionState] = createSignal<
 // means "probably more"; the first short page is the end of the history.
 const [hasOlder, setHasOlder] = createSignal(false);
 const [loadingOlder, setLoadingOlder] = createSignal(false);
+// The newest notification the live stream created. Never set by a backfill, so a
+// reconnect does not replay history as arrivals.
+const [lastCreated, setLastCreated] = createSignal<Notification | null>(null);
 
 let controller: AbortController | null = null;
 let running = false;
@@ -139,10 +142,9 @@ function applyStreamEvent(event: NotificationStreamEvent): void {
     applyDeleted(event.notification);
     return;
   }
-  upsert(
-    event.notification,
-    event.type === "notification.created" ? "created" : "updated",
-  );
+  const created = event.type === "notification.created";
+  upsert(event.notification, created ? "created" : "updated");
+  if (created) setLastCreated(event.notification);
 }
 
 function handleStreamEvent(event: NotificationStreamEvent): void {
@@ -222,6 +224,7 @@ export function stopNotifications(): void {
   setUnreadCount(0);
   setHasOlder(false);
   setLoadingOlder(false);
+  setLastCreated(null);
   setConnectionState("idle");
 }
 
@@ -411,6 +414,9 @@ export function useNotifications() {
     },
     get loadingOlder(): boolean {
       return loadingOlder();
+    },
+    get lastCreated(): Notification | null {
+      return lastCreated();
     },
     loadOlder,
     markRead,

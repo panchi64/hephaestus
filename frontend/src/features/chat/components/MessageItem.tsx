@@ -372,7 +372,7 @@ function UserText(props: { text: string; parts?: ContentPart[] }): JSX.Element {
         </Markdown>
         {/* Only while clamped, and only when there is genuinely more below. */}
         <Show when={clampable() && !expanded()}>
-          <ScrollFade variant="clamp" edge="bottom" ground="raised" />
+          <ScrollFade edge="bottom" ground="raised" />
         </Show>
       </div>
       <Show when={clampable()}>

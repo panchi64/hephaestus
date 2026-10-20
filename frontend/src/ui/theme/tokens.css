@@ -38,17 +38,12 @@
      place, not split between a height and an animation that has to match it. */
   --reasoning-h: 9rem;
 
-  /* ---- scroll fade (`ScrollFade`) ----
-     The band a scroll region dissolves into past an overlaid edge — the chat's
-     title above, its composer below. One token for the band because it is also
-     the inset the scroll region keeps at that edge: the last line of a thread at
-     rest has to clear the fade exactly, not by a second number that drifts. The
-     blur is the strongest layer's; the lighter layers are fractions of it. The
-     tint is how much of the ground colour the fade starts from — enough to keep
-     the title legible over text scrolling under it, never an opaque bar. */
+  /* ---- scroll fade ----
+     The band the chat transcript's mask fades its text over, under the title and
+     above the composer. One token because it is also the inset the transcript
+     keeps at each end: the last line of a thread at rest has to clear the fade
+     exactly, not by a second number that drifts. */
   --scroll-fade-band: 28px;
-  --scroll-fade-blur: 8px;
-  --scroll-fade-tint: 70%;
 
   /* ---- the two voices (§2) ----
      Sans is the interface speaking to the operator; mono is the machine showing
@@ -183,9 +178,11 @@
      model's turn carries no fill at all. It stays well under `--line` so the
      bubble is still quieter than the rules around it. */
   --surface-sunken: #0f0f0f;
-  /* The dot field's dots (§11.1): ΔL* ≈ 9 off the ground, below `--line` so the
-     field stays quieter than any rule drawn on top of it. */
-  --dot-field: #1a1a1a;
+  /* The ambient field's lit cell (§11.1), below `--line` so the field stays
+     quieter than any rule drawn on top of it. `--dither-tint` is how far a ring's
+     crest leans toward its event's accent: near black, a hint of hue and no more. */
+  --dither-on: #0d0d0d;
+  --dither-tint: 12%;
   --line: #212121;
   --line-strong: #333333;
   --text-dim: #6e6e6e; /* 3.9:1 on bg */
@@ -262,9 +259,10 @@
      says it must not become. Still ~2/3 of the separation from the page, so the
      two voices stay tellable apart. */
   --surface-sunken: #f4f3f0;
-  /* Shallower than Ink's ΔL* ≈ 9: dark marks on a light ground read far more
-     readily than light marks on black. */
-  --dot-field: #ebebeb;
+  /* Shallower than Ink, and a lighter tint: dark marks on a light ground read far
+     more readily than light marks on black, and Paper's accents are darker. */
+  --dither-on: #f4f4f4;
+  --dither-tint: 8%;
   --line: #e4e4e1;
   --line-strong: #cfcfcb;
   --text-dim: #8a8a85; /* 3.5:1 on bg */

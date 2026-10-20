@@ -24,6 +24,7 @@ export function NotificationBell(): JSX.Element {
           size="sm"
           class="relative"
           aria-label="Notifications"
+          data-ambient-source="bell"
           onClick={() => setOpen(!open())}
         >
           <Icon name="bell" size={14} />

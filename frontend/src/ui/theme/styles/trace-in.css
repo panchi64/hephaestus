@@ -96,65 +96,7 @@
   backdrop-filter: var(--glass-filter);
 }
 
-/* SCROLL FADE — where a scroll region dissolves under an edge laid over it.
-
-   The box fills its positioned parent (the overlaid header, the docked
-   composer) and reaches one `--scroll-fade-band` PAST the edge that faces the
-   content, so text scrolling under the overlay softens before it reaches the
-   words on top of it instead of being cut at a line.
-
-   Two effects, stacked, because either alone fails. A colour gradient alone is
-   a smear: text scrolled under the title is still crisp, just greyer, and reads
-   as two lines printed over each other. A blur alone leaves the title's contrast
-   at the mercy of whatever scrolls under it. So: a PROGRESSIVE blur — three
-   layers, each masked to a shorter reach from the edge and each blurring harder
-   than the last, so the blur is strongest at the edge and exactly nothing at
-   the band's far end, with no seam where one layer stops — and over it a tint
-   of the ground colour on the same falloff.
-
-   `backdrop-filter` blurs only what is painted inside its backdrop root, so the
-   backdrop-root trap on `.heph-glass` applies in full: nothing between the
-   scroller and this box may carry `opacity`, `filter`, `mask`, `isolation` or a
-   `will-change` of them, or the layers blur nothing and only the tint shows.
-   `pointer-events: none` — the band lies over live transcript. */
-.heph-scroll-fade {
-  --fade-dir: to bottom;
-  position: absolute;
-  inset-inline: 0;
-  top: 0;
-  bottom: calc(-1 * var(--scroll-fade-band));
-  pointer-events: none;
-}
-.heph-scroll-fade[data-edge="bottom"] {
-  --fade-dir: to top;
-  top: calc(-1 * var(--scroll-fade-band));
-  bottom: 0;
-}
-.heph-scroll-fade > * {
-  position: absolute;
-  inset: 0;
-}
-.heph-scroll-fade-blur-1 {
-  backdrop-filter: blur(calc(var(--scroll-fade-blur) / 4));
-  mask-image: linear-gradient(var(--fade-dir), black, transparent);
-}
-.heph-scroll-fade-blur-2 {
-  backdrop-filter: blur(calc(var(--scroll-fade-blur) / 2));
-  mask-image: linear-gradient(var(--fade-dir), black, transparent 66%);
-}
-.heph-scroll-fade-blur-3 {
-  backdrop-filter: blur(var(--scroll-fade-blur));
-  mask-image: linear-gradient(var(--fade-dir), black, transparent 33%);
-}
-.heph-scroll-fade-tint {
-  background: linear-gradient(
-    var(--fade-dir),
-    color-mix(in oklab, var(--bg) var(--scroll-fade-tint), transparent),
-    transparent
-  );
-}
-
-/* The clamp fade (`ScrollFade variant="clamp"`): "there is more below" over the
+/* The clamp fade (`ScrollFade`): "there is more below" over the
    foot of a clamped block. Inside the block, from the block's own ground, no
    blur — a clamped block is not a scroll region with something laid over it. */
 .heph-clamp-fade {

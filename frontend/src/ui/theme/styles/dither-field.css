@@ -1,0 +1,15 @@
+/* The ambient field (§11.1). Below every page: `z-index: -1` in the root stacking
+   context paints it over the `html` ground and under every in-flow box, and every
+   portalled overlay sits above it. Opaque objects occlude it by design.
+
+   Nothing between it and a glass surface (the rail) may set `opacity`, `filter`,
+   `mask`, `isolation` or a `will-change` of them, or the blur samples nothing. */
+.heph-dither-field {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  image-rendering: pixelated;
+}

@@ -262,6 +262,7 @@ function SessionRows(props: {
                 <SessionRow
                   title={s().title}
                   selected={id === props.currentId}
+                  source={`thread:${id}`}
                   pinned={isPinned(id)}
                   unread={props.unread?.(id)}
                   reveal={titleReveals[id]}

@@ -27,6 +27,8 @@ export interface RailRowProps {
   /** Rows nested under this one, folded by a chevron in the row's left gutter. Absent
    *  when there is nothing to fold, and then no chevron is drawn. */
   fold?: { open: boolean; onToggle: () => void; label: string };
+  /** Names the row as the on-screen source of its events, for the ambient field. */
+  source?: string;
   class?: string;
 }
 
@@ -49,6 +51,7 @@ export function RailRow(props: RailRowProps): JSX.Element {
       data-selected={props.selected ? "" : undefined}
       data-unread={props.unread ? "" : undefined}
       data-menu-open={props.menuOpen ? "" : undefined}
+      data-ambient-source={props.source}
       onClick={() => props.onOpen()}
       onContextMenu={(e) => props.onContextMenu?.(e)}
     >
