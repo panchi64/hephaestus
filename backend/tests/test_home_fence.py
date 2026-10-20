@@ -40,7 +40,7 @@ def test_a_commands_own_tmpfs_and_streams_are_inside() -> None:
 def test_an_offline_command_in_scratch_is_bounded_by_the_vm() -> None:
     # Measured: subshells in a build task's test run parked for the operator, where the
     # same work through the old sandbox tool was cleared on its container.
-    def judged(command: str, *, cwd: str = "/home/agent/scratch", reach: str = "workspace"):
+    def judged(command: str, *, cwd: str = "/home/agent/scratch", reach: str = "offline"):
         capability = capability_of(
             "shell_run_command", {"command": command, "reach": reach}, root=_fence(cwd)
         )
@@ -52,6 +52,10 @@ def test_an_offline_command_in_scratch_is_bounded_by_the_vm() -> None:
     assert not judged("(cat ~/projects/api/x)")[0].approved
     assert not judged("(ls)", cwd="/home/agent/projects/api")[0].approved
     assert not judged("(pip install x)", reach="network")[0].approved
+    # An install in scratch runs with the network whatever it declared, so the sandbox
+    # tier must not clear it unread.
+    installs = judged("pip install x")[0]
+    assert not installs.approved and installs.tier is None
 
 
 def test_a_file_write_to_tmp_still_escapes() -> None:

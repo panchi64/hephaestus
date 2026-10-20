@@ -137,6 +137,8 @@ class BackgroundStatus:
     exit_code: int | None
     stdout: str
     stderr: str
+    #: Whether a VM command was given the network; None for a host command.
+    network: bool | None = None
 
 
 def _recoverable[R, **P](

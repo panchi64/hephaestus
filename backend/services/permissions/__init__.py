@@ -13,6 +13,7 @@ from services.permissions.capability import (
     capability_of,
     declared_reach,
     measured_against_root,
+    renamed_reach,
 )
 from services.permissions.decide import (
     Decision,
@@ -101,6 +102,7 @@ __all__ = [
     "measured_against_root",
     "permission_level",
     "permission_spec",
+    "renamed_reach",
     "review",
     "review_transcript",
     "stricter_permission",

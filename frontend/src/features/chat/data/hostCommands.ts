@@ -78,6 +78,7 @@ function boundaryOf(r: HostResult): CommandBoundaryFacts | undefined {
   return {
     reach: r.reach,
     fenced: r.fenced,
+    network: r.network,
     unfencedReason: r.unfenced_reason,
     fenceNote: r.fence_note,
   };
@@ -146,6 +147,7 @@ export function toHostCommand(dto: ToolCallDTO): HostCommand {
     elapsedMs: outcome?.elapsedMs,
     reach: outcome?.reach,
     fenced: outcome?.fenced,
+    network: outcome?.network,
     unfencedReason: outcome?.unfencedReason,
     fenceNote: outcome?.fenceNote,
     // Carry whatever diagnostic exists: the result hint, the denial message, or a

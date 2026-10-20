@@ -21,14 +21,14 @@ answerable from three facts it can actually establish:
 - **structure** — what the command's syntax names, read off a grammar (``shell_ast.py``):
   which paths, which redirects, which environment assignments, and every construct that
   could not be read at all;
-- **a declared reach** — ``workspace``, ``network`` or ``host``, stated by the model on the
+- **a declared reach** — ``offline``, ``network`` or ``host``, stated by the model on the
   call itself (:data:`~services.permissions.capability.Reach`);
 - **a fence** — whether a process can actually be *held* to that reach: a shell command
   runs in the platform VM in the agent's home (``services/sandbox/home_shell.py``), with
   no network unless it declared one.
 
 The declaration is what makes the structure decidable and the fence is what holds a command
-to most of it: a command declaring ``workspace`` runs in the VM with no network, so an
+to most of it: a command declaring ``offline`` runs in the VM with no network, so an
 egress beyond what it declared fails *inside* the fence instead of quietly succeeding, and
 only the project's own files come back out. **Reads of the project are the exception, and
 the one place structure carries the whole weight**: the guest copy holds the project, so
@@ -63,12 +63,12 @@ whenever one of them is missing.
   program inside it needs no reading. This is the one branch that clears a capability the
   extraction marked unbounded, and deliberately: for an interpreter there is no reading of
   the arguments that would ever bound it, and the boundary was never the arguments;
-- a **contained command** at ``workspace`` — every path it names inside the worktree, no
+- a **contained command** at ``offline`` — every path it names inside the worktree, no
   network, and a fence available to hold it there.
 
 **A ``network`` declaration is not a fourth one, and the asymmetry is deliberate.** The
 fence bounds writes and egress and cannot bound *reads* of the project, so a command
-cleared at ``workspace`` can already read everything in it — and the only way that leaves
+cleared at ``offline`` can already read everything in it — and the only way that leaves
 the machine is a command that reaches out. An allowed-domains list does not make
 that safe: the seed names hosts that accept uploads as readily as they serve downloads, so
 `git push` of copied data is inside it. So every networked command goes to the model
@@ -198,9 +198,9 @@ def _shell_judgement(capability: Capability, *, fenced: bool) -> Judgement:
         # it to what it declared, so the declaration buys nothing and the model reviewer
         # rules with the structural facts in front of it instead.
         return Judgement(False, "no fence is available to hold it to that")
-    if capability.network:
-        # The declaration and the command's own syntax disagree, and the disagreement is
-        # the finding: a fence built for `workspace` would deny the egress anyway, so what
-        # this refusal buys is the operator being told rather than the model being puzzled.
-        return Judgement(False, 'declared reach "workspace" but names a network address')
+    if capability.network or capability.fetches:
+        # The declaration and the command disagree, and the shell runs it with the network
+        # anyway (`tools/shell.py:boundary`), so it is reviewed like any networked command.
+        what = "names a network address" if capability.network else "installs or clones"
+        return Judgement(False, f'declared reach "offline" but {what}')
     return Judgement(True, "stays inside the worktree and reaches no network", tier="workspace")

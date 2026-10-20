@@ -15,7 +15,7 @@ project, or its scratch.
 **The executing tools take a `reach`.** The model states how far a command needs to go,
 and this file holds it to that:
 
-- `workspace` runs in the VM with no network at all;
+- `offline` runs in the VM with no network at all;
 - `network` runs in the VM with the conversation's egress credentials, reaching the
   domains the operator has allowed (``services/egress.py``);
 - `host` runs on the operator's machine itself, unfenced, for a command that has to act
@@ -26,9 +26,9 @@ and this file holds it to that:
 
 The same declaration is what the permission layer rules on
 (``services/permissions/judge.py``), so what a command was cleared for and where it runs
-are one statement. A `workspace` declaration the command's own syntax contradicts (it
-names a URL) was approved in the words it was read in, so it gets the network it plainly
-needs rather than failing.
+are one statement. An `offline` declaration the command contradicts (it names a URL, or
+installs or clones) was approved in the words it was read in, so it gets the network it
+plainly needs rather than failing.
 
 **Refused while the VM is down.** Without the VM there is nowhere to run a fenced
 command, and running one on the operator's machine instead is not something this tool
@@ -42,8 +42,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
+from pydantic import BeforeValidator
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 
@@ -51,7 +52,7 @@ from core.diagnostics import render_tool_error
 from runs import ToolProgress
 from services.home.paths import HomePathError, Place, parse
 from services.home.table import RunHome
-from services.permissions import Reach, capability_of
+from services.permissions import Reach, capability_of, renamed_reach
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import SandboxSessionManager
 from services.sandbox.host import host_scratch_dir
@@ -66,6 +67,10 @@ from .deps import RunDeps
 from .emit import RunEventEmitted
 from .home import change_log, resolve_run_home
 from .workspace import unavailable
+
+#: The `reach` argument as the model may send it: an old spelling copied from the
+#: thread's history is read as its current one rather than refused.
+DeclaredReach = Annotated[Reach, BeforeValidator(renamed_reach)]
 
 #: Long enough for a real build or test suite; short enough that a hung command doesn't
 #: hold the turn open indefinitely. The agent can pass its own timeout per call, and any
@@ -127,35 +132,63 @@ def boundary(name: str, command: str, reach: Reach, home: RunHome, cwd: str) -> 
     """Where this command runs, built from the declaration rather than from a judgement:
     the permission layer answers *who must approve*, and this answers *where it runs*.
 
-    Only an explicit `host` declaration leaves the VM. A `workspace` declaration the
-    command's syntax contradicts by reaching the network gets the network, because that is
-    what the approver read."""
+    Only an explicit `host` declaration leaves the VM. An `offline` declaration the
+    command contradicts, by naming an address or by installing or cloning, gets the
+    network, because that is what the approver read."""
     if reach == "host":
         return _Boundary(reach=reach, where="host", network=False, reason=_HOST_DECLARED)
-    network = reach == "network"
-    if not network:
-        capability = capability_of(
-            f"{_NAMESPACE}{name}", {"command": command, "reach": reach}, root=home.fence(cwd)
-        )
-        network = capability.network
-    return _Boundary(reach=reach, where="vm", network=network, reason=None)
+    capability = capability_of(
+        f"{_NAMESPACE}{name}", {"command": command, "reach": reach}, root=home.fence(cwd)
+    )
+    return _Boundary(reach=reach, where="vm", network=capability.runs_with_network, reason=None)
 
 
-def _vm_note(boundary: _Boundary, result: ShellResult) -> str | None:
-    """A note on a request the VM's egress gateway refused, or None."""
-    if not boundary.fenced:
-        return None
-    text = f"{result.stdout}\n{result.stderr}"
+#: How a client reports the gateway's 407 to a request that carried no credentials.
+_PROXY_REFUSED_SIGNS = ("Proxy Authentication Required", "response 407", "hephaestus-egress")
+
+#: What a client that ignores the proxy prints: the guest resolver fails before any
+#: connection is made, so the gateway never sees the request.
+_NO_NETWORK_SIGNS = (
+    "Temporary failure in name resolution",
+    "Name or service not known",
+    "Could not resolve host",
+    "Network is unreachable",
+    "No address associated with hostname",
+    "failed to lookup address",
+    "failed to resolve address",
+    "no such host",
+    "UnknownHostException",
+    "EAI_AGAIN",
+    "ENOTFOUND",
+)
+
+_OFFLINE_NOTE = (
+    "This command ran with reach `offline`, which has no network. The VM does have "
+    "network: run the same command again with reach `network` to reach the domains the "
+    "operator has allowed. Do not move it to `host`; installs and downloads belong in the VM."
+)
+
+_CREDENTIALS_NOTE = (
+    "The VM's egress gateway did not accept this command's proxy credentials. Run it "
+    "again; if it is refused the same way, tell the operator rather than moving it to `host`."
+)
+
+
+def fence_note(*, network: bool, ok: bool, stdout: str, stderr: str) -> str | None:
+    """What the model should do about a refusal by the VM's fence, or None. Only for a
+    command that ran in the VM."""
+    text = f"{stdout}\n{stderr}"
     if DENIED_MARKER in text:
         return (
             "The VM's egress gateway refused a host this conversation has not been allowed "
             "to reach. Ask for it with `code_request_egress`, then run the command again."
         )
-    if "407" in text and "hephaestus-egress" in text:
-        return (
-            "This command declared `workspace`, which has no network. Declare `network` "
-            "to reach the domains the operator has allowed."
-        )
+    if not ok:
+        refused = "407" in text and any(sign in text for sign in _PROXY_REFUSED_SIGNS)
+        if network and refused:
+            return _CREDENTIALS_NOTE
+        if not network and (refused or any(sign in text for sign in _NO_NETWORK_SIGNS)):
+            return _OFFLINE_NOTE
     if "Read-only file system" in text:
         return (
             "A project you may only read is mounted read-only. To change it, edit the file "
@@ -203,7 +236,13 @@ def _run_payload(
         "cwd": cwd,
         **_boundary_fields(boundary),
     }
-    note = _vm_note(boundary, result)
+    note = (
+        fence_note(
+            network=boundary.network, ok=result.ok, stdout=result.stdout, stderr=result.stderr
+        )
+        if boundary.fenced
+        else None
+    )
     if note is not None:
         payload["fence_note"] = note
     if notes:
@@ -219,8 +258,12 @@ def _run_payload(
 
 
 def _boundary_fields(boundary: _Boundary) -> dict[str, object]:
-    """The declaration and the fence's verdict, which every executing tool carries."""
+    """The declaration and the fence's verdict, which every executing tool carries.
+    ``network`` is what a VM command actually ran with, which an ``offline`` declaration
+    can differ from."""
     fields: dict[str, object] = {"reach": boundary.reach, "fenced": boundary.fenced}
+    if boundary.fenced:
+        fields["network"] = boundary.network
     if boundary.reason is not None:
         fields["unfenced_reason"] = boundary.reason
     return fields
@@ -229,14 +272,20 @@ def _boundary_fields(boundary: _Boundary) -> dict[str, object]:
 def _background_payload(status: BackgroundStatus) -> dict[str, object]:
     """A background command as it stands; ``ok`` means nothing went wrong, so a process
     still running is fine and one that exited non-zero is not."""
-    return {
-        "ok": status.exit_code in (None, 0),
+    ok = status.exit_code in (None, 0)
+    payload: dict[str, object] = {
+        "ok": ok,
         "command_id": status.command_id,
         "status": status.status,
         "exit_code": status.exit_code,
         "stdout": status.stdout,
         "stderr": status.stderr,
     }
+    if status.network is not None:
+        note = fence_note(network=status.network, ok=ok, stdout=status.stdout, stderr=status.stderr)
+        if note is not None:
+            payload["fence_note"] = note
+    return payload
 
 
 def _unknown_command(command_id: str) -> dict[str, object]:
@@ -318,7 +367,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
     async def run_command(
         ctx: RunContext[RunDeps],
         command: str,
-        reach: Reach = "workspace",
+        reach: DeclaredReach = "offline",
         timeout_seconds: float | None = None,
     ) -> dict[str, object] | str:
         """Runs a shell command in your home and waits for it to finish. Use it for builds,
@@ -343,12 +392,14 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
 
         Args:
             command: The command, as you would type it in bash.
-            reach: How far the command needs to go. `workspace` runs it in your VM with
+            reach: How far the command needs to go. `offline` runs it in your VM with
                 no network: builds, tests, git and anything that reads or writes files.
-                `network` adds the domains the operator has allowed, for installs and
-                fetches. `host` runs it unfenced on the operator's own machine, starting
-                in the project's folder there; use it only when the command has to act on
-                that machine, and know that its changes cannot be reverted.
+                `network` runs it in your VM with the domains the operator has allowed,
+                for installs, clones and downloads; a package install or clone gets it
+                even when declared `offline`. `host` runs it unfenced on the operator's
+                own machine, starting in the project's folder there; use it only when the
+                command has to act on that machine, never to install packages, and know
+                that its changes cannot be reverted.
             timeout_seconds: Seconds to wait before the command is killed. Default 300.
         """
         state = await _ready(ctx, "run_command")
@@ -380,7 +431,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
     async def start_command(
-        ctx: RunContext[RunDeps], command: str, reach: Reach = "workspace"
+        ctx: RunContext[RunDeps], command: str, reach: DeclaredReach = "offline"
     ) -> dict[str, object] | str:
         """Starts a command in the background and returns at once. Use it for a dev
         server, a watcher, or a build or test run long enough that you want to keep
@@ -397,7 +448,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
 
         Args:
             command: The command, as you would type it in bash.
-            reach: How far the command needs to go: `workspace`, `network` or `host`,
+            reach: How far the command needs to go: `offline`, `network` or `host`,
                 meaning what they mean for `shell_run_command`.
         """
         state = await _ready(ctx, "start_command")

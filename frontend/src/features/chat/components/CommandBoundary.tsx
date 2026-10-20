@@ -40,6 +40,11 @@ export function CommandBoundary(props: {
           <Text variant="meta" tone="dim">
             Reach {reach()}
           </Text>
+          <Show when={reach() === "offline" && c().network}>
+            <Text variant="meta" tone="dim">
+              Ran with network
+            </Text>
+          </Show>
           <Show
             when={c().fenced === false}
             fallback={

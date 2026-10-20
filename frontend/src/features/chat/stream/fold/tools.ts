@@ -218,6 +218,7 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
             // only when there is one.
             detail: ev.detail ?? undefined,
             reach: ev.reach ?? undefined,
+            network: ev.network ?? undefined,
           },
         });
       });

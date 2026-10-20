@@ -252,11 +252,10 @@ export type HostCommandPhase =
   | "denied" // the operator refused it
   | "stale"; // a decision 409'd — already resolved elsewhere (see `Approval.stale`)
 
-/** How far a command **declared** it needs to reach, on the call itself. The
- *  workspace, the network, or the operator's own machine — checked against every path
- *  the command names before anything runs, and then held to by an OS fence built from
- *  the same declaration. */
-export type CommandReach = "workspace" | "network" | "host";
+/** How far a command **declared** it needs to reach, on the call itself: the VM with no
+ *  network, the VM with the allowed domains, or the operator's own machine — checked
+ *  against every path the command names before anything runs. */
+export type CommandReach = "offline" | "network" | "host";
 
 /**
  * What a call that runs something declared, and what held it to that.
@@ -275,6 +274,9 @@ export interface CommandBoundaryFacts {
   fenced?: boolean;
   /** Why it ran unfenced — present only when `fenced` is false. */
   unfencedReason?: string;
+  /** Whether a VM command ran with the network, which an `offline` declaration can
+   *  differ from. Absent for a host command and on results from before it was sent. */
+  network?: boolean;
   /** A permission failure in the output that the fence itself caused, said in words,
    *  so a denied write reads as the fence holding rather than as a broken command. */
   fenceNote?: string;
@@ -491,7 +493,10 @@ export interface Review {
   detail?: string;
   /** How far a shell command said it needs to go. Undefined for acts that declare
    *  nothing at all, which is not the same as declaring the widest reach. */
-  reach?: "workspace" | "network" | "host";
+  reach?: CommandReach;
+  /** Whether the command will run with the network, which an `offline` declaration can
+   *  differ from: an install or a named address gets it anyway. */
+  network?: boolean;
   decision?: "allow" | "ask" | "block";
   /** Which stage settled it: the structural judge, or the model. */
   stage?: "judge" | "reviewer";

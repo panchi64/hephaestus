@@ -62,7 +62,7 @@ from models._fields import utcnow
 from prompts.compaction import COMPACT_PREAMBLE
 from prompts.utility import REVIEW_INSTRUCTIONS
 from routes.deps import app_state
-from runs import Orchestrator, Run, RunRegistry, RunStatus, RunStream
+from runs import Orchestrator, ReviewStarted, Run, RunRegistry, RunStatus, RunStream
 from services.approval_grants import ApprovalGrantStore, GrantInfo
 from services.conversations import ConversationBinding
 from services.home.backend import Mount
@@ -799,7 +799,7 @@ class TestTheTranscriptTheReviewerSees:
         # structural — does what this command names match what it said it needed — and it
         # is an enumerated word rather than free text, so there is nothing to write prose
         # into. An act that declares nothing says nothing here rather than saying "host".
-        assert "Declared reach: workspace" in clear
+        assert "Declared reach: offline" in clear
         assert "Declared reach" not in review_prompt(
             ReviewRequest(capability=capability_of("mail_send", {"to": "a@b.c"}), transcript=())
         )
@@ -1420,6 +1420,16 @@ class TestTheRubricWithoutTheScore:
             ReviewRequest(capability=pushes, transcript=())
         )
 
+    def test_an_install_is_reported_beside_the_address_line(self):
+        installs = capability_of("shell_run_command", {"command": "pip install requests"})
+        assert "Installs or clones from the network: yes" in review_prompt(
+            ReviewRequest(capability=installs, transcript=())
+        )
+        lists = capability_of("shell_run_command", {"command": "pip list"})
+        assert "Installs or clones from the network: no" in review_prompt(
+            ReviewRequest(capability=lists, transcript=())
+        )
+
     def test_a_step_that_serves_the_request_counts_as_asked_for(self):
         """Without this the reviewer wants the operator to have named the act itself,
         which nobody does: they ask for the outcome and the engineer picks the steps."""
@@ -1573,6 +1583,21 @@ class TestTheEngineRunsIt:
             fenced=True,
         )
         assert next(b for b in _bodies(run) if b.type == "review.started").detail is None
+
+    async def test_the_opening_event_says_an_offline_install_runs_with_the_network(self):
+        run = Run(id="r-install", kind="chat", owner_id="operator", stream=RunStream())
+        _ = await gating.review_call(
+            run,
+            tool_call_id="t1",
+            tool="shell_run_command",
+            args={"command": "npm install"},
+            root=WORKSPACE,
+            transcript=(),
+            reviewer=reviewer_of(verdict("low", "explicitly_yes")),
+            fenced=True,
+        )
+        started = next(b for b in _bodies(run) if isinstance(b, ReviewStarted))
+        assert started.reach == "offline" and started.network is True
 
     async def test_no_other_level_reviews_at_all(self, monkeypatch: pytest.MonkeyPatch):
         # Edit asks the operator; the review never runs, so no review event is emitted
