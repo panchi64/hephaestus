@@ -57,9 +57,9 @@ class WebDistiller:
         all-irrelevant result is a ``None``, logged once at warning."""
         try:
             return await asyncio.wait_for(self._distill(body, goal=goal), self._timeout_s)
-        except Exception as exc:  # timeout/model error ⇒ degrade, never raise
+        except Exception:  # timeout/model error ⇒ degrade, never raise
             logger.warning(
-                "web distillation failed for %r; falling back to truncation: %s", url, exc
+                "web distillation failed for %r; falling back to truncation", url, exc_info=True
             )
             return None
 

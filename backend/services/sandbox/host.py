@@ -256,6 +256,7 @@ async def configure(settings: Settings) -> HostConfinement:
             )
         )
     except Exception as exc:  # any init failure means "not confined"
+        logger.warning("sandbox-runtime could not initialize", exc_info=True)
         return HostConfinement(False, f"sandbox-runtime could not initialize ({exc})")
     # Carried on the resolution rather than re-derived at the run: `confine` fences each
     # command individually, and these are the settings half of what it needs — the same

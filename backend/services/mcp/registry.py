@@ -257,8 +257,8 @@ class McpRegistry:
         row = await self._row(owner_id, server_id)
         try:
             discovered = await self._discover(row)
-        except Exception as exc:  # noqa: BLE001 - any transport/protocol failure is a status
-            logger.info("mcp: connect to %r failed: %s", row.name, exc)
+        except Exception as exc:  # any transport/protocol failure is a status
+            logger.info("mcp: connect to %r failed", row.name, exc_info=True)
             await self._record(server_id, error=_reason(exc))
             return await self.get(owner_id, server_id)
         await self._record(server_id, tools=discovered)

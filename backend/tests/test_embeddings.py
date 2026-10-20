@@ -60,7 +60,7 @@ class _RecordingEmbeddings:
     def __init__(self, client: _RecordingClient) -> None:
         self._client: _RecordingClient = client
 
-    async def create(  # noqa: A002 — the SDK's name
+    async def create(  # the SDK's name
         self, *, model: str, input: list[str]
     ) -> _FakeResponse:
         self._client.calls.append((model, list(input)))

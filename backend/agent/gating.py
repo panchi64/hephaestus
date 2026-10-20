@@ -53,6 +53,7 @@ from pydantic_ai.messages import ModelMessage, ToolCallPart
 from core.concurrency import gather_bounded
 from core.config import get_settings
 from core.container import ServiceContainer
+from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.untrusted import new_nonce
 from runs import Run
 from runs.events import ReviewCompleted, ReviewStarted
@@ -361,7 +362,7 @@ async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Fence | 
         return None
     try:
         home = await resolve_run_home(deps)
-    except Exception:  # noqa: BLE001 — a judge that raises would abort the operator's turn
+    except Exception:  # a judge that raises would abort the operator's turn
         logger.info("auto review: no home to judge against", exc_info=True)
         return None
     if home is None:
@@ -389,8 +390,11 @@ async def resolve_reviewer(caps: ServiceContainer, owner_id: str) -> Reviewer | 
         return None
     try:
         resolved = await registry.resolve_background(owner_id=owner_id)
-    except Exception as exc:  # noqa: BLE001 — an unbound role is a degrade, not an error
+    except (DegradedCapabilityError, NotFoundError) as exc:
         logger.info("auto review unavailable: no utility model (%s)", exc)
+        return None
+    except Exception:
+        logger.warning("auto review unavailable: resolving a model failed", exc_info=True)
         return None
     settings = get_settings()
     return make_utility_reviewer(

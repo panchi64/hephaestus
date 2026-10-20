@@ -31,13 +31,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from cryptography.exceptions import InvalidTag
 from sqlalchemy import Engine
 from sqlmodel import Session, col, select
 
 from core import crypto
 from core.db import in_session
 from core.exceptions import HephaestusError, NotFoundError
-from core.vault import Vault
+from core.vault import Vault, VaultLocked
 from models._fields import utcnow
 from models.secret import SecretEntry, SecretVaultConfig
 
@@ -171,7 +172,7 @@ class SecretVaultService:
         kek = await asyncio.to_thread(crypto.derive_kek, passphrase, _b64d(config.kek_salt))
         try:
             key = crypto.aead_decrypt(kek, _b64d(self._vault.decrypt_str(config.wrapped_key_enc)))
-        except Exception:  # any unwrap failure is just a failed unlock
+        except InvalidTag, ValueError, VaultLocked:  # a failed unwrap is a failed unlock
             return False
         self._open_session(owner_id, key)
         return True

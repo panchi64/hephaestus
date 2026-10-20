@@ -71,6 +71,7 @@ async def approval_conversation_title(
         try:
             summary = await store.get_summary(conversation_id, owner_id)
         except Exception:  # a title lookup must not block the notify
+            logger.debug("title lookup failed for %s", conversation_id, exc_info=True)
             summary = None
         if summary is not None and summary.title:
             return summary.title
@@ -80,13 +81,6 @@ async def approval_conversation_title(
 def late_title_wait_s() -> float:
     """How long a namer still running after its run can take to land or give up."""
     return get_settings().title_timeout_s + _LATE_TITLE_SLACK_S
-
-
-def _log_failure(conversation_id: str | None, exc: Exception) -> None:
-    if isinstance(exc, TimeoutError):
-        logger.warning("auto-titling timed out for %s", conversation_id)
-    else:
-        logger.warning("auto-titling failed for %s", conversation_id, exc_info=exc)
 
 
 def maybe_title(
@@ -116,8 +110,10 @@ def maybe_title(
                 max_tokens=get_settings().title_max_tokens,
             )
             await announce_title(run, name, store=store, conversation_id=conversation_id)
-        except Exception as exc:  # titling is best-effort, not turn-critical
-            _log_failure(conversation_id, exc)
+        except TimeoutError:
+            logger.warning("auto-titling timed out for %s", conversation_id)
+        except Exception:  # titling is best-effort, not turn-critical
+            logger.warning("auto-titling failed for %s", conversation_id, exc_info=True)
 
     run.outlive(asyncio.create_task(_name(), context=outside_lease()))
 
@@ -222,8 +218,10 @@ def start_title(
             await announce_title(run, name, store=store, conversation_id=conversation_id)
         except asyncio.CancelledError:
             raise  # a park/cancel abandoning the name (see `discard_title`)
-        except Exception as exc:  # titling is best-effort, not turn-critical
-            _log_failure(conversation_id, exc)
+        except TimeoutError:
+            logger.warning("auto-titling timed out for %s", conversation_id)
+        except Exception:  # titling is best-effort, not turn-critical
+            logger.warning("auto-titling failed for %s", conversation_id, exc_info=True)
 
     return Namer(
         task=asyncio.create_task(_name(), context=outside_lease()),

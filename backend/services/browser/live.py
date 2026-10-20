@@ -23,6 +23,7 @@ from collections.abc import Callable, Hashable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, final, override, runtime_checkable
 
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
 from pydantic_ai_harness.playwright import PlaywrightBrowserSession
 
@@ -211,7 +212,7 @@ class LiveBrowser:
         if context is not None:
             try:
                 return list(context.pages)
-            except Exception:  # noqa: BLE001 — a context whose browser is gone answers here
+            except PlaywrightError:  # a context whose browser is gone answers here
                 return []
         return list(self.session.pages)
 

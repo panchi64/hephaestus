@@ -186,7 +186,7 @@ class ConversationTeardown:
                 await self._uploads.delete(owner_id, upload_id)
             except NotFoundError:
                 pass
-            except Exception:  # noqa: BLE001 — one bad purge mustn't strand the others
+            except Exception:  # one bad purge mustn't strand the others
                 logger.exception("failed to purge orphaned image upload %s", upload_id)
 
     async def _delete_for_clear(
@@ -212,11 +212,11 @@ class ConversationTeardown:
                 continue
             try:
                 await purger.purge(conversation_id)
-            except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded
+            except Exception:  # best-effort; the DB delete already succeeded
                 logger.warning("%s purge failed for %s", name, conversation_id, exc_info=True)
         try:
             await self._egress.forget(conversation_id)
-        except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded
+        except Exception:  # best-effort; the DB delete already succeeded
             logger.warning("egress purge failed for %s", conversation_id, exc_info=True)
 
     async def _subagents(self, owner_id: str, conversation_id: str) -> list[SubagentRecord]:
@@ -225,7 +225,7 @@ class ConversationTeardown:
             return []
         try:
             return await self._subagent_records.descendants(conversation_id, owner_id)
-        except Exception:  # noqa: BLE001 — a delete must not fail on a listing it can live without
+        except Exception:  # a delete must not fail on a listing it can live without
             logger.warning("could not list sub-agents of %s", conversation_id, exc_info=True)
             return []
 
@@ -247,16 +247,16 @@ class ConversationTeardown:
                     # conversation re-creates a cache entry nothing evicts. Bounded so a
                     # wedged child never leaves the operator's delete hanging.
                     await asyncio.wait_for(run.wait(), timeout=_SUBAGENT_STOP_S)
-            except Exception:  # noqa: BLE001 — one stuck child mustn't strand its siblings
+            except Exception:  # one stuck child mustn't strand its siblings
                 logger.warning("could not stop sub-agent %s", row.id, exc_info=True)
         for row in rows:
             try:
                 await self._store.delete_conversation(row.child_conversation_id)
-            except Exception:  # noqa: BLE001 — one stuck child mustn't strand its siblings
+            except Exception:  # one stuck child mustn't strand its siblings
                 logger.warning("could not discard sub-agent %s", row.id, exc_info=True)
         try:
             await self._subagent_records.forget([row.id for row in rows])
-        except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded
+        except Exception:  # best-effort; the DB delete already succeeded
             logger.warning("could not forget sub-agents of %s", conversation_id, exc_info=True)
 
     async def _settle_code_branch(
@@ -283,7 +283,7 @@ class ConversationTeardown:
                 conversation_id=conversation_id,
                 project_id=project.id,
             )
-        except Exception:  # noqa: BLE001 — no branch, no project, no repo: nothing to lose
+        except Exception:  # no branch, no project, no repo: nothing to lose
             logger.debug("no code branch to settle for %s", conversation_id, exc_info=True)
             return
         if diff.files_changed and not discard:

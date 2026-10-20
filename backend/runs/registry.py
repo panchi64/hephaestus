@@ -517,6 +517,7 @@ class RunRegistry:
             self._emit_metrics(run)
             self._emit(run, RunEnded(outcome="cancelled"))
         except Exception as exc:  # orchestrator failures are terminal, not fatal
+            logger.warning("run %s failed", run.id, exc_info=True)
             run.status = RunStatus.error
             run.error = str(exc)
             self._emit_metrics(run)

@@ -80,7 +80,7 @@ def adopt_legacy_archive(archive: Path, workspace: Path, vault: Vault) -> bool:
             tar.extractall(workspace, filter="data")  # 'data' guards path traversal
     except SandboxError:
         raise
-    except Exception as exc:  # noqa: BLE001 — a damaged archive is a legible failure
+    except Exception as exc:  # a damaged archive is a legible failure
         raise SandboxError(f"could not open this conversation's saved workspace: {exc}") from exc
     marker.unlink(missing_ok=True)
     # Only now: the files are on disk, which is where they live from here on. Leaving

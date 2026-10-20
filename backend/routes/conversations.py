@@ -812,7 +812,7 @@ async def _branch_the_fork(request: Request, source_id: str, forked_id: str) -> 
         await deps.worktrees(request).branch_from(
             Path(project.root_path), source_id=source_id, conversation_id=forked_id
         )
-    except Exception:  # noqa: BLE001 — no source branch yet; the fork cuts its own later
+    except Exception:  # no source branch yet; the fork cuts its own later
         logger.debug("fork %s: no source branch to base on", forked_id, exc_info=True)
 
 
@@ -1014,7 +1014,7 @@ async def _run_manual_fold(run: Run, request: Request, pick: RetitleRequest) -> 
     the thread's replay plus one message, so the model that served the last turn serves it
     from the prefix it already holds."""
     conversation_id = run.conversation_id
-    assert conversation_id is not None  # noqa: S101 — set by the submit below
+    assert conversation_id is not None  # set by the submit below
     try:
         model, _, _, context_window, vision, _ = await thread_models(
             request, conversation_id, pick.endpoint_id, pick.model

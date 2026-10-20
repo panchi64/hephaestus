@@ -200,7 +200,7 @@ async def _token_request(
     try:
         async with client:
             token = await client.fetch_token(provider.token_url, grant_type=grant, **params)
-    except Exception as exc:  # noqa: BLE001 — authlib raises a wide family of errors
+    except Exception as exc:  # authlib raises a wide family of errors
         # A refused grant and an unreachable identity provider are different problems for
         # the operator: one needs a reconnect, the other needs waiting.
         message = str(exc).lower()

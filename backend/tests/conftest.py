@@ -89,8 +89,8 @@ def egress_policy(data_dir: Path, domains: tuple[str, ...] = ("pypi.org",)) -> E
     argument rather than a thing under test in most of them. Real rather than a stub: the
     file on disk *is* the interface the fences read, and a stub would only re-describe it.
     """
-    from core.db import init_db, make_engine  # noqa: PLC0415 — after the patches above
-    from services.egress import EgressPolicy  # noqa: PLC0415
+    from core.db import init_db, make_engine  # after the patches above
+    from services.egress import EgressPolicy
 
     engine = make_engine("sqlite:///:memory:")
     init_db(engine)

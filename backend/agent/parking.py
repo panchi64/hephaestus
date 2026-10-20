@@ -264,7 +264,7 @@ async def park_for_input(
                 conversation_id=conversation_id,
                 run_id=run.id,
             )
-        except Exception:  # noqa: BLE001 — a notify failure must not break the park
+        except Exception:  # a notify failure must not break the park
             logger.warning("approval_needed notification failed for run %s", run.id, exc_info=True)
     run.park(
         ParkedTurn(

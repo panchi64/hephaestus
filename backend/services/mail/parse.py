@@ -11,6 +11,7 @@ capability already uses — one HTML-to-text implementation in the codebase, not
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime
 from email import message_from_bytes, policy
@@ -25,6 +26,8 @@ import trafilatura
 from models._fields import utcnow
 
 from .models import MailAddress, MailBody, MailHeader, OutgoingMail
+
+logger = logging.getLogger(__name__)
 
 # How much of the body the listing preview carries. Long enough to be useful in a list
 # row, short enough that a full inbox page stays small.
@@ -73,7 +76,8 @@ def html_to_text(html: str | None) -> str:
         extracted = trafilatura.extract(
             html, output_format="markdown", include_tables=True, favor_recall=True
         )
-    except Exception:  # noqa: BLE001 — extraction is best-effort; markup must not escape
+    except Exception:  # extraction is best-effort; markup must not escape
+        logger.debug("mail: markdown extraction failed", exc_info=True)
         extracted = None
     return (extracted or "").strip() or _strip_tags(html)
 
@@ -134,7 +138,8 @@ def _strip_tags(html: str) -> str:
     try:
         parser.feed(html)
         parser.close()
-    except Exception:  # noqa: BLE001 — malformed markup must not lose the message
+    except Exception:  # malformed markup must not lose the message
+        logger.debug("mail: stripping markup failed", exc_info=True)
         return ""
     return parser.text
 

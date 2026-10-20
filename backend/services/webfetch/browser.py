@@ -29,6 +29,7 @@ from contextlib import asynccontextmanager
 from typing import Protocol, cast
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
+from playwright.async_api import Error as PlaywrightError
 
 from core.tasks import STOP_TIMEOUT_S, cancel_and_wait
 from services.vm import PlatformVM, VMError
@@ -177,26 +178,26 @@ class ManagedBrowser:
                     if seed:
                         try:
                             await ctx.add_cookies(seed)
-                        except Exception:
+                        except PlaywrightError:
                             # add_cookies is all-or-nothing — one malformed entry would drop
                             # the whole seed (clearance cookie included). Re-add one at a
                             # time so a single bad cookie doesn't defeat the carry-forward.
                             for cookie in seed:
                                 try:
                                     await ctx.add_cookies([cookie])
-                                except Exception:
-                                    pass
+                                except PlaywrightError:
+                                    logger.debug("web fetch: dropped a malformed cookie")
                 yield ctx
             finally:
                 if self._jar is not None:
                     try:
                         self._jar.store(await ctx.cookies())
-                    except Exception:
-                        pass  # context already gone ⇒ nothing to harvest
+                    except Exception:  # context already gone ⇒ nothing to harvest
+                        logger.debug("web fetch: harvesting cookies failed", exc_info=True)
                 try:
                     await ctx.close()
-                except Exception:
-                    pass
+                except Exception:  # closing must never fail the fetch
+                    logger.debug("web fetch: closing a context failed", exc_info=True)
 
     async def apply_stealth(self, page: RenderPage) -> None:
         """Bring a page's client hints + ``navigator.userAgentData`` into agreement with
@@ -216,7 +217,9 @@ class ManagedBrowser:
                 ),
             )
         except Exception:
-            logger.debug("web fetch: client-hint override failed; UA-string stealth only")
+            logger.debug(
+                "web fetch: client-hint override failed; UA-string stealth only", exc_info=True
+            )
 
     async def _after_boot(self) -> None:
         """Start again on a VM that was reset: what ran in the old one is gone."""
@@ -289,12 +292,12 @@ class ManagedBrowser:
         if self._browser is not None:
             try:
                 await self._browser.close()
-            except Exception:
-                pass
+            except Exception:  # a browser already gone has nothing to close
+                logger.debug("web fetch: closing the browser failed", exc_info=True)
             self._browser = None
         if self._pw is not None:
             try:
                 await self._pw.stop()
             except Exception:
-                pass
+                logger.debug("web fetch: stopping Playwright failed", exc_info=True)
             self._pw = None

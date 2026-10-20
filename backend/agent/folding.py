@@ -133,7 +133,7 @@ async def fold(run: Run, ctx: CompactionContext, *, reason: CompactionReason) ->
                 # The summary as it is written, so the operator watches it arrive.
                 on_delta=announce_delta,
             )
-    except Exception:  # noqa: BLE001 — a fold must never take its caller down with it
+    except Exception:  # a fold must never take its caller down with it
         logger.warning("compaction failed for %s", ctx.conversation_id, exc_info=True)
         return _failed(run, ctx, reason, FoldFailed("error"))
     if isinstance(result, FoldFailed):

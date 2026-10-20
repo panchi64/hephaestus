@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime
+import logging
 import shutil
 import ssl
 import tempfile
@@ -31,6 +32,8 @@ from cryptography.x509.oid import NameOID
 
 import services.vm.egress as egress
 from services.vm.egress import Secret as Secret
+
+logger = logging.getLogger(__name__)
 
 _VALIDITY = datetime.timedelta(days=30)
 
@@ -143,7 +146,7 @@ class Interceptor:
             await server_w.drain()
             await egress.splice(reader, writer, server_r, server_w)
         except Exception:  # one bad request must never stop the interceptor
-            egress.logger.debug("egress: an intercepted request failed", exc_info=True)
+            logger.debug("egress: an intercepted request failed", exc_info=True)
         finally:
             with contextlib.suppress(Exception):
                 writer.close()

@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 
+from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.untrusted import wrap_untrusted
 
 from .cache import MessageDetail
@@ -100,8 +101,8 @@ class MailStyle:
         )
         try:
             result = await agent.run(prompt, model_settings=settings)
-        except Exception as exc:  # noqa: BLE001 — learning is best-effort
-            logger.warning("mail style learning failed: %s", exc)
+        except Exception:  # learning is best-effort
+            logger.warning("mail style learning failed", exc_info=True)
             return None
         return (result.output or "").strip() or None
 
@@ -125,8 +126,8 @@ class MailStyle:
             result = await agent.run(
                 _draft_prompt(detail, profile, context or []), model_settings=settings
             )
-        except Exception as exc:  # noqa: BLE001 — a suggestion is a nicety, never a failure
-            logger.warning("mail reply drafting failed for %s: %s", detail.message.id, exc)
+        except Exception:  # a suggestion is a nicety, never a failure
+            logger.warning("mail reply drafting failed for %s", detail.message.id, exc_info=True)
             return None
         draft = result.output
         return draft if draft.body.strip() else None
@@ -143,8 +144,11 @@ class MailStyle:
         """
         try:
             resolved = await self._registry.resolve_background(owner_id=owner_id)
-        except Exception as exc:  # noqa: BLE001
+        except (DegradedCapabilityError, NotFoundError) as exc:
             logger.info("mail style: no utility model available (%s)", exc)
+            return None
+        except Exception:
+            logger.warning("mail style: resolving a model failed", exc_info=True)
             return None
         settings: ModelSettings = _SETTINGS | (resolved.reasoning_off or ModelSettings())
         return Agent(resolved.model, output_type=output_type, instructions=instructions), settings

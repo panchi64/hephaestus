@@ -29,7 +29,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import Insert as SQLiteInsert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine.interfaces import DBAPIConnection
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -206,7 +206,7 @@ def _raise_schema_error(
     head = ScriptDirectory.from_config(config).get_current_head()
     try:
         stamped = ", ".join(_stamped_revisions(engine)) or "(none — fresh database)"
-    except Exception:  # pragma: no cover - the bookkeeping table itself is unreadable
+    except SQLAlchemyError:  # pragma: no cover - the bookkeeping table itself is unreadable
         stamped = "(unreadable)"
 
     lines = [

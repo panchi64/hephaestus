@@ -349,10 +349,10 @@ async def summarize_history(
     except SummaryCalledTool:
         logger.warning("conversation compaction summary failed: the model called a tool")
         return FoldFailed("tool_call")
-    except Exception as exc:  # noqa: BLE001 — compaction is best-effort, never fails a turn
+    except Exception:  # compaction is best-effort, never fails a turn
         # CancelledError is not an Exception subclass, so a cancelled run still propagates
         # rather than degrading to "no summary".
-        logger.warning("conversation compaction summary failed: %s", exc)
+        logger.warning("conversation compaction summary failed", exc_info=True)
         return FoldFailed("error")
     if not summary:
         return FoldFailed("summarizer_empty")

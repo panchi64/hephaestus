@@ -21,10 +21,13 @@ because wrongly hiding real prose is far worse than showing a signature.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
 from email_reply_parser import EmailReplyParser
+
+logger = logging.getLogger(__name__)
 
 # RFC 3676's signature delimiter — a line that is exactly "--" (optionally with the
 # trailing space clients strip), or the "__" some clients use instead.
@@ -62,7 +65,8 @@ def split_body(body: str) -> BodyParts:
         return BodyParts(reply="")
     try:
         fragments = EmailReplyParser.read(body).fragments
-    except Exception:  # noqa: BLE001 — a parser hiccup must never lose the message
+    except Exception:  # a parser hiccup must never lose the message
+        logger.debug("mail: splitting quoted history failed", exc_info=True)
         return BodyParts(reply=body.strip())
 
     prose: list[str] = []

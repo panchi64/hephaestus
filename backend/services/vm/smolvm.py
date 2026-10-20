@@ -90,7 +90,8 @@ async def _on_daemon_thread(work: Callable[[], None]) -> None:
         error: BaseException | None = None
         try:
             work()
-        except BaseException as exc:
+        except BaseException as exc:  # handed to the awaiting coroutine, which raises it
+            logger.debug("platform VM: daemon-thread work failed", exc_info=True)
             error = exc
         with suppress(RuntimeError):  # the loop closed while the work ran
             _ = loop.call_soon_threadsafe(settle, error)

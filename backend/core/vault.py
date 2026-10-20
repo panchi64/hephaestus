@@ -18,6 +18,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
+from cryptography.exceptions import InvalidTag
+
 from core import crypto
 from core.serde import parse_json
 
@@ -144,7 +146,7 @@ class Vault:
         kek = await asyncio.to_thread(crypto.derive_kek, password, _b64d(data["kek_salt"]))
         try:
             dek = crypto.aead_decrypt(kek, _b64d(data["wrapped_dek"]))
-        except Exception:  # any unwrap failure is just a failed unlock
+        except InvalidTag, ValueError:  # a failed unwrap is just a failed unlock
             return False
         self._set_dek(dek)
         await self._rehash_verifier_if_stale(data, password)

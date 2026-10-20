@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 
+from core.exceptions import DegradedCapabilityError, NotFoundError
 from core.untrusted import wrap_untrusted
 
 from .cache import MessageDetail
@@ -112,16 +113,19 @@ class MailTriage:
         fails — triage is best-effort and must never block the sync loop."""
         try:
             resolved = await self._registry.resolve_background(owner_id=owner_id)
-        except Exception as exc:  # noqa: BLE001 — an unbound role is a degrade, not an error
+        except (DegradedCapabilityError, NotFoundError) as exc:
             logger.info("mail triage skipped: no utility model available (%s)", exc)
+            return None
+        except Exception:  # triage must never block the sync loop
+            logger.warning("mail triage skipped: resolving a model failed", exc_info=True)
             return None
 
         agent = Agent(resolved.model, output_type=TriageVerdict, instructions=_INSTRUCTIONS)
         settings: ModelSettings = _SETTINGS | (resolved.reasoning_off or ModelSettings())
         try:
             result = await agent.run(_prompt(detail), model_settings=settings)
-        except Exception as exc:  # noqa: BLE001 — never fail a sync over one message
-            logger.warning("mail triage failed for %s: %s", detail.message.id, exc)
+        except Exception:  # never fail a sync over one message
+            logger.warning("mail triage failed for %s", detail.message.id, exc_info=True)
             return None
         verdict = result.output
         await self._alert(owner_id, detail, verdict)
@@ -143,7 +147,7 @@ class MailTriage:
                 f"Urgent email from {sender}",
                 verdict.summary or detail.message.subject,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("mail: urgent-message alert failed", exc_info=True)
 
 

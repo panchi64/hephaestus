@@ -273,7 +273,7 @@ async def sync_calendar(calendar_id: str, request: Request) -> SyncOut:
         raise HTTPException(status_code=502, detail=f"refused to reach that server: {exc}") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 — any transport failure is an upstream error
+    except Exception as exc:  # any transport failure is an upstream error
         raise HTTPException(status_code=502, detail=f"calendar sync failed: {exc}") from exc
 
     calendar = await service.get_calendar(OPERATOR_ID, calendar_id)
@@ -308,7 +308,7 @@ async def sync_all_calendars(request: Request) -> SyncAllOut:
     for calendar in remote:
         try:
             result = await syncer.sync(OPERATOR_ID, calendar.id)
-        except Exception:  # noqa: BLE001 — one bad binding must not sink the others
+        except Exception:  # one bad binding must not sink the others
             logger.warning("calendar sync failed for %s", calendar.id, exc_info=True)
             failed.append(calendar.name)
             continue

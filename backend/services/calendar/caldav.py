@@ -178,7 +178,7 @@ class CalDavSync:
         for event_id, document in documents:
             try:
                 saved = collection.save_event(document)
-            except Exception:  # noqa: BLE001 — any server-side refusal is per-event
+            except Exception:  # any server-side refusal is per-event
                 logger.warning("calendar: remote refused an event during push", exc_info=True)
                 continue
             stamped.append((event_id, _href(saved), _etag(saved)))
@@ -337,6 +337,7 @@ def _href(obj: RemoteObject) -> str | None:
 def _etag(obj: RemoteObject) -> str | None:
     try:
         etag = obj.etag
-    except Exception:  # noqa: BLE001 — some servers omit it; sync must not depend on it
+    except Exception:  # some servers omit it; sync must not depend on it
+        logger.debug("calendar: no etag on a remote object", exc_info=True)
         return None
     return str(etag) if etag else None
