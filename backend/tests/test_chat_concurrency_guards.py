@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import JsonValue
 from pydantic_ai import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -407,26 +407,25 @@ async def test_concurrent_edit_and_regenerate_only_one_proceeds(monkeypatch: pyt
 async def test_delete_message_purge_claims_against_a_concurrent_chat_submission(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    # `image_orphans` awaits real DB round trips before the leaf-moving
+    # The orphan lookup awaits real DB round trips before the leaf-moving
     # `store.delete_message` runs — a concurrent /chat submission landing in that window
     # must not be allowed to register a run that the delete then mutates the tree under.
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, app):
         conv_id, assistant = await _complete_first_turn(client)
 
-        import routes.conversation_teardown as teardown
-
+        teardown = app_state(app).conversation_teardown
         gate, entered = asyncio.Event(), asyncio.Event()
-        original = teardown.image_orphans
+        original = teardown.message_image_orphans
 
         async def _hanging_image_orphans(
-            request: Request, conversation_id: str, *, message_id: str | None
+            owner_id: str, conversation_id: str, message_id: str
         ) -> list[str]:
             entered.set()
             _ = await gate.wait()
-            return await original(request, conversation_id, message_id=message_id)
+            return await original(owner_id, conversation_id, message_id)
 
-        monkeypatch.setattr(teardown, "image_orphans", _hanging_image_orphans)
+        monkeypatch.setattr(teardown, "message_image_orphans", _hanging_image_orphans)
 
         delete_task = asyncio.ensure_future(
             client.delete(f"/conversations/{conv_id}/messages/{s(assistant['id'])}")

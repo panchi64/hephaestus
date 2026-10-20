@@ -49,6 +49,10 @@ class ApprovalRequiredError(HephaestusError):
     """A sensitive action needs explicit operator approval before it runs."""
 
 
+class UnmergedWorkError(HephaestusError):
+    """Deleting this would throw away commits that were never merged."""
+
+
 class DegradedCapabilityError(HephaestusError):
     """An optional capability is unavailable; the caller should degrade gracefully."""
 

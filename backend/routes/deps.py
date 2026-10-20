@@ -37,6 +37,7 @@ from services.commands import CommandRegistry
 from services.commands.store import CommandStore
 from services.conversation_search import ConversationSearch
 from services.conversations import ConversationStore
+from services.conversations.teardown import ConversationTeardown
 from services.corpus import CorpusChunkStore, CorpusIndex, FolderAdapter
 from services.corpus.uploads import UploadsAdapter
 from services.credential_store import CredentialStore
@@ -161,6 +162,7 @@ class AppState(State):
         self.network_tools: frozenset[str]
         self.vm: PlatformVM | None
         self.subagent_records: SubagentStore | None
+        self.conversation_teardown: ConversationTeardown
         self.discovery_client: httpx.AsyncClient
         self.work_summaries: WorkSummaryService
         self.corpus_uploads: UploadsAdapter
@@ -198,6 +200,10 @@ def web_client(request: Request) -> httpx.AsyncClient:
 def inbox_dispatcher(request: Source) -> InboxDispatch | None:
     """What starts the next turn from an idle thread's inbox, or None when not wired."""
     return app_state(request).inbox_dispatcher
+
+
+def conversation_teardown(request: Request) -> ConversationTeardown:
+    return app_state(request).conversation_teardown
 
 
 def subagent_records(request: Request) -> SubagentStore | None:
@@ -292,13 +298,8 @@ def claim_conversation(request: Request, conversation_id: str) -> None:
 
 
 def release_conversation(request: Request, conversation_id: str) -> None:
-    """Release a claim taken by `claim_conversation`. Idempotent. A claim that started no
-    run leaves whatever queued behind it to the inbox dispatcher."""
-    runs = registry(request)
-    runs.release(conversation_id, OPERATOR_ID)
-    dispatcher = inbox_dispatcher(request)
-    if dispatcher is not None and runs.active_run_for(conversation_id, OPERATOR_ID) is None:
-        dispatcher.kick(OPERATOR_ID, conversation_id)
+    """Release a claim taken by `claim_conversation`. Idempotent."""
+    registry(request).release_and_kick(conversation_id, OPERATOR_ID, inbox_dispatcher(request))
 
 
 def store(request: Source) -> ConversationStore:

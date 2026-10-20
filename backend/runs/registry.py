@@ -22,7 +22,7 @@ from core.tasks import STOP_TIMEOUT_S
 
 from .endpoint_gate import Endpoint, EndpointGate
 from .events import EventBody, LimitNotice, RunEnded, RunError, RunQueued, RunStarted, now_utc
-from .inbox import NO_JOURNAL, ConversationInbox, InboxJournal
+from .inbox import NO_JOURNAL, ConversationInbox, InboxDispatch, InboxJournal
 from .lanes import LaneGate, LaneLimits
 from .run import Orchestrator, Run, RunStatus
 from .stream import RunStream
@@ -281,6 +281,15 @@ class RunRegistry:
         """Release a claim taken by `claim`. Idempotent — safe even if `claim` raised
         (or was never called) for this pair."""
         self._claims.discard((owner_id, conversation_id))
+
+    def release_and_kick(
+        self, conversation_id: str, owner_id: str, dispatcher: InboxDispatch | None
+    ) -> None:
+        """Release a claim; one that started no run leaves whatever queued behind it to the
+        inbox dispatcher."""
+        self.release(conversation_id, owner_id)
+        if dispatcher is not None and self.active_run_for(conversation_id, owner_id) is None:
+            dispatcher.kick(owner_id, conversation_id)
 
     # --- launch ---------------------------------------------------------------
     def register(self, run: Run) -> None:

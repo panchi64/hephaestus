@@ -445,11 +445,12 @@ async def test_delete_conversation_purges_its_sandbox(monkeypatch: pytest.Monkey
     patch_model_resolution(monkeypatch, output_text="hi")
     async with client_app() as (client, app):
         conversation_id = await _start_conversation(client)
-        app.state.sandbox = _RecordingPurger()
+        sandbox = _RecordingPurger()
+        app_state(app).conversation_teardown.sandbox = sandbox
 
         resp = await client.delete(f"/conversations/{conversation_id}")
         assert resp.status_code == 204
-        assert app.state.sandbox.purged == [conversation_id]
+        assert sandbox.purged == [conversation_id]
 
 
 async def test_delete_conversation_purges_its_browser(monkeypatch: pytest.MonkeyPatch):
@@ -458,25 +459,28 @@ async def test_delete_conversation_purges_its_browser(monkeypatch: pytest.Monkey
     patch_model_resolution(monkeypatch, output_text="hi")
     async with client_app() as (client, app):
         conversation_id = await _start_conversation(client)
-        app.state.browser_sessions = _RecordingPurger()
+        browser = _RecordingPurger()
+        app_state(app).conversation_teardown.browser = browser
 
         resp = await client.delete(f"/conversations/{conversation_id}")
         assert resp.status_code == 204
-        assert app.state.browser_sessions.purged == [conversation_id]
+        assert browser.purged == [conversation_id]
 
 
 async def test_delete_conversation_survives_a_failing_purge(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch, output_text="hi")
     async with client_app() as (client, app):
         conversation_id = await _start_conversation(client)
-        app.state.sandbox = _RecordingPurger(fail=True)
-        app.state.browser_sessions = _RecordingPurger(fail=True)
+        teardown = app_state(app).conversation_teardown
+        teardown.sandbox = _RecordingPurger(fail=True)
+        browser = _RecordingPurger(fail=True)
+        teardown.browser = browser
 
         # The DB delete is authoritative; a best-effort purge failure must not fail it.
         resp = await client.delete(f"/conversations/{conversation_id}")
         assert resp.status_code == 204
         assert (await client.get(f"/conversations/{conversation_id}")).status_code == 404
-        assert app.state.browser_sessions.purged == [conversation_id]
+        assert browser.purged == [conversation_id]
 
 
 def _snapshot_view(snapshot_id: str) -> SnapshotView:

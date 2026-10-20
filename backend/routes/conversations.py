@@ -26,7 +26,6 @@ from core.compaction_sections import SummarySection
 from core.config import get_settings
 from core.envelopes import ContentPart
 from core.exceptions import DegradedCapabilityError, NotFoundError
-from routes import conversation_teardown as teardown
 from routes import deps
 from routes.chat import thread_models, turn_scope
 from routes.deps import OPERATOR_ID
@@ -683,7 +682,12 @@ async def delete_conversation(
     A worktree thread with unmerged commits is refused (409) unless ``discardBranch=true``:
     destroying a branch must be as deliberate as merging one.
     """
-    _ = await teardown.delete_conversation(request, conversation_id, discard_branch=discard_branch)
+    try:
+        _ = await deps.conversation_teardown(request).delete(
+            OPERATOR_ID, conversation_id, discard_branch=discard_branch
+        )
+    except ConversationBusyError as exc:
+        raise HTTPException(status_code=409, detail=deps.CONVERSATION_BUSY_DETAIL) from exc
 
 
 @router.delete("/{conversation_id}/messages/{message_id}", response_model=ConversationDetail)
@@ -696,18 +700,19 @@ async def delete_message(
     unreferenced. The active path falls back to the turn's parent. Returns the resulting
     thread so the client reseats in one round-trip."""
     store = deps.store(request)
+    teardown = deps.conversation_teardown(request)
     summary = await _require_owned(request, conversation_id)
     # Claimed before the orphan lookup's awaits, so a /chat submission can't register a run
     # between the lookup and the tree mutation. The purge and detail below don't move the
     # leaf, so the claim is released before them.
     deps.claim_conversation(request, conversation_id)
     try:
-        orphans = await teardown.image_orphans(request, conversation_id, message_id=message_id)
+        orphans = await teardown.message_image_orphans(OPERATOR_ID, conversation_id, message_id)
         if not await store.delete_message(conversation_id, message_id):
             raise HTTPException(status_code=404, detail="message not found")
     finally:
         deps.release_conversation(request, conversation_id)
-    await teardown.purge_uploads(request, orphans)
+    await teardown.purge_uploads(OPERATOR_ID, orphans)
     return await _detail(request, conversation_id, summary)
 
 
