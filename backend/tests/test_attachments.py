@@ -738,6 +738,42 @@ async def test_chat_allows_empty_prompt_with_an_attachment(monkeypatch: pytest.M
         assert empty.status_code == 422
 
 
+async def test_deleting_a_chat_deletes_its_orphaned_images_only(monkeypatch: pytest.MonkeyPatch):
+    patch_model_resolution(monkeypatch)
+    async with client_app() as (client, _app):
+        image = await _upload_file(client, name="shot.png", body=b"png-bytes", mime="image/png")
+        note = await _upload_file(client)
+        resp = await client.post("/chat", json={"prompt": "look", "attachment_ids": [image, note]})
+        body = json_body(resp)
+        _ = await collect_sse_events(client, s(body["run_id"]))
+
+        deleted = await client.delete(f"/conversations/{s(body['conversation_id'])}")
+
+        assert deleted.status_code == 204
+        assert (await client.get(f"/uploads/{image}")).status_code == 404
+        assert (await client.get(f"/uploads/{note}")).status_code == 200
+
+
+async def test_deleting_a_message_deletes_its_orphaned_images(monkeypatch: pytest.MonkeyPatch):
+    patch_model_resolution(monkeypatch)
+    async with client_app() as (client, _app):
+        image = await _upload_file(client, name="shot.png", body=b"png-bytes", mime="image/png")
+        body = json_body(
+            await client.post("/chat", json={"prompt": "look", "attachment_ids": [image]})
+        )
+        _ = await collect_sse_events(client, s(body["run_id"]))
+        conversation = s(body["conversation_id"])
+        detail = json_body(await client.get(f"/conversations/{conversation}"))
+        user_turn = next(obj(m) for m in arr(detail["messages"]) if obj(m)["role"] == "user")
+
+        deleted = await client.delete(
+            f"/conversations/{conversation}/messages/{s(user_turn['id'])}"
+        )
+
+        assert deleted.status_code == 200
+        assert (await client.get(f"/uploads/{image}")).status_code == 404
+
+
 async def test_patch_upload_toggles_kb_excluded(monkeypatch: pytest.MonkeyPatch):
     patch_model_resolution(monkeypatch)
     async with client_app() as (client, _app):

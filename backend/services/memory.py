@@ -210,6 +210,17 @@ class MemoryStore:
 
         await in_session(self._engine, work)
 
+    async def delete_all(self, owner_id: str) -> int:
+        """Delete every one of the owner's memories, pinned or not. Returns how many."""
+
+        def work(session: Session) -> int:
+            rows = session.exec(select(Memory).where(Memory.owner_id == owner_id)).all()
+            for row in rows:
+                session.delete(row)
+            return len(rows)
+
+        return await in_session(self._engine, work)
+
     async def consolidate(
         self,
         owner_id: str,

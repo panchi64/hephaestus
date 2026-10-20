@@ -42,7 +42,6 @@ export {
   deleteConversation,
   fetchAutoCompactOverride,
   fetchGrants,
-  fetchOrphanImageAttachments,
   fetchPlan,
   forkConversation,
   regenerateTitle,

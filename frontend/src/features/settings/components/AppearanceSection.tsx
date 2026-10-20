@@ -20,6 +20,7 @@ import {
   toast,
   useTheme,
 } from "~/ui";
+import { SettingRow } from "./SettingRow";
 
 /** Which palette the accent editor is writing. Named in the machine's voice
  *  because it is the *resolved* mode — a fact about the current state, not the
@@ -47,18 +48,12 @@ export function AppearanceSection(): JSX.Element {
   return (
     <Stack gap={4}>
       <Panel label="Appearance">
-        <Row align="center" justify="between">
-          <Stack gap={1}>
-            <Text variant="label" tone="default">
-              Theme
-            </Text>
-            <Text variant="micro" tone="dim">
-              Phosphor (dark), Paper (light), or follow system. Stored locally
-              on this device.
-            </Text>
-          </Stack>
+        <SettingRow
+          label="Theme"
+          description="Phosphor (dark), Paper (light), or follow system. Stored locally on this device."
+        >
           <ThemeToggle />
-        </Row>
+        </SettingRow>
       </Panel>
 
       <Panel label="Accent colors">

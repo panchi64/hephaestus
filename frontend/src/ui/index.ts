@@ -296,12 +296,9 @@ export {
 } from "./components/Toast";
 export {
   confirm,
-  confirmChoice,
   ConfirmHost,
   type ConfirmTone,
-  type ConfirmChoice,
   type ConfirmOptions,
-  type ConfirmChoiceOptions,
 } from "./components/Confirm";
 export {
   ForbiddenView,

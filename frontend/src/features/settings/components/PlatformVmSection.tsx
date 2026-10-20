@@ -4,12 +4,11 @@ import {
   confirm,
   LoadingText,
   Panel,
-  Row,
   Stack,
   StatusFlag,
-  Text,
   toast,
 } from "~/ui";
+import { SettingRow } from "./SettingRow";
 import {
   forgetBrowserProfile,
   refreshVmState,
@@ -69,16 +68,13 @@ export function PlatformVmSection(): JSX.Element {
       <Show when={vm()} fallback={<LoadingText />}>
         {(state) => (
           <Stack gap={3}>
-            <Row align="center" justify="between">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Status
-                </Text>
-                <Text variant="micro" tone="dim">
-                  {state().detail ??
-                    "Runs agent code, previews, web search and web fetch."}
-                </Text>
-              </Stack>
+            <SettingRow
+              label="Status"
+              description={
+                state().detail ??
+                "Runs agent code, previews, web search and web fetch."
+              }
+            >
               <StatusFlag
                 dot
                 pulse={state().state === "starting"}
@@ -86,16 +82,11 @@ export function PlatformVmSection(): JSX.Element {
               >
                 {vmStateLabel(state().state)}
               </StatusFlag>
-            </Row>
-            <Row align="center" justify="between">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Reset VM
-                </Text>
-                <Text variant="micro" tone="dim">
-                  Rebuilds the VM. Web services restart on their own.
-                </Text>
-              </Stack>
+            </SettingRow>
+            <SettingRow
+              label="Reset VM"
+              description="Rebuilds the VM. Web services restart on their own."
+            >
               <Button
                 variant="danger"
                 size="sm"
@@ -104,16 +95,11 @@ export function PlatformVmSection(): JSX.Element {
               >
                 Reset VM
               </Button>
-            </Row>
-            <Row align="center" justify="between">
-              <Stack gap={1}>
-                <Text variant="label" tone="default">
-                  Browser logins
-                </Text>
-                <Text variant="micro" tone="dim">
-                  One profile, shared by every conversation's browser.
-                </Text>
-              </Stack>
+            </SettingRow>
+            <SettingRow
+              label="Browser logins"
+              description="One profile, shared by every conversation's browser."
+            >
               <Button
                 variant="danger"
                 size="sm"
@@ -121,7 +107,7 @@ export function PlatformVmSection(): JSX.Element {
               >
                 Log out everywhere
               </Button>
-            </Row>
+            </SettingRow>
           </Stack>
         )}
       </Show>

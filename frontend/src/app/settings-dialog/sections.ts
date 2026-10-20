@@ -42,13 +42,9 @@ export interface SettingsGroup {
  * discipline `nav/areas.ts` keeps: what exists and how it is labelled lives
  * here, and the components that render it derive everything else.
  *
- * **Each row is one surface, not an umbrella.** The dialog used to list six
- * categories, each stacking three-to-five unrelated sections into one long pane,
- * so finding the offline switch meant knowing it lived under GENERAL and then
- * scrolling past the theme picker. An operator does not think in categories —
- * they think in the thing they came to change. So the column lists the things,
- * the groups only sort them, and the search field above skips the hierarchy
- * altogether.
+ * Each row is one surface, not an umbrella of unrelated sections: the column lists
+ * the things an operator comes to change, the groups only sort them, and the
+ * search field skips the hierarchy altogether.
  *
  * Ordering is deliberate rather than alphabetical: GENERAL first because it is
  * what an operator opens the dialog for most often, SYSTEM last because it is
@@ -229,6 +225,13 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         icon: "archive",
         description: "Snapshots of this workspace, and restoring from one",
         keywords: ["export", "import", "restore", "snapshot"],
+      },
+      {
+        id: "data",
+        label: "Data",
+        icon: "trash",
+        description: "Delete all chats, memories, notifications or uploads",
+        keywords: ["clear", "delete", "wipe", "reset", "history", "privacy"],
       },
       {
         id: "platform-vm",

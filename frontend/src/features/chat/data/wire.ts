@@ -268,10 +268,6 @@ export interface SnapshotDiffDTO {
   diff: string;
 }
 
-export interface OrphanImageAttachmentsDTO {
-  upload_ids: string[];
-}
-
 export interface ApprovalGrantDTO {
   tool_name: string;
   /** The command the grant covers, as the leading words it was read as (`["uv", "run",

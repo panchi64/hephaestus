@@ -28,6 +28,15 @@ import type {
   VmState,
 } from "./model";
 import { toVmState, type VmStateDTO } from "./vmDto";
+import {
+  openThreadCleared,
+  toClearResult,
+  type ClearResult,
+  type ClearResultDTO,
+  type DataKind,
+} from "./clearData";
+import { mainChat, refreshSessions } from "~/features/chat/data";
+import { refreshUploads } from "~/features/uploads/data";
 
 // The endpoint catalog, the provider presets, and the role bindings (reads AND
 // the role writes) are owned by the shared models store so the chat picker,
@@ -375,6 +384,26 @@ export async function resetVm(): Promise<void> {
 /** Log the agent's shared browser profile out of every site. */
 export async function forgetBrowserProfile(): Promise<void> {
   await api.del("/browser/profile");
+}
+
+/** Permanently delete every item of one kind, then re-read the lists that showed them,
+ *  failed or not, since a clear can fail partway. Notifications need no re-read: the
+ *  store hears the `deleted` events. A chats clear that took the open thread restages
+ *  the room. */
+export async function clearData(kind: DataKind): Promise<ClearResult> {
+  try {
+    const result = toClearResult(
+      await api.post<ClearResultDTO>(`/data/clear/${kind}`),
+    );
+    if (kind === "chats") {
+      const chat = mainChat();
+      if (openThreadCleared(chat.currentId(), result)) chat.setCurrentId(null);
+    }
+    return result;
+  } finally {
+    if (kind === "chats") refreshSessions();
+    if (kind === "chats" || kind === "uploads") refreshUploads();
+  }
 }
 
 /* ── Agent tools ────────────────────────────────────────────────────────────────

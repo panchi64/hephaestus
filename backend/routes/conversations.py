@@ -9,7 +9,6 @@ as a render-ready projection — the durable record stays full-fidelity
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Mapping
 from datetime import datetime
@@ -27,6 +26,7 @@ from core.compaction_sections import SummarySection
 from core.config import get_settings
 from core.envelopes import ContentPart
 from core.exceptions import DegradedCapabilityError, NotFoundError
+from routes import conversation_teardown as teardown
 from routes import deps
 from routes.chat import thread_models, turn_scope
 from routes.deps import OPERATOR_ID
@@ -39,7 +39,6 @@ from services.conversations import (
     conversation_totals,
     last_request_usage,
 )
-from services.home.changes import ThreadChanges
 from services.permissions import DEFAULT_PERMISSION
 from services.settings_store import (
     get_auto_compact,
@@ -666,14 +665,6 @@ async def retitle_conversation(
     )
 
 
-class OrphanImageAttachments(BaseModel):
-    """Image uploads that *this* delete would leave referenced by nothing surviving — the
-    set the operator is asked to keep or purge. Empty ⇒ delete straight through (no prompt
-    needed). Only images are listed; other attachments (e.g. PDFs) are never auto-purged."""
-
-    upload_ids: list[str]
-
-
 async def _require_owned(request: Request, conversation_id: str) -> ConversationSummaryView:
     summary = await deps.store(request).get_summary(conversation_id, OPERATOR_ID)
     if summary is None:
@@ -681,230 +672,18 @@ async def _require_owned(request: Request, conversation_id: str) -> Conversation
     return summary
 
 
-async def image_orphans(
-    request: Request, conversation_id: str, *, message_id: str | None
-) -> list[str]:
-    """The image uploads that the proposed delete would orphan — computed before the delete
-    runs (the doomed turns must still be in the tree) and filtered to ``image/*``. The store's
-    check spares any image still referenced by a surviving branch or another chat."""
-    candidates = await deps.store(request).orphaned_attachments_for_delete(
-        OPERATOR_ID, conversation_id, message_id=message_id
-    )
-    return await deps.uploads(request).image_ids(OPERATOR_ID, candidates)
-
-
-#: How long a cancelled sub-agent is given to actually stop before its thread is deleted
-#: anyway. Long enough for a cooperative cancel to reach the next step boundary, short
-#: enough that a wedged child never holds up a delete the operator is waiting on.
-_SUBAGENT_STOP_S = 5.0
-
-
-async def _discard_subagents(request: Request, conversation_id: str) -> None:
-    """Stop and forget every agent below a thread, at any depth, because the thread is going.
-
-    Cancelling first is the half that is not bookkeeping: a sub-agent is a live Run, and
-    one whose parent has been deleted goes on making model requests to produce a report
-    that will find no thread to reach, while still counting against the operator's cap.
-    Its own conversation goes with it — it is hidden from the session list, so the cards
-    this delete is destroying were the only way in.
-
-    Best-effort throughout, per sub-agent, for the reason every teardown below is: the
-    conversation row is already gone, and a sandbox that would not stop must not turn a
-    delete the operator has already seen succeed into a 500.
-    """
-    records = deps.subagent_records(request)
-    if records is None:
-        return  # sub-agents are not wired in this deployment
-    try:
-        rows = await records.descendants(conversation_id, OPERATOR_ID)
-    except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded
-        logger.warning("could not list sub-agents of %s", conversation_id, exc_info=True)
-        return
-    registry = deps.registry(request)
-    store = deps.store(request)
-    for row in rows:
-        try:
-            _ = await registry.cancel(row.run_id)
-            run = registry.get(row.run_id)
-            if run is not None:
-                # Before its thread is deleted, not after: a run finalising into a
-                # conversation that has already gone re-creates a cache entry nothing
-                # ever evicts — the same hazard the claim above protects the parent
-                # from. Bounded, because "it would not stop" is not a reason to leave
-                # the operator's delete hanging.
-                await asyncio.wait_for(run.wait(), timeout=_SUBAGENT_STOP_S)
-        except Exception:  # noqa: BLE001 — one stuck child mustn't strand its siblings
-            logger.warning("could not stop sub-agent %s", row.id, exc_info=True)
-    for row in rows:
-        try:
-            await store.delete_conversation(row.child_conversation_id)
-        except Exception:  # noqa: BLE001 — one stuck child mustn't strand its siblings
-            logger.warning("could not discard sub-agent %s", row.id, exc_info=True)
-    try:
-        await records.forget([row.id for row in rows])
-    except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded
-        logger.warning("could not forget sub-agents of %s", conversation_id, exc_info=True)
-
-
-async def _purge_uploads(request: Request, upload_ids: list[str]) -> None:
-    """Hard-delete the chosen image uploads (bytes + corpus chunks cascade).
-    Best-effort per id, run after the conversation/message is already deleted: one
-    already gone (a race) or otherwise failing to delete is logged and skipped, so it never
-    aborts the remaining purges or 500s a delete the operator already saw succeed."""
-    uploads = deps.uploads(request)
-    for upload_id in upload_ids:
-        try:
-            await uploads.delete(OPERATOR_ID, upload_id)
-        except NotFoundError:
-            pass
-        except Exception:  # noqa: BLE001 — one bad purge mustn't strand the others
-            logger.exception("failed to purge orphaned image upload %s", upload_id)
-
-
-@router.get("/{conversation_id}/orphan-image-attachments", response_model=OrphanImageAttachments)
-async def orphan_image_attachments(
-    conversation_id: str,
-    request: Request,
-    message_id: Annotated[str | None, Query(alias="messageId")] = None,
-) -> OrphanImageAttachments:
-    """Pre-delete probe: which image attachments would lose their last reference if this
-    message (``message_id``) or the whole conversation (omit it) were deleted. The frontend
-    asks this first and only prompts keep-or-delete when the list is non-empty."""
-    _ = await _require_owned(request, conversation_id)
-    upload_ids = await image_orphans(request, conversation_id, message_id=message_id)
-    return OrphanImageAttachments(upload_ids=upload_ids)
-
-
-async def _settle_code_branch(request: Request, conversation_id: str, *, discard: bool) -> None:
-    """Refuse to delete a worktree thread that still holds unmerged commits, or throw its
-    branch away when the operator said to.
-
-    Best-effort about *everything except the refusal*: a project that has since been
-    deleted, or a repository that has moved, leaves nothing to protect and must not block
-    the delete. Only a real, countable diff stops it.
-    """
-    binding = await deps.store(request).binding(conversation_id)
-    if not binding.project_id:
-        return
-    if not binding.worktree:
-        await _discard_child_worktrees(request, binding.project_id, conversation_id)
-        return
-    try:
-        project = await deps.projects(request).get(OPERATOR_ID, binding.project_id)
-        root = Path(project.root_path)
-        diff = await deps.worktrees(request).diff(
-            root,
-            base_ref=project.base_ref,
-            conversation_id=conversation_id,
-            project_id=project.id,
-        )
-    except Exception:  # noqa: BLE001 — no branch, no project, no repo: nothing to lose
-        logger.debug("no code branch to settle for %s", conversation_id, exc_info=True)
-        return
-    if diff.files_changed and not discard:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"This conversation has unmerged work on {diff.branch}: "
-                f"{diff.files_changed} file(s), +{diff.insertions} −{diff.deletions}. "
-                "Merge it first, or delete with discardBranch=true to throw it away."
-            ),
-        )
-    await deps.worktrees(request).discard(
-        root, project_id=binding.project_id, conversation_id=conversation_id
-    )
-
-
-async def _discard_child_worktrees(request: Request, project_id: str, conversation_id: str) -> None:
-    """Remove the worktrees of the sub-agents a deleted thread spawned into them."""
-    try:
-        project = await deps.projects(request).get(OPERATOR_ID, project_id)
-    except NotFoundError:
-        return
-    await deps.worktrees(request).discard_children(
-        Path(project.root_path), project_id=project_id, conversation_id=conversation_id
-    )
-
-
 @router.delete("/{conversation_id}", status_code=204)
 async def delete_conversation(
     conversation_id: str,
     request: Request,
-    purge_images: Annotated[bool, Query(alias="purgeImages")] = False,
     discard_branch: Annotated[bool, Query(alias="discardBranch")] = False,
 ) -> None:
-    """Delete a conversation. With ``purgeImages=true`` the operator chose to also delete
-    the image attachments this would orphan; the default keeps them.
+    """Delete a conversation, with the image uploads it leaves unreferenced.
 
-    A **worktree** thread with unmerged commits is refused (409) unless
-    ``discardBranch=true``. Merging a branch is a deliberate act the operator has to take;
-    destroying one must be at least as deliberate, and deleting the thread would otherwise
-    be the quiet way to lose work that the merge gate exists to protect.
+    A worktree thread with unmerged commits is refused (409) unless ``discardBranch=true``:
+    destroying a branch must be as deliberate as merging one.
     """
-    store = deps.store(request)
-    # The purging delete `routes/deps.claim_conversation` names, and the one mutator here
-    # that was not taking the claim. Deleting under a live run tears the tree, the sandbox
-    # and the turn's attachments out from beneath it: the run keeps going, its own
-    # `finalize` re-creates a ghost cache entry nothing ever evicts, and the turn is
-    # discarded with no error. 409 instead, like every sibling mutation.
-    deps.claim_conversation(request, conversation_id)
-    try:
-        if await store.get_summary(conversation_id, OPERATOR_ID) is None:
-            raise HTTPException(status_code=404, detail="conversation not found")
-        await _settle_code_branch(request, conversation_id, discard=discard_branch)
-        orphans = (
-            await image_orphans(request, conversation_id, message_id=None) if purge_images else []
-        )
-        await store.delete_conversation(conversation_id)
-        # Queued messages restate what was said to the thread; they go with it.
-        deps.registry(request).inbox(conversation_id, OPERATOR_ID).clear()
-        await _purge_uploads(request, orphans)
-        # Drop the conversation's View history (snapshots + any blob no other snapshot
-        # needs), so the work doesn't linger encrypted on disk after the thread is gone.
-        await deps.workspace_history(request).delete_for_conversation(OPERATOR_ID, conversation_id)
-        # Same reasoning for the agent's task list and the plan it was working from: both
-        # restate what was asked for, so neither must outlive the thread.
-        await deps.conversation_tasks(request).delete_for_conversation(OPERATOR_ID, conversation_id)
-        await deps.plan_mode(request).delete_for_conversation(OPERATOR_ID, conversation_id)
-        # The originals of the project files it changed are the operator's content too;
-        # without the thread there is nothing to revert from.
-        changes = deps.capabilities(request).get_optional(ThreadChanges)
-        if changes is not None:
-            await changes.delete_for_conversation(OPERATOR_ID, conversation_id)
-        # And the sub-agents it launched. Unlike everything else here they are not merely
-        # stored state: a live one is a *running* model, spending the operator's money on
-        # work for a thread that no longer exists and holding a slot against the cap, with
-        # no card left anywhere to show it or stop it. Their own threads go too — hidden
-        # ones, reachable only through the cards this delete just destroyed.
-        await _discard_subagents(request, conversation_id)
-        # Delete the conversation's sandbox too (its workspace + sealed archive),
-        # otherwise it lingers on disk keyed to a thread that no longer exists. The DB
-        # delete above is the authoritative action, so a purge failure must not fail it.
-        sandbox = deps.sandbox_sessions(request)
-        if sandbox is not None:
-            try:
-                await sandbox.purge(conversation_id)
-            except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded
-                logger.warning("sandbox purge failed for %s", conversation_id, exc_info=True)
-        # The domains the operator opened for this thread, and the allowlist file the
-        # fences read them from. Same reasoning as the workspace above, and best-effort for
-        # the same reason — but unconditional, because the policy exists whether or not a
-        # sandbox does.
-        try:
-            await deps.egress(request).forget(conversation_id)
-        except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded
-            logger.warning("egress purge failed for %s", conversation_id, exc_info=True)
-        # And the browser: closing its window is the small half — the saved login is the
-        # point. It holds the cookies for every site this thread signed into, so leaving it
-        # behind would keep those sessions alive on disk after the thread is gone.
-        browser = deps.browser_sessions(request)
-        if browser is not None:
-            try:
-                await browser.purge(conversation_id)
-            except Exception:  # noqa: BLE001 — best-effort; the DB delete already succeeded
-                logger.warning("browser purge failed for %s", conversation_id, exc_info=True)
-    finally:
-        deps.release_conversation(request, conversation_id)
+    _ = await teardown.delete_conversation(request, conversation_id, discard_branch=discard_branch)
 
 
 @router.delete("/{conversation_id}/messages/{message_id}", response_model=ConversationDetail)
@@ -912,33 +691,23 @@ async def delete_message(
     conversation_id: str,
     message_id: str,
     request: Request,
-    purge_images: Annotated[bool, Query(alias="purgeImages")] = False,
 ) -> ConversationDetail:
-    """Remove a turn and everything after it on every branch (its subtree). The
-    active path falls back to the deleted turn's parent. With ``purgeImages=true`` the
-    image attachments this orphans are deleted too (default keeps them). Returns the
-    resulting thread so the client reseats in one round-trip (like version switch / rewind)."""
+    """Remove a turn and its subtree on every branch, with the image uploads it leaves
+    unreferenced. The active path falls back to the turn's parent. Returns the resulting
+    thread so the client reseats in one round-trip."""
     store = deps.store(request)
     summary = await _require_owned(request, conversation_id)
-    # Claim before the orphan-attachment lookup (real DB awaits, only when
-    # purge_images) and the leaf-moving `delete_message` call — a concurrent /chat
-    # submission could otherwise land and register its run mid-lookup (nothing has
-    # mutated, and no run exists yet, until this call actually deletes), then this
-    # delete would proceed to mutate the tree while that new run is live. Released as
-    # soon as the tree mutation itself is done — the purge/detail below read but don't
-    # move the leaf, so they don't need to stay inside the claim.
+    # Claimed before the orphan lookup's awaits, so a /chat submission can't register a run
+    # between the lookup and the tree mutation. The purge and detail below don't move the
+    # leaf, so the claim is released before them.
     deps.claim_conversation(request, conversation_id)
     try:
-        orphans = (
-            await image_orphans(request, conversation_id, message_id=message_id)
-            if purge_images
-            else []
-        )
+        orphans = await teardown.image_orphans(request, conversation_id, message_id=message_id)
         if not await store.delete_message(conversation_id, message_id):
             raise HTTPException(status_code=404, detail="message not found")
     finally:
         deps.release_conversation(request, conversation_id)
-    await _purge_uploads(request, orphans)
+    await teardown.purge_uploads(request, orphans)
     return await _detail(request, conversation_id, summary)
 
 
@@ -1285,15 +1054,9 @@ async def compact_conversation_now(
     """Fold this thread's older turns into a summary now, without waiting for it to reach
     the automatic threshold — for a thread the operator knows is about to need the room.
 
-    **A fold is a run, and answering ``202`` with its id is the whole point**: the
-    summarizer is a model call of its own, tens of seconds on a local endpoint, and a
-    request that blocks for its duration has nowhere to put what is happening meanwhile.
-    Attached to the run's stream the client gets exactly what an automatic fold has always
-    produced — ``compaction.started``, the summary as it is written, then
-    ``conversation.compacted`` — because it is now literally the same code path.
-
-    Shaped like ``POST /chat`` for that reason, rather than like ``retitle`` (whose shape
-    it used to follow).
+    A fold is a run, answered ``202`` with its id like ``POST /chat``: the summarizer takes
+    tens of seconds, and the run's stream carries the same frames an automatic fold emits
+    (``compaction.started``, the summary as written, ``conversation.compacted``).
 
     **It still takes the claim**, and the claim is not the same guarantee ``submit``
     gives: ``submit`` refuses a conversation with a live *run*, while a claim also covers a

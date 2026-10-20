@@ -1,9 +1,12 @@
 import { Show, createMemo, type JSX } from "solid-js";
-import { Button, Panel, StatusDot, Text } from "~/ui";
+import { Button, ExpandableText, Icon, Panel, StatusDot, Text } from "~/ui";
 import { relativeTime } from "~/lib/format";
 import type { ChatSummary } from "../model";
 import { runState, showThreadRecap } from "../recapVisibility";
 import { runStateSpec } from "../runState";
+
+/** About two lines of the reading register before MORE. */
+const RECAP_PREVIEW_CHARS = 280;
 
 /** One legend over one value — the whole vocabulary of the footer. */
 function Cell(props: {
@@ -31,32 +34,16 @@ function Cell(props: {
 }
 
 /**
- * What this thread was, for an operator who has just come back to it.
+ * What this thread was, for an operator who has just come back to it: the summary the
+ * backend's utility model writes once a thread has been idle a while, collapsed to a
+ * couple of lines with MORE.
  *
- * **It is a summary now, and it used to be a row of figures.** Age, turn count
- * and the branch diffstat were all things the interface could already answer — the
- * rail says when, the header chip says the branch — so the band spent a strip of
- * the screen restating them and answered the actual re-entry question, *what was I
- * doing here*, not at all. That question needs prose, and prose is not something the
- * client can derive: the backend's utility model writes it once a thread has been
- * idle a while, replaces it wholesale each time, and the band renders whatever the
- * newest one says.
+ * Two figures sit under it because the summary can't carry them: when the thread
+ * opened, and the last run's outcome (a summary written before a failure won't say so).
+ * A `Panel` rather than a `ConsoleGroup`, which is not for prose (§7).
  *
- * **Two figures survived, and both for the same reason** — they are facts about the
- * thread that the summary cannot carry and nothing else on screen says. `OPENED` is
- * when the thread began, which is the one thing that places it among the others; the
- * last run's outcome is what says a thread ended badly, and a summary written before
- * the failure would not mention it.
- *
- * **It is a `Panel`, not a `ConsoleGroup`.** The group is for ruled rows and fixed
- * cells read by scanning, and §7 is explicit that it is not for prose — which is
- * exactly what the band now leads with. A panel is the default container and the
- * right one the moment the content became a paragraph.
- *
- * **Absent unless it has something to say.** No summary yet (the ordinary state of a
- * thread still being worked on), a thread quiet for less than `COLD_AFTER_MS`, or a
- * run in flight — in that last case the live state is the answer, and a recap of the
- * previous turn would be reporting the past over the present.
+ * Absent with no summary yet, a thread quiet for less than `COLD_AFTER_MS`, or a run in
+ * flight, where the live state is the answer.
  */
 export function ThreadRecap(props: {
   /** The thread, as the shared session list already knows it. */
@@ -93,7 +80,7 @@ export function ThreadRecap(props: {
               aria-label="Dismiss thread recap"
               onClick={() => props.onDismiss()}
             >
-              ✕
+              <Icon name="close" size={14} />
             </Button>
           }
         >
@@ -101,9 +88,13 @@ export function ThreadRecap(props: {
               operator reads, sitting above a transcript set at the same size, and
               dropping it to 13px chrome would make the one thing the band exists to
               say the smallest thing in it (§4). */}
-          <Text variant="reading" tone="default" class="block">
-            {s().workSummary}
-          </Text>
+          <ExpandableText
+            text={s().workSummary ?? ""}
+            limit={RECAP_PREVIEW_CHARS}
+            variant="reading"
+            tone="default"
+            class="block"
+          />
           <div class="mt-3 flex flex-wrap items-start gap-x-6 gap-y-1">
             <Cell label="Opened" value={relativeTime(s().createdAt)} />
             {/* Absent when the backend has nothing to say — the run registry is

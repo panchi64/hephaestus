@@ -270,13 +270,8 @@ export function createBranchingOps(ctx: BranchingContext) {
    *  reach the automatic threshold — for a thread the operator knows is about to need the
    *  room.
    *
-   *  **It drives a run, like a turn does**, because that is what the backend starts. The
-   *  fold used to be a blocking POST that answered with the finished transcript, and the
-   *  whole of what the operator saw for the half-minute it held was a flag in the header:
-   *  the events a fold emits had no stream to arrive on. Now the same frames an automatic
-   *  fold produces come back here — the turn that opens, the summary as it is written, the
-   *  checkpoint it settles into — and `fold.ts` renders them without knowing which trigger
-   *  fired.
+   *  It drives a run, like a turn does, so the frames an automatic fold produces stream
+   *  here too and `fold.ts` renders them without knowing which trigger fired.
    *
    *  Nothing is reseated afterwards. `conversation.compacted` carries the checkpoint and
    *  where it goes, so the transcript is already right; refetching it would replace a
@@ -310,16 +305,12 @@ export function createBranchingOps(ctx: BranchingContext) {
 
   /** Delete a turn and everything after it; reseat from the returned active path
    *  (the DELETE returns the post-delete detail, like version-switch/rewind). */
-  async function removeMessage(
-    messageId: string,
-    purgeImages = false,
-  ): Promise<void> {
+  async function removeMessage(messageId: string): Promise<void> {
     const conversationId = ctx.conversationId();
     if (conversationId === null || ctx.sending()) return;
     try {
-      const q = purgeImages ? "?purgeImages=true" : "";
       const detail = await api.del<ConversationDetailDTO>(
-        `/conversations/${conversationId}/messages/${messageId}${q}`,
+        `/conversations/${conversationId}/messages/${messageId}`,
       );
       reseatIfCurrent(conversationId, detail);
       ctx.onTurnComplete?.();

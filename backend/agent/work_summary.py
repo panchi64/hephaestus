@@ -72,10 +72,9 @@ _BASE_SETTINGS: ModelSettings = {"max_tokens": 2048, "temperature": 0.3}
 # **latest** turns, because where the work stands is the half of the answer that decays.
 _EXCERPT = 12000
 
-# The hard ceiling on a stored summary. The prompt asks for two or three sentences, so this
-# is the backstop for a model that ignored the budget rather than the normal path — and it
-# sits at about what a re-entry band can show without becoming something to read.
-MAX_SUMMARY_LEN = 400
+# The hard ceiling on a stored summary, against a model that ignored the prompt's two-or-
+# three-sentence budget. Not a display limit: the recap band collapses long text itself.
+MAX_SUMMARY_LEN = 2000
 
 
 def _call_line(part: ToolCallPart) -> str:

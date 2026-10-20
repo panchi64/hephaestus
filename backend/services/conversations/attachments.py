@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from sqlmodel import Session, col, select
 
 from core.db import in_session
@@ -11,11 +13,8 @@ from .core import StoreCore
 
 
 class AttachmentsMixin(StoreCore):
-    # ── Attachment provenance & the delete-choice safety check ──────────────────
-    #
-    # ``attachment_ids`` is a clear JSON column, so both read it directly — no decrypt.
-    # The first answers "which images are still referenced from chats"; the delete flow uses
-    # the second to purge an attached image only when nothing surviving still references it.
+    # ``attachment_ids`` is a clear JSON column, so everything here reads it directly with
+    # no decrypt. Deletes use these to purge an attached image only once nothing references it.
 
     async def referenced_upload_ids(
         self, owner_id: str, *, exclude_conversation_id: str | None = None
@@ -82,16 +81,44 @@ class AttachmentsMixin(StoreCore):
         )
         return sorted(doomed_refs - surviving_refs)
 
-    async def detach_upload(self, owner_id: str, upload_id: str) -> None:
-        """Drop ``upload_id`` from every message that lists it as an attachment — both the
-        warm in-memory trees (authoritative, possibly ahead of the drainer) and the durable
-        rows. Called when an upload is hard-deleted, so no conversation strands a dangling
-        attachment reference to bytes that no longer exist. ``attachment_ids`` is a clear
-        JSON column, so this neither decrypts nor reseats the tree's structure."""
+    async def attachment_ids(self, owner_id: str, conversation_ids: Iterable[str]) -> set[str]:
+        """Every upload id attached anywhere in these conversations: the durable rows
+        overlaid with the warm trees, which can run ahead of the drainer."""
+        wanted = set(conversation_ids)
+
+        def work(session: Session) -> set[str]:
+            stmt = (
+                select(col(Message.attachment_ids))
+                .join(Conversation, col(Message.conversation_id) == Conversation.id)
+                .where(Conversation.owner_id == owner_id)
+                .where(col(Message.conversation_id).in_(wanted))
+            )
+            refs: set[str] = set()
+            for ids in session.exec(stmt):
+                if ids:
+                    refs.update(ids)
+            return refs
+
+        refs = await in_session(self._engine, work)
+        for cid in wanted:
+            tree = self._cache.get(cid)
+            if tree is None:
+                continue
+            for node in tree.nodes.values():
+                if node.attachment_ids:
+                    refs.update(node.attachment_ids)
+        return refs
+
+    async def detach_uploads(self, owner_id: str, upload_ids: Iterable[str]) -> None:
+        """Drop these upload ids from every message that lists them, in the warm trees and
+        the durable rows, so no conversation points at bytes that are gone."""
+        gone = set(upload_ids)
+        if not gone:
+            return
         for tree in self._cache.values():
             for node in tree.nodes.values():
-                if node.attachment_ids and upload_id in node.attachment_ids:
-                    node.attachment_ids = [a for a in node.attachment_ids if a != upload_id]
+                if node.attachment_ids and gone.intersection(node.attachment_ids):
+                    node.attachment_ids = [a for a in node.attachment_ids if a not in gone]
 
         def work(session: Session) -> None:
             rows = session.exec(
@@ -100,8 +127,8 @@ class AttachmentsMixin(StoreCore):
                 .where(Conversation.owner_id == owner_id)
             ).all()
             for row in rows:
-                if row.attachment_ids and upload_id in row.attachment_ids:
-                    row.attachment_ids = [a for a in row.attachment_ids if a != upload_id]
+                if row.attachment_ids and gone.intersection(row.attachment_ids):
+                    row.attachment_ids = [a for a in row.attachment_ids if a not in gone]
                     session.add(row)
 
         await in_session(self._engine, work)
