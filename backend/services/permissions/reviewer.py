@@ -90,7 +90,7 @@ from pydantic_ai.settings import ModelSettings
 from core.compaction_sections import is_checkpoint
 from core.untrusted import new_nonce, untrusted_fence, untrusted_preamble
 from prompts.utility import REVIEW_INSTRUCTIONS
-from services.permissions.capability import Capability
+from services.permissions.capability import ActionKind, Capability
 
 logger = logging.getLogger(__name__)
 
@@ -386,6 +386,9 @@ def review_prompt(request: ReviewRequest) -> str:
     # push`, `npm publish` and `scp host:/path` all write none, so the label says what was
     # seen and the rubric says in the same breath that seeing none proves nothing.
     lines.append(f"Names a network address: {'yes' if capability.network else 'no'}")
+    if capability.kind is ActionKind.SHELL:
+        fetching = "yes" if capability.fetches else "no"
+        lines.append(f"Installs or clones from the network: {fetching}")
     if capability.reach is not None:
         # The one model-authored value that stands in the clear, and it can: it is an
         # enumerated word this process re-derived from the call, not free text, so there is

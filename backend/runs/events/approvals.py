@@ -111,7 +111,7 @@ class ReviewStarted(Body):
     name: str
     summary: str
     detail: str | None = None
-    reach: Literal["workspace", "network", "host"] | None = None
+    reach: Literal["offline", "network", "host"] | None = None
 
 
 class ReviewCompleted(Body):

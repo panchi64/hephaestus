@@ -269,7 +269,7 @@ describe("a review's two frames", () => {
   // arrives on the opening frame and the tier and the fence arrive on the closing one,
   // and a card that showed only "allowed" would tell them nothing to act on.
   const started = (
-    reach: "workspace" | "network" | "host" | null,
+    reach: "offline" | "network" | "host" | null,
     detail: string | null = null,
   ): RunEvent => ({
     type: "review.started",
@@ -330,14 +330,14 @@ describe("a review's two frames", () => {
 
   test("and most tools have none, which renders nothing rather than empty", () => {
     const h = harness(turn());
-    h.fold(started("workspace"));
+    h.fold(started("offline"));
     const block = review(h.messages);
     expect(block?.kind === "review" && block.review.detail).toBeUndefined();
   });
 
   test("the ground and the fence land with the verdict", () => {
     const h = harness(turn());
-    h.fold(started("workspace"));
+    h.fold(started("offline"));
     h.fold(completed("workspace", true));
     const block = review(h.messages);
     expect(block?.kind === "review" && block.review.tier).toBe("workspace");
@@ -379,7 +379,7 @@ describe("a review's two frames", () => {
     // The reviewer's own refusal became a park, so `too_destructive` is a finding the
     // operator now has to read *while deciding* — not on a collapsed row above the prompt.
     const h = harness(turn());
-    h.fold(started("workspace"));
+    h.fold(started("offline"));
     h.fold(unrecoverable("mail_send"));
     h.fold(asked("mail_send"));
     const block = blockOf(h.messages, "approval");
@@ -396,7 +396,7 @@ describe("a review's two frames", () => {
     // one of them renders as a terminal rather than as an approval card — so a finding
     // carried only onto the latter would never be seen on the calls it was written for.
     const h = harness(turn());
-    h.fold(started("workspace"));
+    h.fold(started("offline"));
     h.fold(unrecoverable("shell_run_command"));
     h.fold(asked("shell_run_command", "git commit --amend"));
     const block = blockOf(h.messages, "host_command");

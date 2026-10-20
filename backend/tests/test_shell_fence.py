@@ -62,7 +62,7 @@ async def _shell(repo: Path, tmp_path: Path, *, approved: bool = True) -> tuple[
 async def test_without_a_vm_the_tools_refuse_and_nothing_runs(repo: Path, tmp_path: Path):
     marker = tmp_path / "ran"
     shell = Shell(shell_toolset(), checkout_ctx(repo))
-    for reach in ("workspace", "network", "host"):
+    for reach in ("offline", "network", "host"):
         refusal = await _refused(shell, "run_command", command=f"touch {marker}", reach=reach)
         assert "platform VM they run in is not running" in refusal
         assert "it is disabled" in refusal
@@ -156,7 +156,7 @@ async def test_a_failed_host_cd_leaves_the_directory_where_it_was(repo: Path, tm
     assert after["stdout"] == before["stdout"]
 
 
-@pytest.mark.parametrize("reach", ["workspace", "host"])
+@pytest.mark.parametrize("reach", ["offline", "host"])
 async def test_a_destructive_command_comes_back_as_a_retry(repo: Path, tmp_path: Path, reach: str):
     shell, _vm = await _shell(repo, tmp_path)
     with pytest.raises(ModelRetry):

@@ -552,7 +552,7 @@ export interface ReviewStarted extends Base {
   name: string;
   summary: string;
   detail: string | null;
-  reach: "workspace" | "network" | "host" | null;
+  reach: "offline" | "network" | "host" | null;
 }
 /** How the review ruled, and on what.
  *

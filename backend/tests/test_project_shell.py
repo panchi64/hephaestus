@@ -61,7 +61,7 @@ async def _call(shell: Shell, name: str, **args: str | int) -> dict[str, JsonVal
     return cast(dict[str, JsonValue], await shell.call(name, **args))
 
 
-async def test_a_workspace_command_edits_a_file_and_it_lands_in_the_host_repo(
+async def test_an_offline_command_edits_a_file_and_it_lands_in_the_host_repo(
     repo: Path, home: _Home
 ):
     shell = _shell(repo, home)
@@ -69,7 +69,7 @@ async def test_a_workspace_command_edits_a_file_and_it_lands_in_the_host_repo(
         shell, "run_command", command="echo changed > hello.txt && echo new > added.txt"
     )
     assert result["ok"] is True
-    assert result["reach"] == "workspace" and result["fenced"] is True
+    assert result["reach"] == "offline" and result["fenced"] is True
     assert (repo / "hello.txt").read_text() == "changed\n"
     assert (repo / "added.txt").read_text() == "new\n"
 
@@ -109,7 +109,7 @@ async def test_a_failed_cd_leaves_the_directory_where_it_was(repo: Path, home: _
     assert s((await _call(shell, "run_command", command="pwd"))["stdout"]).strip() == PROJECT
 
 
-async def test_a_workspace_command_gets_no_proxy_and_cannot_reach_out(repo: Path, home: _Home):
+async def test_an_offline_command_gets_no_proxy_and_cannot_reach_out(repo: Path, home: _Home):
     shell = _shell(repo, home)
     env = await _call(shell, "run_command", command="env")
     env_stdout = s(env["stdout"])
@@ -143,12 +143,12 @@ async def test_a_network_command_gets_the_egress_proxy_with_credentials(repo: Pa
     assert "localhost" in env["NO_PROXY"]
 
 
-async def test_a_workspace_command_that_names_a_url_gets_the_network_it_needs(
+async def test_an_offline_command_that_names_a_url_gets_the_network_it_needs(
     repo: Path, home: _Home
 ):
     shell = _shell(repo, home)
     result = await _call(shell, "run_command", command="echo https://example.com; env")
-    assert result["reach"] == "workspace" and result["fenced"] is True
+    assert result["reach"] == "offline" and result["fenced"] is True
     assert "HTTP_PROXY=http://workspace:" in s(result["stdout"])
 
 

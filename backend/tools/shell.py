@@ -15,7 +15,7 @@ project, or its scratch.
 **The executing tools take a `reach`.** The model states how far a command needs to go,
 and this file holds it to that:
 
-- `workspace` runs in the VM with no network at all;
+- `offline` runs in the VM with no network at all;
 - `network` runs in the VM with the conversation's egress credentials, reaching the
   domains the operator has allowed (``services/egress.py``);
 - `host` runs on the operator's machine itself, unfenced, for a command that has to act
@@ -26,9 +26,9 @@ and this file holds it to that:
 
 The same declaration is what the permission layer rules on
 (``services/permissions/judge.py``), so what a command was cleared for and where it runs
-are one statement. A `workspace` declaration the command's own syntax contradicts (it
-names a URL) was approved in the words it was read in, so it gets the network it plainly
-needs rather than failing.
+are one statement. An `offline` declaration the command contradicts (it names a URL, or
+installs or clones) was approved in the words it was read in, so it gets the network it
+plainly needs rather than failing.
 
 **Refused while the VM is down.** Without the VM there is nowhere to run a fenced
 command, and running one on the operator's machine instead is not something this tool
@@ -127,9 +127,9 @@ def boundary(name: str, command: str, reach: Reach, home: RunHome, cwd: str) -> 
     """Where this command runs, built from the declaration rather than from a judgement:
     the permission layer answers *who must approve*, and this answers *where it runs*.
 
-    Only an explicit `host` declaration leaves the VM. A `workspace` declaration the
-    command's syntax contradicts by reaching the network gets the network, because that is
-    what the approver read."""
+    Only an explicit `host` declaration leaves the VM. An `offline` declaration the
+    command contradicts, by naming an address or by installing or cloning, gets the
+    network, because that is what the approver read."""
     if reach == "host":
         return _Boundary(reach=reach, where="host", network=False, reason=_HOST_DECLARED)
     network = reach == "network"
@@ -137,12 +137,32 @@ def boundary(name: str, command: str, reach: Reach, home: RunHome, cwd: str) -> 
         capability = capability_of(
             f"{_NAMESPACE}{name}", {"command": command, "reach": reach}, root=home.fence(cwd)
         )
-        network = capability.network
+        network = capability.network or capability.fetches
     return _Boundary(reach=reach, where="vm", network=network, reason=None)
 
 
-def _vm_note(boundary: _Boundary, result: ShellResult) -> str | None:
-    """A note on a request the VM's egress gateway refused, or None."""
+#: What a command run without the proxy prints when it tries to reach a host: the guest
+#: resolver fails before any connection is made, so the gateway never sees the request.
+_NO_NETWORK_SIGNS = (
+    "Temporary failure in name resolution",
+    "Name or service not known",
+    "Could not resolve host",
+    "Network is unreachable",
+    "No address associated with hostname",
+    "failed to lookup address",
+    "EAI_AGAIN",
+    "ENOTFOUND",
+)
+
+_OFFLINE_NOTE = (
+    "This command ran with reach `offline`, which has no network. The VM does have "
+    "network: run the same command again with reach `network` to reach the domains the "
+    "operator has allowed. Do not move it to `host`; installs and downloads belong in the VM."
+)
+
+
+def fence_note(boundary: _Boundary, result: ShellResult) -> str | None:
+    """What the model should do about a refusal by the VM's fence, or None."""
     if not boundary.fenced:
         return None
     text = f"{result.stdout}\n{result.stderr}"
@@ -152,10 +172,9 @@ def _vm_note(boundary: _Boundary, result: ShellResult) -> str | None:
             "to reach. Ask for it with `code_request_egress`, then run the command again."
         )
     if "407" in text and "hephaestus-egress" in text:
-        return (
-            "This command declared `workspace`, which has no network. Declare `network` "
-            "to reach the domains the operator has allowed."
-        )
+        return _OFFLINE_NOTE
+    if not boundary.network and any(sign in text for sign in _NO_NETWORK_SIGNS):
+        return _OFFLINE_NOTE
     if "Read-only file system" in text:
         return (
             "A project you may only read is mounted read-only. To change it, edit the file "
@@ -203,7 +222,7 @@ def _run_payload(
         "cwd": cwd,
         **_boundary_fields(boundary),
     }
-    note = _vm_note(boundary, result)
+    note = fence_note(boundary, result)
     if note is not None:
         payload["fence_note"] = note
     if notes:
@@ -318,7 +337,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
     async def run_command(
         ctx: RunContext[RunDeps],
         command: str,
-        reach: Reach = "workspace",
+        reach: Reach = "offline",
         timeout_seconds: float | None = None,
     ) -> dict[str, object] | str:
         """Runs a shell command in your home and waits for it to finish. Use it for builds,
@@ -343,12 +362,14 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
 
         Args:
             command: The command, as you would type it in bash.
-            reach: How far the command needs to go. `workspace` runs it in your VM with
+            reach: How far the command needs to go. `offline` runs it in your VM with
                 no network: builds, tests, git and anything that reads or writes files.
-                `network` adds the domains the operator has allowed, for installs and
-                fetches. `host` runs it unfenced on the operator's own machine, starting
-                in the project's folder there; use it only when the command has to act on
-                that machine, and know that its changes cannot be reverted.
+                `network` runs it in your VM with the domains the operator has allowed,
+                for installs, clones and downloads; a package install or clone gets it
+                even when declared `offline`. `host` runs it unfenced on the operator's
+                own machine, starting in the project's folder there; use it only when the
+                command has to act on that machine, never to install packages, and know
+                that its changes cannot be reverted.
             timeout_seconds: Seconds to wait before the command is killed. Default 300.
         """
         state = await _ready(ctx, "run_command")
@@ -380,7 +401,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
     async def start_command(
-        ctx: RunContext[RunDeps], command: str, reach: Reach = "workspace"
+        ctx: RunContext[RunDeps], command: str, reach: Reach = "offline"
     ) -> dict[str, object] | str:
         """Starts a command in the background and returns at once. Use it for a dev
         server, a watcher, or a build or test run long enough that you want to keep
@@ -397,7 +418,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
 
         Args:
             command: The command, as you would type it in bash.
-            reach: How far the command needs to go: `workspace`, `network` or `host`,
+            reach: How far the command needs to go: `offline`, `network` or `host`,
                 meaning what they mean for `shell_run_command`.
         """
         state = await _ready(ctx, "start_command")

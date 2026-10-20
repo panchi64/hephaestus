@@ -799,7 +799,7 @@ class TestTheTranscriptTheReviewerSees:
         # structural — does what this command names match what it said it needed — and it
         # is an enumerated word rather than free text, so there is nothing to write prose
         # into. An act that declares nothing says nothing here rather than saying "host".
-        assert "Declared reach: workspace" in clear
+        assert "Declared reach: offline" in clear
         assert "Declared reach" not in review_prompt(
             ReviewRequest(capability=capability_of("mail_send", {"to": "a@b.c"}), transcript=())
         )
@@ -1418,6 +1418,16 @@ class TestTheRubricWithoutTheScore:
         assert not pushes.network  # nothing in it writes an address
         assert "Names a network address: no" in review_prompt(
             ReviewRequest(capability=pushes, transcript=())
+        )
+
+    def test_an_install_is_reported_beside_the_address_line(self):
+        installs = capability_of("shell_run_command", {"command": "pip install requests"})
+        assert "Installs or clones from the network: yes" in review_prompt(
+            ReviewRequest(capability=installs, transcript=())
+        )
+        lists = capability_of("shell_run_command", {"command": "pip list"})
+        assert "Installs or clones from the network: no" in review_prompt(
+            ReviewRequest(capability=lists, transcript=())
         )
 
     def test_a_step_that_serves_the_request_counts_as_asked_for(self):

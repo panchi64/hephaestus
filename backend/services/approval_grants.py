@@ -264,7 +264,7 @@ def _reach_marker(tool_name: str, args: Mapping[str, object]) -> tuple[str, ...]
 
     Spelled ``@host`` rather than as a bare word so it cannot collide with a program name,
     and only present where the reach *is* wider — compared against the tool's own answer
-    with no arguments rather than against the literal ``"workspace"``, because a tool with
+    with no arguments rather than against the literal ``"offline"``, because a tool with
     no such argument declares the same thing on every call and has nothing to widen:
     `code_run_host_command` reaches the host by construction, and marking every one of its
     scopes would say nothing a reader did not already know.

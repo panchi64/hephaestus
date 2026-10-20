@@ -40,7 +40,7 @@ def test_a_commands_own_tmpfs_and_streams_are_inside() -> None:
 def test_an_offline_command_in_scratch_is_bounded_by_the_vm() -> None:
     # Measured: subshells in a build task's test run parked for the operator, where the
     # same work through the old sandbox tool was cleared on its container.
-    def judged(command: str, *, cwd: str = "/home/agent/scratch", reach: str = "workspace"):
+    def judged(command: str, *, cwd: str = "/home/agent/scratch", reach: str = "offline"):
         capability = capability_of(
             "shell_run_command", {"command": command, "reach": reach}, root=_fence(cwd)
         )

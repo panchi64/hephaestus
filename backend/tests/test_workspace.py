@@ -301,7 +301,7 @@ async def _status(cwd: Path) -> tuple[int, str]:
 # --- the shell ------------------------------------------------------------------------
 
 
-async def test_the_declaration_is_offered_to_the_model_with_the_workspace_default(tmp_path: Path):
+async def test_the_declaration_is_offered_to_the_model_with_the_offline_default(tmp_path: Path):
     caps = _caps(tmp_path, {"proj-1": tmp_path})
     ctx = _ctx(caps, conversation_id="conv-a", project_id="proj-1", worktree=True)
     tool = (await shell_toolset().get_tools(ctx))["run_command"]
@@ -309,7 +309,7 @@ async def test_the_declaration_is_offered_to_the_model_with_the_workspace_defaul
     reach = obj(obj(schema["properties"])["reach"])
     description = str(reach.get("description", "")).lower()
     assert "reach" not in arr(schema.get("required", []))
-    assert reach.get("default") == "workspace"
+    assert reach.get("default") == "offline"
     # The description explains where each answer runs and never the permission level: one
     # string ships at all four, so a promise about an approval outcome is wrong at three.
     assert "vm" in description and "host" in description
@@ -370,7 +370,7 @@ class TestShellRunsInTheVm:
         # And the turn is still usable afterwards — a retry left nothing broken behind it.
         assert "ok" in str((await _call(shell, "run_command", command="echo ok"))["stdout"])
 
-    async def test_a_workspace_command_runs_in_the_vm_and_a_host_one_on_the_host(
+    async def test_an_offline_command_runs_in_the_vm_and_a_host_one_on_the_host(
         self, tmp_path: Path, copies: ProjectCopies
     ):
         root, shell = await self._shell(tmp_path, copies)

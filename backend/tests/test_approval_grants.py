@@ -520,7 +520,7 @@ class TestACommandScopedGrant:
             )
 
         assert covers("host") is True
-        assert covers("workspace") is False
+        assert covers("offline") is False
         assert covers("network") is False
 
     def test_a_scope_covers_its_own_words_and_not_what_follows_them(self):
@@ -638,7 +638,7 @@ class TestTheScopeAnApprovalRecords:
 
     def test_the_tools_own_reach_is_not_written_into_the_scope(self):
         assert grant_scopes(
-            "shell_run_command", {"command": "uv run pytest", "reach": "workspace"}
+            "shell_run_command", {"command": "uv run pytest", "reach": "offline"}
         ) == [("uv", "run", "pytest")]
 
     def test_a_host_tool_still_records_its_own_reach(self):
