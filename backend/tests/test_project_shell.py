@@ -109,17 +109,24 @@ async def test_a_failed_cd_leaves_the_directory_where_it_was(repo: Path, home: _
     assert s((await _call(shell, "run_command", command="pwd"))["stdout"]).strip() == PROJECT
 
 
-async def test_an_offline_command_gets_no_proxy_and_cannot_reach_out(repo: Path, home: _Home):
+async def test_an_offline_command_gets_no_credentials_and_cannot_reach_out(repo: Path, home: _Home):
     shell = _shell(repo, home)
     env = await _call(shell, "run_command", command="env")
-    env_stdout = s(env["stdout"])
-    assert "HTTP_PROXY" not in env_stdout and "http_proxy" not in env_stdout
+    names = {
+        key: value
+        for key, _, value in (line.partition("=") for line in s(env["stdout"]).splitlines())
+    }
+    proxy = names["HTTP_PROXY"]
+    assert proxy.startswith("http://127.0.0.1:") and "@" not in proxy
 
-    # The URL is assembled at run time: a command that names one is given the network.
+    # The URL is assembled at run time, so nothing gives this command the network: the
+    # gateway refuses it for want of credentials.
     curl = await _call(
-        shell, "run_command", command='U=ht""tp://example.com/; curl -sS --max-time 5 "$U"'
+        shell, "run_command", command='U=ht""tp://example.com/; curl -fsS --max-time 5 "$U"'
     )
     assert curl["exit_code"] not in (0, 127), curl["stderr"]
+    assert "407" in s(curl["stderr"])
+    assert "reach `network`" in s(curl["fence_note"])
 
     script = (
         "import urllib.request; "
@@ -127,7 +134,7 @@ async def test_an_offline_command_gets_no_proxy_and_cannot_reach_out(repo: Path,
     )
     urllib = await _call(shell, "run_command", command=f'python3 -c "{script}"')
     assert urllib["exit_code"] not in (0, 127), urllib["stderr"]
-    assert "URLError" in s(urllib["stderr"])
+    assert "407" in s(urllib["stderr"])
 
 
 async def test_a_network_command_gets_the_egress_proxy_with_credentials(repo: Path, home: _Home):

@@ -66,10 +66,14 @@ _ENV_DEFAULTS = {
 }
 
 
-def proxy_env(credentials: str) -> dict[str, str]:
+def proxy_env(credentials: str | None) -> dict[str, str]:
     """Both spellings, because curl reads only the lowercase names while pip, uv, npm,
-    cargo, go and git read the uppercase pair."""
-    url = f"http://{credentials}@{WORKSPACE_PROXY}"
+    cargo, go and git read the uppercase pair.
+
+    Without credentials the gateway answers every request with a 407, which a client
+    reports as a proxy refusal rather than as a DNS failure that reads like no network
+    exists."""
+    url = f"http://{credentials}@{WORKSPACE_PROXY}" if credentials else f"http://{WORKSPACE_PROXY}"
     direct = "localhost,127.0.0.1"
     return {
         "HTTP_PROXY": url,
@@ -302,10 +306,11 @@ class SandboxSession:
 
     def command_env(self, *, network: bool) -> dict[str, str]:
         """The environment a home command runs with: the package-manager defaults, and the
-        egress proxy when it may reach the network. ``HOME`` is left to the confinement,
-        which points it at the home so ``~/projects`` means what the agent was told."""
+        egress proxy, with credentials only when it may reach the network. ``HOME`` is left
+        to the confinement, which points it at the home so ``~/projects`` means what the
+        agent was told."""
         defaults = {name: value for name, value in _ENV_DEFAULTS.items() if name != "HOME"}
-        return {**defaults, **(self._network_env() if network else {})}
+        return {**defaults, **(self._network_env() if network else proxy_env(None))}
 
     def read_file(self, relpath: str) -> bytes:
         """Read a file the agent produced in this session's workspace, whether or not

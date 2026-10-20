@@ -553,6 +553,9 @@ export interface ReviewStarted extends Base {
   summary: string;
   detail: string | null;
   reach: "offline" | "network" | "host" | null;
+  /** Whether a VM command will run with egress, which an `offline` declaration can
+   *  differ from. Null where nothing runs in the VM; absent from older streams. */
+  network?: boolean | null;
 }
 /** How the review ruled, and on what.
  *

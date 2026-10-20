@@ -10,12 +10,41 @@ from services.home.backend import Mount
 from services.home.paths import SCRATCH
 from services.home.table import RunHome
 from services.permissions import Reach
-from services.sandbox.shell_runner import ShellResult
 from tools import shell as shell_tool
 
 
-def _failed(stderr: str) -> ShellResult:
-    return ShellResult(exit_code=1, stdout="", stderr=stderr, timed_out=False, duration_ms=5)
+def _note(stderr: str, *, network: bool = False, ok: bool = False) -> str | None:
+    return shell_tool.fence_note(network=network, ok=ok, stdout="", stderr=stderr)
+
+
+class TestWhatAFailedCommandIsTold:
+    """The `fence_note` a VM command's result carries when the fence, not the command, is
+    why it failed."""
+
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            "Temporary failure in name resolution",
+            "curl: (6) Could not resolve host: example.com",
+            "npm ERR! getaddrinfo EAI_AGAIN registry.npmjs.org",
+            "dial tcp: lookup proxy.golang.org: no such host",
+            "curl: (56) CONNECT tunnel failed, response 407",
+            "Tunnel connection failed: 407 Proxy Authentication Required",
+        ],
+    )
+    def test_an_offline_command_that_tried_to_reach_out_is_told_to_redeclare(self, stderr: str):
+        note = _note(stderr)
+        assert note is not None and "reach `network`" in note and "`host`" in note
+
+    def test_a_command_that_succeeded_gets_no_note_for_text_it_printed(self):
+        assert _note("ENOTFOUND matched in 3 files", ok=True) is None
+
+    def test_a_networked_command_that_could_not_resolve_gets_no_redeclare_note(self):
+        assert _note("Temporary failure in name resolution", network=True) is None
+
+    def test_a_networked_command_refused_by_the_proxy_is_told_about_its_credentials(self):
+        note = _note("407 Proxy Authentication Required", network=True)
+        assert note is not None and "credentials" in note and "reach `network`" not in note
 
 
 class TestWhereTheToolRunsACommand:
@@ -61,28 +90,6 @@ class TestWhereTheToolRunsACommand:
         # rather than failing; the declaration itself is reported as made.
         boundary = self._boundary(tmp_path, "curl https://example.com/x", reach="offline")
         assert boundary.where == "vm" and boundary.network is True
-
-    @pytest.mark.parametrize(
-        "stderr",
-        [
-            "Temporary failure in name resolution",
-            "curl: (6) Could not resolve host: example.com",
-            "npm ERR! getaddrinfo EAI_AGAIN registry.npmjs.org",
-        ],
-    )
-    def test_a_command_with_no_network_that_tried_to_reach_one_is_told_to_redeclare(
-        self, tmp_path: Path, stderr: str
-    ):
-        offline = self._boundary(tmp_path, "python fetch.py", reach="offline")
-        note = shell_tool.fence_note(offline, _failed(stderr))
-        assert note is not None and "reach `network`" in note and "`host`" in note
-
-    def test_a_networked_command_that_could_not_resolve_gets_no_redeclare_note(
-        self, tmp_path: Path
-    ):
-        networked = self._boundary(tmp_path, "python fetch.py", reach="network")
-        failed = _failed("Temporary failure in name resolution")
-        assert shell_tool.fence_note(networked, failed) is None
 
     def test_a_host_declaration_is_the_one_that_asks_for_the_machine(self, tmp_path: Path):
         boundary = self._boundary(tmp_path, "uv sync", reach="host")

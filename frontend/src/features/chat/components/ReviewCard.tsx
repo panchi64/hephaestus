@@ -142,6 +142,12 @@ export function ReviewCard(props: {
               </Text>
             )}
           </Show>
+          <Show when={props.review.reach === "offline" && props.review.network}>
+            <Text variant="micro" tone="dim">
+              It installs, clones or names an address, so it runs with the
+              allowed domains anyway.
+            </Text>
+          </Show>
           <Show when={props.review.stage}>
             {(stage) => (
               <Text variant="micro" tone="dim">

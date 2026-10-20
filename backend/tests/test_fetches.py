@@ -43,7 +43,15 @@ def _fetches(command: str) -> bool:
         "git submodule update --init",
         "sudo -u root pip install requests",
         "env PIP_NO_CACHE_DIR=1 pip install requests",
+        "env -u PIP_INDEX_URL pip install requests",
         "cd app && npm ci && npm test",
+        "go mod tidy",
+        "poetry install",
+        "pipenv sync",
+        "conda create -n env python",
+        "npx prettier --check .",
+        "pnpm dlx create-vite",
+        "git ls-remote origin",
     ],
 )
 def test_an_install_or_clone_is_read_as_fetching(command: str):
@@ -64,6 +72,9 @@ def test_an_install_or_clone_is_read_as_fetching(command: str):
         "cargo build",
         "echo pip install",
         "ls install",
+        "uv sync --offline",
+        "pip install --no-index --find-links wheels/ requests",
+        "npm ci --offline",
     ],
 )
 def test_other_commands_are_not(command: str):

@@ -68,6 +68,7 @@ from models.approval_grant import ApprovalGrant
 from services.permissions import (
     OPERATOR_ONLY_TOOLS,
     GrantWidth,
+    capability_of,
     command_prefixes,
     declared_reach,
 )
@@ -270,6 +271,10 @@ def _reach_marker(tool_name: str, args: Mapping[str, object]) -> tuple[str, ...]
     scopes would say nothing a reader did not already know.
     """
     reach = declared_reach(tool_name, dict(args))
+    # Marked by what it runs with, so a yes to an install covers it whichever reach the
+    # model wrote.
+    if reach == "offline" and capability_of(tool_name, args).runs_with_network:
+        reach = "network"
     if reach is None or reach == declared_reach(tool_name, {}):
         return ()
     return (f"@{reach}",)

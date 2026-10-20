@@ -335,6 +335,13 @@ describe("a review's two frames", () => {
     expect(block?.kind === "review" && block.review.detail).toBeUndefined();
   });
 
+  test("an offline command that will run with the network says so", () => {
+    const h = harness(turn());
+    h.fold({ ...started("offline"), network: true } as RunEvent);
+    const block = review(h.messages);
+    expect(block?.kind === "review" && block.review.network).toBe(true);
+  });
+
   test("the ground and the fence land with the verdict", () => {
     const h = harness(turn());
     h.fold(started("offline"));

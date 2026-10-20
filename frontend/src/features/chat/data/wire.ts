@@ -248,6 +248,8 @@ export interface HostResult {
    *  — which is why the terminal reads them off the result rather than off a review. */
   reach?: CommandReach;
   fenced?: boolean;
+  /** Whether a VM command ran with the network; absent for a host command. */
+  network?: boolean;
   /** Present only when `fenced` is false: one operator-facing sentence saying why. */
   unfenced_reason?: string;
   /** Present only when the output shows a permission failure the fence itself caused,

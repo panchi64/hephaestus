@@ -437,6 +437,9 @@ async def review_call(
             summary=capability.summary,
             detail=capability.detail,
             reach=capability.reach,
+            network=(
+                capability.runs_with_network if capability.reach in ("offline", "network") else None
+            ),
         )
     )
     outcome = await review(

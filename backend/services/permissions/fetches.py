@@ -29,21 +29,32 @@ _FETCHING: dict[str, tuple[tuple[str, ...], ...]] = {
         ("tool", "install"),
     ),
     "npm": _INSTALLS,
-    "pnpm": _INSTALLS,
-    "yarn": _INSTALLS,
-    "bun": _INSTALLS,
+    "pnpm": (*_INSTALLS, ("dlx",)),
+    "yarn": (*_INSTALLS, ("dlx",)),
+    "bun": (*_INSTALLS, ("x",)),
     "cargo": (("install",), ("fetch",), ("add",), ("update",)),
-    "go": (("get",), ("install",), ("mod", "download")),
+    "go": (("get",), ("install",), ("mod", "download"), ("mod", "tidy")),
+    "poetry": (("install",), ("add",), ("update",), ("lock",)),
+    "pipenv": (("install",), ("sync",), ("update",), ("lock",)),
+    "conda": (("install",), ("create",), ("update",)),
+    "mamba": (("install",), ("create",), ("update",)),
+    "micromamba": (("install",), ("create",), ("update",)),
     "gem": (("install",),),
     "bundle": (("install",),),
     "composer": (("install",), ("require",), ("update",)),
     "apt": (("install",), ("update",)),
     "apt-get": (("install",), ("update",)),
-    "git": (("clone",), ("fetch",), ("pull",), ("submodule", "update")),
+    "git": (("clone",), ("fetch",), ("pull",), ("ls-remote",), ("submodule", "update")),
 }
 
 #: Programs that install when run with no operand at all.
 _BARE_INSTALLS = frozenset({"yarn"})
+
+#: Programs that download what they run on any invocation.
+_ALWAYS_FETCH = frozenset({"npx", "bunx"})
+
+#: Flags that tell a package manager to use only what is already on disk.
+_LOCAL_ONLY = frozenset({"--offline", "--no-index"})
 
 #: Flags whose value is the next word, so that word is not read as the subcommand.
 _VALUE_FLAGS: dict[str, frozenset[str]] = {
@@ -51,6 +62,7 @@ _VALUE_FLAGS: dict[str, frozenset[str]] = {
     "npm": frozenset({"--prefix"}),
     "uv": frozenset({"--directory", "--project"}),
     "sudo": frozenset({"-u", "-g"}),
+    "env": frozenset({"-u", "--unset", "-C", "--chdir"}),
 }
 
 _VERSIONED = re.compile(r"^(pip|python)\d*(\.\d+)?$")
@@ -63,12 +75,14 @@ def fetches(commands: Sequence[ShellCommand]) -> bool:
 
 def _fetches(program: str, arguments: tuple[str, ...]) -> bool:
     name = _name(program)
-    if name == "env":
-        rest = [a for a in arguments if not is_flag(a) and "=" not in a]
-        return bool(rest) and _fetches(rest[0], _after(arguments, rest[0]))
     operands = _operands(name, arguments)
-    if name == "sudo":
-        return bool(operands) and _fetches(operands[0], _after(arguments, operands[0]))
+    if name in ("env", "sudo"):
+        rest = [word for word in operands if "=" not in word]
+        return bool(rest) and _fetches(rest[0], _after(arguments, rest[0]))
+    if any(word in _LOCAL_ONLY for word in arguments):
+        return False
+    if name in _ALWAYS_FETCH:
+        return True
     if name == "python":
         if arguments[:2] != ("-m", "pip"):
             return False

@@ -70,9 +70,16 @@ REACHES: frozenset[str] = frozenset({"offline", "network", "host"})
 #: the declaration the tool will act on, and the judge has to model what will run.
 DEFAULT_REACH: Reach = "offline"
 
-#: Earlier names of a reach, read as the reach they became, so a call recorded before the
-#: rename is described as what it declared rather than as the widest reach.
+#: Old spellings of a reach that a thread's history may still carry, and what they mean.
 _RENAMED_REACHES: dict[str, Reach] = {"workspace": "offline"}
+
+
+def renamed_reach(value: object) -> object:
+    """``value`` with an old spelling of a reach replaced by its current one."""
+    if isinstance(value, str):
+        return _RENAMED_REACHES.get(value, value)
+    return value
+
 
 #: The tools whose schema actually carries a ``reach`` argument (``tools/shell.py``). Only
 #: for these does an absent argument mean :data:`DEFAULT_REACH`; for every other shell-shaped
@@ -167,6 +174,14 @@ class Capability:
         return not self.unbounded
 
     @property
+    def runs_with_network(self) -> bool:
+        """Whether a VM command gets the conversation's egress: it declared ``network``, or
+        declared ``offline`` and names an address or installs or clones anyway."""
+        if self.reach == "network":
+            return True
+        return self.reach == "offline" and (self.network or self.fetches)
+
+    @property
     def programs(self) -> tuple[str, ...]:
         """The program names a shell action would run, in order."""
         return tuple(command.program for command in self.commands)
@@ -256,9 +271,7 @@ def declared_reach(tool: str, args: Mapping[str, object]) -> Reach | None:
         return "host"
     if "reach" not in args:
         return DEFAULT_REACH if tool in _REACH_ARG_TOOLS else None
-    value = args["reach"]
-    if isinstance(value, str) and value in _RENAMED_REACHES:
-        return _RENAMED_REACHES[value]
+    value = renamed_reach(args["reach"])
     return cast("Reach", value) if value in REACHES else "host"
 
 

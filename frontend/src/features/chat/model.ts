@@ -274,6 +274,9 @@ export interface CommandBoundaryFacts {
   fenced?: boolean;
   /** Why it ran unfenced — present only when `fenced` is false. */
   unfencedReason?: string;
+  /** Whether a VM command ran with the network, which an `offline` declaration can
+   *  differ from. Absent for a host command and on results from before it was sent. */
+  network?: boolean;
   /** A permission failure in the output that the fence itself caused, said in words,
    *  so a denied write reads as the fence holding rather than as a broken command. */
   fenceNote?: string;
@@ -491,6 +494,9 @@ export interface Review {
   /** How far a shell command said it needs to go. Undefined for acts that declare
    *  nothing at all, which is not the same as declaring the widest reach. */
   reach?: CommandReach;
+  /** Whether the command will run with the network, which an `offline` declaration can
+   *  differ from: an install or a named address gets it anyway. */
+  network?: boolean;
   decision?: "allow" | "ask" | "block";
   /** Which stage settled it: the structural judge, or the model. */
   stage?: "judge" | "reviewer";

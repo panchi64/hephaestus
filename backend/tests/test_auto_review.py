@@ -62,7 +62,7 @@ from models._fields import utcnow
 from prompts.compaction import COMPACT_PREAMBLE
 from prompts.utility import REVIEW_INSTRUCTIONS
 from routes.deps import app_state
-from runs import Orchestrator, Run, RunRegistry, RunStatus, RunStream
+from runs import Orchestrator, ReviewStarted, Run, RunRegistry, RunStatus, RunStream
 from services.approval_grants import ApprovalGrantStore, GrantInfo
 from services.conversations import ConversationBinding
 from services.home.backend import Mount
@@ -1583,6 +1583,21 @@ class TestTheEngineRunsIt:
             fenced=True,
         )
         assert next(b for b in _bodies(run) if b.type == "review.started").detail is None
+
+    async def test_the_opening_event_says_an_offline_install_runs_with_the_network(self):
+        run = Run(id="r-install", kind="chat", owner_id="operator", stream=RunStream())
+        _ = await gating.review_call(
+            run,
+            tool_call_id="t1",
+            tool="shell_run_command",
+            args={"command": "npm install"},
+            root=WORKSPACE,
+            transcript=(),
+            reviewer=reviewer_of(verdict("low", "explicitly_yes")),
+            fenced=True,
+        )
+        started = next(b for b in _bodies(run) if isinstance(b, ReviewStarted))
+        assert started.reach == "offline" and started.network is True
 
     async def test_no_other_level_reviews_at_all(self, monkeypatch: pytest.MonkeyPatch):
         # Edit asks the operator; the review never runs, so no review event is emitted

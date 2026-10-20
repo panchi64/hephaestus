@@ -57,6 +57,7 @@ class _Job:
     session: SandboxSession
     held: tuple[tuple[Mount, ProjectCopy], ...]
     changes: ChangeLog | None
+    network: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,7 +229,7 @@ class HomeShell:
                 ) from exc
         for _mount, copy in held:
             copy.jobs.add(name)
-        self._jobs[command_id] = _Job(name, session, tuple(held), changes)
+        self._jobs[command_id] = _Job(name, session, tuple(held), changes, network)
         return command_id
 
     async def check(self, copies: ProjectCopies, command_id: str) -> BackgroundStatus | None:
@@ -239,7 +240,7 @@ class HomeShell:
             return self._finished.get(command_id)
         state = await copies.vm.job(job.name)
         if state.running:
-            return self._status(command_id, state, "running")
+            return self._status(command_id, job, state, "running")
         return await self._retire(command_id, job, state, "finished")
 
     async def stop(self, copies: ProjectCopies, command_id: str) -> BackgroundStatus | None:
@@ -275,7 +276,7 @@ class HomeShell:
             async with copy.lock:
                 copy.touch()
                 _ = await _bring_back(mount, copy, job.changes)
-        final = self._status(command_id, state, status)
+        final = self._status(command_id, job, state, status)
         self._finished[command_id] = final
         while len(self._finished) > _MAX_FINISHED:
             _ = self._finished.popitem(last=False)
@@ -284,6 +285,7 @@ class HomeShell:
     def _status(
         self,
         command_id: str,
+        job: _Job,
         state: JobState,
         status: Literal["running", "finished", "stopped"],
     ) -> BackgroundStatus:
@@ -293,6 +295,7 @@ class HomeShell:
             exit_code=state.exit_code,
             stdout=truncate_tail(state.stdout, self._max_output_chars),
             stderr=truncate_tail(state.stderr, self._max_output_chars),
+            network=job.network,
         )
 
     def _follow_cd(self, landed: str, bound: Sequence[Place]) -> None:

@@ -523,6 +523,19 @@ class TestACommandScopedGrant:
         assert covers("offline") is False
         assert covers("network") is False
 
+    def test_an_install_is_scoped_by_the_network_it_runs_with_whatever_it_declared(self):
+        # An offline `npm ci` runs with the network, so it is the same act as one declared
+        # `network`, and one yes covers both.
+        held = _grants(("shell_run_command", ("@network", "npm", "ci")))
+
+        def covers(reach: str) -> bool:
+            return covered_by_grant(
+                "shell_run_command", {"command": "npm ci", "reach": reach}, held
+            )
+
+        assert covers("network") is True
+        assert covers("offline") is True
+
     def test_a_scope_covers_its_own_words_and_not_what_follows_them(self):
         # A scope is only as long as the approved command's own leading words, so matching
         # by *prefix* would turn one yes to a bare wrapper into a yes to everything under

@@ -10,7 +10,7 @@ from services.home.backend import Mount
 from services.home.paths import HOME, SCRATCH, Place
 from services.sandbox import SandboxSessionManager
 from services.sandbox.home_shell import HomeShell
-from services.vm.platform import HomeBind
+from services.vm.platform import WORKSPACE_PROXY, HomeBind
 from services.vm.project import ProjectCopies
 
 from .conftest import egress_policy
@@ -95,6 +95,31 @@ async def test_a_fresh_sessions_first_network_command_gets_the_proxy(tmp_path: P
     _ = await _shell().run(session, copies, "pip install x", mounts=mounts, network=True)
     env = vm.background[next(iter(vm.background))]["env"]
     assert isinstance(env, dict) and "HTTPS_PROXY" in env
+
+
+async def test_an_offline_command_gets_the_proxy_without_credentials(tmp_path: Path) -> None:
+    # The gateway then refuses it with a 407 the model is told how to read, rather than
+    # the request failing on name resolution as though the VM had no network.
+    vm, sessions, copies, mounts = await _setup(tmp_path)
+    session = await sessions.acquire("conv-1")
+    _ = await _shell().run(session, copies, "pip install x", mounts=mounts)
+    env = vm.background[next(iter(vm.background))]["env"]
+    assert isinstance(env, dict)
+    assert env["HTTPS_PROXY"] == f"http://{WORKSPACE_PROXY}"
+
+
+async def test_a_background_status_says_whether_the_command_had_the_network(
+    tmp_path: Path,
+) -> None:
+    _vm, sessions, copies, mounts = await _setup(tmp_path)
+    session = await sessions.acquire("conv-1")
+    shell = _shell()
+    offline = await shell.start(session, copies, "npm test", mounts=mounts)
+    online = await shell.start(session, copies, "npm ci", mounts=mounts, network=True)
+    offline_status = await shell.check(copies, offline)
+    online_status = await shell.check(copies, online)
+    assert offline_status is not None and offline_status.network is False
+    assert online_status is not None and online_status.network is True
 
 
 async def test_the_working_directorys_project_is_bound_without_being_named(
