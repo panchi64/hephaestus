@@ -616,12 +616,13 @@ async def test_a_bound_tripping_just_after_a_park_still_flushes_the_parked_turn(
     assert flushed == [run.id]
 
 
-async def test_shutdown_cancels_live_runs_so_their_waiters_settle():
-    # Nothing else cancels an in-flight or parked run at shutdown, and the stores each run
-    # writes through are torn down right after — so a turn still executing would submit
-    # onto a stopped drainer and be discarded with no error. Registered last in the app's
-    # lifecycle (so it stops first), this gives every run its pre-cancel flush while those
-    # stores are still live, and settles anything awaiting the run's terminal transition.
+async def test_shutdown_cancels_live_runs_and_keeps_parked_ones():
+    # Nothing else cancels an in-flight run at shutdown, and the stores each run writes
+    # through are torn down right after — so a turn still executing would submit onto a
+    # stopped drainer and be discarded with no error. Registered last in the app's lifecycle
+    # (so it stops first), this gives every run its pre-cancel flush while those stores are
+    # still live, and settles anything awaiting the run's terminal transition. A run parked
+    # on the operator is not cancelled: its stored park is what the next process resumes.
     reg = RunRegistry()
     started = asyncio.Event()
 
@@ -641,8 +642,9 @@ async def test_shutdown_cancels_live_runs_so_their_waiters_settle():
     await reg.shutdown()
 
     assert live.status is RunStatus.cancelled
-    assert idle.status is RunStatus.cancelled
-    assert live.stream.closed and idle.stream.closed
+    assert live.stream.closed
+    assert idle.status is RunStatus.awaiting_input
+    assert not idle.stream.closed
 
 
 # --- duration formatting: exact minutes, no silent rounding --------------------------

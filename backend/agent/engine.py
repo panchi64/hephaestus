@@ -65,6 +65,7 @@ from core.container import ServiceContainer
 from runs import (
     DEFAULT_CONTEXT_THRESHOLDS,
     ContextThresholds,
+    Endpoint,
     FoldPoint,
     Orchestrator,
     Run,
@@ -101,6 +102,7 @@ from .history import TurnStart
 from .meta import Judge, make_utility_judge
 from .metrics import post_fold_metrics
 from .naming import (
+    TitleContext,
     discard_title,
     maybe_title,
     reap_title,
@@ -108,7 +110,13 @@ from .naming import (
 )
 from .parking import DEFAULT_BINDING, ParkedTurn
 from .prelude import TurnSetup, prepare_turn, record_prompt
-from .summarize import AutoCompactPolicy, CompactionOutcome, FoldResult
+from .recompose import ParkedFacts, Recomposed
+from .summarize import (
+    AutoCompactPolicy,
+    CompactionOutcome,
+    FoldResult,
+    build_auto_compact_policy,
+)
 from .title import last_user_text
 from .turn import NO_CAPS, drive_turn, turn_deps
 from .verify import should_verify, verify_and_correct
@@ -148,6 +156,69 @@ def turn_agent(
         retries={"tools": settings.agent_tool_retries, "output": settings.agent_output_retries},
         tool_call_timeout_s=settings.tool_call_timeout_s,
     )
+
+
+async def recompose_turn(
+    facts: ParkedFacts,
+    *,
+    model: Model,
+    categories: Mapping[str, AbstractToolset[RunDeps]] | None = None,
+    dormant: Mapping[str, str] = NO_DORMANT,
+    instruction_providers: Sequence[InstructionProvider] = (),
+    capabilities: ServiceContainer = NO_CAPS,
+    store: ConversationStore | None = None,
+    disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
+    auto_compact: AutoCompactPolicy | None = None,
+    context_window: int | None = None,
+    context_thresholds: ContextThresholds = DEFAULT_CONTEXT_THRESHOLDS,
+    title_model: Model | None = None,
+    title_settings: ModelSettings | None = None,
+    endpoint: Endpoint | None = None,
+) -> Recomposed:
+    """The agent and compaction context a restored park resumes with, built the way
+    :func:`build_chat_orchestrator` builds them for a fresh turn: the same agent factory
+    over the composer's own inputs, and the same deps from the stored binding.
+
+    The gauge facts a fresh turn stamps on its run are stamped here too, since a resume
+    reports its metrics against them."""
+    run = facts.run
+    settings = await _tuned(capabilities, run.owner_id)
+    run.context_window = context_window
+    run.context_thresholds = context_thresholds
+    run.context_fold = (
+        FoldPoint.of(auto_compact.threshold, active=auto_compact.enabled)
+        if auto_compact is not None
+        else None
+    )
+    agent = turn_agent(
+        model,
+        categories=categories,
+        instruction_providers=instruction_providers,
+        dormant=dormant,
+        settings=settings,
+        binding=facts.binding,
+    )
+    compaction = build_compaction_context(
+        store=store,
+        conversation_id=facts.conversation_id,
+        policy=auto_compact or build_auto_compact_policy(settings),
+        agent=agent,
+        deps=turn_deps(
+            run,
+            caps=capabilities,
+            disabled_tools=disabled_tools,
+            conversation_id=facts.conversation_id,
+            binding=facts.binding,
+            workspace_key=facts.workspace_key,
+        ),
+        settings=settings,
+    )
+    title = (
+        TitleContext(title_model, title_settings or {})
+        if facts.titled and title_model is not None and settings.title_enabled
+        else None
+    )
+    return Recomposed(agent, compaction, title, endpoint)
 
 
 async def fold_now(
@@ -654,6 +725,9 @@ def build_resume_orchestrator(
     """
 
     async def orchestrate(run: Run) -> None:
+        agent = parked.agent
+        if agent is None:
+            raise RuntimeError("a restored park resumes only after its agent is recomposed")
         settings = await _tuned(capabilities, run.owner_id)
         # `calls` carries values rather than verdicts — Pydantic AI wraps each one in a
         # `ToolReturn`, so the operator's answer lands in history as that call's own
@@ -679,7 +753,7 @@ def build_resume_orchestrator(
         try:
             turn = await drive_turn(
                 run,
-                parked.agent,
+                agent,
                 settings=settings,
                 message_history=parked.message_history,
                 deferred_results=results,

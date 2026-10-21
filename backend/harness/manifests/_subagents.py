@@ -26,6 +26,7 @@ from typing import override
 
 from pydantic_ai import RunContext
 
+from agent.recompose import ParkedFacts, Recomposed, register_recompose
 from agent.summarize import resolve_auto_compact_policy
 from core.diagnostics import render_tool_error
 from core.exceptions import InvalidInputError, NotFoundError
@@ -33,6 +34,7 @@ from harness.manifest import DormantCategory, HarnessContext
 from models.subagent import SubagentRecord
 from prompts.voice import CLASSES
 from routes.chat import compose_turn, resolve_turn_models
+from routes.chat.thread_composer import ThreadComposer
 from runs import RunRegistry, RunStatus
 from services.agents import (
     AgentCatalog,
@@ -42,7 +44,7 @@ from services.agents import (
     normalize_agent_name,
 )
 from services.agents.definition import WorkspacePolicy
-from services.agents.thread import DELEGATION_TOOLS, may_delegate, resolve_thread_agent
+from services.agents.thread import may_delegate, resolve_thread_agent
 from services.conversations import ConversationStore
 from services.offline import OfflineModeService
 from services.permissions import DEFAULT_PERMISSION, permission_level, stricter_permission
@@ -77,7 +79,6 @@ from services.subagents.launcher import (
     SubagentUnavailableError,
     SubagentView,
 )
-from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
 from services.workspace import DELEGATION_SEP, split_workspace_key
 from tools import InstructionProvider, RunDeps
@@ -132,6 +133,34 @@ class ConversationSubagents(SubagentLauncher):
         #: so concurrent launches in one step consult these as well as the register.
         self._reserved: set[tuple[str, str, str]] = set()
         self._reserve_lock: asyncio.Lock = asyncio.Lock()
+        self._composer: ThreadComposer = ThreadComposer(
+            agents=self._agents,
+            model_registry=self._models,
+            conversations=self._conversations,
+            settings_store=self._settings,
+            offline=self._offline,
+            settings=ctx.settings,
+            capabilities=ctx.capabilities,
+            categories=ctx.tool_categories,
+            dormant=DormantCategory.summaries(ctx.dormant_categories),
+            instruction_providers=ctx.instruction_providers,
+            availability=ctx.category_availability,
+            projects=ctx.services.get_optional(ProjectStore),
+            worktrees=ctx.services.get_optional(WorktreeManager),
+        )
+        register_recompose(self._runs, SUBAGENT_KIND, self._recompose)
+
+    async def _recompose(self, facts: ParkedFacts) -> Recomposed:
+        """A parked sub-agent turn's agent, from the definition its thread names. A tree's
+        depth is read off its record, so the agent is offered what it was at launch."""
+        row = (
+            await self._records.by_child(facts.conversation_id)
+            if facts.conversation_id is not None
+            else None
+        )
+        return await self._composer.recompose(
+            facts, kind=SUBAGENT_KIND, depth=row.depth if row is not None else 1
+        )
 
     # -- spawning ------------------------------------------------------------------
 
@@ -198,19 +227,11 @@ class ConversationSubagents(SubagentLauncher):
             permission = stricter_permission(parent.permission, permission)
 
         depth = position.depth + 1
-        disabled = await effective_disabled_tools(
-            self._settings,
-            self._offline,
-            owner_id,
-            vision=models[4],
-            # Nobody is in the agent's conversation, so it is not offered the tools that
-            # would stop and wait for someone.
-            kind=SUBAGENT_KIND,
-            availability=self._ctx.category_availability,
-            caps=self._ctx.capabilities,
+        # Nobody is in the agent's conversation, so it is not offered the tools that would
+        # stop and wait for someone.
+        disabled = await self._composer.disabled(
+            owner_id, kind=SUBAGENT_KIND, vision=models.vision, agent=agent, depth=depth
         )
-        if not may_delegate(agent, depth, self._ctx.settings.agent_max_depth):
-            disabled = disabled | DELEGATION_TOOLS
         # Refuse rather than degrade: an agent missing the one capability its job rests on
         # still answers, from memory, and reads as though it had done the work.
         withheld = {

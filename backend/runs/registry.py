@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from enum import Enum
 from uuid import uuid4
@@ -24,6 +24,7 @@ from .endpoint_gate import Endpoint, EndpointGate
 from .events import EventBody, LimitNotice, RunEnded, RunError, RunQueued, RunStarted, now_utc
 from .inbox import NO_JOURNAL, ConversationInbox, InboxDispatch, InboxJournal
 from .lanes import LaneGate, LaneLimits
+from .parked import NO_PARKED_JOURNAL, ParkedJournal
 from .run import Orchestrator, Run, RunStatus
 from .stream import RunStream
 
@@ -163,6 +164,11 @@ class RunRegistry:
         # One inbox per (owner, conversation), outliving every run on it.
         self._inboxes: dict[tuple[str, str], ConversationInbox] = {}
         self._journal: InboxJournal = NO_JOURNAL
+        self._parked_journal: ParkedJournal = NO_PARKED_JOURNAL
+        # Runs whose park is on the journal, so ending one that never parked costs no write.
+        self._journalled: set[str] = set()
+        # Opaque to the substrate: the orchestrator layer files and reads these by run kind.
+        self._recomposers: dict[str, object] = {}
         self._closing: bool = False
 
     @property
@@ -181,6 +187,57 @@ class RunRegistry:
         self._journal = journal
         for inbox in self._inboxes.values():
             inbox.journal = journal
+
+    # --- parked runs ----------------------------------------------------------
+    def attach_parked_journal(self, journal: ParkedJournal) -> None:
+        """Write every run that parks through ``journal`` from now on."""
+        self._parked_journal = journal
+
+    def set_recomposer(self, kind: str, hook: object) -> None:
+        """File what rebuilds a parked run of ``kind`` after a restart."""
+        self._recomposers[kind] = hook
+
+    def recomposer(self, kind: str) -> object | None:
+        return self._recomposers.get(kind)
+
+    def restore_parked(self, run: Run, announcements: Sequence[EventBody]) -> None:
+        """Track a run rebuilt from a stored park, in ``awaiting_input``, and replay what it
+        was waiting on into its stream. The row is already stored, so it is not rewritten."""
+        if run.conversation_id is not None:
+            run.inbox = self.inbox(run.conversation_id, run.owner_id)
+        self.register(run)
+        self._journalled.add(run.id)
+        for body in announcements:
+            _ = run.emit(body)
+
+    async def block_parked(self, run_id: str, detail: str) -> bool:
+        """End a parked run ``blocked``: its turn is kept as a stopped one, nothing it
+        awaited runs, and the terminal hooks fire as they do for any ending."""
+        run = self._runs.get(run_id)
+        if run is None or run.status is not RunStatus.awaiting_input:
+            return False
+        run.block(detail)
+        self._flush_park_cancel(run)
+        self._forget_park(run.id)
+        _ = run.emit(RunEnded(outcome="blocked", detail=detail))
+        run.ended_at = now_utc()
+        self._fire_terminal(run)
+        run.stream.close()
+        if run.task is not None and not run.task.done():
+            _ = run.task.cancel()
+        return True
+
+    def _journal_park(self, run: Run) -> None:
+        self._journalled.add(run.id)
+        try:
+            self._parked_journal.record(run)
+        except Exception:
+            logger.exception("runs: could not store the park of run %s", run.id)
+
+    def _forget_park(self, run_id: str) -> None:
+        if run_id in self._journalled:
+            self._journalled.discard(run_id)
+            self._parked_journal.forget(run_id)
 
     def inbox(self, conversation_id: str, owner_id: str) -> ConversationInbox:
         """The inbox of ``conversation_id``. Its events go to the live run on the thread."""
@@ -364,6 +421,7 @@ class RunRegistry:
             run.cancel_requested = True
             run.status = RunStatus.cancelled
             self._flush_park_cancel(run)
+            self._forget_park(run.id)
             _ = run.emit(RunEnded(outcome="cancelled"))
             run.ended_at = now_utc()
             self._fire_terminal(run)
@@ -387,7 +445,8 @@ class RunRegistry:
         return True
 
     async def shutdown(self, timeout_s: float = 5.0) -> None:
-        """Cancel every live run and wait up to ``timeout_s`` for them to unwind.
+        """Cancel every live run that isn't parked and wait up to ``timeout_s`` for them to
+        unwind.
 
         The app registers this **last** in its lifecycle, so it stops **first**: an
         orchestrator writes through stores (the conversation write-behind drainer above
@@ -395,12 +454,24 @@ class RunRegistry:
         stopped drainer is discarded with no error and no ``on_drop``. Cancelling here
         runs each turn's own pre-cancel flush while the stores are still live, so a turn
         in flight at shutdown is persisted rather than silently lost.
+
+        A run parked on the operator is left exactly as it is: no flush, no ``run.ended``
+        and its stored park kept, so the next process resumes it. One still unwinding into
+        its park is waited for, so the park is on the journal before the stores stop.
         """
         self._closing = True
-        live = [run for run in self._runs.values() if not run.is_terminal]
+        live = [run for run in self._runs.values() if not run.is_terminal and not run.is_parked]
         for run in live:
             _ = await self.cancel(run.id)
-        pending = [run.task for run in live if run.task is not None and not run.task.done()]
+        unwinding = [
+            run.task
+            for run in self._runs.values()
+            if run.is_parked and run.task is not None and not run.task.done()
+        ]
+        pending = [
+            *(run.task for run in live if run.task is not None and not run.task.done()),
+            *unwinding,
+        ]
         if pending:
             # Bounded: a turn's own pre-cancel flush is worth waiting for, a tool that
             # swallows the cancel is not worth a shutdown that never ends.
@@ -451,6 +522,7 @@ class RunRegistry:
         if run.status is not RunStatus.awaiting_input:
             return None  # cancelled (or already resumed) while we waited
         run.status = RunStatus.queued
+        self._forget_park(run.id)
         wall = self._wall_clock if wall_clock_timeout_s is UNSET else wall_clock_timeout_s
         idle = self._inactivity if inactivity_timeout_s is UNSET else inactivity_timeout_s
         run.task = asyncio.create_task(
@@ -488,6 +560,7 @@ class RunRegistry:
                 if run.is_parked:
                     # Parked for approval: leave the stream open and the
                     # slot free; the run is resumed or cancelled out of band.
+                    self._journal_park(run)
                     return
                 if not run.is_terminal:
                     run.status = RunStatus.done
@@ -527,6 +600,8 @@ class RunRegistry:
             # stream open for the eventual resume. A closed stream means a
             # concurrent `cancel` already finalized this run (see `_emit`); its
             # outcome and its terminal hook are recorded, so don't fire either twice.
+            if run.is_terminal:
+                self._forget_park(run.id)
             if run.is_terminal and not run.stream.closed:
                 run.ended_at = run.ended_at or now_utc()
                 self._fire_terminal(run)

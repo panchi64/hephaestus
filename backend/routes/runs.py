@@ -18,6 +18,7 @@ from pydantic_ai.messages import ToolCallPart
 
 from agent import ParkedTurn, build_resume_orchestrator
 from agent.gating import GrantApproved
+from agent.recompose import RecomposeError, recompose
 from routes import deps
 from runs import (
     AnsweredQuestionOut,
@@ -451,6 +452,18 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     # run to reach terminal. Idempotent: a run with no pending approval_needed (or one
     # already resolved) is simply a no-op.
     _ = await deps.notifications(request).resolve_for_run(deps.OPERATOR_ID, run_id)
+
+    # A park restored after a restart holds no agent yet; its kind's composer rebuilds it.
+    # When what it ran on is gone, no pending call runs and the run ends blocked.
+    try:
+        await recompose(registry, run, parked)
+    except RecomposeError as exc:
+        reason = (
+            f"This run could not be resumed after the restart ({exc}), "
+            + "so its pending calls were denied."
+        )
+        _ = await registry.block_parked(run_id, reason)
+        raise HTTPException(status_code=409, detail=reason) from exc
 
     orchestrator = build_resume_orchestrator(
         parked,

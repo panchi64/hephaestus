@@ -8,8 +8,9 @@ set of live subscribers. It does two jobs at once:
   missed on reconnect.
 - **broker** — each emit fans out to every live subscriber's queue.
 
-The buffer is in-memory and dies with the process, which the spec explicitly
-licenses ("continuity need not survive a server restart").
+The buffer is in-memory and dies with the process ("continuity need not survive a
+server restart"). A run parked on the operator is the exception: it is rebuilt with a
+stream seeded past its last id and the events it waits on replayed (``RunRegistry.restore_parked``).
 
 Correctness note: ``emit`` is synchronous and ``subscribe`` does its
 register-then-snapshot with no ``await`` in between. Under single-threaded
@@ -36,9 +37,11 @@ SUBSCRIBER_QUEUE_MAX = 1024
 
 
 class RunStream:
-    def __init__(self) -> None:
+    def __init__(self, last_seq: int = 0) -> None:
+        """``last_seq`` seeds the counter for a stream rebuilt after a restart, so its new
+        events number above anything a reconnecting client may already have seen."""
         self._buffer: list[Event] = []
-        self._seq: int = 0
+        self._seq: int = last_seq
         self._subscribers: set[asyncio.Queue[Event | None]] = set()
         self._closed: bool = False
 
