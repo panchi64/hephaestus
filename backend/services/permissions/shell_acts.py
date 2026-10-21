@@ -200,12 +200,24 @@ def _find_targets(args: tuple[str, ...]) -> list[str]:
     before = args[:deleting]
     for index, (word, value) in enumerate(zip(before, before[1:], strict=False)):
         if word in _FIND_NAMES and (value == ".git" or value.endswith("/.git")):
-            # `-prune` or `-o` after the test skips the folder instead of deleting it.
-            if not {"-prune", "-o"} & set(before[index + 2 :]):
+            if not _prunes_git_away(args, index, deleting):
                 return [GIT_FOLDERS]
     if any(word in _FIND_NARROWING for word in before):
         return []
     return _find_roots(args)
+
+
+_FIND_GROUPING = frozenset({"(", "\\(", ")", "\\)", "!", "-not"})
+
+
+def _prunes_git_away(args: tuple[str, ...], test: int, action: int) -> bool:
+    """Whether a ``find`` keeps ``.git`` out of the branch that deletes: the strict idiom
+    `-name .git -prune -o … -delete`, with the test followed at once by `-prune` and `-o`,
+    the action after that, and no grouping or negation that could turn it around."""
+    if any(word in _FIND_GROUPING for word in args):
+        return False
+    after = args[test + 2 : test + 4]
+    return after == ("-prune", "-o") and action > test + 3
 
 
 def _find_roots(args: tuple[str, ...]) -> list[str]:
