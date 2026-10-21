@@ -110,6 +110,9 @@ class SubagentRecord(Table, table=True):
     project_id: str | None = Field(default=None)
     #: The commit the sub-agent's worktree was cut at, so a merge carries only its own work.
     base_ref: str | None = Field(default=None)
+    #: The launching turn's prompt, under which this agent's file changes are filed in the
+    #: launcher's ledger. Stored because a wake long after the launch still files there.
+    ledger_prompt_message_id: str | None = Field(default=None)
     #: The child's own context footprint, written when it settles. The *live* figure comes
     #: off the running Run's metrics; this is what a card shows for a sub-agent that
     #: finished before the page was opened, and it is deliberately not written on every

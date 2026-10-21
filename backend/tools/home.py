@@ -77,17 +77,28 @@ async def _child_worktrees(deps: RunDeps) -> list[tuple[str, str, Path]]:
     return [(child.project_id, child.handle, child.path) for child in children]
 
 
-def change_log(deps: RunDeps) -> ChangeLog | None:
-    """Where this run's changes to the operator's project folders are recorded: under the
-    thread whose files it works in, so a spawned agent's land in its parent's list."""
-    store = deps.caps.get_optional(ThreadChanges)
+def ledger_thread(deps: RunDeps) -> str | None:
+    """The thread whose ledger this run's changes are filed in: the one whose files it works
+    in, so a spawned agent's land in its parent's list."""
     owner, _ = split_workspace_key(deps.workspace_key)
-    thread = owner or deps.conversation_id
+    return owner or deps.conversation_id
+
+
+def ledger_prompt(deps: RunDeps) -> str | None:
+    """The prompt this run's changes are filed under in :func:`ledger_thread`: its own turn's
+    when it works in its own thread, else the launching turn's."""
+    if ledger_thread(deps) == deps.conversation_id:
+        return deps.run.prompt_message_id
+    return deps.ledger_prompt_message_id
+
+
+def change_log(deps: RunDeps) -> ChangeLog | None:
+    """Where this run's changes to the operator's project folders are recorded."""
+    store = deps.caps.get_optional(ThreadChanges)
+    thread = ledger_thread(deps)
     if store is None or not thread:
         return None
-    prompt = deps.ledger_prompt_message_id
-    if prompt is None and thread == deps.conversation_id:
-        prompt = deps.run.prompt_message_id
+    prompt = ledger_prompt(deps)
     return ChangeLog(
         store, owner_id=deps.owner_id, conversation_id=thread, prompt_message_id=prompt
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -19,7 +20,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 from agent.turn import TURN_LIMIT_DETAIL
-from harness.manifests._ledger_prompt import ledger_prompt_of
 from routes.deps import app_state
 from runs import Run, RunEnded, RunStatus
 from runs.run import StopCause
@@ -30,7 +30,7 @@ from services.home.paths import Place
 from services.registry import ModelRegistry
 from services.subagents import SubagentParent
 from tools import RunDeps
-from tools.home import change_log
+from tools.home import change_log, ledger_prompt
 
 from ._helpers import client_app, register_stub_provider, stub_resolution, swap_tool_catalog
 from .test_subagents_launch import launcher_of, records_of, settle_run
@@ -41,24 +41,35 @@ TASK = "capped task"
 
 async def _stored_agent(app: FastAPI, cap: int) -> AgentDefinition:
     """A published agent, since a wake reads its definition back from the catalog."""
-    return await app_state(app).agent_store.create(
+    store = app_state(app).agent_store
+    existing = await store.get_by_name(OWNER, "capped")
+    if existing is not None:
+        return existing
+    return await store.create(
         OWNER,
-        {"name": "capped", "description": "a capped worker", "max_requests": cap},
+        {
+            "name": "capped",
+            "description": "a capped worker",
+            "max_requests": cap,
+            "can_delegate": True,
+        },
         published=True,
     )
 
 
 def _toolset(root: Path) -> FunctionToolset[RunDeps]:
     toolset: FunctionToolset[RunDeps] = FunctionToolset()
+    names = itertools.count()
 
     @toolset.tool(metadata={"sensitivity": "read"})
     async def step(ctx: RunContext[RunDeps], n: int) -> str:
         log = change_log(ctx.deps)
         assert log is not None
         mount = Mount(Place("projects", "api"), root, writable=True, project_id="p1")
-        await log.before(mount, ["made.txt"])
-        _ = (root / "made.txt").write_text(f"step {n}")
-        await log.after(mount, ["made.txt"])
+        name = f"made-{next(names)}.txt"
+        await log.before(mount, [name])
+        _ = (root / name).write_text(f"step {n}")
+        await log.after(mount, [name])
         return f"step {n} done"
 
     return toolset
@@ -128,8 +139,12 @@ async def _parent(app: FastAPI) -> tuple[str, Run, asyncio.Event]:
         kind="chat", owner_id=OWNER, orchestrator=orchestrate, conversation_id=conversation
     )
     await asyncio.sleep(0.05)
-    run.prompt_message_id = "parent-prompt"
+    run.prompt_message_id = "T1"
     return conversation, run, release
+
+
+def _deps_of(run: Run) -> RunDeps:
+    return RunDeps(run=run, owner_id=OWNER, conversation_id=run.conversation_id)
 
 
 async def test_a_capped_child_ends_blocked_and_its_wake_is_capped_too(
@@ -175,40 +190,157 @@ async def test_a_capped_child_ends_blocked_and_its_wake_is_capped_too(
         assert _ended(woken).code == "turn_limit"
 
 
+async def _filed(app: FastAPI, root: Path, thread: str, prompt: str) -> set[str]:
+    """The files a rewind of ``prompt`` in ``thread`` would delete."""
+    changes = app_state(app).capabilities.get_optional(ThreadChanges)
+    assert changes is not None
+    plan = await changes.rewind_plan(OWNER, thread, [prompt], {"p1": root})
+    return {f.path for f in plan.delete}
+
+
+async def _spawn(app: FastAPI, parent: SubagentParent, handle: str, cap: int = 1):
+    started = await launcher_of(app).launch(
+        OWNER, await _stored_agent(app, cap), TASK, handle=handle, parent=parent
+    )
+    await settle_run(app, started.run_id)
+    return started
+
+
 async def test_a_childs_file_edit_is_filed_under_the_launching_turn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _install_model(monkeypatch)
-    root = tmp_path / "project"
-    root.mkdir()
     async with client_app() as (_client, app):
-        swap_tool_catalog(app, {"work": _toolset(root)})
+        swap_tool_catalog(app, {"work": _toolset(tmp_path)})
         parent, parent_run, release = await _parent(app)
 
+        started = await _spawn(
+            app,
+            SubagentParent(
+                conversation_id=parent,
+                run_id=parent_run.id,
+                ledger_prompt_message_id=ledger_prompt(_deps_of(parent_run)),
+            ),
+            "editor",
+        )
+
+        assert len(await _filed(app, tmp_path, parent, "T1")) == 1
+        child_run = app_state(app).runs.get(started.run_id)
+        assert child_run is not None and child_run.prompt_message_id is not None
+        assert await _filed(app, tmp_path, parent, child_run.prompt_message_id) == set()
+        row = await records_of(app).by_child(started.conversation_id)
+        assert row is not None and row.ledger_prompt_message_id == "T1"
+        release.set()
+        await _quiet(app)
+
+
+async def test_a_wake_files_under_the_senders_turn_or_else_the_launching_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_model(monkeypatch)
+    async with client_app() as (_client, app):
+        swap_tool_catalog(app, {"work": _toolset(tmp_path)})
+        parent, parent_run, release = await _parent(app)
+        started = await _spawn(
+            app,
+            SubagentParent(
+                conversation_id=parent, run_id=parent_run.id, ledger_prompt_message_id="T1"
+            ),
+            "editor",
+        )
+        first = await _filed(app, tmp_path, parent, "T1")
+        assert len(first) == 1
+
+        # The root has moved on to an unrelated turn. A delivery that names no sending
+        # turn does not file under it.
+        parent_run.prompt_message_id = "T2"
+        release.set()
+        _ = await launcher_of(app).message(OWNER, parent, "editor", "again")
+        await _quiet(app)
+        second = await _filed(app, tmp_path, parent, "T1")
+        assert len(second) == 2
+        assert await _filed(app, tmp_path, parent, "T2") == set()
+
+        # One sent by a running turn files under that turn.
+        _ = await launcher_of(app).message(
+            OWNER, parent, "editor", "and again", ledger_prompt_message_id="T2"
+        )
+        await _quiet(app)
+        assert len(await _filed(app, tmp_path, parent, "T2")) == 1
+        assert await _filed(app, tmp_path, parent, "T1") == second
+        assert started.conversation_id
+
+
+async def test_a_grandchild_spawned_while_the_root_is_idle_files_under_the_first_turn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_model(monkeypatch)
+    async with client_app() as (_client, app):
+        swap_tool_catalog(app, {"work": _toolset(tmp_path)})
+        parent, parent_run, release = await _parent(app)
+        child = await _spawn(
+            app,
+            SubagentParent(
+                conversation_id=parent, run_id=parent_run.id, ledger_prompt_message_id="T1"
+            ),
+            "child",
+        )
+        release.set()
+        await _quiet(app)
+        row = await records_of(app).by_child(child.conversation_id)
+        child_run = app_state(app).runs.get(child.run_id)
+        assert row is not None and child_run is not None
+        deps = RunDeps(
+            run=child_run,
+            owner_id=OWNER,
+            conversation_id=child.conversation_id,
+            workspace_key=row.workspace_key or "",
+            ledger_prompt_message_id=row.ledger_prompt_message_id,
+        )
+
+        _ = await _spawn(
+            app,
+            SubagentParent(
+                conversation_id=child.conversation_id,
+                workspace_key=row.workspace_key,
+                ledger_prompt_message_id=ledger_prompt(deps),
+            ),
+            "grandchild",
+            cap=1,
+        )
+
+        assert len(await _filed(app, tmp_path, parent, "T1")) == 2
+
+
+async def test_an_own_workspace_child_files_under_its_own_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_model(monkeypatch)
+    async with client_app() as (_client, app):
+        swap_tool_catalog(app, {"work": _toolset(tmp_path)})
+        parent, parent_run, release = await _parent(app)
+        agent = await app_state(app).agent_store.create(
+            OWNER,
+            {"name": "loner", "description": "works alone", "max_requests": 1, "workspace": "own"},
+            published=True,
+        )
         started = await launcher_of(app).launch(
             OWNER,
-            await _stored_agent(app, 1),
+            agent,
             TASK,
-            handle="editor",
-            parent=SubagentParent(conversation_id=parent, run_id=parent_run.id),
+            handle="loner",
+            parent=SubagentParent(
+                conversation_id=parent, run_id=parent_run.id, ledger_prompt_message_id="T1"
+            ),
         )
         await settle_run(app, started.run_id)
 
-        changes = app_state(app).capabilities.get_optional(ThreadChanges)
-        assert changes is not None
-        plan = await changes.rewind_plan(OWNER, parent, ["parent-prompt"], {"p1": root})
-        assert [f.path for f in plan.delete] == ["made.txt"]
         child_run = app_state(app).runs.get(started.run_id)
         assert child_run is not None and child_run.prompt_message_id is not None
-        own = await changes.rewind_plan(OWNER, parent, [child_run.prompt_message_id], {"p1": root})
-        assert own.delete == []
-
-        # A grandchild resolves through its parent to the same launching turn.
+        assert await _filed(app, tmp_path, parent, "T1") == set()
         assert (
-            await ledger_prompt_of(
-                app_state(app).runs, records_of(app), OWNER, started.conversation_id
-            )
-            == "parent-prompt"
+            len(await _filed(app, tmp_path, started.conversation_id, child_run.prompt_message_id))
+            == 1
         )
         release.set()
         await _quiet(app)

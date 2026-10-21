@@ -135,7 +135,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             if run.status is RunStatus.error:
                 _ = await notifications.notify(
                     OPERATOR_ID,
-                    "run_failed",
+                    NotificationKind.RUN_FAILED,
                     f'{agent} hit an error in "{title}"',
                     body=run.error,
                     conversation_id=run.conversation_id,

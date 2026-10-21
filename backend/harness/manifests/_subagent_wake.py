@@ -226,14 +226,21 @@ class SubagentWake:
         *,
         source: MessageSource = "subagent",
         sender: str | None = None,
+        ledger_prompt_message_id: str | None = None,
     ) -> bool:
         """Put a report (``source="subagent"``) or another agent's message
         (``source="agent"``) from the agent ``sender`` names into a thread's inbox. False
-        when the recipient is an agent that was stopped, which nothing wakes."""
+        when the recipient is an agent that was stopped, which nothing wakes.
+
+        ``ledger_prompt_message_id`` is the prompt of the sender's running turn, which a wake
+        this message causes files its changes under."""
         row = await self._records.by_child(conversation_id)
         if row is not None and row.status == "cancelled":
             return False
-        _ = self._runs.inbox(conversation_id, owner_id).enqueue(text, source=source, sender=sender)
+        queued = self._runs.inbox(conversation_id, owner_id).enqueue(
+            text, source=source, sender=sender
+        )
+        self._dispatcher.note_ledger_prompt(queued.id, ledger_prompt_message_id)
         await self._dispatcher.dispatch(owner_id, conversation_id)
         return True
 

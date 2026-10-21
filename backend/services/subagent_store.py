@@ -63,6 +63,7 @@ class SubagentStore:
         delegation_id: str | None,
         project_id: str | None = None,
         base_ref: str | None = None,
+        ledger_prompt_message_id: str | None = None,
         agent_class: str = "",
         callsign: str = "",
     ) -> None:
@@ -91,6 +92,7 @@ class SubagentStore:
             delegation_id=delegation_id,
             project_id=project_id,
             base_ref=base_ref,
+            ledger_prompt_message_id=ledger_prompt_message_id,
         )
 
         def work(session: Session) -> None:

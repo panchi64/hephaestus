@@ -48,8 +48,6 @@ from services.settings_store import SettingsStore, get_context_thresholds
 from services.subagent_store import SubagentStore
 from services.uploads import UploadStore
 
-from ._ledger_prompt import ledger_prompt_of
-
 logger = logging.getLogger(__name__)
 
 #: The kind a turn opened by an agent's delivery is submitted under (``runs/lanes.py``).
@@ -84,6 +82,9 @@ class InboxDispatcher:
         # the tree. In memory on purpose: a rail against a runaway loop, not a fact.
         self._chain: OrderedDict[str, int] = OrderedDict()
         self._roots: OrderedDict[str, str] = OrderedDict()
+        # The launching-turn prompt a delivered message was sent under, by message id. A
+        # restart drops it and the wake falls back to the prompt stored on the agent's row.
+        self._message_ledger: OrderedDict[str, str] = OrderedDict()
         # Threads of each tree left waiting at the ceiling, by root.
         self._stalled: dict[str, set[tuple[str, str]]] = {}
         self._kicks: set[asyncio.Task[None]] = set()
@@ -152,6 +153,14 @@ class InboxDispatcher:
         self._roots.move_to_end(conversation_id)
         while len(self._roots) > _ROOTS_CACHED:
             _ = self._roots.popitem(last=False)
+
+    def note_ledger_prompt(self, message_id: str, prompt: str | None) -> None:
+        """Remember which turn's prompt a message's sender was running under."""
+        if prompt is None:
+            return
+        self._message_ledger[message_id] = prompt
+        while len(self._message_ledger) > _ROOTS_CACHED:
+            _ = self._message_ledger.popitem(last=False)
 
     async def root_of(self, conversation_id: str) -> str:
         cached = self._roots.get(conversation_id)
@@ -327,9 +336,10 @@ class InboxDispatcher:
             auto_compact=await resolve_auto_compact_policy(self._settings, owner_id),
             ephemeral=row is not None,
             max_requests=applied.agent.max_requests,
-            # Edits belong to the launcher's turn that sent the message, if one is running.
+            # Edits belong to the turn that sent the message, else to the one that launched
+            # the agent.
             ledger_prompt_message_id=(
-                await ledger_prompt_of(self._runs, records, owner_id, row.parent_conversation_id)
+                self._message_ledger.get(lead.id, row.ledger_prompt_message_id)
                 if row is not None
                 else None
             ),

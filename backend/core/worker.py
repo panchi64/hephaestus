@@ -77,7 +77,7 @@ class WriteBehindWorker[T]:
         self._queue: asyncio.Queue[T] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._stopping: asyncio.Event = asyncio.Event()
-        # Queued plus the one being processed, which `qsize()` no longer counts.
+        # Queued plus the one being processed, which `qsize()` does not count.
         self._unfinished: int = 0
 
     def submit(self, item: T) -> None:
@@ -87,7 +87,7 @@ class WriteBehindWorker[T]:
 
     @property
     def pending(self) -> int:
-        return self._queue.qsize()
+        return self._unfinished
 
     async def start(self) -> None:
         self._stopping.clear()
@@ -118,7 +118,7 @@ class WriteBehindWorker[T]:
                 logger.warning(
                     "%s: %d item(s) unflushed after %.1fs; stopping anyway",
                     self._name,
-                    self._queue.qsize(),
+                    self._unfinished,
                     timeout,
                 )
         elif self._unfinished:
