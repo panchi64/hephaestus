@@ -365,9 +365,9 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
 
         Returns `ok`, `exit_code` (null after a timeout), `stdout`, `stderr`, `timed_out`,
         `duration_ms`, the `cwd` the next command starts in, the `reach` you declared and
-        whether it ran `fenced`. A `fence_note` explains a refusal by the fence, such as a
-        blocked host, a read-only project or a protected host path; act on it rather than
-        retrying the same command. `notes` reports what happened when your changes were copied back.
+        whether it ran `fenced`. A `fence_note` explains a refusal by the fence; act on it
+        rather than retrying the same command. `notes` reports what happened when your
+        changes were copied back.
 
         Args:
             command: The command, as you would type it in bash.
@@ -376,10 +376,10 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
                 `network` runs it in your VM with the domains the operator has allowed,
                 for installs, clones and downloads; a package install or clone gets it
                 even when declared `offline`. `host` runs it on the operator's own
-                machine, starting in the project's folder there, inside a fence that
-                keeps it from shell startup files, `~/.claude`, git hooks and credentials;
-                use it only when the command has to act on that machine, never to install
-                packages, and know that its changes cannot be reverted.
+                machine, starting in the project's folder there, in a fence that blocks
+                shell startup files and credentials; use it only when the command has to
+                act on that machine, never to install packages, and know that its changes
+                cannot be reverted.
             timeout_seconds: Seconds to wait before the command is killed. Default 300.
         """
         state = await _ready(ctx, "run_command")

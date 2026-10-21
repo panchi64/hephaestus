@@ -21,7 +21,7 @@ async def test_a_grant_lands_on_the_threads_own_scratch_key():
 
         assert resp.status_code == 200, resp.text
         assert "files.example.org" in [s(d) for d in arr(json_body(resp)["allowed"])]
-        granted = await deps.egress(app).allowed_for(scratch_key(conversation))
+        granted = await app_state(app).egress.allowed_for(scratch_key(conversation))
         assert "files.example.org" in granted
 
 
@@ -38,7 +38,7 @@ async def test_a_sub_agent_thread_grants_the_scratch_it_shares_with_its_parent()
         )
 
         assert resp.status_code == 200, resp.text
-        policy = deps.egress(app)
+        policy = app_state(app).egress
         assert "api.example.net" in await policy.allowed_for(parent)
         assert "api.example.net" not in await policy.allowed_for(child)
 
@@ -58,7 +58,7 @@ async def test_another_owners_conversation_is_404():
             f"/operator/conversations/{theirs}/egress", json={"domain": "api.example.net"}
         )
         assert resp.status_code == 404
-        assert "api.example.net" not in await deps.egress(app).allowed_for(scratch_key(theirs))
+        assert "api.example.net" not in await app_state(app).egress.allowed_for(scratch_key(theirs))
 
 
 async def test_an_invalid_domain_is_refused_and_grants_nothing():
@@ -69,7 +69,7 @@ async def test_an_invalid_domain_is_refused_and_grants_nothing():
                 f"/operator/conversations/{conversation}/egress", json={"domain": bad}
             )
             assert resp.status_code == 422, (bad, resp.text)
-        allowed = await deps.egress(app).allowed_for(scratch_key(conversation))
+        allowed = await app_state(app).egress.allowed_for(scratch_key(conversation))
         assert "evil.example.com" not in allowed
 
 
@@ -96,6 +96,6 @@ async def test_an_api_token_cannot_reach_the_route():
         )
 
         assert resp.status_code == 403
-        assert "api.example.net" not in await deps.egress(app).allowed_for(
+        assert "api.example.net" not in await app_state(app).egress.allowed_for(
             scratch_key(conversation)
         )

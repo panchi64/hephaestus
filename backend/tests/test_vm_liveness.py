@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import override
+from typing import final, override
 
+import pytest
 from pydantic import JsonValue, TypeAdapter
 
 from services.vm.driver import ExecResult, VMDriver
@@ -68,13 +69,14 @@ class _Clock:
         return self.now
 
 
+@final
 class _Rig:
     def __init__(self, tmp_path: Path) -> None:
-        self.driver = _Driver()
-        self.vm = PlatformVM(self.driver, scratch=tmp_path)
-        self.clock = _Clock()
+        self.driver: _Driver = _Driver()
+        self.vm: PlatformVM = PlatformVM(self.driver, scratch=tmp_path)
+        self.clock: _Clock = _Clock()
         self.notices: list[tuple[str, str]] = []
-        self.liveness = VMLiveness(self.vm, self._notify, clock=self.clock)
+        self.liveness: VMLiveness = VMLiveness(self.vm, self._notify, clock=self.clock)
 
     async def _notify(self, title: str, body: str) -> None:
         self.notices.append((title, body))
@@ -200,19 +202,20 @@ async def test_a_bring_out_from_a_workspace_never_brought_in_says_nothing(tmp_pa
     assert await workspace.bring_out() is None
 
 
-class _RestartsMidCommand(FakeVM):
-    """A VM that is rebuilt after a command finished and before its changes came out."""
-
-    @override
-    async def read_guest(self, guest: str, *, max_bytes: int) -> str:
-        self.restart()
-        return await super().read_guest(guest, max_bytes=max_bytes)
-
-
-async def test_the_shell_result_carries_the_restart_note(tmp_path: Path):
+async def test_the_shell_result_carries_the_restart_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     repo = tmp_path / "project"
     repo.mkdir()
-    vm = _RestartsMidCommand(tmp_path / "guest")
+    vm = FakeVM(tmp_path / "guest")
+    vm.alive_after_start = False
+    read_guest = vm.read_guest
+
+    async def rebuilt_after_the_command(guest: str, *, max_bytes: int) -> str:
+        vm.restart()
+        return await read_guest(guest, max_bytes=max_bytes)
+
+    monkeypatch.setattr(vm, "read_guest", rebuilt_after_the_command)
     copies = ProjectCopies(vm, idle_ttl_s=3600, reap_interval_s=3600)
     sessions = await scratch_sessions(tmp_path, vm)
     ctx = checkout_ctx(repo, copies=copies, sessions=sessions)

@@ -398,9 +398,8 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         installation allows. A permission error on one of those paths is the fence doing
         its job: report it rather than working around it.
 
-        Returns `ok`, `exit_code`, `stdout`, `stderr` and `timed_out`, and `fenced`,
-        which says whether the fence was applied; when it was not, `unfenced_reason`
-        says why. A `fence_note` explains a refusal by the fence.
+        Returns `ok`, `exit_code`, `stdout`, `stderr` and `timed_out`, and `fenced`;
+        when it is false, `unfenced_reason` says why. A `fence_note` explains a refusal.
 
         Args:
             command: The command, as you would type it in a terminal on the host.

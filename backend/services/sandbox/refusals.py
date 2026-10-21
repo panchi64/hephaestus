@@ -7,13 +7,14 @@ names its host, the host itself, which the command card offers to allow.
 
 from __future__ import annotations
 
+import fnmatch
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from services.vm import DENIED_MARKER
 
-from .floor import is_protected_write
+from .floor import credential_read_floor, is_protected_write
 from .network_errors import mentions_no_network
 
 
@@ -123,6 +124,41 @@ def _denied_paths(stderr: str) -> list[str]:
     return paths
 
 
+_SSH_NOTE = (
+    "the SSH private key is not readable inside the host fence; ask the operator to load it "
+    "into ssh-agent once (`ssh-add --apple-use-keychain <key>` on macOS) so git can sign "
+    "through the agent."
+)
+
+#: Path fragments under the home that name a credential file's tool, and what to call it.
+_CREDENTIAL_KINDS = (
+    (".config/gh", "GitHub CLI token file"),
+    (".docker", "Docker credentials file"),
+    (".kube", "kubeconfig"),
+    (".aws", "AWS credentials file"),
+    (".config/gcloud", "gcloud token file"),
+    (".netrc", ".netrc credentials file"),
+)
+
+
+def _credential_note(path: str, home: Path) -> str | None:
+    """The note for a path on the credential read floor, or None for any other path."""
+    covered = any(
+        fnmatch.fnmatchcase(path, entry) or path.startswith(entry.rstrip("/") + "/")
+        for entry in credential_read_floor(home)
+    )
+    if not covered:
+        return None
+    relative = path.removeprefix(str(home) + "/")
+    if relative.startswith(".ssh/"):
+        return _SSH_NOTE
+    kind = next((name for part, name in _CREDENTIAL_KINDS if relative.startswith(part)), None)
+    return (
+        f"the {kind or 'credentials file'} is not readable inside the host fence; ask the "
+        "operator to use the tool's credential helper or keychain login instead."
+    )
+
+
 def host_refusal(
     *, fence_active: bool, ok: bool, stderr: str, home: Path | None = None
 ) -> Refusal | None:
@@ -140,19 +176,22 @@ def host_refusal(
         return None
     base = home if home is not None else Path.home()
     for path in _denied_paths(stderr):
+        credential = _credential_note(path, base)
+        if credential is not None:
+            return Refusal(credential)
         reason = is_protected_write(path, home=base)
         if reason is not None:
             return Refusal(
                 f"The host fence refused a write to {path}: {reason}. The path is outside "
-                "what the host fence allows, so report it to the operator rather than "
-                "working around it."
+                + "what the host fence allows, so report it to the operator rather than "
+                + "working around it."
             )
     if ok:
         return None
     return Refusal(
         "This failed with a permission error, which can be the host fence: it allows writes "
-        "under the home, the temp directories and the scratch directory, minus protected "
-        "paths such as shell rc files and `~/.claude`, and it hides credential files, browser "
-        "profiles and this application's data. If the path is one of those, report it to the "
-        "operator rather than working around it."
+        + "under the home, the temp directories and the scratch directory, minus protected "
+        + "paths such as shell rc files and `~/.claude`, and it hides credential files, browser "
+        + "profiles and this application's data. If the path is one of those, report it to the "
+        + "operator rather than working around it."
     )

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import JsonValue, TypeAdapter
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -100,6 +101,25 @@ class TestHostRefusals:
         stderr = "find: '/private/var/db': Operation not permitted"
         assert host_refusal(fence_active=True, ok=True, stderr=stderr, home=HOME) is None
 
+    def test_an_ssh_private_key_gets_the_agent_instruction(self, tmp_path: Path):
+        (tmp_path / ".ssh").mkdir()
+        _ = (tmp_path / ".ssh" / "id_ed25519").write_text("key")
+        stderr = f"cat: {tmp_path}/.ssh/id_ed25519: Operation not permitted"
+        refusal = host_refusal(fence_active=True, ok=False, stderr=stderr, home=tmp_path)
+        assert refusal is not None
+        assert refusal.note == (
+            "the SSH private key is not readable inside the host fence; ask the operator to "
+            "load it into ssh-agent once (`ssh-add --apple-use-keychain <key>` on macOS) so "
+            "git can sign through the agent."
+        )
+
+    def test_another_credential_file_points_at_the_credential_helper(self, tmp_path: Path):
+        stderr = f"cat: {tmp_path}/.aws/credentials: Operation not permitted"
+        refusal = host_refusal(fence_active=True, ok=False, stderr=stderr, home=tmp_path)
+        assert refusal is not None
+        assert refusal.note.startswith("the AWS credentials file is not readable")
+        assert "credential helper or keychain login" in refusal.note
+
     def test_nothing_is_attributed_to_a_fence_that_was_not_applied(self):
         stderr = "/bin/zsh: /Users/tester/.zshrc: Operation not permitted"
         assert host_refusal(fence_active=False, ok=False, stderr=stderr, home=HOME) is None
@@ -123,7 +143,7 @@ def _deps() -> RunDeps:
 
 async def _host_payload(
     monkeypatch: pytest.MonkeyPatch, confinement: HostConfinement, result: SandboxResult
-) -> dict[str, object]:
+) -> dict[str, JsonValue]:
     async def resolved(_settings: Settings) -> HostConfinement:
         return confinement
 
@@ -136,11 +156,14 @@ async def _host_payload(
     ctx = RunContext(deps=_deps(), model=TestModel(), usage=RunUsage())
     toolset = code_toolset()
     tools = await toolset.get_tools(ctx)
-    out = await toolset.call_tool(
-        "run_host_command", {"command": "x", "explanation": "x"}, ctx, tools["run_host_command"]
+    return TypeAdapter(dict[str, JsonValue]).validate_python(
+        await toolset.call_tool(
+            "run_host_command",
+            {"command": "x", "explanation": "x"},
+            ctx,
+            tools["run_host_command"],
+        )
     )
-    assert isinstance(out, dict)
-    return {str(key): value for key, value in out.items()}
 
 
 async def test_a_fenced_host_command_carries_the_shells_fields(monkeypatch: pytest.MonkeyPatch):

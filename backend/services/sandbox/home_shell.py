@@ -280,7 +280,7 @@ class HomeShell:
         for _mount, copy in job.held:
             copy.jobs.discard(job.name)
         async with job.session.lock:
-            await job.session.bring_out()
+            _ = await job.session.bring_out()
         for mount, copy in job.held:
             async with copy.lock:
                 copy.touch()
@@ -346,7 +346,7 @@ async def _abandon(
     with contextlib.suppress(VMError):
         await vm.stop_job(name)
     with contextlib.suppress(SandboxError):
-        await session.bring_out()
+        _ = await session.bring_out()
     for mount, copy in held:
         with contextlib.suppress(VMError):
             _ = await _bring_back(mount, copy, changes)

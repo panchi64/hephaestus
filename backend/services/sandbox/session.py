@@ -252,7 +252,7 @@ class SandboxSession:
                 timeout_s=spec.timeout_s,
                 stdin=spec.stdin,
             )
-            await self._guest.bring_out()
+            _ = await self._guest.bring_out()
         except VMError as exc:
             raise SandboxError(str(exc)) from exc
         return SandboxResult(
