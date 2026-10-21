@@ -61,6 +61,7 @@ from services.plan_mode import PlanMode
 from services.registry import ModelRegistry
 from services.sandbox import (
     SandboxSessionManager,
+    resolve_confinement,
     shutdown_confinement,
     stop_all_groups,
 )
@@ -241,10 +242,11 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
     discovery_client = httpx.AsyncClient(follow_redirects=True)
     state.discovery_client = discovery_client
     lifecycle.on_stop("discovery-client", discovery_client.aclose)
-    # Host-command confinement configures itself lazily on the first approved host command
-    # and starts proxy listeners doing so. Registered here so they stop with the app —
-    # under the reloading dev server they would otherwise accumulate per restart.
+    # Host-command confinement starts proxy listeners when it resolves. Registered to stop
+    # with the app — under the reloading dev server they would otherwise accumulate per
+    # restart — and resolved now so `confinement_state` is settled before the first command.
     lifecycle.on_stop("host-confinement", shutdown_confinement)
+    _ = await resolve_confinement(settings)
     # A command that backgrounded a server leaves a process group nothing else remembers;
     # stopped after the runs (which kill their own commands), so it only catches strays.
     lifecycle.on_stop("host-process-groups", stop_all_groups)

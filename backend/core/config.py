@@ -262,6 +262,8 @@ class Settings(BaseSettings):
     # operator explicitly approved *this* command, and refusing to run it because a
     # platform primitive is missing would break the one case the tool exists for.
     host_command_sandbox_enabled: bool = True
+    # Applies to `code_run_host_command` only; the host shell reads everything but the floor
+    # (`services/sandbox/floor.py`), and write-denies this list.
     # Read-denied even under approval. The data directory is added to this at runtime
     # because it holds the vault, the sealed workspaces and the database: the agent must
     # never read its own encrypted store from the host, whatever it was approved to do.
@@ -294,7 +296,8 @@ class Settings(BaseSettings):
     # egress allowlist, which are the exfiltration paths. The credential paths above are
     # additionally write-denied, so a confined command can neither read nor clobber them.
     host_command_allow_write: tuple[str, ...] = ("~", "/tmp", "/var/tmp")
-    # Extra writable paths (build caches) for the host shell's fence. Nothing reads this yet.
+    # Extra writable paths (build caches) for the host shell's fence, added to `~`, temp and
+    # the scratch directory.
     host_shell_allow_write: tuple[str, ...] = (
         "~/.cache",
         "~/Library/Caches",

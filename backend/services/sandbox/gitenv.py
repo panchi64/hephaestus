@@ -53,6 +53,19 @@ _PINS: tuple[tuple[str, str], ...] = (
 )
 
 
+#: Prefix for every `git` this backend runs on the host itself, outside any fence: no
+#: repository-named hook directory, fsmonitor or pager may run as part of it. Passed as
+#: `-c` arguments, which beat the repository's own config.
+GIT_ARG_PINS: tuple[str, ...] = (
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.pager=cat",
+)
+
+
 def git_config_pins(base: Mapping[str, str]) -> dict[str, str]:
     """``base`` plus the git config pins, continuing whatever count it already carries.
 

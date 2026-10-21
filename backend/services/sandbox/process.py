@@ -6,11 +6,12 @@ kills the process tree and handles cancellation in one place. The mechanics live
 fence rather than inside it (``fence.py``) so that *what a command may reach* and *how a
 process is started and killed* have separate reasons to change.
 
-Nothing here decides the first of those. :func:`run_on_host` wraps a command in
-:func:`services.sandbox.fence.confine` only when it is handed an active confinement, and the
-host shell hands it none, so its commands run unfenced. What this module guarantees is that
-whatever was started can be stopped **whole** — a command that backgrounds a server must
-not leave it running once the run that started it is gone.
+Nothing here decides what a command may reach. :func:`run_on_host` wraps a command with
+:func:`services.sandbox.fence.fence_command` when it is handed a confinement, and runs it as
+given when it is not or the confinement is inactive. The host shell passes the fence it
+resolves (``shell_confinement``); ``code_run_host_command`` passes its own. What this module
+guarantees is that whatever was started can be stopped **whole** — a command that backgrounds
+a server must not leave it running once the run that started it is gone.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from typing import IO
 from pydantic_ai_harness.shell._capability import LLM_API_KEY_ENV_PATTERNS
 
 from .base import HostExecutionError, SandboxResult
-from .fence import HostConfinement, confine
+from .fence import HostConfinement, fence_command
 from .gitenv import git_config_pins
 from .limits import TIMEOUT_EXIT
 from .shell_result import ProgressHook
@@ -208,7 +209,8 @@ async def spawn_in_session(
     stderr: int | IO[bytes],
 ) -> asyncio.subprocess.Process:
     """Start ``command`` through the host shell in a session of its own, so
-    :func:`kill_tree` can reach it. No fence is applied here; see :func:`run_on_host`.
+    :func:`kill_tree` can reach it. The fence, where one applies, is the caller's
+    to apply first (:func:`~services.sandbox.fence.fence_command`).
 
     The spawn's own errors are left to propagate unwrapped, so each caller decides how a
     launch failure reads.
@@ -258,24 +260,15 @@ async def run_on_host(
 
     ``confinement`` is resolved by the caller (see
     :func:`services.sandbox.fence.resolve_confinement`) and passed in rather than looked up
-    here, so the tool reports the same fence it asked for. ``None`` runs the command
-    unconfined.
+    here, so the tool reports the same fence it asked for. ``None``, or an inactive one,
+    runs the command unconfined.
 
     ``env`` defaults to :func:`filtered_env` rather than to the backend's own — the fence
     denies the *paths* the operator's model keys live at and says nothing about the
     environment, so inheriting it whole would hand them to the one command an operator
     approved without ever being shown that it could read them.
     """
-    if confinement is not None and confinement.active:
-        try:
-            command = await confine(
-                command,
-                allowed_domains=confinement.allowed_domains,
-                allow_write=confinement.allow_write,
-                deny_read=confinement.deny_read,
-            )
-        except Exception as exc:  # wrapping must never lose the command
-            raise HostExecutionError(f"failed to confine host command: {exc}") from exc
+    command = await fence_command(command, confinement)
     out, err = stream_files("run")
     started = time.monotonic()
     task: asyncio.Task[None] | None = None
