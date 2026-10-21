@@ -14,8 +14,10 @@ from .run import Run
 class ParkedJournal(Protocol):
     """Fire-and-forget: an implementation queues the write and never blocks the caller."""
 
-    def record(self, run: Run) -> None:
-        """Write the parked run's continuation."""
+    def record(self, run: Run) -> bool:
+        """Write the parked run's continuation. Returns whether a write was queued, so a
+        run whose continuation cannot be written is not left to a restart that cannot
+        restore it."""
         ...
 
     def forget(self, run_id: str) -> None:
@@ -25,8 +27,8 @@ class ParkedJournal(Protocol):
 
 class _NoParkedJournal(ParkedJournal):
     @override
-    def record(self, run: Run) -> None:
-        pass
+    def record(self, run: Run) -> bool:
+        return False
 
     @override
     def forget(self, run_id: str) -> None:

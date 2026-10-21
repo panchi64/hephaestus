@@ -33,11 +33,11 @@ from .test_task_routes import (
 )
 
 
-async def _task_runs(client: httpx.AsyncClient, task_id: str) -> list[dict[str, JsonValue]]:
+async def task_runs(client: httpx.AsyncClient, task_id: str) -> list[dict[str, JsonValue]]:
     return [obj(r) for r in response_items(await client.get(f"/tasks/{task_id}/runs"))]
 
 
-async def _park_a_fire(client: httpx.AsyncClient, app: FastAPI) -> tuple[str, str, str, str]:
+async def park_a_fire(client: httpx.AsyncClient, app: FastAPI) -> tuple[str, str, str, str]:
     """Fire a routine that parks; returns its task id, TaskRun id, run id and call id."""
     swap_tool_catalog(app, danger_categories())
     task_id = s((await create_task(client, pre_authorized=[]))["id"])
@@ -45,7 +45,7 @@ async def _park_a_fire(client: httpx.AsyncClient, app: FastAPI) -> tuple[str, st
     task_run_id = s(fired["taskRunId"])
     run = await await_parked_task_run(app)
     for _ in range(300):
-        row = (await _task_runs(client, task_id))[0]
+        row = (await task_runs(client, task_id))[0]
         if row["runId"] == run.id:
             break
         await asyncio.sleep(0.01)
@@ -68,7 +68,7 @@ async def test_an_approved_parked_routine_run_finalizes_its_one_task_run(
 ):
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
-        task_id, task_run_id, run_id, call_id = await _park_a_fire(client, app)
+        task_id, task_run_id, run_id, call_id = await park_a_fire(client, app)
 
     async with client_app(home=tmp_path) as (client, app):
         swap_tool_catalog(app, danger_categories())
@@ -77,7 +77,7 @@ async def test_an_approved_parked_routine_run_finalizes_its_one_task_run(
         assert app_state(app).scheduler.running == {}
         _ = await app_state(app).runs.parks_restored.wait()
         await asyncio.sleep(0.1)
-        (open_row,) = await _task_runs(client, task_id)
+        (open_row,) = await task_runs(client, task_id)
         assert open_row["finishedAt"] is None and open_row["runId"] == run_id
 
         await _decide(client, run_id, call_id, approved=True)
@@ -85,7 +85,7 @@ async def test_an_approved_parked_routine_run_finalizes_its_one_task_run(
         assert row["outcome"] == "ok"
         assert row["runId"] == run_id
         assert row["conversationId"] == restored.conversation_id
-        assert len(await _task_runs(client, task_id)) == 1
+        assert len(await task_runs(client, task_id)) == 1
 
 
 async def test_a_denied_parked_routine_run_finalizes_with_the_runs_outcome(
@@ -93,7 +93,7 @@ async def test_a_denied_parked_routine_run_finalizes_with_the_runs_outcome(
 ):
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
-        task_id, task_run_id, run_id, call_id = await _park_a_fire(client, app)
+        task_id, task_run_id, run_id, call_id = await park_a_fire(client, app)
 
     async with client_app(home=tmp_path) as (client, app):
         swap_tool_catalog(app, danger_categories())
@@ -109,7 +109,7 @@ async def test_a_cancelled_parked_routine_run_finalizes_as_cancelled(
 ):
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
-        task_id, task_run_id, run_id, _call_id = await _park_a_fire(client, app)
+        task_id, task_run_id, run_id, _call_id = await park_a_fire(client, app)
 
     async with client_app(home=tmp_path) as (client, app):
         swap_tool_catalog(app, danger_categories())
@@ -125,7 +125,7 @@ async def test_a_restore_that_cannot_recompose_finalizes_the_task_run_as_blocked
 ):
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
-        task_id, task_run_id, run_id, call_id = await _park_a_fire(client, app)
+        task_id, task_run_id, run_id, call_id = await park_a_fire(client, app)
 
     async def gone(_self: ModelRegistry, _role: str, **_kwargs: object):
         raise NotFoundError("endpoint", "gone")
@@ -149,7 +149,7 @@ async def test_an_open_task_run_with_no_run_is_closed_as_failed_at_startup(
 ):
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
-        task_id, parked_row_id, run_id, _call_id = await _park_a_fire(client, app)
+        task_id, parked_row_id, run_id, _call_id = await park_a_fire(client, app)
         orphan_id = "orphan-run-row"
 
         def add(session: Session) -> None:
@@ -162,14 +162,14 @@ async def test_an_open_task_run_with_no_run_is_closed_as_failed_at_startup(
         row = await await_task_run_finalized(client, task_id, orphan_id)
         assert row["outcome"] == "error"
         assert "stopped before this run finished" in s(row["summary"])
-        parked = next(r for r in await _task_runs(client, task_id) if r["id"] == parked_row_id)
+        parked = next(r for r in await task_runs(client, task_id) if r["id"] == parked_row_id)
         assert parked["finishedAt"] is None and parked["runId"] == run_id
 
 
 async def test_stopping_with_a_parked_fire_does_not_hang(monkeypatch: pytest.MonkeyPatch):
     install_sensitive_tool(monkeypatch)
     async with asyncio.timeout(10), client_app() as (client, app):
-        _ = await _park_a_fire(client, app)
+        _ = await park_a_fire(client, app)
 
 
 async def test_an_executor_that_suspends_leaves_its_task_run_open():
@@ -186,5 +186,5 @@ async def test_an_executor_that_suspends_leaves_its_task_run_open():
             if not app_state(app).scheduler.running:
                 break
             await asyncio.sleep(0.01)
-        row = next(r for r in await _task_runs(client, task_id) if r["id"] == task_run_id)
+        row = next(r for r in await task_runs(client, task_id) if r["id"] == task_run_id)
         assert row["finishedAt"] is None

@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from agent.recompose import ParkedFacts, Recomposed, register_recompose
+from agent.recompose import ParkedFacts, Recomposed, RecomposeError, register_recompose
 from agent.summarize import resolve_auto_compact_policy
 from core.api_scopes import ScopeClaim
 from core.exceptions import NotFoundError
@@ -100,6 +100,8 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     )
 
     async def _recompose(facts: ParkedFacts) -> Recomposed:
+        if not await scheduler.records_run(facts.run.id):
+            raise RecomposeError("the routine this run belonged to no longer exists")
         return await composer.recompose(facts, kind=TASK_KIND, depth=0)
 
     register_recompose(runs, TASK_KIND, _recompose)
@@ -214,7 +216,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             context_thresholds=thresholds,
             auto_compact=auto_compact,
             owner_id=view.owner_id,
-            # Routines take the interactive lane (`runs/lanes.py`): they run on schedule.
+            # A routine's run takes the `routine` lane (`runs/lanes.py`).
             kind=TASK_KIND,
             **timeouts,
         )
@@ -305,6 +307,12 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         _ = await asyncio.gather(*list(settling), return_exceptions=True)
 
     ctx.lifecycle.on_stop("task-settling", _drain_settling)
+
+    async def _cancel_runs_of(routine_id: str) -> None:
+        for run_id in await scheduler.open_run_ids(routine_id):
+            _ = await runs.cancel(run_id)
+
+    routines.before_delete(_cancel_runs_of)
 
     async def _close_stranded() -> None:
         _ = await ctx.vault.unlocked_event.wait()

@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import override
 
 import pytest
 
-from runs import ConversationBusyError, LaneLimits, Orchestrator, Run, RunRegistry, RunStatus
+from runs import (
+    ConversationBusyError,
+    LaneLimits,
+    Orchestrator,
+    ParkedJournal,
+    Run,
+    RunRegistry,
+    RunStatus,
+)
 from runs.events import AnswerDelta, RunEnded, RunMetrics
 
 
@@ -616,6 +625,16 @@ async def test_a_bound_tripping_just_after_a_park_still_flushes_the_parked_turn(
     assert flushed == [run.id]
 
 
+class _StoringJournal(ParkedJournal):
+    @override
+    def record(self, run: Run) -> bool:
+        return True
+
+    @override
+    def forget(self, run_id: str) -> None:
+        pass
+
+
 async def test_shutdown_cancels_live_runs_and_keeps_parked_ones():
     # Nothing else cancels an in-flight run at shutdown, and the stores each run writes
     # through are torn down right after — so a turn still executing would submit onto a
@@ -624,6 +643,7 @@ async def test_shutdown_cancels_live_runs_and_keeps_parked_ones():
     # still live, and settles anything awaiting the run's terminal transition. A run parked
     # on the operator is not cancelled: its stored park is what the next process resumes.
     reg = RunRegistry()
+    reg.attach_parked_journal(_StoringJournal())
     started = asyncio.Event()
 
     async def running(_run: Run) -> None:
@@ -645,6 +665,20 @@ async def test_shutdown_cancels_live_runs_and_keeps_parked_ones():
     assert live.stream.closed
     assert idle.status is RunStatus.awaiting_input
     assert not idle.stream.closed
+
+
+async def test_shutdown_cancels_a_parked_run_whose_park_was_not_stored():
+    reg = RunRegistry()
+
+    async def parking(run: Run) -> None:
+        run.park(None)
+
+    idle = reg.submit(kind="chat", owner_id="operator", orchestrator=parking)
+    await idle.wait()
+
+    await reg.shutdown()
+
+    assert idle.status is RunStatus.cancelled and idle.stream.closed
 
 
 # --- duration formatting: exact minutes, no silent rounding --------------------------

@@ -40,6 +40,17 @@ class StoredPark:
 
 
 @dataclass(frozen=True)
+class UnreadablePark:
+    """A stored park whose continuation could not be read: only its identity survives."""
+
+    run_id: str
+    owner_id: str
+    conversation_id: str
+    kind: str
+    last_event_id: int
+
+
+@dataclass(frozen=True)
 class _Job:
     op: Literal["record", "forget"]
     run_id: str
@@ -72,27 +83,44 @@ class SealedParkedStore:
     def forget(self, run_id: str) -> None:
         self._worker.submit(_Job("forget", run_id))
 
-    async def load(self) -> list[StoredPark]:
-        """Every stored park, oldest first. Needs the vault open."""
+    async def load(self) -> tuple[list[StoredPark], list[UnreadablePark]]:
+        """Every stored park, oldest first, and the rows whose payload cannot be opened.
+        Needs the vault open."""
 
         def work(session: Session) -> list[ParkedTurnRecord]:
             query = select(ParkedTurnRecord).order_by(col(ParkedTurnRecord.parked_at))
             return list(session.exec(query))
 
-        rows = await in_session(self._engine, work)
-        return [
-            StoredPark(
-                run_id=row.run_id,
-                owner_id=row.owner_id,
-                conversation_id=row.conversation_id,
-                kind=row.kind,
-                prompt_message_id=row.prompt_message_id,
-                last_event_id=row.last_event_id,
-                payload=self._vault.decrypt_str(row.payload_enc),
-                parked_at=row.parked_at,
+        readable: list[StoredPark] = []
+        unreadable: list[UnreadablePark] = []
+        for row in await in_session(self._engine, work):
+            try:
+                payload = self._vault.decrypt_str(row.payload_enc)
+            except Exception:
+                logger.exception("parked turns: run %s cannot be decrypted", row.run_id)
+                unreadable.append(
+                    UnreadablePark(
+                        run_id=row.run_id,
+                        owner_id=row.owner_id,
+                        conversation_id=row.conversation_id,
+                        kind=row.kind,
+                        last_event_id=row.last_event_id,
+                    )
+                )
+                continue
+            readable.append(
+                StoredPark(
+                    run_id=row.run_id,
+                    owner_id=row.owner_id,
+                    conversation_id=row.conversation_id,
+                    kind=row.kind,
+                    prompt_message_id=row.prompt_message_id,
+                    last_event_id=row.last_event_id,
+                    payload=payload,
+                    parked_at=row.parked_at,
+                )
             )
-            for row in rows
-        ]
+        return readable, unreadable
 
     async def _write(self, job: _Job) -> None:
         if job.op == "record":

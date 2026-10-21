@@ -209,13 +209,32 @@ class RunRegistry:
 
     def restore_parked(self, run: Run, announcements: Sequence[EventBody]) -> None:
         """Track a run rebuilt from a stored park, in ``awaiting_input``, and replay what it
-        was waiting on into its stream. The row is already stored, so it is not rewritten."""
+        was waiting on into its stream. The row is already stored, so it is not rewritten.
+
+        A conversation that already has a live run cannot take a second: the park ends
+        ``blocked`` instead."""
         if run.conversation_id is not None:
+            if self.active_run_for(run.conversation_id, run.owner_id) is not None:
+                self.register(run)
+                self._journalled.add(run.id)
+                self._block_parked(run, "its conversation already has a run in progress")
+                return
             run.inbox = self.inbox(run.conversation_id, run.owner_id)
         self.register(run)
         self._journalled.add(run.id)
         for body in announcements:
             _ = run.emit(body)
+
+    def end_unrestorable(self, run: Run, detail: str) -> None:
+        """Record a run whose stored park could not be read back as ended ``blocked``, so
+        everything that waits on a run's end hears of it. Its row is dropped."""
+        self.register(run)
+        run.block(detail)
+        self._parked_journal.forget(run.id)
+        _ = run.emit(RunEnded(outcome="blocked", detail=detail))
+        run.ended_at = now_utc()
+        self._fire_terminal(run)
+        run.stream.close()
 
     async def block_parked(self, run_id: str, detail: str) -> bool:
         """End a parked run ``blocked``: its turn is kept as a stopped one, nothing it
@@ -223,6 +242,10 @@ class RunRegistry:
         run = self._runs.get(run_id)
         if run is None or run.status is not RunStatus.awaiting_input:
             return False
+        self._block_parked(run, detail)
+        return True
+
+    def _block_parked(self, run: Run, detail: str) -> None:
         run.block(detail)
         self._flush_park_cancel(run)
         self._forget_park(run.id)
@@ -232,14 +255,16 @@ class RunRegistry:
         run.stream.close()
         if run.task is not None and not run.task.done():
             _ = run.task.cancel()
-        return True
 
-    def _journal_park(self, run: Run) -> None:
-        self._journalled.add(run.id)
+    def _journal_park(self, run: Run) -> bool:
         try:
-            self._parked_journal.record(run)
+            stored = self._parked_journal.record(run)
         except Exception:
             logger.exception("runs: could not store the park of run %s", run.id)
+            stored = False
+        if stored:
+            self._journalled.add(run.id)
+        return stored
 
     def _forget_park(self, run_id: str) -> None:
         if run_id in self._journalled:
@@ -462,9 +487,10 @@ class RunRegistry:
         runs each turn's own pre-cancel flush while the stores are still live, so a turn
         in flight at shutdown is persisted rather than silently lost.
 
-        A run parked on the operator is left exactly as it is: no flush, no ``run.ended``
-        and its stored park kept, so the next process resumes it. One still unwinding into
-        its park is waited for, so the park is on the journal before the stores stop.
+        A run parked on the operator is left as it is: no flush, no ``run.ended`` and its
+        park stored again at the stream position it ends on, so the next process resumes it.
+        One still unwinding into its park is waited for, so the park is on the journal before
+        the stores stop. A park that cannot be stored is cancelled like a running turn.
         """
         self._closing = True
         live = [run for run in self._runs.values() if not run.is_terminal and not run.is_parked]
@@ -485,6 +511,12 @@ class RunRegistry:
             _, stuck = await asyncio.wait(pending, timeout=timeout_s)
             if stuck:
                 logger.warning("runs: %d run(s) still unwinding after %.1fs", len(stuck), timeout_s)
+        # A park is kept only if its row is written, at the stream position it ends on;
+        # any other parked run is cancelled, which persists its turn.
+        for run in list(self._runs.values()):
+            if run.status is RunStatus.awaiting_input and not self._journal_park(run):
+                self._forget_park(run.id)
+                _ = await self.cancel(run.id)
         # Afterwork writes through the same stores, so it stops while they are still live.
         afterwork = [task for run in self._runs.values() for task in run.afterwork]
         for task in afterwork:
@@ -567,7 +599,7 @@ class RunRegistry:
                 if run.is_parked:
                     # Parked for approval: leave the stream open and the
                     # slot free; the run is resumed or cancelled out of band.
-                    self._journal_park(run)
+                    _ = self._journal_park(run)
                     return
                 if not run.is_terminal:
                     run.status = RunStatus.done

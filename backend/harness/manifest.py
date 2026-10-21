@@ -12,6 +12,7 @@ central list.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -92,6 +93,9 @@ class HarnessContext:
     # The assembled tool-category mapping and instruction providers (core + every
     # enabled manifest's declarations, complete before any build runs) — so a feature
     # composing agent runs hands the engine exactly what an interactive turn gets.
+    #: Set once every manifest has built and its run-terminal hooks are registered, for a
+    #: startup pass that ends runs and needs every feature to hear of it.
+    built: asyncio.Event = field(default_factory=asyncio.Event)
     tool_categories: Mapping[str, AbstractToolset[RunDeps]] = field(default_factory=lambda: {})
     instruction_providers: tuple[InstructionProvider, ...] = ()
     prompt_context_providers: tuple[PromptContextProvider, ...] = ()

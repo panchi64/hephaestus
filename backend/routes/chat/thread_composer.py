@@ -22,7 +22,13 @@ from core.config import Settings
 from core.container import ServiceContainer
 from routes.chat.turn import TurnModels, resolve_turn_models
 from services.agents import AgentCatalog
-from services.agents.thread import DELEGATION_TOOLS, ThreadAgent, may_delegate, resolve_thread_agent
+from services.agents.thread import (
+    DELEGATION_TOOLS,
+    ThreadAgent,
+    agent_is_gone,
+    may_delegate,
+    resolve_thread_agent,
+)
 from services.conversations import ConversationStore
 from services.offline import OfflineModeService
 from services.projects import ProjectStore, WorktreeManager
@@ -97,21 +103,36 @@ class ThreadComposer:
         if conversation_id is None:
             raise RecomposeError("this run had no conversation to resume in")
         owner_id = facts.run.owner_id
+        binding = await self.conversations.binding(conversation_id)
         try:
-            thread = await self.resolve(owner_id, conversation_id)
+            applied = await resolve_thread_agent(
+                self.agents,
+                owner_id,
+                binding,
+                conversation_id,
+                projects=self.projects,
+                worktrees=self.worktrees,
+            )
+            if agent_is_gone(applied, binding):
+                raise RecomposeError(f"the agent {binding.agent_name!r} is gone")
+            endpoint_id, model = facts.endpoint_id, facts.model
+            if endpoint_id is None and model is None:
+                endpoint_id, model = applied.agent.endpoint_id, applied.agent.model
+            models = await resolve_turn_models(
+                self.model_registry, endpoint_id, model, owner_id=owner_id
+            )
         except HTTPException as exc:
             raise RecomposeError(str(exc.detail)) from exc
-        models = thread.models
         return await recompose_turn(
             facts,
             model=models.main,
             categories=self.categories,
             dormant=self.dormant,
-            instruction_providers=thread.instruction_providers,
+            instruction_providers=(*self.instruction_providers, *applied.instructions),
             capabilities=self.capabilities,
             store=self.conversations,
             disabled_tools=await self.disabled(
-                owner_id, kind=kind, vision=models.vision, applied=thread.applied, depth=depth
+                owner_id, kind=kind, vision=models.vision, applied=applied, depth=depth
             ),
             auto_compact=await resolve_auto_compact_policy(self.settings_store, owner_id),
             context_window=models.context_window,

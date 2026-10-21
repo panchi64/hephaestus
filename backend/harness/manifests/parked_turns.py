@@ -21,7 +21,8 @@ from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from routes.chat.submit import recompose_chat
 from runs import ParkedJournal, Run, RunRegistry, RunStream
 from services.conversations import ConversationStore
-from services.parked_turns import SealedParkedStore, StoredPark
+from services.notifications import NotificationService
+from services.parked_turns import SealedParkedStore, StoredPark, UnreadablePark
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +32,15 @@ class _Journal(ParkedJournal):
         self._store: SealedParkedStore = store
 
     @override
-    def record(self, run: Run) -> None:
+    def record(self, run: Run) -> bool:
         parked = run.parked_payload
         if not isinstance(parked, ParkedTurn) or run.conversation_id is None:
-            return
+            return False
         try:
             payload = encode_park(parked, run)
         except Exception:
             logger.exception("parked turns: run %s cannot be written, so it won't survive", run.id)
-            return
+            return False
         self._store.record(
             StoredPark(
                 run_id=run.id,
@@ -51,22 +52,68 @@ class _Journal(ParkedJournal):
                 payload=payload,
             )
         )
+        return True
 
     @override
     def forget(self, run_id: str) -> None:
         self._store.forget(run_id)
 
 
-async def _restore(
-    store: SealedParkedStore, runs: RunRegistry, conversations: ConversationStore
+async def _abandon(
+    lost: UnreadablePark, runs: RunRegistry, notifications: NotificationService
 ) -> None:
-    for stored in await store.load():
+    """A park that cannot be read back is dropped for good rather than retried every boot.
+    Its run ends blocked, so what waits on a run's end (its routine's `TaskRun`, a
+    sub-agent's parent) hears of it, and the operator is told once."""
+    if runs.get(lost.run_id) is not None:
+        return
+    reason = "a run waiting for approval could not be restored after the restart"
+    runs.end_unrestorable(
+        Run(
+            id=lost.run_id,
+            kind=lost.kind,
+            owner_id=lost.owner_id,
+            conversation_id=lost.conversation_id,
+            stream=RunStream(lost.last_event_id),
+        ),
+        reason,
+    )
+    _ = await notifications.notify(
+        lost.owner_id,
+        "run_restore_failed",
+        "A run could not be restored",
+        body=reason,
+        conversation_id=lost.conversation_id,
+    )
+
+
+async def _restore(
+    store: SealedParkedStore,
+    runs: RunRegistry,
+    conversations: ConversationStore,
+    notifications: NotificationService,
+) -> None:
+    readable, unreadable = await store.load()
+    for lost in unreadable:
+        await _abandon(lost, runs, notifications)
+    for stored in readable:
         if runs.get(stored.run_id) is not None:
             continue
         try:
-            parked, endpoint = decode_park(stored.payload)
+            parked, endpoint = decode_park(stored.payload, kind=stored.kind)
         except Exception:
             logger.exception("parked turns: run %s could not be read back", stored.run_id)
+            await _abandon(
+                UnreadablePark(
+                    run_id=stored.run_id,
+                    owner_id=stored.owner_id,
+                    conversation_id=stored.conversation_id,
+                    kind=stored.kind,
+                    last_event_id=stored.last_event_id,
+                ),
+                runs,
+                notifications,
+            )
             continue
         run = Run(
             id=stored.run_id,
@@ -86,6 +133,7 @@ async def _restore(
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
     runs = ctx.services.get(RunRegistry)
     conversations = ctx.services.get(ConversationStore)
+    notifications = ctx.services.get(NotificationService)
     store = SealedParkedStore(ctx.engine, ctx.vault)
     await ctx.lifecycle.start("parked-turns", start=store.start, stop=store.stop)
     runs.attach_parked_journal(_Journal(store))
@@ -99,8 +147,9 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
     async def restore() -> None:
         _ = await ctx.vault.unlocked_event.wait()
+        _ = await ctx.built.wait()
         try:
-            await _restore(store, runs, conversations)
+            await _restore(store, runs, conversations, notifications)
         except Exception:
             logger.exception("parked turns: could not restore the stored parks")
         finally:
@@ -110,4 +159,4 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     return FeatureRuntime(services=(store,))
 
 
-MANIFEST = FeatureManifest(name="parked-turns", build=_build)
+MANIFEST = FeatureManifest(name="parked-turns", after=("notifications",), build=_build)

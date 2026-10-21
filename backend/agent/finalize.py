@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from pydantic_ai import ModelMessage
+from pydantic_ai import ModelMessage, ModelRequest, ToolReturnPart
 
 from runs import Run, RunStatus
 from services.conversations import ConversationStore
@@ -118,8 +118,34 @@ def persist_parked_cancel(run: Run, *, store: ConversationStore | None) -> None:
     parked = run.parked_payload
     if not isinstance(parked, ParkedTurn):
         return
-    detail = run.detail if run.status is RunStatus.blocked and run.detail else CANCELLED_DETAIL
-    flush_recorder(run, store)(parked.message_history, detail, parked_context(parked))
+    history = parked.message_history
+    if run.status is RunStatus.blocked and run.detail:
+        detail = run.detail
+        history = [*history, *_denied_returns(parked, detail)]
+    else:
+        detail = CANCELLED_DETAIL
+    flush_recorder(run, store)(history, detail, parked_context(parked))
+
+
+def _denied_returns(parked: ParkedTurn, reason: str) -> list[ModelMessage]:
+    """A request answering every call the park was waiting on with a denial, so the stored
+    history has no tool call without a return."""
+    calls = [*parked.requests.approvals, *parked.requests.calls]
+    if not calls:
+        return []
+    return [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content=reason,
+                    tool_call_id=call.tool_call_id,
+                    outcome="denied",
+                )
+                for call in calls
+            ]
+        )
+    ]
 
 
 def parked_context(parked: ParkedTurn, turn_start: TurnStart | None = None) -> PersistContext:

@@ -456,7 +456,7 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
     # A park restored after a restart holds no agent yet; its kind's composer rebuilds it.
     # When what it ran on is gone, no pending call runs and the run ends blocked.
     try:
-        rebuilt = await recompose(registry, run, parked)
+        _ = await recompose(registry, run, parked)
     except RecomposeError as exc:
         reason = (
             f"This run could not be resumed after the restart ({exc}), "
@@ -465,12 +465,10 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
         _ = await registry.block_parked(run_id, reason)
         raise HTTPException(status_code=409, detail=reason) from exc
 
-    # A rebuilt park's deps hold the agent's own withheld tools, which nothing else on this
-    # path re-derives.
+    # The park's deps hold the agent's own withheld tools, which nothing else on this path
+    # re-derives.
     restored_disabled: frozenset[str] = (
-        parked.compaction.deps.disabled_tools
-        if rebuilt and parked.compaction is not None
-        else frozenset()
+        parked.compaction.deps.disabled_tools if parked.compaction is not None else frozenset()
     )
     orchestrator = build_resume_orchestrator(
         parked,

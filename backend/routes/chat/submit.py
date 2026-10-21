@@ -20,7 +20,7 @@ from routes.chat.schemas import ChatCreated
 from routes.chat.turn import TurnModels, compose_turn, resolve_turn_models
 from routes.deps import OPERATOR_ID
 from services.agents import AgentDefinition, lower_of
-from services.agents.thread import ThreadAgent, resolve_thread_agent
+from services.agents.thread import ThreadAgent, agent_is_gone, resolve_thread_agent
 from services.commands import Invocation, expand
 from services.conversations import ConversationBinding
 from services.settings_store import (
@@ -226,7 +226,11 @@ async def recompose_chat(source: deps.Source, facts: ParkedFacts) -> Recomposed:
     if conversation_id is None:
         raise RecomposeError("this run had no conversation to resume in")
     try:
-        models = await thread_models(source, conversation_id, facts.endpoint_id, facts.model)
+        binding = await deps.store(source).binding(conversation_id)
+        applied = await thread_agent(source, binding, conversation_id)
+        if agent_is_gone(applied, binding):
+            raise RecomposeError(f"the agent {binding.agent_name!r} is gone")
+        models = await resolve_models(source, facts.endpoint_id, facts.model, agent=applied.agent)
     except HTTPException as exc:
         raise RecomposeError(str(exc.detail)) from exc
     scope = await turn_scope(source, conversation_id, vision=models.vision)

@@ -530,6 +530,30 @@ class SchedulerService:
             logger.exception("scheduler: task %s last-run stamp failed", task.id)
         return self._decrypt_view(task)
 
+    async def records_run(self, run_id: str) -> bool:
+        """Whether a `TaskRun` is linked to ``run_id``, i.e. its routine still exists."""
+
+        def work(session: Session) -> bool:
+            return (
+                session.exec(select(TaskRun.id).where(TaskRun.run_id == run_id)).first() is not None
+            )
+
+        return await in_session(self._engine, work)
+
+    async def open_run_ids(self, task_id: str) -> list[str]:
+        """The runs linked to ``task_id``'s unfinished `TaskRun` rows."""
+
+        def work(session: Session) -> list[str]:
+            rows = session.exec(
+                select(TaskRun.run_id)
+                .where(TaskRun.task_id == task_id)
+                .where(col(TaskRun.finished_at).is_(None))
+                .where(col(TaskRun.run_id).is_not(None))
+            )
+            return [run_id for run_id in rows if run_id is not None]
+
+        return await in_session(self._engine, work)
+
     async def close_stranded(self, is_live: Callable[[str], bool]) -> int:
         """Finalize every open `TaskRun` that nothing is going to finish: not an execution
         of this process, and not linked to a run for which ``is_live`` holds. Returns how
