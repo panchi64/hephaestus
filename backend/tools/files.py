@@ -26,7 +26,8 @@ from pydantic_ai_harness import FileSystem
 
 from core.config import get_settings
 from core.diagnostics import render_tool_error
-from services.home.paths import HOME, absolute, climbs_out
+from core.untrusted import wrap_untrusted
+from services.home.paths import HOME, SCRATCH, absolute, climbs_out
 from services.home.table import RunHome
 from services.projects.worktree import WorktreeBusyError
 
@@ -34,7 +35,12 @@ from .briefing import with_brief
 from .deps import RunDeps
 from .home import change_log, lease, may_lease, resolve_run_home
 from .rebound import ReboundToolset
+from .spill import is_untrusted_spill
 from .workspace import unavailable
+
+#: The most characters one ``read_file`` page returns, so a page of a long file, or of a
+#: saved tool result, cannot flood the context.
+READ_PAGE_CHARS = 40_000
 
 #: The tools that change a file, by their bare names.
 WRITE_TOOLS = frozenset({"write_file", "edit_file", "create_directory"})
@@ -104,7 +110,10 @@ class _HomeFiles(ReboundToolset):
             await log.after(located[0], [located[1]])
         if home is None or located is None:
             return result
-        return await with_brief(ctx, home, [located[0].place], result)
+        mount, rel = located
+        if name == "read_file" and mount.place == SCRATCH and is_untrusted_spill(rel):
+            return wrap_untrusted(str(result), source="saved tool output")
+        return await with_brief(ctx, home, [mount.place], result)
 
 
 async def _in_home_terms(
@@ -184,6 +193,7 @@ def files_toolset() -> AbstractToolset[RunDeps]:
     toolset = FileSystem[RunDeps](
         root_dir=HOME,
         max_read_lines=get_settings().sandbox_files_max_read_lines,
+        max_read_chars=READ_PAGE_CHARS,
     ).get_toolset()
     assert toolset is not None
     return _HomeFiles("files", toolset)
