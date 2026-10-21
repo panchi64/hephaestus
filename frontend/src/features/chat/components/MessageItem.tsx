@@ -50,7 +50,7 @@ export interface MessageItemProps {
   /** Re-answer this assistant turn with the current model selection. */
   onRegenerate?: () => void;
   /** Re-ask an edited user turn as a new version. */
-  onEditMessage?: (id: string, text: string) => void;
+  onEditMessage?: (id: string, text: string) => void | Promise<boolean>;
   /** Delete this turn and everything after it. */
   onDelete?: () => void;
   /** Rewind the thread to (and including) this turn. */
@@ -400,7 +400,7 @@ function UserText(props: { text: string; parts?: ContentPart[] }): JSX.Element {
 
 function UserTurn(props: {
   message: ChatMessage;
-  onEditMessage?: (id: string, text: string) => void;
+  onEditMessage?: MessageItemProps["onEditMessage"];
   onDelete?: () => void;
   onFork?: () => void;
   onSwitchVersion?: (id: string, index: number) => void;
@@ -419,10 +419,15 @@ function UserTurn(props: {
   const cancel = (): void => {
     setEditing(false);
   };
-  const save = (): void => {
+  const save = async (): Promise<void> => {
     const text = draft().trim();
-    if (text) props.onEditMessage?.(m().id, text);
-    setEditing(false);
+    if (!text) {
+      setEditing(false);
+      return;
+    }
+    // Stays open with the draft when the edit was not submitted.
+    if ((await props.onEditMessage?.(m().id, text)) !== false)
+      setEditing(false);
   };
 
   return (
@@ -502,7 +507,7 @@ function UserTurn(props: {
                 variant="primary"
                 size="sm"
                 disabled={!draft().trim()}
-                onClick={save}
+                onClick={() => void save()}
               >
                 Save
               </Button>

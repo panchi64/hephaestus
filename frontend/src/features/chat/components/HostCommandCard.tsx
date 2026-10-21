@@ -3,13 +3,9 @@ import { ActionButtons, ActionFrame, Row, Stack, StatusFlag, Text } from "~/ui";
 import { duration } from "~/lib/format";
 import { grantKey, type GrantWidth } from "../commandScope";
 import type { ApprovalDecision, HostCommand, HostCommandPhase } from "../model";
-import { offersGrant } from "../approvalCautions";
-import { ApprovalCautions } from "./ApprovalCautions";
+import { CautionsAndGrant } from "./ApprovalCautions";
 import { CommandBoundary, FenceNote } from "./CommandBoundary";
-import {
-  ConversationGrantToggle,
-  createGrantToggle,
-} from "./ConversationGrantToggle";
+import { createGrantToggle } from "./ConversationGrantToggle";
 import { createAdoptedOpen } from "./ProcessRow";
 
 /** The state at the plate's far end, in mono. Hue only where it means something —
@@ -217,20 +213,18 @@ function Terminal(props: {
           }
         >
           <Stack gap={2}>
-            <ApprovalCautions cautions={c()} />
             {/* The grant opt-in sits *above* the decision so it reads naturally; its
                   state is captured into this command's decision the moment APPROVE is
                   clicked (see `decide`), so set it before approving. A guarded call
                   offers none. */}
-            <Show when={offersGrant(c())}>
-              <ConversationGrantToggle
-                command={c().command}
-                toolName={c().name}
-                width={props.sessionWidth}
-                disabled={props.submitting}
-                onChange={(v) => props.onToggleSession?.(v)}
-              />
-            </Show>
+            <CautionsAndGrant
+              cautions={c()}
+              command={c().command}
+              toolName={c().name}
+              width={props.sessionWidth}
+              disabled={props.submitting}
+              onChange={(v) => props.onToggleSession?.(v)}
+            />
             <ActionButtons
               buttons={[
                 {

@@ -42,7 +42,8 @@ import { settled } from "~/lib/resource";
 import { directoryLabel } from "../addDirectory";
 import { ChatRoomHeader } from "../components/ChatRoomHeader";
 import { ChatViewportMounts } from "../components/ChatViewportMounts";
-import { ConversationContext } from "../conversationContext";
+import { AllowHostContext } from "../allowHostContext";
+import { allowDomain } from "../data/egress";
 import { stopThreadAgents } from "../data/subagents";
 import { stopRoute } from "../stopRoute";
 import {
@@ -241,6 +242,10 @@ export function ChatRoomScreen(): JSX.Element {
   // the turn where it stopped — its answer so far, every tool block, every command's
   // output — and the correction opens the next turn against that history, which is what
   // makes it a correction rather than a restart.
+  const allowHost = async (host: string): Promise<void> => {
+    const id = currentId();
+    if (id !== null) await allowDomain(id, host);
+  };
   const route = () =>
     stopRoute({
       sending: stream.sending(),
@@ -250,23 +255,26 @@ export function ChatRoomScreen(): JSX.Element {
     const which = route();
     if (which === "none") return;
     if (which === "agents") {
+      // An idle thread's Stop carries no correction: the composer's draft stays put.
       const id = currentId();
       if (id === null) return;
       try {
-        await stopThreadAgents(id);
+        const stopped = await stopThreadAgents(id);
+        if (stopped.length > 0) toast.success("Agents stopped");
+        else toast.info("No agents were running");
       } catch (err) {
         // A 409 means a run of the thread's own started meanwhile; its cancel is the stop.
         toast.error(
           (err as { detail?: string })?.detail ?? "Unable to stop the agents.",
         );
-        return;
       } finally {
         subagents.refetch();
       }
-    } else await stream.cancel();
-    const stopped = which === "agents" ? "Agents stopped" : "Run cancelled";
-    if (!correction) return void toast.success(stopped);
-    toast.success(`${stopped} — sending your correction`);
+      return;
+    }
+    await stream.cancel();
+    if (!correction) return void toast.success("Run cancelled");
+    toast.success("Run cancelled — sending your correction");
     // No attachment ids: attaching is unavailable while a run streams, so there can be
     // nothing ready to carry.
     // The composer cleared the correction when STOP took it, so a refusal here would
@@ -561,7 +569,7 @@ export function ChatRoomScreen(): JSX.Element {
   };
 
   return (
-    <ConversationContext.Provider value={currentId}>
+    <AllowHostContext.Provider value={allowHost}>
       <div ref={viewport.rowRef} class="flex h-full min-h-0">
         {/* Conversation — the thread list now lives in the app rail's RECENTS, so
           the body is free for the conversation plus the viewport pane. */}
@@ -825,6 +833,6 @@ export function ChatRoomScreen(): JSX.Element {
 
         {rename.element}
       </div>
-    </ConversationContext.Provider>
+    </AllowHostContext.Provider>
   );
 }

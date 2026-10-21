@@ -142,6 +142,9 @@ export function createComposerSend(deps: {
   // Stop, carrying the draft when there is one.
   const stop = (): void => {
     setAwaiting(false);
+    // Nothing is generating, so there is nothing to correct: a plain stop, and the
+    // draft and its attachments stay in the field.
+    if (!props.streaming) return props.onStop?.(undefined);
     const correction = text().trim();
     props.onStop?.(correction || undefined);
     if (correction) {

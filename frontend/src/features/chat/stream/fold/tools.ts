@@ -6,6 +6,7 @@
 
 import { produce } from "solid-js/store";
 import type { RunEvent } from "~/lib/stream";
+import { approvalFromEvent, explanationOf } from "../../approvalEvent";
 import {
   commandBoundary,
   commandReason,
@@ -31,13 +32,6 @@ import {
   upsertHost,
 } from "../patch";
 import type { FoldContext } from "./types";
-
-type Asked = Extract<RunEvent, { type: "approval.required" }>;
-
-/** The backend fills `explanation` with the guard's reason when the tool wrote none; the
- *  card prints the guard on a line of its own, so the copy is dropped. */
-const explanationOf = (ev: Asked): string | undefined =>
-  ev.explanation && ev.explanation !== ev.guard ? ev.explanation : undefined;
 
 /** Fold one tool, review or park event; false when the event is not in this family. */
 export function foldTools(ev: RunEvent, c: FoldContext): boolean {
@@ -291,13 +285,7 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
           kind: "approval",
           id: `approval-${ev.tool_call_id}`,
           approval: {
-            toolCallId: ev.tool_call_id,
-            name: ev.name,
-            args,
-            summary: ev.summary,
-            explanation: explanationOf(ev),
-            guard: ev.guard ?? undefined,
-            unconfined: ev.unconfined ?? undefined,
+            ...approvalFromEvent(ev),
             risk: review?.risk,
             reviewReason: review?.reason,
           },

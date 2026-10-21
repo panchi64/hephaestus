@@ -1,8 +1,7 @@
 import { Show, createSignal, type JSX } from "solid-js";
 import { Button, Row, Stack, Text, toast } from "~/ui";
 import { allowableHost, boundaryReadout } from "../commandBoundary";
-import { useConversationId } from "../conversationContext";
-import { allowDomain } from "../data/egress";
+import { useAllowHost } from "../allowHostContext";
 import type { CommandBoundaryFacts } from "../model";
 
 /**
@@ -110,15 +109,14 @@ export function FenceNote(props: {
 type AllowState = "idle" | "pending" | "allowed";
 
 function AllowHost(props: { host: string }): JSX.Element {
-  const conversationId = useConversationId();
+  const allowHost = useAllowHost();
   const [state, setState] = createSignal<AllowState>("idle");
 
   async function allow(): Promise<void> {
-    const id = conversationId();
-    if (!id || state() !== "idle") return;
+    if (!allowHost || state() !== "idle") return;
     setState("pending");
     try {
-      await allowDomain(id, props.host);
+      await allowHost(props.host);
       setState("allowed");
     } catch (err) {
       setState("idle");
@@ -129,7 +127,7 @@ function AllowHost(props: { host: string }): JSX.Element {
   }
 
   return (
-    <Show when={conversationId()}>
+    <Show when={allowHost}>
       <Show
         when={state() !== "allowed"}
         fallback={

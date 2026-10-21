@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { RewindPreview } from "./data/rewind";
 import {
   hasRewindFiles,
+  isStaleRewind,
   rewindRows,
   sendWithRestore,
   type RestoreChoice,
@@ -18,32 +19,50 @@ const preview = (over: Partial<RewindPreview> = {}): RewindPreview => ({
 
 const file = { projectId: "p", path: "a.txt" };
 const conflict = { ...file, reason: "changed since the agent wrote it" };
-const mismatch = { status: 409, detail: "preview no longer matches" };
+const stale = {
+  status: 409,
+  detail: "the files changed since the rewind was previewed",
+};
+const busy = {
+  status: 409,
+  detail: "A response is already in progress in this conversation",
+};
+const notFound = { status: 404, detail: "conversation not found" };
 
 function run(opts: {
   previews: RewindPreview[];
   choices: RestoreChoice[];
-  failFirstSend?: boolean;
+  failFirstSend?: unknown;
+  previewError?: unknown;
+  proceedUnchecked?: boolean;
 }) {
   const asked: { preview: RewindPreview; changed: boolean }[] = [];
   const sent: (string | undefined)[] = [];
   let fetches = 0;
   let sends = 0;
+  let uncheckedAsked = 0;
   const result = sendWithRestore({
-    fetchPreview: async () =>
-      opts.previews[Math.min(fetches++, opts.previews.length - 1)],
+    fetchPreview: async () => {
+      if (opts.previewError) throw opts.previewError;
+      return opts.previews[Math.min(fetches++, opts.previews.length - 1)];
+    },
     ask: async (p, changed) => {
       asked.push({ preview: p, changed });
       return opts.choices.shift() ?? "cancel";
     },
     send: async (restore) => {
       sent.push(restore?.preview_token);
-      if (opts.failFirstSend && sends++ === 0 && restore) throw mismatch;
+      if (opts.failFirstSend && sends++ === 0 && restore)
+        throw opts.failFirstSend;
       return "created";
     },
-    isConflict: (err) => err === mismatch,
+    isMissing: (err) => err === notFound,
+    confirmUnchecked: async () => {
+      uncheckedAsked++;
+      return opts.proceedUnchecked ?? false;
+    },
   });
-  return { result, asked, sent };
+  return { result, asked, sent, unchecked: () => uncheckedAsked };
 }
 
 describe("offering the file rewind before an edit or regenerate", () => {
@@ -124,19 +143,55 @@ describe("offering the file rewind before an edit or regenerate", () => {
         }),
       ],
       choices: ["restore", "restore"],
-      failFirstSend: true,
+      failFirstSend: stale,
     });
     expect(await r.result).toEqual({ sent: true, value: "created" });
     expect(r.asked.map((a) => a.changed)).toEqual([false, true]);
     expect(r.sent).toEqual(["tok-1", "tok-2"]);
   });
 
-  test("a 409 with an unchanged preview is something else and is rethrown", async () => {
+  test("a busy-conversation 409 is rethrown, not re-previewed", async () => {
     const r = run({
       previews: [preview({ restore: [file] })],
       choices: ["restore"],
-      failFirstSend: true,
+      failFirstSend: busy,
     });
-    await expect(r.result).rejects.toBe(mismatch);
+    await expect(r.result).rejects.toBe(busy);
+    expect(r.asked).toHaveLength(1);
+  });
+
+  test("only a stale-rewind 409 counts as stale", () => {
+    expect(isStaleRewind(stale)).toBe(true);
+    expect(isStaleRewind(busy)).toBe(false);
+    expect(isStaleRewind(new Error("x"))).toBe(false);
+  });
+
+  test("a missing preview (404) sends untouched without asking", async () => {
+    const r = run({ previews: [], choices: [], previewError: notFound });
+    expect(await r.result).toEqual({ sent: true, value: "created" });
+    expect(r.unchecked()).toBe(0);
+    expect(r.sent).toEqual([undefined]);
+  });
+
+  test("any other preview failure asks, and going on sends untouched", async () => {
+    const r = run({
+      previews: [],
+      choices: [],
+      previewError: new Error("down"),
+      proceedUnchecked: true,
+    });
+    expect(await r.result).toEqual({ sent: true, value: "created" });
+    expect(r.unchecked()).toBe(1);
+    expect(r.sent).toEqual([undefined]);
+  });
+
+  test("declining to go on without the check sends nothing", async () => {
+    const r = run({
+      previews: [],
+      choices: [],
+      previewError: new Error("down"),
+    });
+    expect(await r.result).toEqual({ sent: false });
+    expect(r.sent).toEqual([]);
   });
 });

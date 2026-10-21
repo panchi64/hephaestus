@@ -5,6 +5,7 @@ import { ActionButtons, ActionFrame, LoadingText, toast } from "~/ui";
 import type { Approval, ApprovalDecision } from "../model";
 import type { Subagent } from "../data";
 import { isOneClickPark } from "../approvalDecisions";
+import { approvalFromEvent } from "../approvalEvent";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { SubagentDesignation } from "./SubagentDesignation";
 
@@ -52,18 +53,7 @@ export function SubagentApproval(props: {
         setApprovals((prev) =>
           prev.some((a) => a.toolCallId === event.tool_call_id)
             ? prev
-            : [
-                ...prev,
-                {
-                  toolCallId: event.tool_call_id,
-                  name: event.name,
-                  args: event.args ?? {},
-                  summary: event.summary,
-                  explanation: event.explanation ?? undefined,
-                  guard: event.guard ?? undefined,
-                  unconfined: event.unconfined ?? undefined,
-                },
-              ],
+            : [...prev, approvalFromEvent(event)],
         );
       }
       // A call that produced a result is waiting on nobody — the replay carries both

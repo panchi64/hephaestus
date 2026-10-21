@@ -55,21 +55,43 @@ export function rewindRows(preview: RewindPreview): RewindRow[] {
 
 export type RestoreOutcome<T> = { sent: true; value: T } | { sent: false };
 
+/** The detail the backend gives a confirmed rewind whose token no longer matches. A
+ *  conversation-busy 409 carries a different one. */
+const STALE_REWIND_DETAIL = "since the rewind was previewed";
+
+export function isStaleRewind(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const { status, detail } = err as { status?: unknown; detail?: unknown };
+  return (
+    status === 409 &&
+    typeof detail === "string" &&
+    detail.includes(STALE_REWIND_DETAIL)
+  );
+}
+
 /**
  * Offer the file rewind in front of an edit or regenerate, then send.
  *
- * An empty dry run sends straight away. A stale token (the backend answers 409 when a
- * planned file changed since the preview) re-fetches the preview and asks again; a 409
- * whose fresh preview is unchanged is something else, such as a running turn, and is
- * rethrown for the caller to explain.
+ * An empty dry run sends straight away. A stale-rewind 409 re-fetches the preview and
+ * asks again; any other error, a busy conversation included, is rethrown for the caller.
+ * A preview that cannot be read sends untouched on a 404 (nothing tracks this thread's
+ * files) and otherwise asks whether to go on without checking.
  */
 export async function sendWithRestore<T>(deps: {
   fetchPreview: () => Promise<RewindPreview>;
   ask: (preview: RewindPreview, changed: boolean) => Promise<RestoreChoice>;
   send: (restore?: RestoreFiles) => Promise<T>;
-  isConflict: (err: unknown) => boolean;
+  isMissing: (err: unknown) => boolean;
+  confirmUnchecked: () => Promise<boolean>;
 }): Promise<RestoreOutcome<T>> {
-  let preview = await deps.fetchPreview();
+  let preview: RewindPreview;
+  try {
+    preview = await deps.fetchPreview();
+  } catch (err) {
+    if (!deps.isMissing(err) && !(await deps.confirmUnchecked()))
+      return { sent: false };
+    return { sent: true, value: await deps.send() };
+  }
   let changed = false;
   for (;;) {
     if (!hasRewindFiles(preview))
@@ -83,10 +105,8 @@ export async function sendWithRestore<T>(deps: {
         value: await deps.send({ preview_token: preview.previewToken }),
       };
     } catch (err) {
-      if (!deps.isConflict(err)) throw err;
-      const fresh = await deps.fetchPreview();
-      if (fresh.previewToken === preview.previewToken) throw err;
-      preview = fresh;
+      if (!isStaleRewind(err)) throw err;
+      preview = await deps.fetchPreview();
       changed = true;
     }
   }

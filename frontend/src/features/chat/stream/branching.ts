@@ -26,7 +26,7 @@ import { type Setter } from "solid-js";
 import { api, isApiError } from "~/lib/api";
 import { createInFlight } from "~/lib/inFlight";
 import { effectiveSelection, type ModelSelection } from "~/lib/stores/models";
-import { toast } from "~/ui";
+import { confirm, toast } from "~/ui";
 import { toMessage } from "../data/messages";
 import { toViewSnapshotRef } from "../data/viewSnapshots";
 import type { ChatCreatedDTO, ConversationDetailDTO } from "../data/wire";
@@ -86,14 +86,6 @@ export interface BranchingContext extends TranscriptStore {
   onTurnComplete?: () => void;
 }
 
-const NO_FILES: RewindPreview = {
-  restore: [],
-  delete: [],
-  conflicts: [],
-  unrestorable: [],
-  previewToken: "",
-};
-
 function toastError(err: unknown, fallback: string): void {
   toast.error((err as { detail?: string })?.detail ?? fallback);
 }
@@ -146,34 +138,38 @@ export function createBranchingOps(ctx: BranchingContext) {
     return true;
   }
 
+  /** Set while a regenerate or edit is choosing about files, before `sending` is. */
+  let offering = false;
+
   /** Post a regenerate or edit, offering to put the turn's file changes back first.
-   *  Resolves null when the operator cancelled. A preview that cannot be read at all
-   *  sends without one: the files are left as they are, which is what no token means. */
+   *  Resolves null when the operator cancelled. `sending` is set only once the post is
+   *  on its way, so the room is not locked while a dialog is open. */
   async function postOffering(
     conversationId: string,
     messageId: string,
     post: (restore?: RestoreFiles) => Promise<ChatCreatedDTO>,
   ): Promise<ChatCreatedDTO | null> {
-    let first = true;
-    const outcome = await sendWithRestore({
-      fetchPreview: async () => {
-        try {
-          return await fetchRewindPreview(conversationId, messageId);
-        } catch (err) {
-          if (!first) throw err;
-          toast.warn(
-            "File changes could not be checked. Continuing without restoring.",
-          );
-          return NO_FILES;
-        } finally {
-          first = false;
-        }
-      },
-      ask: ctx.askRestore,
-      send: post,
-      isConflict: (err) => isApiError(err) && err.status === 409,
-    });
-    return outcome.sent ? outcome.value : null;
+    offering = true;
+    try {
+      const outcome = await sendWithRestore({
+        fetchPreview: () => fetchRewindPreview(conversationId, messageId),
+        ask: ctx.askRestore,
+        send: (restore) => {
+          ctx.setSending(true);
+          return post(restore);
+        },
+        isMissing: (err) => isApiError(err) && err.status === 404,
+        confirmUnchecked: () =>
+          confirm({
+            title: "Couldn't check file changes",
+            detail: "Files this turn changed may not be put back if you go on.",
+            confirmLabel: "Continue without restoring",
+          }),
+      });
+      return outcome.sent ? outcome.value : null;
+    } finally {
+      offering = false;
+    }
   }
 
   /** Re-answer an assistant turn from the preceding request, using the current
@@ -181,12 +177,11 @@ export function createBranchingOps(ctx: BranchingContext) {
    *  the assistant message's id. */
   async function regenerate(messageId: string): Promise<void> {
     const conversationId = ctx.conversationId();
-    if (conversationId === null || ctx.sending()) return;
+    if (conversationId === null || ctx.sending() || offering) return;
     const i = ctx.messages.findIndex(
       (m) => m.id === messageId && m.role === "assistant",
     );
     if (i < 0) return;
-    ctx.setSending(true);
     const override = ctx.overrideSelection();
     const sel = override ?? effectiveSelection();
     try {
@@ -199,10 +194,7 @@ export function createBranchingOps(ctx: BranchingContext) {
           restore_files: restore,
         }),
       );
-      if (!created) {
-        ctx.setSending(false);
-        return;
-      }
+      if (!created) return;
       const reset: ChatMessage = {
         id: messageId,
         role: "assistant",
@@ -223,22 +215,24 @@ export function createBranchingOps(ctx: BranchingContext) {
   }
 
   /** Re-ask an edited user turn as a new version; a fresh answer streams in.
-   *  `messageId` is the user message's id. */
+   *  `messageId` is the user message's id. Resolves true once the edit was submitted,
+   *  false when it was not (cancelled at the file dialog, refused, or failed) so the
+   *  caller keeps the draft. */
   async function edit(
     messageId: string,
     newText: string,
     selection?: ModelSelection | null,
     attachmentIds?: string[],
-  ): Promise<void> {
+  ): Promise<boolean> {
     const conversationId = ctx.conversationId();
     const j = ctx.messages.findIndex(
       (m) => m.id === messageId && m.role === "user",
     );
-    if (j < 0 || conversationId === null || ctx.sending()) return;
+    if (j < 0 || conversationId === null || ctx.sending() || offering)
+      return false;
     // Reuse the turn's existing attachments unless the caller supplies a new set.
     const ids = attachmentIds ?? ctx.messages[j].attachmentIds ?? [];
-    if (!newText.trim() && ids.length === 0) return;
-    ctx.setSending(true);
+    if (!newText.trim() && ids.length === 0) return false;
     const override = selection ?? ctx.overrideSelection();
     const sel = override ?? effectiveSelection();
     const prompt = newText.trim();
@@ -254,10 +248,7 @@ export function createBranchingOps(ctx: BranchingContext) {
           restore_files: restore,
         }),
       );
-      if (!created) {
-        ctx.setSending(false);
-        return;
-      }
+      if (!created) return false;
       const editedUser: ChatMessage = {
         ...ctx.messages[j],
         content: prompt,
@@ -278,10 +269,12 @@ export function createBranchingOps(ctx: BranchingContext) {
         reconcile([...ctx.messages.slice(0, j), editedUser, assistantMsg]),
       );
       await ctx.driveRun(created.run_id, assistantId);
+      return true;
     } catch (err) {
-      if (surfaceBusy(err)) return;
+      if (surfaceBusy(err)) return false;
       toastError(err, "Unable to submit the edit.");
       ctx.setSending(false);
+      return false;
     }
   }
 

@@ -20,12 +20,8 @@ import { registerKeymap } from "~/lib/keymap";
 import { formatArgs } from "../data";
 import type { Approval, ApprovalDecision } from "../model";
 import { PLAN_SUBMIT_TOOL } from "../stream/approvals";
-import { offersGrant } from "../approvalCautions";
-import { ApprovalCautions } from "./ApprovalCautions";
-import {
-  ConversationGrantToggle,
-  createGrantToggle,
-} from "./ConversationGrantToggle";
+import { CautionsAndGrant } from "./ApprovalCautions";
+import { createGrantToggle } from "./ConversationGrantToggle";
 
 /** How tall the opened call may grow before it scrolls inside itself. `formatArgs` does
  *  not truncate, and a call carrying a file's whole contents would otherwise push the
@@ -292,20 +288,18 @@ export function ApprovalPanel(props: {
               </Show>
 
               {/* A plan is submitted once and answered once; there is no recurring act
-                  for a standing grant to stand for. Above the verdict, so it is set
-                  before the click that captures it. */}
-              <ApprovalCautions cautions={approval} />
-              <Show when={!isPlan(approval) && offersGrant(approval)}>
-                <ConversationGrantToggle
-                  command={commandOf(approval)}
-                  toolName={approval.name}
-                  width={grant.widthOf(keyOf(approval))}
-                  onChange={(v) => {
-                    grant.set(keyOf(approval), v);
-                    emit();
-                  }}
-                />
-              </Show>
+                  for a standing grant to stand for. */}
+              <CautionsAndGrant
+                cautions={approval}
+                grantable={!isPlan(approval)}
+                command={commandOf(approval)}
+                toolName={approval.name}
+                width={grant.widthOf(keyOf(approval))}
+                onChange={(v) => {
+                  grant.set(keyOf(approval), v);
+                  emit();
+                }}
+              />
 
               {/* The filled cell is the verdict given — Approve until one is. Luminance
                   says which answer is standing, the flag above says it in words.

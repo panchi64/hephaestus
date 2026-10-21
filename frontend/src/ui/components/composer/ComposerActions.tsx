@@ -135,7 +135,7 @@ export function ComposerActions(props: ComposerActionsProps): JSX.Element {
         onClick={() => props.onStop()}
       >
         <span class="heph-send-sq" aria-hidden="true" />
-        {props.hasDraft ? "Stop & correct" : "Stop"}
+        {props.hasDraft && props.streaming ? "Stop & correct" : "Stop"}
         <Show when={props.streaming}>
           <KeyHint>esc</KeyHint>
         </Show>

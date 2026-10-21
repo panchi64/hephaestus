@@ -205,7 +205,7 @@ export function TranscriptView(props: TranscriptViewProps): JSX.Element {
                         }
                         compacting={props.stream.compacting()}
                         onEditMessage={(id, text) =>
-                          void props.stream.edit(id, text)
+                          props.stream.edit(id, text)
                         }
                         onSwitchVersion={(id, i) =>
                           void props.stream.switchVersion(id, i)

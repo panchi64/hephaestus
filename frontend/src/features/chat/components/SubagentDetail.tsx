@@ -1,5 +1,7 @@
 import { Show, type JSX } from "solid-js";
 import { Button, Row, StatusFlag, Text } from "~/ui";
+import { AllowHostContext } from "../allowHostContext";
+import { allowDomain } from "../data/egress";
 import type { Subagent, SubagentStatus } from "../data";
 import { SubagentApproval } from "./SubagentApproval";
 import { SubagentDesignation } from "./SubagentDesignation";
@@ -85,7 +87,15 @@ export function SubagentDetail(props: {
       </Show>
 
       <div class="min-h-0 flex-1 overflow-y-auto">
-        <SubagentTranscript subagent={props.subagent} />
+        {/* Its commands run in its own thread, so a host allowed from here is allowed
+            for that thread, not for the one the pane sits beside. */}
+        <AllowHostContext.Provider
+          value={async (host) => {
+            await allowDomain(props.subagent.conversationId, host);
+          }}
+        >
+          <SubagentTranscript subagent={props.subagent} />
+        </AllowHostContext.Provider>
       </div>
     </div>
   );
