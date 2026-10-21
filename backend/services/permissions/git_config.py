@@ -24,7 +24,7 @@ _CONFIG_READS = frozenset(
 )
 _CONFIG_UNSETS = frozenset({"--unset", "--unset-all", "--remove-section"})
 _CONFIG_WRITES = _CONFIG_UNSETS | {"--add", "--replace-all", "--edit", "-e", "--rename-section"}
-_CONFIG_VERBS = frozenset({"set", "unset", "get", "list"})
+_CONFIG_VERBS = frozenset({"set", "unset", "get", "list", "rename-section", "remove-section"})
 #: The options that take the next word as their value (`git config -h`, git 2.54).
 _CONFIG_VALUE_FLAGS = frozenset(
     {"--file", "-f", "--blob", "--default", "--type", "-t", "--value", "--comment", "--url"}
@@ -89,6 +89,19 @@ _EXECUTING_KEYS = (
     "remote.*.receivepack",
     "submodule.*.update",
 )
+
+
+#: The sections that hold an executing key, for a rename that moves keys into one.
+_EXECUTING_SECTIONS = frozenset(
+    {key.rsplit(".", 1)[0] for key in _EXECUTING_KEYS} | {"core", "alias", "diff", "merge"}
+)
+
+
+def _executing_section(name: str) -> bool:
+    return any(
+        fnmatch.fnmatchcase(name, section) or fnmatch.fnmatchcase(name, section + ".*")
+        for section in _EXECUTING_SECTIONS
+    )
 
 
 def git_subcommand(arguments: tuple[str, ...]) -> tuple[str | None, list[str]]:
@@ -224,7 +237,10 @@ def config_write(one: ShellCommand) -> ConfigWrite | None:
     # An unset takes one key, so a second operand is a value to match, or a key that an
     # option's value has pushed out of place: either way it is looked at.
     unreadable = unreadable or (len(found) >= 2 and _hides_executing_key(found))
-    removes = verb == "unset" or bool(_CONFIG_UNSETS & set(words.options))
+    renaming = verb == "rename-section" or "--rename-section" in words.options
+    if renaming and len(found) >= 2 and _executing_section(found[1].lower()):
+        unreadable = True
+    removes = verb in ("unset", "remove-section") or bool(_CONFIG_UNSETS & set(words.options))
     writes = verb is not None or bool(_CONFIG_WRITES & set(words.options))
     if len(found) < 2 and not writes and not unreadable:
         return None

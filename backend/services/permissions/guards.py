@@ -17,7 +17,9 @@ deleting word is guarded as a whole. Outside its reach:
 - an interpreter given code to run (``python -c``, ``perl -e``, ``node -e``, ``ruby -e``);
 - ``GIT_DIR=`` and ``--git-dir`` pointing a repository somewhere else;
 - ``ssh`` and other programs that run a command elsewhere;
-- a program that deletes or writes on its own account (``make clean``, a script).
+- a program that deletes or writes on its own account (``make clean``, a script);
+- the VM copying content into a repository's ``.git/hooks``, and ``tar -C .git`` on the host;
+- ``git config --edit``, which opens an editor on configuration.
 
 On the host a pipeline or here-string that feeds a shell a script this cannot read asks,
 and so does ``osascript``, which is a direct line to the operator's machine.

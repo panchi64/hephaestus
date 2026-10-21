@@ -198,9 +198,11 @@ def _find_targets(args: tuple[str, ...]) -> list[str]:
     if deleting is None:
         return []
     before = args[:deleting]
-    for word, value in zip(before, before[1:], strict=False):
+    for index, (word, value) in enumerate(zip(before, before[1:], strict=False)):
         if word in _FIND_NAMES and (value == ".git" or value.endswith("/.git")):
-            return [GIT_FOLDERS]
+            # `-prune` or `-o` after the test skips the folder instead of deleting it.
+            if not {"-prune", "-o"} & set(before[index + 2 :]):
+                return [GIT_FOLDERS]
     if any(word in _FIND_NARROWING for word in before):
         return []
     return _find_roots(args)

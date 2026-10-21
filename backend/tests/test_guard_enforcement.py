@@ -211,6 +211,34 @@ class TestTheDeferredPath:
         _, manual = await _settle(level, [_call("(cd ..)", "a"), _call("rm -rf *", "b")])
         assert "b" in [c.tool_call_id for c in manual]
 
+    @pytest.mark.parametrize(
+        ("move", "remove"),
+        [
+            ("cd ~/proj", "rm -rf .git"),
+            ("cd ~/proj", "rm -rf ./.git"),
+            ("cd ~/proj", "rm -rf .git/objects"),
+            ("cd ~/proj", "mv .git /tmp/x"),
+            ("cd ~/proj/backend", "rm -rf data"),
+            ("cd ~/.hephaestus", "rm -rf worktrees"),
+            ("cd ~/proj", "rm -rf .g?t"),
+        ],
+    )
+    async def test_after_a_cd_a_relative_name_that_may_be_critical_still_asks(
+        self, move: str, remove: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(gating, "shell_cwd", _in_sub)
+        _, manual = await _settle("yolo", [_call(move, "a"), _call(remove, "b")])
+        assert [c.tool_call_id for c in manual] == ["b"]
+
+    async def test_after_a_cd_an_ordinary_relative_removal_is_not_asked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(gating, "shell_cwd", _in_sub)
+        settled, manual = await _settle(
+            "yolo", [_call("cd ~/proj", "a"), _call("rm -rf build .github", "b")]
+        )
+        assert manual == [] and set(settled) == {"a", "b"}
+
     async def test_a_batch_without_a_cd_keeps_its_directory(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(gating, "shell_cwd", _in_sub)
         settled, manual = await _settle("yolo", [_call("ls", "a"), _call("rm -rf *", "b")])

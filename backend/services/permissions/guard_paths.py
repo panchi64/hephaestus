@@ -10,6 +10,7 @@ earlier in the same line moves.
 
 from __future__ import annotations
 
+import fnmatch
 import posixpath
 import pwd
 import re
@@ -19,7 +20,7 @@ from pathlib import Path
 from core.config import Settings
 from services.home.paths import HOME
 from services.home.table import RunHome
-from services.permissions.shell_acts import GIT_FOLDERS, WORKTREE, names_whole_folder
+from services.permissions.shell_acts import GIT_FOLDERS, GLOB_CHARS, WORKTREE, names_whole_folder
 from services.permissions.shell_ast import OPAQUE
 from services.sandbox.fence import host_scratch_dir
 from services.sandbox.floor import fold, is_protected_write, is_under, write_floor
@@ -179,6 +180,9 @@ class Places:
             return "every untracked and ignored file in the working tree"
         if text == GIT_FOLDERS:
             return "every .git folder it finds"
+        matched = self._critical_by_pattern(text, host)
+        if matched is not None:
+            return matched
         readings = self._readings(text, host_first=host)
         if not readings:
             if text.startswith("~"):
@@ -191,12 +195,35 @@ class Places:
         expected = 1 if self.host_only else 2
         return _RUNTIME if text.startswith("~") and len(readings) < expected else None
 
+    def _critical_names(self) -> tuple[str, ...]:
+        return (".git", self.data_dir.name, self.worktrees_dir.name)
+
+    def _critical_by_pattern(self, text: str, host: bool) -> str | None:
+        """A glob that could match a critical name where it stands counts as that name."""
+        trimmed = text.rstrip("/")
+        base = posixpath.basename(trimmed)
+        if not GLOB_CHARS & set(base) or names_whole_folder(base):
+            return None
+        for name in self._critical_names():
+            if fnmatch.fnmatchcase(name, base):
+                reason = self.critical(trimmed[: len(trimmed) - len(base)] + name, host=host)
+                if reason is not None:
+                    return reason
+        return None
+
     def _unplaced(self, text: str) -> str | None:
-        """A relative path with no known working directory: the directory itself, or
-        anything above it, is not a path to delete unasked."""
-        stem = _glob_parent(posixpath.normpath(text))
+        """A relative path with no known working directory: the directory itself, anything
+        above it, a ``.git`` folder, and a folder named like the data or worktrees folder
+        are not paths to delete unasked, because any of them may be the one that is."""
+        normal = posixpath.normpath(text)
+        stem = _glob_parent(normal)
         if stem in (".", "..") or stem.startswith("../"):
             return "the current directory or one above it"
+        parts = normal.split("/")
+        if ".git" in parts:
+            return "a repository's .git folder"
+        if parts[-1] in (self.data_dir.name, self.worktrees_dir.name):
+            return "a folder named like the application's data or worktrees folder"
         return None
 
     def _vm_critical(self, path: str) -> str | None:
