@@ -20,7 +20,7 @@ from services.sandbox import (
     is_protected_write,
     shutdown_confinement,
 )
-from services.sandbox.floor import hooks_floor, source_root
+from services.sandbox.floor import credential_read_floor, hooks_floor, source_root
 from services.sandbox.host_shell import HostShell
 
 darwin_only = pytest.mark.skipif(sys.platform != "darwin", reason="seatbelt globs are macOS-only")
@@ -234,6 +234,114 @@ async def test_the_shell_reads_ssh_but_not_the_floor_and_cannot_write_ssh(
     assert ssh.ok and "host key" in ssh.stdout
     assert not npm.ok and "NPM-TOKEN-VALUE" not in npm.stdout
     assert not write.ok
+
+
+def _plant_credentials(home: Path, *, inline: bool) -> None:
+    ssh = home / ".ssh"
+    ssh.mkdir()
+    for name in ("id_ed25519", "id_ed25519.pub", "known_hosts", "known_hosts.old", "config"):
+        _ = (ssh / name).write_text(f"SECRET-{name}")
+    (home / ".aws").mkdir()
+    _ = (home / ".aws" / "credentials").write_text("SECRET-aws")
+    _ = (home / ".aws" / "config").write_text("[default]\nregion=x\n")
+    (home / ".config" / "gh").mkdir(parents=True)
+    _ = (home / ".config/gh/config.yml").write_text("git_protocol: ssh\n")
+    _ = (home / ".config/gh/hosts.yml").write_text(
+        "github.com:\n  oauth_token: ghp_x\n" if inline else "github.com:\n  user: me\n"
+    )
+    (home / ".docker").mkdir()
+    docker = (
+        '{"auths": {"r.io": {"auth": "abc"}}}'
+        if inline
+        else '{"auths": {"r.io": {}}, "credsStore": "osxkeychain"}'
+    )
+    _ = (home / ".docker/config.json").write_text(docker)
+    (home / ".kube").mkdir()
+    kube = (
+        "users:\n- name: u\n  user:\n    token: t\n"
+        if inline
+        else "users:\n- name: u\n  user:\n    exec:\n      command: aws\n"
+    )
+    _ = (home / ".kube/config").write_text(kube)
+
+
+def test_the_credential_floor_denies_keys_and_inline_secrets(home: Path):
+    _plant_credentials(home, inline=True)
+    denied = credential_read_floor(home)
+    for rel in (
+        ".ssh/id_ed25519",
+        ".aws/credentials",
+        ".config/gh/hosts.yml",
+        ".docker/config.json",
+        ".kube/config",
+    ):
+        assert str(home / rel) in denied
+    for rel in (
+        ".ssh/id_ed25519.pub",
+        ".ssh/known_hosts",
+        ".ssh/known_hosts.old",
+        ".ssh/config",
+        ".aws/config",
+        ".config/gh/config.yml",
+    ):
+        assert str(home / rel) not in denied
+
+
+def test_the_credential_floor_leaves_helper_backed_configs_readable(home: Path):
+    _plant_credentials(home, inline=False)
+    denied = credential_read_floor(home)
+    for rel in (".config/gh/hosts.yml", ".docker/config.json", ".kube/config"):
+        assert str(home / rel) not in denied
+
+
+def test_an_unparseable_config_is_denied(home: Path):
+    (home / ".docker").mkdir()
+    _ = (home / ".docker/config.json").write_text("{not json")
+    (home / ".kube").mkdir()
+    _ = (home / ".kube/config").write_text(": : :\n\t- [")
+    denied = credential_read_floor(home)
+    assert str(home / ".docker/config.json") in denied
+    assert str(home / ".kube/config") in denied
+
+
+@pytest.mark.usefixtures("fenced")
+@pytest.mark.parametrize("inline", [True, False])
+async def test_the_shell_reads_what_the_credential_floor_allows(
+    home: Path, tmp_path: Path, inline: bool
+):
+    _plant_credentials(home, inline=inline)
+    shell = _shell(_work(tmp_path))
+
+    async def readable(rel: str) -> bool:
+        return (await shell.run(f"cat ~/{rel}")).ok
+
+    for rel in (".ssh/known_hosts", ".ssh/config", ".ssh/id_ed25519.pub", ".aws/config"):
+        assert await readable(rel), rel
+    for rel in (".ssh/id_ed25519", ".aws/credentials"):
+        assert not await readable(rel), rel
+    assert await readable(".config/gh/config.yml")
+    for rel in (".config/gh/hosts.yml", ".docker/config.json", ".kube/config"):
+        assert await readable(rel) is not inline, rel
+
+
+@darwin_only
+@pytest.mark.usefixtures("fenced")
+async def test_a_private_key_that_appears_later_is_denied_by_glob(home: Path, tmp_path: Path):
+    (home / ".ssh").mkdir()
+    shell = _shell(_work(tmp_path))
+    _ = (home / ".ssh" / "id_rsa").write_text("KEY")
+    _ = (home / ".ssh" / "deploy_key").write_text("KEY")
+    _ = (home / ".ssh" / "id_rsa.pub").write_text("PUB")
+    assert not (await shell.run("cat ~/.ssh/id_rsa")).ok
+    assert not (await shell.run("cat ~/.ssh/deploy_key")).ok
+    assert (await shell.run("cat ~/.ssh/id_rsa.pub")).ok
+
+
+@darwin_only
+@pytest.mark.usefixtures("fenced")
+async def test_the_keychain_daemon_stays_reachable_inside_the_fence(tmp_path: Path):
+    result = await _shell(_work(tmp_path)).run("security list-keychains")
+    assert result.ok, result.stderr
 
 
 @pytest.mark.usefixtures("fenced")

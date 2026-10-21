@@ -15,8 +15,9 @@ The two callers differ on the network. ``code_run_host_command`` reaches only th
 ``egress_allowed_domains`` allowlist. The host shell's network is open, because it runs
 ``brew``, ``git push`` and package installs on the operator's own machine; it is bounded by
 what it can write and read, not by where it can connect. It reads less than the hatch:
-only the floor is read-denied, so SSH keys, ``gh``, docker and kube credentials stay usable,
-while ``host_command_deny_read`` (applied to ``code_run_host_command``) is write-denied for
+the floor plus ``credential_read_floor`` are read-denied, so tools reach secrets through
+ssh-agent, the Keychain and credential helpers rather than key and token files, while
+``host_command_deny_read`` (read-denied for ``code_run_host_command``) is write-denied for
 both. On Linux unix sockets are blocked inside the fence, so ssh-agent and docker are
 unavailable there; on macOS seatbelt's open network includes unix sockets.
 
@@ -47,7 +48,7 @@ from typing import Literal
 from core.config import Settings
 
 from .base import HostExecutionError
-from .floor import hooks_floor, merged, read_floor, write_floor
+from .floor import credential_read_floor, hooks_floor, merged, read_floor, write_floor
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +244,7 @@ async def shell_confinement(settings: Settings) -> HostConfinement:
         resolved,
         allow_write=allow_write,
         allowed_domains=(),
-        deny_read=floor_read_paths(settings),
+        deny_read=merged(floor_read_paths(settings), credential_read_floor(Path.home())),
         open_network=True,
     )
 
