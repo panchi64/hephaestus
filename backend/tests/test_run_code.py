@@ -34,7 +34,6 @@ from pydantic_ai.usage import RunUsage
 from agent import stream_agent_run
 from agent.code_mode import (
     NATIVE_ONLY,
-    RUN_CODE,
     CodeModeLimits,
     code_mode_capability,
     code_mode_limits,
@@ -45,6 +44,7 @@ from runs import Run, RunStream, ToolCompleted, ToolFailed, ToolProgress, ToolSt
 from services.conversation_view import ToolView, project_tree
 from services.permissions import PermissionLevel, blocked_message
 from tools import RunDeps, build_agent_toolsets, core_categories
+from tools.code_mode_marks import RUN_CODE
 
 from ._json import s
 

@@ -35,8 +35,9 @@ from .store import SecretValue
 
 CALL_TIMEOUT_S = 120.0
 INSTALL_TIMEOUT_S = 900.0
-#: The most of a tool's result handed back; the rest is cut.
-RESULT_MAX_CHARS = 64 * 1024
+#: A memory bound on one result, which a script's call receives whole. The context is
+#: protected by spilling (`tools/spill.py`), not by this.
+RESULT_MAX_CHARS = 2_000_000
 _LOG_TAIL_CHARS = 2000
 _INSTALL_HOSTS = ("pypi.org", "files.pythonhosted.org")
 _CA_PATH = "/usr/local/share/ca-certificates/hephaestus-egress.crt"

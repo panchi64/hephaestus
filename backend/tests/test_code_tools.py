@@ -7,6 +7,7 @@ and continues, because what these tests are about is what the tool does once it 
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -58,10 +59,26 @@ class _CannedSession:
     is_warm: bool = False
 
     def __init__(
-        self, *, result: SandboxResult | None = None, error: Exception | None = None
+        self,
+        *,
+        result: SandboxResult | None = None,
+        error: Exception | None = None,
+        workspace: Path | None = None,
     ) -> None:
         self._result: SandboxResult | None = result
         self._error: Exception | None = error
+        self.workspace: Path = workspace or Path(tempfile.mkdtemp())
+
+    def ensure_workspace(self) -> Path:
+        return self.workspace
+
+    def read_file(self, relpath: str) -> bytes:
+        return (self.workspace / relpath).read_bytes()
+
+    def write_file(self, relpath: str, content: bytes) -> None:
+        target = self.workspace / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _ = target.write_bytes(content)
 
     async def run(self, _spec: SandboxSpec) -> SandboxResult:
         if self._error is not None:
@@ -281,9 +298,12 @@ def _result(run: Run) -> dict[str, JsonValue]:
 
 
 async def _run_canned(
-    *, result: SandboxResult | None = None, error: Exception | None = None
+    *,
+    result: SandboxResult | None = None,
+    error: Exception | None = None,
+    workspace: Path | None = None,
 ) -> dict[str, JsonValue]:
-    manager = _CannedManager(_CannedSession(result=result, error=error))
+    manager = _CannedManager(_CannedSession(result=result, error=error, workspace=workspace))
     run = await _run_one_tool("code_execute", sessions=manager)
     return _result(run)
 
@@ -537,19 +557,25 @@ async def test_request_egress_degrades_without_a_policy():
     assert "allowlist" in s(result["error"])
 
 
-# --- output is returned whole ------------------------------------------------
+# --- long output is spilled ---------------------------------------------------
 
 
-async def test_output_is_returned_whole(monkeypatch: pytest.MonkeyPatch):
-    # The blanket per-stream cap is gone. It fired on every run regardless of context
-    # pressure and cost the model the middle of exactly the output it had just asked
-    # for; the turn's own context-overflow stop is what catches a pathological run.
+async def test_long_stdout_is_spilled_to_a_pageable_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     monkeypatch.setattr(code_module, "get_settings", Settings)
     big = "".join(f"{i:04d}\n" for i in range(10_000))  # 50,000 chars
-    result = await _run_canned(result=SandboxResult(exit_code=0, stdout=big, stderr="world"))
-    assert result["stdout"] == big
+    result = await _run_canned(
+        result=SandboxResult(exit_code=0, stdout=big, stderr="world"), workspace=tmp_path
+    )
+    assert result["exit_code"] == 0
     assert result["stderr"] == "world"
-    assert "elided" not in s(result["stdout"])
+    stdout = s(result["stdout"])
+    assert len(stdout) < len(big)
+    assert "/home/agent/scratch/tool-output/" in stdout
+    [saved] = (tmp_path / "tool-output").glob("*.txt")
+    assert saved.read_text() == big
+    assert max(len(line) for line in saved.read_text().splitlines()) == 4
 
 
 async def test_host_command_output_is_returned_whole():
