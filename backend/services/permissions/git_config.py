@@ -13,7 +13,7 @@ import fnmatch
 from dataclasses import dataclass
 from typing import Literal
 
-from services.permissions.shell_ast import ShellCommand, operands, option_values
+from services.permissions.shell_ast import ShellCommand, option_values
 from services.permissions.shell_flags import is_flag
 
 _GIT_VALUE_FLAGS = frozenset(
@@ -149,21 +149,52 @@ class ConfigWrite:
     unreadable: bool = False
 
 
-def _unknown_option(rest: list[str]) -> bool:
-    """Whether ``rest`` holds an option this parser does not know, so which of its words
-    is the key cannot be told."""
-    for word in rest:
-        if word == "--":
-            return False
-        if not is_flag(word):
-            continue
+def _unknown_option(options: list[str]) -> bool:
+    """Whether ``options`` holds one this parser does not know, so which of the words is
+    the key cannot be told."""
+    for word in options:
         name = word.split("=", 1)[0]
         if name.startswith("--"):
-            if name not in _KNOWN_LONG:
+            if name not in _KNOWN_LONG and name not in _CONFIG_READS:
                 return True
         elif any(letter not in _KNOWN_SHORT for letter in name[1:]):
             return True
     return False
+
+
+@dataclass(frozen=True)
+class _Words:
+    """The words of a ``git config`` call, told apart: the options, the operands, and
+    whether an option's value could not be told from another option."""
+
+    options: list[str]
+    operands: list[str]
+    ambiguous: bool
+
+
+def _split(rest: list[str]) -> _Words:
+    """Walk ``rest`` once. The word after a value-taking option is its value, so it is
+    neither an option nor an operand; a value that starts with ``-`` is ambiguous."""
+    options: list[str] = []
+    found: list[str] = []
+    ambiguous = False
+    literal = False
+    index = 0
+    while index < len(rest):
+        word = rest[index]
+        if literal:
+            found.append(word)
+        elif word == "--":
+            literal = True
+        elif is_flag(word):
+            options.append(word)
+            if word in _CONFIG_VALUE_FLAGS and index + 1 < len(rest):
+                index += 1
+                ambiguous = ambiguous or rest[index].startswith("-")
+        else:
+            found.append(word)
+        index += 1
+    return _Words(options, found, ambiguous)
 
 
 def _hides_executing_key(found: list[str]) -> bool:
@@ -180,19 +211,21 @@ def config_write(one: ShellCommand) -> ConfigWrite | None:
     if one.program.rsplit("/", 1)[-1] != "git":
         return None
     sub, rest = git_subcommand(one.arguments)
-    if sub != "config" or any(word in _CONFIG_READS for word in rest):
+    if sub != "config":
         return None
-    found = operands(rest, _CONFIG_VALUE_FLAGS)
+    words = _split(rest)
+    found = words.operands
     verb = found[0] if found and found[0] in _CONFIG_VERBS else None
-    if verb in ("get", "list"):
+    unreadable = words.ambiguous or _unknown_option(words.options)
+    if not unreadable and (verb in ("get", "list") or _CONFIG_READS & set(words.options)):
         return None
     if verb is not None:
         found = found[1:]
-    removes = verb == "unset" or any(word in _CONFIG_UNSETS for word in rest)
-    unreadable = _unknown_option(rest) or (
-        not removes and len(found) >= 2 and _hides_executing_key(found)
-    )
-    writes = verb is not None or any(word in _CONFIG_WRITES for word in rest)
+    # An unset takes one key, so a second operand is a value to match, or a key that an
+    # option's value has pushed out of place: either way it is looked at.
+    unreadable = unreadable or (len(found) >= 2 and _hides_executing_key(found))
+    removes = verb == "unset" or bool(_CONFIG_UNSETS & set(words.options))
+    writes = verb is not None or bool(_CONFIG_WRITES & set(words.options))
     if len(found) < 2 and not writes and not unreadable:
         return None
     key = found[0].lower() if found else None
@@ -200,8 +233,8 @@ def config_write(one: ShellCommand) -> ConfigWrite | None:
     files = option_values(tuple(rest), "f", ("--file",))
     if files:
         return ConfigWrite(key, value, "file", removes, files[0], unreadable)
-    if "--global" in rest:
+    if "--global" in words.options:
         return ConfigWrite(key, value, "global", removes, None, unreadable)
-    if "--system" in rest:
+    if "--system" in words.options:
         return ConfigWrite(key, value, "system", removes, None, unreadable)
     return ConfigWrite(key, value, "local", removes, None, unreadable)
