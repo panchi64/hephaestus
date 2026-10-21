@@ -178,6 +178,7 @@ def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinit
         wall_clock_timeout_s=_positive(fields.get("wall-clock-timeout"), float),
         can_delegate=fields.get("can-delegate") is True,
         max_depth=_positive(fields.get("max-depth"), int),
+        max_requests=_positive(fields.get("max-requests"), int),
         source="project",
     )
 
@@ -204,6 +205,8 @@ def render_agent_file(agent: AgentDefinition) -> str:
         front["can-delegate"] = True
     if agent.max_depth is not None:
         front["max-depth"] = agent.max_depth
+    if agent.max_requests is not None:
+        front["max-requests"] = agent.max_requests
     dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, default_flow_style=False)
     return f"---\n{dumped}---\n\n{agent.instructions}\n"
 

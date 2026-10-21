@@ -58,10 +58,13 @@ def untrusted_preamble(nonce: str) -> str:
     return _INSTRUCTION.format(nonce=nonce)
 
 
-def neutralize_tags(content: str) -> str:
-    """``content`` with every ``<untrusted`` / ``</untrusted`` (any case) turned into
-    ``‹untrusted``, so nothing inside a fence can open or close one."""
-    return _LOOKALIKE.sub("‹", content)
+def neutralize_tags(content: str, names: tuple[str, ...] = ("untrusted",)) -> str:
+    """``content`` with every ``<name`` / ``</name`` (any case, each of ``names``) turned
+    into ``‹name``, so nothing inside a fence or envelope can open or close one."""
+    if names == ("untrusted",):
+        return _LOOKALIKE.sub("‹", content)
+    alternatives = "|".join(re.escape(name) for name in names)
+    return re.sub(rf"<(?=/?(?:{alternatives}))", "‹", content, flags=re.IGNORECASE)
 
 
 def untrusted_fence(content: str, nonce: str, *, source: str | None = None) -> str:

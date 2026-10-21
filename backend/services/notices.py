@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import re
 
+from core.untrusted import neutralize_tags
+
+NOTICE_TAG = "system-notice"
 NOTICE_CLOSE = "</system-notice>"
 
 _PREAMBLE = (
@@ -22,7 +25,8 @@ _OPENER = re.compile(r'<system-notice kind="(?P<kind>[a-z][a-z0-9-]*)">\n')
 
 def notice_envelope(kind: str, text: str) -> str:
     """A ``kind`` notice, framed as one."""
-    return f'<system-notice kind="{kind}">\n{_PREAMBLE}\n\n{text.strip()}\n{NOTICE_CLOSE}'
+    safe = neutralize_tags(text.strip(), (NOTICE_TAG, "untrusted"))
+    return f'<system-notice kind="{kind}">\n{_PREAMBLE}\n\n{safe}\n{NOTICE_CLOSE}'
 
 
 def notice_body(text: str) -> tuple[str, str] | None:
