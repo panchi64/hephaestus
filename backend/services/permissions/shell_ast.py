@@ -424,7 +424,11 @@ def _leading_words(command: ShellCommand) -> tuple[str, ...]:
 
 
 _ESCAPE = re.compile(r"\\(.)", re.DOTALL)
-_VARIABLE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
+#: Only a bare `$NAME` or `${NAME}` is the variable's value; any operator, modifier, index,
+#: length or default changes it.
+_VARIABLE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+#: The two modified forms of HOME that can only yield HOME or abort the command.
+_HOME_ONLY = frozenset({"${HOME:?}", "${HOME%/}"})
 
 
 def _text(node: Node) -> str:
@@ -444,8 +448,11 @@ def decode_word(node: Node, variables: Mapping[str, str] | None = None) -> str:
     if kind == "ansi_c_string":
         return _text(node)[2:-1]
     if kind in ("simple_expansion", "expansion"):
-        found = _VARIABLE.match(_text(node))
-        name = found.group(1) if found else None
+        text = _text(node)
+        if text in _HOME_ONLY:
+            return "~"
+        found = _VARIABLE.fullmatch(text)
+        name = (found.group(1) or found.group(2)) if found else None
         if name is not None and variables is not None and name in variables:
             return variables[name]
         return "~" if name == "HOME" else OPAQUE

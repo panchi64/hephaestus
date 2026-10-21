@@ -62,6 +62,7 @@ _XARGS_VALUE_FLAGS = frozenset(
 )
 _PARALLEL_VALUE_FLAGS = frozenset({"-j", "-n", "-N", "-L", "-S", "-a", "--jobs"})
 _ALL_DIGITS = frozenset("0123456789-")
+_READ_VALUE_FLAGS = frozenset({"-a", "-d", "-i", "-n", "-N", "-p", "-t", "-u", "-O", "-C", "-c"})
 #: A backslash-newline the shell removes before it reads a word, unless the backslash is
 #: itself escaped. The grammar reads it as a space, which would split `r\<newline>m`.
 _LINE_JOIN = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
@@ -149,6 +150,22 @@ def script_of(arguments: tuple[str, ...]) -> str | None:
     return None
 
 
+def _bound_by(name: str, arguments: tuple[str, ...]) -> list[str]:
+    """The variables a builtin sets to something read at run time."""
+    found = operands(arguments, _READ_VALUE_FLAGS)
+    if name == "read":
+        return found or ["REPLY"]
+    if name == "printf":
+        return [arguments[i + 1] for i, word in enumerate(arguments[:-1]) if word == "-v"]
+    if name in ("mapfile", "readarray"):
+        return found[-1:] or ["MAPFILE"]
+    if name == "getopts":
+        return found[1:2]
+    if name in ("declare", "typeset", "local", "export", "readonly", "unset"):
+        return [word.partition("=")[0] for word in found if "=" not in word or OPAQUE in word]
+    return []
+
+
 def _command_words(arguments: tuple[str, ...], valued: frozenset[str]) -> tuple[str, ...]:
     """The arguments from the first operand on, past the options (``xargs -n1 rm -rf``)."""
     skip = False
@@ -169,6 +186,10 @@ class _Scanner:
         self._out: Scan = into
         self._states: Cwds = frozenset({()})
         self._vars: dict[str, str] = {}
+        #: How many conditional or repeated constructs enclose the node being visited.
+        self._cond: int = 0
+        #: Every variable assigned or bound so far, in order.
+        self._assigned: list[str] = []
         self._feeds: dict[int, list[str] | None] = {}
 
     def run(self, text: str, depth: int) -> None:
@@ -196,8 +217,29 @@ class _Scanner:
         kind = node.type
         if kind in _SCOPED:
             saved = (self._states, dict(self._vars))
+            mark = len(self._assigned)
+            self._cond += 1
             self._children(node, depth)
+            self._cond -= 1
             self._states, self._vars = saved
+            # A function body runs later, in this shell; a subshell's variables should not
+            # leave it. Either way what was assigned inside is not known after.
+            for name in self._assigned[mark:]:
+                self._vars[name] = OPAQUE
+        elif kind == "for_statement":
+            variable = node.child_by_field_name("variable")
+            if variable is not None:
+                self._bind(_text(variable))
+            self._conditionally(node, depth)
+        elif kind == "declaration_command":
+            for child in node.children:
+                if child.type == "variable_name":
+                    self._bind(_text(child))
+            self._children(node, depth)
+        elif kind == "unset_command":
+            for child in node.children:
+                if child.type == "variable_name":
+                    self._bind(_text(child))
         elif kind == "command":
             self._command(node, depth)
             self._children(node, depth)
@@ -217,11 +259,22 @@ class _Scanner:
             self._out.unreadable.append(_text(node))
             self._children(node, depth)
         elif kind in _BRANCHING:
-            entry = self._states
-            self._children(node, depth)
-            self._states = self._cap(entry | self._states)
+            self._conditionally(node, depth)
         else:
             self._children(node, depth)
+
+    def _conditionally(self, node: Node, depth: int) -> None:
+        """Visit a construct whose body may or may not run, or may run more than once."""
+        entry = self._states
+        self._cond += 1
+        self._children(node, depth)
+        self._cond -= 1
+        self._states = self._cap(entry | self._states)
+
+    def _bind(self, name: str) -> None:
+        """``name`` now holds something this cannot know."""
+        self._vars[name] = OPAQUE
+        self._assigned.append(name)
 
     def _children(self, node: Node, depth: int) -> None:
         for child in node.children:
@@ -235,7 +288,9 @@ class _Scanner:
         self._visit(left, depth)
         if operator.type != "&&":
             self._states = self._cap(entry | self._states)
+        self._cond += 1
         self._visit(right, depth)
+        self._cond -= 1
 
     def _assignment(self, node: Node) -> None:
         parent = node.parent
@@ -247,10 +302,11 @@ class _Scanner:
             return
         key = _text(name)
         text = self._word(value) if value is not None else ""
-        if OPAQUE in text:
-            _ = self._vars.pop(key, None)
+        if self._cond > 0 or OPAQUE in text:
+            self._bind(key)
         else:
             self._vars[key] = text
+            self._assigned.append(key)
 
     def _redirect(self, node: Node) -> None:
         target = node.child_by_field_name("destination")
@@ -324,6 +380,8 @@ class _Scanner:
             else:
                 self._nested(script, depth)
             return
+        for bound in _bound_by(name, args):
+            self._bind(bound)
         if name in ("cd", "pushd"):
             found = operands(args)
             target = OPAQUE if found[:1] == ["-"] else (found[0] if found else "~")
@@ -414,8 +472,13 @@ class _Scanner:
                 self._feeds[body.id] = self._feed_of(_body_of(earlier))
         for child in node.children:
             saved = (self._states, dict(self._vars))
+            mark = len(self._assigned)
+            self._cond += 1
             self._visit(child, depth)
+            self._cond -= 1
             self._states, self._vars = saved
+            for name in self._assigned[mark:]:
+                self._vars[name] = OPAQUE
 
     def _redirected(self, node: Node, depth: int) -> None:
         if not self._reads_stdin_as_script(_body_of(node)):

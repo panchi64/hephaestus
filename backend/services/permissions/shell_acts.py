@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import fnmatch
 import posixpath
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -20,9 +21,22 @@ WORKTREE = "<working tree>"
 
 GLOB_CHARS = frozenset("*?[")
 
-#: The glob segments that match every entry of a directory, so deleting them deletes the
-#: directory's contents. Any other pattern names only some of the entries.
-EVERYTHING = frozenset({"*", ".*", ".??*", ".[!.]*", ".[^.]*", ".[!.]?*"})
+_BRACKET = re.compile(r"\[[^\]]*\]")
+
+
+def names_whole_folder(segment: str) -> bool:
+    """Whether a path segment is a pattern that reaches every entry of its folder.
+
+    It is unless it holds a literal anchor: something other than the metacharacters once
+    a leading dot is set aside. `*`, `.*`, `?*`, `[a-z]*` and `.[!.]*` reach everything;
+    `*.log`, `test_*` and `foo*` reach only some of it. A segment with no metacharacter
+    is a name, not a pattern.
+    """
+    if not GLOB_CHARS & set(segment):
+        return False
+    rest = segment[1:] if segment.startswith(".") else segment
+    return not re.sub(r"[*?]", "", _BRACKET.sub("", rest))
+
 
 REMOVERS = frozenset({"rm", "rmdir", "unlink", "shred", "srm"})
 

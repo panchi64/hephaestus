@@ -18,7 +18,7 @@ from pathlib import Path
 
 from services.home.paths import HOME
 from services.home.table import RunHome
-from services.permissions.shell_acts import EVERYTHING, WORKTREE
+from services.permissions.shell_acts import WORKTREE, names_whole_folder
 from services.permissions.shell_ast import OPAQUE
 from services.sandbox.fence import host_scratch_dir
 from services.sandbox.floor import fold, is_protected_write, is_under, write_floor
@@ -82,7 +82,7 @@ def _resolve(text: str, *, tilde: str, cwd: str | None, vm: bool) -> str | None:
 def _glob_parent(path: str) -> str:
     """``path`` without trailing segments that match every entry, so ``/a/*`` names ``/a``.
     A pattern that matches only some entries (``*.log``) names entries, not the folder."""
-    while posixpath.basename(path) in EVERYTHING:
+    while names_whole_folder(posixpath.basename(path)):
         path = posixpath.dirname(path) or "/"
     return path
 
