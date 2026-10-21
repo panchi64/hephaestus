@@ -132,8 +132,7 @@ class AgentDefinition:
     #: How many levels below itself this agent's delegation may reach. None defers to the
     #: installation's limit.
     max_depth: int | None = None
-    #: Model requests one run of this agent may make before it ends with a partial result.
-    #: None leaves the run unbounded.
+    #: A cap on model requests per run. None means unbounded.
     max_requests: int | None = None
     #: Whether other agents may delegate to this one. False keeps it off the launch roster.
     delegable: bool = True

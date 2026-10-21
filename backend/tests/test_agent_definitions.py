@@ -86,8 +86,8 @@ class TestMaxRequests:
     def test_it_is_parsed_from_frontmatter(self):
         assert parse_agent_file(_file("max-requests: 12\n"), name="scout").max_requests == 12
 
-    @pytest.mark.parametrize("raw", ["0", "-3", "true", "lots"])
-    def test_a_non_positive_value_is_ignored(self, raw: str):
+    @pytest.mark.parametrize("raw", ["0", "-1", "-3", "0.5", "2.9", "true", "lots", "abc"])
+    def test_an_invalid_value_is_ignored_without_raising(self, raw: str):
         assert parse_agent_file(_file(f"max-requests: {raw}\n"), name="scout").max_requests is None
 
     def test_the_definition_refuses_a_non_positive_value(self):

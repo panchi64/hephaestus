@@ -10,9 +10,13 @@ from __future__ import annotations
 
 import re
 
-from core.untrusted import neutralize_tags
+from core.untrusted import neutralize_envelope_markup
 
 NOTICE_TAG = "system-notice"
+
+#: Every envelope tag a body must not carry. The findings tags are absent on purpose: a
+#: child writes that block itself and ``report_structure`` reads it from the body.
+ENVELOPE_TAGS = ("subagent-report", "subagent-direction", "agent-message", NOTICE_TAG)
 NOTICE_CLOSE = "</system-notice>"
 
 _PREAMBLE = (
@@ -25,7 +29,7 @@ _OPENER = re.compile(r'<system-notice kind="(?P<kind>[a-z][a-z0-9-]*)">\n')
 
 def notice_envelope(kind: str, text: str) -> str:
     """A ``kind`` notice, framed as one."""
-    safe = neutralize_tags(text.strip(), (NOTICE_TAG, "untrusted"))
+    safe = neutralize_envelope_markup(text, ENVELOPE_TAGS)
     return f'<system-notice kind="{kind}">\n{_PREAMBLE}\n\n{safe}\n{NOTICE_CLOSE}'
 
 

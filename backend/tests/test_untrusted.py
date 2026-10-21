@@ -72,3 +72,9 @@ def test_neutralize_tags_takes_the_names_to_defang():
     from core.untrusted import neutralize_tags
 
     assert neutralize_tags("<Foo-x></foo-x><bar>", ("foo-x",)) == "‹Foo-x>‹/foo-x><bar>"
+
+
+def test_neutralize_tags_with_no_names_changes_nothing():
+    from core.untrusted import neutralize_tags
+
+    assert neutralize_tags("<a></a>", ()) == "<a></a>"

@@ -63,8 +63,50 @@ def neutralize_tags(content: str, names: tuple[str, ...] = ("untrusted",)) -> st
     into ``‹name``, so nothing inside a fence or envelope can open or close one."""
     if names == ("untrusted",):
         return _LOOKALIKE.sub("‹", content)
-    alternatives = "|".join(re.escape(name) for name in names)
-    return re.sub(rf"<(?=/?(?:{alternatives}))", "‹", content, flags=re.IGNORECASE)
+    if not names:
+        return content
+    return _tolerant_opener(names).sub("‹", content)
+
+
+#: Whitespace and the zero-width characters a model reads straight through.
+_GAP = r"[\s​-‍⁠﻿]"
+
+
+def _tolerant_opener(names: tuple[str, ...]) -> re.Pattern[str]:
+    """The ``<`` (or fullwidth ``＜``) that opens or closes any of ``names``, however the
+    ``/``, the name's letters and its ``-``/``_`` are spaced or spelt."""
+
+    def spelt(name: str) -> str:
+        return f"{_GAP}*".join("[-_]" if ch in "-_" else re.escape(ch) for ch in name)
+
+    alternatives = "|".join(spelt(name) for name in names)
+    return re.compile(rf"[<＜](?={_GAP}*(?:/{_GAP}*)?(?:{alternatives}))", re.IGNORECASE)
+
+
+ENVELOPE_NOTE = "[harness: markup resembling envelope tags in this text was neutralized.]"
+
+_NOTE_LOOKALIKE = re.compile(r"\[(?=\s*harness\s*:)", re.IGNORECASE)
+
+
+def neutralize_envelope_markup(
+    text: str, names: tuple[str, ...], *, note_after_heading: bool = False
+) -> str:
+    """``text`` stripped, with ``names``' tags and any ``[harness:`` marker neutralized and,
+    when anything was, :data:`ENVELOPE_NOTE` on a line of its own, first, or after the
+    first line when ``note_after_heading`` keeps a heading in front."""
+    body = text.strip()
+    safe = _NOTE_LOOKALIKE.sub("‹", neutralize_tags(body, names))
+    if safe == body:
+        return body
+    if note_after_heading:
+        heading, _, rest = safe.partition("\n")
+        return f"{heading}\n{ENVELOPE_NOTE}\n{rest}"
+    return f"{ENVELOPE_NOTE}\n{safe}"
+
+
+def strip_envelope_note(text: str) -> str:
+    """``text`` without the line :func:`neutralize_envelope_markup` adds, for display."""
+    return "\n".join(line for line in text.split("\n") if line != ENVELOPE_NOTE)
 
 
 def untrusted_fence(content: str, nonce: str, *, source: str | None = None) -> str:
