@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from pydantic_ai import ModelRetry, RunContext
+from pydantic_ai import ApprovalRequired, ModelRetry, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -19,7 +19,7 @@ from services.projects.store import ProjectStore
 from services.sandbox import SandboxSessionManager
 from services.settings_store import SettingsStore
 from tools import RunDeps, build_agent_toolsets, harness_events_capability
-from tools.files import files_toolset
+from tools.files import files_toolset, unread_refusal
 from tools.read_ledger import ReadLedger, hash_reported
 
 _TOOLSET = build_agent_toolsets({"files": files_toolset()})[0]
@@ -60,11 +60,17 @@ async def _project(tmp_path: Path) -> tuple[ServiceContainer, Path]:
     caps.add(projects)
     caps.add(WriteLeases(engine, ttl_s=3600))
     caps.add(_Manager(tmp_path), as_type=SandboxSessionManager)
+    caps.add(ReadLedger())
     return caps, root
 
 
 async def _call(
-    caps: ServiceContainer, tool: str, args: dict[str, object], *, conversation: str = "conv-1"
+    caps: ServiceContainer,
+    tool: str,
+    args: dict[str, object],
+    *,
+    conversation: str = "conv-1",
+    approved: bool = True,
 ) -> str:
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     deps = RunDeps(run=run, owner_id="operator", caps=caps, conversation_id=conversation)
@@ -75,7 +81,7 @@ async def _call(
         _event_stream_buffer=[],
         _capability=harness_events_capability(),
     )
-    ctx.tool_call_approved = True
+    ctx.tool_call_approved = approved
     tools = await _TOOLSET.get_tools(ctx)
     name = f"files_{tool}"
     return str(cast(object, await _TOOLSET.call_tool(name, args, ctx, tools[name])))
@@ -88,7 +94,8 @@ def _edit(path: str = README) -> dict[str, object]:
 async def test_an_edit_with_no_read_is_refused(tmp_path: Path):
     caps, root = await _project(tmp_path)
     refused = await _call(caps, "edit_file", _edit())
-    assert refused.startswith("Read ") and refused.endswith(" before changing it.")
+    assert refused.startswith("error: Read ")
+    assert "before changing it." in refused
     assert (root / "README.md").read_text() == "the api\n"
 
     overwrite = await _call(caps, "write_file", {"path": README, "content": "x"})
@@ -181,9 +188,77 @@ async def test_a_failed_read_records_nothing(tmp_path: Path):
     assert ledger.get("conv-1", str(tmp_path / "api" / "missing.md")) is None
 
 
+async def test_a_binary_file_can_be_rewritten_once_read(tmp_path: Path):
+    caps, root = await _project(tmp_path)
+    blob = root / "logo.bin"
+    _ = blob.write_bytes(b"\x00\x01\x02binary")
+    path = "~/projects/api/logo.bin"
+    refused = await _call(caps, "write_file", {"path": path, "content": "text"})
+    assert "before changing it" in refused
+
+    read = await _call(caps, "read_file", {"path": path})
+    assert read.startswith("[Binary file")
+    done = await _call(caps, "write_file", {"path": path, "content": "text"})
+    assert done.startswith("Wrote")
+    assert blob.read_text() == "text"
+
+
+async def test_a_guarded_write_to_an_unread_file_is_refused_before_it_asks(tmp_path: Path):
+    caps, root = await _project(tmp_path)
+    (root / ".git").mkdir()
+    config = root / ".git" / "config"
+    _ = config.write_text("[core]\n")
+    args: dict[str, object] = {"path": "~/projects/api/.git/config", "content": "x"}
+    refused = await _call(caps, "write_file", args, approved=False)
+    assert "before changing it" in refused
+    assert config.read_text() == "[core]\n"
+
+    _ = await _call(caps, "read_file", {"path": args["path"]})
+    with pytest.raises(ApprovalRequired):
+        _ = await _call(caps, "write_file", args, approved=False)
+
+
+async def test_a_run_with_no_ledger_is_not_gated(tmp_path: Path):
+    caps, root = await _project(tmp_path)
+    bare = ServiceContainer()
+    for kind in (ProjectStore, WriteLeases):
+        bare.add(caps.get(kind))
+    bare.add(caps.get(SandboxSessionManager), as_type=SandboxSessionManager)
+    done = await _call(bare, "edit_file", _edit())
+    assert done.startswith("Edited")
+    assert (root / "README.md").read_text() == "the API\n"
+
+
+def test_the_ledger_forgets_the_oldest_conversation_and_path():
+    ledger = ReadLedger()
+    for number in range(300):
+        ledger.record(f"c{number}", "/a", "0123456789ab")
+    assert ledger.get("c0", "/a") is None
+    assert ledger.get("c299", "/a") == "0123456789ab"
+    for number in range(2100):
+        ledger.record("one", f"/p{number}", "0123456789ab")
+    assert ledger.get("one", "/p0") is None
+    assert ledger.get("one", "/p2099") == "0123456789ab"
+
+
+async def test_the_unread_refusal_is_available_before_anyone_is_asked(tmp_path: Path):
+    caps, _ = await _project(tmp_path)
+    run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
+    deps = RunDeps(run=run, owner_id="operator", caps=caps, conversation_id="conv-1")
+    args: dict[str, object] = {"path": README, "content": "x"}
+    assert await unread_refusal(deps, "files_write_file", args) is not None
+    assert await unread_refusal(deps, "files_read_file", args) is None
+    assert (
+        await unread_refusal(deps, "files_write_file", {**args, "path": "~/projects/api/n"}) is None
+    )
+    _ = await _call(caps, "read_file", {"path": README})
+    assert await unread_refusal(deps, "files_write_file", args) is None
+
+
 @pytest.mark.parametrize(
     ("tool", "result", "expected"),
     [
+        ("read_file", "[Binary file: 12 bytes. Use a binary-aware tool to inspect.]", "binary"),
         ("read_file", "[a.md | 3 lines | hash:0123456789ab]\nbody", "0123456789ab"),
         ("write_file", "Wrote 3 chars (1 lines) to a.md. [hash:0123456789ab]", "0123456789ab"),
         ("edit_file", "Edited a.md. [hash:0123456789ab]", "0123456789ab"),

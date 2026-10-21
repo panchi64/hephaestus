@@ -75,6 +75,7 @@ async def _settle(
     *,
     caps: ServiceContainer | None = None,
     run: Run | None = None,
+    metadata: dict[str, dict[str, object]] | None = None,
 ):
     run = run or Run(id="r1", kind="chat", owner_id=OWNER, stream=RunStream())
     return await gating.settle_deferred(
@@ -85,6 +86,7 @@ async def _settle(
         deps=RunDeps(run=run, owner_id=OWNER, permission=permission),
         messages=[],
         permission=permission,
+        metadata=metadata,
     )
 
 
@@ -126,6 +128,38 @@ class TestTheDeferredPath:
         settled, manual = await _settle("edit", [_call(DANGEROUS)], caps=caps)
         assert [c.tool_call_id for c in manual] == ["c1"]
 
+    @pytest.mark.parametrize("level", ["manual", "edit", "auto", "yolo"])
+    async def test_a_call_marked_guarded_in_the_deferral_always_asks(self, level: PermissionLevel):
+        metadata: dict[str, dict[str, object]] = {"c1": {GUARD_KEY: "raised by the toolset"}}
+        settled, manual = await _settle(level, [_call("ls")], metadata=metadata)
+        assert [c.tool_call_id for c in manual] == ["c1"]
+        assert settled == {}
+        assert metadata["c1"][GUARD_KEY] == "raised by the toolset"
+
+    async def test_the_reasons_are_written_back_for_the_park(self):
+        metadata: dict[str, dict[str, object]] = {}
+        _ = await _settle("yolo", [_call(DANGEROUS, "bad"), _call("ls", "fine")], metadata=metadata)
+        assert guards.is_guarded(metadata["bad"])
+        assert "fine" not in metadata
+
+    async def test_a_write_to_an_unread_file_is_denied_not_put_to_the_operator(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        asked: list[str] = []
+
+        async def unread(_deps: RunDeps, tool: str, _args: dict[str, object]) -> str | None:
+            asked.append(tool)
+            return "Read it first." if tool == "files_write_file" else None
+
+        monkeypatch.setattr(gating, "unread_refusal", unread)
+        write = ToolCallPart("files_write_file", {"path": "~/a", "content": "x"}, tool_call_id="w")
+        read = ToolCallPart("files_read_file", {"path": "~/a"}, tool_call_id="r")
+        settled, manual = await _settle("manual", [write, read])
+        assert isinstance(settled["w"], ToolDenied)
+        assert settled["w"].message == "Read it first."
+        assert [c.tool_call_id for c in manual] == ["r"]
+        assert asked == ["files_write_file"]
+
     async def test_a_level_that_refuses_outright_still_refuses(self):
         settled, manual = await _settle("plan", [_call(DANGEROUS)])
         assert manual == []
@@ -144,8 +178,9 @@ class TestTheDeferredPath:
 class TestTheCard:
     async def test_the_park_announces_the_reason_and_no_grant_choice(self):
         run = Run(id="r1", kind="chat", owner_id=OWNER, stream=RunStream())
-        _, manual = await _settle("manual", [_call(DANGEROUS)], run=run)
-        requests = DeferredToolRequests(approvals=manual)
+        requests = DeferredToolRequests(approvals=[_call(DANGEROUS)])
+        _, manual = await _settle("manual", requests.approvals, run=run, metadata=requests.metadata)
+        assert [c.tool_call_id for c in manual] == ["c1"]
         await park_for_input(
             run, Agent(FunctionModel(_answer), deps_type=object), [], requests, set()
         )
@@ -158,6 +193,19 @@ class TestTheCard:
         assert guards.is_guarded(requests.metadata["c1"])
         payload = run.parked_payload
         assert isinstance(payload, ParkedTurn)
+        assert guards.is_guarded(payload.requests.metadata["c1"])
+
+    def test_the_models_own_explanation_is_kept(self):
+        host = ToolCallPart(
+            tool_name="code_run_host_command",
+            args={"command": "rm -rf ~", "explanation": "tidy up"},
+            tool_call_id="h1",
+        )
+        requests = DeferredToolRequests(approvals=[host], metadata={"h1": {GUARD_KEY: "reason"}})
+        [event] = announcements(requests, {})[0]
+        assert isinstance(event, ApprovalRequired)
+        assert event.explanation == "tidy up"
+        assert event.guard == "reason"
 
     def test_a_restored_park_reads_the_reason_off_its_metadata(self):
         requests = DeferredToolRequests(

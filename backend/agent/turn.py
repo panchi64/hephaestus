@@ -485,6 +485,7 @@ async def drive_turn(
             # that opened it however many tool round trips have run since.
             turn_start=turn_start,
             budget=review_budget,
+            metadata=output.metadata,
         )
         if manual or output.calls:
             await park_for_input(

@@ -43,7 +43,7 @@ calls waits once, not four times.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -81,11 +81,13 @@ from services.permissions import (
     review_transcript,
 )
 from services.permissions.fence import Fence
-from services.permissions.guards import GUARDED_TOOLS, guard, remember
+from services.permissions.guards import GUARD_KEY, GUARDED_TOOLS, guard, is_guarded
 from services.registry import ModelRegistry
 from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
 from tools.deps import RunDeps
+from tools.files import unread_refusal
+from tools.guarded import shell_cwd
 from tools.home import resolve_run_home
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,9 @@ logger = logging.getLogger(__name__)
 #: this process; a turn rarely defers more than a handful of calls, and the point is that
 #: their latencies overlap rather than stack.
 _REVIEW_CONCURRENCY = 4
+
+_FILE_REWRITES = frozenset({"files_write_file", "files_edit_file"})
+_UNEXPLAINED = "This call always needs your approval."
 
 
 @dataclass(kw_only=True)
@@ -143,8 +148,12 @@ async def settle_deferred(
     permission: str,
     turn_start: TurnBoundary | None = None,
     budget: ReviewBudget | None = None,
+    metadata: MutableMapping[str, dict[str, object]] | None = None,
 ) -> tuple[dict[str, ToolApproved | ToolDenied], list[ToolCallPart]]:
     """Rule on every call this hop deferred, returning ``(settled, manual)``.
+
+    ``metadata`` is the deferral's own, by call id: a call marked guarded there goes to the
+    operator, and the reason of every guarded call is written into it.
 
     ``settled`` is the decisions the turn can carry on with immediately — an allow the
     model never notices, or a denial it is told in place of the tool's result and re-plans
@@ -200,7 +209,7 @@ async def settle_deferred(
     # ALLOW can come from a grant or from a level that allows outright, and only the first
     # is revocable.
     home = await _guard_home(deps, approvals)
-    guarded = _guard_reasons(run, approvals, home)
+    guarded = _guard_reasons(approvals, home, shell_cwd(deps), metadata)
     ruled = [
         (call, Decision.ASK, False)
         if call.tool_call_id in guarded and decide(permission, call.tool_name) is not Decision.BLOCK
@@ -253,7 +262,29 @@ async def settle_deferred(
             )
         else:
             manual.append(call)
-    return settled, manual
+    return settled, await _turned_away(deps, settled, manual)
+
+
+async def _turned_away(
+    deps: RunDeps, settled: dict[str, ToolApproved | ToolDenied], manual: list[ToolCallPart]
+) -> list[ToolCallPart]:
+    """``manual`` without the changes to unread files, which are denied here instead.
+
+    The operator is never asked to approve a write the read ledger would turn away when
+    it ran; the model is told to read the file first.
+    """
+    asking: list[ToolCallPart] = []
+    for call in manual:
+        refusal = (
+            await unread_refusal(deps, call.tool_name, call.args_as_dict())
+            if call.tool_name in _FILE_REWRITES
+            else None
+        )
+        if refusal is None:
+            asking.append(call)
+        else:
+            settled[call.tool_call_id] = ToolDenied(message=refusal)
+    return asking
 
 
 async def _guard_home(deps: RunDeps, approvals: Sequence[ToolCallPart]) -> RunHome | None:
@@ -269,21 +300,34 @@ async def _guard_home(deps: RunDeps, approvals: Sequence[ToolCallPart]) -> RunHo
 
 
 def _guard_reasons(
-    run: Run, approvals: Sequence[ToolCallPart], home: RunHome | None
+    approvals: Sequence[ToolCallPart],
+    home: RunHome | None,
+    cwd: str | None,
+    metadata: MutableMapping[str, dict[str, object]] | None,
 ) -> dict[str, str]:
     """Why each call that must go to the operator at every level has to, by call id.
 
-    Ahead of the grants, the level and the reviewer: none of them may answer these. The
-    reasons are handed to the park that announces them (:func:`guards.remember`).
+    Ahead of the grants, the level and the reviewer: none of them may answer these. A call
+    already marked guarded in ``metadata`` (the toolset raised its deferral) stays guarded
+    whatever is recomputed, and every reason is written back to ``metadata`` so that the
+    park announces it and a restored park keeps it.
     """
-    candidates = [call for call in approvals if call.tool_name in GUARDED_TOOLS]
     settings = get_settings()
     reasons: dict[str, str] = {}
-    for call in candidates:
-        reason = guard(call.tool_name, call.args_as_dict(), home=home, settings=settings)
-        if reason is not None:
-            reasons[call.tool_call_id] = reason
-            remember(run.id, call.tool_call_id, reason)
+    for call in approvals:
+        marked = metadata.get(call.tool_call_id) if metadata is not None else None
+        if is_guarded(marked):
+            reason = marked.get(GUARD_KEY) if marked is not None else None
+            reasons[call.tool_call_id] = reason if isinstance(reason, str) else _UNEXPLAINED
+        elif call.tool_name in GUARDED_TOOLS:
+            found = guard(
+                call.tool_name, call.args_as_dict(), home=home, settings=settings, cwd=cwd
+            )
+            if found is not None:
+                reasons[call.tool_call_id] = found
+    if metadata is not None:
+        for call_id, reason in reasons.items():
+            metadata.setdefault(call_id, {})[GUARD_KEY] = reason
     return reasons
 
 

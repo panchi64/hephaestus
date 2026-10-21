@@ -266,7 +266,7 @@ def merged(floor: Iterable[str], extra: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys((*floor, *extra)))
 
 
-def _fold(path: PurePath) -> tuple[str, ...]:
+def fold(path: PurePath) -> tuple[str, ...]:
     """The comparable parts of ``path``: lowercased on macOS, whose default volumes are
     case-insensitive."""
     if sys.platform == "darwin":
@@ -274,9 +274,10 @@ def _fold(path: PurePath) -> tuple[str, ...]:
     return path.parts
 
 
-def _is_under(candidate: PurePath, protected: PurePath) -> bool:
-    base = _fold(protected)
-    return _fold(candidate)[: len(base)] == base
+def is_under(candidate: PurePath, protected: PurePath) -> bool:
+    """Whether ``candidate`` is ``protected`` or inside it, compared as :func:`fold` does."""
+    base = fold(protected)
+    return fold(candidate)[: len(base)] == base
 
 
 def is_protected_write(path: str | Path, *, home: Path) -> str | None:
@@ -285,12 +286,12 @@ def is_protected_write(path: str | Path, *, home: Path) -> str | None:
     if not target.is_absolute():
         return None
     for candidate in {target, target.resolve()}:
-        parts = _fold(candidate)
+        parts = fold(candidate)
         for idx in range(len(parts) - 1):
             if parts[idx] == ".git" and parts[idx + 1] in ("hooks", "config"):
                 return "git hooks and config can make git run arbitrary code"
         for base in {home, home.resolve()}:
             for entry in write_floor(base):
-                if _is_under(candidate, Path(entry)):
+                if is_under(candidate, Path(entry)):
                     return f"{entry} is on the protected-write floor"
     return None

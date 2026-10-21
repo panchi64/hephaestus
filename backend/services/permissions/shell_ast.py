@@ -63,6 +63,7 @@ only what the guest copy holds — and it cannot send what it read anywhere.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import tree_sitter_bash
@@ -175,6 +176,83 @@ class ShellCommand:
     arguments: tuple[str, ...] = ()
 
 
+#: Programs that run the command written after their own options.
+WRAPPERS = frozenset(
+    {
+        "sudo",
+        "doas",
+        "env",
+        "command",
+        "exec",
+        "nohup",
+        "nice",
+        "time",
+        "builtin",
+        "timeout",
+        "setsid",
+        "stdbuf",
+    }
+)
+
+#: Options of a wrapper that consume the next word.
+WRAPPER_VALUE_FLAGS: dict[str, frozenset[str]] = {
+    "sudo": frozenset({"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "-r", "-t"}),
+    "doas": frozenset({"-u", "-C"}),
+    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S"}),
+    "nice": frozenset({"-n"}),
+    "timeout": frozenset({"-s", "-k"}),
+}
+
+_UNWRAP_DEPTH = 4
+
+
+def operands(arguments: Sequence[str], value_flags: frozenset[str] | None = None) -> list[str]:
+    """The non-flag words of ``arguments``: the value of each flag in ``value_flags`` is
+    skipped, and every word after a bare ``--`` is an operand."""
+    skipped = value_flags or frozenset()
+    found: list[str] = []
+    skip = False
+    literal = False
+    for word in arguments:
+        if skip:
+            skip = False
+        elif literal:
+            found.append(word)
+        elif word == "--":
+            literal = True
+        elif word in skipped:
+            skip = True
+        elif not is_flag(word):
+            found.append(word)
+    return found
+
+
+def unwrap(one: ShellCommand) -> ShellCommand:
+    """The command a wrapper such as ``sudo`` or ``env`` runs, however deeply wrapped."""
+    for _ in range(_UNWRAP_DEPTH):
+        name = one.program.rsplit("/", 1)[-1]
+        if name not in WRAPPERS:
+            return one
+        words = list(one.arguments)
+        value_flags = WRAPPER_VALUE_FLAGS.get(name, frozenset())
+        index = 0
+        while index < len(words):
+            word = words[index]
+            if word in value_flags:
+                index += 2
+            elif is_flag(word) or (name == "env" and "=" in word):
+                index += 1
+            else:
+                break
+        if name == "timeout":
+            index += 1
+        rest = words[index:]
+        if not rest:
+            return one
+        one = ShellCommand(program=rest[0], arguments=tuple(rest[1:]))
+    return one
+
+
 @dataclass(frozen=True)
 class ShellReach:
     """What one command would touch, as the walk found it."""
@@ -214,6 +292,12 @@ def shell_reach(command: str, *, root: Fence | None) -> ShellReach:
         escapes=tuple(dict.fromkeys(walk.escapes)),
         unbounded=tuple(dict.fromkeys(walk.unbounded)),
     )
+
+
+def parse(command: str) -> Node:
+    """The root of ``command``'s syntax tree, for a caller that reads constructs this
+    module's walk does not describe."""
+    return _PARSER.parse(command.encode()).root_node
 
 
 def strip_comments(command: str) -> str:

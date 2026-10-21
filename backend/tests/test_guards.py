@@ -1,30 +1,33 @@
 """The guard: which calls always ask, and which look-alikes pass.
 
 The table is the contract. A caught row names the shape of the mistake it stands for; a
-passing row is a neighbour that has to keep working.
+passing row is a neighbour that has to keep working. Rows run in the VM reading unless the
+table says host, and from the home's default place unless a working directory is given.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
-from starlette.requests import Request
 
-from core.auth import AuthManager
 from core.config import Settings
-from core.exceptions import PermissionDeniedError
 from services.approval_grants import grantable
 from services.home.backend import Mount
 from services.home.paths import SCRATCH, Place
 from services.home.table import RunHome
-from services.permissions.guards import GUARD_KEY, guard, is_guarded, require_operator, unconfined
+from services.permissions.guards import (
+    GUARD_KEY,
+    guard,
+    guard_of_approval,
+    is_guarded,
+    unconfined,
+)
 
 from .guard_support import FenceState, set_fence
 
 API = Place("projects", "api")
+IN_API = "/home/agent/projects/api"
 
 
 @pytest.fixture
@@ -50,94 +53,199 @@ def shell(command: str, *, reach: str = "offline") -> dict[str, object]:
 
 
 def reason_for(
-    command: str, settings: Settings, home: RunHome | None, *, reach: str = "offline"
+    command: str,
+    settings: Settings,
+    home: RunHome | None,
+    *,
+    reach: str = "offline",
+    cwd: str | None = None,
 ) -> str | None:
-    return guard("shell_run_command", shell(command, reach=reach), home=home, settings=settings)
+    args = shell(command, reach=reach)
+    return guard("shell_run_command", args, home=home, settings=settings, cwd=cwd)
 
 
-CRITICAL_REMOVALS = [
-    "rm -rf /",
-    "rm -rf /*",
-    "rm -rf ~",
-    "rm -rf ~/",
-    "rm -rf ~/*",
-    "rm -r -f /",
-    "rm -rf -- /",
-    'rm -rf "$HOME"',
-    "rm -rf ${HOME}/",
-    "rm -rf '~'",
-    "sudo rm -rf /",
-    "sudo -u root rm -rf ~",
-    "env FOO=1 rm -rf ~",
-    "command rm -rf ~",
-    "nohup rm -rf ~",
-    "cd /tmp && rm -rf ~",
-    "ls; rm -rf /",
-    "bash -c 'rm -rf ~'",
-    'sh -c "sudo rm -rf /"',
-    "rmdir ~",
-    "unlink ~",
-    "shred -u /",
-    "find / -delete",
-    "find ~ -delete",
-    "find -L ~ -type f -delete",
-    "find ~ -name x -exec rm -rf {} +",
-    "git clean -fdx",
-    "git clean -x -d -f",
-    "git -C /tmp clean -fdx",
-    "git clean -fdx ~",
-    "rm -rf /home/agent",
-    "rm -rf ~/projects",
-    "rm -rf ~/projects/api",
-    "rm -rf ~/scratch",
-    "rm -rf /work",
+# Each row: the command, then the working directory it runs from (None: the default place).
+REMOVALS_CAUGHT: list[tuple[str, str | None]] = [
+    ("rm -rf /", None),
+    ("rm -rf /*", None),
+    ("rm -rf ~", None),
+    ("rm -rf ~/", None),
+    ("rm -rf ~/*", None),
+    ("rm -rf ~//", None),
+    ("rm -r -f /", None),
+    ("rm -rf -- /", None),
+    ('rm -rf "$HOME"', None),
+    ("rm -rf ${HOME}/", None),
+    ("rm -rf ${HOME:?}", None),
+    ("rm -rf ${HOME%/}", None),
+    ('rm -rf "${HOME}"', None),
+    ("rm -rf '~'", None),
+    ("sudo rm -rf /", None),
+    ("sudo -u root rm -rf ~", None),
+    ("env FOO=1 rm -rf ~", None),
+    ("command rm -rf ~", None),
+    ("nohup rm -rf ~", None),
+    ("cd /tmp && rm -rf ~", None),
+    ("ls; rm -rf /", None),
+    ("rmdir ~", None),
+    ("unlink ~", None),
+    ("shred -u /", None),
+    ("find / -delete", None),
+    ("find ~ -delete", None),
+    ("find -L ~ -type f -delete", None),
+    ("find ~ -name x -exec rm -rf {} +", None),
+    ("rm -rf /home/agent", None),
+    ("rm -rf ~/projects", None),
+    ("rm -rf ~/projects/api", None),
+    ("rm -rf {~,/tmp/x}", None),
+    # compound shapes: every command node counts, at any depth
+    ("(rm -rf ~)", None),
+    ("{ rm -rf ~; }", None),
+    ("if true; then rm -rf ~; fi", None),
+    ("while true; do rm -rf ~; done", None),
+    ("for i in 1 2; do rm -rf ~; done", None),
+    ("! rm -rf ~", None),
+    ("f() { rm -rf ~; }; f", None),
+    ("echo $(rm -rf ~)", None),
+    ("true && (cd / && rm -rf *)", None),
+    # quoted and backslashed command names
+    ("\\rm -rf ~", None),
+    ('"rm" -rf ~', None),
+    ("'rm' -rf ~", None),
+    ("r\\m -rf ~", None),
+    ("/bin/rm -rf ~", None),
+    # nested shells
+    ("bash -c 'rm -rf ~'", None),
+    ('sh -c "sudo rm -rf /"', None),
+    ('bash -c -- "rm -rf ~"', None),
+    ('eval "rm -rf ~"', None),
+    ('bash <<< "rm -rf ~"', None),
+    ("echo 'rm -rf ~' | sh", None),
+    ("echo 'rm -rf ~' | bash -s", None),
+    ("bash <<EOF\nrm -rf ~\nEOF", None),
+    # a parent of a critical path is critical
+    ("rm -rf ~/..", None),
+    ("rm -rf /Users", None),
+    ("rm -rf /home", None),
+    ("rm -rf ~/../..", None),
+    # relative targets against the working directory
+    ("rm -rf *", IN_API),
+    ("rm -rf .", IN_API),
+    ("rm -rf ./", IN_API),
+    ("rm -rf ./*", IN_API),
+    ("rm -rf ..", IN_API),
+    ("cd ~ && rm -rf *", IN_API),
+    ("cd / && rm -rf *", IN_API),
+    ("cd .. && rm -rf *", IN_API),
+    ("cd /home/agent/projects && rm -rf *", IN_API),
+    ("rm -rf *", "/home/agent"),
+    # git clean in every spelling
+    ("git clean -fdx", None),
+    ("git clean -x -d -f", None),
+    ("git clean -ffdx", None),
+    ("git clean -fdx .", None),
+    ("git clean -fdx -- .", None),
+    ("git clean -fdx :/", None),
+    ("git --no-pager clean -fdx", None),
+    ("git -C . clean -fdx", None),
+    ("git -c a=b clean -fdx", None),
+    ("git --git-dir=/x/.git clean -fdx", None),
+    ("git -C /tmp clean -fdx", None),
+    ("git clean -fdx ~", None),
+    # a part that cannot be read, in a command that deletes
+    ("rm -rf $(echo /)", None),
+    ("rm -rf $SOMETHING", None),
+    ('bash -c "rm -rf $X"', None),
+    ("rm -rf ~ &&&& x", None),
 ]
 
-PASSING_REMOVALS = [
-    "rm -rf ./build",
-    "rm -rf build",
-    "rm -rf ~/proj/tmp",
-    "rm -rf /tmp/x",
-    "rm -rf ~/projects/api/build",
-    "rm -rf ~/scratch/out/*",
-    "rm file.txt",
-    "rm -rf $SOMETHING",
-    "git clean -fd",
-    "git clean -fdxn",
-    "git clean -fdx --dry-run",
-    "git clean -fdx build",
-    "find . -delete",
-    "find ./build -delete",
-    "find / -name x",
-    "find ~ -name '*.pyc'",
-    "ls ~",
-    "ls /",
-    "echo rm -rf /",
-    "grep -r 'rm -rf ~' .",
+REMOVALS_PASSING: list[tuple[str, str | None]] = [
+    ("rm -rf ./build", None),
+    ("rm -rf build", None),
+    ("rm -rf ~/proj/tmp", None),
+    ("rm -rf /tmp/x", None),
+    ("rm -rf ~/projects/api/build", None),
+    ("rm file.txt", None),
+    ("rm -rf $DIR/build", None),
+    ("rm -rf node_modules dist", IN_API),
+    ("rm -rf build/*", IN_API),
+    ("cd src && rm -rf *", IN_API),
+    ("rm -rf *", None),
+    ("rm -rf .", None),
+    ("git clean -fd", None),
+    ("git clean -fdxn", None),
+    ("git clean -fdx --dry-run", None),
+    ("git clean -fdx build", None),
+    ("find . -delete", None),
+    ("find ./build -delete", IN_API),
+    ("find / -name x", None),
+    ("find ~ -name '*.pyc'", None),
+    ("ls ~", None),
+    ("ls /", None),
+    ("echo rm -rf /", None),
+    ("grep -r 'rm -rf ~' .", None),
+    ("cat <<EOF\nrm -rf ~\nEOF", None),
+    ("# rm -rf ~\nls", None),
+    ("curl https://example.com/install | sh", None),
+    ("echo ok | sh", None),
+    ('bash -c "$SCRIPT"', None),
+    # the agent's own scratch
+    ("rm -rf ~/scratch", None),
+    ("rm -rf ~/scratch/*", None),
+    ("rm -rf /work/*", None),
+    ("rm -rf /work", None),
+    ("cd ~/scratch && rm -rf *", IN_API),
 ]
 
-PROTECTED_WRITES = [
+# Written to on the host. Each is a protected path or a way to reach one.
+WRITES_CAUGHT: list[str] = [
     "echo x >> ~/.zshrc",
     "echo x > ~/.zprofile",
     'echo x > "$HOME/.bashrc"',
+    "echo x > ${HOME:?}/.bashrc",
+    "echo x > ~//.zshrc",
     "echo x > ~/.gitconfig",
     "echo x > ~/.claude/settings.json",
     "echo x > ~/Library/LaunchAgents/a.plist",
     "echo x > .git/hooks/pre-commit",
     "echo x > /repo/.git/config",
     "echo x >| /repo/.git/hooks/post-commit",
+    "echo gitdir: /elsewhere > .git",
     "tee ~/.bashrc",
     "echo a | tee -a ~/.zshenv",
     "cp a ~/.zshrc",
+    "cp -t ~/.claude a",
+    "install --target-directory=~/.claude a",
+    "mv -t ~/Library/LaunchAgents a",
     "mv a ~/.profile",
+    "ln -s a ~/.zshrc",
     "dd if=a of=~/.zshrc",
     "touch ~/.zshrc",
     "rm ~/.zshrc",
+    "sed -i s/a/b/ ~/.zshrc",
+    "sed -i.bak s/a/b/ ~/.zshrc",
+    "perl -pi -e 's/a/b/' ~/.zshrc",
+    "curl -o ~/.zshrc https://example.com/x",
+    "curl -sSo ~/.zshrc https://example.com/x",
+    "curl --output ~/.zshrc https://example.com/x",
+    "curl --output=~/.zshrc https://example.com/x",
+    "wget -O ~/.zshrc https://example.com/x",
+    "wget --output-document=~/.zshrc https://example.com/x",
+    "git config --global user.name x",
+    "git config --global --unset user.name",
+    "git -C /tmp config --global user.name x",
+    "git config core.hooksPath /tmp/hooks",
+    "git config --local core.hooksPath /tmp/hooks",
+    "git -C /tmp/repo config core.hooksPath /tmp/hooks",
+    "git config --file ~/.gitconfig user.name x",
     "bash -c 'echo x > ~/.zshrc'",
     "cat <<EOF > ~/.zshrc\nx\nEOF",
+    "(echo x > ~/.zshrc)",
+    "if true; then echo x > ~/.zshrc; fi",
+    "cd ~ && echo x > .zshrc",
 ]
 
-PASSING_WRITES = [
+WRITES_PASSING: list[str] = [
     "echo x > ~/.zshrc.bak",
     "echo x > ~/.config/heph-test",
     "echo x > notes.md",
@@ -145,21 +253,43 @@ PASSING_WRITES = [
     "cat ~/.zshrc",
     "cp ~/.zshrc ./backup",
     "cp a b",
+    "cp -t out a",
     "mkdir ~/.config/heph-test",
+    "mkdir .git",
     "echo x > /tmp/y",
+    "echo 'x > ~/.zshrc'",
+    "echo x > /dev/null",
+    "cat <<EOF\necho x > ~/.zshrc\nEOF",
+    "# echo x > ~/.zshrc\nls",
     "git config user.name x",
+    "git config --global user.name",
+    "git config --global --get user.name",
+    "git config --list",
+    "git config --local user.name x",
     "git commit -m 'edit .git/hooks docs'",
+    "sed -n 1p ~/.zshrc",
+    "curl -O https://example.com/x",
+    "curl -o out.html https://example.com/x",
+    "wget -O out.html https://example.com/x",
+    "rm -rf .git/refs/foo",
 ]
 
 
 class TestCriticalRemoval:
-    @pytest.mark.parametrize("command", CRITICAL_REMOVALS)
-    def test_caught(self, command: str, settings: Settings, home: RunHome):
-        assert reason_for(command, settings, home) is not None, command
+    @pytest.mark.parametrize(("command", "cwd"), REMOVALS_CAUGHT)
+    def test_caught(self, command: str, cwd: str | None, settings: Settings, home: RunHome):
+        assert reason_for(command, settings, home, cwd=cwd) is not None, command
 
-    @pytest.mark.parametrize("command", PASSING_REMOVALS)
-    def test_passing(self, command: str, settings: Settings, home: RunHome):
-        assert reason_for(command, settings, home) is None, command
+    @pytest.mark.parametrize(("command", "cwd"), REMOVALS_PASSING)
+    def test_passing(self, command: str, cwd: str | None, settings: Settings, home: RunHome):
+        assert reason_for(command, settings, home, cwd=cwd) is None, command
+
+    @pytest.mark.parametrize("reach", ["offline", "network", "host"])
+    def test_the_reading_does_not_depend_on_where_it_runs(
+        self, reach: str, settings: Settings, home: RunHome
+    ):
+        assert reason_for("rm -rf ~", settings, home, reach=reach) is not None
+        assert reason_for("rm -rf ./build", settings, home, reach=reach) is None
 
     def test_a_project_folder_by_its_host_path(
         self, settings: Settings, home: RunHome, tmp_path: Path
@@ -168,16 +298,30 @@ class TestCriticalRemoval:
         assert reason_for(f"rm -rf {tmp_path / 'api'}/*", settings, home) is not None
         assert reason_for(f"rm -rf {tmp_path / 'api'}/build", settings, home) is None
 
-    def test_the_data_folder(self, settings: Settings):
+    def test_a_folder_holding_a_project_is_critical(self, settings: Settings):
+        documents = Path.home() / "Documents"
+        held = RunHome(
+            mounts=(
+                Mount(SCRATCH, Path("/nonexistent/scratch"), writable=True),
+                Mount(API, documents / "proj", writable=True),
+            ),
+            default=SCRATCH,
+            key="t",
+        )
+        assert reason_for(f"rm -rf {documents}", settings, held) is not None
+        assert reason_for("rm -rf ~/Documents", settings, held, reach="host") is not None
+        assert reason_for("rm -rf ~/Documents/other", settings, held, reach="host") is None
+        assert reason_for("rm -rf ~/Documents", settings, None) is None
+
+    def test_the_data_folder_and_its_parent(self, settings: Settings):
         assert reason_for(f"rm -rf {settings.data_dir}", settings, None) is not None
         assert reason_for(f"rm -rf {settings.data_dir}/*", settings, None) is not None
+        assert reason_for(f"rm -rf {settings.data_dir.parent}", settings, None) is not None
+        assert reason_for(f"rm -rf {settings.data_dir.parent}/other", settings, None) is None
 
-    def test_the_real_home_folder(self, settings: Settings):
+    def test_the_real_home_folder_and_what_holds_it(self, settings: Settings):
         assert reason_for(f"rm -rf {Path.home()}", settings, None) is not None
-
-    def test_no_home_still_catches_the_unambiguous_ones(self, settings: Settings):
-        assert reason_for("rm -rf ~", settings, None) is not None
-        assert reason_for("rm -rf ./build", settings, None) is None
+        assert reason_for(f"rm -rf {Path.home().parent}", settings, None) is not None
 
     def test_the_reason_names_the_path(self, settings: Settings, home: RunHome):
         reason = reason_for("rm -rf ~/", settings, home)
@@ -196,24 +340,56 @@ class TestCriticalRemoval:
 
 
 class TestProtectedWrites:
-    @pytest.mark.parametrize("command", PROTECTED_WRITES)
-    def test_caught(self, command: str, settings: Settings, home: RunHome):
-        assert reason_for(command, settings, home) is not None, command
+    @pytest.mark.parametrize("command", WRITES_CAUGHT)
+    def test_caught_on_the_host(self, command: str, settings: Settings, home: RunHome):
+        assert reason_for(command, settings, home, reach="host") is not None, command
 
-    @pytest.mark.parametrize("command", PASSING_WRITES)
-    def test_passing(self, command: str, settings: Settings, home: RunHome):
-        assert reason_for(command, settings, home) is None, command
+    @pytest.mark.parametrize("command", WRITES_PASSING)
+    def test_passing_on_the_host(self, command: str, settings: Settings, home: RunHome):
+        assert reason_for(command, settings, home, reach="host") is None, command
+
+    def test_the_vms_home_is_not_the_operators(self, settings: Settings, home: RunHome):
+        for command in ("echo x >> ~/.zshrc", "echo x > ~/.gitconfig", "cp a ~/.profile"):
+            assert reason_for(command, settings, home) is None, command
+        assert reason_for("git config --global user.name x", settings, home) is None
+
+    def test_a_projects_hooks_and_config_are_protected_from_the_vm_too(
+        self, settings: Settings, home: RunHome
+    ):
+        for command in (
+            "echo x > ~/projects/api/.git/hooks/pre-commit",
+            "echo x > /home/agent/projects/api/.git/config",
+            "git config core.hooksPath /tmp/hooks",
+        ):
+            assert reason_for(command, settings, home) is not None, command
+        assert reason_for("echo x > ~/projects/api/src/a.py", settings, home) is None
+
+    def test_a_relative_target_follows_the_working_directory(
+        self, settings: Settings, home: RunHome
+    ):
+        command = "echo x > hooks/pre-commit"
+        assert reason_for(command, settings, home, cwd=f"{IN_API}/.git") is not None
+        assert reason_for(command, settings, home, cwd=IN_API) is None
+        assert reason_for("cd .git && echo x > hooks/a", settings, home, cwd=IN_API) is not None
 
     def test_the_data_folder_is_protected_but_a_mount_inside_it_is_not(self, tmp_path: Path):
         settings = Settings(data_dir=tmp_path)
         scratch = tmp_path / "scratch"
         scratch.mkdir()
         home = RunHome(mounts=(Mount(SCRATCH, scratch, writable=True),), default=SCRATCH, key="t")
-        assert reason_for(f"echo x > {tmp_path}/app.db", settings, home) is not None
-        assert reason_for(f"echo x > {scratch}/notes.md", settings, home) is None
+        host = {"reach": "host"}
+        for command, expected in (
+            (f"echo x > {tmp_path}/app.db", True),
+            (f"echo x > {scratch}/notes.md", False),
+        ):
+            reason = guard(
+                "shell_run_command", {"command": command, **host}, home=home, settings=settings
+            )
+            assert (reason is not None) is expected, command
 
-    def test_git_internals_are_never_exempt(self, settings: Settings, home: RunHome):
-        assert reason_for("git config --local x y > .git/config", settings, home) is not None
+    def test_a_target_known_only_at_run_time_is_not_judged(self, settings: Settings, home: RunHome):
+        assert reason_for("echo x > $TARGET", settings, home, reach="host") is None
+        assert reason_for("tee $TARGET", settings, home, reach="host") is None
 
 
 class TestFileTools:
@@ -226,6 +402,7 @@ class TestFileTools:
             "~/projects/api/.git/hooks/pre-commit",
             "~/projects/api/.git/config",
             "projects/api/.git/hooks/x",
+            "~/projects/api/.git",
         ):
             assert guard(tool, self.args(path), home=home, settings=settings) is not None, path
 
@@ -239,6 +416,8 @@ class TestFileTools:
             assert guard("files_create_directory", args, home=home, settings=settings), path
         other = self.args("~/projects/api/.git/refs")
         assert guard("files_create_directory", other, home=home, settings=settings) is None
+        gitdir = self.args("~/projects/api/.git")
+        assert guard("files_create_directory", gitdir, home=home, settings=settings) is None
 
     def test_ordinary_files_and_reads_pass(self, settings: Settings, home: RunHome):
         for path in ("~/projects/api/src/a.py", "~/scratch/notes.md", "notes.md", ".gitignore"):
@@ -331,37 +510,49 @@ class TestOnceOnly:
         assert not grantable("code_request_egress", {})
 
 
-def _request(app: FastAPI, authorization: str | None = None, cookie: str | None = None) -> Request:
-    headers: list[tuple[bytes, bytes]] = []
-    if authorization is not None:
-        headers.append((b"authorization", authorization.encode()))
-    if cookie is not None:
-        headers.append((b"cookie", f"hephaestus_session={cookie}".encode()))
-    return Request({"type": "http", "headers": headers, "app": app})
+class TestGuardOfApproval:
+    """What the approve route asks: is this approval of a guarded call?"""
 
+    def test_a_parked_call_marked_guarded_is_guarded(self, settings: Settings, home: RunHome):
+        reason = guard_of_approval(
+            "shell_run_command",
+            {GUARD_KEY: "deletes your home"},
+            None,
+            home=home,
+            settings=settings,
+        )
+        assert reason == "deletes your home"
 
-class TestRequireOperator:
-    def app(self, *, auth: bool) -> tuple[FastAPI, str]:
-        app = FastAPI()
-        manager = AuthManager()
-        app.state.settings = SimpleNamespace(auth_enabled=auth)
-        app.state.auth_manager = manager
-        return app, manager.issue()
+    def test_the_marker_holds_whatever_arguments_replace_the_call(
+        self, settings: Settings, home: RunHome
+    ):
+        harmless: dict[str, object] = {"command": "ls"}
+        reason = guard_of_approval(
+            "shell_run_command",
+            {GUARD_KEY: "deletes your home"},
+            harmless,
+            home=home,
+            settings=settings,
+        )
+        assert reason == "deletes your home"
 
-    def test_the_operator_session_passes(self):
-        app, token = self.app(auth=True)
-        require_operator(_request(app, authorization=f"Bearer {token}"))
+    def test_replacement_arguments_that_are_guarded_make_the_approval_guarded(
+        self, settings: Settings, home: RunHome
+    ):
+        reason = guard_of_approval(
+            "shell_run_command", {}, shell("rm -rf ~"), home=home, settings=settings
+        )
+        assert reason is not None
 
-    def test_an_api_token_is_refused(self):
-        app, _ = self.app(auth=True)
-        with pytest.raises(PermissionDeniedError):
-            require_operator(_request(app, authorization="Bearer odyt_abc123"))
+    def test_an_ordinary_approval_is_not_guarded(self, settings: Settings, home: RunHome):
+        assert (
+            guard_of_approval("shell_run_command", None, shell("ls"), home=home, settings=settings)
+            is None
+        )
+        assert (
+            guard_of_approval("shell_run_command", {}, None, home=home, settings=settings) is None
+        )
 
-    def test_no_credential_is_refused(self):
-        app, _ = self.app(auth=True)
-        with pytest.raises(PermissionDeniedError):
-            require_operator(_request(app))
-
-    def test_everyone_is_the_operator_when_auth_is_off(self):
-        app, _ = self.app(auth=False)
-        require_operator(_request(app, authorization="Bearer odyt_abc123"))
+    def test_a_marker_with_no_text_still_guards(self, settings: Settings, home: RunHome):
+        marked = {GUARD_KEY: True}
+        assert guard_of_approval("x", marked, None, home=home, settings=settings) is not None
