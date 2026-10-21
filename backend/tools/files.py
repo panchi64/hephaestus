@@ -34,7 +34,9 @@ from services.projects.worktree import WorktreeBusyError
 from .briefing import with_brief
 from .deps import RunDeps
 from .home import change_log, lease, may_lease, resolve_run_home
+from .read_ledger import BINARY, hash_reported, ledger_of, thread_of, unread_message
 from .rebound import ReboundToolset
+from .run_home import home_of
 from .spill import is_untrusted_spill
 from .workspace import unavailable
 
@@ -91,16 +93,20 @@ class _HomeFiles(ReboundToolset):
         ctx: RunContext[RunDeps],
         tool: ToolsetTool[RunDeps],
     ) -> object:
-        tool_args = await _in_home_terms(ctx, name, tool_args)
+        home = await home_of(ctx.deps)
+        tool_args = _in_home_terms(name, tool_args, home)
         path = tool_args.get("path")
+        refusal, pinned = check_read(ctx.deps, name, tool_args, home)
+        if refusal is not None:
+            return refusal
+        if pinned is not None:
+            tool_args = {**tool_args, "expected_hash": pinned}
         if name in WRITE_TOOLS and isinstance(path, str):
-            refusal = await _clear_write(ctx, path)
+            refusal, leased = await _clear_write(ctx, home, path)
             if refusal is not None:
                 return refusal
-        try:
-            home = await resolve_run_home(ctx.deps)
-        except WorktreeBusyError:
-            home = None
+            if leased:
+                home = await home_of(ctx.deps)
         located = home.locate(path) if home is not None and isinstance(path, str) else None
         log = change_log(ctx.deps) if name in _FILE_WRITES and located is not None else None
         if log is not None and located is not None:
@@ -108,6 +114,10 @@ class _HomeFiles(ReboundToolset):
         result = await super().call_tool(name, tool_args, ctx, tool)
         if log is not None and located is not None:
             await log.after(located[0], [located[1]])
+        ledger = ledger_of(ctx.deps.caps)
+        if ledger is not None and located is not None:
+            if (fresh := hash_reported(name, result)) is not None:
+                ledger.record(thread_of(ctx.deps), str(located[0].root / located[1]), fresh)
         if home is None or located is None:
             return result
         mount, rel = located
@@ -116,8 +126,49 @@ class _HomeFiles(ReboundToolset):
         return await with_brief(ctx, home, [mount.place], result)
 
 
-async def _in_home_terms(
-    ctx: RunContext[RunDeps], name: str, tool_args: dict[str, object]
+def check_read(
+    deps: RunDeps, name: str, tool_args: dict[str, object], home: RunHome | None
+) -> tuple[str | None, str | None]:
+    """The refusal for changing an existing file that was not read in this conversation,
+    and the hash a permitted change is pinned to. ``tool_args`` is already in home terms.
+
+    Neither when the tool does not rewrite a file, the file is new, or the run keeps no
+    ledger. A file that was read as binary is permitted but not pinned: the harness
+    reports no hash for one.
+    """
+    path = tool_args.get("path")
+    ledger = ledger_of(deps.caps)
+    if name not in _FILE_WRITES or ledger is None or home is None or not isinstance(path, str):
+        return None, None
+    located = home.locate(path)
+    if located is None:
+        return None, None
+    host = located[0].root / located[1]
+    if not host.is_file():
+        return None, None
+    known = ledger.get(thread_of(deps), str(host))
+    if known is None:
+        return unread_message(path), None
+    return None, None if known == BINARY else known
+
+
+async def unread_refusal(
+    deps: RunDeps, tool: str, tool_args: dict[str, object], home: RunHome | None = None
+) -> str | None:
+    """The refusal a change to a file not read in this conversation would meet, for a
+    caller that wants to answer before the operator is asked. ``tool`` is the namespaced
+    name; ``home`` is the run's, if the caller already has it."""
+    name = tool.removeprefix("files_")
+    home = home if home is not None else await home_of(deps)
+    try:
+        spelled = _in_home_terms(name, tool_args, home)
+    except ModelRetry:
+        return None
+    return check_read(deps, name, spelled, home)[0]
+
+
+def _in_home_terms(
+    name: str, tool_args: dict[str, object], home: RunHome | None
 ) -> dict[str, object]:
     """The call's ``path`` as the absolute home path it names.
 
@@ -134,10 +185,6 @@ async def _in_home_terms(
     if text.startswith(("~", "/")):
         return {**tool_args, "path": _spelled(text, cwd=HOME)}
     if not text and name not in _WALKS:
-        return tool_args
-    try:
-        home = await resolve_run_home(ctx.deps)
-    except WorktreeBusyError:
         return tool_args
     if home is None:
         return tool_args
@@ -169,23 +216,22 @@ def _spelled(text: str, *, cwd: str) -> str:
     return absolute(text, cwd=cwd)
 
 
-async def _clear_write(ctx: RunContext[RunDeps], path: str) -> str | None:
-    """Ask before a write into a place the thread may only read; lease it once approved."""
-    try:
-        home = await resolve_run_home(ctx.deps)
-    except WorktreeBusyError:
-        return None
+async def _clear_write(
+    ctx: RunContext[RunDeps], home: RunHome | None, path: str
+) -> tuple[str | None, bool]:
+    """Ask before a write into a place the thread may only read; lease it once approved.
+    Returns the refusal, if any, and whether a lease was taken."""
     if home is None:
-        return None
+        return None, False
     place = home.place_of(path)
     if place is None or home.writable(place):
-        return None
+        return None, False
     if not may_lease(ctx.deps):
-        return _delegate_read_only(place.path)
+        return _delegate_read_only(place.path), False
     if not ctx.tool_call_approved:
         raise ApprovalRequired()
     _ = await lease(ctx.deps, home, place)
-    return None
+    return None, True
 
 
 def files_toolset() -> AbstractToolset[RunDeps]:

@@ -22,6 +22,7 @@ from pydantic_ai.usage import RunUsage
 
 from prompts.agent import INSTRUCTIONS
 from runs import Run, RunStream
+from services.permissions.guards import COMMAND_TOOLS
 from tools import RunDeps, build_agent_toolsets
 from tools.catalog import tool_catalog
 from tools.describe import (
@@ -204,7 +205,8 @@ async def test_describing_preserves_everything_that_carries_policy():
     for name, tool_def in offered.items():
         assert tool_def.metadata == raw[name].metadata, name
         assert tool_def.defer_loading == raw[name].defer_loading, name
-        assert tool_def.sequential == raw[name].sequential, name
+        # The one thing added after describing: a tool that runs a command runs alone.
+        assert tool_def.sequential == (raw[name].sequential or name in COMMAND_TOOLS), name
         assert tool_def.strict == raw[name].strict, name
 
 

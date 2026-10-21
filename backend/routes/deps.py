@@ -19,10 +19,10 @@ from sqlalchemy import Engine
 from starlette.datastructures import State
 
 from core.api_scopes import ScopeTable
-from core.auth import AuthManager
+from core.auth import SESSION_COOKIE, AuthManager, token_from_headers
 from core.config import Settings
 from core.container import ServiceContainer
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, PermissionDeniedError
 from core.ratelimit import RateLimiter
 from core.vault import Vault
 from runs import ConversationBusyError, InboxDispatch, Run, RunRegistry
@@ -552,6 +552,23 @@ def vault(request: Request) -> Vault:
 
 def auth_manager(request: Request) -> AuthManager:
     return app_state(request).auth_manager
+
+
+def require_operator(request: Request) -> None:
+    """Refuse a request that did not come from the operator's own session.
+
+    An API token never answers a guarded call, whatever scopes it holds. With
+    authentication switched off every caller is the operator.
+    """
+    if not app_state(request).settings.auth_enabled:
+        return
+    presented = token_from_headers(
+        request.headers.get("authorization"), request.cookies.get(SESSION_COOKIE)
+    )
+    if not auth_manager(request).verify(presented):
+        raise PermissionDeniedError(
+            "only the operator can answer this call; an API token cannot approve it"
+        )
 
 
 def workspace_db_intact(request: Request) -> bool:

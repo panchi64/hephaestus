@@ -43,7 +43,7 @@ calls waits once, not four times.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -63,6 +63,7 @@ from services.approval_grants import (
     covered_by_grant,
     grant_width,
 )
+from services.home.table import RunHome
 from services.permissions import (
     Decision,
     GrantWidth,
@@ -80,11 +81,22 @@ from services.permissions import (
     review_transcript,
 )
 from services.permissions.fence import Fence
+from services.permissions.guards import (
+    FILE_REWRITE_TOOLS,
+    GUARD_KEY,
+    GUARDED_TOOLS,
+    changes_directory,
+    guard,
+    is_guarded,
+)
 from services.registry import ModelRegistry
 from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
 from tools.deps import RunDeps
+from tools.files import unread_refusal
+from tools.guarded import shell_cwd
 from tools.home import resolve_run_home
+from tools.run_home import home_of
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +105,9 @@ logger = logging.getLogger(__name__)
 #: this process; a turn rarely defers more than a handful of calls, and the point is that
 #: their latencies overlap rather than stack.
 _REVIEW_CONCURRENCY = 4
+
+_UNEXPLAINED = "This call always needs your approval."
+_UNCHECKED = "This call could not be checked, so it needs your approval."
 
 
 @dataclass(kw_only=True)
@@ -141,15 +156,23 @@ async def settle_deferred(
     permission: str,
     turn_start: TurnBoundary | None = None,
     budget: ReviewBudget | None = None,
+    metadata: MutableMapping[str, dict[str, object]] | None = None,
 ) -> tuple[dict[str, ToolApproved | ToolDenied], list[ToolCallPart]]:
     """Rule on every call this hop deferred, returning ``(settled, manual)``.
+
+    ``metadata`` is the deferral's own, by call id: a call marked guarded there goes to the
+    operator, and the reason of every guarded call is written into it.
 
     ``settled`` is the decisions the turn can carry on with immediately — an allow the
     model never notices, or a denial it is told in place of the tool's result and re-plans
     around. ``manual`` is what is left for the operator, and a non-empty one is what parks
     the turn.
 
-    **The level rules first, and a grant may answer it but never overturn it.** A standing
+    **A guarded call is ruled before any of that** (``services/permissions/guards.py``): it
+    goes to the operator at every level, and neither a grant nor the reviewer can answer it.
+    A level that refuses outright still refuses.
+
+    **The level rules next, and a grant may answer it but never overturn it.** A standing
     grant is the operator's "stop asking me about this one", so it settles a call the level
     would have put in front of them. But a level that refuses outright carries their answer
     already, in the level they chose — a grant recorded while a thread could act is not
@@ -193,7 +216,28 @@ async def settle_deferred(
     # grant is what produced it, because the two are not recoverable from each other: an
     # ALLOW can come from a grant or from a level that allows outright, and only the first
     # is revocable.
-    ruled = [(call, *_by_level(permission, call, granted)) for call in approvals]
+    home = await _guard_home(deps, approvals)
+    # The operator is never asked to approve a write the read ledger would turn away, and
+    # no model reviews one: the model is told to read the file first.
+    settled: dict[str, ToolApproved | ToolDenied] = {}
+    asking: list[ToolCallPart] = []
+    for call in approvals:
+        refusal = (
+            await unread_refusal(deps, call.tool_name, call.args_as_dict(), home)
+            if call.tool_name in FILE_REWRITE_TOOLS
+            else None
+        )
+        if refusal is None:
+            asking.append(call)
+        else:
+            settled[call.tool_call_id] = ToolDenied(message=refusal)
+    guarded = _guard_reasons(asking, home, shell_cwd(deps), metadata)
+    ruled = [
+        (call, Decision.ASK, False)
+        if call.tool_call_id in guarded and decide(permission, call.tool_name) is not Decision.BLOCK
+        else (call, *_by_level(permission, call, granted))
+        for call in asking
+    ]
     reviewed = await review_batch(
         run,
         [call for call, decision, _ in ruled if decision is Decision.REVIEW],
@@ -203,8 +247,8 @@ async def settle_deferred(
         grants=granted,
         turn_start=turn_start,
         budget=budget,
+        home=home,
     )
-    settled: dict[str, ToolApproved | ToolDenied] = {}
     manual: list[ToolCallPart] = []
     for call, decision, grant_backed in ruled:
         outcome = reviewed.get(call.tool_call_id)
@@ -240,6 +284,56 @@ async def settle_deferred(
         else:
             manual.append(call)
     return settled, manual
+
+
+async def _guard_home(deps: RunDeps, approvals: Sequence[ToolCallPart]) -> RunHome | None:
+    """The home the guard places paths against, opened only when a call in the batch is
+    one it has a rule for."""
+    if not any(call.tool_name in GUARDED_TOOLS for call in approvals):
+        return None
+    return await home_of(deps)
+
+
+def _guard_reasons(
+    approvals: Sequence[ToolCallPart],
+    home: RunHome | None,
+    cwd: str | None,
+    metadata: MutableMapping[str, dict[str, object]] | None,
+) -> dict[str, str]:
+    """Why each call that must go to the operator at every level has to, by call id.
+
+    Ahead of the grants, the level and the reviewer: none of them may answer these. A call
+    already marked guarded in ``metadata`` (the toolset raised its deferral) stays guarded
+    whatever is recomputed, and every reason is written back to ``metadata`` so that the
+    park announces it and a restored park keeps it.
+    """
+    settings = get_settings()
+    reasons: dict[str, str] = {}
+    # The command tools run one after another, so a `cd` in one call moves where the calls
+    # after it start; once one may have, relative paths are not placed.
+    cwd_known = True
+    for call in approvals:
+        marked = metadata.get(call.tool_call_id) if metadata is not None else None
+        args = call.args_as_dict()
+        if is_guarded(marked):
+            reason = marked.get(GUARD_KEY) if marked is not None else None
+            reasons[call.tool_call_id] = reason if isinstance(reason, str) else _UNEXPLAINED
+        elif call.tool_name in GUARDED_TOOLS:
+            try:
+                found = guard(
+                    call.tool_name, args, home=home, settings=settings, cwd=cwd, cwd_known=cwd_known
+                )
+            except Exception:  # a guard that raises would abort the operator's turn
+                logger.warning("guard failed on %s", call.tool_name, exc_info=True)
+                found = _UNCHECKED
+            if found is not None:
+                reasons[call.tool_call_id] = found
+        if cwd_known and changes_directory(call.tool_name, args):
+            cwd_known = False
+    if metadata is not None:
+        for call_id, reason in reasons.items():
+            metadata.setdefault(call_id, {})[GUARD_KEY] = reason
+    return reasons
 
 
 def _by_level(
@@ -284,8 +378,11 @@ async def review_batch(
     grants: Sequence[GrantInfo] = (),
     turn_start: TurnBoundary | None = None,
     budget: ReviewBudget | None = None,
+    home: RunHome | None = None,
 ) -> dict[str, ReviewOutcome]:
     """Review every call the level sent to review, by ``tool_call_id``.
+
+    ``home`` is the one the caller already opened for the batch, so it is not opened twice.
 
     The reviewer and the transcript are built once for the batch and shared: resolving a
     reviewer is a registry lookup and a model construction, and the transcript is the same
@@ -308,7 +405,7 @@ async def review_batch(
         messages, turn_start=turn_start, limit=settings.review_transcript_entries
     )
     nonce = new_nonce()
-    root = await _judged_root(deps, calls)
+    root = await _judged_root(deps, calls, home)
     # Resolved once for the batch: a non-host command is held to its reach only by running
     # in the platform VM, and the shell refuses every command while the VM is down.
     fenced = vm_fences(caps)
@@ -339,7 +436,9 @@ def vm_fences(caps: ServiceContainer) -> bool:
     return copies is not None and copies.vm.available
 
 
-async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Fence | None:
+async def _judged_root(
+    deps: RunDeps, calls: Sequence[ToolCallPart], opened: RunHome | None = None
+) -> Fence | None:
     """The home every path in this batch is measured against, read from where the
     thread's shell stands.
 
@@ -360,11 +459,13 @@ async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Fence | 
     """
     if not any(measured_against_root(call.tool_name) for call in calls):
         return None
-    try:
-        home = await resolve_run_home(deps)
-    except Exception:  # a judge that raises would abort the operator's turn
-        logger.info("auto review: no home to judge against", exc_info=True)
-        return None
+    home = opened
+    if home is None:
+        try:
+            home = await resolve_run_home(deps)
+        except Exception:  # a judge that raises would abort the operator's turn
+            logger.info("auto review: no home to judge against", exc_info=True)
+            return None
     if home is None:
         return None
     shells = deps.caps.get_optional(ThreadShells)

@@ -21,6 +21,12 @@ class ApprovalRequired(Body):
     # operator can judge it without reading the raw arguments — set when the tool
     # supplies one (the host-execution path requires it). Additive to v1; no bump.
     explanation: str | None = None
+    # Why this call always asks: set for a guarded call, which is once-only, so a client
+    # offers no standing-approval choice for it. Additive to v1; no bump.
+    guard: str | None = None
+    # Set on a host command that is about to run with no fence in force, saying why. A
+    # fence the operator disabled and one that cannot be built both set it. Additive to v1.
+    unconfined: str | None = None
 
 
 class QuestionOption(Body):
