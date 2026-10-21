@@ -85,6 +85,7 @@ from services.permissions.guards import (
     FILE_REWRITE_TOOLS,
     GUARD_KEY,
     GUARDED_TOOLS,
+    changes_directory,
     guard,
     is_guarded,
 )
@@ -106,6 +107,7 @@ logger = logging.getLogger(__name__)
 _REVIEW_CONCURRENCY = 4
 
 _UNEXPLAINED = "This call always needs your approval."
+_UNCHECKED = "This call could not be checked, so it needs your approval."
 
 
 @dataclass(kw_only=True)
@@ -307,17 +309,27 @@ def _guard_reasons(
     """
     settings = get_settings()
     reasons: dict[str, str] = {}
+    # The command tools run one after another, so a `cd` in one call moves where the calls
+    # after it start; once one may have, relative paths are not placed.
+    cwd_known = True
     for call in approvals:
         marked = metadata.get(call.tool_call_id) if metadata is not None else None
+        args = call.args_as_dict()
         if is_guarded(marked):
             reason = marked.get(GUARD_KEY) if marked is not None else None
             reasons[call.tool_call_id] = reason if isinstance(reason, str) else _UNEXPLAINED
         elif call.tool_name in GUARDED_TOOLS:
-            found = guard(
-                call.tool_name, call.args_as_dict(), home=home, settings=settings, cwd=cwd
-            )
+            try:
+                found = guard(
+                    call.tool_name, args, home=home, settings=settings, cwd=cwd, cwd_known=cwd_known
+                )
+            except Exception:  # a guard that raises would abort the operator's turn
+                logger.warning("guard failed on %s", call.tool_name, exc_info=True)
+                found = _UNCHECKED
             if found is not None:
                 reasons[call.tool_call_id] = found
+        if cwd_known and changes_directory(call.tool_name, args):
+            cwd_known = False
     if metadata is not None:
         for call_id, reason in reasons.items():
             metadata.setdefault(call_id, {})[GUARD_KEY] = reason

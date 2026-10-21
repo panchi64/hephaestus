@@ -16,9 +16,10 @@ import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from core.config import Settings
 from services.home.paths import HOME
 from services.home.table import RunHome
-from services.permissions.shell_acts import WORKTREE, names_whole_folder
+from services.permissions.shell_acts import GIT_FOLDERS, WORKTREE, names_whole_folder
 from services.permissions.shell_ast import OPAQUE
 from services.sandbox.fence import host_scratch_dir
 from services.sandbox.floor import fold, is_protected_write, is_under, write_floor
@@ -27,7 +28,11 @@ GITLINK_WHY = "a .git file can point git at a directory whose hooks run"
 
 _SCRATCH = f"{HOME}/scratch"
 _VM_PLACE = re.compile(rf"{re.escape(HOME)}/(projects|worktrees|shared)(/[^/]+)?")
-_VM_GIT = re.compile(rf"{re.escape(HOME)}/(projects|worktrees)/[^/]+/\.git(/[^/]+)?")
+#: What a repository's history is made of, which is critical at any depth.
+_GIT_HISTORY = frozenset({"objects", "refs"})
+_VM_GIT = re.compile(
+    rf"{re.escape(HOME)}/(projects|worktrees)/[^/]+/\.git(/[^/]+|/(objects|refs)/.*)?"
+)
 _DATA = "the application's data folder is off limits"
 _FIRMLINK = re.compile(r"^/System/Volumes/Data(?=/|$)")
 _USER = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._-]*")
@@ -83,7 +88,7 @@ def _glob_parent(path: str) -> str:
     """``path`` without trailing segments that match every entry, so ``/a/*`` names ``/a``.
     A pattern that matches only some entries (``*.log``) names entries, not the folder."""
     while names_whole_folder(posixpath.basename(path)):
-        path = posixpath.dirname(path) or "/"
+        path = posixpath.dirname(path) or ("/" if path.startswith("/") else ".")
     return path
 
 
@@ -94,22 +99,38 @@ class Places:
     home: RunHome | None
     os_home: Path
     data_dir: Path
+    worktrees_dir: Path
     vm_cwd: str | None
     host_cwd: str | None
     #: Whether the command runs on the host only, so the VM's reading never applies.
     host_only: bool = False
 
     @classmethod
-    def at(cls, home: RunHome | None, os_home: Path, data_dir: Path, cwd: str | None) -> Places:
+    def at(
+        cls,
+        home: RunHome | None,
+        os_home: Path,
+        settings: Settings,
+        cwd: str | None,
+        *,
+        cwd_known: bool = True,
+    ) -> Places:
+        """The places a shell command runs in. ``cwd_known`` false means an earlier call
+        in the same batch may have moved the shell, so relative paths are not placed."""
+        if not cwd_known:
+            return cls(home, os_home, settings.data_dir, settings.worktrees_dir, None, None)
         vm_cwd = cwd or (home.default.path if home is not None else None)
         located = home.locate(vm_cwd) if home is not None and vm_cwd is not None else None
         host_cwd = str(located[0].root / located[1]) if located is not None else None
-        return cls(home, os_home, data_dir, vm_cwd, host_cwd)
+        return cls(home, os_home, settings.data_dir, settings.worktrees_dir, vm_cwd, host_cwd)
 
     @classmethod
-    def for_host_command(cls, home: RunHome | None, os_home: Path, data_dir: Path) -> Places:
+    def for_host_command(cls, home: RunHome | None, os_home: Path, settings: Settings) -> Places:
         """A command that starts in the host's scratch directory and never sees the VM."""
-        return cls(home, os_home, data_dir, None, str(host_scratch_dir()), host_only=True)
+        scratch = str(host_scratch_dir())
+        return cls(
+            home, os_home, settings.data_dir, settings.worktrees_dir, None, scratch, host_only=True
+        )
 
     def after_cd(self, target: str | None) -> Places:
         """The places once the shell has changed directory to ``target`` (home if None)."""
@@ -139,6 +160,7 @@ class Places:
         named = [
             (self.os_home, _YOUR_HOME),
             (self.data_dir, "the application's data folder"),
+            (self.worktrees_dir, "the folder holding every thread's worktrees"),
         ]
         if self.home is not None:
             named.extend(
@@ -155,6 +177,8 @@ class Places:
         host's reading first."""
         if text == WORKTREE:
             return "every untracked and ignored file in the working tree"
+        if text == GIT_FOLDERS:
+            return "every .git folder it finds"
         readings = self._readings(text, host_first=host)
         if not readings:
             if text.startswith("~"):
@@ -207,9 +231,9 @@ class Places:
                 git = mount.root / ".git"
                 for candidate in {Path(stem), Path(stem).resolve()}:
                     for repository in {git, git.resolve()}:
-                        if (
-                            is_under(candidate, repository)
-                            and len(fold(candidate)) <= len(fold(repository)) + 1
+                        if is_under(candidate, repository) and (
+                            len(fold(candidate)) <= len(fold(repository)) + 1
+                            or fold(candidate)[len(fold(repository))] in _GIT_HISTORY
                         ):
                             return "a repository's .git folder"
         return None

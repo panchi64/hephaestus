@@ -165,12 +165,13 @@ def _narrated(tool_def: ToolDefinition) -> ToolDefinition:
 
 
 def _alone(_ctx: RunContext[RunDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-    """Run each tool that runs a command alone, never overlapping another call in the batch.
+    """Run each tool that runs a command alone: calls before it in the batch finish first,
+    it runs by itself, and calls after it start once it is done.
 
     The guard judges a relative path against the directory the shell stands in, and a
-    command that changes it (`cd`) would otherwise race the call next to it. Inside
-    `run_code` such a tool is called without `await`, which is how the library presents a
-    sequential tool.
+    command that changes it (`cd`) would otherwise race the call next to it. This orders
+    calls in a batch only. These tools are never folded into `run_code`, because they
+    carry `code_arg_name`.
     """
     return [
         replace(tool_def, sequential=True) if tool_def.name in COMMAND_TOOLS else tool_def

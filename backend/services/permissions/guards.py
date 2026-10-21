@@ -36,15 +36,18 @@ from pathlib import Path
 
 from core.config import Settings
 from services.home.table import RunHome
-from services.permissions.guard_paths import Places
-from services.permissions.shell_acts import (
-    GLOB_CHARS,
+from services.permissions.git_config import (
     ConfigWrite,
-    Transfer,
     config_write,
     executes_code,
     git_overrides,
     is_executing_key,
+)
+from services.permissions.guard_paths import Places
+from services.permissions.shell_acts import (
+    GLOB_CHARS,
+    Transfer,
+    installs_crontab,
     name_of,
     removal_targets,
     transfer,
@@ -91,13 +94,41 @@ def guard(
     home: RunHome | None,
     settings: Settings,
     cwd: str | None = None,
+    cwd_known: bool = True,
 ) -> str | None:
     """Why this call must go to the operator whatever the level says, or None.
 
     ``cwd`` is the shell's working directory as a home path; it defaults to the home's
-    default place. ``code_run_host_command`` starts in the host's scratch directory
-    whatever ``cwd`` is.
+    default place, and ``cwd_known`` false says an earlier call in the batch may have moved
+    it. ``code_run_host_command`` starts in the host's scratch directory whatever ``cwd``
+    is. A command too deeply nested to read asks.
     """
+    try:
+        return _guard(tool, args, home=home, settings=settings, cwd=cwd, cwd_known=cwd_known)
+    except RecursionError, UnicodeError:
+        return f"This command is too complex to check. {_GRANT_FREE}"
+
+
+def changes_directory(tool: str, args: Mapping[str, object]) -> bool:
+    """Whether a shell call moves the shell, so the calls after it start somewhere else."""
+    command = args.get("command")
+    if tool not in SHELL_TOOLS or not isinstance(command, str):
+        return False
+    try:
+        return scan(command).changed_directory
+    except RecursionError, UnicodeError:
+        return True
+
+
+def _guard(
+    tool: str,
+    args: Mapping[str, object],
+    *,
+    home: RunHome | None,
+    settings: Settings,
+    cwd: str | None,
+    cwd_known: bool,
+) -> str | None:
     os_home = Path.home()
     if tool in FILE_WRITE_TOOLS:
         reason = _file_write(
@@ -110,9 +141,9 @@ def guard(
     command = args.get("command")
     if isinstance(command, str):
         if tool == HOST_COMMAND_TOOL:
-            places = Places.for_host_command(home, os_home, settings.data_dir)
+            places = Places.for_host_command(home, os_home, settings)
         else:
-            places = Places.at(home, os_home, settings.data_dir, cwd)
+            places = Places.at(home, os_home, settings, cwd, cwd_known=cwd_known)
         reason = _command_reason(command, places, host=host)
         if reason is not None:
             return f"{reason} {_GRANT_FREE}"
@@ -185,6 +216,8 @@ def _act_reason(one: ShellCommand, places: Places, host: bool) -> str | None:
         return _opaque_program_reason(one, places, host)
     if name == "osascript" and host:
         return "This command runs osascript, which can do anything on your computer."
+    if host and installs_crontab(one):
+        return "This command replaces your crontab, which runs commands on a schedule."
     for target in removal_targets(one):
         if OPAQUE in target:
             if not _known_tail(target):
@@ -289,7 +322,7 @@ def _file_write(
 ) -> str | None:
     if home is None or not isinstance(raw, str):
         return None
-    places = Places.at(home, os_home, settings.data_dir, None)
+    places = Places.at(home, os_home, settings, None)
     spellings = [raw]
     if not raw.strip().startswith(("~", "/")):
         spellings.append(f"~/{raw}")

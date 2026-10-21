@@ -11,7 +11,7 @@ in the line, and returns each command with its quoting and backslashes removed.
 as the ``cd`` words that may have preceded it. A ``cd`` binds the commands joined after it
 by ``&&``; after ``;``, ``||``, a newline or ``&`` the directory may be either, because the
 ``cd`` may have failed. A ``cd`` in a subshell, a substitution or a pipeline stage does not
-leave it.
+leave it. After a function is called, or ``popd``, it is not known.
 
 What it cannot read is recorded as ``unreadable`` rather than skipped, so the caller can
 fail closed. A word built at run time is :data:`OPAQUE` in the text.
@@ -19,20 +19,26 @@ fail closed. A word built at run time is :data:`OPAQUE` in the text.
 
 from __future__ import annotations
 
-import posixpath
 import re
 from dataclasses import dataclass, field
 
 from tree_sitter import Node
 
-from services.permissions.shell_acts import find_feed
+from services.permissions.shell_acts import name_of
 from services.permissions.shell_ast import (
     OPAQUE,
     ShellCommand,
     decode_word,
+    node_text,
     operands,
     parse,
     unwrap,
+)
+from services.permissions.shell_feeds import (
+    INPUT_WRAPPERS,
+    braces,
+    feed_words,
+    wrapped_by_input,
 )
 
 SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "fish"})
@@ -42,7 +48,6 @@ type Cwds = frozenset[tuple[str, ...]]
 
 _MAX_NESTING = 4
 _MAX_STATES = 16
-_MAX_BRACE_RESULTS = 64
 _WRITE_OPERATORS = frozenset({">", ">>", "&>", "&>>", ">|"})
 _SCOPED = frozenset(
     {"subshell", "command_substitution", "process_substitution", "function_definition"}
@@ -57,15 +62,12 @@ _BRANCHING = frozenset(
         "case_statement",
     }
 )
-_XARGS_VALUE_FLAGS = frozenset(
-    {"-I", "-J", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs"}
-)
-_PARALLEL_VALUE_FLAGS = frozenset({"-j", "-n", "-N", "-L", "-S", "-a", "--jobs"})
 _ALL_DIGITS = frozenset("0123456789-")
 _READ_VALUE_FLAGS = frozenset({"-a", "-d", "-i", "-n", "-N", "-p", "-t", "-u", "-O", "-C", "-c"})
 #: A backslash-newline the shell removes before it reads a word, unless the backslash is
 #: itself escaped. The grammar reads it as a space, which would split `r\<newline>m`.
 _LINE_JOIN = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
+_UNKNOWN: Cwds = frozenset({(OPAQUE,)})
 
 
 @dataclass(frozen=True)
@@ -81,64 +83,17 @@ class Scan:
     writes: list[tuple[str, Cwds]] = field(default_factory=list)
     #: The text of each part that could not be read.
     unreadable: list[str] = field(default_factory=list)
-    #: The text of each pipeline or here-string that feeds a shell a script not seen here.
+    #: The text of each pipeline, redirect or substitution that gives a shell a script
+    #: not seen here.
     piped_shells: list[str] = field(default_factory=list)
+    #: Whether the line changes the shell's directory, which later calls then start in.
+    changed_directory: bool = False
 
 
 def scan(command: str) -> Scan:
     result = Scan()
     _Scanner(result).run(command, 0)
     return result
-
-
-def _text(node: Node) -> str:
-    return node.text.decode(errors="replace") if node.text else ""
-
-
-def braces(text: str) -> list[str]:
-    """``text`` with ``{a,b}`` brace expansion applied, recursively and bounded."""
-    start = text.find("{")
-    while start != -1:
-        depth = 0
-        end = -1
-        for index in range(start, len(text)):
-            if text[index] == "{":
-                depth += 1
-            elif text[index] == "}":
-                depth -= 1
-                if depth == 0:
-                    end = index
-                    break
-        if end == -1:
-            return [text]
-        parts = _split_top(text[start + 1 : end])
-        if len(parts) > 1:
-            out: list[str] = []
-            for part in parts:
-                out.extend(braces(text[:start] + part + text[end + 1 :]))
-                if len(out) >= _MAX_BRACE_RESULTS:
-                    break
-            return out[:_MAX_BRACE_RESULTS]
-        start = text.find("{", start + 1)
-    return [text]
-
-
-def _split_top(body: str) -> list[str]:
-    parts: list[str] = []
-    depth = 0
-    current = ""
-    for char in body:
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-        if char == "," and depth == 0:
-            parts.append(current)
-            current = ""
-        else:
-            current += char
-    parts.append(current)
-    return parts
 
 
 def script_of(arguments: tuple[str, ...]) -> str | None:
@@ -166,21 +121,6 @@ def _bound_by(name: str, arguments: tuple[str, ...]) -> list[str]:
     return []
 
 
-def _command_words(arguments: tuple[str, ...], valued: frozenset[str]) -> tuple[str, ...]:
-    """The arguments from the first operand on, past the options (``xargs -n1 rm -rf``)."""
-    skip = False
-    for index, word in enumerate(arguments):
-        if skip:
-            skip = False
-        elif word in valued:
-            skip = True
-        elif word == "--":
-            return arguments[index + 1 :]
-        elif not word.startswith("-"):
-            return arguments[index:]
-    return ()
-
-
 class _Scanner:
     def __init__(self, into: Scan) -> None:
         self._out: Scan = into
@@ -190,6 +130,7 @@ class _Scanner:
         self._cond: int = 0
         #: Every variable assigned or bound so far, in order.
         self._assigned: list[str] = []
+        self._functions: set[str] = set()
         self._feeds: dict[int, list[str] | None] = {}
 
     def run(self, text: str, depth: int) -> None:
@@ -208,7 +149,7 @@ class _Scanner:
         self._states, self._vars = saved[0], saved[1]
 
     def _cap(self, states: Cwds) -> Cwds:
-        return states if len(states) <= _MAX_STATES else frozenset({(OPAQUE,)})
+        return states if len(states) <= _MAX_STATES else _UNKNOWN
 
     def _word(self, node: Node) -> str:
         return decode_word(node, self._vars)
@@ -216,30 +157,17 @@ class _Scanner:
     def _visit(self, node: Node, depth: int) -> None:
         kind = node.type
         if kind in _SCOPED:
-            saved = (self._states, dict(self._vars))
-            mark = len(self._assigned)
-            self._cond += 1
-            self._children(node, depth)
-            self._cond -= 1
-            self._states, self._vars = saved
-            # A function body runs later, in this shell; a subshell's variables should not
-            # leave it. Either way what was assigned inside is not known after.
-            for name in self._assigned[mark:]:
-                self._vars[name] = OPAQUE
+            self._scoped(node, depth)
         elif kind == "for_statement":
             variable = node.child_by_field_name("variable")
             if variable is not None:
-                self._bind(_text(variable))
+                self._bind(node_text(variable))
             self._conditionally(node, depth)
-        elif kind == "declaration_command":
+        elif kind == "declaration_command" or kind == "unset_command":
             for child in node.children:
                 if child.type == "variable_name":
-                    self._bind(_text(child))
+                    self._bind(node_text(child))
             self._children(node, depth)
-        elif kind == "unset_command":
-            for child in node.children:
-                if child.type == "variable_name":
-                    self._bind(_text(child))
         elif kind == "command":
             self._command(node, depth)
             self._children(node, depth)
@@ -256,12 +184,29 @@ class _Scanner:
             self._assignment(node)
             self._children(node, depth)
         elif kind == "ERROR":
-            self._out.unreadable.append(_text(node))
+            self._out.unreadable.append(node_text(node))
             self._children(node, depth)
         elif kind in _BRANCHING:
             self._conditionally(node, depth)
         else:
             self._children(node, depth)
+
+    def _scoped(self, node: Node, depth: int) -> None:
+        """A construct whose directory and variables stay inside it. A function body runs
+        later, in this shell, so what it assigns is unknown after it; a subshell's
+        variables should not leave it, and are treated the same way."""
+        saved = (self._states, dict(self._vars))
+        mark = len(self._assigned)
+        if node.type == "function_definition":
+            name = node.child_by_field_name("name")
+            if name is not None:
+                self._functions.add(node_text(name))
+        self._cond += 1
+        self._children(node, depth)
+        self._cond -= 1
+        self._states, self._vars = saved
+        for name in self._assigned[mark:]:
+            self._vars[name] = OPAQUE
 
     def _conditionally(self, node: Node, depth: int) -> None:
         """Visit a construct whose body may or may not run, or may run more than once."""
@@ -300,7 +245,7 @@ class _Scanner:
         value = node.child_by_field_name("value")
         if name is None:
             return
-        key = _text(name)
+        key = node_text(name)
         text = self._word(value) if value is not None else ""
         if self._cond > 0 or OPAQUE in text:
             self._bind(key)
@@ -343,7 +288,7 @@ class _Scanner:
         feed = self._feeds.get(node.id)
         if feed is None and stdin is not None and OPAQUE not in stdin:
             feed = stdin.split()
-        self._handle(one, _text(node), depth, stdin=stdin, feed=feed)
+        self._handle(one, node_text(node), depth, stdin=stdin, feed=feed)
 
     def _handle(
         self,
@@ -358,68 +303,69 @@ class _Scanner:
             self._emit(one)
             self._out.unreadable.append(source)
             return
-        name = posixpath.basename(one.program)
+        name = name_of(one)
         args = one.arguments
         script: str | None = None
         if name in SHELLS:
             script = script_of(args)
             if script is None and stdin is not None:
                 script = stdin
-                if OPAQUE in stdin:
-                    self._out.piped_shells.append(source)
+            if script is None and any(OPAQUE in a for a in args):
+                self._unseen(source)
         elif name == "eval":
             script = " ".join(args)
+        elif name in ("source", "."):
+            if any(OPAQUE in a for a in args):
+                self._unseen(source)
         elif name == "su":
             script = script_of(args)
         elif name == "trap":
             found = operands(args)
             script = found[0] if found else None
         if script is not None:
-            if OPAQUE in script:
-                self._out.unreadable.append(source)
-            else:
-                self._nested(script, depth)
+            self._run_script(script, name, source, depth)
             return
         for bound in _bound_by(name, args):
             self._bind(bound)
-        if name in ("cd", "pushd"):
-            found = operands(args)
-            target = OPAQUE if found[:1] == ["-"] else (found[0] if found else "~")
-            self._states = self._cap(frozenset(state + (target,) for state in self._states))
+        if name in ("cd", "pushd", "popd"):
+            self._change_directory(name, args)
             return
-        if name in ("xargs", "parallel"):
-            self._wrapped_by_input(one, source, depth, feed)
+        if name in INPUT_WRAPPERS:
+            inner = wrapped_by_input(one, feed)
+            if inner is not None:
+                self._handle(inner, source, depth)
             return
         if name == "find":
             self._find_execs(args, source, depth)
         self._emit(one)
+        if name in self._functions:
+            self._out.changed_directory = True
+            self._states = _UNKNOWN
+
+    def _unseen(self, source: str) -> None:
+        self._out.unreadable.append(source)
+        self._out.piped_shells.append(source)
+
+    def _run_script(self, script: str, name: str, source: str, depth: int) -> None:
+        if OPAQUE in script:
+            self._unseen(source)
+        elif name == "eval":
+            # The script runs in this shell, so what it changes stays changed.
+            self.run(script, depth + 1)
+        else:
+            self._nested(script, depth)
+
+    def _change_directory(self, name: str, args: tuple[str, ...]) -> None:
+        self._out.changed_directory = True
+        if name == "popd":
+            self._states = _UNKNOWN
+            return
+        found = operands(args)
+        target = OPAQUE if found[:1] == ["-"] else (found[0] if found else "~")
+        self._states = self._cap(frozenset(state + (target,) for state in self._states))
 
     def _emit(self, one: ShellCommand) -> None:
         self._out.steps.append(Step(one, self._states))
-
-    def _wrapped_by_input(
-        self, one: ShellCommand, source: str, depth: int, feed: list[str] | None
-    ) -> None:
-        """``xargs`` and ``parallel`` run their command on words read at run time, so the
-        targets are the words of the producer when it can be read and unknown otherwise."""
-        parallel = posixpath.basename(one.program) == "parallel"
-        valued = _PARALLEL_VALUE_FLAGS if parallel else _XARGS_VALUE_FLAGS
-        words = _command_words(one.arguments, valued)
-        extra: list[str] = []
-        if parallel:
-            for marker in (":::", "::::"):
-                if marker in words:
-                    split = words.index(marker)
-                    extra, words = list(words[split + 1 :]), words[:split]
-                    break
-            else:
-                extra = [OPAQUE] if feed is None else list(feed)
-        else:
-            extra = [OPAQUE] if feed is None else list(feed)
-        if not words:
-            return
-        inner = unwrap(ShellCommand(words[0], (*words[1:], *extra)))
-        self._handle(inner, source, depth)
 
     def _find_execs(self, args: tuple[str, ...], source: str, depth: int) -> None:
         index = 0
@@ -438,38 +384,21 @@ class _Scanner:
         if node is None:
             return False
         one, _ = self._parts(node)
-        if one is None or posixpath.basename(one.program) not in SHELLS:
+        if one is None or name_of(one) not in SHELLS:
             return False
         has_operand = any(not a.startswith("-") for a in one.arguments)
         return script_of(one.arguments) is None and not has_operand
-
-    def _feed_of(self, node: Node | None) -> list[str] | None:
-        """The words a pipeline stage writes, when they can be read: ``echo``, ``printf``
-        and ``find``."""
-        if node is None:
-            return None
-        one, _ = self._parts(node)
-        if one is None:
-            return None
-        name = posixpath.basename(one.program)
-        words = operands(one.arguments)
-        if name == "echo":
-            return words
-        if name == "printf":
-            return words[1:]
-        if name == "find":
-            return find_feed(one.arguments)
-        return None
 
     def _pipeline(self, node: Node, depth: int) -> None:
         stages = [c for c in node.children if c.type in ("command", "redirected_statement")]
         for earlier, stage in zip(stages, stages[1:], strict=False):
             body = _body_of(stage)
             if self._reads_stdin_as_script(body):
-                self._out.unreadable.append(_text(node))
-                self._out.piped_shells.append(_text(node))
+                self._unseen(node_text(node))
             elif body is not None:
-                self._feeds[body.id] = self._feed_of(_body_of(earlier))
+                before = _body_of(earlier)
+                producer = self._parts(before)[0] if before is not None else None
+                self._feeds[body.id] = None if producer is None else feed_words(producer)
         for child in node.children:
             saved = (self._states, dict(self._vars))
             mark = len(self._assigned)
@@ -487,7 +416,9 @@ class _Scanner:
             if child.type == "heredoc_redirect":
                 for part in child.children:
                     if part.type == "heredoc_body":
-                        self._nested(_text(part), depth)
+                        self._nested(node_text(part), depth)
+            elif child.type == "file_redirect" and any(c.type == "<" for c in child.children):
+                self._unseen(node_text(node))
 
 
 def _body_of(node: Node) -> Node | None:

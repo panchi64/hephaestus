@@ -242,6 +242,42 @@ def operands(arguments: Sequence[str], value_flags: frozenset[str] | None = None
     return found
 
 
+def option_values(
+    arguments: tuple[str, ...], short: str | None, long: tuple[str, ...]
+) -> list[str]:
+    """The values given to one option, in every spelling: ``-o F``, ``-oF``, ``-so F``,
+    ``--output F`` and ``--output=F``."""
+    values: list[str] = []
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
+            break
+        matched = False
+        for flag in long:
+            if word == flag and index + 1 < len(arguments):
+                values.append(arguments[index + 1])
+                index += 1
+                matched = True
+                break
+            if word.startswith(flag + "="):
+                values.append(word[len(flag) + 1 :])
+                matched = True
+                break
+        if not matched and short and word.startswith("-") and not word.startswith("--"):
+            body = word[1:]
+            position = body.find(short)
+            if position != -1:
+                attached = body[position + 1 :]
+                if attached:
+                    values.append(attached)
+                elif index + 1 < len(arguments):
+                    values.append(arguments[index + 1])
+                    index += 1
+        index += 1
+    return values
+
+
 def unwrap(one: ShellCommand) -> ShellCommand:
     """The command a wrapper such as ``sudo`` or ``env`` runs, however deeply wrapped.
 
@@ -431,7 +467,7 @@ _VARIABLE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*
 _HOME_ONLY = frozenset({"${HOME:?}", "${HOME%/}"})
 
 
-def _text(node: Node) -> str:
+def node_text(node: Node) -> str:
     return node.text.decode(errors="replace") if node.text else ""
 
 
@@ -442,13 +478,13 @@ def decode_word(node: Node, variables: Mapping[str, str] | None = None) -> str:
     has one."""
     kind = node.type
     if kind in ("word", "number"):
-        return _ESCAPE.sub(r"\1", _text(node).replace("\\\n", ""))
+        return _ESCAPE.sub(r"\1", node_text(node).replace("\\\n", ""))
     if kind == "raw_string":
-        return _text(node)[1:-1]
+        return node_text(node)[1:-1]
     if kind == "ansi_c_string":
-        return _text(node)[2:-1]
+        return node_text(node)[2:-1]
     if kind in ("simple_expansion", "expansion"):
-        text = _text(node)
+        text = node_text(node)
         if text in _HOME_ONLY:
             return "~"
         found = _VARIABLE.fullmatch(text)
@@ -459,7 +495,7 @@ def decode_word(node: Node, variables: Mapping[str, str] | None = None) -> str:
     if kind in ("string", "concatenation"):
         return "".join(decode_word(c, variables) for c in node.children if c.type != '"')
     if kind == "string_content":
-        return _text(node).replace("\\\n", "")
+        return node_text(node).replace("\\\n", "")
     return OPAQUE
 
 
@@ -477,7 +513,7 @@ def _literal(node: Node) -> str | None:
         if any(part is None for part in parts):
             return None
         return "".join(part for part in parts if part is not None)
-    text = _text(node)
+    text = node_text(node)
     if node.type in _LITERAL:
         # Single quotes suppress every expansion there is, so the text between them is
         # the value however it is spelled.

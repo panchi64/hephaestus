@@ -98,6 +98,10 @@ async def _settle(
     )
 
 
+def _in_sub(_deps: RunDeps) -> str:
+    return "/home/agent/projects/api/sub"
+
+
 class TestTheDeferredPath:
     @pytest.mark.parametrize("level", ["manual", "edit", "auto", "yolo"])
     async def test_a_guarded_call_goes_to_the_operator_at_every_level(
@@ -193,6 +197,36 @@ class TestTheDeferredPath:
         assert reviewed == []
         assert manual == []
         assert isinstance(settled["w"], ToolDenied)
+
+    @pytest.mark.parametrize("level", ["yolo", "auto", "edit"])
+    async def test_a_cd_in_one_call_moves_where_the_next_one_starts(
+        self, level: PermissionLevel, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(gating, "shell_cwd", _in_sub)
+        alone, asked = await _settle("yolo", [_call("rm -rf *", "b")])
+        assert asked == [] and isinstance(alone["b"], ToolApproved)
+
+        _, manual = await _settle(level, [_call("cd ..", "a"), _call("rm -rf *", "b")])
+        assert "b" in [c.tool_call_id for c in manual]
+        _, manual = await _settle(level, [_call("(cd ..)", "a"), _call("rm -rf *", "b")])
+        assert "b" in [c.tool_call_id for c in manual]
+
+    async def test_a_batch_without_a_cd_keeps_its_directory(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(gating, "shell_cwd", _in_sub)
+        settled, manual = await _settle("yolo", [_call("ls", "a"), _call("rm -rf *", "b")])
+        assert manual == []
+        assert set(settled) == {"a", "b"}
+
+    async def test_a_guard_that_raises_asks_instead_of_failing_the_turn(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        def broken(*_args: object, **_kwargs: object) -> str | None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(gating, "guard", broken)
+        settled, manual = await _settle("yolo", [_call("ls")])
+        assert [c.tool_call_id for c in manual] == ["c1"]
+        assert settled == {}
 
     async def test_a_level_that_refuses_outright_still_refuses(self):
         settled, manual = await _settle("plan", [_call(DANGEROUS)])

@@ -3,21 +3,23 @@
 Takes the commands :mod:`shell_scan` found and names the paths each deletes, writes,
 copies or moves. It knows a short list of programs; one it does not know contributes
 nothing, so this reads the common shapes of a destructive command and is not a complete
-account of one.
+account of one. Git configuration is :mod:`git_config`.
 """
 
 from __future__ import annotations
 
-import fnmatch
 import posixpath
 import re
 from dataclasses import dataclass
 from typing import Literal
 
-from services.permissions.shell_ast import ShellCommand, operands
+from services.permissions.git_config import git_subcommand
+from services.permissions.shell_ast import OPAQUE, ShellCommand, operands, option_values
 
 #: A stand-in for "every untracked and ignored file in the working tree".
 WORKTREE = "<working tree>"
+#: A stand-in for every repository's `.git` folder, which a `find` can delete by name.
+GIT_FOLDERS = "<.git folders>"
 
 GLOB_CHARS = frozenset("*?[")
 
@@ -106,11 +108,10 @@ _RSYNC_VALUE_FLAGS = frozenset(
         "-T",
     }
 )
-_GIT_VALUE_FLAGS = frozenset(
-    {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env"}
-)
 _TOP_PATHSPECS = frozenset({".", "./", ":/", ":(top)", ":(top)."})
-_FIND_FILTERS = frozenset(
+#: What narrows a ``find`` to some of what is under its roots, so that deleting the matches
+#: does not delete the roots. `-type` is not one: `find ~ -type f -delete` empties ~.
+_FIND_NARROWING = frozenset(
     {
         "-name",
         "-iname",
@@ -118,7 +119,6 @@ _FIND_FILTERS = frozenset(
         "-ipath",
         "-regex",
         "-iregex",
-        "-type",
         "-newer",
         "-mtime",
         "-atime",
@@ -137,28 +137,7 @@ _FIND_FILTERS = frozenset(
         "-lname",
     }
 )
-_CONFIG_READS = frozenset(
-    {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "--show-origin"}
-)
-_CONFIG_UNSETS = frozenset({"--unset", "--unset-all", "--remove-section"})
-_CONFIG_WRITES = _CONFIG_UNSETS | {"--add", "--replace-all", "--edit", "-e", "--rename-section"}
-#: Configuration keys whose value git runs as a command or loads as more configuration.
-_EXECUTING_KEYS = (
-    "core.hookspath",
-    "core.fsmonitor",
-    "core.pager",
-    "core.editor",
-    "core.sshcommand",
-    "core.askpass",
-    "include.path",
-    "includeif.*",
-    "filter.*",
-    "diff.*.textconv",
-    "diff.*.command",
-    "credential.helper",
-    "credential.*.helper",
-    "sequence.editor",
-)
+_FIND_NAMES = frozenset({"-name", "-iname", "-path", "-ipath"})
 
 type Kind = Literal["write", "dir", "remove"]
 
@@ -171,7 +150,7 @@ class Target:
 
 @dataclass(frozen=True)
 class Transfer:
-    """A copy, move, link or sync of ``sources`` to ``dest``."""
+    """A copy, move, link, sync or extraction of ``sources`` to ``dest``."""
 
     dest: str
     sources: tuple[str, ...]
@@ -181,37 +160,10 @@ class Transfer:
     moves: bool
     #: Whether files in ``dest`` that are not in the sources are deleted (``rsync --delete``).
     prunes: bool
-    #: Whether a source written ``dir/`` or ``dir/.`` copies the contents of the directory.
-    trailing_slash_copies_contents: bool
 
 
 def name_of(one: ShellCommand) -> str:
     return posixpath.basename(one.program)
-
-
-def git_subcommand(arguments: tuple[str, ...]) -> tuple[str | None, list[str]]:
-    """The subcommand of a ``git`` call and the words after it, past the global options."""
-    index = 0
-    while index < len(arguments):
-        word = arguments[index]
-        if word in _GIT_VALUE_FLAGS:
-            index += 2
-        elif word.startswith("-"):
-            index += 1
-        else:
-            return word, list(arguments[index + 1 :])
-    return None, []
-
-
-def git_overrides(arguments: tuple[str, ...]) -> list[str]:
-    """The ``key=value`` pairs given to git with ``-c`` for this one call."""
-    found: list[str] = []
-    for index, word in enumerate(arguments[:-1]):
-        if word == "-c":
-            found.append(arguments[index + 1])
-        elif not word.startswith("-"):
-            break
-    return found
 
 
 def removal_targets(one: ShellCommand) -> list[str]:
@@ -232,7 +184,8 @@ def removal_targets(one: ShellCommand) -> list[str]:
 
 
 def _find_targets(args: tuple[str, ...]) -> list[str]:
-    """The roots a ``find`` deletes, when nothing narrows what it deletes to part of them."""
+    """What a ``find`` deletes: its roots when nothing narrows it, each root's ``.git`` when
+    it is asked for by name, and nothing when it narrows to some other names."""
     deleting = None
     for index, word in enumerate(args):
         if word == "-delete" or (
@@ -242,7 +195,13 @@ def _find_targets(args: tuple[str, ...]) -> list[str]:
         ):
             deleting = index
             break
-    if deleting is None or any(word in _FIND_FILTERS for word in args[:deleting]):
+    if deleting is None:
+        return []
+    before = args[:deleting]
+    for word, value in zip(before, before[1:], strict=False):
+        if word in _FIND_NAMES and (value == ".git" or value.endswith("/.git")):
+            return [GIT_FOLDERS]
+    if any(word in _FIND_NARROWING for word in before):
         return []
     return _find_roots(args)
 
@@ -261,14 +220,14 @@ def _find_roots(args: tuple[str, ...]) -> list[str]:
 def find_feed(args: tuple[str, ...]) -> list[str]:
     """The paths a ``find`` prints that this can name: its roots when nothing narrows what
     it matches, and none when a filter makes it print names inside them."""
-    if any(word in _FIND_FILTERS for word in args):
+    if any(word in _FIND_NARROWING or word == "-type" for word in args):
         return []
     return _find_roots(args)
 
 
 def _clean_targets(rest: list[str]) -> list[str]:
     flags = {
-        letter
+        letter.lower() if letter == "X" else letter
         for word in rest
         if word.startswith("-") and not word.startswith("--")
         for letter in word[1:]
@@ -285,42 +244,6 @@ def _clean_targets(rest: list[str]) -> list[str]:
     return specs
 
 
-def option_values(
-    arguments: tuple[str, ...], short: str | None, long: tuple[str, ...]
-) -> list[str]:
-    """The values given to one option, in every spelling: ``-o F``, ``-oF``, ``-so F``,
-    ``--output F`` and ``--output=F``."""
-    values: list[str] = []
-    index = 0
-    while index < len(arguments):
-        word = arguments[index]
-        if word == "--":
-            break
-        matched = False
-        for flag in long:
-            if word == flag and index + 1 < len(arguments):
-                values.append(arguments[index + 1])
-                index += 1
-                matched = True
-                break
-            if word.startswith(flag + "="):
-                values.append(word[len(flag) + 1 :])
-                matched = True
-                break
-        if not matched and short and word.startswith("-") and not word.startswith("--"):
-            body = word[1:]
-            position = body.find(short)
-            if position != -1:
-                attached = body[position + 1 :]
-                if attached:
-                    values.append(attached)
-                elif index + 1 < len(arguments):
-                    values.append(arguments[index + 1])
-                    index += 1
-        index += 1
-    return values
-
-
 def _edits_in_place(name: str, args: tuple[str, ...]) -> bool:
     if name not in ("sed", "gsed", "perl"):
         return False
@@ -331,36 +254,53 @@ def _edits_in_place(name: str, args: tuple[str, ...]) -> bool:
     )
 
 
+def _extraction(name: str, args: tuple[str, ...]) -> Transfer | None:
+    """``tar -x -C DIR`` and ``unzip -d DIR``: names read from an archive land in DIR."""
+    if name == "tar":
+        extracting = any(
+            word in ("--extract", "--get")
+            or (word.startswith("-") and not word.startswith("--") and "x" in word[1:])
+            for word in args
+        ) or (bool(args) and not args[0].startswith("-") and "x" in args[0])
+        folders = option_values(args, "C", ("--directory",)) if extracting else []
+    elif name == "unzip":
+        folders = option_values(args, "d", ())
+    else:
+        return None
+    if not folders:
+        return None
+    return Transfer(folders[-1], (OPAQUE,), into_directory=True, moves=False, prunes=False)
+
+
 def transfer(one: ShellCommand) -> Transfer | None:
-    """The copy, move, link or sync a command makes, or None for any other command."""
+    """The copy, move, link, sync or extraction a command makes, or None for any other."""
     name = name_of(one)
+    args = one.arguments
+    if name in ("tar", "unzip"):
+        return _extraction(name, args)
     if name not in _COPIERS:
         return None
-    args = one.arguments
     rsync = name == "rsync"
     directory = [] if rsync else option_values(args, "t", ("--target-directory",))
-    flags = _RSYNC_VALUE_FLAGS if rsync else _COPY_VALUE_FLAGS
-    found = operands(args, flags)
-    recursive = rsync or any(
-        word in ("-r", "-R", "--recursive") or (word.startswith("-a") and not word.startswith("--"))
-        for word in args
-    )
+    found = operands(args, _RSYNC_VALUE_FLAGS if rsync else _COPY_VALUE_FLAGS)
     if directory:
         dest, sources = directory[0], tuple(found)
     elif len(found) >= 2:
         dest, sources = found[-1], tuple(found[:-1])
     else:
         return None
-    pruned = rsync and any(word.startswith(("--delete", "--del")) for word in args)
-    moved = name == "mv" or (rsync and "--remove-source-files" in args)
     return Transfer(
         dest=dest,
         sources=sources,
         into_directory=bool(directory) or len(sources) > 1 or dest.endswith("/"),
-        moves=moved,
-        prunes=pruned,
-        trailing_slash_copies_contents=recursive,
+        moves=name == "mv" or (rsync and "--remove-source-files" in args),
+        prunes=rsync and any(word.startswith(("--delete", "--del")) for word in args),
     )
+
+
+def installs_crontab(one: ShellCommand) -> bool:
+    """Whether the command replaces the crontab from a file or from its input."""
+    return name_of(one) == "crontab" and bool(operands(one.arguments, frozenset({"-u"})))
 
 
 def write_targets(one: ShellCommand) -> list[Target]:
@@ -385,56 +325,3 @@ def write_targets(one: ShellCommand) -> list[Target]:
         folders = option_values(args, "P", ("--directory-prefix",))
         return [*(Target(p, "write") for p in files), *(Target(p, "dir") for p in folders)]
     return []
-
-
-def is_executing_key(key: str | None) -> bool:
-    """Whether git runs the value of configuration ``key`` as a command (an alias only
-    when its value starts with ``!``, see :func:`executes_code`)."""
-    if key is None:
-        return False
-    return key.startswith("alias.") or any(
-        fnmatch.fnmatchcase(key, pattern) for pattern in _EXECUTING_KEYS
-    )
-
-
-def executes_code(key: str | None, value: str | None) -> bool:
-    """Whether setting git configuration ``key`` to ``value`` makes git run a command."""
-    if key is None:
-        return False
-    if key.startswith("alias."):
-        return value is not None and value.lstrip().startswith("!")
-    return is_executing_key(key)
-
-
-@dataclass(frozen=True)
-class ConfigWrite:
-    """A ``git config`` that changes configuration."""
-
-    key: str | None
-    value: str | None
-    scope: Literal["global", "system", "file", "local"]
-    removes: bool
-    file: str | None = None
-
-
-def config_write(one: ShellCommand) -> ConfigWrite | None:
-    """The configuration change a ``git config`` call makes, or None for a read."""
-    if name_of(one) != "git":
-        return None
-    sub, rest = git_subcommand(one.arguments)
-    if sub != "config" or any(word in _CONFIG_READS for word in rest):
-        return None
-    found = operands(rest, frozenset({"--file", "-f", "--blob", "--default", "--type"}))
-    if len(found) < 2 and not any(word in _CONFIG_WRITES for word in rest):
-        return None
-    key = found[0].lower() if found else None
-    value = found[1] if len(found) > 1 else None
-    removes = any(word in _CONFIG_UNSETS for word in rest)
-    files = option_values(tuple(rest), "f", ("--file",))
-    if files:
-        return ConfigWrite(key, value, "file", removes, files[0])
-    if "--global" in rest:
-        return ConfigWrite(key, value, "global", removes)
-    if "--system" in rest:
-        return ConfigWrite(key, value, "system", removes)
-    return ConfigWrite(key, value, "local", removes)
