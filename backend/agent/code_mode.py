@@ -76,12 +76,10 @@ from services.tool_sensitivity import (
 from tools import RunDeps
 from tools.describe import NARRATION_ARG, NARRATION_PROPERTY, add_property, drop_properties
 from tools.recover import describe_failure
+from tools.spill import RUN_CODE, script_call_of, spill_large
 
 from .emit import NestedToolFinished, NestedToolStarted
 from .gating import settle_deferred
-
-#: The library's name for the tool, and the one name everything here keys on.
-RUN_CODE = "run_code"
 
 #: Tools that stay direct calls at every level, whatever the level clears. Each one ends
 #: or reshapes the turn — a question suspends it for the operator, and entering or
@@ -138,21 +136,6 @@ def clears_unasked(_ctx: RunContext[RunDeps], tool_def: ToolDefinition) -> bool:
     return tool_def.kind == "function" and tool_def.name not in NATIVE_ONLY
 
 
-def script_call_of(ctx: RunContext[RunDeps]) -> str | None:
-    """The ``run_code`` call a tool hook's call was made from, or None for a direct call.
-
-    The sandbox dispatches through a ``ToolManager`` of its own whose context *is* the
-    ``run_code`` call's, and the library hands each call a context carrying the manager
-    executing it. So a call is nested exactly when its manager's context names
-    ``run_code``; a direct call's manager is the run's, whose context names no tool.
-    """
-    manager = ctx.tool_manager
-    outer = manager.ctx if manager is not None else None
-    if outer is not None and outer.tool_name == RUN_CODE:
-        return outer.tool_call_id
-    return None
-
-
 def _error_text(name: str, error: Exception) -> str:
     """The text a failed nested call's row shows."""
     if isinstance(error, ModelRetry | ToolFailed):
@@ -199,6 +182,19 @@ class _NarratedCodeModeToolset(CodeModeToolset[RunDeps]):
         }
         base = CodeModeToolset._build_description(compact, has_os=has_os, has_mount=has_mount)
         return base + _CATALOG_NOTE if compact else base
+
+    @override
+    async def call_tool(
+        self,
+        name: str,
+        tool_args: dict[str, object],
+        ctx: RunContext[RunDeps],
+        tool: ToolsetTool[RunDeps],
+    ) -> object:
+        """A script's own result is spilled here: it never passes the inner stack's
+        recovery layer, which spills every other tool's."""
+        result = cast(object, await super().call_tool(name, tool_args, ctx, tool))
+        return await spill_large(ctx, name, result) if name == RUN_CODE else result
 
     @override
     async def get_tools(self, ctx: RunContext[RunDeps]) -> dict[str, ToolsetTool[RunDeps]]:

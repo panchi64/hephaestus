@@ -128,6 +128,10 @@ class Settings(BaseSettings):
     code_mode_max_memory_mb: int = 256
     code_mode_max_tool_calls: int = 25
 
+    # A tool result longer than this many characters is saved to the thread's scratch and
+    # the model gets a head-and-tail preview with the path (`tools/spill.py`).
+    tool_output_spill_chars: int = 40_000
+
     # How long a sub-agent's turn may run before the substrate ends it. The one place a wall
     # clock is on by default, because nobody is sitting in front of it: the inactivity
     # watchdog cannot end it (a model streaming tokens refreshes that clock on every

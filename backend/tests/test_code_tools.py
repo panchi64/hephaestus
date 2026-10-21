@@ -545,6 +545,9 @@ async def test_output_is_returned_whole(monkeypatch: pytest.MonkeyPatch):
     # pressure and cost the model the middle of exactly the output it had just asked
     # for; the turn's own context-overflow stop is what catches a pathological run.
     monkeypatch.setattr(code_module, "get_settings", Settings)
+    # The tool itself cuts nothing; spilling a result this long is `tests/test_spill.py`'s.
+    uncapped = Settings(tool_output_spill_chars=10**9)
+    monkeypatch.setattr("tools.spill.get_settings", lambda: uncapped)
     big = "".join(f"{i:04d}\n" for i in range(10_000))  # 50,000 chars
     result = await _run_canned(result=SandboxResult(exit_code=0, stdout=big, stderr="world"))
     assert result["stdout"] == big
