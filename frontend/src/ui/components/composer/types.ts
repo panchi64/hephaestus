@@ -119,6 +119,9 @@ export interface ComposerProps {
    *  (`disabled` false), SEND remains beside it — the caller queues the message
    *  into the live run (mid-run steering); a disabled field shows STOP alone. */
   streaming?: boolean;
+  /** Nothing is generating but something still runs that STOP ends (a thread's
+   *  sub-agents): STOP joins SEND, which stays a plain send. */
+  stoppable?: boolean;
   /** The run is waiting in line for capacity: the plate takes the queue tone, still. */
   queued?: boolean;
   /**

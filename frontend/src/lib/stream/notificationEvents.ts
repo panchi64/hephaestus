@@ -18,6 +18,7 @@ export type NotificationKind =
   | "run_completed"
   | "run_failed"
   | "save_failed"
+  | "vm_down"
   | "reminder"
   | "task_outcome"
   | "system";

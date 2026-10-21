@@ -3,6 +3,8 @@ import { ActionButtons, ActionFrame, Row, Stack, StatusFlag, Text } from "~/ui";
 import { duration } from "~/lib/format";
 import { grantKey, type GrantWidth } from "../commandScope";
 import type { ApprovalDecision, HostCommand, HostCommandPhase } from "../model";
+import { offersGrant } from "../approvalCautions";
+import { ApprovalCautions } from "./ApprovalCautions";
 import { CommandBoundary, FenceNote } from "./CommandBoundary";
 import {
   ConversationGrantToggle,
@@ -94,6 +96,9 @@ export function HostCommandCard(props: {
     );
     try {
       await props.onSubmit(payload);
+      // A command still pending after the submit never landed (a 403 for an API
+      // token, a dropped connection): clear the verdicts so the buttons come back.
+      if (pending().length > 0) setDecisions({});
     } finally {
       setSubmitting(false);
     }
@@ -212,16 +217,20 @@ function Terminal(props: {
           }
         >
           <Stack gap={2}>
+            <ApprovalCautions cautions={c()} />
             {/* The grant opt-in sits *above* the decision so it reads naturally; its
                   state is captured into this command's decision the moment APPROVE is
-                  clicked (see `decide`), so set it before approving. */}
-            <ConversationGrantToggle
-              command={c().command}
-              toolName={c().name}
-              width={props.sessionWidth}
-              disabled={props.submitting}
-              onChange={(v) => props.onToggleSession?.(v)}
-            />
+                  clicked (see `decide`), so set it before approving. A guarded call
+                  offers none. */}
+            <Show when={offersGrant(c())}>
+              <ConversationGrantToggle
+                command={c().command}
+                toolName={c().name}
+                width={props.sessionWidth}
+                disabled={props.submitting}
+                onChange={(v) => props.onToggleSession?.(v)}
+              />
+            </Show>
             <ActionButtons
               buttons={[
                 {

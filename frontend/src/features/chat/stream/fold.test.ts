@@ -827,3 +827,81 @@ describe("the context meter", () => {
     expect(seen).toEqual([window]);
   });
 });
+
+describe("a parked approval's cautions and replay", () => {
+  const asked = (name: string, extra: Record<string, unknown> = {}): RunEvent =>
+    ({
+      type: "approval.required",
+      seq: ++seq,
+      ts: "",
+      tool_call_id: "t1",
+      name,
+      args: name === "shell_run_command" ? { command: "ls" } : {},
+      summary: `Runs ${name}`,
+      explanation: null,
+      ...extra,
+    }) as RunEvent;
+
+  const blocks = (messages: ChatMessage[], kind: string) =>
+    messages.find((m) => m.id === "a1")?.blocks?.filter((b) => b.kind === kind);
+
+  test("the guard and the unconfined reason land on the approval card", () => {
+    const h = harness(turn());
+    h.fold(asked("mail_send", { guard: "sends mail", unconfined: "no fence" }));
+    const block = blocks(h.messages, "approval")?.[0];
+    expect(block?.kind === "approval" && block.approval.guard).toBe(
+      "sends mail",
+    );
+    expect(block?.kind === "approval" && block.approval.unconfined).toBe(
+      "no fence",
+    );
+  });
+
+  test("and on the terminal, where the shell asks", () => {
+    const h = harness(turn());
+    h.fold(asked("shell_run_command", { guard: "g", unconfined: null }));
+    const block = blocks(h.messages, "host_command")?.[0];
+    expect(block?.kind === "host_command" && block.command.guard).toBe("g");
+    expect(
+      block?.kind === "host_command" && block.command.unconfined,
+    ).toBeUndefined();
+  });
+
+  test("a replayed approval shows one card for the call", () => {
+    const h = harness(turn());
+    h.fold(asked("mail_send"));
+    h.fold(asked("mail_send"));
+    expect(blocks(h.messages, "approval")).toHaveLength(1);
+  });
+
+  test("a replayed terminal approval still shows one block", () => {
+    const h = harness(turn());
+    h.fold(asked("shell_run_command"));
+    h.fold(asked("shell_run_command"));
+    expect(blocks(h.messages, "host_command")).toHaveLength(1);
+  });
+
+  test("two different calls keep two cards", () => {
+    const h = harness(turn());
+    h.fold(asked("mail_send"));
+    h.fold(asked("mail_send", { tool_call_id: "t2" }));
+    expect(blocks(h.messages, "approval")).toHaveLength(2);
+  });
+});
+
+describe("the turn-limit notice", () => {
+  test("is announced like the other stops", () => {
+    const spy = spyOn(toast, "error");
+    harness(turn()).fold({
+      type: "limit.notice",
+      seq: ++seq,
+      ts: "",
+      limit: "turn_limit",
+      message: "This agent reached its request cap.",
+    });
+    expect(spy.mock.calls.at(-1)?.[0]).toBe(
+      "This agent reached its request cap.",
+    );
+    spy.mockRestore();
+  });
+});

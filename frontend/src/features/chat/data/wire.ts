@@ -256,6 +256,8 @@ export interface HostResult {
    *  so a denied write reads as the fence holding rather than as the command being
    *  broken. */
   fence_note?: string;
+  /** Present only when a VM command's egress was refused and the gateway named the host. */
+  denied_host?: string;
   error?: string;
 }
 

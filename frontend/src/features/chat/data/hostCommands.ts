@@ -62,10 +62,10 @@ export function hostPhaseFromResult(r: HostResult): HostCommandPhase {
 /** The declaration and the fence's verdict off any result that carries them, or
  *  `undefined` for the overwhelming majority that do not.
  *
- *  Keyed on the presence of `reach` rather than on a tool name, because it is the tools
- *  that *run a command* that carry these and the client should not hold a second list of
- *  which those are — the backend attaches the pair to every executing command tool, and
- *  a new one would arrive here already understood. */
+ *  Keyed on the presence of `reach` or `fenced` rather than on a tool name, because it is
+ *  the tools that *run a command* that carry these and the client should not hold a
+ *  second list of which those are — the backend attaches them to every executing command
+ *  tool, and a new one would arrive here already understood. */
 export function commandBoundary(
   result: unknown,
 ): CommandBoundaryFacts | undefined {
@@ -74,13 +74,14 @@ export function commandBoundary(
 }
 
 function boundaryOf(r: HostResult): CommandBoundaryFacts | undefined {
-  if (!r.reach) return undefined;
+  if (!r.reach && r.fenced === undefined) return undefined;
   return {
     reach: r.reach,
     fenced: r.fenced,
     network: r.network,
     unfencedReason: r.unfenced_reason,
     fenceNote: r.fence_note,
+    deniedHost: r.denied_host,
   };
 }
 
@@ -150,6 +151,7 @@ export function toHostCommand(dto: ToolCallDTO): HostCommand {
     network: outcome?.network,
     unfencedReason: outcome?.unfencedReason,
     fenceNote: outcome?.fenceNote,
+    deniedHost: outcome?.deniedHost,
     // Carry whatever diagnostic exists: the result hint, the denial message, or a
     // retry/validation error projected onto the tool call.
     error: outcome?.error ?? denial ?? dto.error ?? undefined,

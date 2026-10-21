@@ -30,7 +30,13 @@ import { toast } from "~/ui";
 import { toMessage } from "../data/messages";
 import { toViewSnapshotRef } from "../data/viewSnapshots";
 import type { ChatCreatedDTO, ConversationDetailDTO } from "../data/wire";
+import { fetchRewindPreview, type RewindPreview } from "../data/rewind";
 import type { ChatMessage, ContextUsage, ViewSnapshotRef } from "../model";
+import {
+  sendWithRestore,
+  type RestoreChoice,
+  type RestoreFiles,
+} from "../rewindRestore";
 import { nextId } from "./patch";
 
 /** The store slots a conversation detail reseats — the active path, the window
@@ -72,8 +78,21 @@ export interface BranchingContext extends TranscriptStore {
   overrideSelection: () => ModelSelection | null | undefined;
   driveRun: (runId: string, assistantId: string) => Promise<void>;
   reattachToLiveRun: (conversationId: string) => Promise<void>;
+  /** Show the dry run of a file rewind and return the operator's choice. */
+  askRestore: (
+    preview: RewindPreview,
+    changed: boolean,
+  ) => Promise<RestoreChoice>;
   onTurnComplete?: () => void;
 }
+
+const NO_FILES: RewindPreview = {
+  restore: [],
+  delete: [],
+  conflicts: [],
+  unrestorable: [],
+  previewToken: "",
+};
 
 function toastError(err: unknown, fallback: string): void {
   toast.error((err as { detail?: string })?.detail ?? fallback);
@@ -127,6 +146,36 @@ export function createBranchingOps(ctx: BranchingContext) {
     return true;
   }
 
+  /** Post a regenerate or edit, offering to put the turn's file changes back first.
+   *  Resolves null when the operator cancelled. A preview that cannot be read at all
+   *  sends without one: the files are left as they are, which is what no token means. */
+  async function postOffering(
+    conversationId: string,
+    messageId: string,
+    post: (restore?: RestoreFiles) => Promise<ChatCreatedDTO>,
+  ): Promise<ChatCreatedDTO | null> {
+    let first = true;
+    const outcome = await sendWithRestore({
+      fetchPreview: async () => {
+        try {
+          return await fetchRewindPreview(conversationId, messageId);
+        } catch (err) {
+          if (!first) throw err;
+          toast.warn(
+            "File changes could not be checked. Continuing without restoring.",
+          );
+          return NO_FILES;
+        } finally {
+          first = false;
+        }
+      },
+      ask: ctx.askRestore,
+      send: post,
+      isConflict: (err) => isApiError(err) && err.status === 409,
+    });
+    return outcome.sent ? outcome.value : null;
+  }
+
   /** Re-answer an assistant turn from the preceding request, using the current
    *  model selection; the new answer becomes a sibling version. `messageId` is
    *  the assistant message's id. */
@@ -141,12 +190,19 @@ export function createBranchingOps(ctx: BranchingContext) {
     const override = ctx.overrideSelection();
     const sel = override ?? effectiveSelection();
     try {
-      const created = await api.post<ChatCreatedDTO>("/chat/regenerate", {
-        conversation_id: conversationId,
-        message_id: messageId,
-        endpoint_id: override?.endpointId,
-        model: override?.model,
-      });
+      const created = await postOffering(conversationId, messageId, (restore) =>
+        api.post<ChatCreatedDTO>("/chat/regenerate", {
+          conversation_id: conversationId,
+          message_id: messageId,
+          endpoint_id: override?.endpointId,
+          model: override?.model,
+          restore_files: restore,
+        }),
+      );
+      if (!created) {
+        ctx.setSending(false);
+        return;
+      }
       const reset: ChatMessage = {
         id: messageId,
         role: "assistant",
@@ -187,14 +243,21 @@ export function createBranchingOps(ctx: BranchingContext) {
     const sel = override ?? effectiveSelection();
     const prompt = newText.trim();
     try {
-      const created = await api.post<ChatCreatedDTO>("/chat/edit", {
-        conversation_id: conversationId,
-        message_id: messageId,
-        prompt,
-        endpoint_id: override?.endpointId,
-        model: override?.model,
-        attachment_ids: ids,
-      });
+      const created = await postOffering(conversationId, messageId, (restore) =>
+        api.post<ChatCreatedDTO>("/chat/edit", {
+          conversation_id: conversationId,
+          message_id: messageId,
+          prompt,
+          endpoint_id: override?.endpointId,
+          model: override?.model,
+          attachment_ids: ids,
+          restore_files: restore,
+        }),
+      );
+      if (!created) {
+        ctx.setSending(false);
+        return;
+      }
       const editedUser: ChatMessage = {
         ...ctx.messages[j],
         content: prompt,

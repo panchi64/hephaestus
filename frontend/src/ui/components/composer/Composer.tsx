@@ -214,6 +214,7 @@ export function Composer(props: ComposerProps): JSX.Element {
               awaiting={send.awaiting()}
               canSend={send.canSend()}
               streaming={props.streaming}
+              stoppable={props.stoppable}
               disabled={props.disabled}
               sendBlocked={props.sendBlocked}
               sendLabel={props.sendLabel}

@@ -163,6 +163,19 @@ export async function fetchOwnCallsign(
   return own ? own.callsign || own.handle : undefined;
 }
 
+/** Stop every live agent below a thread that has no run of its own. Their reports go
+ *  to the held inbox, so nothing wakes the thread. Rejects with a 409 when the thread
+ *  has a run: that run's cancel stops its agents. */
+export async function stopThreadAgents(
+  conversationId: string,
+): Promise<string[]> {
+  const res = await api.post<{ stopped: string[] }>(
+    `/conversations/${conversationId}/agents/stop`,
+    {},
+  );
+  return res.stopped;
+}
+
 /** Cancel one agent's run. Resolves false when the backend refused it. */
 export async function stopSubagent(runId: string): Promise<boolean> {
   try {

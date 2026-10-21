@@ -162,10 +162,20 @@ export interface RunMetrics extends Base {
    *  response; optional here only so an older backend still renders. */
   last_request?: LastRequestUsage | null;
 }
+/** Which bound stopped a blocked run. */
+export type RunEndCode =
+  | "wall_clock"
+  | "inactivity"
+  | "first_token"
+  | "loop"
+  | "context_overflow"
+  | "turn_limit";
 export interface RunEnded extends Base {
   type: "run.ended";
   outcome: "done" | "blocked" | "cancelled";
   detail: string | null;
+  /** Absent from an older backend and from endings that no bound caused. */
+  code?: RunEndCode | null;
 }
 export interface RunError extends Base {
   type: "run.error";
@@ -483,6 +493,11 @@ export interface ApprovalRequired extends Base {
   args: Record<string, unknown>;
   summary: string;
   explanation: string | null;
+  /** Why this call always asks. Set, it is once-only: no standing approval is offered.
+   *  Absent from an older backend. */
+  guard?: string | null;
+  /** Set on a host command about to run with no fence in force, saying why. */
+  unconfined?: string | null;
 }
 /** One answer offered for a question. */
 export interface QuestionOption {
@@ -717,6 +732,8 @@ export interface LimitNotice extends Base {
     | "verify"
     | "context"
     | "search"
+    /** The agent's own request cap was reached; the work so far is partial. */
+    | "turn_limit"
     /** Not a stop: the turn carried on past a bound by itself (auto-continue). */
     | "continue";
   message: string;

@@ -170,7 +170,7 @@ export interface ToolImage {
 
 /** A sensitive action the agent paused to ask about (`approval.required`). The
  *  operator approves or denies; the run resumes on the same stream. */
-export interface Approval {
+export interface Approval extends ApprovalCautions {
   toolCallId: string;
   name: string;
   /** Full call arguments, shown so the operator can judge the action. */
@@ -280,13 +280,25 @@ export interface CommandBoundaryFacts {
   /** A permission failure in the output that the fence itself caused, said in words,
    *  so a denied write reads as the fence holding rather than as a broken command. */
   fenceNote?: string;
+  /** The host a VM command was refused, when the gateway named one — the host the
+   *  operator can allow for this thread. */
+  deniedHost?: string;
+}
+
+/** What made an approval ask on every call, and what makes it riskier than usual. Both
+ *  are the backend's own sentences, carried verbatim. */
+export interface ApprovalCautions {
+  /** Why this call always asks. Set, it is once-only: no standing approval is offered. */
+  guard?: string;
+  /** Set on a host command about to run with no fence in force, saying why. */
+  unconfined?: string;
 }
 
 /** A host shell command rendered as a single persistent terminal: the exact
  *  command, the approval gate, and — once it runs — its captured output. Folded
  *  from the run's `tool.started`/`approval.required`/`tool.completed` events
  *  (warm) or the persisted tool call (cold), all keyed by `toolCallId`. */
-export interface HostCommand extends CommandBoundaryFacts {
+export interface HostCommand extends CommandBoundaryFacts, ApprovalCautions {
   toolCallId: string;
   /** The namespaced tool that asked. More than one renders as a terminal — the
    *  sandboxed host command and the worktree shell — and a conversation grant is

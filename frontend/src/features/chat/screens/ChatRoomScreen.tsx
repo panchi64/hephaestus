@@ -42,6 +42,9 @@ import { settled } from "~/lib/resource";
 import { directoryLabel } from "../addDirectory";
 import { ChatRoomHeader } from "../components/ChatRoomHeader";
 import { ChatViewportMounts } from "../components/ChatViewportMounts";
+import { ConversationContext } from "../conversationContext";
+import { stopThreadAgents } from "../data/subagents";
+import { stopRoute } from "../stopRoute";
 import {
   ComposerHeaderAside,
   ComposerHeaderStatus,
@@ -238,11 +241,32 @@ export function ChatRoomScreen(): JSX.Element {
   // the turn where it stopped — its answer so far, every tool block, every command's
   // output — and the correction opens the next turn against that history, which is what
   // makes it a correction rather than a restart.
+  const route = () =>
+    stopRoute({
+      sending: stream.sending(),
+      subagents: subagents.latest(),
+    });
   const stopRun = async (correction?: string) => {
-    if (!stream.sending()) return;
-    await stream.cancel();
-    if (!correction) return void toast.success("Run cancelled");
-    toast.success("Run cancelled — sending your correction");
+    const which = route();
+    if (which === "none") return;
+    if (which === "agents") {
+      const id = currentId();
+      if (id === null) return;
+      try {
+        await stopThreadAgents(id);
+      } catch (err) {
+        // A 409 means a run of the thread's own started meanwhile; its cancel is the stop.
+        toast.error(
+          (err as { detail?: string })?.detail ?? "Unable to stop the agents.",
+        );
+        return;
+      } finally {
+        subagents.refetch();
+      }
+    } else await stream.cancel();
+    const stopped = which === "agents" ? "Agents stopped" : "Run cancelled";
+    if (!correction) return void toast.success(stopped);
+    toast.success(`${stopped} — sending your correction`);
     // No attachment ids: attaching is unavailable while a run streams, so there can be
     // nothing ready to carry.
     // The composer cleared the correction when STOP took it, so a refusal here would
@@ -537,11 +561,12 @@ export function ChatRoomScreen(): JSX.Element {
   };
 
   return (
-    <div ref={viewport.rowRef} class="flex h-full min-h-0">
-      {/* Conversation — the thread list now lives in the app rail's RECENTS, so
+    <ConversationContext.Provider value={currentId}>
+      <div ref={viewport.rowRef} class="flex h-full min-h-0">
+        {/* Conversation — the thread list now lives in the app rail's RECENTS, so
           the body is free for the conversation plus the viewport pane. */}
-      <section class="flex min-h-full min-w-0 flex-1 flex-col">
-        {/* The transcript runs the full height of this box, and the title block is
+        <section class="flex min-h-full min-w-0 flex-1 flex-col">
+          {/* The transcript runs the full height of this box, and the title block is
             laid over its top rather than stacked above it: the conversation scrolls
             out of sight *under* the title, through a `ScrollFade`, instead of being
             cut at the header's bottom edge by a band that spent its own height.
@@ -550,64 +575,64 @@ export function ChatRoomScreen(): JSX.Element {
             may carry `opacity`, `filter`, `mask`, `isolation` or a `will-change` of
             them: any one makes a backdrop root, and the fade's blur would sample
             nothing (the trap noted on `.heph-glass`). */}
-        <div class="relative flex min-h-0 flex-1 flex-col">
-          <TranscriptView
-            stream={stream}
-            viewport={viewport}
-            actions={actions}
-            scroll={transcript}
-            conversationId={currentId}
-            history={history}
-            onRetryHistory={reloadHistory}
-            measure={MEASURE}
-            insetTop={overlayHeight}
-          />
-          {/* AFTER the transcript in the DOM and with no `z-*`: both are positioned,
+          <div class="relative flex min-h-0 flex-1 flex-col">
+            <TranscriptView
+              stream={stream}
+              viewport={viewport}
+              actions={actions}
+              scroll={transcript}
+              conversationId={currentId}
+              history={history}
+              onRetryHistory={reloadHistory}
+              measure={MEASURE}
+              insetTop={overlayHeight}
+            />
+            {/* AFTER the transcript in the DOM and with no `z-*`: both are positioned,
               so paint order is DOM order and this stays on top without a stacking
               context — which some engines treat as a backdrop root, the one thing the
               fade inside it cannot survive. The session menu's popover portals to
               the body, so tab order is the only thing the position costs. */}
-          <div ref={measureOverlay} class="absolute inset-x-0 top-0">
-            <ScrollFade edge="top" />
-            <div class="relative">
-              <ChatRoomHeader
-                title={headerTitle}
-                reveal={headerReveal}
-                workspaceHint={workspaceHint}
-                working={titleWorking}
-                conversationId={currentId}
-                messageCount={() => stream.messages.length}
-                compacting={stream.compacting}
-                turnLive={stream.sending}
-                viewport={viewport}
-                branch={branch.latest}
-                actions={{
-                  rename: rename.open,
-                  retitle: () => void actions.retitle(),
-                  compact: () => void stream.compactNow(),
-                  openBrowser: () => void actions.openBrowser(),
-                  copy: actions.copyTranscript,
-                  remove: () => void actions.removeConversation(),
-                }}
-              />
-              {/* Pinned under the title, not folded into the transcript: a recap
+            <div ref={measureOverlay} class="absolute inset-x-0 top-0">
+              <ScrollFade edge="top" />
+              <div class="relative">
+                <ChatRoomHeader
+                  title={headerTitle}
+                  reveal={headerReveal}
+                  workspaceHint={workspaceHint}
+                  working={titleWorking}
+                  conversationId={currentId}
+                  messageCount={() => stream.messages.length}
+                  compacting={stream.compacting}
+                  turnLive={stream.sending}
+                  viewport={viewport}
+                  branch={branch.latest}
+                  actions={{
+                    rename: rename.open,
+                    retitle: () => void actions.retitle(),
+                    compact: () => void stream.compactNow(),
+                    openBrowser: () => void actions.openBrowser(),
+                    copy: actions.copyTranscript,
+                    remove: () => void actions.removeConversation(),
+                  }}
+                />
+                {/* Pinned under the title, not folded into the transcript: a recap
                   inside the scroll is a message that is not one, sitting at the top of
                   a thread the operator has just been dropped at the bottom of. It
                   carries the ground as a fill because it is a paragraph — the fade is
                   for a line of title, and prose scrolling through prose is unreadable
                   at any blur. `flow-root` keeps the panel's bottom margin inside it. */}
-              <div class="flow-root bg-bg">
-                <ThreadRecap
-                  summary={recapSummary}
-                  streaming={stream.sending}
-                  onDismiss={() => setRecapDismissed(openId())}
-                />
+                <div class="flow-root bg-bg">
+                  <ThreadRecap
+                    summary={recapSummary}
+                    streaming={stream.sending}
+                    onDismiss={() => setRecapDismissed(openId())}
+                  />
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* The composer docks on the page background, and the transcript dissolves
+          {/* The composer docks on the page background, and the transcript dissolves
             into it through the same `ScrollFade` the title uses at the top — one
             edge treatment for both ends of the conversation, the composer's own
             opaque fill and ruled frame doing the separating.
@@ -615,154 +640,157 @@ export function ChatRoomScreen(): JSX.Element {
             on its own, and the transcript keeps exactly that band as its bottom
             inset, so the last turn at rest clears it. A pad here would add a strip
             of bare page between the fade and the frame. */}
-        {/* The dock's own background spans the full width — it is what the
+          {/* The dock's own background spans the full width — it is what the
             transcript scrolls out of sight behind — while its contents take the
             same measure as the transcript above. */}
-        {/* The background is dropped while a run is parked, and only then. The park
+          {/* The background is dropped while a run is parked, and only then. The park
             panel is *glass*: an opaque fill behind it leaves it nothing to frost, and
             it would read as a flat tinted card rather than as the transcript seen
             through it (see `ParkDock`). It stays full-width for the composer, which
             needs the transcript to disappear behind it rather than beside it. */}
-        {/* `pb-4` is the whole bottom margin: the shell gives this route its bottom
+          {/* `pb-4` is the whole bottom margin: the shell gives this route its bottom
             edge flush (`isFlushRoute`). It has to clear the composer's registration
             ticks, which sit 6px outside its frame (the shell's scroll root would clip
             a pair left hanging past it), and then leave a little air — at `pb-2` the
             ticks cleared but the unit read as resting on the window's edge. */}
-        <div class={cx("sticky bottom-0 px-4 pb-4", !stream.park() && "bg-bg")}>
-          <ScrollFade edge="bottom" />
-          <div class={cx("relative", MEASURE)}>
-            {/* A parked run takes the composer's place. It is the same slot, so
+          <div
+            class={cx("sticky bottom-0 px-4 pb-4", !stream.park() && "bg-bg")}
+          >
+            <ScrollFade edge="bottom" />
+            <div class={cx("relative", MEASURE)}>
+              {/* A parked run takes the composer's place. It is the same slot, so
                 nothing below the transcript moves — but the only thing offered is
                 the thing the run is waiting for. */}
-            <Show when={stream.park()}>
-              {(park) => (
-                <ParkDock
-                  park={park()}
-                  draft={stream.parkDraft()}
-                  onDraft={stream.patchParkDraft}
-                  // This room has a Plan panel, so a plan the dock is asking about
-                  // can be read at a panel's width one click away. A compare pane
-                  // passes nothing and the button is not offered there.
-                  onReadPlan={() => viewport.showSurface("plan")}
-                  onStop={() => void stopRun()}
-                  onSubmit={(settlement) =>
-                    stream.resolvePark(park().messageId, settlement)
-                  }
-                  // A park and a queued message can be outstanding together, and both
-                  // reach the model on the same resume — so the dock that has taken the
-                  // composer's slot also has to be where the queue is answerable.
-                  inbox={inbox()}
-                  inboxActions={inboxActions}
-                />
-              )}
-            </Show>
-            <Show when={!stream.park()}>
-              <Show when={dockVisible()}>
-                <InboxDock framed inbox={inbox()} {...inboxActions} />
+              <Show when={stream.park()}>
+                {(park) => (
+                  <ParkDock
+                    park={park()}
+                    draft={stream.parkDraft()}
+                    onDraft={stream.patchParkDraft}
+                    // This room has a Plan panel, so a plan the dock is asking about
+                    // can be read at a panel's width one click away. A compare pane
+                    // passes nothing and the button is not offered there.
+                    onReadPlan={() => viewport.showSurface("plan")}
+                    onStop={() => void stopRun()}
+                    onSubmit={(settlement) =>
+                      stream.resolvePark(park().messageId, settlement)
+                    }
+                    // A park and a queued message can be outstanding together, and both
+                    // reach the model on the same resume — so the dock that has taken the
+                    // composer's slot also has to be where the queue is answerable.
+                    inbox={inbox()}
+                    inboxActions={inboxActions}
+                  />
+                )}
               </Show>
-              <Composer
-                autofocus
-                placeholder={`Message ${
-                  agentChoice() === undefined
-                    ? speaker()
-                    : agentDisplayName(agentValue())
-                }…`}
-                streaming={stream.sending()}
-                queued={stream.sending() && stream.runQueue() !== null}
-                onStop={(correction) => void stopRun(correction)}
-                onSend={sendTurn}
-                menu={composerMenu}
-                recall={recall}
-                // The backend refuses a turn it can't keep inside a context window; this
-                // is the same stop, arriving before the message is committed to it.
-                sendBlocked={sendBlockedReason()}
-                attachments={attachments}
-                storageKey={composerKey()}
-                prefill={stream.undeliveredDraft()}
-                onPrefillConsumed={stream.clearUndeliveredDraft}
-                onShiftTab={cyclePermission}
-                headerStart={
-                  // What the thread is doing: its name and `ready` at rest, the live
-                  // run, a lost stream, or a run that ended in a way worth saying.
-                  <ComposerHeaderStatus
-                    title={() => currentSummary()?.title ?? null}
-                    streaming={stream.sending}
-                    compacting={stream.compacting}
-                    detached={stream.detached}
-                    runClock={stream.runClock}
-                    runQueue={stream.runQueue}
-                    activity={() => currentSummary()?.activity}
-                    lastOutcome={() => currentSummary()?.lastOutcome}
-                  />
-                }
-                headerEnd={
-                  // The run's clock, queued messages waiting on the operator's say-so,
-                  // or the branch a code thread writes to.
-                  <ComposerHeaderAside
-                    streaming={stream.sending}
-                    runClock={stream.runClock}
-                    queued={() => inbox().items.length}
-                    queuedOpen={dockVisible}
-                    onToggleQueued={() => setDockOpen((open) => !open)}
-                    branch={() => branch.latest()?.branch}
-                  />
-                }
-                // The action tier's echo. The dock takes the composer's slot for a
-                // park this room is driving, so what reaches here is a run the backend
-                // reports waiting that this room is not holding the ask for.
-                waiting={
-                  !stream.park() &&
-                  currentSummary()?.activity === "awaiting_input"
-                    ? { label: "Waiting on you", onJump: jumpToAsk }
-                    : null
-                }
-                controls={
-                  // The project is chosen while the thread is staged and only named once
-                  // it is saved — it is set at creation, and re-pointing a thread would
-                  // strand whatever worktree it had cut. The level is the opposite: it
-                  // is the operator's live control over a thread already in flight, so
-                  // it is offered at every moment of one, and it rides the next send.
-                  <>
-                    <ModelPicker />
-                    <PermissionControl
-                      level={permission()}
-                      onLevelChange={setPermission}
-                      // While an opened thread's own level is still in flight the seat
-                      // holds the strictest one as a placeholder; the control reports
-                      // that rather than naming a level the thread may not be at.
-                      pending={permissionPending()}
+              <Show when={!stream.park()}>
+                <Show when={dockVisible()}>
+                  <InboxDock framed inbox={inbox()} {...inboxActions} />
+                </Show>
+                <Composer
+                  autofocus
+                  placeholder={`Message ${
+                    agentChoice() === undefined
+                      ? speaker()
+                      : agentDisplayName(agentValue())
+                  }…`}
+                  streaming={stream.sending()}
+                  stoppable={route() === "agents"}
+                  queued={stream.sending() && stream.runQueue() !== null}
+                  onStop={(correction) => void stopRun(correction)}
+                  onSend={sendTurn}
+                  menu={composerMenu}
+                  recall={recall}
+                  // The backend refuses a turn it can't keep inside a context window; this
+                  // is the same stop, arriving before the message is committed to it.
+                  sendBlocked={sendBlockedReason()}
+                  attachments={attachments}
+                  storageKey={composerKey()}
+                  prefill={stream.undeliveredDraft()}
+                  onPrefillConsumed={stream.clearUndeliveredDraft}
+                  onShiftTab={cyclePermission}
+                  headerStart={
+                    // What the thread is doing: its name and `ready` at rest, the live
+                    // run, a lost stream, or a run that ended in a way worth saying.
+                    <ComposerHeaderStatus
+                      title={() => currentSummary()?.title ?? null}
+                      streaming={stream.sending}
+                      compacting={stream.compacting}
+                      detached={stream.detached}
+                      runClock={stream.runClock}
+                      runQueue={stream.runQueue}
+                      activity={() => currentSummary()?.activity}
+                      lastOutcome={() => currentSummary()?.lastOutcome}
                     />
-                    <AgentControl
-                      agents={settled(agents) ?? []}
-                      value={agentValue()}
-                      onChange={setAgentChoice}
+                  }
+                  headerEnd={
+                    // The run's clock, queued messages waiting on the operator's say-so,
+                    // or the branch a code thread writes to.
+                    <ComposerHeaderAside
+                      streaming={stream.sending}
+                      runClock={stream.runClock}
+                      queued={() => inbox().items.length}
+                      queuedOpen={dockVisible}
+                      onToggleQueued={() => setDockOpen((open) => !open)}
+                      branch={() => branch.latest()?.branch}
                     />
-                    <Show
-                      when={openId() === null}
-                      fallback={
-                        <Show when={savedProjectLabel()}>
-                          {(label) => (
-                            <StatusCell class="max-sm:hidden">
-                              {label()}
-                            </StatusCell>
-                          )}
-                        </Show>
-                      }
-                    >
-                      <ProjectControl
-                        projects={settled(projects)?.projects ?? []}
-                        value={stagedProjectId()}
-                        onChange={setStagedProjectId}
+                  }
+                  // The action tier's echo. The dock takes the composer's slot for a
+                  // park this room is driving, so what reaches here is a run the backend
+                  // reports waiting that this room is not holding the ask for.
+                  waiting={
+                    !stream.park() &&
+                    currentSummary()?.activity === "awaiting_input"
+                      ? { label: "Waiting on you", onJump: jumpToAsk }
+                      : null
+                  }
+                  controls={
+                    // The project is chosen while the thread is staged and only named once
+                    // it is saved — it is set at creation, and re-pointing a thread would
+                    // strand whatever worktree it had cut. The level is the opposite: it
+                    // is the operator's live control over a thread already in flight, so
+                    // it is offered at every moment of one, and it rides the next send.
+                    <>
+                      <ModelPicker />
+                      <PermissionControl
+                        level={permission()}
+                        onLevelChange={setPermission}
+                        // While an opened thread's own level is still in flight the seat
+                        // holds the strictest one as a placeholder; the control reports
+                        // that rather than naming a level the thread may not be at.
+                        pending={permissionPending()}
                       />
-                    </Show>
-                  </>
-                }
-                // What the thread is doing: the task count, the stats behind their
-                // trigger, and how full the context window is.
-                trailing={status.items()}
-              />
-            </Show>
-            {/* While a run is parked the Composer — and the status bar joined to it —
+                      <AgentControl
+                        agents={settled(agents) ?? []}
+                        value={agentValue()}
+                        onChange={setAgentChoice}
+                      />
+                      <Show
+                        when={openId() === null}
+                        fallback={
+                          <Show when={savedProjectLabel()}>
+                            {(label) => (
+                              <StatusCell class="max-sm:hidden">
+                                {label()}
+                              </StatusCell>
+                            )}
+                          </Show>
+                        }
+                      >
+                        <ProjectControl
+                          projects={settled(projects)?.projects ?? []}
+                          value={stagedProjectId()}
+                          onChange={setStagedProjectId}
+                        />
+                      </Show>
+                    </>
+                  }
+                  // What the thread is doing: the task count, the stats behind their
+                  // trigger, and how full the context window is.
+                  trailing={status.items()}
+                />
+              </Show>
+              {/* While a run is parked the Composer — and the status bar joined to it —
                 gives its slot to the dock, but a disconnected stream and the task count
                 are no less true for it; the bar's trailing cells stand on their own
                 until the dock is gone, as the same bar boxed on all four sides. The
@@ -772,30 +800,31 @@ export function ChatRoomScreen(): JSX.Element {
                 Its own fill, shared with the task rows: the wrapper's is gone while a
                 park is up, and neither is part of the glass — without it they would
                 sit on the transcript scrolling behind them. */}
-            <div class="bg-bg">
-              <Show when={stream.park()}>
-                <StatusBar
-                  edge="box"
-                  start={
-                    <Show when={stream.detached()}>
-                      <StatusCell class="text-alert">Disconnected</StatusCell>
-                    </Show>
-                  }
-                  end={status.items()}
-                  class="mt-1.5"
-                />
-              </Show>
-              {status.taskRows()}
+              <div class="bg-bg">
+                <Show when={stream.park()}>
+                  <StatusBar
+                    edge="box"
+                    start={
+                      <Show when={stream.detached()}>
+                        <StatusCell class="text-alert">Disconnected</StatusCell>
+                      </Show>
+                    }
+                    end={status.items()}
+                    class="mt-1.5"
+                  />
+                </Show>
+                {status.taskRows()}
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Documents / live previews / artifacts sit beside the conversation, on a
+        {/* Documents / live previews / artifacts sit beside the conversation, on a
           draggable divider above `lg` and in a full-screen sheet below it. */}
-      <ChatViewportMounts viewport={viewport} />
+        <ChatViewportMounts viewport={viewport} />
 
-      {rename.element}
-    </div>
+        {rename.element}
+      </div>
+    </ConversationContext.Provider>
   );
 }

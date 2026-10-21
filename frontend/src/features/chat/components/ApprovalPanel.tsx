@@ -20,6 +20,8 @@ import { registerKeymap } from "~/lib/keymap";
 import { formatArgs } from "../data";
 import type { Approval, ApprovalDecision } from "../model";
 import { PLAN_SUBMIT_TOOL } from "../stream/approvals";
+import { offersGrant } from "../approvalCautions";
+import { ApprovalCautions } from "./ApprovalCautions";
 import {
   ConversationGrantToggle,
   createGrantToggle,
@@ -292,7 +294,8 @@ export function ApprovalPanel(props: {
               {/* A plan is submitted once and answered once; there is no recurring act
                   for a standing grant to stand for. Above the verdict, so it is set
                   before the click that captures it. */}
-              <Show when={!isPlan(approval)}>
+              <ApprovalCautions cautions={approval} />
+              <Show when={!isPlan(approval) && offersGrant(approval)}>
                 <ConversationGrantToggle
                   command={commandOf(approval)}
                   toolName={approval.name}

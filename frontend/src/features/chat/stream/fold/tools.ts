@@ -260,6 +260,8 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
           upsertHost(m, ev.tool_call_id, ev.name, {
             command: typeof args.command === "string" ? args.command : "",
             explanation: ev.explanation ?? undefined,
+            guard: ev.guard ?? undefined,
+            unconfined: ev.unconfined ?? undefined,
             risk: review?.risk,
             reviewReason: review?.reason,
             phase: "pending",
@@ -268,6 +270,15 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
         return true;
       }
       patchById(assistantId, (m) => {
+        // A reconnect with an old Last-Event-ID replays the park; one card per call.
+        if (
+          m.blocks?.some(
+            (b) =>
+              b.kind === "approval" &&
+              b.approval.toolCallId === ev.tool_call_id,
+          )
+        )
+          return;
         const review = findReview(m, ev.tool_call_id)?.review;
         (m.blocks ?? (m.blocks = [])).push({
           kind: "approval",
@@ -278,6 +289,8 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
             args,
             summary: ev.summary,
             explanation: ev.explanation ?? undefined,
+            guard: ev.guard ?? undefined,
+            unconfined: ev.unconfined ?? undefined,
             risk: review?.risk,
             reviewReason: review?.reason,
           },

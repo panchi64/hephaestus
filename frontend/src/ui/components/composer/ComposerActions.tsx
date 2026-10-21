@@ -16,6 +16,8 @@ export interface ComposerActionsProps {
   awaiting: boolean;
   canSend: boolean;
   streaming: boolean | undefined;
+  /** STOP is offered with nothing streaming; SEND keeps its plain meaning. */
+  stoppable?: boolean;
   disabled: boolean | undefined;
   sendBlocked: string | null | undefined;
   /** What SEND is called outside a recall or a run. */
@@ -118,25 +120,44 @@ export function ComposerActions(props: ComposerActionsProps): JSX.Element {
       ? "Stop the run and send this correction (Esc stops without sending)"
       : "Stop the run (Esc)";
 
+  // Alert: it ends work in flight, and with a correction typed it also sends it — the
+  // one key on the unit with a consequence the operator cannot take back. A component
+  // for the same reason as `SendButton`.
+  const StopButton = () => (
+    <Tooltip
+      label={props.streaming ? stopTip() : "Stop the thread's running agents"}
+      side="top"
+    >
+      <button
+        type="button"
+        class="heph-send"
+        data-tone="stop"
+        onClick={() => props.onStop()}
+      >
+        <span class="heph-send-sq" aria-hidden="true" />
+        {props.hasDraft ? "Stop & correct" : "Stop"}
+        <Show when={props.streaming}>
+          <KeyHint>esc</KeyHint>
+        </Show>
+      </button>
+    </Tooltip>
+  );
+
   return (
     <span class="flex shrink-0 items-stretch">
-      <Show when={props.streaming} fallback={sendBtn()}>
+      <Show
+        when={props.streaming}
+        fallback={
+          <>
+            {sendBtn()}
+            <Show when={props.stoppable}>
+              <StopButton />
+            </Show>
+          </>
+        }
+      >
         <Show when={!props.disabled}>{sendBtn()}</Show>
-        {/* Alert: it ends work in flight, and with a correction typed it also sends
-            it — the one key on the unit with a consequence the operator cannot take
-            back. */}
-        <Tooltip label={stopTip()} side="top">
-          <button
-            type="button"
-            class="heph-send"
-            data-tone="stop"
-            onClick={() => props.onStop()}
-          >
-            <span class="heph-send-sq" aria-hidden="true" />
-            {props.hasDraft ? "Stop & correct" : "Stop"}
-            <KeyHint>esc</KeyHint>
-          </button>
-        </Tooltip>
+        <StopButton />
       </Show>
     </span>
   );

@@ -1,5 +1,8 @@
-import { Show, type JSX } from "solid-js";
-import { Row, Text } from "~/ui";
+import { Show, createSignal, type JSX } from "solid-js";
+import { Button, Row, Stack, Text, toast } from "~/ui";
+import { allowableHost, boundaryReadout } from "../commandBoundary";
+import { useConversationId } from "../conversationContext";
+import { allowDomain } from "../data/egress";
 import type { CommandBoundaryFacts } from "../model";
 
 /**
@@ -19,9 +22,11 @@ import type { CommandBoundaryFacts } from "../model";
  * review, so a thread at Manual or Yolo used to run commands with neither fact anywhere
  * on screen.
  *
- * Renders nothing at all when there is no declaration — a call that never executed, or a
- * thread from before the tool carried one. An absent fact says nothing, and a placeholder
- * reading UNKNOWN would be a third state the backend never reports.
+ * Renders nothing at all when there is neither a declaration nor a fence verdict — a call
+ * that never executed, or a thread from before the tools carried them. An absent fact says
+ * nothing, and a placeholder reading UNKNOWN would be a third state the backend never
+ * reports. The host-reach command tool reports the fence verdict without a `reach`, and
+ * shows the verdict alone.
  *
  * It takes the **facts**, not a command, so the one component serves both kinds of row
  * that can hold them: a terminal, and the ordinary tool card a backgrounded command
@@ -30,31 +35,29 @@ import type { CommandBoundaryFacts } from "../model";
 export function CommandBoundary(props: {
   command: CommandBoundaryFacts;
 }): JSX.Element {
-  const c = () => props.command;
+  const readout = () => boundaryReadout(props.command);
   return (
-    <Show when={c().reach}>
-      {(reach) => (
+    <Show when={readout()}>
+      {(r) => (
         <Row gap={2} align="center" class="flex-wrap">
           {/* `meta` rather than `plate`: this reports a state, it does not name a
               region. */}
-          <Text variant="meta" tone="dim">
-            Reach {reach()}
-          </Text>
-          <Show when={reach() === "offline" && c().network}>
+          <Show when={r().reach}>
+            <Text variant="meta" tone="dim">
+              Reach {r().reach}
+            </Text>
+          </Show>
+          <Show when={r().ranWithNetwork}>
             <Text variant="meta" tone="dim">
               Ran with network
             </Text>
           </Show>
-          <Show
-            when={c().fenced === false}
-            fallback={
-              <Show when={c().fenced}>
-                <Text variant="meta" tone="dim">
-                  Fenced
-                </Text>
-              </Show>
-            }
-          >
+          <Show when={r().fence === "fenced"}>
+            <Text variant="meta" tone="dim">
+              Fenced
+            </Text>
+          </Show>
+          <Show when={r().fence === "unfenced"}>
             {/* The word carries it, not a colour (§12) — and it is warn rather than
                 alert because an unfenced command is a weaker guarantee, not a failure.
                 The reason rides beside it in sentence form, since "unfenced" alone
@@ -62,9 +65,9 @@ export function CommandBoundary(props: {
             <Text variant="meta" tone="warn">
               Unfenced
             </Text>
-            <Show when={c().unfencedReason}>
+            <Show when={r().unfencedReason}>
               <Text variant="micro" tone="dim" class="min-w-0 break-words">
-                {c().unfencedReason}
+                {r().unfencedReason}
               </Text>
             </Show>
           </Show>
@@ -82,15 +85,70 @@ export function CommandBoundary(props: {
  * as a broken command, and it is the fence doing exactly its job. The backend emits the
  * note only when it recognises that case, so this renders only when there is something
  * to say.
+ *
+ * When the note names a host a VM command was refused, the operator can allow it for the
+ * thread from here. A host-reach refusal names no host and gets no button: allowing a
+ * domain widens the VM's egress, which a command on the operator's own machine never used.
  */
 export function FenceNote(props: {
   command: CommandBoundaryFacts;
 }): JSX.Element {
   return (
     <Show when={props.command.fenceNote}>
-      <Text variant="micro" tone="warn" class="break-words">
-        {props.command.fenceNote}
-      </Text>
+      <Stack gap={1} class="items-start">
+        <Text variant="micro" tone="warn" class="break-words">
+          {props.command.fenceNote}
+        </Text>
+        <Show when={allowableHost(props.command)}>
+          {(host) => <AllowHost host={host()} />}
+        </Show>
+      </Stack>
+    </Show>
+  );
+}
+
+type AllowState = "idle" | "pending" | "allowed";
+
+function AllowHost(props: { host: string }): JSX.Element {
+  const conversationId = useConversationId();
+  const [state, setState] = createSignal<AllowState>("idle");
+
+  async function allow(): Promise<void> {
+    const id = conversationId();
+    if (!id || state() !== "idle") return;
+    setState("pending");
+    try {
+      await allowDomain(id, props.host);
+      setState("allowed");
+    } catch (err) {
+      setState("idle");
+      toast.error(
+        (err as { detail?: string })?.detail ?? "Unable to allow that host.",
+      );
+    }
+  }
+
+  return (
+    <Show when={conversationId()}>
+      <Show
+        when={state() !== "allowed"}
+        fallback={
+          <Text variant="micro" tone="dim" class="break-words">
+            {props.host} is allowed for this thread. Retry the command and it
+            can reach it.
+          </Text>
+        }
+      >
+        <Button
+          variant="default"
+          size="sm"
+          leading="link"
+          pending={state() === "pending"}
+          onClick={() => void allow()}
+        >
+          {`Allow ${props.host} for this thread`}
+        </Button>
+      </Show>
     </Show>
   );
 }
