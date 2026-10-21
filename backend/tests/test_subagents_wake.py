@@ -648,6 +648,14 @@ class TestWhoStoppedIt:
 
         assert "operator asks" not in text
 
+    def test_a_time_limit_says_the_work_is_partial_not_that_it_awaits_an_answer(self):
+        text = report_text(
+            "blocked", "migrate", "worker", "half", None, None, cause=StopCause.time_limit
+        )
+
+        assert "its work is partial: it ran out of time" in text
+        assert "answer it with" not in text
+
     def test_a_turn_limit_says_the_work_is_partial_and_can_be_continued(self):
         text = report_text(
             "blocked", "migrate", "worker", "half", None, None, cause=StopCause.turn_limit

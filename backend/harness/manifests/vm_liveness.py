@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
+from models.notification import NotificationKind
 from routes.deps import OPERATOR_ID
 from services.notifications import NotificationService
 from services.vm import PlatformVM
@@ -16,7 +17,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     notifications = ctx.services.get(NotificationService)
 
     async def notify(title: str, body: str) -> None:
-        _ = await notifications.notify(OPERATOR_ID, "vm_down", title, body)
+        _ = await notifications.notify(OPERATOR_ID, NotificationKind.VM_DOWN, title, body)
 
     liveness = VMLiveness(vm, notify)
     await ctx.lifecycle.start("vm-liveness", start=liveness.start, stop=liveness.stop)

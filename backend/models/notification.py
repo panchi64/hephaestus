@@ -43,6 +43,7 @@ class NotificationKind(StrEnum):
     REMINDER = "reminder"
     TASK_OUTCOME = "task_outcome"
     SYSTEM = "system"
+    VM_DOWN = "vm_down"
 
 
 class Notification(Table, table=True):

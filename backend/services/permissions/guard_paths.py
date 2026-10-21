@@ -105,6 +105,9 @@ class Places:
     host_cwd: str | None
     #: Whether the command runs on the host only, so the VM's reading never applies.
     host_only: bool = False
+    #: Set for a caller that cannot ask: after a possible `cd`, any relative target counts
+    #: as critical because it could name anything.
+    strict_unplaced: bool = False
 
     @classmethod
     def at(
@@ -115,11 +118,21 @@ class Places:
         cwd: str | None,
         *,
         cwd_known: bool = True,
+        strict: bool = False,
     ) -> Places:
         """The places a shell command runs in. ``cwd_known`` false means an earlier call
-        in the same batch may have moved the shell, so relative paths are not placed."""
+        in the same batch may have moved the shell, so relative paths are not placed;
+        ``strict`` then makes every relative target critical."""
         if not cwd_known:
-            return cls(home, os_home, settings.data_dir, settings.worktrees_dir, None, None)
+            return cls(
+                home,
+                os_home,
+                settings.data_dir,
+                settings.worktrees_dir,
+                None,
+                None,
+                strict_unplaced=strict,
+            )
         vm_cwd = cwd or (home.default.path if home is not None else None)
         located = home.locate(vm_cwd) if home is not None and vm_cwd is not None else None
         host_cwd = str(located[0].root / located[1]) if located is not None else None
@@ -215,6 +228,8 @@ class Places:
         """A relative path with no known working directory: the directory itself, anything
         above it, a ``.git`` folder, and a folder named like the data or worktrees folder
         are not paths to delete unasked, because any of them may be the one that is."""
+        if self.strict_unplaced and not posixpath.isabs(text):
+            return "a relative path after the shell may have changed directory"
         normal = posixpath.normpath(text)
         stem = _glob_parent(normal)
         if stem in (".", "..") or stem.startswith("../"):

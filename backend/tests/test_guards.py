@@ -985,13 +985,16 @@ class TestTheWarning:
     ):
         set_fence(monkeypatch, "unavailable", "no bwrap")
         host: dict[str, object] = {"command": "ls"}
-        assert unconfined("code_run_host_command", host, settings=settings) == "no bwrap"
+        reason = unconfined("code_run_host_command", host, settings=settings)
+        assert reason is not None
+        assert "can't start: no bwrap" in reason
+        assert reason.endswith("turn the fence off in Settings.")
         assert unconfined("shell_run_command", shell("ls", reach="host"), settings=settings)
 
     def test_a_disabled_fence_warns_too(self, monkeypatch: pytest.MonkeyPatch, settings: Settings):
         set_fence(monkeypatch, "disabled_by_setting", "disabled by configuration")
         assert unconfined("code_run_host_command", {}, settings=settings) == (
-            "disabled by configuration"
+            "The host fence is turned off in Settings."
         )
 
     def test_nothing_to_warn_about_when_active_or_in_the_vm(
@@ -1022,46 +1025,12 @@ class TestOnceOnly:
 class TestGuardOfApproval:
     """What the approve route asks: is this approval of a guarded call?"""
 
-    def test_a_parked_call_marked_guarded_is_guarded(self, settings: Settings, home: RunHome):
-        reason = guard_of_approval(
-            "shell_run_command",
-            {GUARD_KEY: "deletes your home"},
-            None,
-            home=home,
-            settings=settings,
-        )
-        assert reason == "deletes your home"
+    def test_a_parked_call_marked_guarded_is_guarded(self):
+        assert guard_of_approval({GUARD_KEY: "deletes your home"}) == "deletes your home"
 
-    def test_the_marker_holds_whatever_arguments_replace_the_call(
-        self, settings: Settings, home: RunHome
-    ):
-        harmless: dict[str, object] = {"command": "ls"}
-        reason = guard_of_approval(
-            "shell_run_command",
-            {GUARD_KEY: "deletes your home"},
-            harmless,
-            home=home,
-            settings=settings,
-        )
-        assert reason == "deletes your home"
+    def test_an_ordinary_approval_is_not_guarded(self):
+        assert guard_of_approval(None) is None
+        assert guard_of_approval({}) is None
 
-    def test_replacement_arguments_that_are_guarded_make_the_approval_guarded(
-        self, settings: Settings, home: RunHome
-    ):
-        reason = guard_of_approval(
-            "shell_run_command", {}, shell("rm -rf ~"), home=home, settings=settings
-        )
-        assert reason is not None
-
-    def test_an_ordinary_approval_is_not_guarded(self, settings: Settings, home: RunHome):
-        assert (
-            guard_of_approval("shell_run_command", None, shell("ls"), home=home, settings=settings)
-            is None
-        )
-        assert (
-            guard_of_approval("shell_run_command", {}, None, home=home, settings=settings) is None
-        )
-
-    def test_a_marker_with_no_text_still_guards(self, settings: Settings, home: RunHome):
-        marked = {GUARD_KEY: True}
-        assert guard_of_approval("x", marked, None, home=home, settings=settings) is not None
+    def test_a_marker_with_no_text_still_guards(self):
+        assert guard_of_approval({GUARD_KEY: True}) is not None

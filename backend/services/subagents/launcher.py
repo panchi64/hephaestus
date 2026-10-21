@@ -217,13 +217,15 @@ class SubagentLauncher(ABC):
         text: str,
         *,
         ledger_prompt_message_id: str | None = None,
+        ledger_thread: str | None = None,
     ) -> str:
         """Send ``text`` from the agent of ``conversation_id`` to ``to``: a handle in the
         same tree, or :data:`PARENT_ADDRESS`. Queued onto the recipient's running turn, or
         delivered by waking it. Returns the recipient's handle.
 
-        ``ledger_prompt_message_id`` is the sender's launching-turn prompt; a wake the message
-        causes files its changes under it rather than under the recipient's stored one.
+        ``ledger_prompt_message_id`` is the prompt the sender files its changes under in
+        ``ledger_thread``'s ledger; a wake the message causes files under it too, but only
+        when the recipient's ledger is that same thread, else under the recipient's stored one.
 
         Raises :class:`SubagentUnavailableError` when nothing in the tree answers to ``to``.
         """

@@ -39,6 +39,7 @@ from services.answers import (
 )
 from services.approval_grants import GrantInfo, grant_scopes, grant_width, grantable
 from services.permissions.guards import (
+    COMMAND_TOOLS,
     FILE_WRITE_TOOLS,
     GUARDED_TOOLS,
     changes_directory,
@@ -287,7 +288,7 @@ def _still_covered(call: ToolCallPart, settled: GrantApproved, active: Sequence[
     return width == "tool" if settled.needs_whole_tool else width != "none"
 
 
-async def _guarded_approvals(
+async def guarded_approvals(
     body: ApprovalDecisions,
     parked: ParkedTurn,
     settings: Settings,
@@ -304,28 +305,29 @@ async def _guarded_approvals(
     cwd_known = True
     for call in parked.requests.approvals:
         decision = chosen.get(call.tool_call_id)
-        if decision is None:
-            continue
         name = call.tool_name
-        override = decision.override_args if decision.approved else None
-        if decision.approved:
-            marked = guard_of_approval(
-                name,
-                parked.requests.metadata.get(call.tool_call_id),
-                None,
-                home=home,
-                settings=settings,
-            )
-            if marked is not None:
+        override = decision.override_args if decision is not None and decision.approved else None
+        if decision is not None and decision.approved:
+            if guard_of_approval(parked.requests.metadata.get(call.tool_call_id)) is not None:
                 found.add(call.tool_call_id)
             elif override is not None and name in GUARDED_TOOLS:
-                # A file write that cannot be placed is not known to be harmless.
-                unplaced = name in FILE_WRITE_TOOLS and home is None
+                # What cannot be placed is not known to be harmless: a file write with no
+                # home, a command with no deps to place it by, or one that follows a `cd`.
+                unplaced = (name in FILE_WRITE_TOOLS and home is None) or (
+                    name in COMMAND_TOOLS and (deps_of_run is None or not cwd_known)
+                )
                 reason = guard(
-                    name, override, home=home, settings=settings, cwd=cwd, cwd_known=cwd_known
+                    name,
+                    override,
+                    home=home,
+                    settings=settings,
+                    cwd=cwd,
+                    cwd_known=cwd_known,
+                    strict=True,
                 )
                 if unplaced or reason is not None:
                     found.add(call.tool_call_id)
+        # Every call in order, including the ones already settled: they run too.
         if cwd_known and changes_directory(name, override or call.args_as_dict()):
             cwd_known = False
     return found
@@ -375,14 +377,15 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
             ),
         )
 
-    # A guarded approval is the operator's alone, and is settled before anything below
-    # changes: an API token's request leaves the park as it was.
+    # A guarded approval is the operator's alone, and is refused before the answers or
+    # grants below change anything.
     if parked.agent is None and any(d.override_args is not None for d in body.decisions):
         # A restored park holds no deps yet; the guard needs the home they place paths in.
-        # A failure is reported by the recompose below.
+        # A token's request may therefore recompose the park before the 403, which is
+        # idempotent. A failure is reported by the recompose below.
         with contextlib.suppress(RecomposeError):
             _ = await recompose(registry, run, parked)
-    guarded = await _guarded_approvals(body, parked, deps.app_state(request).settings)
+    guarded = await guarded_approvals(body, parked, deps.app_state(request).settings)
     if guarded:
         deps.require_operator(request)
 

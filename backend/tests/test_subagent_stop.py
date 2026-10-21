@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
 from fastapi import FastAPI
-from pydantic_ai import ModelResponse, TextPart
+from pydantic_ai import ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -29,16 +29,27 @@ from tests.test_subagents_launch import launcher_of, records_of, settle_run
 EXPLORER = builtin_roster()["explorer"]
 
 
-def _hold_every_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every model request waits forever, so a spawned agent stays live until stopped."""
+def _mentions(messages: list[ModelMessage], needle: str) -> bool:
+    return any(
+        isinstance(part, UserPromptPart) and needle in str(part.content)
+        for message in messages
+        for part in message.parts
+    )
+
+
+def _hold_every_model(monkeypatch: pytest.MonkeyPatch, only: str | None = None) -> None:
+    """Every model request waits forever, so a spawned agent stays live until stopped.
+    With ``only``, just the requests whose prompt mentions it do; the rest answer at once."""
     gate = asyncio.Event()
 
-    async def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        _ = await gate.wait()
+    async def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if only is None or _mentions(messages, only):
+            _ = await gate.wait()
         return ModelResponse(parts=[TextPart(content="never")])
 
-    async def stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        _ = await gate.wait()
+    async def stream(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        if only is None or _mentions(messages, only):
+            _ = await gate.wait()
         yield "never"
 
     async def resolve(self: ModelRegistry, _role: str, **_kwargs: object):
@@ -329,3 +340,56 @@ async def test_an_agent_launched_while_its_parent_is_stopped_is_stopped_too(
         assert row is not None
         assert row.status == "cancelled"
         assert _run(app, child.run_id).stop_cause is StopCause.operator
+
+
+@pytest.mark.parametrize("ended_as", ["done", "failed"])
+async def test_a_stop_does_not_wake_a_finished_agent_through_its_childs_report(
+    monkeypatch: pytest.MonkeyPatch, ended_as: str
+):
+    _hold_every_model(monkeypatch, only="slow task")
+    async with client_app() as (client, app):
+        root = await _thread(app)
+        lead = await app_state(app).agent_store.create(
+            "operator",
+            {"name": "lead", "description": "Splits work.", "can_delegate": True},
+            published=True,
+        )
+        mid = await launcher_of(app).launch(
+            "operator",
+            lead,
+            "plain task",
+            handle="mid",
+            parent=SubagentParent(conversation_id=root),
+        )
+        await settle_run(app, mid.run_id)
+        mid_row = await records_of(app).by_child(mid.conversation_id)
+        assert mid_row is not None
+        if ended_as == "done":
+            await records_of(app).settle(mid_row.id, status="done")
+        else:
+            assert mid_row.status == "failed"
+        grand = await launcher_of(app).launch(
+            "operator",
+            EXPLORER,
+            "slow task",
+            handle="grand",
+            parent=SubagentParent(
+                conversation_id=mid.conversation_id, workspace_key=mid_row.workspace_key
+            ),
+        )
+        await asyncio.sleep(0.1)
+        assert not _run(app, grand.run_id).is_terminal
+
+        def runs_of_mid() -> list[str]:
+            return [
+                r.id for r in app_state(app).runs.list() if r.conversation_id == mid.conversation_id
+            ]
+
+        before = runs_of_mid()
+
+        resp = await client.post(f"/conversations/{root}/agents/stop")
+
+        assert json_body(resp)["stopped"] == ["grand"]
+        await settle_run(app, grand.run_id)
+        await asyncio.sleep(0.2)
+        assert runs_of_mid() == before

@@ -196,7 +196,7 @@ def announcements(
                 name=call.tool_name,
                 args=args,
                 summary=summarize_call(call.tool_name, args),
-                explanation=explanation if isinstance(explanation, str) else guard_reason,
+                explanation=explanation if isinstance(explanation, str) else None,
                 guard=guard_reason,
                 unconfined=unconfined(call.tool_name, args, settings=get_settings()),
             )

@@ -40,7 +40,9 @@ class FakeLauncher:
         text: str,
         *,
         ledger_prompt_message_id: str | None = None,
+        ledger_thread: str | None = None,
     ) -> str:
+        del ledger_thread
         self.sent.append((to, text))
         self.filed_under.append(ledger_prompt_message_id)
         return RECIPIENTS[to].label

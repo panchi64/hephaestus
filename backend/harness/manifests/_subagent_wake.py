@@ -268,20 +268,22 @@ class SubagentWake:
         source: MessageSource = "subagent",
         sender: str | None = None,
         ledger_prompt_message_id: str | None = None,
+        ledger_thread: str | None = None,
     ) -> bool:
         """Put a report (``source="subagent"``) or another agent's message
         (``source="agent"``) from the agent ``sender`` names into a thread's inbox. False
         when the recipient is an agent that was stopped, which nothing wakes.
 
-        ``ledger_prompt_message_id`` is the prompt of the sender's running turn, which a wake
-        this message causes files its changes under."""
+        ``ledger_prompt_message_id`` is the prompt of the sender's running turn in
+        ``ledger_thread``'s ledger, which a wake this message causes files its changes under
+        when the recipient files in that same thread."""
         row = await self._records.by_child(conversation_id)
         if row is not None and row.status == "cancelled":
             return False
         queued = self._runs.inbox(conversation_id, owner_id).enqueue(
             text, source=source, sender=sender
         )
-        self._dispatcher.note_ledger_prompt(queued.id, ledger_prompt_message_id)
+        self._dispatcher.note_ledger_prompt(queued.id, ledger_prompt_message_id, ledger_thread)
         await self._dispatcher.dispatch(owner_id, conversation_id)
         return True
 
@@ -359,9 +361,10 @@ def _recovery(status: str, handle: str, cause: StopCause | None = None) -> list[
     """What the parent can do next, for a report that did not end in finished work."""
     if status == "cancelled" and cause is StopCause.operator:
         return [OPERATOR_STOPPED]
-    if status == "blocked" and cause is StopCause.turn_limit:
+    if status == "blocked" and cause in _LIMIT_LABELS:
+        ran_out = "turns" if cause is StopCause.turn_limit else "time"
         return [
-            "its work is partial: it ran out of turns before finishing",
+            f"its work is partial: it ran out of {ran_out} before finishing",
             f"continue it with `agents_message` to `{handle}`; it picks up where it stopped",
             f"or `agents_stop` `{handle}` and take the work back",
         ]

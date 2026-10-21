@@ -97,16 +97,20 @@ def guard(
     settings: Settings,
     cwd: str | None = None,
     cwd_known: bool = True,
+    strict: bool = False,
 ) -> str | None:
     """Why this call must go to the operator whatever the level says, or None.
 
     ``cwd`` is the shell's working directory as a home path; it defaults to the home's
     default place, and ``cwd_known`` false says an earlier call in the batch may have moved
-    it. ``code_run_host_command`` starts in the host's scratch directory whatever ``cwd``
-    is. A command too deeply nested to read asks.
+    it. ``strict`` then treats every relative removal or move target as critical, for a
+    caller that cannot ask. ``code_run_host_command`` starts in the host's scratch
+    directory whatever ``cwd`` is. A command too deeply nested to read asks.
     """
     try:
-        return _guard(tool, args, home=home, settings=settings, cwd=cwd, cwd_known=cwd_known)
+        return _guard(
+            tool, args, home=home, settings=settings, cwd=cwd, cwd_known=cwd_known, strict=strict
+        )
     except RecursionError, UnicodeError:
         return f"This command is too complex to check. {_GRANT_FREE}"
 
@@ -130,6 +134,7 @@ def _guard(
     settings: Settings,
     cwd: str | None,
     cwd_known: bool,
+    strict: bool,
 ) -> str | None:
     os_home = Path.home()
     if tool in FILE_WRITE_TOOLS:
@@ -145,7 +150,7 @@ def _guard(
         if tool == HOST_COMMAND_TOOL:
             places = Places.for_host_command(home, os_home, settings)
         else:
-            places = Places.at(home, os_home, settings, cwd, cwd_known=cwd_known)
+            places = Places.at(home, os_home, settings, cwd, cwd_known=cwd_known, strict=strict)
         reason = _command_reason(command, places, host=host)
         if reason is not None:
             return f"{reason} {_GRANT_FREE}"
@@ -159,27 +164,13 @@ def _guard(
     return None
 
 
-def guard_of_approval(
-    tool_name: str,
-    parked_metadata: Mapping[str, object] | None,
-    override_args: Mapping[str, object] | None,
-    *,
-    home: RunHome | None,
-    settings: Settings,
-    cwd: str | None = None,
-) -> str | None:
-    """The guard reason that applies to an approval, or None when it is an ordinary one.
-
-    Guarded when the parked call was marked guarded, or when the arguments the operator
-    approved in its place (``override_args``) are themselves guarded. A guarded approval
-    is once-only and may only come from the operator's own session.
-    """
-    if is_guarded(parked_metadata):
-        marked = parked_metadata.get(GUARD_KEY) if parked_metadata else None
-        return marked if isinstance(marked, str) else "This call always needs your approval."
-    if override_args is not None:
-        return guard(tool_name, override_args, home=home, settings=settings, cwd=cwd)
-    return None
+def guard_of_approval(parked_metadata: Mapping[str, object] | None) -> str | None:
+    """The reason a parked call was marked guarded, or None for an ordinary one. A guarded
+    approval is once-only and may only come from the operator's own session."""
+    if not is_guarded(parked_metadata):
+        return None
+    marked = parked_metadata.get(GUARD_KEY) if parked_metadata else None
+    return marked if isinstance(marked, str) else "This call always needs your approval."
 
 
 def unconfined(tool: str, args: Mapping[str, object], *, settings: Settings) -> str | None:
@@ -189,7 +180,13 @@ def unconfined(tool: str, args: Mapping[str, object], *, settings: Settings) -> 
     state = confinement_state(settings)
     if state.state == "active":
         return None
-    return state.reason or state.state.replace("_", " ")
+    if state.state == "disabled_by_setting":
+        return "The host fence is turned off in Settings."
+    why = state.reason or "it is not available"
+    return (
+        f"The host fence can't start: {why}. "
+        + "Install bubblewrap or turn the fence off in Settings."
+    )
 
 
 def _command_reason(command: str, start: Places, *, host: bool) -> str | None:

@@ -285,7 +285,7 @@ class TestTheCard:
         [event] = [b for b in run_bodies(run) if isinstance(b, ApprovalRequired)]
         assert event.guard is not None
         assert "home folder" in event.guard
-        assert event.explanation == event.guard
+        assert event.explanation is None
         assert guards.is_guarded(requests.metadata["c1"])
         payload = run.parked_payload
         assert isinstance(payload, ParkedTurn)
@@ -332,7 +332,12 @@ class TestTheCard:
         events, _, _ = announcements(
             DeferredToolRequests(approvals=[host, _call("make", "h2", reach="host")]), {}
         )
-        assert [e.unconfined for e in events if isinstance(e, ApprovalRequired)] == [reason, reason]
+        warned = [e.unconfined for e in events if isinstance(e, ApprovalRequired)]
+        assert len(warned) == 2
+        assert all(w is not None and "host fence" in w for w in warned)
+        assert warned[0] == warned[1]
+        if state == "unavailable":
+            assert reason in (warned[0] or "")
 
     def test_a_vm_command_carries_none(self, monkeypatch: pytest.MonkeyPatch):
         set_fence(monkeypatch, "unavailable", "no bwrap")
