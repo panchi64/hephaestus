@@ -317,6 +317,8 @@ def build_chat_orchestrator(
     disabled_tools: frozenset[str] = NO_DISABLED_TOOLS,
     binding: ConversationBinding = DEFAULT_BINDING,
     workspace_key: str = "",
+    max_requests: int | None = None,
+    ledger_prompt_message_id: str | None = None,
 ) -> Orchestrator:
     """Build the orchestrator for one chat turn (one always-agent path).
 
@@ -570,6 +572,8 @@ def build_chat_orchestrator(
                 compaction=setup.compaction,
                 turn_start=setup.turn_start,
                 workspace_key=workspace_key,
+                max_requests=max_requests,
+                ledger_prompt_message_id=ledger_prompt_message_id,
             )
 
             # Verify only a completed turn (not one parked for approval or stopped at

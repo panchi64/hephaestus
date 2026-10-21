@@ -118,6 +118,12 @@ class WriteBehindWorker[T]:
                     self._queue.qsize(),
                     timeout,
                 )
+        elif not self._queue.empty():
+            logger.warning(
+                "%s: vault locked at stop; %d item(s) left unflushed",
+                self._name,
+                self._queue.qsize(),
+            )
         await cancel_and_wait(self._task, STOP_TIMEOUT_S)
         self._task = None
 

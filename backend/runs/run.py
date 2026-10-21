@@ -27,6 +27,7 @@ from .events import (
     RunMetrics,
     now_utc,
 )
+from .events.lifecycle import EndCode
 from .inbox import ConversationInbox, QueuedMessage
 from .overhead import TurnOverhead
 from .prefix import PrefixVerdict
@@ -97,6 +98,8 @@ class Run:
     detail: str | None = None
     # Who or what stopped a cancelled or blocked run; None for every other ending.
     stop_cause: StopCause | None = None
+    # Which bound blocked the run; becomes `RunEnded.code`.
+    end_code: EndCode | None = None
     error: str | None = None
     created_at: datetime = field(default_factory=now_utc)
     started_at: datetime | None = None

@@ -10,7 +10,10 @@ compose in at construction.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import Callable
 
 from core.api_scopes import ScopeClaim
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
@@ -26,6 +29,45 @@ from services.notifications import NotificationService
 from services.settings_store import SettingsStore
 
 logger = logging.getLogger(__name__)
+
+#: A conversation whose saves keep failing is announced once per this window.
+SAVE_FAILED_WINDOW_S = 600.0
+
+
+def save_failure_reporter(
+    notifications: NotificationService,
+    *,
+    window_s: float = SAVE_FAILED_WINDOW_S,
+    clock: Callable[[], float] = time.monotonic,
+) -> Callable[[str], None]:
+    """A store drop listener that raises a `save_failed` notice, at most once per
+    conversation per window. It must be called with an event loop running."""
+    last: dict[str, float] = {}
+    tasks: set[asyncio.Task[None]] = set()
+
+    async def _notify(conversation_id: str) -> None:
+        try:
+            _ = await notifications.notify(
+                OPERATOR_ID,
+                "save_failed",
+                "A conversation could not be saved",
+                body="The latest messages were not written to disk and may be lost on restart.",
+                conversation_id=conversation_id,
+            )
+        except Exception:
+            logger.exception("notifications: failed to report a save failure")
+
+    def report(conversation_id: str) -> None:
+        now = clock()
+        previous = last.get(conversation_id)
+        if previous is not None and now - previous < window_s:
+            return
+        last[conversation_id] = now
+        task = asyncio.get_running_loop().create_task(_notify(conversation_id))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    return report
 
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
@@ -44,6 +86,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         ),
     )
     await ctx.lifecycle.start("notifications", start=notifications.start, stop=notifications.stop)
+    conversations.on_save_failed(save_failure_reporter(notifications))
     # In-flight run-terminal tasks are this surface's writers — cancel and await
     # them right before it stops (registered after ⇒ stops earlier), so a run
     # finishing at shutdown never leaves a task notifying through a stopped store.

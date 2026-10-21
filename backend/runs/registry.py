@@ -16,6 +16,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from enum import Enum
+from typing import Literal
 from uuid import uuid4
 
 from core.tasks import STOP_TIMEOUT_S
@@ -25,7 +26,7 @@ from .events import EventBody, LimitNotice, RunEnded, RunError, RunQueued, RunSt
 from .inbox import NO_JOURNAL, ConversationInbox, InboxDispatch, InboxJournal
 from .lanes import LaneGate, LaneLimits
 from .parked import NO_PARKED_JOURNAL, ParkedJournal
-from .run import Orchestrator, Run, RunStatus
+from .run import Orchestrator, Run, RunStatus, StopCause
 from .stream import RunStream
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ def _ended(run: Run) -> RunEnded:
         case RunStatus.done:
             return RunEnded(outcome="done", detail=run.detail)
         case RunStatus.blocked:
-            return RunEnded(outcome="blocked", detail=run.detail)
+            return RunEnded(outcome="blocked", detail=run.detail, code=run.end_code)
         case RunStatus.cancelled:
             return RunEnded(outcome="cancelled", detail=run.detail)
         case _:
@@ -73,6 +74,9 @@ class ConversationBusyError(Exception):
         self.conversation_id: str = conversation_id
 
 
+type TimeoutKind = Literal["wall_clock", "inactivity"]
+
+
 class RunTimeout(Exception):
     """A Run exceeded a bound. ``kind`` is ``wall_clock`` or ``inactivity``.
 
@@ -82,9 +86,9 @@ class RunTimeout(Exception):
     (``blockedDetail``), so it must read as a plain sentence, never internal jargon.
     """
 
-    def __init__(self, kind: str, bound_s: float | None = None) -> None:
+    def __init__(self, kind: TimeoutKind, bound_s: float | None = None) -> None:
         super().__init__(_timeout_message(kind, bound_s))
-        self.kind: str = kind
+        self.kind: TimeoutKind = kind
 
 
 def _fmt_minutes(minutes: float) -> str:
@@ -614,6 +618,9 @@ class RunRegistry:
             self._emit(run, LimitNotice(limit="time", message=str(timeout)))
             parked = run.status is RunStatus.awaiting_input
             run.block(str(timeout))
+            run.end_code = timeout.kind
+            if timeout.kind == "wall_clock":
+                run.stop_cause = StopCause.time_limit
             if parked:
                 # The bound tripped in the window after the orchestrator parked but
                 # before its task finished unwinding. A parked turn's persistence is

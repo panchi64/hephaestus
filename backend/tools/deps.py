@@ -88,6 +88,8 @@ class RunDeps:
     # a spawned agent to its launcher's, since its edits land in the parent's ledger; None
     # means the run's own `run.prompt_message_id` (`tools/home.py`).
     ledger_prompt_message_id: str | None = None
+    # The most model requests this run's turn may make; None is unbounded.
+    max_requests: int | None = None
     # How far this run may go before it has to ask: "plan", "manual", "edit", "auto" or
     # "yolo" — the last of which is the operator saying it never has to.
     # Here because a tool is offered and executed inside a Run,

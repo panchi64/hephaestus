@@ -16,9 +16,9 @@ ours, not the library's.** ``FallbackModel`` only ever falls back while *opening
 a request stream (a dead/erroring endpoint before any output); once a stream is
 open and answer text is flowing it propagates errors rather than re-trying a
 different endpoint. We complete the guarantee in the orchestrator: a model error
-after the first ``answer.delta`` ends the run (``run.answer_started`` is set in
-the translation layer) — we never re-drive a turn onto another endpoint once the
-user has seen partial output.
+after the first ``answer.delta`` retracts the partial answer (``answer.retracted``) and
+re-sends the request (``agent/turn.py``); ``run.answer_started`` pins the endpoint, so
+we never re-drive a turn onto another endpoint once the user has seen partial output.
 """
 
 from __future__ import annotations
