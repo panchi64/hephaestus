@@ -80,6 +80,7 @@ from services.permissions import (
     review_transcript,
 )
 from services.permissions.fence import Fence
+from services.permissions.guards import GUARDED_TOOLS, guard, remember
 from services.registry import ModelRegistry
 from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
@@ -193,7 +194,13 @@ async def settle_deferred(
     # grant is what produced it, because the two are not recoverable from each other: an
     # ALLOW can come from a grant or from a level that allows outright, and only the first
     # is revocable.
-    ruled = [(call, *_by_level(permission, call, granted)) for call in approvals]
+    guarded = await _guard_reasons(run, approvals, deps)
+    ruled = [
+        (call, Decision.ASK, False)
+        if call.tool_call_id in guarded and decide(permission, call.tool_name) is not Decision.BLOCK
+        else (call, *_by_level(permission, call, granted))
+        for call in approvals
+    ]
     reviewed = await review_batch(
         run,
         [call for call, decision, _ in ruled if decision is Decision.REVIEW],
@@ -240,6 +247,32 @@ async def settle_deferred(
         else:
             manual.append(call)
     return settled, manual
+
+
+async def _guard_reasons(
+    run: Run, approvals: Sequence[ToolCallPart], deps: RunDeps
+) -> dict[str, str]:
+    """Why each call that must go to the operator at every level has to, by call id.
+
+    Ahead of the grants, the level and the reviewer: none of them may answer these. The
+    reasons are handed to the park that announces them (:func:`guards.remember`).
+    """
+    candidates = [call for call in approvals if call.tool_name in GUARDED_TOOLS]
+    if not candidates:
+        return {}
+    try:
+        home = await resolve_run_home(deps)
+    except Exception:  # a guard that raises would abort the operator's turn
+        logger.info("guard: no home to place paths against", exc_info=True)
+        home = None
+    settings = get_settings()
+    reasons: dict[str, str] = {}
+    for call in candidates:
+        reason = guard(call.tool_name, call.args_as_dict(), home=home, settings=settings)
+        if reason is not None:
+            reasons[call.tool_call_id] = reason
+            remember(run.id, call.tool_call_id, reason)
+    return reasons
 
 
 def _by_level(

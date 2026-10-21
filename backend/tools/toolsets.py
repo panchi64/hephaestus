@@ -58,6 +58,7 @@ from .describe import (
 )
 from .files import GATED_TOOLS as _FILES_GATED
 from .files import files_toolset
+from .guarded import GuardedToolset
 from .harness_events import own_harness_events
 from .plan import GATED_TOOLS as _PLAN_GATED
 from .plan import plan_toolset
@@ -234,6 +235,6 @@ def build_agent_toolsets(
     # prefixing produces, there is no point gating a tool the filter already took away,
     # and the rewrite resolves a description's cross-references against those same
     # namespaced names (`describe.py`). Recovery wraps all of it, so a call that raises is
-    # reported to the model whatever layer it raised in.
+    # reported to the model whatever layer it raised in; the guard sits just inside it.
     stack = combined.filtered(_enabled_gate).prepared(_approval_gate).prepared(_describe)
-    return [RecoveringToolset(stack, call_timeout_s=call_timeout_s)]
+    return [RecoveringToolset(GuardedToolset(stack), call_timeout_s=call_timeout_s)]

@@ -46,10 +46,12 @@ from pydantic_ai import (
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 
+from core.config import get_settings
 from runs import ApprovalRequired, EventBody, QuestionAsked, Run
 from services.answers import questions_of
 from services.conversations import ConversationBinding, ConversationStore
 from services.notification_view import NotificationView
+from services.permissions.guards import GUARD_KEY, take, unconfined
 
 from .compaction_context import CompactionContext
 from .factory import TurnAgent
@@ -176,16 +178,21 @@ def announcements(
         # A plain-language explanation comes from an `explanation` argument (the
         # host-execution path requires one) or, for a tool that writes its own from
         # stored state, from the `ApprovalRequired` metadata.
+        metadata = requests.metadata.get(call.tool_call_id, {})
         explanation = args.get("explanation")
         if not isinstance(explanation, str):
-            explanation = requests.metadata.get(call.tool_call_id, {}).get("explanation")
+            explanation = metadata.get("explanation")
+        reason = metadata.get(GUARD_KEY)
+        guard_reason = reason if isinstance(reason, str) and reason else None
         events.append(
             ApprovalRequired(
                 tool_call_id=call.tool_call_id,
                 name=call.tool_name,
                 args=args,
                 summary=summarize_call(call.tool_name, args),
-                explanation=explanation if isinstance(explanation, str) else None,
+                explanation=guard_reason or (explanation if isinstance(explanation, str) else None),
+                guard=guard_reason,
+                unconfined=unconfined(call.tool_name, args, settings=get_settings()),
             )
         )
     for call in requests.calls:
@@ -257,6 +264,10 @@ async def park_for_input(
     workspace_key: str = "",
 ) -> None:
     settled = settled or {}
+    for call in requests.approvals:
+        reason = take(run.id, call.tool_call_id)
+        if reason is not None:
+            requests.metadata.setdefault(call.tool_call_id, {})[GUARD_KEY] = reason
     events, pending_names, asked = announcements(requests, settled)
     for event in events:
         _ = run.emit(event)

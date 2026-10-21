@@ -72,6 +72,7 @@ from services.permissions import (
     command_prefixes,
     declared_reach,
 )
+from services.permissions.guards import is_guarded
 
 #: The tools whose grant is scoped to a command rather than to the whole tool — the ones
 #: whose call carries the command line the operator is really answering. Named as literals
@@ -93,6 +94,12 @@ _WORDS = TypeAdapter(list[str])
 #: policy instead), and one on a plan approval would let the agent raise its own level.
 #: Both writers of a grant consult it, and :func:`grant_width` ignores any row on one.
 ONCE_ONLY_TOOLS = frozenset({"code_request_egress"}) | OPERATOR_ONLY_TOOLS
+
+
+def grantable(tool_name: str, metadata: Mapping[str, object] | None = None) -> bool:
+    """Whether an approval of this call may leave a standing grant behind. A guarded call
+    (``metadata`` carries its guard) is once-only whatever its tool."""
+    return tool_name not in ONCE_ONLY_TOOLS and not is_guarded(metadata)
 
 
 @dataclass(frozen=True)
