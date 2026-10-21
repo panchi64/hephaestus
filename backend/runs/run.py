@@ -49,6 +49,13 @@ class RunStatus(StrEnum):
     cancelled = "cancelled"
 
 
+class StopCause(StrEnum):
+    operator = "operator"
+    parent = "parent"
+    time_limit = "time_limit"
+    turn_limit = "turn_limit"
+
+
 TERMINAL_STATUSES = {
     RunStatus.done,
     RunStatus.blocked,
@@ -88,6 +95,8 @@ class Run:
     prompt_message_id: str | None = None
     status: RunStatus = RunStatus.queued
     detail: str | None = None
+    # Who or what stopped a cancelled or blocked run; None for every other ending.
+    stop_cause: StopCause | None = None
     error: str | None = None
     created_at: datetime = field(default_factory=now_utc)
     started_at: datetime | None = None
