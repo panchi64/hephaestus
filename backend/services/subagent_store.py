@@ -20,6 +20,7 @@ from sqlmodel import Session, col, select
 
 from core.db import in_session
 from core.vault import Vault
+from models.parked_turn import ParkedTurnRecord
 from models.subagent import SubagentRecord
 from services.subagents.launcher import SubagentView
 
@@ -275,12 +276,20 @@ class SubagentStore:
         ``running`` forever — counting against the cap, showing a spinner in the panel, and
         promising the parent a report that is never coming. Calling it ``cancelled`` is both
         true and the honest thing to show the operator.
+
+        A row whose run is stored as parked is left live: the restart kept that run, and
+        it resumes when the operator answers.
         """
 
         def work(session: Session) -> int:
-            rows = session.exec(
-                select(SubagentRecord).where(col(SubagentRecord.status).in_(LIVE_STATUSES))
-            ).all()
+            parked = set(session.exec(select(ParkedTurnRecord.run_id)).all())
+            rows = [
+                row
+                for row in session.exec(
+                    select(SubagentRecord).where(col(SubagentRecord.status).in_(LIVE_STATUSES))
+                ).all()
+                if row.run_id not in parked
+            ]
             for row in rows:
                 row.status = "cancelled"
                 row.ended_at = row.ended_at or datetime.now(UTC)

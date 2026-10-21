@@ -118,7 +118,8 @@ def persist_parked_cancel(run: Run, *, store: ConversationStore | None) -> None:
     parked = run.parked_payload
     if not isinstance(parked, ParkedTurn):
         return
-    flush_recorder(run, store)(parked.message_history, CANCELLED_DETAIL, parked_context(parked))
+    detail = run.detail if run.status is RunStatus.blocked and run.detail else CANCELLED_DETAIL
+    flush_recorder(run, store)(parked.message_history, detail, parked_context(parked))
 
 
 def parked_context(parked: ParkedTurn, turn_start: TurnStart | None = None) -> PersistContext:

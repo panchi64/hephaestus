@@ -177,7 +177,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         # Nobody is watching, so tools that stop and wait for someone are withheld, and so
         # are features never set up.
         disabled = await composer.disabled(
-            view.owner_id, kind=TASK_KIND, vision=models.vision, agent=applied.agent, depth=0
+            view.owner_id, kind=TASK_KIND, vision=models.vision, applied=applied, depth=0
         )
         thresholds = await get_context_thresholds(settings_store, view.owner_id)
         timeouts: WallClockOverride = {}

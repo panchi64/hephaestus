@@ -44,8 +44,8 @@ from services.agents import (
     normalize_agent_name,
 )
 from services.agents.definition import WorkspacePolicy
-from services.agents.thread import may_delegate, resolve_thread_agent
-from services.conversations import ConversationStore
+from services.agents.thread import as_thread, may_delegate, resolve_thread_agent
+from services.conversations import ConversationBinding, ConversationStore
 from services.offline import OfflineModeService
 from services.permissions import DEFAULT_PERMISSION, permission_level, stricter_permission
 from services.projects import ProjectStore, WorktreeManager
@@ -230,7 +230,11 @@ class ConversationSubagents(SubagentLauncher):
         # Nobody is in the agent's conversation, so it is not offered the tools that would
         # stop and wait for someone.
         disabled = await self._composer.disabled(
-            owner_id, kind=SUBAGENT_KIND, vision=models.vision, agent=agent, depth=depth
+            owner_id,
+            kind=SUBAGENT_KIND,
+            vision=models.vision,
+            applied=as_thread(agent, ConversationBinding()),
+            depth=depth,
         )
         # Refuse rather than degrade: an agent missing the one capability its job rests on
         # still answers, from memory, and reads as though it had done the work.

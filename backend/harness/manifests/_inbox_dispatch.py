@@ -293,7 +293,7 @@ class InboxDispatcher:
             owner_id,
             kind=WAKE_KIND,
             vision=models.vision,
-            agent=applied.agent,
+            applied=applied,
             depth=row.depth if row is not None else 0,
         )
         # A spawned agent's turn gets the wall clock its first one had: nobody is watching.

@@ -21,7 +21,7 @@ from agent.summarize import resolve_auto_compact_policy
 from core.config import Settings
 from core.container import ServiceContainer
 from routes.chat.turn import TurnModels, resolve_turn_models
-from services.agents import AgentCatalog, AgentDefinition
+from services.agents import AgentCatalog
 from services.agents.thread import DELEGATION_TOOLS, ThreadAgent, may_delegate, resolve_thread_agent
 from services.conversations import ConversationStore
 from services.offline import OfflineModeService
@@ -73,10 +73,11 @@ class ThreadComposer:
         return ThreadTurn(applied, models, (*self.instruction_providers, *applied.instructions))
 
     async def disabled(
-        self, owner_id: str, *, kind: str, vision: bool, agent: AgentDefinition, depth: int
+        self, owner_id: str, *, kind: str, vision: bool, applied: ThreadAgent, depth: int
     ) -> frozenset[str]:
         """What is withheld from a run of ``kind`` ``depth`` levels below its tree's root:
-        the operator's switches, and delegation where ``agent`` may not delegate."""
+        the operator's switches, delegation where the agent may not delegate, and the
+        agent's own withheld tools."""
         disabled = await effective_disabled_tools(
             self.settings_store,
             self.offline,
@@ -86,9 +87,9 @@ class ThreadComposer:
             availability=self.availability,
             caps=self.capabilities,
         )
-        if not may_delegate(agent, depth, self.settings.agent_max_depth):
+        if not may_delegate(applied.agent, depth, self.settings.agent_max_depth):
             disabled |= DELEGATION_TOOLS
-        return disabled
+        return disabled | applied.withheld
 
     async def recompose(self, facts: ParkedFacts, *, kind: str, depth: int) -> Recomposed:
         """The agent and compaction context a parked turn of ``kind`` resumes with."""
@@ -110,7 +111,7 @@ class ThreadComposer:
             capabilities=self.capabilities,
             store=self.conversations,
             disabled_tools=await self.disabled(
-                owner_id, kind=kind, vision=models.vision, agent=thread.applied.agent, depth=depth
+                owner_id, kind=kind, vision=models.vision, applied=thread.applied, depth=depth
             ),
             auto_compact=await resolve_auto_compact_policy(self.settings_store, owner_id),
             context_window=models.context_window,

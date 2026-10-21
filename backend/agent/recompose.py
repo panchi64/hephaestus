@@ -66,11 +66,12 @@ def register_recompose(registry: RunRegistry, kind: str, hook: RecomposeHook) ->
     registry.set_recomposer(kind, _Entry(hook))
 
 
-async def recompose(registry: RunRegistry, run: Run, parked: ParkedTurn) -> None:
+async def recompose(registry: RunRegistry, run: Run, parked: ParkedTurn) -> bool:
     """Give a restored park its agent and compaction context, in place. A park that still
-    holds its agent is left alone. Raises :class:`RecomposeError`."""
+    holds its agent is left alone. Returns whether it was rebuilt; raises
+    :class:`RecomposeError`."""
     if parked.agent is not None:
-        return
+        return False
     entry = registry.recomposer(run.kind)
     if not isinstance(entry, _Entry):
         raise RecomposeError(f"nothing can rebuild a {run.kind} run after a restart")
@@ -95,3 +96,4 @@ async def recompose(registry: RunRegistry, run: Run, parked: ParkedTurn) -> None
     parked.title = rebuilt.title
     if rebuilt.endpoint is not None:
         run.endpoint = rebuilt.endpoint
+    return True
