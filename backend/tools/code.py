@@ -230,7 +230,8 @@ def _execute_description(settings: Settings, *, delegated: bool = False) -> str:
         "or thread inside the run. `stdout` and `stderr` come back whole, so print what "
         "you need to read, and write bulky output to a file under `/work` to read back "
         "in slices.\n\n"
-        "Returns `ok`, `exit_code`, `stdout`, `stderr` and `timed_out`. On failure it "
+        "Returns `ok`, `exit_code`, `stdout`, `stderr` and `timed_out`, and `notes` from "
+        "copying your changes back. On failure it "
         "adds an `error` hint naming the cap that was likely hit, if any; read `stderr` "
         "for the cause, fix the code, and run it again."
     )

@@ -4,6 +4,7 @@ A VM that stops answering leaves every command waiting on a guest that is gone. 
 probes in a row count as dead, because one probe can time out on a busy guest. The first
 death is answered with a reset; a second within :data:`REPEAT_WINDOW_S` leaves the VM down
 and tells the operator, because a VM that keeps dying needs a person, not another reboot.
+Bringing a VM that was left down back up reopens the automatic reset.
 """
 
 from __future__ import annotations

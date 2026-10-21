@@ -171,17 +171,13 @@ class EgressGateway:
         self._grants[token] = Grant(Allowlist(allow_dir), tuple(secrets_), allow_dir.name)
         return f"workspace:{token}"
 
-    def latest_denial(self, workspace: str, since: float) -> str | None:
-        """The host most recently refused to ``workspace`` (its allowlist directory name)
-        at or after ``since``, a :func:`time.monotonic` reading, or None."""
-        found: tuple[float, str] | None = None
-        for grant in self._grants.values():
-            if grant.workspace != workspace:
-                continue
-            for when, host in grant.denials:
-                if when >= since and (found is None or when >= found[0]):
-                    found = (when, host)
-        return found[1] if found is not None else None
+    def latest_denial(self, credentials: str, since: float) -> str | None:
+        """The host most recently refused to ``credentials``' grant at or after ``since``,
+        a :func:`time.monotonic` reading, or None."""
+        grant = self.grant_for(credentials)
+        if grant is None:
+            return None
+        return next((host for when, host in reversed(grant.denials) if when >= since), None)
 
     def grant_for(self, credentials: str) -> Grant | None:
         """The grant ``credentials`` name, or ``None`` once revoked."""

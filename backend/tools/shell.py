@@ -47,7 +47,6 @@ new piece of output goes out as `tool.progress`.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal
@@ -64,7 +63,6 @@ from services.home.table import RunHome
 from services.permissions import Reach, capability_of, renamed_reach
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import SandboxSessionManager
-from services.sandbox.base import safe_key
 from services.sandbox.fence import ConfinementState, confinement_state, host_scratch_dir
 from services.sandbox.limits import VM_WAIT_S
 from services.sandbox.refusals import Refusal, egress_note, host_refusal, vm_refusal
@@ -162,6 +160,25 @@ def _with_refusal(payload: dict[str, object], refusal: Refusal | None) -> None:
     payload["fence_note"] = refusal.note
     if refusal.denied_host is not None:
         payload["denied_host"] = refusal.denied_host
+
+
+def _name_gateway_denial(payload: dict[str, object], state: _Ready, began: float) -> None:
+    """Fill ``denied_host`` from the gateway's record when the client's own error text
+    named no host. It is the session's latest refusal since the command took the session,
+    which another job or run of the same workspace can also have caused. An unrelated
+    fence note stays, and then no host is added."""
+    if "denied_host" in payload:
+        return
+    note = payload.get("fence_note")
+    if note is not None and note != egress_note(None):
+        return
+    credentials = state.session.credentials
+    if credentials is None:
+        return
+    host = state.copies.vm.gateway.latest_denial(credentials, began)
+    if host is not None:
+        payload["denied_host"] = host
+        payload["fence_note"] = egress_note(host)
 
 
 def _host_fence() -> ConfinementState:
@@ -369,9 +386,9 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
 
         Returns `ok`, `exit_code` (null after a timeout), `stdout`, `stderr`, `timed_out`,
         `duration_ms`, the `cwd` the next command starts in, the `reach` you declared and
-        whether it ran `fenced`. A `fence_note` explains a refusal by the fence; act on it
-        rather than retrying the same command. `notes` reports what happened when your
-        changes were copied back.
+        whether it ran `fenced`. A `fence_note` explains a fence refusal; don't just
+        retry the command. `denied_host` is the workspace's latest
+        refused host during the command, not proof it was this command's. `notes` reports on copying your changes back.
 
         Args:
             command: The command, as you would type it in bash.
@@ -380,10 +397,9 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
                 `network` runs it in your VM with the domains the operator has allowed,
                 for installs, clones and downloads; a package install or clone gets it
                 even when declared `offline`. `host` runs it on the operator's own
-                machine, starting in the project's folder there, in a fence that blocks
-                shell startup files and credentials; use it only when the command has to
-                act on that machine, never to install packages, and know that its changes
-                cannot be reverted.
+                machine, starting in the project's folder there; use it only when the
+                command has to act on that machine, never to install packages, and know
+                that its changes cannot be reverted.
             timeout_seconds: Seconds to wait before the command is killed. Default 300.
         """
         state = await _ready(ctx, "run_command")
@@ -400,7 +416,6 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
             )
             payload = _run_payload(result, bound, timeout, cwd=cwd)
         else:
-            began = time.monotonic()
             done = await shell.home.run(
                 state.session,
                 state.copies,
@@ -412,13 +427,8 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
                 changes=change_log(ctx.deps),
             )
             payload = _run_payload(done.result, bound, timeout, cwd=done.cwd, notes=done.notes)
-            if not done.result.ok and "denied_host" not in payload:
-                recent = state.copies.vm.gateway.latest_denial(
-                    safe_key(ctx.deps.scratch_key), began
-                )
-                if recent is not None:
-                    payload["denied_host"] = recent
-                    _ = payload.setdefault("fence_note", egress_note(recent))
+            if not done.result.ok and bound.network:
+                _name_gateway_denial(payload, state, done.began)
         return await with_brief_payload(ctx, state.home, touched, payload)
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})
@@ -487,7 +497,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
     async def check_command(ctx: RunContext[RunDeps], command_id: str) -> dict[str, object] | str:
         """Returns where a background command stands: `status` (`running` or `finished`),
         `exit_code` once it has one, and everything it has printed so far in `stdout` and
-        `stderr`.
+        `stderr`. `notes` reports on copying its changes back.
 
         Use it to wait for a server to come up or a long run to finish. Between checks,
         get on with other work rather than calling this again straight away.

@@ -238,9 +238,9 @@ async def test_a_refused_tunnel_is_remembered_for_its_workspace(tmp_path: Path):
     )
 
     assert reply.startswith(b"HTTP/1.1 403")
-    assert gateway.latest_denial(tmp_path.name, before) == "evil.example"
-    assert gateway.latest_denial(tmp_path.name, time.monotonic() + 1) is None
-    assert gateway.latest_denial("some-other-workspace", before) is None
+    assert gateway.latest_denial(credentials, before) == "evil.example"
+    assert gateway.latest_denial(credentials, time.monotonic() + 1) is None
+    assert gateway.latest_denial("workspace:unknown", before) is None
 
 
 @pytest.mark.parametrize(

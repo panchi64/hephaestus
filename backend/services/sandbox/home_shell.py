@@ -68,6 +68,8 @@ class HomeResult:
     notes: tuple[str, ...]
     #: Where the next command starts.
     cwd: str
+    #: A :func:`time.monotonic` reading taken once the command held its session.
+    began: float
 
 
 class HomeShell:
@@ -148,6 +150,7 @@ class HomeShell:
             # In key order, so two commands reaching the same projects never deadlock.
             for _mount, copy in sorted(held, key=lambda pair: pair[1].workspace.key):
                 _ = await stack.enter_async_context(copy.lock)
+            began = time.monotonic()
             try:
                 await session.bring_in()
                 for _mount, copy in held:
@@ -193,7 +196,7 @@ class HomeShell:
             timed_out=timed_out,
             duration_ms=round((time.monotonic() - started) * 1000),
         )
-        return HomeResult(result=result, notes=tuple(notes), cwd=self._cwd)
+        return HomeResult(result=result, notes=tuple(notes), cwd=self._cwd, began=began)
 
     async def start(
         self,
@@ -280,13 +283,17 @@ class HomeShell:
         for _mount, copy in job.held:
             copy.jobs.discard(job.name)
         notes: list[str] = []
-        async with job.session.lock:
-            if (lost := await job.session.bring_out()) is not None:
-                notes.append(lost)
-        for mount, copy in job.held:
-            async with copy.lock:
-                copy.touch()
-                notes += await _bring_back(mount, copy, job.changes)
+        try:
+            async with job.session.lock:
+                if (lost := await job.session.bring_out()) is not None:
+                    notes.append(lost)
+            for mount, copy in job.held:
+                async with copy.lock:
+                    copy.touch()
+                    notes += await _bring_back(mount, copy, job.changes)
+        except (SandboxError, VMError) as exc:
+            # The job is already off the books, so its status must still be stored.
+            notes.append(f"bringing the command's changes back failed: {exc}")
         final = replace(
             self._status(command_id, job, state, status), notes=tuple(dict.fromkeys(notes))
         )
