@@ -167,19 +167,23 @@ def parse_agent_file(text: str, *, name: str, clip: bool = True) -> AgentDefinit
         # of what it is told to do, and an empty one is an agent with no instructions.
         raise AgentFileError(f"agent {spec_name!r} has no instructions below its frontmatter")
 
-    return AgentDefinition(
-        name=spec_name,
-        description=_clip(description, DESCRIPTION_MAX_CHARS) if clip else description,
-        agent_class=_declared_class(fields, name=spec_name),
-        instructions=_clip(brief, BRIEF_MAX_CHARS) if clip else brief,
-        tools=_declared_tools(fields),
-        permission_ceiling=_declared_ceiling(fields, name=spec_name),
-        workspace=_declared_workspace(fields, name=spec_name),
-        wall_clock_timeout_s=_positive(fields.get("wall-clock-timeout"), float),
-        can_delegate=fields.get("can-delegate") is True,
-        max_depth=_positive(fields.get("max-depth"), int),
-        source="project",
-    )
+    try:
+        return AgentDefinition(
+            name=spec_name,
+            description=_clip(description, DESCRIPTION_MAX_CHARS) if clip else description,
+            agent_class=_declared_class(fields, name=spec_name),
+            instructions=_clip(brief, BRIEF_MAX_CHARS) if clip else brief,
+            tools=_declared_tools(fields),
+            permission_ceiling=_declared_ceiling(fields, name=spec_name),
+            workspace=_declared_workspace(fields, name=spec_name),
+            wall_clock_timeout_s=_positive(fields.get("wall-clock-timeout"), float),
+            can_delegate=fields.get("can-delegate") is True,
+            max_depth=_positive(fields.get("max-depth"), int),
+            max_requests=_positive(fields.get("max-requests"), int),
+            source="project",
+        )
+    except ValueError as exc:
+        raise AgentFileError(f"agent {spec_name!r}: {exc}") from None
 
 
 def render_agent_file(agent: AgentDefinition) -> str:
@@ -204,6 +208,8 @@ def render_agent_file(agent: AgentDefinition) -> str:
         front["can-delegate"] = True
     if agent.max_depth is not None:
         front["max-depth"] = agent.max_depth
+    if agent.max_requests is not None:
+        front["max-requests"] = agent.max_requests
     dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, default_flow_style=False)
     return f"---\n{dumped}---\n\n{agent.instructions}\n"
 
@@ -351,6 +357,8 @@ def _declared_tools(fields: dict[str, object]) -> ToolAccess:
 def _positive[T: (int, float)](raw: object, kind: type[T]) -> T | None:
     """A positive number from frontmatter, or None for anything else."""
     if isinstance(raw, bool) or not isinstance(raw, int | float) or raw <= 0:
+        return None
+    if kind is int and not isinstance(raw, int):
         return None
     return kind(raw)
 

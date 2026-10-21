@@ -53,6 +53,7 @@ class AgentOut(BaseModel):
     wall_clock_timeout_s: float | None
     can_delegate: bool
     max_depth: int | None
+    max_requests: int | None
     #: Whether other agents may delegate to it.
     delegable: bool
     #: Whether it is on the launch roster now: delegable, published and not shadowed.
@@ -100,6 +101,7 @@ class AgentWrite(BaseModel):
     wall_clock_timeout_s: float | None = None
     can_delegate: bool | None = None
     max_depth: int | None = None
+    max_requests: int | None = None
 
 
 @router.get("", response_model=list[AgentOut])
@@ -297,6 +299,7 @@ def _out(agent: AgentDefinition, *, active: bool) -> AgentOut:
         wall_clock_timeout_s=agent.wall_clock_timeout_s,
         can_delegate=agent.can_delegate,
         max_depth=agent.max_depth,
+        max_requests=agent.max_requests,
         delegable=agent.delegable,
         launchable=agent.delegable and agent.published and active,
         required=sorted(agent.required),

@@ -37,6 +37,7 @@ from core.diagnostics import is_platform_failure
 from core.envelopes import ContentPart, result_parts, split_envelopes
 from core.serde import jsonable
 from core.text import chars_to_tokens
+from core.untrusted import strip_envelope_note
 from services.answers import ASK_USER_TOOL, AnsweredQuestion, parse_answer, questions_of
 from services.commands.spec import Invocation
 from services.notices import notice_body
@@ -835,7 +836,7 @@ def project_tree(
                         MessageView(
                             role="notice",
                             notice=notice[0],
-                            content=notice[1],
+                            content=strip_envelope_note(notice[1]),
                             timestamp=part.timestamp,
                             id=node_id,
                         )
@@ -864,14 +865,14 @@ def project_tree(
                         MessageView(
                             role="subagent",
                             author=sent[0],
-                            content=sent[1],
+                            content=strip_envelope_note(sent[1]),
                             timestamp=part.timestamp,
                             id=node_id,
                         )
                     )
                     continue
                 body = report if report is not None else direction
-                content = strip_chassis_markers(text if body is None else body)
+                content = strip_chassis_markers(text if body is None else strip_envelope_note(body))
                 parts: list[ContentPart] | None = None
                 if report is None:
                     split = split_envelopes(content, vouched_only=True)

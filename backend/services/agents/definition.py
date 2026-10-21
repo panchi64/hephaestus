@@ -132,6 +132,8 @@ class AgentDefinition:
     #: How many levels below itself this agent's delegation may reach. None defers to the
     #: installation's limit.
     max_depth: int | None = None
+    #: A cap on model requests per run. None means unbounded.
+    max_requests: int | None = None
     #: Whether other agents may delegate to this one. False keeps it off the launch roster.
     delegable: bool = True
     source: AgentSource = "builtin"
@@ -143,5 +145,7 @@ class AgentDefinition:
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("an agent needs a name")
+        if self.max_requests is not None and self.max_requests <= 0:
+            raise ValueError("max_requests must be positive")
         if self.agent_class not in CLASSES:
             raise ValueError(f"{self.agent_class!r} is not an agent class")

@@ -49,6 +49,8 @@ from typing import ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from core.serde import parse_json
+from core.untrusted import neutralize_envelope_markup
+from services.notices import ENVELOPE_TAGS
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +131,9 @@ def _unwrap(header: str, closer: str, text: str) -> str | None:
 
 def report_envelope(text: str) -> str:
     """A sub-agent's report, framed as one."""
-    return _wrap(_REPORT_HEADER, REPORT_CLOSE, text)
+    # The note follows the heading: report_sender reads the handle from the first line.
+    safe = neutralize_envelope_markup(text, ENVELOPE_TAGS, note_after_heading=True)
+    return _wrap(_REPORT_HEADER, REPORT_CLOSE, safe)
 
 
 def report_body(text: str) -> str | None:
@@ -162,7 +166,8 @@ def direction_body(text: str) -> str | None:
 
 def message_envelope(sender: str, text: str) -> str:
     """A message from the agent ``sender`` names, framed as one."""
-    return _wrap(_MESSAGE_HEADER, MESSAGE_CLOSE, f"From `{sender}`:\n{text.strip()}")
+    safe = neutralize_envelope_markup(text, ENVELOPE_TAGS)
+    return _wrap(_MESSAGE_HEADER, MESSAGE_CLOSE, f"From `{sender}`:\n{safe}")
 
 
 def message_body(text: str) -> tuple[str, str] | None:
