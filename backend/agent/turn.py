@@ -21,9 +21,13 @@ it in, so every bound and every frame of a turn is measured against the same val
 from __future__ import annotations
 
 import asyncio
+import math
+import random
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 import httpx
 from pydantic_ai import (
@@ -38,7 +42,7 @@ from pydantic_ai import (
     UsageLimits,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import UserContent
 from pydantic_ai.tools import DeferredToolApprovalResult
 
@@ -46,6 +50,7 @@ from core.config import Settings
 from core.container import ServiceContainer
 from core.exceptions import ModelLoadError
 from runs import AnswerRetracted, LimitNotice, Run
+from runs.run import StopCause
 from services.conversations import ConversationBinding, ConversationStore
 from services.notifications import NotificationService
 from services.permissions import ReviewBudget
@@ -94,6 +99,8 @@ class TurnResult:
     binding: ConversationBinding | None = None
     #: Whether a spawned agent filed its report during the turn.
     reported: bool = False
+    #: Model requests the turn has spent, counted across its segments.
+    requests_used: int = 0
 
 
 def turn_deps(
@@ -106,6 +113,8 @@ def turn_deps(
     workspace_key: str = "",
     turn_start: TurnStart | None = None,
     review_budget: ReviewBudget | None = None,
+    max_requests: int | None = None,
+    ledger_prompt_message_id: str | None = None,
 ) -> RunDeps:
     """The ``RunDeps`` a turn runs its agent with.
 
@@ -147,16 +156,59 @@ def turn_deps(
         # review's transcript opens on, and the review budget (`agent/code_mode.py`).
         turn_start=turn_start,
         review_budget=review_budget,
+        max_requests=max_requests,
+        ledger_prompt_message_id=ledger_prompt_message_id,
     )
 
 
 #: The wait before each resend of a request a transient model error cut short.
 TRANSIENT_BACKOFF_S = (2.0, 8.0)
+_JITTER = 0.2
+#: The longest a provider's Retry-After is honoured for.
+RETRY_AFTER_CAP_S = 60.0
+
+TURN_LIMIT_DETAIL = "stopped: reached the agent's request limit"
 
 
-#: No request or tool-call budget: a turn is bounded by the loop guard and the timeouts.
-#: Explicit because the library applies a 50-request cap when ``usage_limits`` is omitted.
-UNBOUNDED = UsageLimits(request_limit=None)
+def _retry_after_s(exc: Exception) -> float | None:
+    """The provider's Retry-After as a wait in seconds (header value in seconds or as an
+    HTTP date), or None when it sent none or an unreadable one."""
+    headers = exc.headers if isinstance(exc, ModelHTTPError) else None
+    raw = headers.get("retry-after") if headers else None
+    if raw is None:
+        return None
+    raw = raw.strip()
+    try:
+        seconds = float(raw)
+    except ValueError:
+        pass
+    else:
+        return None if math.isnan(seconds) else max(seconds, 0.0)
+    try:
+        when = parsedate_to_datetime(raw)
+    except TypeError, ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max((when - datetime.now(UTC)).total_seconds(), 0.0)
+
+
+def transient_wait_s(exc: Exception, retries: int) -> float:
+    """How long to wait before resend number ``retries`` (1-based): the provider's
+    Retry-After, never below the backoff step and capped, else the step with ±20% jitter."""
+    step = TRANSIENT_BACKOFF_S[min(retries, len(TRANSIENT_BACKOFF_S)) - 1]
+    step *= random.uniform(1 - _JITTER, 1 + _JITTER)
+    advised = _retry_after_s(exc)
+    if advised is None:
+        return step
+    return min(max(advised, step), RETRY_AFTER_CAP_S)
+
+
+def _request_limits(max_requests: int | None) -> UsageLimits:
+    """No request or tool-call budget unless the agent set one: otherwise a turn is bounded
+    by the loop guard and the timeouts. Explicit because the library applies a 50-request
+    cap when ``usage_limits`` is omitted."""
+    return UsageLimits(request_limit=max_requests)
 
 
 def _resume_point(messages: list[ModelMessage]) -> list[ModelMessage] | None:
@@ -192,6 +244,9 @@ async def drive_turn(
     correcting: bool = False,
     workspace_key: str = "",
     reported: bool = False,
+    max_requests: int | None = None,
+    requests_used: int = 0,
+    ledger_prompt_message_id: str | None = None,
 ) -> TurnResult:
     """Drive one turn to its end: an answer, a park, or a stop at a bound.
 
@@ -225,14 +280,20 @@ async def drive_turn(
         workspace_key=workspace_key,
         turn_start=turn_start,
         review_budget=review_budget,
+        max_requests=max_requests,
+        ledger_prompt_message_id=ledger_prompt_message_id,
     )
     deps.reported = reported
+    usage_limits = _request_limits(max_requests)
     # A turn may run as several segments: the initial model pass, then a continuation
     # for each batch of deferred calls a conversation grant auto-approves. They share
     # ONE no-progress guard and ONE usage accumulator, so a granted tool the model keeps
     # re-calling can't reset the guard by deferring on each hop; it trips the loop stop.
     loop_breaker = LoopBreaker(repeat_threshold=settings.loop_repeat_threshold)
-    usage = RunUsage()
+    # Seeded with the requests earlier segments of this turn spent, so the cap bounds the
+    # whole turn. A queued-message continuation below is another request of the same turn
+    # and counts against it too.
+    usage = RunUsage(requests=requests_used)
     open_tasks_raised = False
 
     def report_progress(history: list[ModelMessage]) -> None:
@@ -303,7 +364,7 @@ async def drive_turn(
                 deps=deps,
                 message_history=message_history,
                 deferred_tool_results=deferred_results,
-                usage_limits=UNBOUNDED,
+                usage_limits=usage_limits,
                 usage=usage,
             ) as agent_run:
                 await stream_agent_run(
@@ -321,12 +382,22 @@ async def drive_turn(
             detail = f"stopped: {exc}"
             _ = run.emit(LimitNotice(limit="time", message=detail))
             run.block(detail)
+            run.end_code = "first_token"
             return TurnResult(answer=None, messages=_partial_history(), blocked_reason=detail)
+        except UsageLimitExceeded:
+            _ = run.emit(LimitNotice(limit="turn_limit", message=TURN_LIMIT_DETAIL))
+            run.block(TURN_LIMIT_DETAIL)
+            run.end_code = "turn_limit"
+            run.stop_cause = StopCause.turn_limit
+            return TurnResult(
+                answer=None, messages=_partial_history(), blocked_reason=TURN_LIMIT_DETAIL
+            )
         except LoopDetected as exc:
             # No-progress guard tripped — stop and report state, don't error.
             _ = run.emit(LimitNotice(limit="loop", message=str(exc)))
             detail = "stopped: repeated an action without making progress"
             run.block(detail)
+            run.end_code = "loop"
             return TurnResult(
                 answer=None,
                 messages=_partial_history(),
@@ -377,6 +448,7 @@ async def drive_turn(
                     )
                 )
                 run.block(detail)
+                run.end_code = "context_overflow"
                 return TurnResult(
                     answer=None,
                     messages=_partial_history(),
@@ -401,18 +473,20 @@ async def drive_turn(
                     )
                 )
                 run.step_text_chars = run.step_thinking_chars = 0
+            wait_s = transient_wait_s(exc, transient_retries)
             _ = run.emit(
                 LimitNotice(
                     limit="continue",
                     message=(
-                        f"The model connection failed ({type(exc).__name__}); retrying "
-                        + f"({transient_retries} of {settings.auto_continue_transient_max})"
+                        f"The model connection failed ({type(exc).__name__}); retrying in "
+                        + f"{wait_s:.0f}s ({transient_retries} of "
+                        + f"{settings.auto_continue_transient_max})"
                     ),
                 )
             )
-            await asyncio.sleep(
-                TRANSIENT_BACKOFF_S[min(transient_retries, len(TRANSIENT_BACKOFF_S)) - 1]
-            )
+            # A wait can outlast the inactivity bound, and nothing else is emitting.
+            async with run.keepalive():
+                await asyncio.sleep(wait_s)
             prompt = None
             message_history = resume
             deferred_results = None
@@ -464,6 +538,7 @@ async def drive_turn(
                 messages=messages,
                 binding=replace(binding, permission=deps.permission),
                 reported=deps.reported,
+                requests_used=usage.requests,
             )
 
         # Rule on each deferred *approval* — grants, then the level, then Auto's review.
@@ -510,6 +585,9 @@ async def drive_turn(
                 # argument, so a turn that filled the default in from its conversation
                 # carries the resolved key rather than an empty one.
                 workspace_key=deps.workspace_key,
+                max_requests=max_requests,
+                requests_used=usage.requests,
+                ledger_prompt_message_id=ledger_prompt_message_id,
             )
             return TurnResult(answer=None, messages=messages)
         # Every deferred call settled without the operator — no question was asked, and

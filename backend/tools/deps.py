@@ -84,10 +84,12 @@ class RunDeps:
     # Whether the operator's checkout is read-only to this run because the thread whose
     # leases it holds works in a worktree (`ConversationBinding.checkout_read_only`).
     checkout_read_only: bool = False
-    # The prompt id this run's file changes are filed under in the thread's ledger. Set for
-    # a spawned agent to its launcher's, since its edits land in the parent's ledger; None
-    # means the run's own `run.prompt_message_id` (`tools/home.py`).
+    # The launching turn's prompt id, under which a spawned agent's file changes are filed
+    # when they land in the launcher's ledger. Ignored by a run that works in its own
+    # thread, which files under its own `run.prompt_message_id` (`tools/home.py`).
     ledger_prompt_message_id: str | None = None
+    # The most model requests this run's turn may make; None is unbounded.
+    max_requests: int | None = None
     # How far this run may go before it has to ask: "plan", "manual", "edit", "auto" or
     # "yolo" — the last of which is the operator saying it never has to.
     # Here because a tool is offered and executed inside a Run,

@@ -27,6 +27,7 @@ from .events import (
     RunMetrics,
     now_utc,
 )
+from .events.lifecycle import EndCode
 from .inbox import ConversationInbox, QueuedMessage
 from .overhead import TurnOverhead
 from .prefix import PrefixVerdict
@@ -97,6 +98,8 @@ class Run:
     detail: str | None = None
     # Who or what stopped a cancelled or blocked run; None for every other ending.
     stop_cause: StopCause | None = None
+    # Which bound blocked the run; becomes `RunEnded.code`.
+    end_code: EndCode | None = None
     error: str | None = None
     created_at: datetime = field(default_factory=now_utc)
     started_at: datetime | None = None
@@ -157,11 +160,6 @@ class Run:
     # orchestrator on both folds (the prelude's, and the in-turn overflow recovery's), read
     # only by the metrics builder.
     fold_boundary: int = 0
-    # Set once the first answer token has streamed. The AE-5.3 rule — never
-    # switch endpoints after answer text has begun — is enforced against this:
-    # the orchestrator refuses to re-drive a turn onto another endpoint once it
-    # is set (FallbackModel only falls back pre-stream; this guards the rest).
-    answer_started: bool = False
     # Answer and reasoning characters streamed for the model request in flight, which a
     # retry of that request has to take back off the operator's screen.
     step_text_chars: int = 0

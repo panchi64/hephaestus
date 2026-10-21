@@ -37,6 +37,7 @@ from services.subagents.callsigns import class_display
 from tools.child_worktrees import discard_child, merge_child, worktree_paths
 from tools.deps import RunDeps
 from tools.describe import registered_tools
+from tools.home import ledger_prompt
 from tools.project_agents import run_roster
 
 #: The spawn tool's name inside the category, before the prefix makes it ``agents_spawn``.
@@ -137,7 +138,13 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
             return {"sent": False, "detail": _UNAVAILABLE}
         conversation_id = ctx.deps.conversation_id or ""
         try:
-            label = await launcher.message(ctx.deps.owner_id, conversation_id, to, text)
+            label = await launcher.message(
+                ctx.deps.owner_id,
+                conversation_id,
+                to,
+                text,
+                ledger_prompt_message_id=ledger_prompt(ctx.deps),
+            )
         except SubagentUnavailableError as exc:
             return {"sent": False, "detail": str(exc)}
         return {"sent": True, "to": label}
@@ -270,4 +277,5 @@ def _parent(ctx: RunContext[RunDeps]) -> SubagentParent:
         permission=ctx.deps.permission,
         workspace_key=ctx.deps.workspace_key,
         run_id=ctx.deps.run.id,
+        ledger_prompt_message_id=ledger_prompt(ctx.deps),
     )

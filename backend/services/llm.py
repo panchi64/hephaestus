@@ -11,14 +11,11 @@ Every endpoint flows through these builders. The OpenAI-wire discovery
 and probe helpers live here too — they are what the openai-compatible and local
 adapters delegate to.
 
-**The AE-5.3 rule — "don't switch endpoints once answer text has streamed" — is
-ours, not the library's.** ``FallbackModel`` only ever falls back while *opening*
-a request stream (a dead/erroring endpoint before any output); once a stream is
-open and answer text is flowing it propagates errors rather than re-trying a
-different endpoint. We complete the guarantee in the orchestrator: a model error
-after the first ``answer.delta`` ends the run (``run.answer_started`` is set in
-the translation layer) — we never re-drive a turn onto another endpoint once the
-user has seen partial output.
+**Fallback happens only while opening a stream.** ``FallbackModel`` falls back
+on a dead/erroring endpoint before any output; once a stream is open and answer text
+is flowing it propagates the error. The orchestrator (``agent/turn.py``) then retracts
+the partial answer (``answer.retracted``) and re-sends the request, and that re-send
+opens a fresh stream, so it may land on the next endpoint in the chain.
 """
 
 from __future__ import annotations

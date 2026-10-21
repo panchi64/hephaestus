@@ -318,6 +318,8 @@ class ConversationSubagents(SubagentLauncher):
                 self._ctx.settings.subagent_wall_clock_timeout_s,
             ),
             ephemeral=True,
+            max_requests=agent.max_requests,
+            ledger_prompt_message_id=parent.ledger_prompt_message_id,
         )
 
         await self._records.record(
@@ -339,6 +341,7 @@ class ConversationSubagents(SubagentLauncher):
             delegation_id=delegation_id if policy == "isolated" else None,
             project_id=parent.project_id,
             base_ref=base_ref,
+            ledger_prompt_message_id=parent.ledger_prompt_message_id,
         )
         return LaunchedSubagent(
             subagent_id=created.run_id,
@@ -526,7 +529,15 @@ class ConversationSubagents(SubagentLauncher):
         return found
 
     @override
-    async def message(self, owner_id: str, conversation_id: str, to: str, text: str) -> str:
+    async def message(
+        self,
+        owner_id: str,
+        conversation_id: str,
+        to: str,
+        text: str,
+        *,
+        ledger_prompt_message_id: str | None = None,
+    ) -> str:
         text = text.strip()
         if not text:
             raise SubagentUnavailableError("A message with nothing in it says nothing.")
@@ -534,7 +545,12 @@ class ConversationSubagents(SubagentLauncher):
         sender = position.record.handle if position.record else ROOT_HANDLE
         found = await self.recipient(owner_id, conversation_id, to)
         delivered = await self._wake.deliver(
-            owner_id, found.conversation_id, text, source="agent", sender=sender
+            owner_id,
+            found.conversation_id,
+            text,
+            source="agent",
+            sender=sender,
+            ledger_prompt_message_id=ledger_prompt_message_id,
         )
         if not delivered:
             raise SubagentUnavailableError(

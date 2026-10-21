@@ -59,6 +59,9 @@ class SubagentParent:
     #: The run doing the launching. Only its id is kept, to tie a card back to the turn
     #: that asked for it.
     run_id: str | None = None
+    #: The launching turn's prompt, under which the child's file changes are filed in the
+    #: launcher's ledger (``tools.home.ledger_prompt``).
+    ledger_prompt_message_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -205,10 +208,21 @@ class SubagentLauncher(ABC):
         """
 
     @abstractmethod
-    async def message(self, owner_id: str, conversation_id: str, to: str, text: str) -> str:
+    async def message(
+        self,
+        owner_id: str,
+        conversation_id: str,
+        to: str,
+        text: str,
+        *,
+        ledger_prompt_message_id: str | None = None,
+    ) -> str:
         """Send ``text`` from the agent of ``conversation_id`` to ``to``: a handle in the
         same tree, or :data:`PARENT_ADDRESS`. Queued onto the recipient's running turn, or
         delivered by waking it. Returns the recipient's handle.
+
+        ``ledger_prompt_message_id`` is the sender's launching-turn prompt; a wake the message
+        causes files its changes under it rather than under the recipient's stored one.
 
         Raises :class:`SubagentUnavailableError` when nothing in the tree answers to ``to``.
         """

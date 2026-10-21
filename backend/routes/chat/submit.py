@@ -198,6 +198,7 @@ async def submit_turn(
         attachment_ids=attachment_ids,
         file_refs=file_refs,
         ephemeral=ephemeral,
+        max_requests=scope.agent.max_requests,
         # Resolved here, not at each caller: send, regenerate and edit all want it and none
         # of them should have to know it exists.
         auto_compact=await _resolve_auto_compact(request, conversation_id),

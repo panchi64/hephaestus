@@ -35,6 +35,7 @@ class NotificationKind(StrEnum):
     APPROVAL_NEEDED = "approval_needed"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
+    SAVE_FAILED = "save_failed"
     # The scheduler's two kinds (`app.py`'s task executor/notify closures): a
     # reminder task fires REMINDER directly (title = task title, body = the prompt
     # verbatim); any task whose output channel is "notification" also fires

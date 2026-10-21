@@ -64,6 +64,8 @@ async def verify_and_correct(
     context_threshold: float | None = None,
     turn_start: TurnStart | None = None,
     workspace_key: str = "",
+    max_requests: int | None = None,
+    ledger_prompt_message_id: str | None = None,
 ) -> TurnResult:
     """Judge the answer; on failure make a single bounded corrective re-attempt.
 
@@ -127,6 +129,10 @@ async def verify_and_correct(
         # The correction is this turn continuing, so it works where the turn worked.
         workspace_key=workspace_key,
         reported=turn.reported,
+        # The correction is the same turn, so it spends what the first pass left.
+        max_requests=max_requests,
+        requests_used=turn.requests_used,
+        ledger_prompt_message_id=ledger_prompt_message_id,
     )
     if run.status is RunStatus.awaiting_input:
         # The correction needs approval: carry the drop range on the parked turn

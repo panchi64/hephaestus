@@ -6,6 +6,10 @@ from typing import Literal
 
 from .base import PROTOCOL_VERSION, Body
 
+EndCode = Literal[
+    "wall_clock", "inactivity", "first_token", "loop", "context_overflow", "turn_limit"
+]
+
 
 class RunStarted(Body):
     type: Literal["run.started"] = "run.started"
@@ -37,6 +41,8 @@ class RunEnded(Body):
     type: Literal["run.ended"] = "run.ended"
     outcome: Literal["done", "blocked", "cancelled"]
     detail: str | None = None
+    # Which bound stopped a blocked run, for a client that has to branch on it.
+    code: EndCode | None = None
 
 
 class RunError(Body):
@@ -80,8 +86,9 @@ class AnswerRetracted(Body):
 
 class LimitNotice(Body):
     type: Literal["limit.notice"] = "limit.notice"
-    # "time" | "loop" | "verify" | "context" | "continue" (not a stop: a transient model
-    # error is being retried). "context" means the model's context window was exceeded.
+    # "time" | "loop" | "verify" | "context" | "turn_limit" | "continue" (not a stop: a
+    # transient model error is being retried). "context" means the model's context window
+    # was exceeded; "turn_limit" that the agent's request cap was reached.
     limit: str
     message: str
     # The stop marker this notice announces, when the bound also blocked the turn — the

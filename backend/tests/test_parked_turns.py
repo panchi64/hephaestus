@@ -61,7 +61,10 @@ async def _first(events: AsyncIterator[Event]) -> Event:
 
 
 async def await_row(app: FastAPI, run_id: str, *, present: bool = True) -> None:
-    for _ in range(300):
+    # A deadline rather than a count of polls: under full-suite load each read takes
+    # wall-clock time, and a count of them runs out before the write-behind drainer does.
+    deadline = asyncio.get_running_loop().time() + 15.0
+    while asyncio.get_running_loop().time() < deadline:
         if any(row.run_id == run_id for row in await stored_parks(app)) == present:
             return
         await asyncio.sleep(0.01)

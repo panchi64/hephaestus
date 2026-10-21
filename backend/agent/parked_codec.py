@@ -61,6 +61,9 @@ class ParkPayload(BaseModel):
     endpoint_id: str | None
     model: str | None
     endpoint: StoredEndpoint | None
+    max_requests: int | None = None
+    requests_used: int = 0
+    ledger_prompt_message_id: str | None = None
 
 
 def encode_park(parked: ParkedTurn, run: Run) -> str:
@@ -104,6 +107,9 @@ def encode_park(parked: ParkedTurn, run: Run) -> str:
             if endpoint is not None
             else None
         ),
+        max_requests=parked.max_requests,
+        requests_used=parked.requests_used,
+        ledger_prompt_message_id=parked.ledger_prompt_message_id,
     ).model_dump_json()
 
 
@@ -144,6 +150,9 @@ def decode_park(payload: str, *, kind: str) -> tuple[ParkedTurn, Endpoint | None
         endpoint_id=stored.endpoint_id,
         model=stored.model,
         titled=stored.titled,
+        max_requests=stored.max_requests,
+        requests_used=stored.requests_used,
+        ledger_prompt_message_id=stored.ledger_prompt_message_id,
     )
     endpoint = (
         Endpoint(stored.endpoint.id, stored.endpoint.name, stored.endpoint.capacity)

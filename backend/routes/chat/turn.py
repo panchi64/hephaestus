@@ -165,6 +165,8 @@ def compose_turn(
     kind: str = "chat",
     workspace_key: str = "",
     run_id: str | None = None,
+    max_requests: int | None = None,
+    ledger_prompt_message_id: str | None = None,
 ) -> ChatCreated:
     """Build the chat orchestrator from pre-resolved models/capabilities and submit
     the Run — the one composition path a live chat turn (`submit_turn`, resolving
@@ -225,6 +227,8 @@ def compose_turn(
         # turn is what passes one: it works in the workspace of the thread that launched
         # it, or in a delegated child of it (`services/workspace.py`).
         workspace_key=workspace_key or (binding.workspace_key if binding else ""),
+        max_requests=max_requests,
+        ledger_prompt_message_id=ledger_prompt_message_id,
     )
     try:
         run = registry.submit(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import override
 
@@ -21,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 
 class DrainerMixin(StoreCore):
+    _save_failed_listener: Callable[[str], None] | None = None
+
+    def set_save_failed_listener(self, listener: Callable[[str], None] | None) -> None:
+        """Replace the callback given the conversation id when a write is dropped for good.
+        It runs on the drainer's task, so it must not block."""
+        self._save_failed_listener = listener
+
     @override
     async def _persist(self, job: PersistJob) -> None:
         if job.kind == "messages":
@@ -185,3 +193,8 @@ class DrainerMixin(StoreCore):
         # Terminal, so the pin goes even though the write never landed — holding it
         # would keep this conversation resident for the life of the process.
         self._release(job)
+        if self._save_failed_listener is not None:
+            try:
+                self._save_failed_listener(job.conversation_id)
+            except Exception:
+                logger.exception("save-failed listener raised for %s", job.conversation_id)
