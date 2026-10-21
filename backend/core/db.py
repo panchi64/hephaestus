@@ -13,7 +13,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Callable, Generator
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from pathlib import Path
 from typing import NoReturn, Protocol
 from weakref import WeakKeyDictionary
@@ -229,6 +229,14 @@ def _raise_schema_error(
     message = "\n".join(lines)
     logger.error(message)
     raise SchemaMigrationError(message) from None
+
+
+def read_blocking[T](engine: Engine, work: Callable[[Session], T]) -> T:
+    """Run a read on the calling thread, for the rare synchronous path that cannot await.
+    It blocks the loop for the read, so it is never a hot path."""
+    lock = _CONN_LOCKS.get(engine)
+    with lock if lock is not None else nullcontext(), Session(engine) as session:
+        return work(session)
 
 
 async def in_session[T](engine: Engine, work: Callable[[Session], T]) -> T:

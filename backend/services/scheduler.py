@@ -479,9 +479,10 @@ class SchedulerService:
         await in_session(self._engine, work)
 
     async def link_task_run(
-        self, run_row_id: str, *, run_id: str, conversation_id: str | None
+        self, run_row_id: str, *, run_id: str | None, conversation_id: str | None
     ) -> None:
-        """Point an open `TaskRun` at the run it drives, so a restored run finds its row."""
+        """Point an open `TaskRun` at the run it drives, so a restored run finds its row;
+        ``None`` takes the pointer back when that run was never started."""
 
         def work(session: Session) -> None:
             row = session.get(TaskRun, run_row_id)

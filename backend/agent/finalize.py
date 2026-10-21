@@ -130,6 +130,16 @@ def persist_parked_cancel(run: Run, *, store: ConversationStore | None) -> None:
     flush_recorder(run, store)(history, detail, parked_context(parked))
 
 
+def stamp_parked_block(run: Run, *, store: ConversationStore | None) -> None:
+    """Leave the reason a parked run was blocked on its prompt, without writing its turn.
+    For a run whose thread already has another run extending it."""
+    parked = run.parked_payload
+    if store is None or not isinstance(parked, ParkedTurn) or not run.detail:
+        return
+    if parked.conversation_id is not None and parked.prompt_message_id is not None:
+        store.stamp_block(parked.conversation_id, parked.prompt_message_id, run.detail)
+
+
 def _denied_returns(parked: ParkedTurn, reason: str) -> list[ModelMessage]:
     """A request answering every call of the turn's last response that has no return with a
     denial, so the stored history has no tool call without one."""

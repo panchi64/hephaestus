@@ -33,7 +33,7 @@ from routes.deps import app_state
 from runs import Run, RunRegistry, RunStatus, RunStream
 from runs.events import AnswerDelta
 from services.agents import builtin_roster
-from services.subagents import SubagentLauncher
+from services.subagents import SubagentLauncher, SubagentParent
 
 from ._helpers import await_parked, client_app, collect_sse_events, parked_turn, swap_tool_catalog
 from ._json import json_body, s
@@ -151,7 +151,15 @@ async def test_the_readable_parks_are_registered_before_an_unreadable_one_ends(
             parent_id, _call_id = await park_chat(client, app)
             launcher = app_state(app).capabilities.get_optional(SubagentLauncher)
             assert launcher is not None
-            child = await launcher.launch("operator", worker, "delete it", handle="deleter")
+            parent_run = app_state(app).runs.get(parent_id)
+            assert parent_run is not None
+            child = await launcher.launch(
+                "operator",
+                worker,
+                "delete it",
+                handle="deleter",
+                parent=SubagentParent(conversation_id=parent_run.conversation_id),
+            )
             _ = await await_parked(app, child.run_id)
             await await_row(app, child.run_id)
 
@@ -178,7 +186,9 @@ async def test_the_readable_parks_are_registered_before_an_unreadable_one_ends(
                 break
             await asyncio.sleep(0.01)
         assert seen == [True]
+        await asyncio.sleep(0.3)  # the child's report reaches the parent's inbox
         assert parent.status is RunStatus.awaiting_input
+        assert app_state(app).runs.get(parent_id) is parent
 
 
 async def test_a_cancelled_park_leaves_no_tool_call_without_a_return(

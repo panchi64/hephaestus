@@ -17,7 +17,6 @@ from .core import StoreCore
 from .paths import active_path_model
 from .projection import MESSAGE, install_persisted_attachments, project
 from .rows import PersistJob, Row
-from .tree import Tree
 
 
 class RecordingMixin(StoreCore):
@@ -64,12 +63,9 @@ class RecordingMixin(StoreCore):
             return []
         tree = self.cache_get(conversation_id)
         if tree is None:
-            # Nothing cached: either a brand-new conversation (`create_conversation`
-            # seeds an empty tree, so normally this doesn't fire) or one whose id no
-            # longer exists — a delete that landed while this turn was still running.
-            # An empty tree is right for the first case and a resurrected ghost in the
-            # second, so `_persist_messages` re-checks the row before writing.
-            tree = self._cache_put(conversation_id, Tree())
+            # Evicted, or deleted while this turn was still running (an empty tree then,
+            # which `_persist_messages` re-checks the row before writing).
+            tree = self.hydrate_blocking(conversation_id)
         added = tree.append_chain(new_messages)
         # A turn blocked before it produced a response (a time/cancel bound tripping in
         # the pre-model setup window) has no response node to carry the marker — so the
@@ -202,6 +198,10 @@ class RecordingMixin(StoreCore):
         """The active leaf — on a regenerate, the request about to be re-answered."""
         return (await self.tree(conversation_id)).active_leaf_id
 
+    def stamp_block(self, conversation_id: str, node_id: str, reason: str) -> None:
+        """Mark a recorded node with the reason its turn stopped, durably. The leaf stays."""
+        self._block_node(conversation_id, node_id, reason)
+
     def _block_node(self, conversation_id: str, node_id: str, reason: str) -> None:
         """Stamp a stop marker on a node that is already recorded, durably.
 
@@ -209,8 +209,8 @@ class RecordingMixin(StoreCore):
         marker can go; it is already in the tree and (probably) in the table, so this
         rewrites the node and queues the matching row update. A node that already carries
         a marker keeps it — the first stop is the one that explains the turn."""
-        tree = self._cache.get(conversation_id)
-        node = tree.nodes.get(node_id) if tree is not None else None
+        tree = self._cache.get(conversation_id) or self.hydrate_blocking(conversation_id)
+        node = tree.nodes.get(node_id)
         if node is None or node.blocked_reason is not None:
             return
         node.blocked_reason = reason

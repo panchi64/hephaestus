@@ -49,6 +49,7 @@ from tools.catalog import tool_catalog
 from ._helpers import (
     client_app,
     full_tool_categories,
+    parked_turn,
     patch_model_resolution,
     register_stub_provider,
     stub_resolution,
@@ -503,6 +504,9 @@ async def test_resume_applies_the_operator_set_and_the_offline_set(
         swap_tool_catalog(app, _danger_categories())
         run_id = s(json_body(await client.post("/chat", json={"prompt": "delete it"}))["run_id"])
         run = await _await_parked(app, run_id)
+        compaction = parked_turn(run).compaction
+        assert compaction is not None
+        turn_start_withheld = compaction.deps.disabled_tools
 
         # Switched off after the turn parked: the resume must pick up the current policy,
         # not whatever was in force when the run started.
@@ -524,9 +528,7 @@ async def test_resume_applies_the_operator_set_and_the_offline_set(
         assert resp.status_code == 202
         unconfigured = await _unconfigured(app)
 
-    # The policy's set, plus what the park's own turn withheld (no vision model here).
-    assert captured["disabled"] - unconfigured == {
-        "danger_safe_thing",
-        "web_search",
-        "browse_screenshot",
-    }
+    # The policy's set, plus whatever the park's own turn withheld when it began.
+    assert captured["disabled"] - unconfigured == {"danger_safe_thing", "web_search"} | (
+        turn_start_withheld - unconfigured
+    )

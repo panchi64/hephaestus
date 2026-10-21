@@ -13,7 +13,7 @@ import logging
 from functools import partial
 from typing import override
 
-from agent.finalize import persist_parked_cancel
+from agent.finalize import persist_parked_cancel, stamp_parked_block
 from agent.parked_codec import decode_park, encode_park
 from agent.parking import ParkedTurn, announcements
 from agent.recompose import ParkedFacts, Recomposed, register_recompose
@@ -26,10 +26,15 @@ from services.parked_turns import SealedParkedStore, StoredPark
 
 logger = logging.getLogger(__name__)
 
+_LOST = "a run waiting for approval could not be restored after the restart"
+_BUSY = "its conversation already has a run in progress"
+
 
 class _Journal(ParkedJournal):
-    def __init__(self, store: SealedParkedStore) -> None:
+    def __init__(self, store: SealedParkedStore, conversations: ConversationStore) -> None:
         self._store: SealedParkedStore = store
+        self._conversations: ConversationStore = conversations
+        self._threads: dict[str, str] = {}
 
     @override
     def record(self, run: Run) -> bool:
@@ -52,89 +57,101 @@ class _Journal(ParkedJournal):
                 payload=payload,
             )
         )
+        self.hold(run.id, run.conversation_id)
         return True
+
+    def hold(self, run_id: str, conversation_id: str) -> None:
+        """Keep the thread's tree cached for as long as the run is parked."""
+        self._threads[run_id] = conversation_id
+        self._conversations.pin(conversation_id)
 
     @override
     def forget(self, run_id: str) -> None:
         self._store.forget(run_id)
+        conversation_id = self._threads.pop(run_id, None)
+        if conversation_id is not None and conversation_id not in self._threads.values():
+            self._conversations.unpin(conversation_id)
 
 
-async def _abandon(
-    stored: StoredPark,
-    runs: RunRegistry,
-    store: SealedParkedStore,
-    notifications: NotificationService,
-) -> None:
-    """A park that cannot be read back is dropped for good rather than retried every boot.
-    Its run ends blocked, so what waits on a run's end (its routine's `TaskRun`, a
-    sub-agent's parent) hears of it, and the operator is told once."""
-    if runs.get(stored.run_id) is not None:
-        store.forget(stored.run_id)
-        return
-    reason = "a run waiting for approval could not be restored after the restart"
-    runs.end_unrestorable(
-        Run(
-            id=stored.run_id,
-            kind=stored.kind,
-            owner_id=stored.owner_id,
-            conversation_id=stored.conversation_id,
-            stream=RunStream(stored.last_event_id),
-        ),
-        reason,
-    )
-    _ = await notifications.notify(
-        stored.owner_id,
-        "run_restore_failed",
-        "A run could not be restored",
-        body=reason,
+def _rebuild(stored: StoredPark, conversations: ConversationStore) -> Run:
+    """The parked run a stored park describes. Raises when it cannot be read."""
+    if stored.payload is None:
+        raise ValueError("the sealed payload could not be opened")
+    parked, endpoint = decode_park(stored.payload, kind=stored.kind)
+    run = Run(
+        id=stored.run_id,
+        kind=stored.kind,
+        owner_id=stored.owner_id,
         conversation_id=stored.conversation_id,
+        endpoint=endpoint,
+        prompt_message_id=stored.prompt_message_id,
+        stream=RunStream(stored.last_event_id),
     )
+    run.park(parked)
+    run.on_park_cancel = partial(persist_parked_cancel, run, store=conversations)
+    return run
 
 
 async def _restore(
     store: SealedParkedStore,
     runs: RunRegistry,
+    journal: _Journal,
     conversations: ConversationStore,
     notifications: NotificationService,
 ) -> None:
-    """Every readable park is registered before any unreadable one is ended, since ending
-    a child run can wake the parent whose own park is still to be restored."""
-    lost: list[StoredPark] = []
-    vetoed: list[tuple[Run, str]] = []
+    """Every readable park is registered before any other is ended, since ending a child
+    run can wake the parent whose own park is still to be restored. One park failing
+    never stops the rest."""
+    ending: list[tuple[Run, str]] = []
     for stored in await store.load():
         if runs.get(stored.run_id) is not None:
             continue
         try:
-            if stored.payload is None:
-                raise ValueError("the sealed payload could not be opened")
-            parked, endpoint = decode_park(stored.payload, kind=stored.kind)
-            # The turn is written into the thread's cached tree when it ends, and an
-            # uncached thread would be written as a second root.
-            _ = await conversations.tree(stored.conversation_id)
+            run = _rebuild(stored, conversations)
         except Exception:
             logger.exception("parked turns: run %s could not be read back", stored.run_id)
-            lost.append(stored)
+            ending.append(
+                (
+                    Run(
+                        id=stored.run_id,
+                        kind=stored.kind,
+                        owner_id=stored.owner_id,
+                        conversation_id=stored.conversation_id,
+                        stream=RunStream(stored.last_event_id),
+                    ),
+                    _LOST,
+                )
+            )
             continue
-        run = Run(
-            id=stored.run_id,
-            kind=stored.kind,
-            owner_id=stored.owner_id,
-            conversation_id=stored.conversation_id,
-            endpoint=endpoint,
-            prompt_message_id=stored.prompt_message_id,
-            stream=RunStream(stored.last_event_id),
-        )
-        run.park(parked)
-        run.on_park_cancel = partial(persist_parked_cancel, run, store=conversations)
-        if (problem := await runs.restore_problem(run)) is not None:
-            vetoed.append((run, problem))
-            continue
-        events, _, _ = announcements(parked.requests, parked.settled)
-        runs.restore_parked(run, events)
-    for stored in lost:
-        await _abandon(stored, runs, store, notifications)
-    for run, problem in vetoed:
-        runs.end_unrestorable(run, problem)
+        try:
+            problem = await runs.restore_problem(run)
+            if problem is None and runs.active_run_for(stored.conversation_id, run.owner_id):
+                # The live run owns the thread's leaf, so the park leaves only a marker on
+                # its prompt instead of its turn.
+                run.on_park_cancel = partial(stamp_parked_block, run, store=conversations)
+                problem = _BUSY
+            if problem is not None:
+                ending.append((run, problem))
+                continue
+            parked = run.parked_payload
+            assert isinstance(parked, ParkedTurn)
+            events, _, _ = announcements(parked.requests, parked.settled)
+            runs.restore_parked(run, events)
+            journal.hold(run.id, stored.conversation_id)
+        except Exception:
+            logger.exception("parked turns: run %s could not be restored", stored.run_id)
+    for run, reason in ending:
+        try:
+            runs.end_unrestorable(run, reason)
+            _ = await notifications.notify(
+                run.owner_id,
+                "run_restore_failed",
+                "A run could not be restored",
+                body=reason,
+                conversation_id=run.conversation_id,
+            )
+        except Exception:
+            logger.exception("parked turns: run %s could not be ended", run.id)
 
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:
@@ -143,7 +160,8 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     notifications = ctx.services.get(NotificationService)
     store = SealedParkedStore(ctx.engine, ctx.vault)
     await ctx.lifecycle.start("parked-turns", start=store.start, stop=store.stop)
-    runs.attach_parked_journal(_Journal(store))
+    journal = _Journal(store, conversations)
+    runs.attach_parked_journal(journal)
     app = ctx.app
     if app is not None:
 
@@ -156,7 +174,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         _ = await ctx.vault.unlocked_event.wait()
         _ = await ctx.built.wait()
         try:
-            await _restore(store, runs, conversations, notifications)
+            await _restore(store, runs, journal, conversations, notifications)
         except Exception:
             logger.exception("parked turns: could not restore the stored parks")
         finally:

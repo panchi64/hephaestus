@@ -100,9 +100,14 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         worktrees=services.get_optional(WorktreeManager),
     )
 
+    async def _routine_gone(run_id: str) -> str | None:
+        if await scheduler.records_run(run_id):
+            return None
+        return "the routine this run belonged to no longer exists"
+
     async def _recompose(facts: ParkedFacts) -> Recomposed:
-        if not await scheduler.records_run(facts.run.id):
-            raise RecomposeError("the routine this run belonged to no longer exists")
+        if (gone := await _routine_gone(facts.run.id)) is not None:
+            raise RecomposeError(gone)
         return await composer.recompose(facts, kind=TASK_KIND, depth=0)
 
     register_recompose(runs, TASK_KIND, _recompose)
@@ -207,28 +212,35 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             await scheduler.link_task_run(
                 view.task_run_id, run_id=run_id, conversation_id=conversation_id
             )
-        created = compose_turn(
-            run_id=run_id,
-            prompt=prompt,
-            conversation_id=conversation_id,
-            models=models,
-            capabilities=ctx.capabilities,
-            categories=ctx.tool_categories,
-            dormant=DormantCategory.summaries(ctx.dormant_categories),
-            instruction_providers=thread.instruction_providers,
-            prompt_context_providers=ctx.prompt_context_providers,
-            registry=runs,
-            store=conversations,
-            uploads=services.get(UploadStore),
-            disabled_tools=disabled,
-            binding=applied.binding,
-            context_thresholds=thresholds,
-            auto_compact=auto_compact,
-            owner_id=view.owner_id,
-            # A routine's run takes the `routine` lane (`runs/lanes.py`).
-            kind=TASK_KIND,
-            **timeouts,
-        )
+        try:
+            created = compose_turn(
+                run_id=run_id,
+                prompt=prompt,
+                conversation_id=conversation_id,
+                models=models,
+                capabilities=ctx.capabilities,
+                categories=ctx.tool_categories,
+                dormant=DormantCategory.summaries(ctx.dormant_categories),
+                instruction_providers=thread.instruction_providers,
+                prompt_context_providers=ctx.prompt_context_providers,
+                registry=runs,
+                store=conversations,
+                uploads=services.get(UploadStore),
+                disabled_tools=disabled,
+                binding=applied.binding,
+                context_thresholds=thresholds,
+                auto_compact=auto_compact,
+                owner_id=view.owner_id,
+                # A routine's run takes the `routine` lane (`runs/lanes.py`).
+                kind=TASK_KIND,
+                **timeouts,
+            )
+        except Exception:
+            if view.task_run_id is not None:
+                await scheduler.link_task_run(
+                    view.task_run_id, run_id=None, conversation_id=conversation_id
+                )
+            raise
         # Registered before the first await below, so the run cannot reach terminal first.
         run_waiters[created.run_id] = waiter
         # Waits for a terminal outcome: a fire parked for approval stays open until the
@@ -314,9 +326,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     ctx.lifecycle.on_stop("task-settling", _drain_settling)
 
     async def _restore_problem(run: Run) -> str | None:
-        if await scheduler.records_run(run.id):
-            return None
-        return "the routine this run belonged to no longer exists"
+        return await _routine_gone(run.id)
 
     runs.set_restore_check(TASK_KIND, _restore_problem)
 
