@@ -14,7 +14,11 @@ git paths are covered on which platform.
 The two callers differ on the network. ``code_run_host_command`` reaches only the
 ``egress_allowed_domains`` allowlist. The host shell's network is open, because it runs
 ``brew``, ``git push`` and package installs on the operator's own machine; it is bounded by
-what it can write and read, not by where it can connect.
+what it can write and read, not by where it can connect. It reads less than the hatch:
+only the floor is read-denied, so SSH keys, ``gh``, docker and kube credentials stay usable,
+while ``host_command_deny_read`` (applied to ``code_run_host_command``) is write-denied for
+both. On Linux unix sockets are blocked inside the fence, so ssh-agent and docker are
+unavailable there; on macOS seatbelt's open network includes unix sockets.
 
 **Loopback is outside the allowlist, deliberately.** A dev server and its tests are compute,
 so the allowlisted profile permits ``localhost``, and with it whatever else listens there,
@@ -68,6 +72,7 @@ class HostConfinement:
     allowed_domains: tuple[str, ...] = ()
     allow_write: tuple[str, ...] = ()
     deny_read: tuple[str, ...] = ()
+    deny_write: tuple[str, ...] = ()
     open_network: bool = False
     disabled: bool = False
 
@@ -130,14 +135,22 @@ def scratch_path() -> Path:
     return Path(tempfile.gettempdir()) / f"hephaestus-host-{os.getuid()}"
 
 
-def denied_read_paths(settings: Settings) -> tuple[str, ...]:
-    """The paths no confined host command may read: the floor, then the settings list.
+def floor_read_paths(settings: Settings) -> tuple[str, ...]:
+    """The read floor alone: what the host shell may not read.
 
     The data directory is the entry that matters most: it holds the vault, the sealed
     workspaces and the database, so exposing it would undo at-rest encryption wholesale.
     """
-    floor = read_floor(Path.home(), Path(settings.data_dir), settings.db_url)
-    return merged(floor, settings.host_command_deny_read)
+    return read_floor(Path.home(), Path(settings.data_dir), settings.db_url)
+
+
+def denied_read_paths(settings: Settings) -> tuple[str, ...]:
+    """What ``code_run_host_command`` may not read: the floor, then ``host_command_deny_read``.
+
+    The host shell reads less (:func:`floor_read_paths`), so ``git push`` over SSH, ``gh``,
+    ``docker`` and ``kubectl`` keep their credentials. Both are write-denied the full list.
+    """
+    return merged(floor_read_paths(settings), settings.host_command_deny_read)
 
 
 def _denied_write_paths(deny_read: Iterable[str], allow_write: Iterable[str]) -> list[str]:
@@ -226,7 +239,13 @@ async def shell_confinement(settings: Settings) -> HostConfinement:
         ("~", tempfile.gettempdir(), *shared_tmp, str(scratch_path())),
         settings.host_shell_allow_write,
     )
-    return replace(resolved, allow_write=allow_write, allowed_domains=(), open_network=True)
+    return replace(
+        resolved,
+        allow_write=allow_write,
+        allowed_domains=(),
+        deny_read=floor_read_paths(settings),
+        open_network=True,
+    )
 
 
 async def fence_command(command: str, confinement: HostConfinement | None) -> str:
@@ -239,6 +258,7 @@ async def fence_command(command: str, confinement: HostConfinement | None) -> st
             allowed_domains=confinement.allowed_domains,
             allow_write=confinement.allow_write,
             deny_read=confinement.deny_read,
+            deny_write=confinement.deny_write,
             open_network=confinement.open_network,
         )
     except Exception as exc:  # wrapping must never lose the command
@@ -353,6 +373,7 @@ async def configure(settings: Settings) -> HostConfinement:
         allowed_domains=tuple(domains),
         allow_write=tuple(allow_write),
         deny_read=tuple(deny_read),
+        deny_write=tuple(deny_read),
     )
 
 
@@ -385,6 +406,7 @@ async def confine(
     allowed_domains: Iterable[str],
     allow_write: Iterable[str],
     deny_read: Iterable[str],
+    deny_write: Iterable[str] = (),
     open_network: bool = False,
 ) -> str:
     """``command`` rewritten to run under the platform's sandbox, fenced for *this* call.
@@ -424,7 +446,7 @@ async def confine(
     command = f"export TMPDIR={shlex.quote(tempfile.gettempdir())}; {command}"
     allowed = list(allow_write)
     denied_read = list(deny_read)
-    denied_write = _denied_write_paths(denied_read, allowed)
+    denied_write = _denied_write_paths(merged(denied_read, deny_write), allowed)
     if open_network:
         return await _wrap_open_network(command, allowed, denied_read, denied_write)
     return await SandboxManager.wrap_with_sandbox(
@@ -470,7 +492,6 @@ async def _wrap_open_network(
                 read_config=read_config,
                 write_config=write_config,
                 enable_weaker_nested_sandbox=SandboxManager.get_enable_weaker_nested_sandbox(),
-                allow_all_unix_sockets=True,
                 ripgrep_config=SandboxManager.get_ripgrep_config(),
                 mandatory_deny_search_depth=SandboxManager.get_mandatory_deny_search_depth(),
             )

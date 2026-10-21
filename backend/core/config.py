@@ -262,6 +262,8 @@ class Settings(BaseSettings):
     # operator explicitly approved *this* command, and refusing to run it because a
     # platform primitive is missing would break the one case the tool exists for.
     host_command_sandbox_enabled: bool = True
+    # Applies to `code_run_host_command` only; the host shell reads everything but the floor
+    # (`services/sandbox/floor.py`), and write-denies this list.
     # Read-denied even under approval. The data directory is added to this at runtime
     # because it holds the vault, the sealed workspaces and the database: the agent must
     # never read its own encrypted store from the host, whatever it was approved to do.

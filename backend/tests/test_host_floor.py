@@ -221,6 +221,22 @@ async def test_the_fenced_shell_cannot_read_what_the_floor_denies(home: Path, tm
 
 
 @pytest.mark.usefixtures("fenced")
+async def test_the_shell_reads_ssh_but_not_the_floor_and_cannot_write_ssh(
+    home: Path, tmp_path: Path
+):
+    (home / ".ssh").mkdir()
+    _ = (home / ".ssh" / "known_hosts").write_text("host key")
+    _ = (home / ".npmrc").write_text("NPM-TOKEN-VALUE")
+    shell = _shell(_work(tmp_path))
+    ssh = await shell.run("cat ~/.ssh/known_hosts")
+    npm = await shell.run("cat ~/.npmrc")
+    write = await shell.run("echo k >> ~/.ssh/authorized_keys")
+    assert ssh.ok and "host key" in ssh.stdout
+    assert not npm.ok and "NPM-TOKEN-VALUE" not in npm.stdout
+    assert not write.ok
+
+
+@pytest.mark.usefixtures("fenced")
 async def test_the_fenced_shell_can_write_elsewhere_under_home_and_keep_its_cwd(
     home: Path, tmp_path: Path
 ):

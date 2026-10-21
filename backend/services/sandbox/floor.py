@@ -9,7 +9,9 @@ from.
 writable root itself. On macOS the fence also gets absolute globs that cover nested
 repositories under each root. On Linux the runtime skips globs and any deny path that does
 not exist yet, so a nested repository's hooks and config, and a missing ``~/.gitconfig`` or
-``~/.claude``, are not protected there. Renaming a nested ``.git`` directory is not denied
+``~/.claude``, are not protected there. On Linux the runtime blocks unix sockets
+with seccomp and has no per-socket allowlist, so ssh-agent and docker sockets are
+unavailable inside the fence there. Renaming a nested ``.git`` directory is not denied
 on either platform, since that would also block ``git init``.
 """
 
