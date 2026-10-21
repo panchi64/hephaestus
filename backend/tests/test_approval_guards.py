@@ -5,8 +5,10 @@ from __future__ import annotations
 import httpx
 import pytest
 from fastapi import FastAPI
+from pydantic_ai import FunctionToolset
 
 from services.permissions.guards import GUARD_KEY
+from tools import RunDeps
 
 from ._helpers import await_parked, client_app, parked_turn, swap_tool_catalog
 from ._json import json_body, json_list, s
@@ -109,3 +111,62 @@ async def test_a_token_still_approves_an_ordinary_call(monkeypatch: pytest.Monke
         )
 
         assert resp.status_code == 202
+
+
+def _file_categories() -> dict[str, FunctionToolset[RunDeps]]:
+    toolset: FunctionToolset[RunDeps] = FunctionToolset()
+
+    @toolset.tool_plain(requires_approval=True, name="write_file")
+    def write_file(path: str, content: str) -> str:
+        return f"wrote {path} ({len(content)})"
+
+    return {"files": toolset}
+
+
+_HOOK = {"path": ".git/hooks/x", "content": "x"}
+
+
+async def _unplaceable(monkeypatch: pytest.MonkeyPatch, *, restored: bool) -> None:
+    """No home to place paths in: a restored park whose deps are not rebuilt, or a live
+    one whose home cannot be opened."""
+
+    async def no_home(_deps: RunDeps) -> None:
+        return None
+
+    monkeypatch.setattr("routes.runs.home_of", no_home)
+    if restored:
+
+        async def not_rebuilt(*_args: object) -> bool:
+            return False
+
+        monkeypatch.setattr("routes.runs.recompose", not_rebuilt)
+
+
+@pytest.mark.parametrize("restored", [True, False])
+async def test_a_token_cannot_redirect_a_file_write_it_cannot_place(
+    monkeypatch: pytest.MonkeyPatch, restored: bool
+):
+    install_sensitive_tool(monkeypatch)
+    async with client_app(auth_enabled=True, passphrase=None) as (client, app):
+        token = await _operator_and_token(client)
+        swap_tool_catalog(app, _file_categories())
+        run_id = s(json_body(await client.post("/chat", json={"prompt": "write it"}))["run_id"])
+        run = await await_parked(app, run_id)
+        parked = parked_turn(run)
+        call_id = parked.requests.approvals[0].tool_call_id
+        assert parked.requests.approvals[0].tool_name == "files_write_file"
+        if restored:
+            parked.agent = None
+            parked.compaction = None
+        await _unplaceable(monkeypatch, restored=restored)
+        redirected = _decision(call_id, scope="conversation", override_args=_HOOK)
+        session = dict(client.cookies)
+        client.cookies.clear()
+
+        refused = await client.post(_ROUTE.format(run_id=run_id), json=redirected, headers=token)
+        assert refused.status_code == 403
+
+        client.cookies.update(session)
+        resp = await client.post(_ROUTE.format(run_id=run_id), json=redirected)
+        assert resp.status_code == 202
+        assert json_body(resp)["granted"] == []

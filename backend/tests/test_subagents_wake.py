@@ -18,14 +18,21 @@ on the thread takes it.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 import pytest
 from fastapi import FastAPI
-from pydantic_ai import ModelRequest, ModelRetry, RunContext, RunUsage, UserPromptPart
+from pydantic_ai import (
+    FunctionToolset,
+    ModelRequest,
+    ModelRetry,
+    RunContext,
+    RunUsage,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
 
 from agent import turn as turn_module
@@ -43,6 +50,7 @@ from services.subagents import FiledReport, ReportStatus, SubagentLauncher
 from tests._helpers import client_app, patch_model_resolution, settle
 from tests._json import json_body, s
 from tools import RunDeps, build_agent_toolsets
+from tools.delegation import add_delegation_tools
 from tools.report import report_toolset, require_report
 
 
@@ -462,7 +470,7 @@ async def _spawned(app: FastAPI) -> tuple[str, str]:
     """A spawned agent under ``parent-1`` whose first turn has ended: its record id and
     its thread."""
     from services.agents import builtin_roster
-    from services.subagents import SubagentLauncher, SubagentParent
+    from services.subagents import SubagentParent
 
     launcher = app_state(app).capabilities.get(SubagentLauncher)
     started = await launcher.launch(
@@ -672,8 +680,32 @@ class TestWhoStoppedIt:
             assert f"): {heading}." in _prompt(composed[0])
             row = await _records(app).get(subagent_id, "operator")
             assert row is not None
-            assert row.status == status.value
+            # A limit ending is stored as terminal `stopped`, so it holds no cap slot.
+            expected = "stopped" if status is RunStatus.blocked else status.value
+            assert row.status == expected
+            assert subagent_id not in {r.id for r in await _records(app).live("operator")}
             await _drain(app)
+
+
+def _tool(app: FastAPI, name: str) -> Callable[..., Awaitable[dict[str, object]]]:
+    """A delegation tool as the thread ``parent-1`` would call it, on the agent
+    ``migrate-schema``."""
+    toolset = FunctionToolset[RunDeps]()
+    add_delegation_tools(toolset)
+    function = cast(Callable[..., Awaitable[dict[str, object]]], toolset.tools[name].function)
+    run = Run(id="r", kind="chat", owner_id="operator", stream=RunStream())
+    deps = RunDeps(
+        run=run,
+        owner_id="operator",
+        caps=app_state(app).capabilities,
+        conversation_id="parent-1",
+    )
+    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+
+    async def call(**kwargs: object) -> dict[str, object]:
+        return await function(ctx, "migrate-schema", **kwargs)
+
+    return call
 
 
 class TestLargeReports:
@@ -696,10 +728,23 @@ class TestLargeReports:
             assert len(prompt) < limit + 1_000
             assert "characters omitted" in prompt
             assert "read the full report with `agents_read migrate-schema`" in prompt
-            launcher = app_state(app).capabilities.get(SubagentLauncher)
-            view = await launcher.read("operator", "parent-1", "migrate-schema")
-            assert view.summary is not None
-            assert view.summary.startswith(full)
+            read = _tool(app, "read")
+            pages: list[str] = []
+            start = 0
+            while True:
+                out = await read(start=start)
+                pages.append(str(out["report"]))
+                length = out["report_length"]
+                assert isinstance(length, int)
+                assert length >= len(full)
+                next_start = out.get("next_start")
+                if next_start is None:
+                    break
+                assert isinstance(next_start, int)
+                start = next_start
+            assert len(pages) > 1
+            assert all(len(page) < limit for page in pages)
+            assert "".join(pages).startswith(full)
             await _drain(app)
 
     async def test_a_report_within_the_limit_is_delivered_whole(

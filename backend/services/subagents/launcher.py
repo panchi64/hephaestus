@@ -99,7 +99,8 @@ class SubagentView:
     #: What the spawning agent called this one, unique within its tree.
     handle: str
     task: str
-    #: ``running`` | ``blocked`` | ``done`` | ``failed`` | ``cancelled``.
+    #: ``running`` | ``blocked`` | ``done`` | ``failed`` | ``cancelled`` | ``stopped``
+    #: (ended at a time or turn limit).
     status: str
     #: The operator's name for it, and its class's key. Empty on rows from before either.
     callsign: str = ""

@@ -190,9 +190,18 @@ async def stop_agents(conversation_id: str, request: Request) -> StoppedAgents:
         raise HTTPException(status_code=404, detail="sub-agents are not available")
     if not await deps.store(request).exists(conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
-    inbox = deps.registry(request).inbox(conversation_id, OPERATOR_ID)
+    registry = deps.registry(request)
+    if registry.active_run_for(conversation_id, OPERATOR_ID) is not None:
+        raise HTTPException(
+            status_code=409, detail="the thread has a run of its own; cancel that run instead"
+        )
+    inbox = registry.inbox(conversation_id, OPERATOR_ID)
     mark = inbox.stop()
-    stopped = await stopper.stop_below(OPERATOR_ID, conversation_id)
+    try:
+        stopped = await stopper.stop_below(OPERATOR_ID, conversation_id)
+    except BaseException:
+        inbox.undo_stop(mark)
+        raise
     if not stopped:
         inbox.undo_stop(mark)
     return StoppedAgents(stopped=stopped)

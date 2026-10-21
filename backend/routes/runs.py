@@ -7,6 +7,7 @@ Run is a feature concern (the chat and agent routes), not here — those call
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Literal
@@ -37,7 +38,13 @@ from services.answers import (
     render_answer,
 )
 from services.approval_grants import GrantInfo, grant_scopes, grant_width, grantable
-from services.permissions.guards import GUARDED_TOOLS, guard_of_approval
+from services.permissions.guards import (
+    FILE_WRITE_TOOLS,
+    GUARDED_TOOLS,
+    changes_directory,
+    guard,
+    guard_of_approval,
+)
 from services.plan_mode import PLAN_SUBMIT_TOOL
 from services.settings_store import get_inactivity_timeout, get_wall_clock_timeout
 from services.subagents import SubtreeStopper
@@ -180,7 +187,17 @@ async def cancel_run(
         raise HTTPException(status_code=409, detail=f"run already {run.status.value}")
     stopper = deps.capabilities(request).get_optional(SubtreeStopper)
     if run is not None and run.conversation_id and stopper is not None:
-        _ = await stopper.stop_below(run.owner_id, run.conversation_id)
+        # The stopped agents' reports must not start a turn on the thread just stopped.
+        inbox = registry.inbox(run.conversation_id, run.owner_id)
+        mark = None if held is not None else inbox.stop()
+        try:
+            stopped = await stopper.stop_below(run.owner_id, run.conversation_id)
+        except BaseException:
+            if mark is not None:
+                inbox.undo_stop(mark)
+            raise
+        if mark is not None and not stopped:
+            inbox.undo_stop(mark)
     return {"status": "cancelling"}
 
 
@@ -272,33 +289,45 @@ def _still_covered(call: ToolCallPart, settled: GrantApproved, active: Sequence[
 
 async def _guarded_approvals(
     body: ApprovalDecisions,
-    call_by_id: dict[str, ToolCallPart],
     parked: ParkedTurn,
     settings: Settings,
 ) -> set[str]:
     """The approved calls only the operator may answer: those the park marked guarded, and
     those whose replacement arguments are guarded themselves."""
     deps_of_run = parked.compaction.deps if parked.compaction is not None else None
+    home = await home_of(deps_of_run) if deps_of_run is not None else None
+    cwd = shell_cwd(deps_of_run) if deps_of_run is not None else None
+    chosen = {d.tool_call_id: d for d in body.decisions}
     found: set[str] = set()
-    for decision in body.decisions:
-        if not decision.approved:
+    # The command tools run one after another, so a `cd` moves where the calls after it
+    # start; once one may have, relative paths are not placed.
+    cwd_known = True
+    for call in parked.requests.approvals:
+        decision = chosen.get(call.tool_call_id)
+        if decision is None:
             continue
-        name = call_by_id[decision.tool_call_id].tool_name
-        home = None
-        cwd = None
-        if decision.override_args is not None and name in GUARDED_TOOLS and deps_of_run is not None:
-            home = await home_of(deps_of_run)
-            cwd = shell_cwd(deps_of_run)
-        reason = guard_of_approval(
-            name,
-            parked.requests.metadata.get(decision.tool_call_id),
-            decision.override_args,
-            home=home,
-            settings=settings,
-            cwd=cwd,
-        )
-        if reason is not None:
-            found.add(decision.tool_call_id)
+        name = call.tool_name
+        override = decision.override_args if decision.approved else None
+        if decision.approved:
+            marked = guard_of_approval(
+                name,
+                parked.requests.metadata.get(call.tool_call_id),
+                None,
+                home=home,
+                settings=settings,
+            )
+            if marked is not None:
+                found.add(call.tool_call_id)
+            elif override is not None and name in GUARDED_TOOLS:
+                # A file write that cannot be placed is not known to be harmless.
+                unplaced = name in FILE_WRITE_TOOLS and home is None
+                reason = guard(
+                    name, override, home=home, settings=settings, cwd=cwd, cwd_known=cwd_known
+                )
+                if unplaced or reason is not None:
+                    found.add(call.tool_call_id)
+        if cwd_known and changes_directory(name, override or call.args_as_dict()):
+            cwd_known = False
     return found
 
 
@@ -348,7 +377,12 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
 
     # A guarded approval is the operator's alone, and is settled before anything below
     # changes: an API token's request leaves the park as it was.
-    guarded = await _guarded_approvals(body, call_by_id, parked, deps.app_state(request).settings)
+    if parked.agent is None and any(d.override_args is not None for d in body.decisions):
+        # A restored park holds no deps yet; the guard needs the home they place paths in.
+        # A failure is reported by the recompose below.
+        with contextlib.suppress(RecomposeError):
+            _ = await recompose(registry, run, parked)
+    guarded = await _guarded_approvals(body, parked, deps.app_state(request).settings)
     if guarded:
         deps.require_operator(request)
 

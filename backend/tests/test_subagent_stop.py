@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
 from fastapi import FastAPI
@@ -16,7 +16,12 @@ from runs import Run
 from runs.run import StopCause
 from services.agents import builtin_roster
 from services.registry import ModelRegistry
-from services.subagents import LaunchedSubagent, SubagentParent, SubagentUnavailableError
+from services.subagents import (
+    LaunchedSubagent,
+    SubagentParent,
+    SubagentUnavailableError,
+    SubtreeStopper,
+)
 from tests._helpers import client_app, register_stub_provider, stub_resolution
 from tests._json import arr, json_body, s
 from tests.test_subagents_launch import launcher_of, records_of, settle_run
@@ -63,6 +68,16 @@ def _run(app: FastAPI, run_id: str) -> Run:
     run = app_state(app).runs.get(run_id)
     assert run is not None
     return run
+
+
+def _after[**P, R](hook: Callable[[], Awaitable[None]], real: Callable[P, Awaitable[R]]):
+    """``real``, run after ``hook`` has."""
+
+    async def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        await hook()
+        return await real(*args, **kwargs)
+
+    return wrapped
 
 
 def _hold_run(app: FastAPI, conversation_id: str) -> Run:
@@ -211,3 +226,106 @@ async def test_a_message_to_an_agent_the_operator_stopped_names_the_operator(
             _ = await launcher_of(app).message("operator", root, "reader", "still there?")
 
         assert "unless the operator asks" in str(refused.value)
+
+
+async def test_cancelling_without_a_hold_still_keeps_the_stopped_agents_from_waking_the_thread(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _hold_every_model(monkeypatch)
+    async with client_app() as (client, app):
+        root = await _thread(app)
+        child = await _spawn(app, "reader", root)
+        own = _hold_run(app, root)
+
+        resp = await client.post(f"/runs/{own.id}/cancel", json={})
+
+        assert resp.status_code == 202
+        await _stopped_cleanly(app, root, child)
+
+
+async def test_cancelling_a_thread_with_no_agents_leaves_its_inbox_alone(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _hold_every_model(monkeypatch)
+    async with client_app() as (client, app):
+        root = await _thread(app)
+        own = _hold_run(app, root)
+
+        resp = await client.post(f"/runs/{own.id}/cancel", json={})
+
+        assert resp.status_code == 202
+        assert not app_state(app).runs.inbox(root, "operator").waiting_for_operator
+
+
+async def test_the_stop_route_refuses_a_thread_with_a_run_of_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _hold_every_model(monkeypatch)
+    async with client_app() as (client, app):
+        root = await _thread(app)
+        _ = _hold_run(app, root)
+
+        assert (await client.post(f"/conversations/{root}/agents/stop")).status_code == 409
+
+
+async def test_a_message_to_an_agent_stopped_before_a_restart_is_neutral(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _hold_every_model(monkeypatch)
+    async with client_app() as (_client, app):
+        root = await _thread(app)
+        child = await _spawn(app, "reader", root)
+        row = await records_of(app).by_child(child.conversation_id)
+        assert row is not None
+        await records_of(app).settle(row.id, status="cancelled")
+
+        with pytest.raises(SubagentUnavailableError) as refused:
+            _ = await launcher_of(app).message("operator", root, "reader", "still there?")
+
+        assert "stopped, so nothing will read this." in str(refused.value)
+        assert "Spawn" not in str(refused.value)
+        _ = await launcher_of(app).stop("operator", root, "reader")
+        await settle_run(app, child.run_id)
+
+
+async def test_the_stop_reaches_an_agent_whose_row_says_done_but_whose_run_is_live(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _hold_every_model(monkeypatch)
+    async with client_app() as (client, app):
+        root = await _thread(app)
+        child = await _spawn(app, "reader", root)
+        row = await records_of(app).by_child(child.conversation_id)
+        assert row is not None
+        await records_of(app).settle(row.id, status="done")
+
+        resp = await client.post(f"/conversations/{root}/agents/stop")
+
+        assert json_body(resp)["stopped"] == ["reader"]
+        await settle_run(app, child.run_id)
+        assert _run(app, child.run_id).stop_cause is StopCause.operator
+
+
+async def test_an_agent_launched_while_its_parent_is_stopped_is_stopped_too(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _hold_every_model(monkeypatch)
+    async with client_app() as (_client, app):
+        root = await _thread(app)
+        records = records_of(app)
+        stopper = app_state(app).capabilities.get(SubtreeStopper)
+
+        async def stop_parent() -> None:
+            # After the child's turn was submitted and before its row exists, which the
+            # sweep cannot see.
+            _ = await stopper.stop_below("operator", root)
+
+        monkeypatch.setattr(records, "record", _after(stop_parent, records.record))
+
+        child = await _spawn(app, "reader", root)
+
+        await settle_run(app, child.run_id)
+        row = await records.by_child(child.conversation_id)
+        assert row is not None
+        assert row.status == "cancelled"
+        assert _run(app, child.run_id).stop_cause is StopCause.operator

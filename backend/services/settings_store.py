@@ -67,14 +67,11 @@ _DISABLED = ""
 # operator's hardware.
 FIRST_TOKEN_TIMEOUT_KEY = "chat.first_token_timeout_s"
 
-# How many sub-agents may be running for the operator at once (services/subagents/). Unset
-# means no cap, which is the default and the honest one: the model launches these to *save*
-# the operator time, and a number chosen in advance without knowing what the work splits
-# into would mostly be wrong. The setting exists for the operator who has watched it launch
-# six at a time and decided that is not what they want their evening spent on. Like the wall
-# clock, "unset" and "off" are the same state here rather than different ones — there is no
-# way to say "no sub-agents at all" with a number, because that is what switching the tool
-# off in the catalog is for.
+# How many sub-agents may be running in one delegation tree at once (services/subagents/).
+# Unset means the default of 8 (`DEFAULT_MAX_CONCURRENT`); the setting exists for the
+# operator who wants fewer or more. Like the wall clock, "unset" and "off" are the same
+# state here — there is no way to say "no sub-agents at all" with a number, because that
+# is what switching the tool off in the catalog is for.
 SUBAGENT_LIMIT_KEY = "chat.subagent_max_concurrent"
 
 # Offline mode (services/offline.py) persists the operator's two switches here as
@@ -148,14 +145,12 @@ class SettingsStore:
 
 
 async def get_subagent_limit(store: SettingsStore, owner_id: str) -> int | None:
-    """How many sub-agents may run at once, or ``None`` for no cap.
+    """The operator's cap on sub-agents at once, or ``None`` when unset, which the launcher
+    reads as its default of 8.
 
-    ``None`` is the default and is not a fallback from a missing config value — there is no
-    config default to fall back to, because "however many the work splits into" is the
-    intended behaviour rather than an unset one. A stored 0, negative or non-numeric value
-    is corruption rather than intent and reads as no cap, which is the same direction every
-    other getter here falls: back to how the product behaves out of the box, rather than to
-    a restriction the operator never asked for.
+    A stored 0, negative or non-numeric value is corruption rather than intent and reads as
+    unset, the same direction every other getter here falls: back to how the product
+    behaves out of the box.
     """
     value = _positive_int_or(await store.get(owner_id, SUBAGENT_LIMIT_KEY), 0)
     return value or None

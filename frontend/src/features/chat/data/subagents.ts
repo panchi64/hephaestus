@@ -62,9 +62,10 @@ export interface Subagent {
 }
 
 /** `blocked` is waiting on the operator rather than on the machine, which is the one
- *  state worth putting in front of them. */
+ *  state worth putting in front of them. `stopped` is an agent a time or turn limit
+ *  ended: finished, with partial work its parent may continue. */
 export type SubagentStatus =
-  "running" | "blocked" | "done" | "failed" | "cancelled";
+  "running" | "blocked" | "done" | "failed" | "cancelled" | "stopped";
 
 /** `BRAX · Tripodes` as plain text, or "" when it has no callsign. */
 export function designationText(who: {

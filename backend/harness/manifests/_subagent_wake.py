@@ -158,7 +158,7 @@ class SubagentWake:
         try:
             await self._records.settle(
                 row.id,
-                status=outcome.status,
+                status=_stored_status(outcome),
                 summary=None if summary is None else _joined(summary, parked),
                 error=outcome.error,
                 context_used=(getattr(run.metrics, "context_used", None) if run.metrics else None),
@@ -288,6 +288,14 @@ def status_of(run: Run) -> str:
     return "blocked" if run.status is RunStatus.blocked and run.stop_cause else "failed"
 
 
+def _stored_status(outcome: _Outcome) -> str:
+    """A limit ending is reported as blocked but stored as stopped: terminal, so it holds
+    no slot and the panel does not offer an approval for it."""
+    if outcome.status == "blocked" and outcome.cause in _LIMIT_LABELS:
+        return "stopped"
+    return outcome.status
+
+
 def stopped_phrase(cause: StopCause | None) -> str:
     """How a stopped agent is described: who stopped it, when that is known."""
     match cause:
@@ -318,7 +326,8 @@ def _preview(summary: str, handle: str, limit: int) -> str:
         return summary
     return (
         f"{head}\n[… {elided} characters omitted …]\n{tail}\n\n"
-        + f"This report is long: read the full report with `agents_read {handle}`."
+        + f"This report is long: read the full report with `agents_read {handle}`, "
+        + "passing each page's `next_start` as `start` for the next."
     )
 
 

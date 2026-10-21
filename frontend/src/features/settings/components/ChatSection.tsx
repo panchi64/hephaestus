@@ -296,17 +296,17 @@ export function ChatSection(): JSX.Element {
 
           <SettingHeader title="Sub-agents at once">
             The agent can hand pieces of work to sub-agents that go off and do
-            them on their own, and it decides how many the work splits into.
-            There's no limit unless you set one — each is a separate agent
-            spending model requests of its own, so this is the ceiling on how
-            much can be running while you're not watching. Over the limit, the
-            agent is told to wait rather than refused: nothing is lost, it just
-            launches the next one as one finishes.
+            them on their own, and it decides how many the work splits into. Up
+            to 8 run at once unless you set a different limit — each is a
+            separate agent spending model requests of its own, so this is the
+            ceiling on how much can be running while you're not watching. Over
+            the limit, the agent is told to wait rather than refused: nothing is
+            lost, it just launches the next one as one finishes.
           </SettingHeader>
           <Toggle
             checked={subagentCapOn()}
             onChange={setSubagentCapOn}
-            label="Limit how many sub-agents can run at once"
+            label="Set my own limit on how many sub-agents run at once"
           />
           <Row gap={4} align="end">
             <Stack gap={1}>

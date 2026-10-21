@@ -7,7 +7,8 @@ const RANK: Record<string, number> = {
   blocked: 0,
   running: 1,
   failed: 2,
-  cancelled: 3,
+  stopped: 3,
+  cancelled: 4,
 };
 
 export function byUrgency(a: Subagent, b: Subagent): number {

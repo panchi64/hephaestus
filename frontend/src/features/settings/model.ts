@@ -107,8 +107,8 @@ export interface SearchProviderInput {
  *  depends on how long the operator's turns are, not on the model. `warn` is always
  *  strictly below `alert`; the backend refuses a pair that isn't.
  *  `subagentMaxConcurrent` is how many sub-agents the agent may have running at once, and
- *  is `null` (no cap) unless the operator sets one — the second field here where `null` is
- *  a value rather than an absence. It bounds how many the agent may *have*, which is about
+ *  is `null` (the backend's default of 8 applies) unless the operator sets one — the
+ *  second field here where `null` is a value rather than an absence. It bounds how many the agent may *have*, which is about
  *  the operator's attention and their bill; how many actually execute together is a host
  *  bound the backend keeps separately. */
 export interface ChatSettings {
@@ -128,10 +128,9 @@ export interface ChatSettings {
   subagentMaxConcurrent: number | null;
 }
 
-/** What `subagentMaxConcurrent` seeds to when it is switched on and nothing was stored.
- *  The frontend's own suggestion, like `DEFAULT_WALL_CLOCK_S` and for the same reason:
- *  there is no backend default to borrow, because the cap is absent until asked for. */
-export const DEFAULT_SUBAGENT_LIMIT = 3;
+/** What `subagentMaxConcurrent` seeds to when it is switched on and nothing was stored:
+ *  the backend's own default, so switching it on changes nothing until it is edited. */
+export const DEFAULT_SUBAGENT_LIMIT = 8;
 
 /** What `wallClockTimeoutS` seeds to when it is switched on and nothing was stored — the
  *  frontend's own starting suggestion, not a backend default (there isn't one: the bound
