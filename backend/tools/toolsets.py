@@ -43,6 +43,7 @@ from dataclasses import replace
 from pydantic_ai import AbstractToolset, CombinedToolset, RunContext, ToolDefinition
 
 from services.permissions import beyond_scope
+from services.permissions.guards import COMMAND_TOOLS
 from services.tool_policy import permission_disabled_tools
 from services.tool_sensitivity import declared_sensitivity
 
@@ -58,6 +59,7 @@ from .describe import (
 )
 from .files import GATED_TOOLS as _FILES_GATED
 from .files import files_toolset
+from .guarded import GuardedToolset
 from .harness_events import own_harness_events
 from .plan import GATED_TOOLS as _PLAN_GATED
 from .plan import plan_toolset
@@ -162,6 +164,21 @@ def _narrated(tool_def: ToolDefinition) -> ToolDefinition:
     )
 
 
+def _alone(_ctx: RunContext[RunDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    """Run each tool that runs a command alone: calls before it in the batch finish first,
+    it runs by itself, and calls after it start once it is done.
+
+    The guard judges a relative path against the directory the shell stands in, and a
+    command that changes it (`cd`) would otherwise race the call next to it. This orders
+    calls in a batch only. These tools are never folded into `run_code`, because they
+    carry `code_arg_name`.
+    """
+    return [
+        replace(tool_def, sequential=True) if tool_def.name in COMMAND_TOOLS else tool_def
+        for tool_def in tool_defs
+    ]
+
+
 def core_categories() -> dict[str, AbstractToolset[RunDeps]]:
     """The categories the harness itself contributes — everything else is a manifest's."""
     return {
@@ -234,6 +251,7 @@ def build_agent_toolsets(
     # prefixing produces, there is no point gating a tool the filter already took away,
     # and the rewrite resolves a description's cross-references against those same
     # namespaced names (`describe.py`). Recovery wraps all of it, so a call that raises is
-    # reported to the model whatever layer it raised in.
+    # reported to the model whatever layer it raised in; the guard sits just inside it.
     stack = combined.filtered(_enabled_gate).prepared(_approval_gate).prepared(_describe)
-    return [RecoveringToolset(stack, call_timeout_s=call_timeout_s)]
+    stack = stack.prepared(_alone)
+    return [RecoveringToolset(GuardedToolset(stack), call_timeout_s=call_timeout_s)]

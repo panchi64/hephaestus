@@ -391,6 +391,7 @@ class CodeModeCapability(CodeMode[RunDeps]):
                 permission=deps.permission,
                 turn_start=deps.turn_start,
                 budget=deps.review_budget,
+                metadata=requests.metadata,
             )
         needs_operator = {call.tool_call_id for call in manual}
         approvals: dict[str, ToolApproved | ToolDenied | bool] = {}

@@ -11,8 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-from services.permissions.shell_ast import ShellCommand
-from services.permissions.shell_flags import is_flag
+from services.permissions.shell_ast import ShellCommand, operands, unwrap
 
 _INSTALLS = (("install",), ("i",), ("add",), ("ci",), ("update",), ("upgrade",))
 
@@ -61,8 +60,6 @@ _VALUE_FLAGS: dict[str, frozenset[str]] = {
     "git": frozenset({"-C", "-c"}),
     "npm": frozenset({"--prefix"}),
     "uv": frozenset({"--directory", "--project"}),
-    "sudo": frozenset({"-u", "-g"}),
-    "env": frozenset({"-u", "--unset", "-C", "--chdir"}),
 }
 
 _VERSIONED = re.compile(r"^(pip|python)\d*(\.\d+)?$")
@@ -74,11 +71,11 @@ def fetches(commands: Sequence[ShellCommand]) -> bool:
 
 
 def _fetches(program: str, arguments: tuple[str, ...]) -> bool:
+    inner = unwrap(ShellCommand(program, arguments))
+    if (inner.program, inner.arguments) != (program, arguments):
+        return _fetches(inner.program, inner.arguments)
     name = _name(program)
-    operands = _operands(name, arguments)
-    if name in ("env", "sudo"):
-        rest = [word for word in operands if "=" not in word]
-        return bool(rest) and _fetches(rest[0], _after(arguments, rest[0]))
+    found = operands(arguments, _VALUE_FLAGS.get(name, frozenset()))
     if any(word in _LOCAL_ONLY for word in arguments):
         return False
     if name in _ALWAYS_FETCH:
@@ -86,13 +83,13 @@ def _fetches(program: str, arguments: tuple[str, ...]) -> bool:
     if name == "python":
         if arguments[:2] != ("-m", "pip"):
             return False
-        name, operands = "pip", _operands("pip", arguments[2:])
+        name, found = "pip", operands(arguments[2:], _VALUE_FLAGS.get("pip", frozenset()))
     rows = _FETCHING.get(name)
     if rows is None:
         return False
-    if not operands:
+    if not found:
         return name in _BARE_INSTALLS
-    return any(tuple(operands[: len(row)]) == row for row in rows)
+    return any(tuple(found[: len(row)]) == row for row in rows)
 
 
 def _name(program: str) -> str:
@@ -100,22 +97,3 @@ def _name(program: str) -> str:
     base = program.rsplit("/", 1)[-1]
     versioned = _VERSIONED.match(base)
     return versioned.group(1) if versioned else base
-
-
-def _operands(name: str, arguments: tuple[str, ...]) -> list[str]:
-    """The non-flag words, skipping the value of each flag that takes the next word."""
-    value_flags = _VALUE_FLAGS.get(name, frozenset())
-    operands: list[str] = []
-    skip = False
-    for word in arguments:
-        if skip:
-            skip = False
-        elif word in value_flags:
-            skip = True
-        elif not is_flag(word):
-            operands.append(word)
-    return operands
-
-
-def _after(arguments: tuple[str, ...], word: str) -> tuple[str, ...]:
-    return arguments[arguments.index(word) + 1 :]
