@@ -252,7 +252,7 @@ class SandboxSession:
                 timeout_s=spec.timeout_s,
                 stdin=spec.stdin,
             )
-            _ = await self._guest.bring_out()
+            lost = await self._guest.bring_out()
         except VMError as exc:
             raise SandboxError(str(exc)) from exc
         return SandboxResult(
@@ -260,6 +260,7 @@ class SandboxSession:
             stdout=result.stdout,
             stderr=result.stderr,
             timed_out=result.exit_code == TIMEOUT_EXIT,
+            notes=(lost,) if lost is not None else (),
         )
 
     def _network_env(self) -> dict[str, str]:

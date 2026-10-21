@@ -42,6 +42,7 @@ class VMLiveness:
         self._clock: Callable[[], float] = clock
         self._misses: int = 0
         self._last_death: float | None = None
+        self._held: bool = False
         self._probe_task: PeriodicTask = PeriodicTask(
             "vm-liveness", interval_s=interval_s, work=self.probe, logger=logger
         )
@@ -60,6 +61,11 @@ class VMLiveness:
             return
         if await self._vm.responds():
             self._misses = 0
+            if self._held:
+                # The operator brought a VM we left down back up: it earns its automatic
+                # reset again.
+                self._held = False
+                self._last_death = None
             return
         self._misses += 1
         if self._misses < MISSES_TO_DIE:
@@ -73,6 +79,7 @@ class VMLiveness:
         self._last_death = now
         self._vm.mark_unavailable("the platform VM stopped answering")
         if repeated:
+            self._held = True
             logger.warning("platform VM: died again within the window; leaving it down")
             _ = await self._notify(
                 "The platform VM keeps stopping",

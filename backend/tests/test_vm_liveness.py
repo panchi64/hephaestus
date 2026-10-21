@@ -130,6 +130,29 @@ async def test_the_vm_reads_unavailable_the_moment_it_is_judged_dead(tmp_path: P
     await rig.vm.stop()
 
 
+async def test_a_manual_reset_of_a_held_vm_earns_the_automatic_reset_again(tmp_path: Path):
+    rig = _Rig(tmp_path)
+    await rig.up()
+    await rig.die_and_probe_twice()
+    rig.driver.answers = True
+    await rig.settle()
+    rig.clock.now += 60
+    await rig.die_and_probe_twice()
+    assert not rig.vm.available
+
+    await rig.vm.reset()
+    rig.driver.answers = True
+    await rig.settle()
+    await rig.liveness.probe()
+    rig.clock.now += 60
+    boots = rig.driver.boots
+    await rig.die_and_probe_twice()
+    rig.driver.answers = True
+    await rig.settle()
+
+    assert rig.driver.boots == boots + 1
+
+
 async def test_a_second_death_within_ten_minutes_stays_down(tmp_path: Path):
     rig = _Rig(tmp_path)
     await rig.up()

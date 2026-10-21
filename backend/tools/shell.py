@@ -47,6 +47,7 @@ new piece of output goes out as `tool.progress`.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal
@@ -63,9 +64,10 @@ from services.home.table import RunHome
 from services.permissions import Reach, capability_of, renamed_reach
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import SandboxSessionManager
+from services.sandbox.base import safe_key
 from services.sandbox.fence import ConfinementState, confinement_state, host_scratch_dir
 from services.sandbox.limits import VM_WAIT_S
-from services.sandbox.refusals import Refusal, host_refusal, vm_refusal
+from services.sandbox.refusals import Refusal, egress_note, host_refusal, vm_refusal
 from services.sandbox.session import SandboxSession
 from services.sandbox.shell_result import BackgroundStatus, ProgressHook, ShellResult
 from services.sandbox.thread_shells import ThreadShell, ThreadShells
@@ -254,6 +256,8 @@ def _background_payload(status: BackgroundStatus) -> dict[str, object]:
         "stdout": status.stdout,
         "stderr": status.stderr,
     }
+    if status.notes:
+        payload["notes"] = list(status.notes)
     _with_refusal(
         payload,
         _refusal(
@@ -396,6 +400,7 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
             )
             payload = _run_payload(result, bound, timeout, cwd=cwd)
         else:
+            began = time.monotonic()
             done = await shell.home.run(
                 state.session,
                 state.copies,
@@ -407,6 +412,13 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
                 changes=change_log(ctx.deps),
             )
             payload = _run_payload(done.result, bound, timeout, cwd=done.cwd, notes=done.notes)
+            if not done.result.ok and "denied_host" not in payload:
+                recent = state.copies.vm.gateway.latest_denial(
+                    safe_key(ctx.deps.scratch_key), began
+                )
+                if recent is not None:
+                    payload["denied_host"] = recent
+                    _ = payload.setdefault("fence_note", egress_note(recent))
         return await with_brief_payload(ctx, state.home, touched, payload)
 
     @toolset.tool(metadata={"code_arg_name": "command", "code_arg_language": "shell"})

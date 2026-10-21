@@ -25,8 +25,10 @@ import logging
 import secrets
 import socket
 import ssl
+import time
+from collections import deque
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, override
 
@@ -45,6 +47,7 @@ DENIED_MARKER = "hephaestus-egress: denied"
 #: agent wrote, so an endless head is refused rather than buffered.
 _MAX_HEAD_BYTES = 64 * 1024
 HEAD_TIMEOUT_S = 30.0
+_RECENT_DENIALS = 8
 
 
 def parse_allowlist(text: str) -> tuple[str, ...]:
@@ -138,8 +141,12 @@ class Grant:
 
     allowlist: Policy
     secrets: tuple[Secret, ...] = ()
-    #: The workspace these credentials belong to, for the log line a refusal writes.
+    #: The workspace these credentials belong to (its allowlist directory name).
     workspace: str = ""
+    #: The most recent refusals as ``(monotonic time, host)``, newest last.
+    denials: deque[tuple[float, str]] = field(
+        default_factory=lambda: deque(maxlen=_RECENT_DENIALS), compare=False
+    )
 
     def permits(self, host: str) -> bool:
         return self.allowlist.permits(host)
@@ -161,10 +168,20 @@ class EgressGateway:
         """Proxy credentials (``user:password``) that reach what ``allow_dir`` allows,
         with ``secrets_`` put into HTTPS requests to their hosts."""
         token = secrets.token_urlsafe(24)
-        self._grants[token] = Grant(
-            Allowlist(allow_dir), tuple(secrets_), allow_dir.name.removeprefix("s")
-        )
+        self._grants[token] = Grant(Allowlist(allow_dir), tuple(secrets_), allow_dir.name)
         return f"workspace:{token}"
+
+    def latest_denial(self, workspace: str, since: float) -> str | None:
+        """The host most recently refused to ``workspace`` (its allowlist directory name)
+        at or after ``since``, a :func:`time.monotonic` reading, or None."""
+        found: tuple[float, str] | None = None
+        for grant in self._grants.values():
+            if grant.workspace != workspace:
+                continue
+            for when, host in grant.denials:
+                if when >= since and (found is None or when >= found[0]):
+                    found = (when, host)
+        return found[1] if found is not None else None
 
     def grant_for(self, credentials: str) -> Grant | None:
         """The grant ``credentials`` name, or ``None`` once revoked."""
@@ -223,7 +240,7 @@ class EgressGateway:
             return
         host, port = split_hostport(target, 443)
         if not grant.permits(host):
-            await _deny(writer, host, grant.workspace)
+            await _deny(writer, host, grant)
             return
         secrets_ = grant.secrets_for(host)
         if secrets_ and self.interceptor is not None:
@@ -303,7 +320,7 @@ async def _forward(
     authority, _, path = rest.partition("/")
     host, port = split_hostport(authority, 80)
     if not grant.permits(host):
-        await _deny(writer, host, grant.workspace)
+        await _deny(writer, host, grant)
         return
     upstream = await dial_pinned(host, port, writer)
     if upstream is None:
@@ -416,8 +433,11 @@ async def _respond(
         _close(writer)
 
 
-async def _deny(writer: asyncio.StreamWriter, host: str, workspace: str = "") -> None:
-    """Refuse ``host`` with :data:`DENIED_MARKER` in the body. ``workspace`` is the
-    refused workspace's key, empty where the refusal is not tied to one."""
-    logger.warning("egress: denied %s for conversation %s", host, workspace or "(none)")
+async def _deny(writer: asyncio.StreamWriter, host: str, grant: Grant | None = None) -> None:
+    """Refuse ``host`` with :data:`DENIED_MARKER` in the body, noting it on ``grant``
+    (absent where the refusal is not tied to a workspace)."""
+    workspace = grant.workspace if grant is not None else ""
+    logger.warning("egress: denied %s for workspace %s", host, workspace or "(none)")
+    if grant is not None:
+        grant.denials.append((time.monotonic(), host))
     await _respond(writer, "403 Forbidden", f"{DENIED_MARKER} {host}\n")

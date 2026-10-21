@@ -20,7 +20,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Collection, Sequence
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from pydantic_ai.exceptions import ModelRetry
@@ -279,13 +279,17 @@ class HomeShell:
         _ = self._reading.pop(command_id, None)
         for _mount, copy in job.held:
             copy.jobs.discard(job.name)
+        notes: list[str] = []
         async with job.session.lock:
-            _ = await job.session.bring_out()
+            if (lost := await job.session.bring_out()) is not None:
+                notes.append(lost)
         for mount, copy in job.held:
             async with copy.lock:
                 copy.touch()
-                _ = await _bring_back(mount, copy, job.changes)
-        final = self._status(command_id, job, state, status)
+                notes += await _bring_back(mount, copy, job.changes)
+        final = replace(
+            self._status(command_id, job, state, status), notes=tuple(dict.fromkeys(notes))
+        )
         self._finished[command_id] = final
         while len(self._finished) > _MAX_FINISHED:
             _ = self._finished.popitem(last=False)

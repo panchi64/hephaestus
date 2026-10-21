@@ -154,6 +154,8 @@ def _exec_result(
         "stderr": result.stderr,
         "timed_out": result.timed_out,
     }
+    if result.notes:
+        payload["notes"] = list(result.notes)
     if not result.ok:
         payload["error"] = _failure_hint(
             result.exit_code,

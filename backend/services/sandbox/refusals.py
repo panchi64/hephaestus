@@ -89,7 +89,7 @@ def denied_host(text: str) -> str | None:
     return None
 
 
-def _egress_note(host: str | None) -> str:
+def egress_note(host: str | None) -> str:
     named = f" (`{host}`)" if host else ""
     return (
         f"The VM's egress gateway refused a host{named} this conversation has not been "
@@ -102,13 +102,13 @@ def vm_refusal(*, network: bool, ok: bool, stdout: str, stderr: str) -> Refusal 
     text = f"{stdout}\n{stderr}"
     if DENIED_MARKER in text:
         host = denied_host(text)
-        return Refusal(_egress_note(host), host)
+        return Refusal(egress_note(host), host)
     if not ok:
         refused = "407" in text and any(sign in text for sign in _PROXY_REFUSED_SIGNS)
         if network and refused:
             return Refusal(_CREDENTIALS_NOTE)
         if network and (host := denied_host(text)) is not None:
-            return Refusal(_egress_note(host), host)
+            return Refusal(egress_note(host), host)
         if not network and (refused or mentions_no_network(text)):
             return Refusal(_OFFLINE_NOTE)
     if "Read-only file system" in text:
