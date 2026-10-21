@@ -57,8 +57,7 @@ backend/    Pydantic AI + FastAPI (Python 3.14, uv)
 docs/       architecture, decision register, design system
 ```
 
-Design: [`docs/architecture/`](docs/architecture/README.md). Every trade-off and the alternatives rejected: [`decisions.md`](docs/architecture/decisions.md).
-
+Design: [`docs/architecture/`](docs/architecture/README.md).
 ## Running it
 
 ```bash
@@ -83,7 +82,7 @@ Agent workspaces are disposable; anything that leaves them (your host, your real
 
 ## Contributing
 
-Help is welcome. The architecture docs and the decision register are the source of truth; a decision with real trade-offs belongs in `decisions.md` with the angles that were rejected. Requirement ids in docstrings (`XC-*`, `AE-*`) are historical; where one disagrees with the code, the code is right.
+Help is welcome. The architecture docs are the source of truth; the rationale for a trade-off, including the alternatives rejected, goes in the commit message. Requirement ids in docstrings (`XC-*`, `AE-*`) are historical; where one disagrees with the code, the code is right.
 
 ## Lineage and license
 

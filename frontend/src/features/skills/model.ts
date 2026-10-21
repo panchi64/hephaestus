@@ -41,7 +41,7 @@ export interface Skill extends SkillSummary {
   license: string | null;
   compatibility: string | null;
   metadata: Record<string, unknown> | null;
-  /** Recorded and displayed, never enforced — advisory only (D32). */
+  /** Recorded and displayed, never enforced: advisory only. */
   allowedTools: string[] | null;
   /** Non-standard frontmatter preserved verbatim so an export is lossless
    *  (an imported bundle's `when_to_use` lands here). Read-only in the UI. */
