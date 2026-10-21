@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 _LOST = "a run waiting for approval could not be restored after the restart"
 _BUSY = "its conversation already has a run in progress"
+_NO_PROMPT = "the message it was answering is no longer in its conversation"
 
 
 class _Journal(ParkedJournal):
@@ -129,6 +130,29 @@ async def _restore(
             continue
         try:
             problem = await runs.restore_problem(run)
+            journal.hold(run.id, stored.conversation_id)
+            tree = None
+            try:
+                # Cached before the park is visible, so acting on it never reads the
+                # database on the loop.
+                tree = await conversations.tree(stored.conversation_id)
+            except Exception:
+                logger.warning(
+                    "parked turns: thread %s not preloaded, so its park loads it when it ends",
+                    stored.conversation_id,
+                    exc_info=True,
+                )
+            if (
+                problem is None
+                and tree is not None
+                and parked.prompt_message_id is not None
+                and parked.prompt_message_id not in tree.nodes
+            ):
+                # Nothing to write the turn under.
+                run.on_park_cancel = None
+                problem = _NO_PROMPT
+            # Checked last, with no await before the park is registered: a run started
+            # during the awaits above would otherwise sit beside it.
             if problem is None and runs.active_run_for(stored.conversation_id, run.owner_id):
                 # The live run owns the thread's leaf, so the park leaves only a marker on
                 # its prompt instead of its turn.
@@ -137,17 +161,6 @@ async def _restore(
             if problem is not None:
                 ending.append((run, problem))
                 continue
-            journal.hold(run.id, stored.conversation_id)
-            try:
-                # Cached before the park is visible, so acting on it never reads the
-                # database on the loop.
-                _ = await conversations.tree(stored.conversation_id)
-            except Exception:
-                logger.warning(
-                    "parked turns: thread %s not preloaded, so its park loads it when it ends",
-                    stored.conversation_id,
-                    exc_info=True,
-                )
             events, _, _ = announcements(parked.requests, parked.settled)
             runs.restore_parked(run, events)
         except Exception:

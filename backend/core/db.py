@@ -78,6 +78,11 @@ LOCK_RETRIES = 3
 _LOCK_RETRY_DELAY_S = 0.25
 
 
+_BLOCKING_ATTEMPTS = 3
+_BLOCKING_BUSY_MS = 250
+_BLOCKING_RETRY_DELAY_S = 0.05
+
+
 def _is_locked(exc: OperationalError) -> bool:
     """Whether this is SQLite's writer-lock contention rather than a real fault.
 
@@ -343,14 +348,27 @@ def read_session(engine: Engine) -> Generator[Session]:
 
 def read_blocking[T](engine: Engine, work: Callable[[Session], T]) -> T:
     """Run a read on the calling thread, for the rare synchronous path that cannot await.
-    It blocks the loop for the read and for any wait on a locked database, so it is only a
-    fallback."""
-    for attempt in range(LOCK_RETRIES + 1):
+    It blocks the loop, so it waits on a locked database for at most about a second
+    (:data:`_BLOCKING_ATTEMPTS` tries at :data:`_BLOCKING_BUSY_MS` each) and then raises."""
+
+    def capped(session: Session) -> T:
+        connection = session.connection()
+        sqlite = connection.dialect.name == "sqlite"
+        previous = connection.exec_driver_sql("PRAGMA busy_timeout").scalar() if sqlite else None
+        if sqlite:
+            _ = connection.exec_driver_sql(f"PRAGMA busy_timeout={_BLOCKING_BUSY_MS}")
+        try:
+            return work(session)
+        finally:
+            if sqlite:
+                _ = connection.exec_driver_sql(f"PRAGMA busy_timeout={previous}")
+
+    for attempt in range(_BLOCKING_ATTEMPTS):
         try:
             with read_session(engine) as session:
-                return work(session)
+                return capped(session)
         except OperationalError as exc:
-            if attempt == LOCK_RETRIES or not _is_locked(exc):
+            if attempt == _BLOCKING_ATTEMPTS - 1 or not _is_locked(exc):
                 raise
-            time.sleep(_LOCK_RETRY_DELAY_S * (attempt + 1))
+            time.sleep(_BLOCKING_RETRY_DELAY_S * (attempt + 1))
     raise AssertionError("unreachable")  # pragma: no cover

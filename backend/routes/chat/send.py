@@ -8,8 +8,6 @@ leaf first; the launch is identical (``submit_turn``).
 
 from __future__ import annotations
 
-import asyncio
-from contextlib import suppress
 from dataclasses import replace
 
 from fastapi import APIRouter, HTTPException, Request
@@ -33,16 +31,7 @@ from services.turn_stamps import still_named
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-# How long a send to an existing thread waits for the stored parks to be put back.
-_RESTORE_WAIT_S = 10.0
-
-
-async def _after_restore(request: Request) -> None:
-    """A thread is not written to before the stored parks are back: a turn finished first
-    would move the leaf the parked turn is to be written under, or occupy the thread so
-    the park has to be dropped."""
-    with suppress(TimeoutError):
-        _ = await asyncio.wait_for(deps.registry(request).parks_restored.wait(), _RESTORE_WAIT_S)
+_after_restore = deps.after_restore
 
 
 async def _validate_attachments(request: Request, attachment_ids: list[str]) -> None:

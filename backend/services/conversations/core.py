@@ -5,7 +5,6 @@ owner memo, the write-behind queue, and the thread lifecycle (create, delete).
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections import Counter, OrderedDict
 from typing import TYPE_CHECKING
 
@@ -36,9 +35,6 @@ _DEFAULT_MAX_CACHED_CONVERSATIONS = 64
 # against a whole decrypted conversation, so the memo can outlive the trees it was
 # populated alongside by a wide margin and still cost nothing worth counting.
 _OWNER_MEMO_MULTIPLE = 8
-
-
-logger = logging.getLogger(__name__)
 
 
 class ConversationUnavailableError(RuntimeError):
@@ -322,9 +318,6 @@ class StoreCore:
             )
             return self._cache_put(conversation_id, self._build_tree(*loaded))
         except (VaultLocked, OperationalError) as exc:
-            logger.warning(
-                "conversations: cannot load thread %s to record into it: %s", conversation_id, exc
-            )
             raise ConversationUnavailableError(conversation_id) from exc
 
     def _build_tree(self, rows: list[HydratedRow], active: str | None) -> Tree:

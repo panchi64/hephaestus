@@ -211,7 +211,9 @@ class RunRegistry:
     def restore_parked(self, run: Run, announcements: Sequence[EventBody]) -> None:
         """Track a run rebuilt from a stored park, in ``awaiting_input``, and replay what it
         was waiting on into its stream. The row is already stored, so it is not rewritten.
-        The caller has checked that the conversation has no live run."""
+
+        The caller has checked that the conversation has no live run, with no await between
+        that check and this call; nothing here re-checks."""
         if run.conversation_id is not None:
             run.inbox = self.inbox(run.conversation_id, run.owner_id)
         self.register(run)
