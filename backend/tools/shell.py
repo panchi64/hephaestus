@@ -387,8 +387,9 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
         Returns `ok`, `exit_code` (null after a timeout), `stdout`, `stderr`, `timed_out`,
         `duration_ms`, the `cwd` the next command starts in, the `reach` you declared and
         whether it ran `fenced`. A `fence_note` explains a fence refusal; don't just
-        retry the command. `denied_host` is the workspace's latest
-        refused host during the command, not proof it was this command's. `notes` reports on copying your changes back.
+        retry the command. `denied_host` is the workspace's latest refused host during
+        the command, not proof it was this command's. `notes` reports on copying your
+        changes back.
 
         Args:
             command: The command, as you would type it in bash.
