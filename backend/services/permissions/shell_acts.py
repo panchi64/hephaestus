@@ -28,6 +28,8 @@ def _without_brackets(text: str) -> str | None:
 
     An expression is `[`, an optional `!` or `^`, a `]` that is a literal when first, then
     members up to the next `]`, where `[:class:]`, `[=x=]` and `[.x.]` are single members.
+    A backslash or quote inside one is not accounted for either: the words reaching here
+    are already decoded, so an escaped `]` can no longer be told from a closing one.
     """
     kept: list[str] = []
     index = 0
@@ -43,6 +45,8 @@ def _without_brackets(text: str) -> str | None:
             index += 1
         while True:
             if index >= len(text):
+                return None
+            if text[index] in "\\'\"":
                 return None
             if text[index] == "]":
                 index += 1
