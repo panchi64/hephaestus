@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 #: ending, and the parked state in between is read off the live Run by
 #: :meth:`SubagentStore.view`'s caller rather than persisted, because the Run is the thing
 #: that actually knows. ``blocked`` is in the set anyway so that the one vocabulary answers
-#: for both, and a future writer of it cannot silently stop counting.
+#: for both, and a future writer of it cannot silently stop counting. ``stopped`` (ended at
+#: a time or turn limit) is terminal and not in the set: it holds no slot.
 LIVE_STATUSES: frozenset[str] = frozenset({"running", "blocked"})
 
 

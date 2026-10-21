@@ -13,6 +13,7 @@ const FLAG: Record<SubagentStatus, "nominal" | "warn" | "alert" | "idle"> = {
   done: "nominal",
   failed: "alert",
   cancelled: "idle",
+  stopped: "idle",
 };
 
 const LABEL: Record<SubagentStatus, string> = {
@@ -21,6 +22,7 @@ const LABEL: Record<SubagentStatus, string> = {
   done: "Done",
   failed: "Failed",
   cancelled: "Stopped",
+  stopped: "Stopped at a limit",
 };
 
 /**

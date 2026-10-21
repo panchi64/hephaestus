@@ -17,6 +17,7 @@ from typing import override
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext, Tool
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
+from core.config import get_settings
 from core.diagnostics import render_tool_error
 from services.agents import (
     AgentDefinition,
@@ -131,8 +132,8 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
     async def message(ctx: RunContext[RunDeps], to: str, text: str) -> dict[str, object]:
         """Send a message to another agent of your delegation tree: a handle or callsign
         from `agents_list`, `parent` for the agent that spawned you, or `main` for the thread at
-        the top. It reaches a running agent at its next step and wakes an idle one; you are
-        not waiting on a reply, which arrives as a message of its own if one comes."""
+        the top. It reaches a running agent at its next step and wakes an idle one; a reply,
+        if any, arrives as a message."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"sent": False, "detail": _UNAVAILABLE}
@@ -191,9 +192,9 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
         }
 
     @toolset.tool(name="read")
-    async def read(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
+    async def read(ctx: RunContext[RunDeps], name: str, start: int = 0) -> dict[str, object]:
         """An agent of your tree: its status, and its report, or its latest answer while it
-        works. You do not need this to receive a report."""
+        works. A long report comes in pages: pass `next_start` as `start` for the next."""
         launcher = ctx.deps.caps.get_optional(SubagentLauncher)
         if launcher is None:
             return {"available": False, "detail": _UNAVAILABLE}
@@ -201,7 +202,10 @@ def add_delegation_tools(toolset: FunctionToolset[RunDeps]) -> None:
             view = await launcher.read(ctx.deps.owner_id, ctx.deps.conversation_id or "", name)
         except SubagentUnavailableError as exc:
             raise ModelRetry(f"could not read {name!r}:\n{exc}") from exc
-        return {**_read_out(view), **(await worktree_paths(ctx)).get(view.handle, {})}
+        return {
+            **_paged(_read_out(view), start),
+            **(await worktree_paths(ctx)).get(view.handle, {}),
+        }
 
     @toolset.tool(name="stop")
     async def stop(ctx: RunContext[RunDeps], name: str) -> dict[str, object]:
@@ -252,6 +256,20 @@ class ProjectRoster(WrapperToolset[RunDeps]):
             **tools,
             SPAWN_TOOL: replace(tool, tool_def=replace(tool.tool_def, description=described)),
         }
+
+
+def _paged(out: dict[str, object], start: int) -> dict[str, object]:
+    """One page of the report, sized to stay under the tool-output spill so the whole of
+    it reaches the model; ``next_start`` is there while more remains."""
+    report = out.get("report")
+    page = get_settings().tool_output_spill_chars // 2
+    if not isinstance(report, str) or (start <= 0 and len(report) <= page):
+        return out
+    start = max(start, 0)
+    paged = {**out, "report": report[start : start + page], "report_length": len(report)}
+    if start + page < len(report):
+        paged["next_start"] = start + page
+    return paged
 
 
 def _read_out(view: SubagentView) -> dict[str, object]:

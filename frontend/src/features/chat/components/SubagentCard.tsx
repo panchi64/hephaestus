@@ -16,6 +16,7 @@ const GLYPH: Record<SubagentStatus, string> = {
   done: "bg-text",
   failed: "bg-alert",
   cancelled: "bg-dim",
+  stopped: "bg-dim",
 };
 
 /** For the row's accessible name; the glyph is hidden from screen readers. */
@@ -25,6 +26,7 @@ const LABEL: Record<SubagentStatus, string> = {
   done: "done",
   failed: "failed",
   cancelled: "stopped",
+  stopped: "stopped at a limit",
 };
 
 /** Running: the live edge (§10.9). Blocked: the action tier's echo (§10.18). Both are
@@ -33,6 +35,7 @@ const EDGE: Partial<Record<SubagentStatus, string>> = {
   running: "shadow-[inset_1px_0_0_var(--color-info)]",
   blocked: "bg-warn/5 shadow-[inset_2px_0_0_var(--color-warn)]",
   cancelled: "opacity-60",
+  stopped: "opacity-60",
 };
 
 const GAUGE_FILL = {

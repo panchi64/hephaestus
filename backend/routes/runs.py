@@ -7,6 +7,7 @@ Run is a feature concern (the chat and agent routes), not here — those call
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Literal
@@ -19,6 +20,7 @@ from pydantic_ai.messages import ToolCallPart
 from agent import ParkedTurn, build_resume_orchestrator
 from agent.gating import GrantApproved
 from agent.recompose import RecomposeError, recompose
+from core.config import Settings
 from routes import deps
 from runs import (
     AnsweredQuestionOut,
@@ -28,15 +30,26 @@ from runs import (
     parse_last_event_id,
     sse_response,
 )
+from runs.run import StopCause
 from services.answers import (
     AnswerError,
     answered_questions,
     questions_of,
     render_answer,
 )
-from services.approval_grants import ONCE_ONLY_TOOLS, GrantInfo, grant_scopes, grant_width
+from services.approval_grants import GrantInfo, grant_scopes, grant_width, grantable
+from services.permissions.guards import (
+    FILE_WRITE_TOOLS,
+    GUARDED_TOOLS,
+    changes_directory,
+    guard,
+    guard_of_approval,
+)
 from services.plan_mode import PLAN_SUBMIT_TOOL
 from services.settings_store import get_inactivity_timeout, get_wall_clock_timeout
+from services.subagents import SubtreeStopper
+from tools.guarded import shell_cwd
+from tools.run_home import home_of
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -161,6 +174,8 @@ async def cancel_run(
         # Before the cancel, so the run ending finds the inbox already held.
         inbox = registry.inbox(run.conversation_id, run.owner_id)
         held = (inbox, inbox.stop())
+    if run is not None and not run.is_terminal and run.stop_cause is None:
+        run.stop_cause = StopCause.operator
     cancelled = await registry.cancel(run_id)
     if not cancelled:
         if held is not None:
@@ -170,6 +185,19 @@ async def cancel_run(
         if run is None:
             raise HTTPException(status_code=404, detail="run not found")
         raise HTTPException(status_code=409, detail=f"run already {run.status.value}")
+    stopper = deps.capabilities(request).get_optional(SubtreeStopper)
+    if run is not None and run.conversation_id and stopper is not None:
+        # The stopped agents' reports must not start a turn on the thread just stopped.
+        inbox = registry.inbox(run.conversation_id, run.owner_id)
+        mark = None if held is not None else inbox.stop()
+        try:
+            stopped = await stopper.stop_below(run.owner_id, run.conversation_id)
+        except BaseException:
+            if mark is not None:
+                inbox.undo_stop(mark)
+            raise
+        if mark is not None and not stopped:
+            inbox.undo_stop(mark)
     return {"status": "cancelling"}
 
 
@@ -259,6 +287,50 @@ def _still_covered(call: ToolCallPart, settled: GrantApproved, active: Sequence[
     return width == "tool" if settled.needs_whole_tool else width != "none"
 
 
+async def _guarded_approvals(
+    body: ApprovalDecisions,
+    parked: ParkedTurn,
+    settings: Settings,
+) -> set[str]:
+    """The approved calls only the operator may answer: those the park marked guarded, and
+    those whose replacement arguments are guarded themselves."""
+    deps_of_run = parked.compaction.deps if parked.compaction is not None else None
+    home = await home_of(deps_of_run) if deps_of_run is not None else None
+    cwd = shell_cwd(deps_of_run) if deps_of_run is not None else None
+    chosen = {d.tool_call_id: d for d in body.decisions}
+    found: set[str] = set()
+    # The command tools run one after another, so a `cd` moves where the calls after it
+    # start; once one may have, relative paths are not placed.
+    cwd_known = True
+    for call in parked.requests.approvals:
+        decision = chosen.get(call.tool_call_id)
+        if decision is None:
+            continue
+        name = call.tool_name
+        override = decision.override_args if decision.approved else None
+        if decision.approved:
+            marked = guard_of_approval(
+                name,
+                parked.requests.metadata.get(call.tool_call_id),
+                None,
+                home=home,
+                settings=settings,
+            )
+            if marked is not None:
+                found.add(call.tool_call_id)
+            elif override is not None and name in GUARDED_TOOLS:
+                # A file write that cannot be placed is not known to be harmless.
+                unplaced = name in FILE_WRITE_TOOLS and home is None
+                reason = guard(
+                    name, override, home=home, settings=settings, cwd=cwd, cwd_known=cwd_known
+                )
+                if unplaced or reason is not None:
+                    found.add(call.tool_call_id)
+        if cwd_known and changes_directory(name, override or call.args_as_dict()):
+            cwd_known = False
+    return found
+
+
 @router.post("/{run_id}/approve", status_code=202)
 async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) -> ApprovalOutcome:
     """Settle everything a parked run is awaiting — permissions and answers — then
@@ -302,6 +374,17 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
                 f"({sorted(asked)})"
             ),
         )
+
+    # A guarded approval is the operator's alone, and is settled before anything below
+    # changes: an API token's request leaves the park as it was.
+    if parked.agent is None and any(d.override_args is not None for d in body.decisions):
+        # A restored park holds no deps yet; the guard needs the home they place paths in.
+        # A failure is reported by the recompose below.
+        with contextlib.suppress(RecomposeError):
+            _ = await recompose(registry, run, parked)
+    guarded = await _guarded_approvals(body, parked, deps.app_state(request).settings)
+    if guarded:
+        deps.require_operator(request)
 
     # The answers, rendered from the *parked arguments* rather than from anything the
     # client sent as prose. The client says which options it chose; what those options
@@ -397,15 +480,19 @@ async def approve_run(run_id: str, body: ApprovalDecisions, request: Request) ->
         if decision.approved:
             decisions[decision.tool_call_id] = ToolApproved(override_args=decision.override_args)
             granted_call = call_by_id[decision.tool_call_id]
-            # A once-only tool's call is approved; its *scope* is not honoured — and it is
-            # not reported as unscoped either, since nothing about the call is what stopped
-            # it from being granted. Silently rather than as a 400: the client offering the
-            # checkbox is not wrong to have offered it, and the operator's decision on this
-            # call still stands.
+            # A once-only or guarded call is approved; its *scope* is not honoured — and it
+            # is not reported as unscoped either, since nothing about the call is what
+            # stopped it from being granted. Silently rather than as a 400: the client
+            # offering the checkbox is not wrong to have offered it, and the operator's
+            # decision on this call still stands.
             if (
                 decision.scope != "once"
                 and parked.conversation_id is not None
-                and granted_call.tool_name not in ONCE_ONLY_TOOLS
+                and decision.tool_call_id not in guarded
+                and grantable(
+                    granted_call.tool_name,
+                    parked.requests.metadata.get(decision.tool_call_id),
+                )
             ):
                 if decision.scope == "conversation_tool":
                     # The wider pick names the tool, so there is nothing to derive and
