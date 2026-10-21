@@ -202,12 +202,20 @@ def _find_targets(args: tuple[str, ...]) -> list[str]:
         if word in _FIND_NAMES and (value == ".git" or value.endswith("/.git")):
             if not _prunes_git_away(args, index, deleting):
                 return [GIT_FOLDERS]
+            if _DEPTH_FIRST & set(args):
+                # Depth-first traversal visits a folder's contents before the folder, so
+                # `-prune` does nothing: judge the branch after `-o` on its own.
+                if any(word in _FIND_NARROWING for word in args[index + 4 : deleting]):
+                    return []
+                return _find_roots(args)
     if any(word in _FIND_NARROWING for word in before):
         return []
     return _find_roots(args)
 
 
 _FIND_GROUPING = frozenset({"(", "\\(", ")", "\\)", "!", "-not"})
+#: What makes `find` walk depth-first, where `-prune` has no effect; `-delete` implies it.
+_DEPTH_FIRST = frozenset({"-depth", "-d", "-delete"})
 
 
 def _prunes_git_away(args: tuple[str, ...], test: int, action: int) -> bool:
