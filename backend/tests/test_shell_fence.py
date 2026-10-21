@@ -119,14 +119,14 @@ async def test_a_host_command_runs_on_the_operators_machine_and_not_in_the_vm(
     assert vm.events == [] and vm.runs == [] and vm.background == {}
 
 
-async def test_a_host_declaration_is_unfenced_and_says_it_asked_to_be(repo: Path, tmp_path: Path):
-    # An operator reading "unfenced" with nothing beside it would be right to read it as
-    # the gate having broken, so the reason is not optional.
+async def test_a_host_command_without_the_host_fence_says_why(repo: Path, tmp_path: Path):
+    # Tests run with the host fence disabled by setting. An operator reading "unfenced"
+    # with nothing beside it would think the gate had broken, so the reason is not optional.
     shell, _vm = await _shell(repo, tmp_path)
     result = await _call(shell, "run_command", command="echo hi", reach="host")
     assert result["ok"] is True and result["stdout"] == "hi\n"
     assert result["reach"] == "host" and result["fenced"] is False
-    assert "host" in s(result["unfenced_reason"])
+    assert "host fence is not applied" in s(result["unfenced_reason"])
     assert "notes" not in result and "fence_note" not in result
 
 

@@ -57,3 +57,5 @@ class BackgroundStatus:
     stderr: str
     #: Whether a VM command was given the network; None for a host command.
     network: bool | None = None
+    #: What the agent should know about bringing its changes back, such as a VM restart.
+    notes: tuple[str, ...] = ()
