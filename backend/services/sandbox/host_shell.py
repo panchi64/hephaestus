@@ -15,7 +15,8 @@ sentinel redirect where the next one runs.
 
 A foreground run goes through :func:`~services.sandbox.process.run_on_host`, so it times
 out, reaps its process tree and reports progress the way the approval-gated host command
-does. Commands here run without the OS fence.
+does. Commands run inside the OS fence (:func:`~services.sandbox.fence.shell_confinement`)
+when it is active, and as plain subprocesses when it is disabled or unavailable.
 """
 
 from __future__ import annotations
@@ -35,8 +36,11 @@ from typing import ClassVar, Concatenate, Literal
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness._output import truncate_tail
 
+from core.config import get_settings
+
 from .base import HostExecutionError
 from .command_check import check_command
+from .fence import fence_command, shell_confinement
 from .process import filtered_env, run_on_host, spawn_in_session, terminate_tree
 from .shell_result import BackgroundStatus, ProgressHook, ShellResult
 from .streams import read_text, stream_files, unlink
@@ -140,6 +144,7 @@ class HostShell:
                 result = await run_on_host(
                     wrapped,
                     timeout_s=timeout,
+                    confinement=await shell_confinement(get_settings()),
                     cwd=self._cwd,
                     on_progress=on_progress,
                     kill_leftovers=False,
@@ -170,8 +175,9 @@ class HostShell:
         command_id = uuid.uuid4().hex[:12]
         out, err = stream_files(command_id)
         try:
+            fenced = await fence_command(command, await shell_confinement(get_settings()))
             proc = await spawn_in_session(
-                command, cwd=self._cwd, env=filtered_env(), stdout=out, stderr=err
+                fenced, cwd=self._cwd, env=filtered_env(), stdout=out, stderr=err
             )
         except BaseException:
             unlink(out.name, err.name)
@@ -260,10 +266,9 @@ class HostShell:
         wrong place: `cat secrets.txt` would clear as contained while reading some other
         directory's file.
 
-        Both spellings of the root are compared, because the two ends disagree about it on
-        macOS: the shell starts at the path it was given and `pwd` reports the one the
-        kernel resolved, so `/tmp/wt` and `/private/tmp/wt` are one directory under two
-        names and comparing against a single spelling would stop tracking `cd` entirely.
+        Both sides are resolved through symlinks, so a link inside the worktree that points
+        elsewhere does not count as inside, and `/tmp/wt` and `/private/tmp/wt` (one
+        directory on macOS) compare equal.
 
         The whole read is guarded, not only the open: the command it belongs to already
         succeeded, so a capture that is not UTF-8 or a path the OS refuses to stat is
@@ -272,18 +277,22 @@ class HostShell:
             recorded = cwd_file.read_text(encoding="utf-8").strip()
             if not recorded:
                 return
-            landed = Path(recorded)
-            if landed.is_dir() and self._contains(landed):
+            landed = self._contained(Path(recorded))
+            if landed is not None and landed.is_dir():
                 self._cwd = landed
         except OSError, ValueError:
             return
 
-    def _contains(self, candidate: Path) -> bool:
-        """Whether ``candidate`` is the worktree root or something under it."""
-        for root in (self._root, self._root.resolve()):
-            if candidate == root or root in candidate.parents:
-                return True
-        return False
+    def _contained(self, candidate: Path) -> Path | None:
+        """``candidate`` resolved through symlinks, when that lands in the worktree root or
+        under it; ``None`` otherwise, or when it cannot be resolved."""
+        try:
+            resolved = candidate.resolve(strict=True)
+            if resolved.is_relative_to(self._root.resolve()):
+                return resolved
+        except OSError, RuntimeError:
+            pass
+        return None
 
     def _capped(self, text: str) -> str:
         """Trimmed from the front, per stream — the end of a log is what says how it went.

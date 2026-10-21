@@ -1,31 +1,27 @@
 """The OS-level fence for commands that run on the operator's machine rather than in the VM.
 
-Two paths execute there: ``code_run_host_command``, the approval-gated exception that
-exists for when the host itself must change, and the host shell working in a project's
-folder or worktree. Only ``code_run_host_command`` goes through this fence today, via
-:func:`confine`; the host shell does not, and its commands run unfenced.
+Two paths execute there, and both run inside :func:`confine`: ``code_run_host_command``, the
+approval-gated exception for when the host itself must change, and the host shell working in
+a project's folder or worktree.
 
-The fence is ``sandbox-runtime`` (seatbelt on macOS, bubblewrap on Linux): credential
-paths and the data directory are unreadable, writes are deny-by-default, and egress to the
-*outside* goes only to allowlisted domains. :func:`confine` applies it per command;
-:func:`resolve_confinement` is the once-per-process machinery behind it.
+The fence is ``sandbox-runtime`` (seatbelt on macOS, bubblewrap on Linux). Writes are
+deny-by-default, and the deny floor in :mod:`services.sandbox.floor` (shell rc files, launch
+agents, ``~/.claude``, ``.git/hooks``; credentials, browser profiles, this application's
+source tree and its data directory for reads) applies to every command; settings lists can
+add to it and never remove from it.
 
-**Loopback is outside the allowlist, deliberately and not for free.** A dev server, its
-test suite and every tool that talks to one are compute, so the profile permits
-``localhost``. What that also permits is whatever else listens there — including the
-loopback ports this application publishes for its own VM services, some of which
-(the web-fetch browser's DevTools port) speak an unauthenticated protocol that can fetch
-on a command's behalf. So the honest statement of this fence is that it bounds where a
-command may reach *off the machine*, not that everything it can reach is on the list.
+The two callers differ on the network. ``code_run_host_command`` reaches only the
+``egress_allowed_domains`` allowlist. The host shell's network is open, because it runs
+``brew``, ``git push`` and package installs on the operator's own machine; it is bounded by
+what it can write and read, not by where it can connect.
 
-**Approval is not the only thing holding the line.** What the operator read and agreed
-to is the command; what a command can *reach* once running is a separate question, and
-one they cannot audit from a single line of shell.
+**Loopback is outside the allowlist, deliberately.** A dev server and its tests are compute,
+so the allowlisted profile permits ``localhost``, and with it whatever else listens there,
+including the loopback ports this application publishes for its VM services.
 
-**The hatch degrades rather than failing closed, deliberately.** The operator has
-explicitly approved *this* command, and refusing it because a platform primitive is
-missing would break the single case the tool exists for — so it runs unconfined and says
-so.
+**The fence degrades rather than failing closed.** When it is disabled by setting, or its
+platform primitive is missing, a command runs unfenced. :func:`confinement_state` reports
+which, so the permission layer can make an unfenced host command ask first.
 """
 
 from __future__ import annotations
@@ -36,19 +32,26 @@ import os
 import stat
 import tempfile
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Literal
 
-from core.config import Settings
+from core.config import Settings, get_settings
 
 from .base import HostExecutionError
+from .floor import hooks_floor, merged, read_floor, write_floor
 
 logger = logging.getLogger(__name__)
+
+_UNAVAILABLE_FIX = (
+    "install the missing dependency (bubblewrap on Linux, ripgrep everywhere) "
+    + "or disable the host command fence in Settings"
+)
 
 
 @dataclass(frozen=True)
 class HostConfinement:
-    """The fence an approved host command runs under: whether it applies, why not when it
+    """The fence a host command runs under: whether it applies, why not when it
     doesn't, and what it lets through.
 
     Resolved before the run rather than reported after it, so the tool can tell the
@@ -61,6 +64,17 @@ class HostConfinement:
     allowed_domains: tuple[str, ...] = ()
     allow_write: tuple[str, ...] = ()
     deny_read: tuple[str, ...] = ()
+    open_network: bool = False
+    disabled: bool = False
+
+
+@dataclass(frozen=True)
+class ConfinementState:
+    """Where the host fence stands: ``active``, ``disabled_by_setting`` (the operator's
+    choice) or ``unavailable`` (wanted but not possible; ``reason`` says how to fix it)."""
+
+    state: Literal["active", "disabled_by_setting", "unavailable"]
+    reason: str = ""
 
 
 # The confinement primitive is a process-global singleton, so it is configured once and
@@ -113,13 +127,20 @@ def scratch_path() -> Path:
 
 
 def denied_read_paths(settings: Settings) -> tuple[str, ...]:
-    """The paths no confined host command may read.
+    """The paths no confined host command may read: the floor, then the settings list.
 
-    The data directory is the entry that matters most, and the one an operator's own
-    ``host_command_deny_read`` would not think to name: it holds the vault, the sealed
+    The data directory is the entry that matters most: it holds the vault, the sealed
     workspaces and the database, so exposing it would undo at-rest encryption wholesale.
     """
-    return (*settings.host_command_deny_read, str(Path(settings.data_dir).resolve()))
+    floor = read_floor(Path.home(), Path(settings.data_dir))
+    return merged(floor, settings.host_command_deny_read)
+
+
+def _denied_write_paths(deny_read: Iterable[str], allow_write: Iterable[str]) -> list[str]:
+    """Everything read-denied is write-denied too, plus the write floor and each writable
+    root's ``.git/hooks``."""
+    roots = [os.path.expanduser(p) for p in allow_write]
+    return list(merged(merged(deny_read, write_floor(Path.home())), hooks_floor(roots)))
 
 
 def _claim_scratch(scratch: Path) -> None:
@@ -175,9 +196,51 @@ async def resolve_confinement(settings: Settings) -> HostConfinement:
         return resolved
 
 
+def confinement_state() -> ConfinementState:
+    """The resolved state of the host fence. Call :func:`resolve_confinement` at startup
+    first; before that, an enabled fence reads as unavailable."""
+    if _resolved is None:
+        if not get_settings().host_command_sandbox_enabled:
+            return ConfinementState("disabled_by_setting", "disabled by configuration")
+        return ConfinementState("unavailable", "the host fence has not been resolved yet")
+    if _resolved.active:
+        return ConfinementState("active")
+    if _resolved.disabled:
+        return ConfinementState("disabled_by_setting", _resolved.reason)
+    return ConfinementState("unavailable", _resolved.reason)
+
+
+async def shell_confinement(settings: Settings) -> HostConfinement:
+    """The fence for the host shell: writes under ``~``, temp and the scratch directory
+    plus ``host_shell_allow_write``, and an open network."""
+    resolved = await resolve_confinement(settings)
+    if not resolved.active:
+        return resolved
+    allow_write = merged(
+        ("~", tempfile.gettempdir(), str(scratch_path())), settings.host_shell_allow_write
+    )
+    return replace(resolved, allow_write=allow_write, allowed_domains=(), open_network=True)
+
+
+async def fence_command(command: str, confinement: HostConfinement | None) -> str:
+    """``command`` wrapped for ``confinement``, or unchanged when no fence applies."""
+    if confinement is None or not confinement.active:
+        return command
+    try:
+        return await confine(
+            command,
+            allowed_domains=confinement.allowed_domains,
+            allow_write=confinement.allow_write,
+            deny_read=confinement.deny_read,
+            open_network=confinement.open_network,
+        )
+    except Exception as exc:  # wrapping must never lose the command
+        raise HostExecutionError(f"failed to confine host command: {exc}") from exc
+
+
 async def configure(settings: Settings) -> HostConfinement:
     if not settings.host_command_sandbox_enabled:
-        return HostConfinement(False, "disabled by configuration")
+        return HostConfinement(False, "disabled by configuration", disabled=True)
     try:
         from sandbox_runtime import (
             FilesystemConfig,
@@ -187,7 +250,9 @@ async def configure(settings: Settings) -> HostConfinement:
             get_default_write_paths,
         )
     except ImportError as exc:  # pragma: no cover - the dependency is declared
-        return HostConfinement(False, f"sandbox-runtime is not installed ({exc})")
+        return HostConfinement(
+            False, f"sandbox-runtime is not installed ({exc}); {_UNAVAILABLE_FIX}"
+        )
     if not SandboxManager.check_dependencies():
         # Name what is actually missing. A generic "unavailable" reads as "your OS can't
         # do this" and gets ignored, when in practice the usual cause is a single absent
@@ -197,14 +262,21 @@ async def configure(settings: Settings) -> HostConfinement:
         from sandbox_runtime.utils.ripgrep import has_ripgrep_sync
 
         if not SandboxManager.is_supported_platform(get_platform()):
-            return HostConfinement(False, f"{get_platform()} has no supported sandbox primitive")
+            return HostConfinement(
+                False,
+                f"{get_platform()} has no supported sandbox primitive; "
+                + "disable the host command fence in Settings",
+            )
         if not has_ripgrep_sync():
             return HostConfinement(
                 False,
                 "ripgrep (`rg`) is not installed — sandbox-runtime needs it to resolve "
-                + "the filesystem deny rules; install it to fence host commands",
+                + "the filesystem deny rules; install it or disable the host command fence "
+                + "in Settings",
             )
-        return HostConfinement(False, "the platform's sandbox dependencies are unavailable")
+        return HostConfinement(
+            False, f"the platform's sandbox dependencies are unavailable; {_UNAVAILABLE_FIX}"
+        )
     deny_read = list(denied_read_paths(settings))
     # Writes are deny-by-default in this runtime, so the allow list is not a hardening knob
     # — it is what keeps an approved command able to do the thing it was approved for. The
@@ -247,13 +319,19 @@ async def configure(settings: Settings) -> HostConfinement:
                 # covering everything a command can reach.
                 network=NetworkConfig(allowed_domains=domains, allow_local_binding=True),
                 filesystem=FilesystemConfig(
-                    deny_read=deny_read, allow_write=allow_write, deny_write=list(deny_read)
+                    deny_read=deny_read,
+                    allow_write=allow_write,
+                    deny_write=_denied_write_paths(deny_read, allow_write),
+                    # Read from this global config at wrap time, never from a per-call one.
+                    allow_git_config=True,
                 ),
             )
         )
     except Exception as exc:  # any init failure means "not confined"
         logger.warning("sandbox-runtime could not initialize", exc_info=True)
-        return HostConfinement(False, f"sandbox-runtime could not initialize ({exc})")
+        return HostConfinement(
+            False, f"sandbox-runtime could not initialize ({exc}); {_UNAVAILABLE_FIX}"
+        )
     # Carried on the resolution rather than re-derived at the run: `confine` fences each
     # command individually, and these are the settings half of what it needs — the same
     # values the global init above was given, so the two cannot drift.
@@ -294,8 +372,14 @@ async def confine(
     allowed_domains: Iterable[str],
     allow_write: Iterable[str],
     deny_read: Iterable[str],
+    open_network: bool = False,
 ) -> str:
     """``command`` rewritten to run under the platform's sandbox, fenced for *this* call.
+
+    The write floor and each writable root's ``.git/hooks`` are denied here whatever the
+    caller passes. ``open_network`` skips network filtering entirely: the runtime's config
+    cannot express "every host" (a bare ``*`` is rejected and an empty list still isolates
+    the network), so the platform wrapper is called with network restriction off.
 
     :func:`resolve_confinement` settles the machinery once per process — the platform
     probe, the proxy listeners — but not where a particular command may write, because
@@ -322,15 +406,59 @@ async def confine(
         SandboxRuntimeConfig,
     )
 
-    # Everything read-denied is write-denied too. Read denial alone would still let a
-    # command clobber the vault or an ssh key it could not read.
-    denied = list(deny_read)
+    allowed = list(allow_write)
+    denied_read = list(deny_read)
+    denied_write = _denied_write_paths(denied_read, allowed)
+    if open_network:
+        return await _wrap_open_network(command, allowed, denied_read, denied_write)
     return await SandboxManager.wrap_with_sandbox(
         command,
         custom_config=SandboxRuntimeConfig(
             network=NetworkConfig(allowed_domains=sorted(set(allowed_domains))),
             filesystem=FilesystemConfig(
-                deny_read=denied, allow_write=list(allow_write), deny_write=denied
+                deny_read=denied_read, allow_write=allowed, deny_write=denied_write
             ),
         ),
     )
+
+
+async def _wrap_open_network(
+    command: str, allow_write: list[str], deny_read: list[str], deny_write: list[str]
+) -> str:
+    from sandbox_runtime import SandboxManager, get_default_write_paths
+    from sandbox_runtime.linux_sandbox import LinuxSandboxParams, wrap_command_linux
+    from sandbox_runtime.macos_sandbox import MacOSSandboxParams, wrap_command_macos
+    from sandbox_runtime.schemas import FsReadRestrictionConfig, FsWriteRestrictionConfig
+    from sandbox_runtime.utils.platform import get_platform
+
+    read_config = FsReadRestrictionConfig(deny_only=deny_read)
+    write_config = FsWriteRestrictionConfig(
+        allow_only=[*get_default_write_paths(), *allow_write], deny_within_allow=deny_write
+    )
+    platform = get_platform()
+    if platform == "macos":
+        return wrap_command_macos(
+            MacOSSandboxParams(
+                command=command,
+                needs_network_restriction=False,
+                read_config=read_config,
+                write_config=write_config,
+                ignore_violations=SandboxManager.get_ignore_violations(),
+                allow_git_config=True,
+            )
+        )
+    if platform == "linux":
+        return await wrap_command_linux(
+            LinuxSandboxParams(
+                command=command,
+                needs_network_restriction=False,
+                read_config=read_config,
+                write_config=write_config,
+                enable_weaker_nested_sandbox=SandboxManager.get_enable_weaker_nested_sandbox(),
+                allow_all_unix_sockets=SandboxManager.get_allow_all_unix_sockets(),
+                ripgrep_config=SandboxManager.get_ripgrep_config(),
+                mandatory_deny_search_depth=SandboxManager.get_mandatory_deny_search_depth(),
+                allow_git_config=True,
+            )
+        )
+    raise RuntimeError(f"Sandbox configuration is not supported on platform: {platform}")
