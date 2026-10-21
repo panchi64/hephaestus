@@ -233,6 +233,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
                 owner_id=view.owner_id,
                 # A routine's run takes the `routine` lane (`runs/lanes.py`).
                 kind=TASK_KIND,
+                max_requests=applied.agent.max_requests,
                 **timeouts,
             )
         except Exception:

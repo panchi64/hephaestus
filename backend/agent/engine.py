@@ -621,6 +621,8 @@ def build_chat_orchestrator(
                         # reviewed against the same opening request the first pass was.
                         turn_start=setup.turn_start,
                         workspace_key=workspace_key,
+                        max_requests=max_requests,
+                        ledger_prompt_message_id=ledger_prompt_message_id,
                     )
 
             finalize(
@@ -785,6 +787,9 @@ def build_resume_orchestrator(
                 # From the parked payload for the same reason `binding` is: the resumed
                 # turn must work in the same place the parked one did.
                 workspace_key=parked.workspace_key,
+                max_requests=parked.max_requests,
+                requests_used=parked.requests_used,
+                ledger_prompt_message_id=parked.ledger_prompt_message_id,
             )
             finalize(run, turn, store=store, context=parked_context(parked, turn_start))
             # Disarm the flush hooks now the turn is recorded — a bound or cancel

@@ -17,6 +17,7 @@ export type NotificationKind =
   | "approval_needed"
   | "run_completed"
   | "run_failed"
+  | "save_failed"
   | "reminder"
   | "task_outcome"
   | "system";

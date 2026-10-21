@@ -17,6 +17,7 @@ import type {
 const KIND_ICON: Record<NotificationKind, IconName> = {
   approval_needed: "warning",
   run_failed: "close",
+  save_failed: "warning",
   run_completed: "check",
   reminder: "bell",
   task_outcome: "activity",
@@ -26,6 +27,7 @@ const KIND_ICON: Record<NotificationKind, IconName> = {
 const KIND_TONE: Record<NotificationKind, string> = {
   approval_needed: "text-warn",
   run_failed: "text-alert",
+  save_failed: "text-alert",
   run_completed: "text-dim",
   reminder: "text-info",
   task_outcome: "text-dim",

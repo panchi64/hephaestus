@@ -21,6 +21,7 @@ it in, so every bound and every frame of a turn is measured against the same val
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 from collections.abc import Callable, Sequence
 from contextlib import suppress
@@ -98,6 +99,8 @@ class TurnResult:
     binding: ConversationBinding | None = None
     #: Whether a spawned agent filed its report during the turn.
     reported: bool = False
+    #: Model requests the turn has spent, counted across its segments.
+    requests_used: int = 0
 
 
 def turn_deps(
@@ -176,9 +179,11 @@ def _retry_after_s(exc: Exception) -> float | None:
         return None
     raw = raw.strip()
     try:
-        return max(float(raw), 0.0)
+        seconds = float(raw)
     except ValueError:
         pass
+    else:
+        return None if math.isnan(seconds) else max(seconds, 0.0)
     try:
         when = parsedate_to_datetime(raw)
     except TypeError, ValueError:
@@ -190,12 +195,13 @@ def _retry_after_s(exc: Exception) -> float | None:
 
 def transient_wait_s(exc: Exception, retries: int) -> float:
     """How long to wait before resend number ``retries`` (1-based): the provider's
-    Retry-After, capped, else the backoff step with ±20% jitter."""
-    advised = _retry_after_s(exc)
-    if advised is not None:
-        return min(advised, RETRY_AFTER_CAP_S)
+    Retry-After, never below the backoff step and capped, else the step with ±20% jitter."""
     step = TRANSIENT_BACKOFF_S[min(retries, len(TRANSIENT_BACKOFF_S)) - 1]
-    return step * random.uniform(1 - _JITTER, 1 + _JITTER)
+    step *= random.uniform(1 - _JITTER, 1 + _JITTER)
+    advised = _retry_after_s(exc)
+    if advised is None:
+        return step
+    return min(max(advised, step), RETRY_AFTER_CAP_S)
 
 
 def _request_limits(max_requests: int | None) -> UsageLimits:
@@ -239,6 +245,7 @@ async def drive_turn(
     workspace_key: str = "",
     reported: bool = False,
     max_requests: int | None = None,
+    requests_used: int = 0,
     ledger_prompt_message_id: str | None = None,
 ) -> TurnResult:
     """Drive one turn to its end: an answer, a park, or a stop at a bound.
@@ -283,7 +290,10 @@ async def drive_turn(
     # ONE no-progress guard and ONE usage accumulator, so a granted tool the model keeps
     # re-calling can't reset the guard by deferring on each hop; it trips the loop stop.
     loop_breaker = LoopBreaker(repeat_threshold=settings.loop_repeat_threshold)
-    usage = RunUsage()
+    # Seeded with the requests earlier segments of this turn spent, so the cap bounds the
+    # whole turn. A queued-message continuation below is another request of the same turn
+    # and counts against it too.
+    usage = RunUsage(requests=requests_used)
     open_tasks_raised = False
 
     def report_progress(history: list[ModelMessage]) -> None:
@@ -463,16 +473,20 @@ async def drive_turn(
                     )
                 )
                 run.step_text_chars = run.step_thinking_chars = 0
+            wait_s = transient_wait_s(exc, transient_retries)
             _ = run.emit(
                 LimitNotice(
                     limit="continue",
                     message=(
-                        f"The model connection failed ({type(exc).__name__}); retrying "
-                        + f"({transient_retries} of {settings.auto_continue_transient_max})"
+                        f"The model connection failed ({type(exc).__name__}); retrying in "
+                        + f"{wait_s:.0f}s ({transient_retries} of "
+                        + f"{settings.auto_continue_transient_max})"
                     ),
                 )
             )
-            await asyncio.sleep(transient_wait_s(exc, transient_retries))
+            # A wait can outlast the inactivity bound, and nothing else is emitting.
+            async with run.keepalive():
+                await asyncio.sleep(wait_s)
             prompt = None
             message_history = resume
             deferred_results = None
@@ -524,6 +538,7 @@ async def drive_turn(
                 messages=messages,
                 binding=replace(binding, permission=deps.permission),
                 reported=deps.reported,
+                requests_used=usage.requests,
             )
 
         # Rule on each deferred *approval* — grants, then the level, then Auto's review.
@@ -570,6 +585,9 @@ async def drive_turn(
                 # argument, so a turn that filled the default in from its conversation
                 # carries the resolved key rather than an empty one.
                 workspace_key=deps.workspace_key,
+                max_requests=max_requests,
+                requests_used=usage.requests,
+                ledger_prompt_message_id=ledger_prompt_message_id,
             )
             return TurnResult(answer=None, messages=messages)
         # Every deferred call settled without the operator — no question was asked, and

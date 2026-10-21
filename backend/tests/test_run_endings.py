@@ -157,6 +157,33 @@ async def test_exhausted_transient_retries_end_in_an_error_without_a_code(
     assert run.end_code is None
 
 
+async def test_a_retry_wait_longer_than_the_inactivity_bound_does_not_stop_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _settings(monkeypatch, Settings(auto_continue_transient_max=2))
+    monkeypatch.setattr(turn, "TRANSIENT_BACKOFF_S", (0.5,))
+    attempts = 0
+
+    async def stream_fn(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ModelHTTPError(status_code=503, model_name="m", body="overloaded")
+        yield "answered"
+
+    orchestrator = build_chat_orchestrator(
+        "go", model=FunctionModel(stream_function=stream_fn), categories={}
+    )
+    reg = RunRegistry(wall_clock_timeout_s=None, inactivity_timeout_s=0.15)
+    run = reg.submit(kind="chat", owner_id="operator", orchestrator=orchestrator)
+    await run.wait()
+
+    assert run.status is RunStatus.done
+    assert attempts == 2
+
+
 # --- the turn cap -----------------------------------------------------------
 
 
@@ -239,9 +266,25 @@ def test_retry_after_is_capped_at_a_minute() -> None:
     assert transient_wait_s(_http({"retry-after": "3600"}), 1) == 60.0
 
 
-def test_a_date_in_the_past_waits_no_longer_than_zero() -> None:
+@pytest.mark.parametrize("advised", ["0", "-5"])
+def test_a_retry_after_below_the_backoff_step_still_backs_off_the_step(advised: str) -> None:
+    waits = [transient_wait_s(_http({"retry-after": advised}), 1) for _ in range(100)]
+    assert all(1.6 <= wait <= 2.4 for wait in waits)
+
+
+def test_a_date_in_the_past_still_backs_off_the_step() -> None:
     past = format_datetime(datetime.now(UTC) - timedelta(hours=1), usegmt=True)
-    assert transient_wait_s(_http({"retry-after": past}), 1) == 0.0
+    assert 1.6 <= transient_wait_s(_http({"retry-after": past}), 1) <= 2.4
+
+
+def test_an_infinite_retry_after_is_capped() -> None:
+    assert transient_wait_s(_http({"retry-after": "inf"}), 1) == 60.0
+
+
+@pytest.mark.parametrize("raw", ["nan", "NaN", "-nan"])
+def test_a_nan_retry_after_is_treated_as_absent(raw: str) -> None:
+    waits = [transient_wait_s(_http({"retry-after": raw}), 1) for _ in range(100)]
+    assert all(1.6 <= wait <= 2.4 for wait in waits)
 
 
 @pytest.mark.parametrize("headers", [None, {}, {"retry-after": "soon"}])
@@ -304,7 +347,7 @@ async def test_the_store_calls_its_listener_when_a_write_is_dropped(
     _, store = await make_stores(tmp_path)
     conv = await store.create_conversation("operator", title="t")
     seen: list[str] = []
-    store.on_save_failed(seen.append)
+    store.set_save_failed_listener(seen.append)
 
     async def refuse(*_args: object, **_kwargs: object) -> None:
         raise OSError("disk full")
@@ -322,8 +365,9 @@ async def test_the_store_calls_its_listener_when_a_write_is_dropped(
     assert seen == [conv]
 
 
-async def test_stopping_with_the_vault_locked_warns_with_the_items_left(
-    caplog: pytest.LogCaptureFixture,
+@pytest.mark.parametrize("count", [1, 3])
+async def test_stopping_with_the_vault_locked_warns_with_every_item_left(
+    caplog: pytest.LogCaptureFixture, count: int
 ) -> None:
     locked = asyncio.Event()
     handled: list[int] = []
@@ -333,11 +377,14 @@ async def test_stopping_with_the_vault_locked_warns_with_the_items_left(
 
     worker = WriteBehindWorker(handler, name="test-drainer", unlocked=locked)
     await worker.start()
-    worker.submit(1)
-    worker.submit(2)
+    for item in range(count):
+        worker.submit(item)
+    # The worker has taken the first item and is parked waiting for the unlock.
+    for _ in range(5):
+        await asyncio.sleep(0)
 
     with caplog.at_level(logging.WARNING, logger="core.worker"):
         await worker.stop(drain_timeout_s=0.1)
 
     assert handled == []
-    assert any("2 item(s) left unflushed" in record.getMessage() for record in caplog.records)
+    assert any(f"{count} item(s) left unflushed" in r.getMessage() for r in caplog.records)

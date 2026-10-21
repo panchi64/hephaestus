@@ -83,6 +83,7 @@ from services.uploads import UploadStore
 from services.workspace import DELEGATION_SEP, split_workspace_key
 from tools import InstructionProvider, RunDeps
 
+from ._ledger_prompt import ledger_prompt_of
 from ._subagent_wake import SubagentWake
 
 logger = logging.getLogger(__name__)
@@ -318,6 +319,10 @@ class ConversationSubagents(SubagentLauncher):
                 self._ctx.settings.subagent_wall_clock_timeout_s,
             ),
             ephemeral=True,
+            max_requests=agent.max_requests,
+            ledger_prompt_message_id=await ledger_prompt_of(
+                self._runs, self._records, owner_id, thread, run_id=parent.run_id
+            ),
         )
 
         await self._records.record(

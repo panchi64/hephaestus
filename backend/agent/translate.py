@@ -224,7 +224,6 @@ def _emit_result(
 
 
 def _answer(run: Run, text: str) -> None:
-    run.answer_started = True  # pins the endpoint past this point (AE-5.3)
     run.step_text_chars += len(text)
     _ = run.emit(AnswerDelta(text=text))
 

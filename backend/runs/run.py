@@ -160,11 +160,6 @@ class Run:
     # orchestrator on both folds (the prelude's, and the in-turn overflow recovery's), read
     # only by the metrics builder.
     fold_boundary: int = 0
-    # Set once the first answer token has streamed. The AE-5.3 rule — never
-    # switch endpoints after answer text has begun — is enforced against this:
-    # the orchestrator refuses to re-drive a turn onto another endpoint once it
-    # is set (FallbackModel only falls back pre-stream; this guards the rest).
-    answer_started: bool = False
     # Answer and reasoning characters streamed for the model request in flight, which a
     # retry of that request has to take back off the operator's screen.
     step_text_chars: int = 0

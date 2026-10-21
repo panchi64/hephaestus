@@ -48,6 +48,8 @@ from services.settings_store import SettingsStore, get_context_thresholds
 from services.subagent_store import SubagentStore
 from services.uploads import UploadStore
 
+from ._ledger_prompt import ledger_prompt_of
+
 logger = logging.getLogger(__name__)
 
 #: The kind a turn opened by an agent's delivery is submitted under (``runs/lanes.py``).
@@ -324,6 +326,13 @@ class InboxDispatcher:
             context_thresholds=await get_context_thresholds(self._settings, owner_id),
             auto_compact=await resolve_auto_compact_policy(self._settings, owner_id),
             ephemeral=row is not None,
+            max_requests=applied.agent.max_requests,
+            # Edits belong to the launcher's turn that sent the message, if one is running.
+            ledger_prompt_message_id=(
+                await ledger_prompt_of(self._runs, records, owner_id, row.parent_conversation_id)
+                if row is not None
+                else None
+            ),
             **timeouts,
         )
         self._runs.inbox(conversation_id, owner_id).take(lead)

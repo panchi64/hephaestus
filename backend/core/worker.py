@@ -77,9 +77,12 @@ class WriteBehindWorker[T]:
         self._queue: asyncio.Queue[T] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._stopping: asyncio.Event = asyncio.Event()
+        # Queued plus the one being processed, which `qsize()` no longer counts.
+        self._unfinished: int = 0
 
     def submit(self, item: T) -> None:
         """Hot path: enqueue an item for background processing (never blocks)."""
+        self._unfinished += 1
         self._queue.put_nowait(item)
 
     @property
@@ -118,11 +121,11 @@ class WriteBehindWorker[T]:
                     self._queue.qsize(),
                     timeout,
                 )
-        elif not self._queue.empty():
+        elif self._unfinished:
             logger.warning(
                 "%s: vault locked at stop; %d item(s) left unflushed",
                 self._name,
-                self._queue.qsize(),
+                self._unfinished,
             )
         await cancel_and_wait(self._task, STOP_TIMEOUT_S)
         self._task = None
@@ -133,6 +136,7 @@ class WriteBehindWorker[T]:
             try:
                 await self._process(item)
             finally:
+                self._unfinished -= 1
                 self._queue.task_done()
 
     async def _ready(self) -> bool:

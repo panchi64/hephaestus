@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 class DrainerMixin(StoreCore):
     _save_failed_listener: Callable[[str], None] | None = None
 
-    def on_save_failed(self, listener: Callable[[str], None] | None) -> None:
-        """Call ``listener(conversation_id)`` when a write is dropped for good. It runs on
-        the drainer's task, so it must not block."""
+    def set_save_failed_listener(self, listener: Callable[[str], None] | None) -> None:
+        """Replace the callback given the conversation id when a write is dropped for good.
+        It runs on the drainer's task, so it must not block."""
         self._save_failed_listener = listener
 
     @override

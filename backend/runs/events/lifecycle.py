@@ -7,7 +7,7 @@ from typing import Literal
 from .base import PROTOCOL_VERSION, Body
 
 EndCode = Literal[
-    "wall_clock", "inactivity", "first_token", "loop", "context_overflow", "verify", "turn_limit"
+    "wall_clock", "inactivity", "first_token", "loop", "context_overflow", "turn_limit"
 ]
 
 

@@ -149,6 +149,12 @@ class ParkedTurn:
     # Whether the turn was to name its thread. `title` holds model clients a restart can't
     # carry, so a restored park keeps this and has `title` rebuilt by its recompose hook.
     titled: bool = False
+    # The agent's request cap and the requests the turn has spent so far, so the cap bounds
+    # the whole turn across a park and its resume rather than each segment.
+    max_requests: int | None = None
+    requests_used: int = 0
+    # Where a spawned agent's file changes are filed (`RunDeps.ledger_prompt_message_id`).
+    ledger_prompt_message_id: str | None = None
 
 
 def primary_model_name(agent: TurnAgent) -> str | None:
@@ -262,6 +268,9 @@ async def park_for_input(
     vision: bool = True,
     compaction: CompactionContext | None = None,
     workspace_key: str = "",
+    max_requests: int | None = None,
+    requests_used: int = 0,
+    ledger_prompt_message_id: str | None = None,
 ) -> None:
     settled = settled or {}
     events, pending_names, asked = announcements(requests, settled)
@@ -312,5 +321,8 @@ async def park_for_input(
             workspace_key=workspace_key,
             endpoint_id=run.endpoint.id if run.endpoint is not None else None,
             model=primary_model_name(agent),
+            max_requests=max_requests,
+            requests_used=requests_used,
+            ledger_prompt_message_id=ledger_prompt_message_id,
         )
     )

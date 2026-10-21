@@ -18,6 +18,7 @@ from collections.abc import Callable
 from core.api_scopes import ScopeClaim
 from harness.manifest import FeatureManifest, FeatureRuntime, HarnessContext
 from harness.run_terminal import RunTerminalDispatcher
+from models.notification import NotificationKind
 from routes import notifications as notifications_routes
 from routes.deps import OPERATOR_ID
 from runs import Run, RunStatus
@@ -49,7 +50,7 @@ def save_failure_reporter(
         try:
             _ = await notifications.notify(
                 OPERATOR_ID,
-                "save_failed",
+                NotificationKind.SAVE_FAILED,
                 "A conversation could not be saved",
                 body="The latest messages were not written to disk and may be lost on restart.",
                 conversation_id=conversation_id,
@@ -86,7 +87,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         ),
     )
     await ctx.lifecycle.start("notifications", start=notifications.start, stop=notifications.stop)
-    conversations.on_save_failed(save_failure_reporter(notifications))
+    conversations.set_save_failed_listener(save_failure_reporter(notifications))
     # In-flight run-terminal tasks are this surface's writers — cancel and await
     # them right before it stops (registered after ⇒ stops earlier), so a run
     # finishing at shutdown never leaves a task notifying through a stopped store.
