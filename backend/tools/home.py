@@ -85,7 +85,12 @@ def change_log(deps: RunDeps) -> ChangeLog | None:
     thread = owner or deps.conversation_id
     if store is None or not thread:
         return None
-    return ChangeLog(store, owner_id=deps.owner_id, conversation_id=thread)
+    prompt = deps.ledger_prompt_message_id
+    if prompt is None and thread == deps.conversation_id:
+        prompt = deps.run.prompt_message_id
+    return ChangeLog(
+        store, owner_id=deps.owner_id, conversation_id=thread, prompt_message_id=prompt
+    )
 
 
 def lease_holder(deps: RunDeps) -> str | None:

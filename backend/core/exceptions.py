@@ -53,6 +53,10 @@ class UnmergedWorkError(HephaestusError):
     """Deleting this would throw away commits that were never merged."""
 
 
+class StaleRewindError(HephaestusError):
+    """A file rewind was confirmed against a preview that no longer matches the files."""
+
+
 class DegradedCapabilityError(HephaestusError):
     """An optional capability is unavailable; the caller should degrade gracefully."""
 

@@ -81,12 +81,20 @@ class ChatCreate(BaseModel):
     command: CommandInvocation | None = None
 
 
+class RestoreFiles(BaseModel):
+    """Confirms the file rewind a dry run previewed (``GET /conversations/{id}/changes/rewind``)."""
+
+    preview_token: str
+
+
 class RegenerateCreate(BaseModel):
     conversation_id: str
     message_id: str  # the assistant turn to re-answer (its branch node id)
     # Optional per-turn model override — regenerate with a different provider/model.
     endpoint_id: str | None = None
     model: str | None = None
+    # Put the files back to before the re-answered turn first.
+    restore_files: RestoreFiles | None = None
 
 
 class EditCreate(BaseModel):
@@ -98,6 +106,8 @@ class EditCreate(BaseModel):
     # Attachments for the edited turn — a fresh user request, so the same direct-inject
     # path as a new message (regenerate, which adds no new request, takes none).
     attachment_ids: list[str] = []
+    # Put the files back to before the replaced turn first.
+    restore_files: RestoreFiles | None = None
 
 
 class ChatCreated(BaseModel):

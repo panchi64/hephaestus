@@ -35,6 +35,7 @@ needs to do any more is restate the answer already written here.
   didn't match exactly one span, so the write would have been ambiguous.
 - ``UnmergedWorkError`` → **409**. A delete would throw away unmerged commits; the
   caller has to merge first or say to discard them.
+- ``StaleRewindError`` → **409**. The files changed since the rewind was previewed.
 - ``SkillValidationError`` → **422**, carrying the offending ``field`` so the operator is
   told which part of the bundle to fix.
 - ``HephaestusError`` itself has **no** entry. A base-class catch-all would quietly give a
@@ -61,6 +62,7 @@ from core.exceptions import (
     SkillValidationError,
     SpanEditError,
     SSRFError,
+    StaleRewindError,
     UnmergedWorkError,
     WebFetchError,
 )
@@ -78,6 +80,7 @@ _STATUSES: tuple[tuple[type[Exception], int], ...] = (
     (RoutineValidationError, 422),
     (SpanEditError, 409),
     (UnmergedWorkError, 409),
+    (StaleRewindError, 409),
     (SSRFError, 422),
     (RateLimitedError, 429),
     (DegradedCapabilityError, 503),

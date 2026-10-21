@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from core.exceptions import NotFoundError
 from routes import deps
+from routes.changes import rewind_files
 from routes.chat.schemas import (
     ChatCreate,
     ChatCreated,
@@ -256,6 +257,11 @@ async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
     deps.claim_conversation(request, body.conversation_id)
     try:
         models = await thread_models(request, body.conversation_id, body.endpoint_id, body.model)
+        if body.restore_files is not None:
+            # Planned against the leaf as it is now; `regenerate_point` moves it.
+            _ = await rewind_files(
+                request, body.conversation_id, body.message_id, body.restore_files.preview_token
+            )
         if not await store.regenerate_point(body.conversation_id, body.message_id):
             raise HTTPException(status_code=404, detail="message not found")
         created = await submit_turn(
@@ -304,6 +310,10 @@ async def edit(body: EditCreate, request: Request) -> ChatCreated:
         # after it, the trailing request is the previous turn.
         stamped = await store.turn_stamps(body.conversation_id, body.message_id)
         stamps = still_named(stamped, body.prompt)
+        if body.restore_files is not None:
+            _ = await rewind_files(
+                request, body.conversation_id, body.message_id, body.restore_files.preview_token
+            )
         if not await store.edit_point(body.conversation_id, body.message_id):
             raise HTTPException(status_code=404, detail="message not found")
         created = await submit_turn(

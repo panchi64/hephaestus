@@ -84,6 +84,10 @@ class RunDeps:
     # Whether the operator's checkout is read-only to this run because the thread whose
     # leases it holds works in a worktree (`ConversationBinding.checkout_read_only`).
     checkout_read_only: bool = False
+    # The operator prompt that opened the turn this run's file changes are filed under.
+    # A spawned agent inherits its launcher's, since its edits land in the parent's ledger;
+    # None on a top-level run means its own `run.prompt_message_id` (`tools/home.py`).
+    ledger_prompt_message_id: str | None = None
     # How far this run may go before it has to ask: "plan", "manual", "edit", "auto" or
     # "yolo" — the last of which is the operator saying it never has to.
     # Here because a tool is offered and executed inside a Run,

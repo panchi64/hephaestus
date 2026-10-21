@@ -220,6 +220,22 @@ class NavigationMixin(StoreCore):
         self._move_leaf(conversation_id, tree.active_leaf_id)
         return True
 
+    async def turn_prompt_ids(self, conversation_id: str, message_id: str) -> list[str] | None:
+        """The operator prompts on the active path from the turn holding ``message_id``
+        through the leaf, oldest first; None when the node isn't on the active path.
+
+        A regenerate's request and its answer are one turn, so either id names it. A
+        mid-run aside is a prompt of its own, harmless to include: no file change is
+        filed under it."""
+        path = (await self.tree(conversation_id)).active_path()
+        ids = [node.id for node in path]
+        if message_id not in ids:
+            return None
+        start = ids.index(message_id)
+        while start > 0 and not opens_turn(path[start]):
+            start -= 1
+        return [node.id for node in path[start:] if opens_turn(node)]
+
     async def delete_message(self, conversation_id: str, message_id: str) -> bool:
         """Delete the turn whose branch node is ``message_id`` and everything after
         it on every branch (its subtree), reseating the active leaf on the parent if
