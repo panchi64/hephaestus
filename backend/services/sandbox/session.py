@@ -252,7 +252,7 @@ class SandboxSession:
                 timeout_s=spec.timeout_s,
                 stdin=spec.stdin,
             )
-            await self._guest.bring_out()
+            lost = await self._guest.bring_out()
         except VMError as exc:
             raise SandboxError(str(exc)) from exc
         return SandboxResult(
@@ -260,6 +260,7 @@ class SandboxSession:
             stdout=result.stdout,
             stderr=result.stderr,
             timed_out=result.exit_code == TIMEOUT_EXIT,
+            notes=(lost,) if lost is not None else (),
         )
 
     def _network_env(self) -> dict[str, str]:
@@ -272,11 +273,11 @@ class SandboxSession:
         self._ensure_workspace()
         await self._ensure_up()
 
-    async def bring_out(self) -> None:
-        """Bring back what a command changed in the guest copy. The caller holds
-        :attr:`lock`."""
+    async def bring_out(self) -> str | None:
+        """Bring back what a command changed in the guest copy, returning a note when the
+        copy was lost to a VM restart. The caller holds :attr:`lock`."""
         try:
-            await self._guest.bring_out()
+            return await self._guest.bring_out()
         except VMError as exc:
             raise SandboxError(f"could not bring the work back from the VM: {exc}") from exc
 

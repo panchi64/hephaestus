@@ -16,6 +16,9 @@ from pathlib import Path
 from .host import WorkspaceHost
 from .sync import Manifest, diff, scan
 
+#: What the agent is told when a bring-out finds the guest copy gone with its VM.
+LOST_TO_RESTART = "the VM restarted; changes made in it since the last command were lost"
+
 
 class GuestWorkspace:
     def __init__(self, vm: WorkspaceHost, key: str, root: Path) -> None:
@@ -44,21 +47,23 @@ class GuestWorkspace:
         self._host = host_now
         self._generation = self._vm.generation
 
-    async def bring_out(self) -> None:
-        """Copy what changed in the guest back to the host."""
+    async def bring_out(self) -> str | None:
+        """Copy what changed in the guest back to the host. Returns a note when the copy
+        belongs to an older VM generation, whose changes are gone."""
         if not self.is_in:
-            return
+            return LOST_TO_RESTART if self._generation is not None else None
         guest_now = await self._vm.manifest(self.key)
         changes = diff(guest_now, self._guest)
         if changes:
             await self._vm.pull(self.key, self.root, changes)
         self._guest = guest_now
         self._host = await asyncio.to_thread(scan, self.root)
+        return None
 
     async def evict(self) -> None:
         """Bring the work out, then wipe the guest copy."""
         if self.is_in:
-            await self.bring_out()
+            _ = await self.bring_out()
             await self._vm.wipe(self.key)
         self._generation = None
         self._host, self._guest = {}, {}

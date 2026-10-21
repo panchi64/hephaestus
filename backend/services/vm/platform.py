@@ -214,6 +214,21 @@ class PlatformVM:
         """Why the last bring-up failed, for the operator."""
         return self._failure
 
+    async def responds(self) -> bool:
+        """Whether the VM is up and answers a command. False when it is not up."""
+        if not self.available:
+            return False
+        try:
+            return await self._driver.alive()
+        except VMError:
+            return False
+
+    def mark_unavailable(self, reason: str) -> None:
+        """Report the VM as down without touching it, so what needs it stops being sent
+        there. :meth:`reset` brings it back."""
+        self._ready.clear()
+        self._failure = reason
+
     async def start(self) -> None:
         """Begin bringing the VM up in the background."""
         if not self._enabled:
