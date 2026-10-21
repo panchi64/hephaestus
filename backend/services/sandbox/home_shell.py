@@ -169,7 +169,8 @@ class HomeShell:
                     await _abandon(vm, name, session, held, changes)
                     raise
                 landed = await vm.read_guest(cwd_file, max_bytes=4096)
-                await session.bring_out()
+                if (lost := await session.bring_out()) is not None:
+                    notes.append(lost)
                 for mount, copy in held:
                     notes += await _bring_back(mount, copy, changes)
             except VMError as exc:

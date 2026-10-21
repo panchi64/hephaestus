@@ -138,6 +138,8 @@ class Grant:
 
     allowlist: Policy
     secrets: tuple[Secret, ...] = ()
+    #: The workspace these credentials belong to, for the log line a refusal writes.
+    workspace: str = ""
 
     def permits(self, host: str) -> bool:
         return self.allowlist.permits(host)
@@ -159,7 +161,9 @@ class EgressGateway:
         """Proxy credentials (``user:password``) that reach what ``allow_dir`` allows,
         with ``secrets_`` put into HTTPS requests to their hosts."""
         token = secrets.token_urlsafe(24)
-        self._grants[token] = Grant(Allowlist(allow_dir), tuple(secrets_))
+        self._grants[token] = Grant(
+            Allowlist(allow_dir), tuple(secrets_), allow_dir.name.removeprefix("s")
+        )
         return f"workspace:{token}"
 
     def grant_for(self, credentials: str) -> Grant | None:
@@ -219,7 +223,7 @@ class EgressGateway:
             return
         host, port = split_hostport(target, 443)
         if not grant.permits(host):
-            await _deny(writer, host)
+            await _deny(writer, host, grant.workspace)
             return
         secrets_ = grant.secrets_for(host)
         if secrets_ and self.interceptor is not None:
@@ -285,7 +289,7 @@ async def _forward(
     target: str,
     version: str,
     headers: list[bytes],
-    policy: Policy,
+    grant: Grant,
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
 ) -> None:
@@ -298,8 +302,8 @@ async def _forward(
         return
     authority, _, path = rest.partition("/")
     host, port = split_hostport(authority, 80)
-    if not policy.permits(host):
-        await _deny(writer, host)
+    if not grant.permits(host):
+        await _deny(writer, host, grant.workspace)
         return
     upstream = await dial_pinned(host, port, writer)
     if upstream is None:
@@ -412,7 +416,8 @@ async def _respond(
         _close(writer)
 
 
-async def _deny(writer: asyncio.StreamWriter, host: str) -> None:
-    """Refuse ``host`` with :data:`DENIED_MARKER` in the body."""
-    logger.info("egress: denied %s", host)
+async def _deny(writer: asyncio.StreamWriter, host: str, workspace: str = "") -> None:
+    """Refuse ``host`` with :data:`DENIED_MARKER` in the body. ``workspace`` is the
+    refused workspace's key, empty where the refusal is not tied to one."""
+    logger.warning("egress: denied %s for conversation %s", host, workspace or "(none)")
     await _respond(writer, "403 Forbidden", f"{DENIED_MARKER} {host}\n")

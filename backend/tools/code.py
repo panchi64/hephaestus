@@ -40,8 +40,7 @@ from services.sandbox import (
     resolve_confinement,
     run_on_host,
 )
-from services.sandbox.network_errors import mentions_no_network
-from services.vm import DENIED_MARKER
+from services.sandbox.refusals import denied_host, host_refusal, is_egress_denied
 
 from .deps import RunDeps
 from .emit import RunEventEmitted
@@ -64,15 +63,6 @@ _MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([^']+)'")
 def _looks_like_pid_cap(stderr: str) -> bool:
     low = stderr.lower()
     return "fork" in low and any(marker in low for marker in _PID_CAP_MARKERS)
-
-
-def _looks_like_egress_denied(output: str) -> bool:
-    low = output.lower()
-    # The marker the workspace's proxy writes into a refusal's body, read from the script
-    # that writes it — two spellings of it would be one hint that quietly stopped firing.
-    if DENIED_MARKER.lower() in low:
-        return True
-    return mentions_no_network(output)
 
 
 def _failure_hint(
@@ -114,7 +104,7 @@ def _failure_hint(
             "package that provides that module) with reach `network` — then re-run this "
             "code unchanged."
         )
-    if sandboxed and _looks_like_egress_denied(stderr + "\n" + stdout):
+    if sandboxed and is_egress_denied(stderr + "\n" + stdout):
         if delegated:
             # A delegate has no egress request to make — it is withheld, because there is
             # nobody in its run to answer one. Sending it after the tool anyway costs it
@@ -175,6 +165,9 @@ def _exec_result(
             sandboxed=sandboxed,
             delegated=delegated,
         )
+        host = denied_host(f"{result.stdout}\n{result.stderr}") if sandboxed else None
+        if host is not None:
+            payload["denied_host"] = host
     return payload
 
 
@@ -405,9 +398,9 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         installation allows. A permission error on one of those paths is the fence doing
         its job: report it rather than working around it.
 
-        Returns `ok`, `exit_code`, `stdout`, `stderr` and `timed_out`, and `confined`,
-        which says whether the fence was applied; when it was not, `confinement_note`
-        says why.
+        Returns `ok`, `exit_code`, `stdout`, `stderr` and `timed_out`, and `fenced`,
+        which says whether the fence was applied; when it was not, `unfenced_reason`
+        says why. A `fence_note` explains a refusal by the fence.
 
         Args:
             command: The command, as you would type it in a terminal on the host.
@@ -436,10 +429,13 @@ def code_toolset() -> FunctionToolset[RunDeps]:
             return {"ok": False, "error": f"The host command could not be launched: {exc}"}
         payload = _exec_result(result, settings, sandboxed=False)
         # State the fence plainly: the operator approved the command, and whether it ran
-        # confined changes what that approval actually permitted.
-        payload["confined"] = confinement.active
+        # fenced changes what that approval actually permitted.
+        payload["fenced"] = confinement.active
         if not confinement.active:
-            payload["confinement_note"] = f"This ran unconfined on the host ({confinement.reason})."
+            payload["unfenced_reason"] = f"the host fence is not applied: {confinement.reason}"
+        refusal = host_refusal(fence_active=confinement.active, ok=result.ok, stderr=result.stderr)
+        if refusal is not None:
+            payload["fence_note"] = refusal.note
         return payload
 
     return toolset

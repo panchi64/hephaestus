@@ -10,11 +10,13 @@ from services.home.backend import Mount
 from services.home.paths import SCRATCH
 from services.home.table import RunHome
 from services.permissions import Reach
+from services.sandbox.refusals import vm_refusal
 from tools import shell as shell_tool
 
 
 def _note(stderr: str, *, network: bool = False, ok: bool = False) -> str | None:
-    return shell_tool.fence_note(network=network, ok=ok, stdout="", stderr=stderr)
+    refusal = vm_refusal(network=network, ok=ok, stdout="", stderr=stderr)
+    return None if refusal is None else refusal.note
 
 
 class TestWhatAFailedCommandIsTold:
@@ -62,7 +64,6 @@ class TestWhereTheToolRunsACommand:
         boundary = shell_tool.boundary("run_command", command, reach, home, SCRATCH.path)
         assert boundary.reach == reach
         assert boundary.fenced is (boundary.where == "vm")
-        assert (boundary.reason is None) is boundary.fenced
         return boundary
 
     def test_an_offline_command_runs_in_the_vm_with_no_network(self, tmp_path: Path):
@@ -94,4 +95,3 @@ class TestWhereTheToolRunsACommand:
     def test_a_host_declaration_is_the_one_that_asks_for_the_machine(self, tmp_path: Path):
         boundary = self._boundary(tmp_path, "uv sync", reach="host")
         assert boundary.where == "host" and boundary.network is False
-        assert boundary.reason is not None and "host" in boundary.reason

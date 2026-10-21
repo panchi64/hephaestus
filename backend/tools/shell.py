@@ -18,11 +18,18 @@ and this file holds it to that:
 - `offline` runs in the VM with no network at all;
 - `network` runs in the VM with the conversation's egress credentials, reaching the
   domains the operator has allowed (``services/egress.py``);
-- `host` runs on the operator's machine itself, unfenced, for a command that has to act
-  on that machine — which is what the approver was shown. It starts in the host folder of
-  the project the working directory is in, else in the host scratch directory. What it
+- `host` runs on the operator's machine itself, for a command that has to act on that
+  machine — which is what the approver was shown. It starts in the host folder of the
+  project the working directory is in, else in the host scratch directory. What it
   changes there is not recorded for revert (``services/home/changes.py``): it writes the
   folder directly rather than coming back through the VM.
+
+  It runs inside the host fence (``services/sandbox/fence.py``): writes are limited to the
+  home, the temp directories and the host scratch directory, minus a hardcoded floor (shell
+  rc files, ``~/.claude``, ``.git/hooks``, ``.git/config``, launch agents), and credential
+  files, browser profiles and the application's own ``.env``, data directory and database
+  cannot be read. The network is open. With the fence disabled in Settings, or unavailable
+  on this machine, it runs unfenced, and the result says so.
 
 The same declaration is what the permission layer rules on
 (``services/permissions/judge.py``), so what a command was cleared for and where it runs
@@ -48,6 +55,7 @@ from pydantic import BeforeValidator
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 
+from core.config import get_settings
 from core.diagnostics import render_tool_error
 from runs import ToolProgress
 from services.home.paths import HomePathError, Place, parse
@@ -55,13 +63,12 @@ from services.home.table import RunHome
 from services.permissions import Reach, capability_of, renamed_reach
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import SandboxSessionManager
-from services.sandbox.fence import host_scratch_dir
+from services.sandbox.fence import ConfinementState, confinement_state, host_scratch_dir
 from services.sandbox.limits import VM_WAIT_S
-from services.sandbox.network_errors import mentions_no_network
+from services.sandbox.refusals import Refusal, host_refusal, vm_refusal
 from services.sandbox.session import SandboxSession
 from services.sandbox.shell_result import BackgroundStatus, ProgressHook, ShellResult
 from services.sandbox.thread_shells import ThreadShell, ThreadShells
-from services.vm import DENIED_MARKER
 from services.vm.project import ProjectCopies
 
 from .briefing import with_brief_payload
@@ -79,8 +86,8 @@ DeclaredReach = Annotated[Reach, BeforeValidator(renamed_reach)]
 #: genuinely long-running thing belongs in `start_command`.
 SHELL_TIMEOUT_S = 300.0
 
-#: Effectively no cap: a pathological command's output is caught by the run's own
-#: context-overflow stop, which says so out loud rather than silently dropping the middle.
+#: A memory cap on one command's captured output, not a limit on what the model reads:
+#: large results are spilled to a file for the context (``tools/spill.py``).
 SHELL_MAX_OUTPUT_CHARS = 2_000_000
 
 #: The two tools that execute something new. `check_command` and `stop_command` act on a
@@ -115,15 +122,11 @@ class _Boundary:
     where: Literal["vm", "host"]
     #: Whether a VM command gets the conversation's egress credentials.
     network: bool
-    #: Why it runs on the host. None for a VM command.
-    reason: str | None
 
     @property
     def fenced(self) -> bool:
+        """Whether it runs in the VM; a host command's own fence is reported separately."""
         return self.where == "vm"
-
-
-_HOST_DECLARED = "the command declared `host`, which asks for the operator's machine itself"
 
 
 def boundary(name: str, command: str, reach: Reach, home: RunHome, cwd: str) -> _Boundary:
@@ -134,50 +137,33 @@ def boundary(name: str, command: str, reach: Reach, home: RunHome, cwd: str) -> 
     command contradicts, by naming an address or by installing or cloning, gets the
     network, because that is what the approver read."""
     if reach == "host":
-        return _Boundary(reach=reach, where="host", network=False, reason=_HOST_DECLARED)
+        return _Boundary(reach=reach, where="host", network=False)
     capability = capability_of(
         f"{_NAMESPACE}{name}", {"command": command, "reach": reach}, root=home.fence(cwd)
     )
-    return _Boundary(reach=reach, where="vm", network=capability.runs_with_network, reason=None)
+    return _Boundary(reach=reach, where="vm", network=capability.runs_with_network)
 
 
-#: How a client reports the gateway's 407 to a request that carried no credentials.
-_PROXY_REFUSED_SIGNS = ("Proxy Authentication Required", "response 407", "hephaestus-egress")
-
-_OFFLINE_NOTE = (
-    "This command ran with reach `offline`, which has no network. The VM does have "
-    "network: run the same command again with reach `network` to reach the domains the "
-    "operator has allowed. Do not move it to `host`; installs and downloads belong in the VM."
-)
-
-_CREDENTIALS_NOTE = (
-    "The VM's egress gateway did not accept this command's proxy credentials. Run it "
-    "again; if it is refused the same way, tell the operator rather than moving it to `host`."
-)
+def _refusal(
+    *, network: bool | None, ok: bool, stdout: str, stderr: str, host_fence_active: bool
+) -> Refusal | None:
+    """The fence's refusal in a finished command: the VM's for a command that ran there
+    (``network`` set), the host's for one that did not."""
+    if network is None:
+        return host_refusal(fence_active=host_fence_active, ok=ok, stderr=stderr)
+    return vm_refusal(network=network, ok=ok, stdout=stdout, stderr=stderr)
 
 
-def fence_note(*, network: bool, ok: bool, stdout: str, stderr: str) -> str | None:
-    """What the model should do about a refusal by the VM's fence, or None. Only for a
-    command that ran in the VM."""
-    text = f"{stdout}\n{stderr}"
-    if DENIED_MARKER in text:
-        return (
-            "The VM's egress gateway refused a host this conversation has not been allowed "
-            "to reach. Ask for it with `code_request_egress`, then run the command again."
-        )
-    if not ok:
-        refused = "407" in text and any(sign in text for sign in _PROXY_REFUSED_SIGNS)
-        if network and refused:
-            return _CREDENTIALS_NOTE
-        if not network and (refused or mentions_no_network(text)):
-            return _OFFLINE_NOTE
-    if "Read-only file system" in text:
-        return (
-            "A project you may only read is mounted read-only. To change it, edit the file "
-            "with the `files_*` tools, which ask the operator once and then let this thread "
-            "write that project, and run the command again."
-        )
-    return None
+def _with_refusal(payload: dict[str, object], refusal: Refusal | None) -> None:
+    if refusal is None:
+        return
+    payload["fence_note"] = refusal.note
+    if refusal.denied_host is not None:
+        payload["denied_host"] = refusal.denied_host
+
+
+def _host_fence() -> ConfinementState:
+    return confinement_state(get_settings())
 
 
 def _progress_hook(ctx: RunContext[RunDeps]) -> ProgressHook | None:
@@ -208,6 +194,7 @@ def _run_payload(
 ) -> dict[str, object]:
     """One finished command, as the model and the operator's terminal both read it. The
     optional keys are absent rather than null when they say nothing."""
+    fields = _boundary_fields(boundary)
     payload: dict[str, object] = {
         "ok": result.ok,
         "exit_code": result.exit_code,
@@ -216,19 +203,20 @@ def _run_payload(
         "timed_out": result.timed_out,
         "duration_ms": result.duration_ms,
         "cwd": cwd,
-        **_boundary_fields(boundary),
+        **fields,
     }
-    note = (
-        fence_note(
-            network=boundary.network, ok=result.ok, stdout=result.stdout, stderr=result.stderr
-        )
-        if boundary.fenced
-        else None
+    _with_refusal(
+        payload,
+        _refusal(
+            network=boundary.network if boundary.fenced else None,
+            ok=result.ok,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            host_fence_active=fields["fenced"] is True,
+        ),
     )
-    if note is not None:
-        payload["fence_note"] = note
     if notes:
-        payload["notes"] = list(notes)
+        payload["notes"] = list(dict.fromkeys(notes))
     if result.timed_out:
         payload["error"] = (
             f"The command was still running after {timeout_s}s and was terminated. "
@@ -242,12 +230,15 @@ def _run_payload(
 def _boundary_fields(boundary: _Boundary) -> dict[str, object]:
     """The declaration and the fence's verdict, which every executing tool carries.
     ``network`` is what a VM command actually ran with, which an ``offline`` declaration
-    can differ from."""
+    can differ from. A host command is ``fenced`` when the host fence is applied."""
     fields: dict[str, object] = {"reach": boundary.reach, "fenced": boundary.fenced}
     if boundary.fenced:
         fields["network"] = boundary.network
-    if boundary.reason is not None:
-        fields["unfenced_reason"] = boundary.reason
+        return fields
+    state = _host_fence()
+    fields["fenced"] = state.state == "active"
+    if state.state != "active":
+        fields["unfenced_reason"] = f"the host fence is not applied: {state.reason}"
     return fields
 
 
@@ -263,10 +254,16 @@ def _background_payload(status: BackgroundStatus) -> dict[str, object]:
         "stdout": status.stdout,
         "stderr": status.stderr,
     }
-    if status.network is not None:
-        note = fence_note(network=status.network, ok=ok, stdout=status.stdout, stderr=status.stderr)
-        if note is not None:
-            payload["fence_note"] = note
+    _with_refusal(
+        payload,
+        _refusal(
+            network=status.network,
+            ok=ok,
+            stdout=status.stdout,
+            stderr=status.stderr,
+            host_fence_active=_host_fence().state == "active",
+        ),
+    )
     return payload
 
 
@@ -368,9 +365,9 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
 
         Returns `ok`, `exit_code` (null after a timeout), `stdout`, `stderr`, `timed_out`,
         `duration_ms`, the `cwd` the next command starts in, the `reach` you declared and
-        whether it ran `fenced` in the VM. A `fence_note` explains a refusal by the fence,
-        such as a blocked host or a read-only project; act on it rather than retrying the
-        same command. `notes` reports what happened when your changes were copied back.
+        whether it ran `fenced`. A `fence_note` explains a refusal by the fence, such as a
+        blocked host, a read-only project or a protected host path; act on it rather than
+        retrying the same command. `notes` reports what happened when your changes were copied back.
 
         Args:
             command: The command, as you would type it in bash.
@@ -378,10 +375,11 @@ def shell_toolset() -> FunctionToolset[RunDeps]:
                 no network: builds, tests, git and anything that reads or writes files.
                 `network` runs it in your VM with the domains the operator has allowed,
                 for installs, clones and downloads; a package install or clone gets it
-                even when declared `offline`. `host` runs it unfenced on the operator's
-                own machine, starting in the project's folder there; use it only when the
-                command has to act on that machine, never to install packages, and know
-                that its changes cannot be reverted.
+                even when declared `offline`. `host` runs it on the operator's own
+                machine, starting in the project's folder there, inside a fence that
+                keeps it from shell startup files, `~/.claude`, git hooks and credentials;
+                use it only when the command has to act on that machine, never to install
+                packages, and know that its changes cannot be reverted.
             timeout_seconds: Seconds to wait before the command is killed. Default 300.
         """
         state = await _ready(ctx, "run_command")
