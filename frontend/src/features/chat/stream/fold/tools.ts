@@ -32,6 +32,13 @@ import {
 } from "../patch";
 import type { FoldContext } from "./types";
 
+type Asked = Extract<RunEvent, { type: "approval.required" }>;
+
+/** The backend fills `explanation` with the guard's reason when the tool wrote none; the
+ *  card prints the guard on a line of its own, so the copy is dropped. */
+const explanationOf = (ev: Asked): string | undefined =>
+  ev.explanation && ev.explanation !== ev.guard ? ev.explanation : undefined;
+
 /** Fold one tool, review or park event; false when the event is not in this family. */
 export function foldTools(ev: RunEvent, c: FoldContext): boolean {
   const { deps, assistantId } = c;
@@ -259,7 +266,9 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
           const review = findReview(m, ev.tool_call_id)?.review;
           upsertHost(m, ev.tool_call_id, ev.name, {
             command: typeof args.command === "string" ? args.command : "",
-            explanation: ev.explanation ?? undefined,
+            explanation: explanationOf(ev),
+            guard: ev.guard ?? undefined,
+            unconfined: ev.unconfined ?? undefined,
             risk: review?.risk,
             reviewReason: review?.reason,
             phase: "pending",
@@ -268,6 +277,15 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
         return true;
       }
       patchById(assistantId, (m) => {
+        // A reconnect with an old Last-Event-ID replays the park; one card per call.
+        if (
+          m.blocks?.some(
+            (b) =>
+              b.kind === "approval" &&
+              b.approval.toolCallId === ev.tool_call_id,
+          )
+        )
+          return;
         const review = findReview(m, ev.tool_call_id)?.review;
         (m.blocks ?? (m.blocks = [])).push({
           kind: "approval",
@@ -277,7 +295,9 @@ export function foldTools(ev: RunEvent, c: FoldContext): boolean {
             name: ev.name,
             args,
             summary: ev.summary,
-            explanation: ev.explanation ?? undefined,
+            explanation: explanationOf(ev),
+            guard: ev.guard ?? undefined,
+            unconfined: ev.unconfined ?? undefined,
             risk: review?.risk,
             reviewReason: review?.reason,
           },

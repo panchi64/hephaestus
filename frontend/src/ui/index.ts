@@ -296,7 +296,10 @@ export {
 } from "./components/Toast";
 export {
   confirm,
+  choose,
   ConfirmHost,
+  type ConfirmChoice,
+  type ChooseOptions,
   type ConfirmTone,
   type ConfirmOptions,
 } from "./components/Confirm";

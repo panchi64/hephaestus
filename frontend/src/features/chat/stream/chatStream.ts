@@ -53,6 +53,7 @@ import {
   reseatFromDetail,
   type TranscriptStore,
 } from "./branching";
+import { askRestore } from "../askRestore";
 import { adoptLiveIdentity } from "./reseatIdentity";
 import { attachOptions, createRunDrive } from "./drive";
 import {
@@ -625,6 +626,7 @@ export function createChatStream(
     overrideSelection: () => options.selection?.(),
     driveRun: (runId, assistantId) => drive.driveRun(runId, assistantId),
     reattachToLiveRun: (id) => resume.reattachToLiveRun(id),
+    askRestore,
     onTurnComplete: () => options.onTurnComplete?.(),
   });
 

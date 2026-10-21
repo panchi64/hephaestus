@@ -22,33 +22,55 @@ export interface ConfirmOptions {
    *  unrecoverable — not a general "are you sure" upgrade, which would only
    *  train the reflex it exists to interrupt. */
   requireText?: string;
+  /** Rendered under the detail line, for a body the plain sentence cannot carry. */
+  content?: () => JSX.Element;
 }
 
-interface ConfirmState extends ConfirmOptions {
-  resolve: (confirmed: boolean) => void;
+export type ConfirmChoice = "confirm" | "alternate" | "cancel";
+
+/** A dialog with a third way out, between confirming and cancelling. */
+export interface ChooseOptions extends ConfirmOptions {
+  /** The middle button: go on without what the confirm button does. */
+  alternateLabel: string;
+}
+
+interface ConfirmState extends ChooseOptions {
+  resolve: (choice: ConfirmChoice) => void;
 }
 
 const [current, setCurrent] = createSignal<ConfirmState | null>(null);
+
+function open(
+  opts: ConfirmOptions & { alternateLabel?: string },
+): Promise<ConfirmChoice> {
+  return new Promise((resolve) => {
+    setCurrent((prev) => {
+      prev?.resolve("cancel"); // supersede any open dialog as cancelled
+      return { alternateLabel: "", ...opts, resolve };
+    });
+  });
+}
 
 /** Await a user's confirmation before a dangerous action:
  *  `if (await confirm({ title: "Delete report?", tone: "alert" })) remove();`
  *  Cancel, the X, the backdrop, and Escape all resolve `false`.
  *  Render <ConfirmHost/> once at the app root. */
-export function confirm(opts: ConfirmOptions): Promise<boolean> {
-  return new Promise((resolve) => {
-    setCurrent((prev) => {
-      prev?.resolve(false); // supersede any open dialog as cancelled
-      return { ...opts, resolve };
-    });
-  });
+export async function confirm(opts: ConfirmOptions): Promise<boolean> {
+  return (await open(opts)) === "confirm";
 }
 
-function settle(confirmed: boolean): void {
+/** Like `confirm`, with a middle choice. Cancel, the X, the backdrop and Escape resolve
+ *  `"cancel"`. */
+export function choose(opts: ChooseOptions): Promise<ConfirmChoice> {
+  return open(opts);
+}
+
+function settle(choice: ConfirmChoice): void {
   const c = current();
   if (!c) return;
   setCurrent(null);
   setTyped("");
-  c.resolve(confirmed);
+  c.resolve(choice);
 }
 
 /** The gate word as typed so far. Held beside `current` rather than inside it so
@@ -65,17 +87,24 @@ export function ConfirmHost(): JSX.Element {
   return (
     <Modal
       open={current() !== null}
-      onClose={() => settle(false)}
+      onClose={() => settle("cancel")}
       title={current()?.title}
       footer={
         <>
-          <Button variant="ghost" onClick={() => settle(false)}>
+          <Button variant="ghost" onClick={() => settle("cancel")}>
             {current()?.cancelLabel ?? "Cancel"}
           </Button>
+          <Show when={current()?.alternateLabel}>
+            {(label) => (
+              <Button variant="default" onClick={() => settle("alternate")}>
+                {label()}
+              </Button>
+            )}
+          </Show>
           <Button
             variant={current()?.tone === "alert" ? "danger" : "primary"}
             disabled={gated()}
-            onClick={() => settle(true)}
+            onClick={() => settle("confirm")}
           >
             {current()?.confirmLabel ?? "Confirm"}
           </Button>
@@ -86,6 +115,7 @@ export function ConfirmHost(): JSX.Element {
         <Text tone="dim">
           {current()?.detail ?? "This action cannot be undone."}
         </Text>
+        {current()?.content?.()}
         <Show when={current()?.requireText}>
           {(word) => (
             <Input

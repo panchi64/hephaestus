@@ -60,6 +60,8 @@ export function SubagentApproval(props: {
                   args: event.args ?? {},
                   summary: event.summary,
                   explanation: event.explanation ?? undefined,
+                  guard: event.guard ?? undefined,
+                  unconfined: event.unconfined ?? undefined,
                 },
               ],
         );
