@@ -11,54 +11,72 @@ their choice and is not a guard, though the card still carries a warning
 **A backstop behind the fence, not a replacement for it.** The host fence lets a command
 write anywhere under ``~``, so for deleting files this reading is the only line of defence,
 and it works on syntax: paths are read off the command's grammar (:mod:`shell_scan`), so a
-path built at run time is invisible to it. A command it cannot parse that contains a
-deleting word is therefore guarded as a whole. Also outside its reach: ``GIT_DIR=`` and
-``--git-dir`` pointing a repository somewhere else, and a ``cd`` inside a subshell leaking
-into the line after it.
+path built at run time is invisible to it, and a command it cannot parse that contains a
+deleting word is guarded as a whole. Outside its reach:
 
-**Why ``.git`` is limited to hooks, config and the gitlink.** Those are the places git
-reads code or settings that run commands. Guarding all of ``.git`` would ask on every
-commit's internals.
+- an interpreter given code to run (``python -c``, ``perl -e``, ``node -e``, ``ruby -e``);
+- ``GIT_DIR=`` and ``--git-dir`` pointing a repository somewhere else;
+- ``ssh`` and other programs that run a command elsewhere;
+- a program that deletes or writes on its own account (``make clean``, a script).
+
+On the host a pipeline or here-string that feeds a shell a script this cannot read asks,
+and so does ``osascript``, which is a direct line to the operator's machine.
+
+**Why ``.git`` is limited to hooks, config and the gitlink for writes.** Those are the
+places git reads code or settings that run commands. A repository's ``.git`` folder is also
+critical to delete.
 """
 
 from __future__ import annotations
 
+import posixpath
 import re
 from collections.abc import Mapping
 from pathlib import Path
 
 from core.config import Settings
-from services.home.paths import HOME
 from services.home.table import RunHome
 from services.permissions.guard_paths import Places
 from services.permissions.shell_acts import (
+    GLOB_CHARS,
+    ConfigWrite,
+    Transfer,
     config_write,
+    executes_code,
+    git_overrides,
+    is_executing_key,
     name_of,
     removal_targets,
+    transfer,
     write_targets,
 )
-from services.permissions.shell_ast import ShellCommand, operands
-from services.permissions.shell_scan import OPAQUE, scan
+from services.permissions.shell_ast import OPAQUE, ShellCommand, operands
+from services.permissions.shell_scan import scan
 from services.sandbox.fence import confinement_state
-from services.sandbox.floor import is_protected_write
 
 #: The key a guarded call carries in its approval metadata, and in a parked turn's.
 GUARD_KEY = "guard"
 
 FILE_WRITE_TOOLS = frozenset({"files_write_file", "files_edit_file", "files_create_directory"})
+#: The file tools that rewrite what a file holds, which need the file read first.
+FILE_REWRITE_TOOLS = frozenset({"files_write_file", "files_edit_file"})
 SHELL_TOOLS = frozenset({"shell_run_command", "shell_start_command"})
 HOST_COMMAND_TOOL = "code_run_host_command"
+#: The tools that run a command, which must not overlap: each is judged against the
+#: directory the one before it left the shell in.
+COMMAND_TOOLS = SHELL_TOOLS | {HOST_COMMAND_TOOL}
 
 #: Every tool :func:`guard` has a rule for.
-GUARDED_TOOLS = FILE_WRITE_TOOLS | SHELL_TOOLS | {HOST_COMMAND_TOOL}
+GUARDED_TOOLS = FILE_WRITE_TOOLS | COMMAND_TOOLS
 
 _GRANT_FREE = "It always asks, whatever the permission level, and no standing approval covers it."
 _REMOVER_WORDS = re.compile(
-    r"(?<![\w.-])(?:rm|rmdir|unlink|shred)(?![\w-])"
+    r"(?<![\w.-])(?:rm|rmdir|unlink|shred|srm)(?![\w-])"
     + r"|\bfind\b[^;|&]*-delete|\bgit\b[^;|&]*\bclean\b"
 )
-_GLOB = frozenset("*?[")
-_HOOKS_PATH = "core.hookspath"
+_UNREADABLE_SCRIPT = (
+    "This command runs a script it can't read, which could do anything on your computer."
+)
 
 
 def is_guarded(metadata: Mapping[str, object] | None) -> bool:
@@ -77,20 +95,24 @@ def guard(
     """Why this call must go to the operator whatever the level says, or None.
 
     ``cwd`` is the shell's working directory as a home path; it defaults to the home's
-    default place.
+    default place. ``code_run_host_command`` starts in the host's scratch directory
+    whatever ``cwd`` is.
     """
     os_home = Path.home()
     if tool in FILE_WRITE_TOOLS:
         reason = _file_write(
-            args.get("path"), home, os_home, directory=tool == "files_create_directory"
+            args.get("path"), home, os_home, settings, directory=tool == "files_create_directory"
         )
         return None if reason is None else f"{reason} {_GRANT_FREE}"
-    if tool not in SHELL_TOOLS and tool != HOST_COMMAND_TOOL:
+    if tool not in COMMAND_TOOLS:
         return None
     host = tool == HOST_COMMAND_TOOL or args.get("reach") == "host"
     command = args.get("command")
     if isinstance(command, str):
-        places = Places.at(home, os_home, settings.data_dir, cwd)
+        if tool == HOST_COMMAND_TOOL:
+            places = Places.for_host_command(home, os_home, settings.data_dir)
+        else:
+            places = Places.at(home, os_home, settings.data_dir, cwd)
         reason = _command_reason(command, places, host=host)
         if reason is not None:
             return f"{reason} {_GRANT_FREE}"
@@ -139,21 +161,18 @@ def unconfined(tool: str, args: Mapping[str, object], *, settings: Settings) -> 
 
 def _command_reason(command: str, start: Places, *, host: bool) -> str | None:
     found = scan(command)
-    places = start
-    standing = [start]
-    for one in found.commands:
-        if name_of(one) in ("cd", "pushd"):
-            words = operands(one.arguments)
-            places = places.after_cd(OPAQUE if words and words[0] == "-" else _first(words))
-        else:
-            reason = _act_reason(one, places, host)
+    for step in found.steps:
+        for directories in step.cwds:
+            reason = _act_reason(step.command, start.walk(directories), host)
             if reason is not None:
                 return reason
-        standing.append(places)
-    for destination, after in found.writes:
-        why = standing[min(after, len(standing) - 1)].protected(destination, host=host)
-        if why is not None:
-            return f"This command writes {destination}: {why}."
+    for destination, cwds in found.writes:
+        for directories in cwds:
+            why = start.walk(directories).protected(destination, host=host)
+            if why is not None:
+                return f"This command writes {destination}: {why}."
+    if host and found.piped_shells:
+        return _UNREADABLE_SCRIPT
     for part in found.unreadable:
         if _REMOVER_WORDS.search(part):
             return "This command cannot be fully read and appears to delete files."
@@ -161,63 +180,121 @@ def _command_reason(command: str, start: Places, *, host: bool) -> str | None:
 
 
 def _act_reason(one: ShellCommand, places: Places, host: bool) -> str | None:
+    name = name_of(one)
+    if OPAQUE in one.program:
+        return _opaque_program_reason(one, places, host)
+    if name == "osascript" and host:
+        return "This command runs osascript, which can do anything on your computer."
     for target in removal_targets(one):
         if OPAQUE in target:
             if not _known_tail(target):
                 return "This command deletes a path that is only known when it runs."
             continue
-        what = places.critical(target)
+        what = places.critical(target, host=host)
         if what is not None:
             return f"This command deletes {what} ({target}), which cannot be undone."
+    moved = transfer(one)
+    if moved is not None:
+        reason = _transfer_reason(moved, places, host)
+        if reason is not None:
+            return reason
     for written in write_targets(one):
         why = places.protected(written.path, host=host, kind=written.kind)
         if why is not None:
             return f"This command writes {written.path}: {why}."
+    if name == "git":
+        for pair in git_overrides(one.arguments):
+            key, _, value = pair.partition("=")
+            if executes_code(key.lower(), value):
+                return f"This command makes git run {key} for this call, which can run code."
     change = config_write(one)
-    if change is None:
-        return None
-    return _config_reason(change.key, change.scope, change.file, places, host)
+    return None if change is None else _config_reason(change, places, host)
 
 
-def _first(words: list[str]) -> str | None:
-    return words[0] if words else None
+def _opaque_program_reason(one: ShellCommand, places: Places, host: bool) -> str | None:
+    """A command whose program is only known when it runs is guarded when anything it is
+    given is a path that must not be touched."""
+    for word in operands(one.arguments):
+        if OPAQUE in word:
+            continue
+        what = places.critical(word, host=host)
+        if what is not None:
+            return f"This command runs a program it can't read on {what} ({word})."
+        why = places.protected(word, host=host)
+        if why is not None:
+            return f"This command runs a program it can't read on {word}: {why}."
+    return None
+
+
+def _transfer_reason(moved: Transfer, places: Places, host: bool) -> str | None:
+    if moved.moves:
+        for source in moved.sources:
+            if OPAQUE in source:
+                continue
+            what = places.critical(source, host=host)
+            if what is not None:
+                return f"This command moves {what} ({source}) away."
+            why = places.protected(source, host=host, kind="remove")
+            if why is not None:
+                return f"This command moves {source} away: {why}."
+    if moved.prunes and OPAQUE not in moved.dest:
+        what = places.critical(moved.dest, host=host)
+        if what is not None:
+            return f"This command deletes what {what} ({moved.dest}) holds beyond its sources."
+    if not (moved.into_directory or places.is_dir(moved.dest, host=host)):
+        why = places.protected(moved.dest, host=host)
+        return None if why is None else f"This command writes {moved.dest}: {why}."
+    for source in moved.sources:
+        contents = OPAQUE in source or source.endswith(("/", "/.")) or source in (".", "..")
+        if contents:
+            if places.holds_protected(moved.dest, host=host):
+                return (
+                    f"This command copies names it can't read into {moved.dest}, "
+                    + "which holds files that must not be overwritten."
+                )
+            continue
+        target = f"{moved.dest.rstrip('/')}/{posixpath.basename(source.rstrip('/'))}"
+        why = places.protected(target, host=host)
+        if why is not None:
+            return f"This command writes {target}: {why}."
+    return None
 
 
 def _known_tail(target: str) -> bool:
     """Whether an unreadable path still ends in a plain name, such as ``$DIR/build``."""
     tail = target.rstrip("/").rsplit("/", 1)[-1]
-    return bool(tail) and OPAQUE not in tail and tail not in (".", "..") and not (_GLOB & set(tail))
+    return (
+        bool(tail)
+        and OPAQUE not in tail
+        and tail not in (".", "..")
+        and not (GLOB_CHARS & set(tail))
+    )
 
 
-def _config_reason(
-    key: str | None, scope: str, file: str | None, places: Places, host: bool
-) -> str | None:
-    if key == _HOOKS_PATH:
-        return "This command points git at another hooks folder, which can run arbitrary code."
-    if scope in ("global", "system") and host:
+def _config_reason(change: ConfigWrite, places: Places, host: bool) -> str | None:
+    if change.removes and is_executing_key(change.key):
+        return None
+    if executes_code(change.key, change.value):
+        return f"This command sets git's {change.key}, which makes git run code."
+    if change.scope in ("global", "system") and host:
         return "This command changes the git configuration for every repository on this computer."
-    if scope == "file" and file is not None:
-        why = places.protected(file, host=host)
-        return None if why is None else f"This command writes {file}: {why}."
+    if change.scope == "file" and change.file is not None:
+        why = places.protected(change.file, host=host)
+        return None if why is None else f"This command writes {change.file}: {why}."
     return None
 
 
-def _file_write(raw: object, home: RunHome | None, os_home: Path, *, directory: bool) -> str | None:
+def _file_write(
+    raw: object, home: RunHome | None, os_home: Path, settings: Settings, *, directory: bool
+) -> str | None:
     if home is None or not isinstance(raw, str):
         return None
+    places = Places.at(home, os_home, settings.data_dir, None)
     spellings = [raw]
     if not raw.strip().startswith(("~", "/")):
-        spellings.append(f"{home.default.path}/{raw}")
-        spellings.append(f"{HOME}/{raw}")
+        spellings.append(f"~/{raw}")
     for spelling in spellings:
-        located = home.locate(spelling)
-        if located is None:
-            continue
-        mount, rel = located
-        target = mount.root / rel
-        why = is_protected_write(target, home=os_home)
-        if why is None and not directory and target.name.lower() == ".git":
-            why = "a .git file can point git at a directory whose hooks run"
+        why = places.protected(spelling, host=False, kind="dir" if directory else "write")
         if why is not None:
             return f"This writes {raw}: {why}."
     return None

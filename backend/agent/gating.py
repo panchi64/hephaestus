@@ -81,7 +81,13 @@ from services.permissions import (
     review_transcript,
 )
 from services.permissions.fence import Fence
-from services.permissions.guards import GUARD_KEY, GUARDED_TOOLS, guard, is_guarded
+from services.permissions.guards import (
+    FILE_REWRITE_TOOLS,
+    GUARD_KEY,
+    GUARDED_TOOLS,
+    guard,
+    is_guarded,
+)
 from services.registry import ModelRegistry
 from services.sandbox.thread_shells import ThreadShells
 from services.vm.project import ProjectCopies
@@ -89,6 +95,7 @@ from tools.deps import RunDeps
 from tools.files import unread_refusal
 from tools.guarded import shell_cwd
 from tools.home import resolve_run_home
+from tools.run_home import home_of
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +105,6 @@ logger = logging.getLogger(__name__)
 #: their latencies overlap rather than stack.
 _REVIEW_CONCURRENCY = 4
 
-_FILE_REWRITES = frozenset({"files_write_file", "files_edit_file"})
 _UNEXPLAINED = "This call always needs your approval."
 
 
@@ -209,12 +215,26 @@ async def settle_deferred(
     # ALLOW can come from a grant or from a level that allows outright, and only the first
     # is revocable.
     home = await _guard_home(deps, approvals)
-    guarded = _guard_reasons(approvals, home, shell_cwd(deps), metadata)
+    # The operator is never asked to approve a write the read ledger would turn away, and
+    # no model reviews one: the model is told to read the file first.
+    settled: dict[str, ToolApproved | ToolDenied] = {}
+    asking: list[ToolCallPart] = []
+    for call in approvals:
+        refusal = (
+            await unread_refusal(deps, call.tool_name, call.args_as_dict(), home)
+            if call.tool_name in FILE_REWRITE_TOOLS
+            else None
+        )
+        if refusal is None:
+            asking.append(call)
+        else:
+            settled[call.tool_call_id] = ToolDenied(message=refusal)
+    guarded = _guard_reasons(asking, home, shell_cwd(deps), metadata)
     ruled = [
         (call, Decision.ASK, False)
         if call.tool_call_id in guarded and decide(permission, call.tool_name) is not Decision.BLOCK
         else (call, *_by_level(permission, call, granted))
-        for call in approvals
+        for call in asking
     ]
     reviewed = await review_batch(
         run,
@@ -227,7 +247,6 @@ async def settle_deferred(
         budget=budget,
         home=home,
     )
-    settled: dict[str, ToolApproved | ToolDenied] = {}
     manual: list[ToolCallPart] = []
     for call, decision, grant_backed in ruled:
         outcome = reviewed.get(call.tool_call_id)
@@ -262,29 +281,7 @@ async def settle_deferred(
             )
         else:
             manual.append(call)
-    return settled, await _turned_away(deps, settled, manual)
-
-
-async def _turned_away(
-    deps: RunDeps, settled: dict[str, ToolApproved | ToolDenied], manual: list[ToolCallPart]
-) -> list[ToolCallPart]:
-    """``manual`` without the changes to unread files, which are denied here instead.
-
-    The operator is never asked to approve a write the read ledger would turn away when
-    it ran; the model is told to read the file first.
-    """
-    asking: list[ToolCallPart] = []
-    for call in manual:
-        refusal = (
-            await unread_refusal(deps, call.tool_name, call.args_as_dict())
-            if call.tool_name in _FILE_REWRITES
-            else None
-        )
-        if refusal is None:
-            asking.append(call)
-        else:
-            settled[call.tool_call_id] = ToolDenied(message=refusal)
-    return asking
+    return settled, manual
 
 
 async def _guard_home(deps: RunDeps, approvals: Sequence[ToolCallPart]) -> RunHome | None:
@@ -292,11 +289,7 @@ async def _guard_home(deps: RunDeps, approvals: Sequence[ToolCallPart]) -> RunHo
     one it has a rule for."""
     if not any(call.tool_name in GUARDED_TOOLS for call in approvals):
         return None
-    try:
-        return await resolve_run_home(deps)
-    except Exception:  # a guard that raises would abort the operator's turn
-        logger.info("guard: no home to place paths against", exc_info=True)
-        return None
+    return await home_of(deps)
 
 
 def _guard_reasons(

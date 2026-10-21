@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Sequence
+from pathlib import Path
 
 import pytest
 from pydantic_ai import (
@@ -22,9 +23,12 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolResults
+from pydantic_ai.usage import RunUsage
 
 import agent.gating as gating
+import tools.run_home as run_home
 from agent import stream_agent_run
 from agent.factory import build_agent
 from agent.history import TurnStart
@@ -36,10 +40,14 @@ from core.db import init_db, make_engine
 from runs import ApprovalRequired, Run, RunStatus, RunStream, ToolFailed
 from services.approval_grants import ApprovalGrantStore
 from services.conversations import ConversationBinding
+from services.home.backend import Mount
+from services.home.paths import SCRATCH
+from services.home.table import RunHome
 from services.permissions import PermissionLevel, guards
 from services.permissions.guards import GUARD_KEY
 from tools import RunDeps, build_agent_toolsets
 from tools.code_mode_marks import RUN_CODE
+from tools.run_home import home_of
 
 from ._helpers import run_bodies
 from .guard_support import FenceState, set_fence
@@ -147,7 +155,9 @@ class TestTheDeferredPath:
     ):
         asked: list[str] = []
 
-        async def unread(_deps: RunDeps, tool: str, _args: dict[str, object]) -> str | None:
+        async def unread(
+            _deps: RunDeps, tool: str, _args: dict[str, object], _home: object = None
+        ) -> str | None:
             asked.append(tool)
             return "Read it first." if tool == "files_write_file" else None
 
@@ -159,6 +169,30 @@ class TestTheDeferredPath:
         assert settled["w"].message == "Read it first."
         assert [c.tool_call_id for c in manual] == ["r"]
         assert asked == ["files_write_file"]
+
+    async def test_the_reviewer_is_not_asked_about_a_write_it_would_turn_away(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        reviewed: list[str] = []
+
+        async def spy(
+            _run: Run, calls: Sequence[ToolCallPart], **_kwargs: object
+        ) -> dict[str, object]:
+            reviewed.extend(call.tool_call_id for call in calls)
+            return {}
+
+        async def unread(
+            _deps: RunDeps, _tool: str, _args: dict[str, object], _home: object = None
+        ) -> str | None:
+            return "Read it first."
+
+        monkeypatch.setattr(gating, "review_batch", spy)
+        monkeypatch.setattr(gating, "unread_refusal", unread)
+        write = ToolCallPart("files_write_file", {"path": "~/a", "content": "x"}, tool_call_id="w")
+        settled, manual = await _settle("auto", [write])
+        assert reviewed == []
+        assert manual == []
+        assert isinstance(settled["w"], ToolDenied)
 
     async def test_a_level_that_refuses_outright_still_refuses(self):
         settled, manual = await _settle("plan", [_call(DANGEROUS)])
@@ -345,12 +379,56 @@ async def _run_scripted(
 _SCRIPT = (
     'out = ""\n'
     "try:\n"
-    '    await shell_run_command(command="rm -rf ~")\n'
+    '    shell_run_command(command="rm -rf ~")\n'
     "except Exception as e:\n"
     "    out = str(e)\n"
-    'await shell_run_command(command="ls")\n'
+    'shell_run_command(command="ls")\n'
     "out"
 )
+
+
+class TestCallsThatRunCommands:
+    async def test_they_run_alone_and_nothing_else_does(self):
+        toolset: FunctionToolset[RunDeps] = FunctionToolset()
+
+        @toolset.tool_plain
+        def run_command(command: str) -> str:
+            return command
+
+        @toolset.tool_plain
+        def check_command(command_id: str) -> str:
+            return command_id
+
+        stack = build_agent_toolsets({"shell": toolset})[0]
+        run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
+        ctx = RunContext(
+            deps=RunDeps(run=run, owner_id=OWNER, permission="yolo"),
+            model=TestModel(),
+            usage=RunUsage(),
+        )
+        tools = await stack.get_tools(ctx)
+        assert tools["shell_run_command"].tool_def.sequential
+        assert not tools["shell_check_command"].tool_def.sequential
+
+    async def test_the_home_is_resolved_once_for_the_guard_and_the_tool(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        opened: list[int] = []
+        scratch = RunHome(
+            mounts=(Mount(SCRATCH, tmp_path, writable=True),), default=SCRATCH, key="t"
+        )
+
+        async def counting(deps: RunDeps) -> RunHome:
+            opened.append(1)
+            deps.home = scratch
+            return scratch
+
+        monkeypatch.setattr(run_home, "resolve_run_home", counting)
+        run = Run(id="t", kind="chat", owner_id=OWNER, stream=RunStream())
+        deps = RunDeps(run=run, owner_id=OWNER)
+        for _ in range(3):
+            assert await home_of(deps) is scratch
+        assert opened == [1]
 
 
 class TestANestedCall:

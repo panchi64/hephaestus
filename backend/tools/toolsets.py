@@ -43,6 +43,7 @@ from dataclasses import replace
 from pydantic_ai import AbstractToolset, CombinedToolset, RunContext, ToolDefinition
 
 from services.permissions import beyond_scope
+from services.permissions.guards import COMMAND_TOOLS
 from services.tool_policy import permission_disabled_tools
 from services.tool_sensitivity import declared_sensitivity
 
@@ -163,6 +164,20 @@ def _narrated(tool_def: ToolDefinition) -> ToolDefinition:
     )
 
 
+def _alone(_ctx: RunContext[RunDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    """Run each tool that runs a command alone, never overlapping another call in the batch.
+
+    The guard judges a relative path against the directory the shell stands in, and a
+    command that changes it (`cd`) would otherwise race the call next to it. Inside
+    `run_code` such a tool is called without `await`, which is how the library presents a
+    sequential tool.
+    """
+    return [
+        replace(tool_def, sequential=True) if tool_def.name in COMMAND_TOOLS else tool_def
+        for tool_def in tool_defs
+    ]
+
+
 def core_categories() -> dict[str, AbstractToolset[RunDeps]]:
     """The categories the harness itself contributes — everything else is a manifest's."""
     return {
@@ -237,4 +252,5 @@ def build_agent_toolsets(
     # namespaced names (`describe.py`). Recovery wraps all of it, so a call that raises is
     # reported to the model whatever layer it raised in; the guard sits just inside it.
     stack = combined.filtered(_enabled_gate).prepared(_approval_gate).prepared(_describe)
+    stack = stack.prepared(_alone)
     return [RecoveringToolset(GuardedToolset(stack), call_timeout_s=call_timeout_s)]

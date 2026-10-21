@@ -63,7 +63,7 @@ only what the guest copy holds — and it cannot send what it read anywhere.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 import tree_sitter_bash
@@ -191,6 +191,11 @@ WRAPPERS = frozenset(
         "timeout",
         "setsid",
         "stdbuf",
+        "caffeinate",
+        "arch",
+        "chronic",
+        "watch",
+        "flock",
     }
 )
 
@@ -198,10 +203,20 @@ WRAPPERS = frozenset(
 WRAPPER_VALUE_FLAGS: dict[str, frozenset[str]] = {
     "sudo": frozenset({"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "-r", "-t"}),
     "doas": frozenset({"-u", "-C"}),
-    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S"}),
+    "env": frozenset({"-u", "--unset", "-C", "--chdir"}),
     "nice": frozenset({"-n"}),
     "timeout": frozenset({"-s", "-k"}),
+    "exec": frozenset({"-a"}),
+    "caffeinate": frozenset({"-t", "-w"}),
+    "watch": frozenset({"-n", "-d"}),
+    "flock": frozenset({"-w", "-E"}),
 }
+
+#: Wrappers whose first operand is not the command: the duration, the lock file.
+_LEADING_OPERAND = frozenset({"timeout", "flock"})
+
+#: Stands for a word the shell fills in at run time.
+OPAQUE = "￼"
 
 _UNWRAP_DEPTH = 4
 
@@ -228,7 +243,11 @@ def operands(arguments: Sequence[str], value_flags: frozenset[str] | None = None
 
 
 def unwrap(one: ShellCommand) -> ShellCommand:
-    """The command a wrapper such as ``sudo`` or ``env`` runs, however deeply wrapped."""
+    """The command a wrapper such as ``sudo`` or ``env`` runs, however deeply wrapped.
+
+    ``env -S 'string'`` is returned as a shell running the string. Wrappers nested past
+    the depth limit come back as an unknown program, so a deep chain cannot hide one.
+    """
     for _ in range(_UNWRAP_DEPTH):
         name = one.program.rsplit("/", 1)[-1]
         if name not in WRAPPERS:
@@ -238,18 +257,22 @@ def unwrap(one: ShellCommand) -> ShellCommand:
         index = 0
         while index < len(words):
             word = words[index]
+            if name == "env" and word in ("-S", "--split-string") and index + 1 < len(words):
+                return ShellCommand("sh", ("-c", words[index + 1]))
             if word in value_flags:
                 index += 2
             elif is_flag(word) or (name == "env" and "=" in word):
                 index += 1
             else:
                 break
-        if name == "timeout":
+        if name in _LEADING_OPERAND:
             index += 1
         rest = words[index:]
         if not rest:
             return one
         one = ShellCommand(program=rest[0], arguments=tuple(rest[1:]))
+    if one.program.rsplit("/", 1)[-1] in WRAPPERS:
+        return ShellCommand(OPAQUE, one.arguments)
     return one
 
 
@@ -400,6 +423,39 @@ def _leading_words(command: ShellCommand) -> tuple[str, ...]:
     return tuple(words)
 
 
+_ESCAPE = re.compile(r"\\(.)", re.DOTALL)
+_VARIABLE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _text(node: Node) -> str:
+    return node.text.decode(errors="replace") if node.text else ""
+
+
+def decode_word(node: Node, variables: Mapping[str, str] | None = None) -> str:
+    """The text the shell would hand a program for this word, with :data:`OPAQUE` where
+    it cannot be known: quoting and backslashes are removed, a backslash-newline joins the
+    lines, ``$HOME`` is ``~`` and any other variable is its value in ``variables`` if it
+    has one."""
+    kind = node.type
+    if kind in ("word", "number"):
+        return _ESCAPE.sub(r"\1", _text(node).replace("\\\n", ""))
+    if kind == "raw_string":
+        return _text(node)[1:-1]
+    if kind == "ansi_c_string":
+        return _text(node)[2:-1]
+    if kind in ("simple_expansion", "expansion"):
+        found = _VARIABLE.match(_text(node))
+        name = found.group(1) if found else None
+        if name is not None and variables is not None and name in variables:
+            return variables[name]
+        return "~" if name == "HOME" else OPAQUE
+    if kind in ("string", "concatenation"):
+        return "".join(decode_word(c, variables) for c in node.children if c.type != '"')
+    if kind == "string_content":
+        return _text(node).replace("\\\n", "")
+    return OPAQUE
+
+
 def _literal(node: Node) -> str | None:
     """The fixed text of an argument node, or None when it is decided at run time.
 
@@ -409,24 +465,26 @@ def _literal(node: Node) -> str | None:
     sees it: a brace, a glob, a bracket class or a backslash escape. Both arrive here as
     None, because in both cases the text on the command line is not the value.
     """
-    if node.type in _LITERAL:
-        text = node.text.decode(errors="replace") if node.text else ""
-        if node.type == "raw_string":
-            # Single quotes suppress every expansion there is, so the text between them is
-            # the value however it is spelled.
-            return text[1:-1]
-        return None if _expands(text, _EXPANDED_UNQUOTED) else text
-    if node.type == "string":
-        if any(child.type in _DYNAMIC for child in node.children):
-            return None
-        text = node.text.decode(errors="replace") if node.text else ""
-        return None if _expands(text, _EXPANDED_IN_QUOTES) else text.strip('"')
     if node.type == "concatenation":
         parts = [_literal(child) for child in node.children]
         if any(part is None for part in parts):
             return None
         return "".join(part for part in parts if part is not None)
-    return None
+    text = _text(node)
+    if node.type in _LITERAL:
+        # Single quotes suppress every expansion there is, so the text between them is
+        # the value however it is spelled.
+        if node.type != "raw_string" and _expands(text, _EXPANDED_UNQUOTED):
+            return None
+    elif node.type == "string":
+        if any(child.type in _DYNAMIC for child in node.children):
+            return None
+        if _expands(text, _EXPANDED_IN_QUOTES):
+            return None
+    else:
+        return None
+    value = decode_word(node)
+    return None if OPAQUE in value else value
 
 
 def _expands(text: str, characters: frozenset[str]) -> bool:

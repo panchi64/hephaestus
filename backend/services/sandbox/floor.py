@@ -54,6 +54,10 @@ _CREDENTIAL_FILES = (
 )
 
 
+#: The files ssh reads to decide who may log in and what runs when someone does.
+_SSH_RUN_FILES = ("authorized_keys", "config", "rc")
+
+
 def source_root() -> Path:
     """The backend package root, where the application's dotenv file sits."""
     return Path(core.__file__).resolve().parent.parent
@@ -67,6 +71,7 @@ def write_floor(home: Path) -> tuple[str, ...]:
         str(home / ".claude"),
         str(home / ".gitconfig"),
         str(home / ".config" / "git" / "config"),
+        *(str(home / ".ssh" / name) for name in _SSH_RUN_FILES),
     )
 
 

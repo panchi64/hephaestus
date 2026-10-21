@@ -36,6 +36,7 @@ from .deps import RunDeps
 from .home import change_log, lease, may_lease, resolve_run_home
 from .read_ledger import BINARY, hash_reported, ledger_of, thread_of, unread_message
 from .rebound import ReboundToolset
+from .run_home import home_of
 from .spill import is_untrusted_spill
 from .workspace import unavailable
 
@@ -92,7 +93,7 @@ class _HomeFiles(ReboundToolset):
         ctx: RunContext[RunDeps],
         tool: ToolsetTool[RunDeps],
     ) -> object:
-        home = await _home_of(ctx.deps)
+        home = await home_of(ctx.deps)
         tool_args = _in_home_terms(name, tool_args, home)
         path = tool_args.get("path")
         refusal, pinned = check_read(ctx.deps, name, tool_args, home)
@@ -105,7 +106,7 @@ class _HomeFiles(ReboundToolset):
             if refusal is not None:
                 return refusal
             if leased:
-                home = await _home_of(ctx.deps)
+                home = await home_of(ctx.deps)
         located = home.locate(path) if home is not None and isinstance(path, str) else None
         log = change_log(ctx.deps) if name in _FILE_WRITES and located is not None else None
         if log is not None and located is not None:
@@ -123,13 +124,6 @@ class _HomeFiles(ReboundToolset):
         if name == "read_file" and mount.place == SCRATCH and is_untrusted_spill(rel):
             return wrap_untrusted(str(result), source="saved tool output")
         return await with_brief(ctx, home, [mount.place], result)
-
-
-async def _home_of(deps: RunDeps) -> RunHome | None:
-    try:
-        return await resolve_run_home(deps)
-    except WorktreeBusyError:
-        return None
 
 
 def check_read(
@@ -158,12 +152,14 @@ def check_read(
     return None, None if known == BINARY else known
 
 
-async def unread_refusal(deps: RunDeps, tool: str, tool_args: dict[str, object]) -> str | None:
+async def unread_refusal(
+    deps: RunDeps, tool: str, tool_args: dict[str, object], home: RunHome | None = None
+) -> str | None:
     """The refusal a change to a file not read in this conversation would meet, for a
     caller that wants to answer before the operator is asked. ``tool`` is the namespaced
-    name."""
+    name; ``home`` is the run's, if the caller already has it."""
     name = tool.removeprefix("files_")
-    home = await _home_of(deps)
+    home = home if home is not None else await home_of(deps)
     try:
         spelled = _in_home_terms(name, tool_args, home)
     except ModelRetry:

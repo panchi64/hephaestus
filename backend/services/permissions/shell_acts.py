@@ -1,43 +1,112 @@
 """What one command does to the filesystem, read off its program and flags.
 
-Takes the commands :mod:`shell_scan` found and names the paths each deletes or writes. It
-knows a short list of programs; one it does not know contributes nothing, so this reads
-the common shapes of a destructive command and is not a complete account of one.
+Takes the commands :mod:`shell_scan` found and names the paths each deletes, writes,
+copies or moves. It knows a short list of programs; one it does not know contributes
+nothing, so this reads the common shapes of a destructive command and is not a complete
+account of one.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import posixpath
 from dataclasses import dataclass
 from typing import Literal
 
 from services.permissions.shell_ast import ShellCommand, operands
 
-#: A bare name for "every untracked and ignored file in the working tree".
+#: A stand-in for "every untracked and ignored file in the working tree".
 WORKTREE = "<working tree>"
 
-REMOVERS = frozenset({"rm", "rmdir", "unlink", "shred"})
+GLOB_CHARS = frozenset("*?[")
 
-_WRITES_ALL = frozenset({"tee", "touch", "truncate", "mv"})
-_WRITES_LAST = frozenset({"cp", "install", "ln", "rsync"})
+#: The glob segments that match every entry of a directory, so deleting them deletes the
+#: directory's contents. Any other pattern names only some of the entries.
+EVERYTHING = frozenset({"*", ".*", ".??*", ".[!.]*", ".[^.]*", ".[!.]?*"})
+
+REMOVERS = frozenset({"rm", "rmdir", "unlink", "shred", "srm"})
+
+_WRITES_ALL = frozenset({"tee", "touch", "truncate"})
+_COPIERS = frozenset({"cp", "mv", "install", "ln", "rsync"})
+_COPY_VALUE_FLAGS = frozenset(
+    {"-t", "--target-directory", "-S", "--suffix", "-m", "--mode", "-o", "--owner", "-g", "--group"}
+)
+_RSYNC_VALUE_FLAGS = frozenset(
+    {
+        "-e",
+        "--rsh",
+        "-f",
+        "--filter",
+        "--exclude",
+        "--include",
+        "--exclude-from",
+        "--include-from",
+        "--files-from",
+        "--port",
+        "--backup-dir",
+        "--suffix",
+        "--partial-dir",
+        "--temp-dir",
+        "--bwlimit",
+        "--chmod",
+        "--chown",
+        "--compare-dest",
+        "--link-dest",
+        "-T",
+    }
+)
 _GIT_VALUE_FLAGS = frozenset(
     {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env"}
 )
 _TOP_PATHSPECS = frozenset({".", "./", ":/", ":(top)", ":(top)."})
+_FIND_FILTERS = frozenset(
+    {
+        "-name",
+        "-iname",
+        "-path",
+        "-ipath",
+        "-regex",
+        "-iregex",
+        "-type",
+        "-newer",
+        "-mtime",
+        "-atime",
+        "-ctime",
+        "-mmin",
+        "-amin",
+        "-cmin",
+        "-size",
+        "-user",
+        "-group",
+        "-perm",
+        "-empty",
+        "-links",
+        "-inum",
+        "-samefile",
+        "-lname",
+    }
+)
 _CONFIG_READS = frozenset(
     {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "--show-origin"}
 )
-_CONFIG_WRITES = frozenset(
-    {
-        "--unset",
-        "--unset-all",
-        "--add",
-        "--replace-all",
-        "--edit",
-        "-e",
-        "--remove-section",
-        "--rename-section",
-    }
+_CONFIG_UNSETS = frozenset({"--unset", "--unset-all", "--remove-section"})
+_CONFIG_WRITES = _CONFIG_UNSETS | {"--add", "--replace-all", "--edit", "-e", "--rename-section"}
+#: Configuration keys whose value git runs as a command or loads as more configuration.
+_EXECUTING_KEYS = (
+    "core.hookspath",
+    "core.fsmonitor",
+    "core.pager",
+    "core.editor",
+    "core.sshcommand",
+    "core.askpass",
+    "include.path",
+    "includeif.*",
+    "filter.*",
+    "diff.*.textconv",
+    "diff.*.command",
+    "credential.helper",
+    "credential.*.helper",
+    "sequence.editor",
 )
 
 type Kind = Literal["write", "dir", "remove"]
@@ -47,6 +116,22 @@ type Kind = Literal["write", "dir", "remove"]
 class Target:
     path: str
     kind: Kind
+
+
+@dataclass(frozen=True)
+class Transfer:
+    """A copy, move, link or sync of ``sources`` to ``dest``."""
+
+    dest: str
+    sources: tuple[str, ...]
+    #: Whether ``dest`` must be a directory, by the way the command is written.
+    into_directory: bool
+    #: Whether the sources are removed (``mv``, ``rsync --remove-source-files``).
+    moves: bool
+    #: Whether files in ``dest`` that are not in the sources are deleted (``rsync --delete``).
+    prunes: bool
+    #: Whether a source written ``dir/`` or ``dir/.`` copies the contents of the directory.
+    trailing_slash_copies_contents: bool
 
 
 def name_of(one: ShellCommand) -> str:
@@ -67,35 +152,67 @@ def git_subcommand(arguments: tuple[str, ...]) -> tuple[str | None, list[str]]:
     return None, []
 
 
+def git_overrides(arguments: tuple[str, ...]) -> list[str]:
+    """The ``key=value`` pairs given to git with ``-c`` for this one call."""
+    found: list[str] = []
+    for index, word in enumerate(arguments[:-1]):
+        if word == "-c":
+            found.append(arguments[index + 1])
+        elif not word.startswith("-"):
+            break
+    return found
+
+
 def removal_targets(one: ShellCommand) -> list[str]:
     """The paths a deleting command removes; :data:`WORKTREE` for a forced ``git clean``."""
     name = name_of(one)
     args = one.arguments
     if name in REMOVERS:
         return operands(args)
-    if name == "find" and _find_deletes(args):
-        roots: list[str] = []
-        for word in args:
-            if word in ("-H", "-L", "-P"):
-                continue
-            if word.startswith(("-", "(", "!")):
-                break
-            roots.append(word)
-        return roots or ["."]
+    if name == "find":
+        return _find_targets(args)
     if name == "git":
         sub, rest = git_subcommand(args)
         if sub == "clean":
             return _clean_targets(rest)
+        if sub == "worktree" and rest[:1] == ["remove"]:
+            return operands(rest[1:])
     return []
 
 
-def _find_deletes(args: tuple[str, ...]) -> bool:
-    if "-delete" in args:
-        return True
-    return any(
-        word in ("-exec", "-execdir") and posixpath.basename(after) in REMOVERS
-        for word, after in zip(args, args[1:], strict=False)
-    )
+def _find_targets(args: tuple[str, ...]) -> list[str]:
+    """The roots a ``find`` deletes, when nothing narrows what it deletes to part of them."""
+    deleting = None
+    for index, word in enumerate(args):
+        if word == "-delete" or (
+            word in ("-exec", "-execdir")
+            and index + 1 < len(args)
+            and posixpath.basename(args[index + 1]) in REMOVERS
+        ):
+            deleting = index
+            break
+    if deleting is None or any(word in _FIND_FILTERS for word in args[:deleting]):
+        return []
+    return _find_roots(args)
+
+
+def _find_roots(args: tuple[str, ...]) -> list[str]:
+    roots: list[str] = []
+    for word in args:
+        if word in ("-H", "-L", "-P"):
+            continue
+        if word.startswith(("-", "(", "!")):
+            break
+        roots.append(word)
+    return roots or ["."]
+
+
+def find_feed(args: tuple[str, ...]) -> list[str]:
+    """The paths a ``find`` prints that this can name: its roots when nothing narrows what
+    it matches, and none when a filter makes it print names inside them."""
+    if any(word in _FIND_FILTERS for word in args):
+        return []
+    return _find_roots(args)
 
 
 def _clean_targets(rest: list[str]) -> list[str]:
@@ -154,7 +271,7 @@ def option_values(
 
 
 def _edits_in_place(name: str, args: tuple[str, ...]) -> bool:
-    if name not in ("sed", "perl"):
+    if name not in ("sed", "gsed", "perl"):
         return False
     return any(
         word.startswith("--in-place")
@@ -163,8 +280,41 @@ def _edits_in_place(name: str, args: tuple[str, ...]) -> bool:
     )
 
 
+def transfer(one: ShellCommand) -> Transfer | None:
+    """The copy, move, link or sync a command makes, or None for any other command."""
+    name = name_of(one)
+    if name not in _COPIERS:
+        return None
+    args = one.arguments
+    rsync = name == "rsync"
+    directory = [] if rsync else option_values(args, "t", ("--target-directory",))
+    flags = _RSYNC_VALUE_FLAGS if rsync else _COPY_VALUE_FLAGS
+    found = operands(args, flags)
+    recursive = rsync or any(
+        word in ("-r", "-R", "--recursive") or (word.startswith("-a") and not word.startswith("--"))
+        for word in args
+    )
+    if directory:
+        dest, sources = directory[0], tuple(found)
+    elif len(found) >= 2:
+        dest, sources = found[-1], tuple(found[:-1])
+    else:
+        return None
+    pruned = rsync and any(word.startswith(("--delete", "--del")) for word in args)
+    moved = name == "mv" or (rsync and "--remove-source-files" in args)
+    return Transfer(
+        dest=dest,
+        sources=sources,
+        into_directory=bool(directory) or len(sources) > 1 or dest.endswith("/"),
+        moves=moved,
+        prunes=pruned,
+        trailing_slash_copies_contents=recursive,
+    )
+
+
 def write_targets(one: ShellCommand) -> list[Target]:
-    """The paths a command writes, creates, replaces or deletes."""
+    """The paths a command (other than a copy or move, see :func:`transfer`) writes,
+    creates or deletes."""
     name = name_of(one)
     args = one.arguments
     if name in REMOVERS:
@@ -173,11 +323,6 @@ def write_targets(one: ShellCommand) -> list[Target]:
         return [Target(path, "dir") for path in operands(args)]
     if name in _WRITES_ALL:
         return [Target(path, "write") for path in operands(args)]
-    if name in _WRITES_LAST:
-        directory = option_values(args, "t", ("--target-directory",))
-        if directory:
-            return [Target(path, "dir") for path in directory]
-        return [Target(path, "write") for path in operands(args)[-1:]]
     if name == "dd":
         return [Target(word[3:], "write") for word in args if word.startswith("of=")]
     if _edits_in_place(name, args):
@@ -191,12 +336,33 @@ def write_targets(one: ShellCommand) -> list[Target]:
     return []
 
 
+def is_executing_key(key: str | None) -> bool:
+    """Whether git runs the value of configuration ``key`` as a command (an alias only
+    when its value starts with ``!``, see :func:`executes_code`)."""
+    if key is None:
+        return False
+    return key.startswith("alias.") or any(
+        fnmatch.fnmatchcase(key, pattern) for pattern in _EXECUTING_KEYS
+    )
+
+
+def executes_code(key: str | None, value: str | None) -> bool:
+    """Whether setting git configuration ``key`` to ``value`` makes git run a command."""
+    if key is None:
+        return False
+    if key.startswith("alias."):
+        return value is not None and value.lstrip().startswith("!")
+    return is_executing_key(key)
+
+
 @dataclass(frozen=True)
 class ConfigWrite:
     """A ``git config`` that changes configuration."""
 
     key: str | None
+    value: str | None
     scope: Literal["global", "system", "file", "local"]
+    removes: bool
     file: str | None = None
 
 
@@ -211,11 +377,13 @@ def config_write(one: ShellCommand) -> ConfigWrite | None:
     if len(found) < 2 and not any(word in _CONFIG_WRITES for word in rest):
         return None
     key = found[0].lower() if found else None
+    value = found[1] if len(found) > 1 else None
+    removes = any(word in _CONFIG_UNSETS for word in rest)
     files = option_values(tuple(rest), "f", ("--file",))
     if files:
-        return ConfigWrite(key, "file", files[0])
+        return ConfigWrite(key, value, "file", removes, files[0])
     if "--global" in rest:
-        return ConfigWrite(key, "global")
+        return ConfigWrite(key, value, "global", removes)
     if "--system" in rest:
-        return ConfigWrite(key, "system")
-    return ConfigWrite(key, "local")
+        return ConfigWrite(key, value, "system", removes)
+    return ConfigWrite(key, value, "local", removes)
