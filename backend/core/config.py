@@ -294,7 +294,8 @@ class Settings(BaseSettings):
     # egress allowlist, which are the exfiltration paths. The credential paths above are
     # additionally write-denied, so a confined command can neither read nor clobber them.
     host_command_allow_write: tuple[str, ...] = ("~", "/tmp", "/var/tmp")
-    # Extra writable paths (build caches) for the host shell's fence. Nothing reads this yet.
+    # Extra writable paths (build caches) for the host shell's fence, added to `~`, temp and
+    # the scratch directory.
     host_shell_allow_write: tuple[str, ...] = (
         "~/.cache",
         "~/Library/Caches",

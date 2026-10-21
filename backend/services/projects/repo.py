@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
+
+from services.sandbox.gitenv import GIT_ARG_PINS, git_config_pins
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +65,10 @@ async def run_git(cwd: Path, *args: str) -> tuple[int, str, str]:
     try:
         proc = await asyncio.create_subprocess_exec(
             "git",
+            *GIT_ARG_PINS,
             *args,
             cwd=str(cwd),
+            env=git_config_pins(os.environ),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

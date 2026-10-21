@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +50,7 @@ from models.subagent import SubagentRecord
 from models.task import ScheduledTask
 from models.thread_change import ThreadChange
 from models.thread_worktree import ThreadWorktree
+from services.sandbox.gitenv import GIT_ARG_PINS, git_config_pins
 from services.settings_store import ACTIVE_PROJECT_KEY, SettingsStore
 
 from .slugs import slug_for
@@ -126,8 +128,10 @@ async def _run_git(cwd: Path, *args: str) -> tuple[int, str]:
     """One `git` invocation with a fixed argv and no shell. Returns (code, stdout)."""
     proc = await asyncio.create_subprocess_exec(
         "git",
+        *GIT_ARG_PINS,
         *args,
         cwd=str(cwd),
+        env=git_config_pins(os.environ),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )

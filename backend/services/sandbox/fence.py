@@ -6,9 +6,10 @@ a project's folder or worktree.
 
 The fence is ``sandbox-runtime`` (seatbelt on macOS, bubblewrap on Linux). Writes are
 deny-by-default, and the deny floor in :mod:`services.sandbox.floor` (shell rc files, launch
-agents, ``~/.claude``, ``.git/hooks``; credentials, browser profiles, this application's
-source tree and its data directory for reads) applies to every command; settings lists can
-add to it and never remove from it.
+agents, ``~/.claude``, git hooks and config; credentials, browser profiles, this
+application's dotenv file, database and data directory for reads) applies to every command;
+settings lists can add to it and never remove from it. The floor's docstring states which
+git paths are covered on which platform.
 
 The two callers differ on the network. ``code_run_host_command`` reaches only the
 ``egress_allowed_domains`` allowlist. The host shell's network is open, because it runs
@@ -27,8 +28,11 @@ which, so the permission layer can make an unfenced host command ask first.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
+import shlex
+import signal
 import stat
 import tempfile
 from collections.abc import Iterable
@@ -36,7 +40,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from core.config import Settings, get_settings
+from core.config import Settings
 
 from .base import HostExecutionError
 from .floor import hooks_floor, merged, read_floor, write_floor
@@ -132,7 +136,7 @@ def denied_read_paths(settings: Settings) -> tuple[str, ...]:
     The data directory is the entry that matters most: it holds the vault, the sealed
     workspaces and the database, so exposing it would undo at-rest encryption wholesale.
     """
-    floor = read_floor(Path.home(), Path(settings.data_dir))
+    floor = read_floor(Path.home(), Path(settings.data_dir), settings.db_url)
     return merged(floor, settings.host_command_deny_read)
 
 
@@ -196,11 +200,11 @@ async def resolve_confinement(settings: Settings) -> HostConfinement:
         return resolved
 
 
-def confinement_state() -> ConfinementState:
-    """The resolved state of the host fence. Call :func:`resolve_confinement` at startup
-    first; before that, an enabled fence reads as unavailable."""
+def confinement_state(settings: Settings) -> ConfinementState:
+    """The resolved state of the host fence. :func:`resolve_confinement` runs at startup;
+    before that, ``settings`` decides between disabled and not-yet-resolved."""
     if _resolved is None:
-        if not get_settings().host_command_sandbox_enabled:
+        if not settings.host_command_sandbox_enabled:
             return ConfinementState("disabled_by_setting", "disabled by configuration")
         return ConfinementState("unavailable", "the host fence has not been resolved yet")
     if _resolved.active:
@@ -216,8 +220,11 @@ async def shell_confinement(settings: Settings) -> HostConfinement:
     resolved = await resolve_confinement(settings)
     if not resolved.active:
         return resolved
+    # The runtime drops `/tmp` as written (a symlink on macOS), so its real path is named too.
+    shared_tmp = ("/tmp", "/var/tmp", os.path.realpath("/tmp"), os.path.realpath("/var/tmp"))
     allow_write = merged(
-        ("~", tempfile.gettempdir(), str(scratch_path())), settings.host_shell_allow_write
+        ("~", tempfile.gettempdir(), *shared_tmp, str(scratch_path())),
+        settings.host_shell_allow_write,
     )
     return replace(resolved, allow_write=allow_write, allowed_domains=(), open_network=True)
 
@@ -305,6 +312,9 @@ async def configure(settings: Settings) -> HostConfinement:
     # in the setting means the same thing at both fences. Left raw, `Files.PythonHosted.org`
     # or a pasted URL would be allowed by the egress gateway and refused here.
     domains = [normalise_domain(d) for d in settings.egress_allowed_domains]
+    # The runtime installs its own SIGINT/SIGTERM handlers on first use, which would
+    # replace the server's and leave Ctrl+C unable to stop it.
+    saved_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
         await SandboxManager.initialize(
             SandboxRuntimeConfig(
@@ -322,8 +332,6 @@ async def configure(settings: Settings) -> HostConfinement:
                     deny_read=deny_read,
                     allow_write=allow_write,
                     deny_write=_denied_write_paths(deny_read, allow_write),
-                    # Read from this global config at wrap time, never from a per-call one.
-                    allow_git_config=True,
                 ),
             )
         )
@@ -332,6 +340,11 @@ async def configure(settings: Settings) -> HostConfinement:
         return HostConfinement(
             False, f"sandbox-runtime could not initialize ({exc}); {_UNAVAILABLE_FIX}"
         )
+    finally:
+        for sig, handler in saved_handlers.items():
+            if handler is not None:
+                with contextlib.suppress(ValueError):
+                    _ = signal.signal(sig, handler)
     # Carried on the resolution rather than re-derived at the run: `confine` fences each
     # command individually, and these are the settings half of what it needs — the same
     # values the global init above was given, so the two cannot drift.
@@ -384,7 +397,7 @@ async def confine(
     :func:`resolve_confinement` settles the machinery once per process — the platform
     probe, the proxy listeners — but not where a particular command may write, because
     callers differ: the approved host command writes wherever the operator allowed, and the
-    host shell, once it is fenced, would write into one conversation's project folder. Those
+    host shell writes into one conversation's project folder. Those
     rules are genuinely per-call, because they go into the wrapper the OS itself enforces.
 
     **The network half is coarser, and that is a property of the runtime, not a choice
@@ -406,6 +419,9 @@ async def confine(
         SandboxRuntimeConfig,
     )
 
+    # The runtime exports TMPDIR=/tmp/claude, a directory that may not exist; the real
+    # temp root is on the write list.
+    command = f"export TMPDIR={shlex.quote(tempfile.gettempdir())}; {command}"
     allowed = list(allow_write)
     denied_read = list(deny_read)
     denied_write = _denied_write_paths(denied_read, allowed)
@@ -444,7 +460,6 @@ async def _wrap_open_network(
                 read_config=read_config,
                 write_config=write_config,
                 ignore_violations=SandboxManager.get_ignore_violations(),
-                allow_git_config=True,
             )
         )
     if platform == "linux":
@@ -455,10 +470,9 @@ async def _wrap_open_network(
                 read_config=read_config,
                 write_config=write_config,
                 enable_weaker_nested_sandbox=SandboxManager.get_enable_weaker_nested_sandbox(),
-                allow_all_unix_sockets=SandboxManager.get_allow_all_unix_sockets(),
+                allow_all_unix_sockets=True,
                 ripgrep_config=SandboxManager.get_ripgrep_config(),
                 mandatory_deny_search_depth=SandboxManager.get_mandatory_deny_search_depth(),
-                allow_git_config=True,
             )
         )
     raise RuntimeError(f"Sandbox configuration is not supported on platform: {platform}")

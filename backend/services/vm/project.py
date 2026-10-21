@@ -28,7 +28,7 @@ from pathlib import Path
 
 from core.periodic import PeriodicTask
 from core.serde import parse_json
-from services.sandbox.gitenv import git_config_pins
+from services.sandbox.gitenv import GIT_ARG_PINS, git_config_pins
 
 from .driver import VMError
 from .host import ProjectHost
@@ -265,6 +265,7 @@ class ProjectWorkspace:
     async def _host_git(self, *args: str, check: bool = True) -> str:
         proc = await asyncio.create_subprocess_exec(
             "git",
+            *GIT_ARG_PINS,
             "-C",
             str(self.root),
             *args,
