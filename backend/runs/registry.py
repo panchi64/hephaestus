@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from enum import Enum
 from uuid import uuid4
@@ -169,6 +169,7 @@ class RunRegistry:
         self._journalled: set[str] = set()
         # Opaque to the substrate: the orchestrator layer files and reads these by run kind.
         self._recomposers: dict[str, object] = {}
+        self._restore_checks: dict[str, Callable[[Run], Awaitable[str | None]]] = {}
         self._closing: bool = False
         self._parks_restored: asyncio.Event = asyncio.Event()
 
@@ -215,9 +216,10 @@ class RunRegistry:
         ``blocked`` instead."""
         if run.conversation_id is not None:
             if self.active_run_for(run.conversation_id, run.owner_id) is not None:
-                self.register(run)
-                self._journalled.add(run.id)
-                self._block_parked(run, "its conversation already has a run in progress")
+                # The live run extends the thread's leaf, so writing this turn after it
+                # would put it out of order.
+                run.on_park_cancel = None
+                self.end_unrestorable(run, "its conversation already has a run in progress")
                 return
             run.inbox = self.inbox(run.conversation_id, run.owner_id)
         self.register(run)
@@ -226,15 +228,20 @@ class RunRegistry:
             _ = run.emit(body)
 
     def end_unrestorable(self, run: Run, detail: str) -> None:
-        """Record a run whose stored park could not be read back as ended ``blocked``, so
+        """Record a run from a stored park that cannot be resumed as ended ``blocked``, so
         everything that waits on a run's end hears of it. Its row is dropped."""
         self.register(run)
-        run.block(detail)
-        self._parked_journal.forget(run.id)
-        _ = run.emit(RunEnded(outcome="blocked", detail=detail))
-        run.ended_at = now_utc()
-        self._fire_terminal(run)
-        run.stream.close()
+        self._journalled.add(run.id)
+        self._block_parked(run, detail)
+
+    def set_restore_check(self, kind: str, check: Callable[[Run], Awaitable[str | None]]) -> None:
+        """File what vets a restored park of ``kind``: it returns why the park can no longer
+        be resumed, or ``None``."""
+        self._restore_checks[kind] = check
+
+    async def restore_problem(self, run: Run) -> str | None:
+        check = self._restore_checks.get(run.kind)
+        return None if check is None else await check(run)
 
     async def block_parked(self, run_id: str, detail: str) -> bool:
         """End a parked run ``blocked``: its turn is kept as a stopped one, nothing it
@@ -511,7 +518,7 @@ class RunRegistry:
             _, stuck = await asyncio.wait(pending, timeout=timeout_s)
             if stuck:
                 logger.warning("runs: %d run(s) still unwinding after %.1fs", len(stuck), timeout_s)
-        # A park is kept only if its row is written, at the stream position it ends on;
+        # A park is kept only if its row is queued, at the stream position it ends on;
         # any other parked run is cancelled, which persists its turn.
         for run in list(self._runs.values()):
             if run.status is RunStatus.awaiting_input and not self._journal_park(run):

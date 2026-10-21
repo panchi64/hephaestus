@@ -18,7 +18,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from pydantic_ai import ModelMessage, ModelRequest, ToolReturnPart
+from pydantic_ai import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 
 from runs import Run, RunStatus
 from services.conversations import ConversationStore
@@ -118,19 +125,34 @@ def persist_parked_cancel(run: Run, *, store: ConversationStore | None) -> None:
     parked = run.parked_payload
     if not isinstance(parked, ParkedTurn):
         return
-    history = parked.message_history
-    if run.status is RunStatus.blocked and run.detail:
-        detail = run.detail
-        history = [*history, *_denied_returns(parked, detail)]
-    else:
-        detail = CANCELLED_DETAIL
+    detail = run.detail if run.status is RunStatus.blocked and run.detail else CANCELLED_DETAIL
+    history = [*parked.message_history, *_denied_returns(parked, detail)]
     flush_recorder(run, store)(history, detail, parked_context(parked))
 
 
 def _denied_returns(parked: ParkedTurn, reason: str) -> list[ModelMessage]:
-    """A request answering every call the park was waiting on with a denial, so the stored
-    history has no tool call without a return."""
-    calls = [*parked.requests.approvals, *parked.requests.calls]
+    """A request answering every call of the turn's last response that has no return with a
+    denial, so the stored history has no tool call without one."""
+    history = parked.message_history
+    last = next(
+        (i for i in reversed(range(len(history))) if isinstance(history[i], ModelResponse)), None
+    )
+    if last is None:
+        return []
+    answered = {
+        part.tool_call_id
+        for message in history[last + 1 :]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart | RetryPromptPart)
+    }
+    response = history[last]
+    assert isinstance(response, ModelResponse)
+    calls = [
+        part
+        for part in response.parts
+        if isinstance(part, ToolCallPart) and part.tool_call_id not in answered
+    ]
     if not calls:
         return []
     return [

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from uuid import uuid4
 
 from agent.recompose import ParkedFacts, Recomposed, RecomposeError, register_recompose
 from agent.summarize import resolve_auto_compact_policy
@@ -199,7 +200,15 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         auto_compact = await resolve_auto_compact_policy(settings_store, view.owner_id)
         prompt = await _with_last_run(view)
         waiter: asyncio.Future[Run] = asyncio.get_running_loop().create_future()
+        run_id = uuid4().hex
+        # Linked before the run exists, so a restored run always finds its row and a failed
+        # link starts nothing.
+        if view.task_run_id is not None:
+            await scheduler.link_task_run(
+                view.task_run_id, run_id=run_id, conversation_id=conversation_id
+            )
         created = compose_turn(
+            run_id=run_id,
             prompt=prompt,
             conversation_id=conversation_id,
             models=models,
@@ -222,10 +231,6 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         )
         # Registered before the first await below, so the run cannot reach terminal first.
         run_waiters[created.run_id] = waiter
-        if view.task_run_id is not None:
-            await scheduler.link_task_run(
-                view.task_run_id, run_id=created.run_id, conversation_id=conversation_id
-            )
         # Waits for a terminal outcome: a fire parked for approval stays open until the
         # operator decides. Shutdown releases the wait while the run is still parked; the
         # `TaskRun` stays open for whoever settles the restored run.
@@ -308,9 +313,17 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
     ctx.lifecycle.on_stop("task-settling", _drain_settling)
 
-    async def _cancel_runs_of(routine_id: str) -> None:
+    async def _restore_problem(run: Run) -> str | None:
+        if await scheduler.records_run(run.id):
+            return None
+        return "the routine this run belonged to no longer exists"
+
+    runs.set_restore_check(TASK_KIND, _restore_problem)
+
+    async def _cancel_runs_of(routine_id: str, by_run: str | None) -> None:
         for run_id in await scheduler.open_run_ids(routine_id):
-            _ = await runs.cancel(run_id)
+            if run_id != by_run:
+                _ = await runs.cancel(run_id)
 
     routines.before_delete(_cancel_runs_of)
 

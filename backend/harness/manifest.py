@@ -93,9 +93,6 @@ class HarnessContext:
     # The assembled tool-category mapping and instruction providers (core + every
     # enabled manifest's declarations, complete before any build runs) — so a feature
     # composing agent runs hands the engine exactly what an interactive turn gets.
-    #: Set once every manifest has built and its run-terminal hooks are registered, for a
-    #: startup pass that ends runs and needs every feature to hear of it.
-    built: asyncio.Event = field(default_factory=asyncio.Event)
     tool_categories: Mapping[str, AbstractToolset[RunDeps]] = field(default_factory=lambda: {})
     instruction_providers: tuple[InstructionProvider, ...] = ()
     prompt_context_providers: tuple[PromptContextProvider, ...] = ()
@@ -113,6 +110,9 @@ class HarnessContext:
     # The app itself, for a feature that composes a turn on the operator's behalf the way a
     # request would (the inbox dispatcher). None where a test builds a context by hand.
     app: FastAPI | None = None
+    # Set once every manifest has built and its run-terminal hooks are registered, for a
+    # startup pass that ends runs and needs every feature to hear of it.
+    built: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass(frozen=True)

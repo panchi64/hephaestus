@@ -8,17 +8,27 @@ from typing import cast
 
 import httpx
 import pytest
-from fastapi import FastAPI
-from pydantic_ai import ModelRequest, ToolReturnPart
+from fastapi import FastAPI, HTTPException
+from pydantic_ai import (
+    DeferredToolRequests,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from sqlmodel import Session, select
 
 import agent.finalize as finalize_module
 import routes.runs as runs_routes
 from agent import build_resume_orchestrator
 from agent.finalize import persist_parked_cancel
+from agent.parking import ParkedTurn
 from core.db import in_session
 from models.parked_turn import ParkedTurnRecord
 from models.task import ScheduledTask
+from routes.chat.turn import resolve_turn_models
 from routes.deps import app_state
 from runs import Run, RunRegistry, RunStatus, RunStream
 from runs.events import AnswerDelta
@@ -29,6 +39,7 @@ from ._helpers import await_parked, client_app, collect_sse_events, parked_turn,
 from ._json import json_body, s
 from .test_approval_routes import danger_categories, install_sensitive_tool
 from .test_parked_turns import await_row, park_chat, stored_parks
+from .test_registry import make_registry
 from .test_task_parked_restart import park_a_fire, task_runs
 from .test_task_routes import await_task_run_finalized
 from .test_tool_policy import spy_disabled_tools
@@ -93,12 +104,12 @@ async def test_a_routine_park_whose_agent_is_gone_is_blocked_and_its_task_run_fa
         assert row["outcome"] == "blocked"
 
 
-async def test_a_routine_park_whose_routine_is_gone_is_blocked(
+async def test_a_routine_park_whose_routine_is_gone_is_blocked_at_restore(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
-        task_id, _task_run_id, run_id, call_id = await park_a_fire(client, app)
+        task_id, _task_run_id, run_id, _call_id = await park_a_fire(client, app)
 
         def drop(session: Session) -> None:
             session.delete(session.get(ScheduledTask, task_id))
@@ -106,12 +117,166 @@ async def test_a_routine_park_whose_routine_is_gone_is_blocked(
         await in_session(app_state(app).db_engine, drop)
 
     async with client_app(home=tmp_path) as (client, app):
+        restored = None
+        for _ in range(300):
+            restored = app_state(app).runs.get(run_id)
+            if restored is not None and restored.is_terminal:
+                break
+            await asyncio.sleep(0.01)
+        assert restored is not None and restored.status is RunStatus.blocked
+        assert "no longer exists" in (restored.detail or "")
+        await await_row(app, run_id, present=False)
+
+
+async def test_a_routine_deleting_itself_is_not_cancelled_by_the_delete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    install_sensitive_tool(monkeypatch)
+    async with client_app(home=tmp_path) as (client, app):
+        task_id, _task_run_id, run_id, _call_id = await park_a_fire(client, app)
+        await app_state(app).routines.delete("operator", task_id, by_run=run_id)
+        run = app_state(app).runs.get(run_id)
+        assert run is not None and run.status is RunStatus.awaiting_input
+
+
+async def test_the_readable_parks_are_registered_before_an_unreadable_one_ends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    install_sensitive_tool(monkeypatch)
+    worker = builtin_roster()["worker"]
+    with monkeypatch.context() as crash:
+        crash.setattr(RunRegistry, "shutdown", _no_shutdown)
+        async with client_app(home=tmp_path) as (client, app):
+            swap_tool_catalog(app, danger_categories())
+            parent_id, _call_id = await park_chat(client, app)
+            launcher = app_state(app).capabilities.get_optional(SubagentLauncher)
+            assert launcher is not None
+            child = await launcher.launch("operator", worker, "delete it", handle="deleter")
+            _ = await await_parked(app, child.run_id)
+            await await_row(app, child.run_id)
+
+            def corrupt(session: Session) -> None:
+                row = session.get(ParkedTurnRecord, child.run_id)
+                assert row is not None
+                row.payload_enc = "not a sealed payload"
+                session.add(row)
+
+            await in_session(app_state(app).db_engine, corrupt)
+
+    seen: list[bool] = []
+    real = RunRegistry.end_unrestorable
+
+    def spy(self: RunRegistry, run: Run, detail: str) -> None:
+        seen.append(self.get(parent_id) is not None)
+        real(self, run, detail)
+
+    monkeypatch.setattr(RunRegistry, "end_unrestorable", spy)
+    async with client_app(home=tmp_path) as (client, app):
+        parent = await await_parked(app, parent_id)
+        for _ in range(300):
+            if seen:
+                break
+            await asyncio.sleep(0.01)
+        assert seen == [True]
+        assert parent.status is RunStatus.awaiting_input
+
+
+async def test_a_cancelled_park_leaves_no_tool_call_without_a_return(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    done = ToolCallPart("ran", {}, tool_call_id="done")
+    deferred = ToolCallPart("danger_delete_thing", {}, tool_call_id="deferred")
+    parked = ParkedTurn(
+        agent=None,
+        message_history=[
+            ModelRequest(parts=[UserPromptPart("go")]),
+            ModelResponse(parts=[done, deferred]),
+            ModelRequest(parts=[ToolReturnPart("ran", "ok", tool_call_id="done")]),
+        ],
+        requests=DeferredToolRequests(approvals=[deferred]),
+        conversation_id="c",
+    )
+    run = Run(id="r", kind="chat", owner_id="operator", stream=RunStream())
+    run.park(parked)
+    run.status = RunStatus.cancelled
+    captured: list[list[ModelMessage]] = []
+
+    def spy(_run: Run, _store: object):
+        def record(history: list[ModelMessage], _detail: str, _context: object) -> None:
+            captured.append(history)
+
+        return record
+
+    monkeypatch.setattr(finalize_module, "flush_recorder", spy)
+    persist_parked_cancel(run, store=None)
+
+    [history] = captured
+    calls = {
+        p.tool_call_id
+        for m in history
+        if isinstance(m, ModelResponse)
+        for p in m.parts
+        if isinstance(p, ToolCallPart)
+    }
+    returns = {
+        p.tool_call_id
+        for m in history
+        if isinstance(m, ModelRequest)
+        for p in m.parts
+        if isinstance(p, ToolReturnPart)
+    }
+    assert calls == returns == {"done", "deferred"}
+
+
+async def test_an_unknown_model_on_an_existing_endpoint_cannot_recompose():
+    registry = await make_registry()
+    endpoint = await registry.create_endpoint("operator", name="p", base_url="http://p/v1")
+    with pytest.raises(HTTPException):
+        _ = await resolve_turn_models(registry, endpoint.id, "no-such-model")
+
+
+async def test_a_park_beside_a_live_run_is_blocked_and_the_thread_stays_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    install_sensitive_tool(monkeypatch)
+    with monkeypatch.context() as crash:
+        crash.setattr(RunRegistry, "shutdown", _no_shutdown)
+        async with client_app(home=tmp_path) as (client, app):
+            swap_tool_catalog(app, danger_categories())
+            run_id, _call_id = await park_chat(client, app)
+            original = app_state(app).runs.get(run_id)
+            assert original is not None
+            conversation_id = original.conversation_id
+            assert conversation_id is not None
+
+    real = RunRegistry.active_run_for
+    busy = {"on": True}
+
+    def occupied(self: RunRegistry, conversation: str, owner: str) -> Run | None:
+        if busy["on"]:
+            return Run(id="other", kind="chat", owner_id=owner, stream=RunStream())
+        return real(self, conversation, owner)
+
+    monkeypatch.setattr(RunRegistry, "active_run_for", occupied)
+    async with client_app(home=tmp_path) as (client, app):
         swap_tool_catalog(app, danger_categories())
-        restored = await await_parked(app, run_id)
-        resp = await _approve(client, run_id, call_id)
-        assert resp.status_code == 409
-        assert "no longer exists" in s(json_body(resp)["detail"])
-        assert restored.status is RunStatus.blocked
+        blocked = None
+        for _ in range(300):
+            blocked = app_state(app).runs.get(run_id)
+            if blocked is not None and blocked.is_terminal:
+                break
+            await asyncio.sleep(0.01)
+        assert blocked is not None and blocked.status is RunStatus.blocked
+        busy["on"] = False
+        before = await app_state(app).conversations.messages_view(conversation_id)
+        sent = await client.post(
+            "/chat", json={"prompt": "again", "conversation_id": conversation_id}
+        )
+        assert sent.status_code == 202
+        _ = await await_parked(app, s(json_body(sent)["run_id"]))
+        after = await app_state(app).conversations.messages_view(conversation_id)
+        assert len(after) > len(before)
+        assert [t.content for t in after if t.role == "user"].count("delete it") == 1
 
 
 async def test_deleting_a_routine_cancels_its_parked_run_and_drops_the_stored_park(

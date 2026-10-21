@@ -524,5 +524,9 @@ async def test_resume_applies_the_operator_set_and_the_offline_set(
         assert resp.status_code == 202
         unconfigured = await _unconfigured(app)
 
-    # The park's own withheld tools ride along, so the set may hold more than the policy's.
-    assert {"danger_safe_thing", "web_search"} <= captured["disabled"] - unconfigured
+    # The policy's set, plus what the park's own turn withheld (no vision model here).
+    assert captured["disabled"] - unconfigured == {
+        "danger_safe_thing",
+        "web_search",
+        "browse_screenshot",
+    }

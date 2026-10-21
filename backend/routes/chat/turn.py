@@ -164,6 +164,7 @@ def compose_turn(
     wall_clock_timeout_s: float | None | Unset = UNSET,
     kind: str = "chat",
     workspace_key: str = "",
+    run_id: str | None = None,
 ) -> ChatCreated:
     """Build the chat orchestrator from pre-resolved models/capabilities and submit
     the Run — the one composition path a live chat turn (`submit_turn`, resolving
@@ -230,6 +231,7 @@ def compose_turn(
             kind=kind,
             owner_id=owner_id,
             orchestrator=orchestrator,
+            run_id=run_id,
             conversation_id=conversation_id,
             endpoint=endpoint,
             # The operator's inactivity bound, resolved by the interactive caller; the

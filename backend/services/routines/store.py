@@ -128,7 +128,7 @@ class RoutineStore:
         self._engine: Engine = engine
         self._vault: Vault = vault
         self._agents: AgentCatalog | None = agents
-        self._before_delete: Callable[[str], Awaitable[None]] | None = None
+        self._before_delete: Callable[[str, str | None], Awaitable[None]] | None = None
 
     @property
     def engine(self) -> Engine:
@@ -282,15 +282,16 @@ class RoutineStore:
         """Let a drafted routine fire, counting its schedule from now."""
         return await self.update(owner_id, routine_id, {}, approved=True)
 
-    def before_delete(self, hook: Callable[[str], Awaitable[None]]) -> None:
-        """Run ``hook`` with a routine's id before it is deleted, so what is still running
-        for it can be stopped while the routine's records exist."""
+    def before_delete(self, hook: Callable[[str, str | None], Awaitable[None]]) -> None:
+        """Run ``hook`` with a routine's id, and the run deleting it, before it is deleted,
+        so what is still running for it can be stopped while the routine's records exist."""
         self._before_delete = hook
 
-    async def delete(self, owner_id: str, routine_id: str) -> None:
+    async def delete(self, owner_id: str, routine_id: str, *, by_run: str | None = None) -> None:
+        """Delete a routine. ``by_run`` is the run asking, which is left running."""
         _ = await self._row(owner_id, routine_id)
         if self._before_delete is not None:
-            await self._before_delete(routine_id)
+            await self._before_delete(routine_id, by_run)
 
         def work(session: Session) -> None:
             session.delete(_owned(session, owner_id, routine_id))

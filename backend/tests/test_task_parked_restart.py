@@ -23,6 +23,7 @@ from services.scheduler import ScheduledTaskView, TaskRunResult, TaskRunSuspende
 from ._helpers import await_parked, client_app, swap_tool_catalog
 from ._json import json_body, obj, s
 from .test_approval_routes import danger_categories
+from .test_parked_turns import await_row
 from .test_task_routes import (
     await_parked_task_run,
     await_task_run_finalized,
@@ -52,6 +53,7 @@ async def park_a_fire(client: httpx.AsyncClient, app: FastAPI) -> tuple[str, str
     else:
         raise AssertionError("the open TaskRun was never linked to its run")
     assert row["finishedAt"] is None
+    await await_row(app, run.id)
     return task_id, task_run_id, run.id, parked_call_id(run)
 
 

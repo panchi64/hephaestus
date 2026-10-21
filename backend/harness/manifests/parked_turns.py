@@ -22,7 +22,7 @@ from routes.chat.submit import recompose_chat
 from runs import ParkedJournal, Run, RunRegistry, RunStream
 from services.conversations import ConversationStore
 from services.notifications import NotificationService
-from services.parked_turns import SealedParkedStore, StoredPark, UnreadablePark
+from services.parked_turns import SealedParkedStore, StoredPark
 
 logger = logging.getLogger(__name__)
 
@@ -60,30 +60,34 @@ class _Journal(ParkedJournal):
 
 
 async def _abandon(
-    lost: UnreadablePark, runs: RunRegistry, notifications: NotificationService
+    stored: StoredPark,
+    runs: RunRegistry,
+    store: SealedParkedStore,
+    notifications: NotificationService,
 ) -> None:
     """A park that cannot be read back is dropped for good rather than retried every boot.
     Its run ends blocked, so what waits on a run's end (its routine's `TaskRun`, a
     sub-agent's parent) hears of it, and the operator is told once."""
-    if runs.get(lost.run_id) is not None:
+    if runs.get(stored.run_id) is not None:
+        store.forget(stored.run_id)
         return
     reason = "a run waiting for approval could not be restored after the restart"
     runs.end_unrestorable(
         Run(
-            id=lost.run_id,
-            kind=lost.kind,
-            owner_id=lost.owner_id,
-            conversation_id=lost.conversation_id,
-            stream=RunStream(lost.last_event_id),
+            id=stored.run_id,
+            kind=stored.kind,
+            owner_id=stored.owner_id,
+            conversation_id=stored.conversation_id,
+            stream=RunStream(stored.last_event_id),
         ),
         reason,
     )
     _ = await notifications.notify(
-        lost.owner_id,
+        stored.owner_id,
         "run_restore_failed",
         "A run could not be restored",
         body=reason,
-        conversation_id=lost.conversation_id,
+        conversation_id=stored.conversation_id,
     )
 
 
@@ -93,27 +97,23 @@ async def _restore(
     conversations: ConversationStore,
     notifications: NotificationService,
 ) -> None:
-    readable, unreadable = await store.load()
-    for lost in unreadable:
-        await _abandon(lost, runs, notifications)
-    for stored in readable:
+    """Every readable park is registered before any unreadable one is ended, since ending
+    a child run can wake the parent whose own park is still to be restored."""
+    lost: list[StoredPark] = []
+    vetoed: list[tuple[Run, str]] = []
+    for stored in await store.load():
         if runs.get(stored.run_id) is not None:
             continue
         try:
+            if stored.payload is None:
+                raise ValueError("the sealed payload could not be opened")
             parked, endpoint = decode_park(stored.payload, kind=stored.kind)
+            # The turn is written into the thread's cached tree when it ends, and an
+            # uncached thread would be written as a second root.
+            _ = await conversations.tree(stored.conversation_id)
         except Exception:
             logger.exception("parked turns: run %s could not be read back", stored.run_id)
-            await _abandon(
-                UnreadablePark(
-                    run_id=stored.run_id,
-                    owner_id=stored.owner_id,
-                    conversation_id=stored.conversation_id,
-                    kind=stored.kind,
-                    last_event_id=stored.last_event_id,
-                ),
-                runs,
-                notifications,
-            )
+            lost.append(stored)
             continue
         run = Run(
             id=stored.run_id,
@@ -126,8 +126,15 @@ async def _restore(
         )
         run.park(parked)
         run.on_park_cancel = partial(persist_parked_cancel, run, store=conversations)
+        if (problem := await runs.restore_problem(run)) is not None:
+            vetoed.append((run, problem))
+            continue
         events, _, _ = announcements(parked.requests, parked.settled)
         runs.restore_parked(run, events)
+    for stored in lost:
+        await _abandon(stored, runs, store, notifications)
+    for run, problem in vetoed:
+        runs.end_unrestorable(run, problem)
 
 
 async def _build(ctx: HarnessContext) -> FeatureRuntime:

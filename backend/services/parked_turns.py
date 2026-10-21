@@ -27,7 +27,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class StoredPark:
-    """One parked run as stored: its identity, and its continuation as plain JSON text."""
+    """One parked run as stored: its identity, and its continuation as plain JSON text, or
+    ``None`` when the sealed payload could not be opened."""
 
     run_id: str
     owner_id: str
@@ -35,19 +36,8 @@ class StoredPark:
     kind: str
     prompt_message_id: str | None
     last_event_id: int
-    payload: str
+    payload: str | None
     parked_at: datetime | None = None
-
-
-@dataclass(frozen=True)
-class UnreadablePark:
-    """A stored park whose continuation could not be read: only its identity survives."""
-
-    run_id: str
-    owner_id: str
-    conversation_id: str
-    kind: str
-    last_event_id: int
 
 
 @dataclass(frozen=True)
@@ -83,32 +73,22 @@ class SealedParkedStore:
     def forget(self, run_id: str) -> None:
         self._worker.submit(_Job("forget", run_id))
 
-    async def load(self) -> tuple[list[StoredPark], list[UnreadablePark]]:
-        """Every stored park, oldest first, and the rows whose payload cannot be opened.
+    async def load(self) -> list[StoredPark]:
+        """Every stored park, oldest first; one whose payload cannot be opened has none.
         Needs the vault open."""
 
         def work(session: Session) -> list[ParkedTurnRecord]:
             query = select(ParkedTurnRecord).order_by(col(ParkedTurnRecord.parked_at))
             return list(session.exec(query))
 
-        readable: list[StoredPark] = []
-        unreadable: list[UnreadablePark] = []
+        parks: list[StoredPark] = []
         for row in await in_session(self._engine, work):
             try:
                 payload = self._vault.decrypt_str(row.payload_enc)
             except Exception:
                 logger.exception("parked turns: run %s cannot be decrypted", row.run_id)
-                unreadable.append(
-                    UnreadablePark(
-                        run_id=row.run_id,
-                        owner_id=row.owner_id,
-                        conversation_id=row.conversation_id,
-                        kind=row.kind,
-                        last_event_id=row.last_event_id,
-                    )
-                )
-                continue
-            readable.append(
+                payload = None
+            parks.append(
                 StoredPark(
                     run_id=row.run_id,
                     owner_id=row.owner_id,
@@ -120,12 +100,13 @@ class SealedParkedStore:
                     parked_at=row.parked_at,
                 )
             )
-        return readable, unreadable
+        return parks
 
     async def _write(self, job: _Job) -> None:
         if job.op == "record":
             park = job.park
             assert park is not None
+            assert park.payload is not None
             payload_enc = self._vault.encrypt_str(park.payload)
 
             def record(session: Session) -> None:
