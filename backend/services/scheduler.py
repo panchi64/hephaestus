@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from zoneinfo import ZoneInfo
@@ -95,6 +95,14 @@ class ScheduledTaskView:
     output: str  # TaskOutput
     pre_authorized: list[str]
     agent_name: str | None = None
+    #: The open `TaskRun` this fire records. An executor that starts a run links it with
+    #: `SchedulerService.link_task_run` so the row can be found again after a restart.
+    task_run_id: str | None = None
+
+
+class TaskRunSuspended(Exception):
+    """Raised by an executor whose run outlives this process (parked on the operator at
+    shutdown). The `TaskRun` stays open: whoever settles the restored run finalizes it."""
 
 
 @dataclass(frozen=True)
@@ -184,7 +192,8 @@ class SchedulerService:
     async def stop(self) -> None:
         """Stop the tick loop and let any in-flight executions finish naturally —
         each one is responsible for its own `TaskRun` finalize, so cutting them off
-        would strand a row `finished_at`-less forever."""
+        would strand a row `finished_at`-less forever. An execution whose run is parked on
+        the operator ends with `TaskRunSuspended` and leaves its row open on purpose."""
         self._stopping.set()
         self._wake.set()  # unstick a park on `_wait_unlocked`/`_wait_for`
         await cancel_and_wait(self._task, STOP_TIMEOUT_S)
@@ -314,12 +323,14 @@ class SchedulerService:
     async def _fire(self, task: ScheduledTask, fire_time: datetime, run_row_id: str) -> None:
         await self._insert_task_run(id=run_row_id, task_id=task.id, started_at=fire_time)
         try:
-            view = self._decrypt_view(task)
+            view = replace(self._decrypt_view(task), task_run_id=run_row_id)
             if task.kind == TaskKind.REMINDER:
                 await self._notify(view)
                 result = TaskRunResult(outcome=TaskOutcome.OK.value)
             else:
                 result = await self._executor(view)
+        except TaskRunSuspended:
+            return
         except Exception as exc:  # a bad task must never kill the loop
             logger.exception("scheduler: task %s execution failed", task.id)
             result = TaskRunResult(outcome=TaskOutcome.ERROR.value, summary=str(exc))
@@ -456,16 +467,92 @@ class SchedulerService:
 
         def work(session: Session) -> None:
             row = session.get(TaskRun, run_row_id)
-            if row is None:
+            if row is None or row.finished_at is not None:
                 return
             row.finished_at = finished_at
             row.outcome = outcome
-            row.run_id = run_id
-            row.conversation_id = conversation_id
+            row.run_id = run_id or row.run_id
+            row.conversation_id = conversation_id or row.conversation_id
             row.summary_enc = summary_enc
             session.add(row)
 
         await in_session(self._engine, work)
+
+    async def link_task_run(
+        self, run_row_id: str, *, run_id: str, conversation_id: str | None
+    ) -> None:
+        """Point an open `TaskRun` at the run it drives, so a restored run finds its row."""
+
+        def work(session: Session) -> None:
+            row = session.get(TaskRun, run_row_id)
+            if row is None or row.finished_at is not None:
+                return
+            row.run_id = run_id
+            row.conversation_id = conversation_id
+            session.add(row)
+
+        await self._retry_locked(
+            lambda: in_session(self._engine, work), what=f"task run {run_row_id} link"
+        )
+
+    async def settle_restored(
+        self, run_id: str, *, outcome: str, summary: str | None
+    ) -> ScheduledTaskView | None:
+        """Finalize the open `TaskRun` linked to ``run_id``, for a run that ended in a
+        process other than the one that fired it. Returns the routine's view when a row
+        was closed, ``None`` when none was open."""
+
+        def find(session: Session) -> tuple[str, ScheduledTask] | None:
+            row = session.exec(
+                select(TaskRun)
+                .where(TaskRun.run_id == run_id)
+                .where(col(TaskRun.finished_at).is_(None))
+            ).first()
+            task = session.get(ScheduledTask, row.task_id) if row is not None else None
+            return (row.id, task) if row is not None and task is not None else None
+
+        found = await in_session(self._engine, find)
+        if found is None:
+            return None
+        run_row_id, task = found
+        finished = utcnow()
+        _ = await self._finalize_parked(
+            run_row_id,
+            finished_at=finished,
+            outcome=outcome,
+            run_id=run_id,
+            conversation_id=None,
+            summary=summary,
+        )
+        try:
+            await self.advance(task.id, last_run_at=finished)
+        except Exception:
+            logger.exception("scheduler: task %s last-run stamp failed", task.id)
+        return self._decrypt_view(task)
+
+    async def close_stranded(self, is_live: Callable[[str], bool]) -> int:
+        """Finalize every open `TaskRun` that nothing is going to finish: not an execution
+        of this process, and not linked to a run for which ``is_live`` holds. Returns how
+        many were closed."""
+
+        def open_rows(session: Session) -> list[tuple[str, str | None]]:
+            rows = session.exec(select(TaskRun).where(col(TaskRun.finished_at).is_(None)))
+            return [(row.id, row.run_id) for row in rows]
+
+        closed = 0
+        for run_row_id, run_id in await in_session(self._engine, open_rows):
+            if run_row_id in self._running or (run_id is not None and is_live(run_id)):
+                continue
+            _ = await self._finalize_parked(
+                run_row_id,
+                finished_at=utcnow(),
+                outcome=TaskOutcome.ERROR.value,
+                run_id=run_id,
+                conversation_id=None,
+                summary="the app stopped before this run finished",
+            )
+            closed += 1
+        return closed
 
     async def _retry_locked(self, attempt: Callable[[], Awaitable[None]], *, what: str) -> None:
         """Run a DB write, riding out SQLite's transient `database is locked`/`busy`

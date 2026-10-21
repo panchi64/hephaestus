@@ -103,6 +103,8 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             await _restore(store, runs, conversations)
         except Exception:
             logger.exception("parked turns: could not restore the stored parks")
+        finally:
+            runs.parks_restored.set()
 
     _ = ctx.lifecycle.track("parked-turns-restore", restore())
     return FeatureRuntime(services=(store,))

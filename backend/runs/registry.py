@@ -170,6 +170,13 @@ class RunRegistry:
         # Opaque to the substrate: the orchestrator layer files and reads these by run kind.
         self._recomposers: dict[str, object] = {}
         self._closing: bool = False
+        self._parks_restored: asyncio.Event = asyncio.Event()
+
+    @property
+    def parks_restored(self) -> asyncio.Event:
+        """Set once the stored parks have been put back (or the attempt has ended), so what
+        holds a record of a parked run can tell a live one from an orphan."""
+        return self._parks_restored
 
     @property
     def closing(self) -> bool:
