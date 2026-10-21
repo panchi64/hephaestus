@@ -126,6 +126,8 @@ async def test_a_routine_park_whose_routine_is_gone_is_blocked_at_restore(
         assert restored is not None and restored.status is RunStatus.blocked
         assert "no longer exists" in (restored.detail or "")
         await await_row(app, run_id, present=False)
+        items, _ = await app_state(app).notifications.list_notifications("operator", limit=50)
+        assert [n.kind for n in items].count("run_restore_failed") == 1
 
 
 async def test_a_routine_deleting_itself_is_not_cancelled_by_the_delete(
@@ -186,7 +188,11 @@ async def test_the_readable_parks_are_registered_before_an_unreadable_one_ends(
                 break
             await asyncio.sleep(0.01)
         assert seen == [True]
-        await asyncio.sleep(0.3)  # the child's report reaches the parent's inbox
+        for _ in range(300):
+            if parent.inbox is not None and parent.inbox.messages:
+                break
+            await asyncio.sleep(0.01)
+        assert parent.inbox is not None and parent.inbox.messages
         assert parent.status is RunStatus.awaiting_input
         assert app_state(app).runs.get(parent_id) is parent
 
@@ -424,22 +430,6 @@ async def test_replayed_approvals_sit_above_events_emitted_while_parked(
         restored = await await_parked(app, run_id)
         approvals = [e.seq for e in restored.stream.replay() if e.body.type == "approval.required"]
         assert approvals and min(approvals) > seen
-
-
-async def test_a_park_cannot_be_restored_beside_a_live_run_on_its_conversation():
-    reg = RunRegistry()
-    live = Run(id="live", kind="chat", owner_id="operator", conversation_id="c", stream=RunStream())
-    reg.register(live)
-    parked = Run(
-        id="parked", kind="chat", owner_id="operator", conversation_id="c", stream=RunStream()
-    )
-    parked.park(None)
-
-    reg.restore_parked(parked, [])
-
-    assert parked.status is RunStatus.blocked and parked.stream.closed
-    assert "already has a run" in (parked.detail or "")
-    assert reg.active_run_for("c", "operator") is live
 
 
 async def test_a_blocked_park_is_stored_with_a_denial_for_every_pending_call(

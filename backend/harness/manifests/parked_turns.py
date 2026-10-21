@@ -61,20 +61,24 @@ class _Journal(ParkedJournal):
         return True
 
     def hold(self, run_id: str, conversation_id: str) -> None:
-        """Keep the thread's tree cached for as long as the run is parked."""
+        """Keep the thread's tree cached until the run is terminal, since a resumed run
+        writes its turn into it when it ends."""
         self._threads[run_id] = conversation_id
         self._conversations.pin(conversation_id)
+
+    def release(self, run: Run) -> None:
+        conversation_id = self._threads.pop(run.id, None)
+        if conversation_id is not None and conversation_id not in self._threads.values():
+            self._conversations.unpin(conversation_id)
 
     @override
     def forget(self, run_id: str) -> None:
         self._store.forget(run_id)
-        conversation_id = self._threads.pop(run_id, None)
-        if conversation_id is not None and conversation_id not in self._threads.values():
-            self._conversations.unpin(conversation_id)
 
 
-def _rebuild(stored: StoredPark, conversations: ConversationStore) -> Run:
-    """The parked run a stored park describes. Raises when it cannot be read."""
+def _rebuild(stored: StoredPark, conversations: ConversationStore) -> tuple[Run, ParkedTurn]:
+    """The parked run a stored park describes, with its continuation. Raises when it
+    cannot be read."""
     if stored.payload is None:
         raise ValueError("the sealed payload could not be opened")
     parked, endpoint = decode_park(stored.payload, kind=stored.kind)
@@ -89,7 +93,7 @@ def _rebuild(stored: StoredPark, conversations: ConversationStore) -> Run:
     )
     run.park(parked)
     run.on_park_cancel = partial(persist_parked_cancel, run, store=conversations)
-    return run
+    return run, parked
 
 
 async def _restore(
@@ -107,7 +111,7 @@ async def _restore(
         if runs.get(stored.run_id) is not None:
             continue
         try:
-            run = _rebuild(stored, conversations)
+            run, parked = _rebuild(stored, conversations)
         except Exception:
             logger.exception("parked turns: run %s could not be read back", stored.run_id)
             ending.append(
@@ -133,13 +137,22 @@ async def _restore(
             if problem is not None:
                 ending.append((run, problem))
                 continue
-            parked = run.parked_payload
-            assert isinstance(parked, ParkedTurn)
+            journal.hold(run.id, stored.conversation_id)
+            try:
+                # Cached before the park is visible, so acting on it never reads the
+                # database on the loop.
+                _ = await conversations.tree(stored.conversation_id)
+            except Exception:
+                logger.warning(
+                    "parked turns: thread %s not preloaded, so its park loads it when it ends",
+                    stored.conversation_id,
+                    exc_info=True,
+                )
             events, _, _ = announcements(parked.requests, parked.settled)
             runs.restore_parked(run, events)
-            journal.hold(run.id, stored.conversation_id)
         except Exception:
             logger.exception("parked turns: run %s could not be restored", stored.run_id)
+            ending.append((run, _LOST))
     for run, reason in ending:
         try:
             runs.end_unrestorable(run, reason)
@@ -181,7 +194,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             runs.parks_restored.set()
 
     _ = ctx.lifecycle.track("parked-turns-restore", restore())
-    return FeatureRuntime(services=(store,))
+    return FeatureRuntime(services=(store,), run_terminal_sync=(journal.release,))
 
 
 MANIFEST = FeatureManifest(name="parked-turns", after=("notifications",), build=_build)

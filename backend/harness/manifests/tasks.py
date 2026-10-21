@@ -237,9 +237,12 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             )
         except Exception:
             if view.task_run_id is not None:
-                await scheduler.link_task_run(
-                    view.task_run_id, run_id=None, conversation_id=conversation_id
-                )
+                try:
+                    await scheduler.link_task_run(
+                        view.task_run_id, run_id=None, conversation_id=conversation_id
+                    )
+                except Exception:
+                    logger.exception("tasks: could not unlink TaskRun %s", view.task_run_id)
             raise
         # Registered before the first await below, so the run cannot reach terminal first.
         run_waiters[created.run_id] = waiter

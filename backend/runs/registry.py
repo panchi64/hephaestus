@@ -211,16 +211,8 @@ class RunRegistry:
     def restore_parked(self, run: Run, announcements: Sequence[EventBody]) -> None:
         """Track a run rebuilt from a stored park, in ``awaiting_input``, and replay what it
         was waiting on into its stream. The row is already stored, so it is not rewritten.
-
-        A conversation that already has a live run cannot take a second: the park ends
-        ``blocked`` instead."""
+        The caller has checked that the conversation has no live run."""
         if run.conversation_id is not None:
-            if self.active_run_for(run.conversation_id, run.owner_id) is not None:
-                # The live run extends the thread's leaf, so writing this turn after it
-                # would put it out of order.
-                run.on_park_cancel = None
-                self.end_unrestorable(run, "its conversation already has a run in progress")
-                return
             run.inbox = self.inbox(run.conversation_id, run.owner_id)
         self.register(run)
         self._journalled.add(run.id)
@@ -761,8 +753,10 @@ class RunRegistry:
         Best-effort: a hook that raises must not stop the cancel from proceeding."""
         if run.on_park_cancel is None:
             return
-        with suppress(Exception):
+        try:
             run.on_park_cancel()
+        except Exception:
+            logger.warning("runs: the parked turn of run %s was not written", run.id, exc_info=True)
 
     @staticmethod
     def _flush_cancel(run: Run) -> None:

@@ -36,7 +36,9 @@ class RecordingMixin(StoreCore):
         returning the ids of the nodes it created (empty when it wrote nothing).
 
         Only projects and serializes here (no vault) — the drainer encrypts just
-        before the write, on the lock-aware side of the queue. New messages branch
+        before the write, on the lock-aware side of the queue. An evicted thread is
+        reloaded first, which blocks on the read and raises
+        :class:`ConversationUnavailableError` when the rows cannot be opened. New messages branch
         automatically when a prior regenerate/edit moved the active leaf back.
         ``prompt_id`` says the turn's user request is **already in the tree** — written by
         :meth:`record_prompt` as the turn began — so ``new_messages`` is only what followed
@@ -59,7 +61,7 @@ class RecordingMixin(StoreCore):
         so the readout can total a cold thread's time the way it totals its tokens."""
         if not new_messages:
             if prompt_id is not None and blocked_reason:
-                self._block_node(conversation_id, prompt_id, blocked_reason)
+                self.stamp_block(conversation_id, prompt_id, blocked_reason)
             return []
         tree = self.cache_get(conversation_id)
         if tree is None:
@@ -75,7 +77,7 @@ class RecordingMixin(StoreCore):
             isinstance(n.message, ModelResponse) for n in added
         )
         if blocked_on_request and prompt_id is not None:
-            self._block_node(conversation_id, prompt_id, blocked_reason or "")
+            self.stamp_block(conversation_id, prompt_id, blocked_reason or "")
             blocked_on_request = False
             blocked_reason = None
         rows: list[Row] = []
@@ -199,17 +201,15 @@ class RecordingMixin(StoreCore):
         return (await self.tree(conversation_id)).active_leaf_id
 
     def stamp_block(self, conversation_id: str, node_id: str, reason: str) -> None:
-        """Mark a recorded node with the reason its turn stopped, durably. The leaf stays."""
-        self._block_node(conversation_id, node_id, reason)
-
-    def _block_node(self, conversation_id: str, node_id: str, reason: str) -> None:
         """Stamp a stop marker on a node that is already recorded, durably.
 
         The prompt of a turn that stopped before producing anything is the only place its
         marker can go; it is already in the tree and (probably) in the table, so this
         rewrites the node and queues the matching row update. A node that already carries
         a marker keeps it — the first stop is the one that explains the turn."""
-        tree = self._cache.get(conversation_id) or self.hydrate_blocking(conversation_id)
+        tree = self._cache.get(conversation_id)
+        if tree is None:
+            tree = self.hydrate_blocking(conversation_id)
         node = tree.nodes.get(node_id)
         if node is None or node.blocked_reason is not None:
             return

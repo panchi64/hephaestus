@@ -5,14 +5,16 @@ owner memo, the write-behind queue, and the thread lifecycle (create, delete).
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import Counter, OrderedDict
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Engine, delete
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, col, select
 
 from core.db import in_session, read_blocking
-from core.vault import Vault
+from core.vault import Vault, VaultLocked
 from core.worker import WriteBehindWorker
 from models.conversation import Conversation, Message
 from models.thread_worktree import ThreadWorktree
@@ -34,6 +36,17 @@ _DEFAULT_MAX_CACHED_CONVERSATIONS = 64
 # against a whole decrypted conversation, so the memo can outlive the trees it was
 # populated alongside by a wide margin and still cost nothing worth counting.
 _OWNER_MEMO_MULTIPLE = 8
+
+
+logger = logging.getLogger(__name__)
+
+
+class ConversationUnavailableError(RuntimeError):
+    """A thread's stored rows could not be read, so nothing can be recorded into it."""
+
+    def __init__(self, conversation_id: str) -> None:
+        super().__init__(f"conversation {conversation_id} could not be loaded")
+        self.conversation_id: str = conversation_id
 
 
 def _load_rows(session: Session, conversation_id: str) -> tuple[list[HydratedRow], str | None]:
@@ -95,8 +108,8 @@ class StoreCore:
         self._max_cached: int = max_cached_conversations
         # Conversations with durable work still queued. `record()` extends the cached
         # tree in place and hands the drainer a *slice*, so evicting between the two
-        # would leave `setdefault` rebuilding an empty tree and the turn appending to
-        # nothing. Never evict one of these; the count drains to zero as the writes land.
+        # would make the next `record` rehydrate rows that do not yet hold the slice.
+        # Never evict one of these; the count drains to zero as the writes land.
         self._pending: Counter[str] = Counter()
         # Conversations a parked run will be written into when it ends.
         self._pinned: set[str] = set()
@@ -200,11 +213,12 @@ class StoreCore:
     def _trim_cache(self) -> None:
         """Drop least-recently-used trees until the cache is back within its cap.
 
-        Entries with queued durable work are skipped, never dropped: `record()` mutates
-        the cached tree and queues only the new slice, so evicting one mid-turn would
-        leave the next `record` appending to a freshly-built empty tree. If every entry
-        is pending — far more in flight than the cap — the cache simply runs over rather
-        than corrupting a tree; the overflow drains on its own as the writes land.
+        Entries with queued durable work or a parked run are skipped, never dropped:
+        `record()` mutates the cached tree and queues only the new slice, so evicting one
+        mid-turn would make the next `record` rehydrate rows that do not yet hold it, and
+        a parked run's finish should not need a blocking reload. If every entry is held —
+        far more in flight than the cap — the cache simply runs over; the overflow drains
+        as the writes land and the parks end.
         """
         if len(self._cache) <= self._max_cached:
             return
@@ -298,9 +312,20 @@ class StoreCore:
     def hydrate_blocking(self, conversation_id: str) -> Tree:
         """The conversation's tree read from the database on the calling thread and cached,
         for ``record()``, which cannot await. A thread with rows is never recorded into an
-        empty tree, since its new nodes would reuse the sequence numbers of the stored ones."""
-        loaded = read_blocking(self._engine, lambda session: _load_rows(session, conversation_id))
-        return self._cache_put(conversation_id, self._build_tree(*loaded))
+        empty tree, since its new nodes would reuse the sequence numbers of the stored ones.
+
+        Raises :class:`ConversationUnavailableError` when the rows cannot be read or opened
+        (a locked vault, a database that stays busy)."""
+        try:
+            loaded = read_blocking(
+                self._engine, lambda session: _load_rows(session, conversation_id)
+            )
+            return self._cache_put(conversation_id, self._build_tree(*loaded))
+        except (VaultLocked, OperationalError) as exc:
+            logger.warning(
+                "conversations: cannot load thread %s to record into it: %s", conversation_id, exc
+            )
+            raise ConversationUnavailableError(conversation_id) from exc
 
     def _build_tree(self, rows: list[HydratedRow], active: str | None) -> Tree:
         tree = Tree()

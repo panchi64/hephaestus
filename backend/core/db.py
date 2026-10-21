@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from collections.abc import Callable, Generator
-from contextlib import ExitStack, contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import NoReturn, Protocol
 from weakref import WeakKeyDictionary
@@ -231,14 +232,6 @@ def _raise_schema_error(
     raise SchemaMigrationError(message) from None
 
 
-def read_blocking[T](engine: Engine, work: Callable[[Session], T]) -> T:
-    """Run a read on the calling thread, for the rare synchronous path that cannot await.
-    It blocks the loop for the read, so it is never a hot path."""
-    lock = _CONN_LOCKS.get(engine)
-    with lock if lock is not None else nullcontext(), Session(engine) as session:
-        return work(session)
-
-
 async def in_session[T](engine: Engine, work: Callable[[Session], T]) -> T:
     """Run a unit of DB work in a threadpool and commit it. For a single-connection
     in-memory engine the session is taken under that engine's lock, so overlapping
@@ -346,3 +339,18 @@ def read_session(engine: Engine) -> Generator[Session]:
         if lock is not None:
             _ = stack.enter_context(lock)
         yield stack.enter_context(Session(engine, expire_on_commit=False))
+
+
+def read_blocking[T](engine: Engine, work: Callable[[Session], T]) -> T:
+    """Run a read on the calling thread, for the rare synchronous path that cannot await.
+    It blocks the loop for the read and for any wait on a locked database, so it is only a
+    fallback."""
+    for attempt in range(LOCK_RETRIES + 1):
+        try:
+            with read_session(engine) as session:
+                return work(session)
+        except OperationalError as exc:
+            if attempt == LOCK_RETRIES or not _is_locked(exc):
+                raise
+            time.sleep(_LOCK_RETRY_DELAY_S * (attempt + 1))
+    raise AssertionError("unreachable")  # pragma: no cover
