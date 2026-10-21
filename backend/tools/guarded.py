@@ -13,7 +13,7 @@ It sits inside the recovering wrapper and outside the namespaced stack, so a nes
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import override
+from typing import cast, override
 
 from pydantic import JsonValue
 from pydantic_ai import ApprovalRequired, RunContext
@@ -45,4 +45,4 @@ class GuardedToolset(WrapperToolset[RunDeps]):
             reason = guard(name, tool_args, home=home, settings=get_settings())
             if reason is not None:
                 raise ApprovalRequired(metadata={GUARD_KEY: reason})
-        return await self.wrapped.call_tool(name, tool_args, ctx, tool)
+        return cast(object, await self.wrapped.call_tool(name, tool_args, ctx, tool))

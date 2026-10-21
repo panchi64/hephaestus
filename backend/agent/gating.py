@@ -63,6 +63,7 @@ from services.approval_grants import (
     covered_by_grant,
     grant_width,
 )
+from services.home.table import RunHome
 from services.permissions import (
     Decision,
     GrantWidth,
@@ -150,7 +151,11 @@ async def settle_deferred(
     around. ``manual`` is what is left for the operator, and a non-empty one is what parks
     the turn.
 
-    **The level rules first, and a grant may answer it but never overturn it.** A standing
+    **A guarded call is ruled before any of that** (``services/permissions/guards.py``): it
+    goes to the operator at every level, and neither a grant nor the reviewer can answer it.
+    A level that refuses outright still refuses.
+
+    **The level rules next, and a grant may answer it but never overturn it.** A standing
     grant is the operator's "stop asking me about this one", so it settles a call the level
     would have put in front of them. But a level that refuses outright carries their answer
     already, in the level they chose — a grant recorded while a thread could act is not
@@ -194,7 +199,8 @@ async def settle_deferred(
     # grant is what produced it, because the two are not recoverable from each other: an
     # ALLOW can come from a grant or from a level that allows outright, and only the first
     # is revocable.
-    guarded = await _guard_reasons(run, approvals, deps)
+    home = await _guard_home(deps, approvals)
+    guarded = _guard_reasons(run, approvals, home)
     ruled = [
         (call, Decision.ASK, False)
         if call.tool_call_id in guarded and decide(permission, call.tool_name) is not Decision.BLOCK
@@ -210,6 +216,7 @@ async def settle_deferred(
         grants=granted,
         turn_start=turn_start,
         budget=budget,
+        home=home,
     )
     settled: dict[str, ToolApproved | ToolDenied] = {}
     manual: list[ToolCallPart] = []
@@ -249,8 +256,20 @@ async def settle_deferred(
     return settled, manual
 
 
-async def _guard_reasons(
-    run: Run, approvals: Sequence[ToolCallPart], deps: RunDeps
+async def _guard_home(deps: RunDeps, approvals: Sequence[ToolCallPart]) -> RunHome | None:
+    """The home the guard places paths against, opened only when a call in the batch is
+    one it has a rule for."""
+    if not any(call.tool_name in GUARDED_TOOLS for call in approvals):
+        return None
+    try:
+        return await resolve_run_home(deps)
+    except Exception:  # a guard that raises would abort the operator's turn
+        logger.info("guard: no home to place paths against", exc_info=True)
+        return None
+
+
+def _guard_reasons(
+    run: Run, approvals: Sequence[ToolCallPart], home: RunHome | None
 ) -> dict[str, str]:
     """Why each call that must go to the operator at every level has to, by call id.
 
@@ -258,13 +277,6 @@ async def _guard_reasons(
     reasons are handed to the park that announces them (:func:`guards.remember`).
     """
     candidates = [call for call in approvals if call.tool_name in GUARDED_TOOLS]
-    if not candidates:
-        return {}
-    try:
-        home = await resolve_run_home(deps)
-    except Exception:  # a guard that raises would abort the operator's turn
-        logger.info("guard: no home to place paths against", exc_info=True)
-        home = None
     settings = get_settings()
     reasons: dict[str, str] = {}
     for call in candidates:
@@ -317,8 +329,11 @@ async def review_batch(
     grants: Sequence[GrantInfo] = (),
     turn_start: TurnBoundary | None = None,
     budget: ReviewBudget | None = None,
+    home: RunHome | None = None,
 ) -> dict[str, ReviewOutcome]:
     """Review every call the level sent to review, by ``tool_call_id``.
+
+    ``home`` is the one the caller already opened for the batch, so it is not opened twice.
 
     The reviewer and the transcript are built once for the batch and shared: resolving a
     reviewer is a registry lookup and a model construction, and the transcript is the same
@@ -341,7 +356,7 @@ async def review_batch(
         messages, turn_start=turn_start, limit=settings.review_transcript_entries
     )
     nonce = new_nonce()
-    root = await _judged_root(deps, calls)
+    root = await _judged_root(deps, calls, home)
     # Resolved once for the batch: a non-host command is held to its reach only by running
     # in the platform VM, and the shell refuses every command while the VM is down.
     fenced = vm_fences(caps)
@@ -372,7 +387,9 @@ def vm_fences(caps: ServiceContainer) -> bool:
     return copies is not None and copies.vm.available
 
 
-async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Fence | None:
+async def _judged_root(
+    deps: RunDeps, calls: Sequence[ToolCallPart], opened: RunHome | None = None
+) -> Fence | None:
     """The home every path in this batch is measured against, read from where the
     thread's shell stands.
 
@@ -393,11 +410,13 @@ async def _judged_root(deps: RunDeps, calls: Sequence[ToolCallPart]) -> Fence | 
     """
     if not any(measured_against_root(call.tool_name) for call in calls):
         return None
-    try:
-        home = await resolve_run_home(deps)
-    except Exception:  # a judge that raises would abort the operator's turn
-        logger.info("auto review: no home to judge against", exc_info=True)
-        return None
+    home = opened
+    if home is None:
+        try:
+            home = await resolve_run_home(deps)
+        except Exception:  # a judge that raises would abort the operator's turn
+            logger.info("auto review: no home to judge against", exc_info=True)
+            return None
     if home is None:
         return None
     shells = deps.caps.get_optional(ThreadShells)

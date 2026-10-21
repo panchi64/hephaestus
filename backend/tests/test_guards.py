@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Literal
 
 import pytest
 from fastapi import FastAPI
@@ -21,12 +20,11 @@ from services.approval_grants import grantable
 from services.home.backend import Mount
 from services.home.paths import SCRATCH, Place
 from services.home.table import RunHome
-from services.permissions import guards
 from services.permissions.guards import GUARD_KEY, guard, is_guarded, require_operator, unconfined
-from services.sandbox.fence import ConfinementState
+
+from .guard_support import FenceState, set_fence
 
 API = Place("projects", "api")
-type FenceState = Literal["active", "disabled_by_setting", "unavailable"]
 
 
 @pytest.fixture
@@ -260,11 +258,7 @@ class TestFileTools:
 
 class TestTheFence:
     def fence(self, monkeypatch: pytest.MonkeyPatch, state: FenceState) -> None:
-        monkeypatch.setattr(
-            guards,
-            "confinement_state",
-            lambda _settings: ConfinementState(state, "install bubblewrap"),
-        )
+        set_fence(monkeypatch, state, "install bubblewrap")
 
     def test_an_unavailable_fence_stops_a_host_command(
         self, monkeypatch: pytest.MonkeyPatch, settings: Settings, home: RunHome
@@ -301,19 +295,13 @@ class TestTheWarning:
     def test_a_host_command_without_a_fence_carries_the_reason(
         self, monkeypatch: pytest.MonkeyPatch, settings: Settings
     ):
-        monkeypatch.setattr(
-            guards, "confinement_state", lambda _s: ConfinementState("unavailable", "no bwrap")
-        )
+        set_fence(monkeypatch, "unavailable", "no bwrap")
         host: dict[str, object] = {"command": "ls"}
         assert unconfined("code_run_host_command", host, settings=settings) == "no bwrap"
         assert unconfined("shell_run_command", shell("ls", reach="host"), settings=settings)
 
     def test_a_disabled_fence_warns_too(self, monkeypatch: pytest.MonkeyPatch, settings: Settings):
-        monkeypatch.setattr(
-            guards,
-            "confinement_state",
-            lambda _s: ConfinementState("disabled_by_setting", "disabled by configuration"),
-        )
+        set_fence(monkeypatch, "disabled_by_setting", "disabled by configuration")
         assert unconfined("code_run_host_command", {}, settings=settings) == (
             "disabled by configuration"
         )
@@ -321,11 +309,9 @@ class TestTheWarning:
     def test_nothing_to_warn_about_when_active_or_in_the_vm(
         self, monkeypatch: pytest.MonkeyPatch, settings: Settings
     ):
-        monkeypatch.setattr(guards, "confinement_state", lambda _s: ConfinementState("active"))
+        set_fence(monkeypatch, "active")
         assert unconfined("code_run_host_command", {}, settings=settings) is None
-        monkeypatch.setattr(
-            guards, "confinement_state", lambda _s: ConfinementState("unavailable", "x")
-        )
+        set_fence(monkeypatch, "unavailable", "x")
         assert unconfined("shell_run_command", shell("ls"), settings=settings) is None
 
 

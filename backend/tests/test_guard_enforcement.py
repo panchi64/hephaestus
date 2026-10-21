@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Sequence
-from typing import Literal
 
 import pytest
 from pydantic_ai import (
@@ -39,13 +38,11 @@ from services.approval_grants import ApprovalGrantStore
 from services.conversations import ConversationBinding
 from services.permissions import PermissionLevel, guards
 from services.permissions.guards import GUARD_KEY
-from services.sandbox.fence import ConfinementState
 from tools import RunDeps, build_agent_toolsets
 from tools.code_mode_marks import RUN_CODE
 
 from ._helpers import run_bodies
-
-type FenceState = Literal["active", "disabled_by_setting", "unavailable"]
+from .guard_support import FenceState, set_fence
 
 OWNER = "operator"
 CONV = "conv-1"
@@ -137,9 +134,7 @@ class TestTheDeferredPath:
     async def test_the_host_fence_being_down_holds_a_host_command(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr(
-            guards, "confinement_state", lambda _s: ConfinementState("unavailable", "no bwrap")
-        )
+        set_fence(monkeypatch, "unavailable", "no bwrap")
         _, manual = await _settle("yolo", [_call("make install", reach="host")])
         assert [c.tool_call_id for c in manual] == ["c1"]
         _, manual = await _settle("yolo", [_call("make install", reach="offline")])
@@ -184,7 +179,7 @@ class TestTheCard:
         self, state: FenceState, monkeypatch: pytest.MonkeyPatch
     ):
         reason = "why the fence is down"
-        monkeypatch.setattr(guards, "confinement_state", lambda _s: ConfinementState(state, reason))
+        set_fence(monkeypatch, state, reason)
         host = ToolCallPart(
             tool_name="code_run_host_command",
             args={"command": "ls", "explanation": "look"},
@@ -196,9 +191,7 @@ class TestTheCard:
         assert [e.unconfined for e in events if isinstance(e, ApprovalRequired)] == [reason, reason]
 
     def test_a_vm_command_carries_none(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(
-            guards, "confinement_state", lambda _s: ConfinementState("unavailable", "no bwrap")
-        )
+        set_fence(monkeypatch, "unavailable", "no bwrap")
         events, _, _ = announcements(DeferredToolRequests(approvals=[_call("make")]), {})
         [event] = events
         assert isinstance(event, ApprovalRequired)
@@ -301,20 +294,21 @@ async def _run_scripted(
     return run, agent_run.result.output
 
 
-class TestANestedCall:
-    CODE = (
-        'out = ""\n'
-        "try:\n"
-        '    await shell_run_command(command="rm -rf ~")\n'
-        "except Exception as e:\n"
-        "    out = str(e)\n"
-        'await shell_run_command(command="ls")\n'
-        "out"
-    )
+_SCRIPT = (
+    'out = ""\n'
+    "try:\n"
+    '    await shell_run_command(command="rm -rf ~")\n'
+    "except Exception as e:\n"
+    "    out = str(e)\n"
+    'await shell_run_command(command="ls")\n'
+    "out"
+)
 
+
+class TestANestedCall:
     async def test_a_script_cannot_run_a_guarded_call(self):
         ran: list[str] = []
-        run, output = await _run_scripted(_scripted(self.CODE), ran, "yolo")
+        run, output = await _run_scripted(_scripted(_SCRIPT), ran, "yolo")
 
         assert ran == ["ls"]
         assert not isinstance(output, DeferredToolRequests)

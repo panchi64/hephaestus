@@ -34,6 +34,7 @@ from services.projects.worktree import WorktreeBusyError
 from .briefing import with_brief
 from .deps import RunDeps
 from .home import change_log, lease, may_lease, resolve_run_home
+from .read_ledger import hash_reported, ledger_of
 from .rebound import ReboundToolset
 from .spill import is_untrusted_spill
 from .workspace import unavailable
@@ -93,6 +94,15 @@ class _HomeFiles(ReboundToolset):
     ) -> object:
         tool_args = await _in_home_terms(ctx, name, tool_args)
         path = tool_args.get("path")
+        seen = ledger_of(ctx.deps.caps)
+        thread = ctx.deps.conversation_id or ctx.deps.workspace_key
+        if name in _FILE_WRITES and isinstance(path, str):
+            on_disk = await _existing_file(ctx, path)
+            if on_disk is not None:
+                known = seen.get(thread, on_disk)
+                if known is None:
+                    return f"Read {path} before changing it."
+                tool_args = {**tool_args, "expected_hash": known}
         if name in WRITE_TOOLS and isinstance(path, str):
             refusal = await _clear_write(ctx, path)
             if refusal is not None:
@@ -108,12 +118,27 @@ class _HomeFiles(ReboundToolset):
         result = await super().call_tool(name, tool_args, ctx, tool)
         if log is not None and located is not None:
             await log.after(located[0], [located[1]])
+        if located is not None and (fresh := hash_reported(name, result)) is not None:
+            seen.record(thread, str(located[0].root / located[1]), fresh)
         if home is None or located is None:
             return result
         mount, rel = located
         if name == "read_file" and mount.place == SCRATCH and is_untrusted_spill(rel):
             return wrap_untrusted(str(result), source="saved tool output")
         return await with_brief(ctx, home, [mount.place], result)
+
+
+async def _existing_file(ctx: RunContext[RunDeps], path: str) -> str | None:
+    """The host path of ``path`` when it names a file that exists, else None."""
+    try:
+        home = await resolve_run_home(ctx.deps)
+    except WorktreeBusyError:
+        return None
+    located = home.locate(path) if home is not None else None
+    if located is None:
+        return None
+    host = located[0].root / located[1]
+    return str(host) if host.is_file() else None
 
 
 async def _in_home_terms(

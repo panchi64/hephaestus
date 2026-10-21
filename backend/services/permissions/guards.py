@@ -87,13 +87,18 @@ class _AuthSettings(Protocol):
     def auth_enabled(self) -> bool: ...
 
 
+class _OperatorApp(Protocol):
+    @property
+    def state(self) -> _OperatorGate: ...
+
+
 def require_operator(request: Request) -> None:
     """Refuse a request that did not come from the operator's own session.
 
     An API token never answers a guarded call, whatever scopes it holds. With
     authentication switched off every caller is the operator.
     """
-    state = cast("_OperatorGate", request.app.state)
+    state = cast("_OperatorApp", request.scope["app"]).state
     if not state.settings.auth_enabled:
         return
     presented = token_from_headers(
@@ -337,7 +342,7 @@ def _critical(text: str, home: RunHome | None, settings: Settings, os_home: Path
         return "the home folder"
     if path.startswith(("~/", f"{HOME}/", "/work/")) or path in (HOME, "/work"):
         virtual = absolute(path, cwd=HOME)
-        places = {m.place.path for m in home.mounts} if home is not None else set()
+        places: set[str] = {m.place.path for m in home.mounts} if home is not None else set()
         groups = {f"{HOME}/{group}" for group in ("projects", "worktrees", "shared")}
         if virtual == HOME:
             return "the agent's home folder"
