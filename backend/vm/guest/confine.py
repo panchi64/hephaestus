@@ -60,6 +60,7 @@ class _Args(argparse.Namespace):
     out_offset: int = 0
     err_offset: int = 0
     limit: int = 1 << 20
+    tail: bool = False
     cwd_file: str = ""
     plugin: str = ""
     plugin_writable: bool = False
@@ -439,25 +440,37 @@ def _text(data: bytes) -> tuple[str, int]:
         return data.decode(errors="replace"), len(data)
 
 
-def _read_from(path: str, offset: int, limit: int) -> tuple[str, int]:
+def _read_from(path: str, offset: int, limit: int, tail: bool) -> tuple[str, int, bool]:
+    """Up to ``limit`` bytes of the file after ``offset``, or the last ``limit`` bytes of
+    it when ``tail`` and there are more than that. Returns the text, the offset to read
+    on from, and whether the read reached the end of the file in bytes (a multi-byte
+    character cut at the end is left for the next read but does not count against it)."""
     try:
         with open(path, "rb") as handle:
-            _ = handle.seek(offset)
-            text, used = _text(handle.read(limit))
+            size = os.fstat(handle.fileno()).st_size
+            start = max(offset, size - limit) if tail else offset
+            _ = handle.seek(start)
+            raw = handle.read(limit)
+            text, used = _text(raw)
     except OSError:
-        return "", offset
-    return text, offset + used
+        return "", offset, True
+    return text, start + used, start + len(raw) >= size
 
 
 def output(args: _Args, paths: dict[str, str]) -> int:
-    """A job's state and its output after the given offsets, as JSON."""
+    """A job's state and its output after the given offsets, as JSON. A finished job's
+    files are removed once a read has returned all of them."""
     try:
         with open(_job(paths, args.name, "exit")) as handle:
             code: int | None = int(handle.read().strip())
     except (OSError, ValueError):
         code = None
-    out, out_end = _read_from(_job(paths, args.name, "out"), args.out_offset, args.limit)
-    err, err_end = _read_from(_job(paths, args.name, "err"), args.err_offset, args.limit)
+    out, out_end, out_done = _read_from(
+        _job(paths, args.name, "out"), args.out_offset, args.limit, args.tail
+    )
+    err, err_end, err_done = _read_from(
+        _job(paths, args.name, "err"), args.err_offset, args.limit, args.tail
+    )
     json.dump(
         {
             "running": code is None and alive(args, paths) == 0,
@@ -469,6 +482,11 @@ def output(args: _Args, paths: dict[str, str]) -> int:
         },
         sys.stdout,
     )
+    _ = sys.stdout.flush()
+    if code is not None and out_done and err_done:
+        for suffix in ("out", "err", "exit", "pid"):
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(_job(paths, args.name, suffix))
     return 0
 
 
@@ -498,6 +516,8 @@ def main() -> int:
     _ = parser.add_argument("--out-offset", type=int, default=0)
     _ = parser.add_argument("--err-offset", type=int, default=0)
     _ = parser.add_argument("--limit", type=int, default=1 << 20)
+    # Past --limit, read the end of the output rather than the next --limit bytes.
+    _ = parser.add_argument("--tail", action="store_true")
     # A file the command may write its final working directory to, as /run/cwd.
     _ = parser.add_argument("--cwd-file", default="")
     _ = parser.add_argument("--plugin", default="")

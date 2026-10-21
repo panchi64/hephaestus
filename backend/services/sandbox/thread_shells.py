@@ -14,7 +14,7 @@ from pathlib import Path
 from services.vm.project import ProjectCopies
 
 from .home_shell import HomeShell
-from .shell_runner import HostShell
+from .host_shell import HostShell
 
 #: Idle shells kept past this are dropped oldest first; a busy one is never dropped.
 _MAX_IDLE = 256

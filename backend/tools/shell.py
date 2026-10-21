@@ -55,9 +55,11 @@ from services.home.table import RunHome
 from services.permissions import Reach, capability_of, renamed_reach
 from services.projects.worktree import WorktreeBusyError
 from services.sandbox import SandboxSessionManager
-from services.sandbox.host import host_scratch_dir
+from services.sandbox.fence import host_scratch_dir
+from services.sandbox.limits import VM_WAIT_S
+from services.sandbox.network_errors import mentions_no_network
 from services.sandbox.session import SandboxSession
-from services.sandbox.shell_runner import BackgroundStatus, ProgressHook, ShellResult
+from services.sandbox.shell_result import BackgroundStatus, ProgressHook, ShellResult
 from services.sandbox.thread_shells import ThreadShell, ThreadShells
 from services.vm import DENIED_MARKER
 from services.vm.project import ProjectCopies
@@ -105,10 +107,6 @@ def _no_vm(reason: str) -> str:
     )
 
 
-#: How long the first command of a session waits for a VM that is still starting.
-_VM_WAIT_S = 120.0
-
-
 @dataclass(frozen=True, slots=True)
 class _Boundary:
     """Where one command runs, as something a reader can be shown."""
@@ -146,22 +144,6 @@ def boundary(name: str, command: str, reach: Reach, home: RunHome, cwd: str) -> 
 #: How a client reports the gateway's 407 to a request that carried no credentials.
 _PROXY_REFUSED_SIGNS = ("Proxy Authentication Required", "response 407", "hephaestus-egress")
 
-#: What a client that ignores the proxy prints: the guest resolver fails before any
-#: connection is made, so the gateway never sees the request.
-_NO_NETWORK_SIGNS = (
-    "Temporary failure in name resolution",
-    "Name or service not known",
-    "Could not resolve host",
-    "Network is unreachable",
-    "No address associated with hostname",
-    "failed to lookup address",
-    "failed to resolve address",
-    "no such host",
-    "UnknownHostException",
-    "EAI_AGAIN",
-    "ENOTFOUND",
-)
-
 _OFFLINE_NOTE = (
     "This command ran with reach `offline`, which has no network. The VM does have "
     "network: run the same command again with reach `network` to reach the domains the "
@@ -187,7 +169,7 @@ def fence_note(*, network: bool, ok: bool, stdout: str, stderr: str) -> str | No
         refused = "407" in text and any(sign in text for sign in _PROXY_REFUSED_SIGNS)
         if network and refused:
             return _CREDENTIALS_NOTE
-        if not network and (refused or any(sign in text for sign in _NO_NETWORK_SIGNS)):
+        if not network and (refused or mentions_no_network(text)):
             return _OFFLINE_NOTE
     if "Read-only file system" in text:
         return (
@@ -340,7 +322,7 @@ async def _ready(ctx: RunContext[RunDeps], name: str) -> _Ready | str:
     if copies is None or shells is None:
         return _no_vm("it is disabled")
     vm = copies.vm
-    if not vm.available and not await vm.wait_ready(_VM_WAIT_S):
+    if not vm.available and not await vm.wait_ready(VM_WAIT_S):
         return _no_vm(vm.failure or "it is still starting")
     try:
         home = await resolve_run_home(ctx.deps)

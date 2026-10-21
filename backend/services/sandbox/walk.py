@@ -1,15 +1,13 @@
 """What a walk of a workspace counts as part of it.
 
-One question, asked by four readers who must agree: the fork's manifest, the merge
-back, the history snapshot, and the per-turn workspace block the model reads. A walk
-that kept a different set from another's would have the block advertising a file the
-merge will not carry, or a fork reporting changes to files nothing else can see.
+One question, asked by every reader that lists a workspace: the history snapshot and the
+per-turn workspace block the model reads, among them. A walk that kept a different set
+from another's would have the block advertising a file the snapshot does not carry.
 
-The exclusions here are **cosmetic and merge-safety only — nothing in this module
-deletes anything.** A workspace's files stay on disk for as long as the conversation
-does; what these names decide is which of them are worth *reporting*: a virtualenv
-and a `node_modules` are thousands of files the agent did not write, and three-way
-merging a `.git` directory's internals is corruption rather than continuity.
+The exclusions here are **cosmetic only — nothing in this module deletes anything.** A
+workspace's files stay on disk for as long as the conversation does; what these names
+decide is which of them are worth *reporting*: a virtualenv and a `node_modules` are
+thousands of files the agent did not write.
 """
 
 from __future__ import annotations

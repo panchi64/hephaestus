@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-import services.sandbox.host as host_mod
+import services.sandbox.fence as host_mod
 from core.config import Settings
 from services.sandbox import (
     HostConfinement,
@@ -22,7 +22,7 @@ from services.sandbox import (
     run_on_host,
 )
 from services.sandbox.base import contained_file, contained_path
-from services.sandbox.host import configure, confine
+from services.sandbox.fence import configure, confine
 
 
 # --- paths stay inside the workspace ----------------------------------------

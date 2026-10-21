@@ -1,14 +1,16 @@
 """Running a command on the operator's real machine, and reaping the tree it starts.
 
-Two paths land here — the host shell and ``code_run_host_command``, the approval-gated
-escape hatch — and they differ only in what they do with the streams afterwards. The
-mechanics live beside the fence rather than inside it (``host.py``) so that *what a command
-may reach* and *how a process is started and killed* have separate reasons to change.
+Two paths land here: ``code_run_host_command``, the approval-gated escape hatch, and the
+host shell in a project folder. Both go through :func:`run_on_host`, which spawns, times out,
+kills the process tree and handles cancellation in one place. The mechanics live beside the
+fence rather than inside it (``fence.py``) so that *what a command may reach* and *how a
+process is started and killed* have separate reasons to change.
 
-Nothing here decides the first of those. Every caller rewrites its command through
-:func:`services.sandbox.host.confine` before it gets this far. What this module guarantees
-is that whatever was started can be stopped **whole** — a command that backgrounds a
-server must not leave it running once the run that started it is gone.
+Nothing here decides the first of those. :func:`run_on_host` wraps a command in
+:func:`services.sandbox.fence.confine` only when it is handed an active confinement, and the
+host shell hands it none, so its commands run unfenced. What this module guarantees is that
+whatever was started can be stopped **whole** — a command that backgrounds a server must
+not leave it running once the run that started it is gone.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import contextlib
 import fnmatch
 import os
 import signal
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import IO
@@ -25,8 +28,11 @@ from typing import IO
 from pydantic_ai_harness.shell._capability import LLM_API_KEY_ENV_PATTERNS
 
 from .base import HostExecutionError, SandboxResult
+from .fence import HostConfinement, confine
 from .gitenv import git_config_pins
-from .host import HostConfinement, confine
+from .limits import TIMEOUT_EXIT
+from .shell_result import ProgressHook
+from .streams import Tail, read_text, stream_files, unlink
 
 #: How long a process group gets to shut itself down before it is killed outright. Long
 #: enough for a server to close its listeners and drop a lockfile, short enough that an
@@ -34,7 +40,7 @@ from .host import HostConfinement, confine
 _GRACE_S = 2.0
 
 
-#: Process groups started by :func:`spawn_confined` that may still be alive, each with the
+#: Process groups started by :func:`spawn_in_session` that may still be alive, each with the
 #: leader process that opened it. A command that backgrounds a server returns, its shell is
 #: reaped, and the group lives on — nothing else remembers it, so without this a quit app
 #: left every such server running on the operator's machine. Pruned on each spawn, so it
@@ -147,6 +153,19 @@ async def terminate_tree(proc: asyncio.subprocess.Process) -> None:
     except TimeoutError:
         kill_tree(proc)
         _ = await proc.wait()
+    except BaseException:
+        # Cancelled mid-grace: the group was only asked to stop, and a process that
+        # ignores SIGTERM would outlive the run.
+        kill_tree(proc)
+        raise
+
+
+def _kill_leftovers(proc: asyncio.subprocess.Process) -> None:
+    """Kill what is still running in the group ``proc`` led, once ``proc`` itself has
+    exited. Never signals any other group."""
+    if group_is_ours(proc.pid, proc):
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
 
 
 def filtered_env() -> dict[str, str]:
@@ -180,7 +199,7 @@ def filtered_env() -> dict[str, str]:
     )
 
 
-async def spawn_confined(
+async def spawn_in_session(
     command: str,
     *,
     cwd: Path | None = None,
@@ -188,12 +207,11 @@ async def spawn_confined(
     stdout: int | IO[bytes],
     stderr: int | IO[bytes],
 ) -> asyncio.subprocess.Process:
-    """Start ``command`` in a session of its own, so :func:`kill_tree` can reach it.
+    """Start ``command`` through the host shell in a session of its own, so
+    :func:`kill_tree` can reach it. No fence is applied here; see :func:`run_on_host`.
 
-    The spawn's own errors are left to propagate unwrapped. The two callers read them
-    differently — the shell turns a working directory the model's last command deleted
-    into something it can retry, while the hatch reports any launch failure as one — and
-    flattening them here would take that distinction away from both.
+    The spawn's own errors are left to propagate unwrapped, so each caller decides how a
+    launch failure reads.
     """
     proc = await asyncio.create_subprocess_shell(
         command,
@@ -219,13 +237,27 @@ async def run_on_host(
     confinement: HostConfinement | None = None,
     cwd: Path | None = None,
     env: Mapping[str, str] | None = None,
+    on_progress: ProgressHook | None = None,
+    kill_leftovers: bool = True,
 ) -> SandboxResult:
     """Run ``command`` in the host shell, after approval. Bounded by a wall-clock
-    timeout; the process group is killed on overrun — and on cancellation, so a stopped
-    run never leaves the command's tree running on the operator's machine.
+    timeout; the process group is terminated on overrun — and killed on cancellation, so a
+    stopped run never leaves the command's tree running on the operator's machine. A
+    timed-out command reports exit 124 with whatever it printed.
+
+    ``on_progress``, where given, is handed each new piece of output as the command runs.
+    It is watched from a task of its own so a hook that blocks cannot delay the process
+    being reaped, and the watcher is torn down on every way out of this function.
+
+    ``kill_leftovers`` kills what the command left running in its process group once the
+    shell itself has exited, so a command that backgrounds a child does not outlive the
+    call. A caller that keeps background processes on purpose passes ``False``.
+
+    A launch failure raises :class:`HostExecutionError` with the spawn's own ``OSError``
+    or ``ValueError`` as its cause.
 
     ``confinement`` is resolved by the caller (see
-    :func:`services.sandbox.host.resolve_confinement`) and passed in rather than looked up
+    :func:`services.sandbox.fence.resolve_confinement`) and passed in rather than looked up
     here, so the tool reports the same fence it asked for. ``None`` runs the command
     unconfined.
 
@@ -244,35 +276,60 @@ async def run_on_host(
             )
         except Exception as exc:  # wrapping must never lose the command
             raise HostExecutionError(f"failed to confine host command: {exc}") from exc
+    out, err = stream_files("run")
+    started = time.monotonic()
+    task: asyncio.Task[None] | None = None
     try:
-        proc = await spawn_confined(
-            command,
-            cwd=cwd,
-            env=env if env is not None else filtered_env(),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        try:
+            proc = await spawn_in_session(
+                command,
+                cwd=cwd,
+                env=env if env is not None else filtered_env(),
+                stdout=out,
+                stderr=err,
+            )
+        except (OSError, ValueError) as exc:
+            raise HostExecutionError(f"failed to launch host command: {exc}") from exc
+        # The spawned process holds its own descriptors; ours are done with once it has them.
+        out.close()
+        err.close()
+        watcher = (
+            None
+            if on_progress is None
+            else Tail(out.name, err.name, started=started, hook=on_progress)
         )
-    except (OSError, ValueError) as exc:
-        raise HostExecutionError(f"failed to launch host command: {exc}") from exc
-
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
-    except TimeoutError:
-        kill_tree(proc)
-        _ = await proc.wait()
+        task = None if watcher is None else asyncio.create_task(watcher.pump())
+        timed_out = False
+        try:
+            _ = await asyncio.wait_for(proc.wait(), timeout=timeout_s)
+        except TimeoutError:
+            await terminate_tree(proc)
+            timed_out = True
+        except BaseException:
+            # Cancellation lands here — the run hit its inactivity/wall-clock bound, or the
+            # operator pressed Stop. Unwinding without reaping would leave the command's
+            # whole tree alive on the operator's real machine with no run left to stop it,
+            # which is precisely what the process group exists to prevent. Not awaited: this
+            # coroutine is already being torn down, and the group is signalled.
+            kill_tree(proc)
+            raise
+        else:
+            if kill_leftovers:
+                _kill_leftovers(proc)
+        if watcher is not None and task is not None:
+            # Stopped rather than cancelled, so the last tick reads what the command printed
+            # on its way out.
+            watcher.stop()
+            await task
         return SandboxResult(
-            exit_code=124, stdout="", stderr="host command timed out", timed_out=True
+            exit_code=TIMEOUT_EXIT if timed_out else (proc.returncode or 0),
+            stdout=read_text(out.name),
+            stderr=read_text(err.name),
+            timed_out=timed_out,
         )
-    except BaseException:
-        # Cancellation lands here — the run hit its inactivity/wall-clock bound, or the
-        # operator pressed Stop. Unwinding without reaping would leave the approved
-        # command's whole tree alive on the operator's real machine with no run left to
-        # stop it, which is precisely what the process group exists to prevent. Not
-        # awaited: this coroutine is already being torn down, and the group is signalled.
-        kill_tree(proc)
-        raise
-    return SandboxResult(
-        exit_code=proc.returncode or 0,
-        stdout=out.decode("utf-8", "replace"),
-        stderr=err.decode("utf-8", "replace"),
-    )
+    finally:
+        if task is not None:
+            _ = task.cancel()
+        out.close()
+        err.close()
+        unlink(out.name, err.name)

@@ -152,7 +152,6 @@ class EgressGateway:
 
     def __init__(self, interceptor: SecretInterceptor | None = None) -> None:
         self._grants: dict[str, Grant] = {}
-        self._standing: dict[Path, str] = {}
         self._public: Grant = Grant(PublicPolicy())
         self.interceptor: SecretInterceptor | None = interceptor
 
@@ -162,14 +161,6 @@ class EgressGateway:
         token = secrets.token_urlsafe(24)
         self._grants[token] = Grant(Allowlist(allow_dir), tuple(secrets_))
         return f"workspace:{token}"
-
-    def credentials_for(self, allow_dir: Path) -> str:
-        """Standing credentials for ``allow_dir``, the same for every caller: for the
-        project shell, whose commands have no session to tie a grant's lifetime to."""
-        credentials = self._standing.get(allow_dir)
-        if credentials is None:
-            credentials = self._standing[allow_dir] = self.grant(allow_dir)
-        return credentials
 
     def grant_for(self, credentials: str) -> Grant | None:
         """The grant ``credentials`` name, or ``None`` once revoked."""

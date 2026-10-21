@@ -24,6 +24,7 @@ from pathlib import Path
 
 from core.serde import parse_json
 from services.revisions import Bundle, encode_bundle
+from services.sandbox.limits import TIMEOUT_EXIT
 from services.sandbox.session import proxy_env
 from services.vm.driver import VMError
 from services.vm.egress import ALLOW_FILE, Secret
@@ -129,7 +130,7 @@ class PluginRuntime:
             shutil.rmtree(allow_dir, ignore_errors=True)
             await self._vm.wipe(key)
         log = result.stderr[-_LOG_TAIL_CHARS:]
-        if result.exit_code == 124:
+        if result.exit_code == TIMEOUT_EXIT:
             return CallResult(False, f"{tool.name} took longer than {timeout_s:.0f}s", log)
         try:
             reply = parse_json(result.stdout.strip().splitlines()[-1])

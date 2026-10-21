@@ -7,7 +7,7 @@ allowlist. Outputs return explicitly (stdout/stderr, and the workspace's files p
 out); nothing escapes as a side effect.
 
 Not everything the agent runs arrives there: the approval-gated host command executes
-on the operator's own machine under OS-level confinement (:mod:`services.sandbox.host`),
+on the operator's own machine under OS-level confinement (:mod:`services.sandbox.fence`),
 which fences the same domains and hides the credential paths, but is a different
 boundary.
 """
@@ -48,7 +48,7 @@ class HostExecutionError(HephaestusError):
     Down here with the other error rather than beside the runner that raises it most
     (``process.py``), because the *fence* raises it too — a scratch directory someone else
     planted refuses the command before a process is ever started — and ``process.py``
-    imports ``host.py`` for the fence. One of the two had to stop owning the name, and an
+    imports ``fence.py`` for the fence. One of the two had to stop owning the name, and an
     error type is exactly what this module is for."""
 
 

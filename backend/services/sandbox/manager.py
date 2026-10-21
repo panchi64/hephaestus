@@ -3,10 +3,8 @@
 One :class:`~services.sandbox.session.SandboxSession` is a single conversation's
 workspace and guest copy, and knows nothing about the others. Everything that is a
 *policy over the set* lives here instead: mapping a conversation to its session,
-the live-session cap, the idle reaper, the preview token index, purging a deleted
-conversation, collecting the forks an unclean shutdown stranded, and forking a
-session for a delegated agent (the copy and the merge themselves are
-:mod:`services.sandbox.fork`'s; which key is the parent is a fact about the set).
+the live-session cap, the idle reaper, the preview token index and purging a deleted
+conversation.
 
 The split follows the lock. A session's lock spans one call on one workspace; this
 manager's lock guards the maps that decide which session a key even names, and the
@@ -14,12 +12,10 @@ tombstone protocol (``_tearing_down``) that keeps a second session from being mi
 onto a workspace a teardown is still working through. Two locks with two jobs, and
 neither file has a reason to change when the other's job does.
 
-Reaping is about guest copies and nothing else. An ordinary conversation's workspace is
-left on disk untouched, so a stranded *directory* is not a problem to solve — it is
-simply that conversation's files, waiting. The one thing a crash can strand that
-nobody will ever ask for again is a delegated agent's fork, and the idle sweep
-collects those (:meth:`_collect_orphan_forks`). What a crash leaves in the VM is gone
-at the next boot, which starts from the clean image.
+Reaping is about guest copies and nothing else. A conversation's workspace is left on
+disk untouched, so a stranded *directory* is not a problem to solve — it is simply that
+conversation's files, waiting. What a crash leaves in the VM is gone at the next boot,
+which starts from the clean image.
 """
 
 from __future__ import annotations
@@ -34,13 +30,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from core.concurrency import gather_bounded
-from core.fork import MergeReport
 from core.periodic import PeriodicTask
 from core.vault import Vault
 from services.vm.host import SessionHost
 
-from .base import SandboxError, safe_key
-from .fork import fork_marker, orphan_fork_keys
+from .base import safe_key
 from .legacy_seal import partial_marker
 from .preview import PreviewHandle
 from .preview_tokens import PreviewTokens
@@ -63,13 +57,6 @@ _TEARDOWN_CONCURRENCY = 3
 #: reaper's in-flight teardowns). A teardown that has not returned by now is not going
 #: to, and the process exiting is worth more than the one stop.
 _SESSION_STOP_TIMEOUT_S = 10.0
-
-# How many stranded forks one sweep collects. Every key in a batch is tombstoned for
-# the whole batch, and an `acquire()` that lands on a tombstone waits with nothing to
-# show the operator — so the batch is kept to a couple of rounds rather than however
-# many a crashed process happened to leave. The next sweep takes the next slice, which
-# is soon enough for directories nobody is waiting on.
-ORPHAN_FORKS_PER_SWEEP = 2 * _TEARDOWN_CONCURRENCY
 
 
 #: A session taken out of the live map and awaiting its teardown, with the event that
@@ -186,9 +173,9 @@ class SandboxSessionManager:
 
     @property
     def walk_excludes(self) -> tuple[str, ...]:
-        """What a walk of any workspace here skips — reporting and merge safety only.
+        """What a walk of any workspace here skips — reporting only.
 
-        Exposed because :mod:`services.sandbox.walk` is one answer four readers have to
+        Exposed because :mod:`services.sandbox.walk` is one answer its readers have to
         agree on, and the per-turn block is the one reader that has no session to ask.
         Re-reading the setting instead would make it a second source that only happens
         to match.
@@ -264,8 +251,7 @@ class SandboxSessionManager:
         first. Called under the manager lock.
 
         ``keep`` is what the admission is *about* and must survive it: the arriving
-        session, and — for a fork — the parent it was copied from, mid-work by the very
-        fact that it has just delegated. Beyond those, only a session nobody is using is a
+        session. Beyond that, only a session nobody is using is a
         candidate — see :attr:`SandboxSession.is_displaceable` for the three ways that is
         decided. The cap is a resource ceiling, not a deadline: if everything live is in use
         the set simply runs over and the idle sweep collects the overflow once the work
@@ -313,7 +299,7 @@ class SandboxSessionManager:
 
     async def _reattach(self, detached: list[_Detached]) -> None:
         """Undo a :meth:`_detach` whose teardown must not happen after all — a teardown
-        that failed, a merge that reported nothing. Dropped there instead, a session is
+        that failed. Dropped there instead, a session is
         lost where neither sweep nor purge can find it: a guest copy in nobody's map over
         a live workspace, behind a tombstone every later ``acquire()`` for that key waits
         on forever. Nothing can have taken the key meanwhile — holding acquire and purge
@@ -376,9 +362,7 @@ class SandboxSessionManager:
 
         _ = await gather_bounded([down(*item) for item in detached], _TEARDOWN_CONCURRENCY)
 
-    def _new_session(
-        self, safe: str, egress_dir: Path, *, ephemeral: bool = False
-    ) -> SandboxSession:
+    def _new_session(self, safe: str, egress_dir: Path) -> SandboxSession:
         return SandboxSession(
             safe,
             workspace=self._work_root / safe,
@@ -387,84 +371,7 @@ class SandboxSessionManager:
             vm=self._vm,
             vault=self._vault,
             excludes=self._excludes,
-            ephemeral=ephemeral,
         )
-
-    async def fork(
-        self, parent_key: str, child_key: str, *, holder: LiveWork | None = None
-    ) -> SandboxSession:
-        """A delegated agent's own session, over a copy of ``parent_key``'s workspace.
-
-        The child is a full session — its own guest copy and egress credentials — over a
-        copy of the parent's files and behind the *parent's* allowlist: a delegated agent
-        reaches what the conversation that delegated to it reaches, and a grant approved for
-        one is not a second thing to approve for the other. ``holder`` is the child's run,
-        and passing it keeps the fork out of the cap's reach — displacing one *deletes*
-        it, where displacing an ordinary session only wipes its guest copy — and
-        claims the *parent*, mid-work by the very fact that it has just delegated."""
-        parent = await self.acquire(parent_key, holder=holder)
-        safe = safe_key(child_key)
-        async with self._lock:
-            if safe in self._sessions or safe in self._tearing_down:
-                raise SandboxError(f"a workspace already exists for {child_key!r}")
-            child = self._new_session(safe, self._egress.allow_dir(parent_key), ephemeral=True)
-            self._sessions[safe] = child
-            child.hold(holder)
-            evicted = self._detach(self._over_cap(keep={safe, parent.key}))
-        # Both halves have to agree on the key — a grant written under the child's own
-        # would land in a file the child's credentials never read. After the map, so a
-        # refusal above leaves no alias.
-        self._egress.share(child_key, parent_key)
-        # Before the copy, not after: what this displaced is already out of the live map
-        # behind a tombstone, and a failed copy would strand its acquires on an unset event.
-        await self._tear_down(evicted)
-        try:
-            # The parent's own call: the copy must hold the workspace's disk lock —
-            # `clone_into`.
-            child.fork_manifest = await asyncio.to_thread(parent.clone_into, child.workspace)
-        except BaseException:
-            # A fork with no copy is a session nobody can use, and reap-bait left in the map
-            # over a copy nothing will ever merge — and a Stop into the copy, the longest
-            # await here, is not an `Exception`. `purge` takes the alias down with it.
-            await asyncio.shield(self.purge(child_key))
-            raise
-        return child
-
-    async def merge_back(self, child_key: str, parent_key: str) -> MergeReport:
-        """Land what a forked workspace changed back in its parent, then delete the fork.
-
-        Deleted whichever way the merge *went*: a report of conflicts has already told the
-        caller which paths did not come across, and keeping a second copy of the parent's
-        files in the hope someone revisits them is how disks fill up. A merge that produced
-        no report at all — a vault re-locked mid-delegation, a Stop mid-walk — is the other
-        case: the fork is put back, being the only copy of that agent's work with nothing
-        reported for anyone to act on. Only a *fork* may be the child, precisely because
-        deleting it is the last thing this does: an ordinary conversation's key, from a
-        caller with its arguments the wrong way round, would land everything that
-        conversation holds in another's workspace and then go with its archive; one key
-        twice would wait out the teardown it is itself holding."""
-        safe = safe_key(child_key)
-        async with self._lock:
-            child = self._sessions.get(safe)
-            if child is None or not child.ephemeral or safe == safe_key(parent_key):
-                raise SandboxError(f"there is no forked workspace for {child_key!r}")
-            # Out of the live map for the whole merge: a fork displaced meanwhile is
-            # *deleted*, leaving this walk an empty directory to report as a clean landing.
-            detached = self._detach([safe])
-        try:
-            # The fork's work comes out of the VM before the walk, so the walk judges
-            # everything the child wrote and nothing writes after it.
-            await child.discard()
-            parent = await self.acquire(parent_key)
-            work = child.ensure_workspace()
-            report = await asyncio.to_thread(parent.merge_fork, work, child.fork_manifest)
-        except BaseException:
-            # Shielded, like the teardown it replaces: a cancellation delivered here too
-            # would leave the fork in no map, behind a tombstone nothing ever releases.
-            await asyncio.shield(self._reattach(detached))
-            raise
-        await self._tear_down(detached)
-        return report
 
     async def start_preview(self, key: str, command: list[str], port: int) -> PreviewHandle:
         """Start (or replace) the conversation's live preview and index its token."""
@@ -554,9 +461,6 @@ class SandboxSessionManager:
                 await session.discard()
             await asyncio.to_thread(self._purge_disk, safe)
         finally:
-            # A fork's allowlist alias ends with the workspace it named — nothing ever
-            # looks that key up again. An ordinary conversation never has one.
-            self._egress.unshare(key)
             async with self._lock:
                 _ = self._tearing_down.pop(safe, None)
             my_event.set()
@@ -565,7 +469,6 @@ class SandboxSessionManager:
         workspace = self._work_root / safe
         shutil.rmtree(workspace, ignore_errors=True)
         partial_marker(workspace).unlink(missing_ok=True)
-        fork_marker(workspace).unlink(missing_ok=True)
         (self._sealed_root / f"{safe}.tar.enc.gz").unlink(missing_ok=True)
 
     async def start(self) -> None:
@@ -599,16 +502,12 @@ class SandboxSessionManager:
     async def sweep(self) -> None:
         now = time.monotonic()
         async with self._lock:
-            # A claimed fork is the one thing time may not collect. Reaping an ordinary
-            # session is lossless — the guest copy goes, the files stay — which is why the
-            # sweep otherwise ignores who holds what, down to a run parked on an
-            # unanswered approval. Reaping a fork *deletes* it.
+            # Reaping is lossless — the guest copy goes, the files stay — so the sweep
+            # ignores who holds what, down to a run parked on an unanswered approval.
             stale = [
                 key
                 for key, s in self._sessions.items()
-                if not s.is_busy
-                and s.idle_seconds(now) >= self._idle_ttl
-                and not (s.ephemeral and s.is_claimed)
+                if not s.is_busy and s.idle_seconds(now) >= self._idle_ttl
             ]
             # Snapshot + detach under the lock (so a concurrent acquire() can't
             # mint a second session onto the same workspace mid-teardown), but the
@@ -621,40 +520,3 @@ class SandboxSessionManager:
             detached = self._detach(stale)
 
         await self._tear_down(detached)
-        await self._collect_orphan_forks()
-
-    async def _collect_orphan_forks(self) -> None:
-        """Delete the delegated-agent forks an unclean shutdown stranded.
-
-        *Which* directories those are belongs to
-        :func:`~services.sandbox.fork.orphan_fork_keys`, with the rest of what a
-        dead process leaves behind. What is here is the deleting, and it goes through a
-        throwaway session and the ordinary detach path rather than a bare ``rmtree`` so
-        it inherits every protection that path carries: the tombstone protocol, so an
-        ``acquire()`` for that key arriving mid-delete waits instead of minting a
-        session onto the directory being removed; and that same tombstone's release in a
-        ``finally``, however the leg ends.
-
-        A directory name is all this path has, and the conversation key it was derived
-        from cannot be recovered from it — so these sessions get the allowlist directory
-        that *name* maps to (``dir_for``, not ``allow_dir``, which would encode an
-        already-encoded name). Nothing reads it: an allowlist is read for a running
-        command, and this path runs none."""
-        orphans: list[_Detached] = []
-        async with self._lock:
-            # Listed under the lock, so the two maps it reads cannot shift underneath
-            # the answer — which is the whole reason the key discovery takes them as an
-            # argument rather than reaching for them itself.
-            taken = self._sessions.keys() | self._tearing_down.keys()
-            for safe in orphan_fork_keys(self._work_root, taken)[:ORPHAN_FORKS_PER_SWEEP]:
-                event = asyncio.Event()
-                self._tearing_down[safe] = event
-                session = self._new_session(safe, self._egress.dir_for(safe), ephemeral=True)
-                orphans.append((safe, session, event))
-        if not orphans:
-            return
-        logger.info(
-            "sandbox: collecting %d delegated fork(s) left behind by an unclean shutdown",
-            len(orphans),
-        )
-        await self._tear_down(orphans)

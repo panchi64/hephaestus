@@ -40,6 +40,7 @@ from services.sandbox import (
     resolve_confinement,
     run_on_host,
 )
+from services.sandbox.network_errors import mentions_no_network
 from services.vm import DENIED_MARKER
 
 from .deps import RunDeps
@@ -59,26 +60,6 @@ _PID_CAP_MARKERS = (
 # failure, and the one worth deterministic install mechanics at the failure point.
 _MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([^']+)'")
 
-# The other face of the same refusal. A client that never gets as far as the proxy — or
-# one that reports a refused CONNECT as a dead connection — prints a resolution or
-# connection failure instead, so both spellings have to key the same hint. Only errors
-# naming the *connection* belong here: pip's own "no matching distribution" summary is
-# what a misspelled package name prints against a registry it reached perfectly well, and
-# answering that with "ask the operator for pypi.org" is a loop rather than a hint.
-_NO_NETWORK_MARKERS = (
-    "temporary failure in name resolution",
-    "name or service not known",
-    "network is unreachable",
-    "could not resolve host",
-    "failed to establish a new connection",
-    # A refused CONNECT. Most fetches are HTTPS, and there the marker never reaches the
-    # client — a tunnel refusal carries no body — so the refusal is legible only in these
-    # phrasings: urllib, urllib3 and pip say the first, curl one of the other two.
-    "tunnel connection failed",
-    "connect tunnel failed",
-    "from proxy after connect",
-)
-
 
 def _looks_like_pid_cap(stderr: str) -> bool:
     low = stderr.lower()
@@ -91,7 +72,7 @@ def _looks_like_egress_denied(output: str) -> bool:
     # that writes it — two spellings of it would be one hint that quietly stopped firing.
     if DENIED_MARKER.lower() in low:
         return True
-    return any(marker in low for marker in _NO_NETWORK_MARKERS)
+    return mentions_no_network(output)
 
 
 def _failure_hint(
@@ -438,7 +419,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
         # The installation-wide allowlist, not this conversation's grants: one proxy
         # serves every confined process on the host, so a grant folded in here would
         # widen the fence around every other command running at the same moment and
-        # outlive this one (`services/sandbox/host.confine`).
+        # outlive this one (`services/sandbox/fence.confine`).
         confinement = await resolve_confinement(settings)
         # Not the server process's own directory, which is the application's source tree:
         # a relative path the model wrote would land among this backend's own files, and

@@ -1,12 +1,14 @@
-"""The OS-level fence for everything that runs outside the platform VM, and the escape hatch.
+"""The OS-level fence for commands that run on the operator's machine rather than in the VM.
 
-Two paths execute on the operator's real machine: the host shell, working in a
-project's folder or worktree, and ``code_run_host_command``, the approval-gated exception
-that exists for when the host itself must change. Both are fenced the same way, by
-``sandbox-runtime`` (seatbelt on macOS, bubblewrap on Linux): credential
+Two paths execute there: ``code_run_host_command``, the approval-gated exception that
+exists for when the host itself must change, and the host shell working in a project's
+folder or worktree. Only ``code_run_host_command`` goes through this fence today, via
+:func:`confine`; the host shell does not, and its commands run unfenced.
+
+The fence is ``sandbox-runtime`` (seatbelt on macOS, bubblewrap on Linux): credential
 paths and the data directory are unreadable, writes are deny-by-default, and egress to the
-*outside* goes only to allowlisted domains. :func:`confine` is that fence, applied per
-command; :func:`resolve_confinement` is the once-per-process machinery behind it.
+*outside* goes only to allowlisted domains. :func:`confine` applies it per command;
+:func:`resolve_confinement` is the once-per-process machinery behind it.
 
 **Loopback is outside the allowlist, deliberately and not for free.** A dev server, its
 test suite and every tool that talks to one are compute, so the profile permits
@@ -84,7 +86,7 @@ def host_scratch_dir() -> Path:
     So host commands get a scratch directory of their own: under the OS temp root, which
     the fence allows writing to; holding nothing the operator did not put there through
     this tool; and stable across calls, so one command's output is still there for the
-    next — which is the one property the old server-directory behaviour had.
+    next.
 
     **Stable and predictable under a shared root is a squattable pair**, so the path is
     claimed rather than merely created — see :func:`_claim_scratch`. This matters on Linux,
@@ -158,18 +160,12 @@ def _claim_scratch(scratch: Path) -> None:
         os.chmod(scratch, 0o700)
 
 
-def _cached() -> HostConfinement | None:
-    return _resolved
-
-
 async def resolve_confinement(settings: Settings) -> HostConfinement:
     """Configure OS-level confinement for host commands, once per process."""
     global _resolved
-    if (cached := _cached()) is not None:
-        return cached
     async with _resolve_lock:
-        if (cached := _cached()) is not None:  # settled while this call waited for the lock
-            return cached
+        if _resolved is not None:
+            return _resolved
         resolved = await configure(settings)
         if not resolved.active:
             # Worth one line: an operator who believes their host commands are fenced
@@ -218,8 +214,8 @@ async def configure(settings: Settings) -> HostConfinement:
     # `TMPDIR` under `/var/folders`, so a hardcoded path would miss where temp files
     # actually land (`XC-PORT-1`). The scratch directory is under it and named anyway,
     # because it is the one path a host command *has* to be able to write: it is where the
-    # command starts. What used to stand here was `os.getcwd()` — the application's own
-    # source tree, which is neither where a command runs nor anywhere one should write.
+    # command starts. The application's own source tree (`os.getcwd()`) is neither where a
+    # command runs nor anywhere one should write.
     # Named, not claimed: `host_scratch_dir` does the claiming, on the call that will
     # actually run there, so a squatted path refuses one command rather than leaving every
     # later one unfenced.
@@ -302,10 +298,10 @@ async def confine(
     """``command`` rewritten to run under the platform's sandbox, fenced for *this* call.
 
     :func:`resolve_confinement` settles the machinery once per process — the platform
-    probe, the proxy listeners — but not where a particular command may write, because the
-    two callers do not agree on that: the host shell writes into one conversation's
-    project folder, the approved host command wherever the operator allowed. Those rules are
-    genuinely per-call, because they go into the wrapper the OS itself enforces.
+    probe, the proxy listeners — but not where a particular command may write, because
+    callers differ: the approved host command writes wherever the operator allowed, and the
+    host shell, once it is fenced, would write into one conversation's project folder. Those
+    rules are genuinely per-call, because they go into the wrapper the OS itself enforces.
 
     **The network half is coarser, and that is a property of the runtime, not a choice
     here.** One proxy serves the whole process and filters every request against the

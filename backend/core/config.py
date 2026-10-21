@@ -45,7 +45,7 @@ class Settings(BaseSettings):
         return value.expanduser().resolve()
 
     # Where the chats' git worktrees are checked out. **Deliberately outside
-    # `data_dir`**: an approved host command is fenced by `services/sandbox/host.py`,
+    # `data_dir`**: an approved host command is fenced by `services/sandbox/fence.py`,
     # which denies reads of the whole data directory (the vault, the sealed workspaces
     # and the DB live there). A worktree under `data_dir` would therefore be unreadable
     # by the very shell that has to build and test it. The tradeoff this accepts is that
@@ -294,8 +294,8 @@ class Settings(BaseSettings):
     # egress allowlist, which are the exfiltration paths. The credential paths above are
     # additionally write-denied, so a confined command can neither read nor clobber them.
     host_command_allow_write: tuple[str, ...] = ("~", "/tmp", "/var/tmp")
-    # Build-cache locations. Nothing reads this setting.
-    worktree_command_allow_write: tuple[str, ...] = (
+    # Extra writable paths (build caches) for the host shell's fence. Nothing reads this yet.
+    host_shell_allow_write: tuple[str, ...] = (
         "~/.cache",
         "~/Library/Caches",
         "~/.npm/_cacache",

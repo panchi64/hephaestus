@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from services.sandbox import shell_runner
-from services.sandbox.shell_runner import HostShell
+from services.sandbox import streams
+from services.sandbox.host_shell import HostShell
 
 
 def _shell(root: Path, *, timeout: float = 30.0, max_chars: int = 1_000_000) -> HostShell:
@@ -131,7 +131,7 @@ async def test_streaming_stops_at_its_budget_and_the_result_still_has_everything
     # The live stream is held in memory and replayed to a reattaching client; a command
     # that prints megabytes must not be able to put all of it there. What it prints is
     # still the tool's result in full.
-    monkeypatch.setattr(shell_runner, "_PROGRESS_MAX_CHARS", 4)
+    monkeypatch.setattr(streams, "PROGRESS_MAX_CHARS", 4)
     chunks: list[str] = []
 
     async def hook(chunk: str, _elapsed: float) -> None:

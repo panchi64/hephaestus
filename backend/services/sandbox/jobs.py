@@ -12,10 +12,11 @@ from pydantic_ai.exceptions import ModelRetry
 from services.vm.host import JobHost
 from services.vm.platform import JobState
 
-from .shell_runner import ProgressHook, check_command
+from .command_check import check_command
+from .limits import PROGRESS_MAX_CHARS
+from .shell_result import ProgressHook
 
 _POLL_S = 0.5
-_PROGRESS_MAX_CHARS = 200_000
 
 
 async def follow_job(
@@ -32,10 +33,10 @@ async def follow_job(
         err.append(state.stderr)
         out_at, err_at = state.out_end, state.err_end
         chunk = state.stdout + state.stderr
-        if on_progress is not None and chunk and streamed < _PROGRESS_MAX_CHARS:
+        if on_progress is not None and chunk and streamed < PROGRESS_MAX_CHARS:
             with contextlib.suppress(Exception):
                 await on_progress(
-                    chunk[: _PROGRESS_MAX_CHARS - streamed], time.monotonic() - started
+                    chunk[: PROGRESS_MAX_CHARS - streamed], time.monotonic() - started
                 )
             streamed += len(chunk)
         if not state.running:

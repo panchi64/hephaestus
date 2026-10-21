@@ -68,7 +68,9 @@ class JobHost(WorkspaceHost, Protocol):
 
     async def stop_job(self, name: str) -> None: ...
 
-    async def job(self, name: str, *, out_offset: int = 0, err_offset: int = 0) -> JobState: ...
+    async def job(
+        self, name: str, *, out_offset: int = 0, err_offset: int = 0, tail: bool = False
+    ) -> JobState: ...
 
 
 class SessionHost(JobHost, Protocol):

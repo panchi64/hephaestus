@@ -133,38 +133,9 @@ class EgressPolicy:
         # at boot: an operator who wrote one believes it is allowed, and silently dropping
         # it would leave them debugging the fence instead of their typo.
         self._global: frozenset[str] = frozenset(normalise_domain(d) for d in global_domains)
-        # Forked workspace key → the key whose allowlist it is actually fenced by. See
-        # `share`. In memory only: a fork does not outlive the process that took it.
-        self._shared: dict[str, str] = {}
-
-    def share(self, key: str, with_key: str) -> None:
-        """Fence one workspace by another's allowlist — what a fork is.
-
-        A delegated agent reaches exactly what the conversation that delegated to it
-        reaches: its gateway grant reads the parent's directory, and a grant the operator
-        approves for one is not a second thing to approve for the other. So both halves
-        have to agree on which key the grant belongs to — a row written under the child's
-        own key would materialise a file nothing reads, and the approval would read
-        as having done nothing.
-        """
-        self._shared[key] = with_key
-
-    def unshare(self, key: str) -> None:
-        """Forget a fork's alias, once the workspace behind it is gone.
-
-        Called from the purge that deletes a fork, because nothing else ever names that
-        key again: the delegation id lives only in the call that took it, so an entry
-        left here is a pair of strings the process keeps until it exits, one per
-        delegation, forever."""
-        _ = self._shared.pop(key, None)
-
-    def fenced_by(self, key: str) -> str:
-        """The key whose allowlist fences ``key``: its own, or the parent it shares."""
-        return self._shared.get(key, key)
 
     async def allowed_for(self, key: str) -> frozenset[str]:
         """Everything the workspace behind ``key`` may reach."""
-        key = self.fenced_by(key)
         if not key:
             return self._global
 
@@ -191,7 +162,6 @@ class EgressPolicy:
         the approval refuses that retry — which reads, to whoever is watching, as an
         approval that did nothing.
         """
-        key = self.fenced_by(key)
         if not key:
             raise InvalidInputError("egress is granted to a workspace; none was named")
         wanted = sorted({normalise_domain(d) for d in domains})
@@ -230,9 +200,6 @@ class EgressPolicy:
         """
         if not conversation_id:
             return
-        # Dropped first, so this deletes what the conversation itself was granted rather
-        # than following a fork's alias into the grants of the parent that outlives it.
-        self.unshare(conversation_id)
 
         def work(session: Session) -> None:
             _ = session.exec(
@@ -249,16 +216,7 @@ class EgressPolicy:
         """The directory holding this workspace's allowlist file. Derived from the same
         ``safe_key`` the session manager names workspaces with, so a
         workspace and its allowlist can never end up under two different tokens."""
-        return self.dir_for(safe_key(self.fenced_by(key)))
-
-    def dir_for(self, safe: str) -> Path:
-        """The allowlist directory an already-``safe_key``-ed name maps to.
-
-        ``safe_key`` prepends its prefix unconditionally, so it is not idempotent and a
-        caller holding the safe name — the orphan sweep, which has a directory name and
-        no way back to the conversation key — cannot go through :meth:`allow_dir` without
-        landing under a token nothing else will ever look up."""
-        return self._root / safe
+        return self._root / safe_key(key)
 
     async def materialise(self, key: str) -> Path:
         """Write this workspace's allowlist and return the directory holding it."""

@@ -27,7 +27,7 @@ conversation is the one exception — it gets its own checkout beside the parent
 owned by the same conversation (see :mod:`services.projects.fork`).
 
 **Worktrees live outside ``data_dir``.** An approved host command is fenced by
-``services/sandbox/host.py``, which denies reads of the whole data directory — the vault,
+``services/sandbox/fence.py``, which denies reads of the whole data directory — the vault,
 the sealed workspaces and the database are in there. A worktree beneath it would be
 unreadable by the very shell that has to build and test it. The consequence is that a
 worktree is plaintext on disk; it is a checkout of the operator's own already-plaintext

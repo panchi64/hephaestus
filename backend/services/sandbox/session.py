@@ -24,29 +24,24 @@ import logging
 import shutil
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol
 
 from core import net
-from core.fork import MergeReport
 from core.vault import Vault
 from services.vm import GuestWorkspace, VMError
 from services.vm.host import SessionHost
 from services.vm.platform import WORKSPACE_PROXY
 
 from .base import SandboxError, SandboxResult, SandboxSpec, contained_path
-from .fork import clone_workspace, fork_marker, manifest_of, merge_workspace
 from .legacy_seal import adopt_legacy_archive, partial_marker, retire_superseded_archive
+from .limits import TIMEOUT_EXIT, VM_WAIT_S
 from .preview import PreviewHandle
 from .walk import walk_files
 
 logger = logging.getLogger(__name__)
 
-#: The guest's own timeout reports this exit; the command was stopped, not failed.
-_TIMEOUT_EXIT = 124
-#: How long a first command waits for a VM that is still booting.
-_VM_WAIT_S = 120.0
 #: Workspace-relative dirs the env defaults point at, created before a run so the first
 #: command already finds them. Scratch, and excluded from what a walk reports.
 _TMP_SUBDIR = ".tmp"
@@ -114,7 +109,6 @@ class SandboxSession:
         vm: SessionHost,
         vault: Vault,
         excludes: Iterable[str],
-        ephemeral: bool = False,
     ) -> None:
         self.key: str = key
         self.workspace: Path = workspace
@@ -122,14 +116,6 @@ class SandboxSession:
         #: ever ran the build that wrote them. Read once and retired — see
         #: :mod:`services.sandbox.legacy_seal`.
         self.sealed: Path = sealed
-        # A fork taken for a delegated agent: a copy of a workspace that still exists
-        # under its parent's key. It is deleted where an ordinary session's workspace
-        # is kept — see :meth:`shutdown`.
-        self.ephemeral: bool = ephemeral
-        # The parent's files as they stood when this fork was taken, ``{relpath: sha256}``
-        # — what :func:`services.sandbox.fork.merge_workspace` decides against. Empty on
-        # every session that is not a fork.
-        self.fork_manifest: dict[str, str] = {}
         # This workspace's allowlist directory, owned by the egress policy, which
         # rewrites it whenever the operator approves a domain; the gateway re-reads it,
         # so a grant lands on the next request.
@@ -145,16 +131,11 @@ class SandboxSession:
         self._preview: PreviewHandle | None = None
         self._last_used: float = time.monotonic()
         self._lock: asyncio.Lock = asyncio.Lock()
-        # Guards the multi-step disk transitions on this workspace against each other:
-        # materialising it (`_ensure_workspace`, which may still be adopting a
-        # sealing-era archive), a fork's walk-and-copy, and the merge back. They are
-        # reachable at the same instant because the file tools deliberately take no
-        # session lock — a run parked on an approval can be reaped while it still holds
-        # this session object, and its next write lands mid-merge. A thread lock rather
+        # Orders the multi-step disk transitions on this workspace: materialising it
+        # (`_ensure_workspace`, which may still be adopting a sealing-era archive) against
+        # the file tools, which deliberately take no session lock. A thread lock rather
         # than the asyncio one because every side is synchronous and some of them do not
-        # run on the loop at all; it is uncontended except in exactly that race.
-        # Reentrant because `merge_fork` holds it across a materialisation that takes it
-        # too.
+        # run on the loop at all.
         self._disk: threading.RLock = threading.RLock()
         self._holders: list[LiveWork] = []
 
@@ -235,11 +216,6 @@ class SandboxSession:
         return self._lock
 
     @property
-    def disk_lock(self) -> threading.RLock:
-        """The thread lock that orders the multi-step disk transitions on this workspace."""
-        return self._disk
-
-    @property
     def credentials(self) -> str | None:
         """The egress proxy credentials granted to this session, or ``None`` when it holds none."""
         return self._credentials
@@ -283,7 +259,7 @@ class SandboxSession:
             exit_code=result.exit_code,
             stdout=result.stdout,
             stderr=result.stderr,
-            timed_out=result.exit_code == _TIMEOUT_EXIT,
+            timed_out=result.exit_code == TIMEOUT_EXIT,
         )
 
     def _network_env(self) -> dict[str, str]:
@@ -399,31 +375,13 @@ class SandboxSession:
         This is the whole of a reap. A conversation's files are not what a reap is trying
         to reclaim — the guest copy, its processes and its preview are — so they are left
         on disk, which is also the only way a `.venv` the agent installed or the `.git` of
-        a repository it cloned survive to the next turn.
-
-        A fork is the one exception, and it is a deletion rather than a saving: its
-        files are a copy of a parent workspace that still exists under its own key, and
-        by now they have either been merged back or abandoned."""
+        a repository it cloned survive to the next turn."""
         async with self._lock:
             await self._release()
-            if self.ephemeral:
-                await asyncio.to_thread(self._drop_workspace)
-
-    def _drop_workspace(self) -> None:
-        """Remove a fork's plaintext, and the markers that describe it.
-
-        Under ``_disk``: a file tool arriving on this session mid-teardown must wait
-        rather than recreate the directory being removed."""
-        with self._disk:
-            shutil.rmtree(self.workspace, ignore_errors=True)
-            fork_marker(self.workspace).unlink(missing_ok=True)
-            partial_marker(self.workspace).unlink(missing_ok=True)
 
     async def discard(self) -> None:
         """Bring the work out and release the guest copy, run when a conversation is being
-        deleted and before a fork's files are read back into its parent. Unlike
-        :meth:`shutdown` it never deletes a fork's workspace — the merge still has to read
-        it; disk cleanup has a single home (``SandboxSessionManager._purge_disk``)."""
+        deleted. Disk cleanup has a single home (``SandboxSessionManager._purge_disk``)."""
         async with self._lock:
             await self._release()
 
@@ -483,43 +441,9 @@ class SandboxSession:
         self.touch()
         return self.workspace
 
-    def clone_into(self, child: Path) -> dict[str, str]:
-        """Copy this workspace onto a fork's path, and record what it held at that moment.
-
-        Blocking IO; call it off the event loop. ``_disk`` is held for the whole
-        materialise-copy-and-hash, exactly as :meth:`merge_fork` holds it for the walk:
-        a second writer landing mid-copy leaves a torn copy whose manifest would record
-        the tear as the fork point, so the merge back would read the parent's surviving
-        files as never having existed.
-
-        The manifest is hashed from the *copy*, which is the fork point by construction:
-        re-reading this workspace afterwards would record a write it took since the clone
-        as the base, and the merge back would then undo that write with the child's older
-        copy.
-        """
-        with self._disk:
-            self._ensure_workspace()
-            clone_workspace(self.workspace, child)
-            self.touch()
-            return manifest_of(child, self._walk_excludes)
-
-    def merge_fork(self, child: Path, manifest: Mapping[str, str]) -> MergeReport:
-        """Land what a fork of this workspace changed, and report what could not.
-
-        Blocking IO; call it off the event loop. ``_disk`` is held for the whole
-        walk-and-copy, with the workspace materialised *inside* that hold: judging what
-        is on disk and then writing to it are one transaction, and a second writer
-        between the two would have the merge decide against a tree that no longer
-        stands."""
-        with self._disk:
-            self._ensure_workspace()
-            return merge_workspace(
-                child=child, parent=self.workspace, manifest=manifest, excludes=self._walk_excludes
-            )
-
     def _ensure_workspace(self) -> None:
-        # Under `_disk` so the one-way adoption below cannot interleave with a merge
-        # holding the same lock — two writers on one directory. See `_disk`.
+        # Under `_disk` so the one-way adoption below cannot interleave with another
+        # materialisation — two writers on one directory. See `_disk`.
         with self._disk:
             marker = partial_marker(self.workspace)
             if marker.exists():
@@ -547,7 +471,7 @@ class SandboxSession:
     async def _ensure_up(self) -> None:
         """Pipe the workspace into the guest, with this session's egress credentials
         granted first, so no command runs before its fence is in place."""
-        if not self._vm.available and not await self._vm.wait_ready(_VM_WAIT_S):
+        if not self._vm.available and not await self._vm.wait_ready(VM_WAIT_S):
             if self._vm.failure:
                 raise SandboxError(
                     f"the platform VM is unavailable: {self._vm.failure}",

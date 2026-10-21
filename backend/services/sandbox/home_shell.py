@@ -37,10 +37,10 @@ from services.vm.project import ProjectCopies, ProjectCopy
 
 from .base import SandboxError
 from .jobs import capturing_cwd, follow_job, refuse
+from .limits import TIMEOUT_EXIT
 from .session import SandboxSession
-from .shell_runner import BackgroundStatus, ProgressHook, ShellResult
+from .shell_result import BackgroundStatus, ProgressHook, ShellResult
 
-_TIMEOUT_EXIT = 124
 #: How long a stop waits for the job to report it has ended.
 _STOP_WAIT_S = 5.0
 #: How many projects one command may bring into the VM by naming them.
@@ -81,6 +81,9 @@ class HomeShell:
         self._max_output_chars: int = max_output_chars
         self._jobs: dict[str, _Job] = {}
         self._finished: OrderedDict[str, BackgroundStatus] = OrderedDict()
+        # The guest hands a finished job's output to the first reader only, so two readers
+        # of one id must not overlap.
+        self._reading: dict[str, asyncio.Lock] = {}
 
     @property
     def cwd(self) -> str:
@@ -178,7 +181,7 @@ class HomeShell:
                     copy.touch()
                 with contextlib.suppress(VMError):
                     _ = await vm.call(["rm", "-f", cwd_file])
-        timed_out = state.exit_code == _TIMEOUT_EXIT
+        timed_out = state.exit_code == TIMEOUT_EXIT
         exit_code = None if timed_out else state.exit_code
         if exit_code == 0:
             self._follow_cd(landed, [mount.place for mount, _ in held])
@@ -235,26 +238,30 @@ class HomeShell:
     async def check(self, copies: ProjectCopies, command_id: str) -> BackgroundStatus | None:
         """A background command as it stands. One that has ended is brought back once
         and retired, and later checks read its final status."""
-        job = self._jobs.get(command_id)
-        if job is None:
-            return self._finished.get(command_id)
-        state = await copies.vm.job(job.name)
-        if state.running:
-            return self._status(command_id, job, state, "running")
-        return await self._retire(command_id, job, state, "finished")
+        async with self._reading.setdefault(command_id, asyncio.Lock()):
+            job = self._jobs.get(command_id)
+            if job is None:
+                _ = self._reading.pop(command_id, None)
+                return self._finished.get(command_id)
+            state = await copies.vm.job(job.name, tail=True)
+            if state.running:
+                return self._status(command_id, job, state, "running")
+            return await self._retire(command_id, job, state, "finished")
 
     async def stop(self, copies: ProjectCopies, command_id: str) -> BackgroundStatus | None:
-        job = self._jobs.get(command_id)
-        if job is None:
-            return self._finished.get(command_id)
-        vm = copies.vm
-        await vm.stop_job(job.name)
-        deadline = time.monotonic() + _STOP_WAIT_S
-        state = await vm.job(job.name)
-        while state.running and time.monotonic() < deadline:
-            await asyncio.sleep(0.1)
-            state = await vm.job(job.name)
-        return await self._retire(command_id, job, state, "stopped")
+        async with self._reading.setdefault(command_id, asyncio.Lock()):
+            job = self._jobs.get(command_id)
+            if job is None:
+                _ = self._reading.pop(command_id, None)
+                return self._finished.get(command_id)
+            vm = copies.vm
+            await vm.stop_job(job.name)
+            deadline = time.monotonic() + _STOP_WAIT_S
+            state = await vm.job(job.name, tail=True)
+            while state.running and time.monotonic() < deadline:
+                await asyncio.sleep(0.1)
+                state = await vm.job(job.name, tail=True)
+            return await self._retire(command_id, job, state, "stopped")
 
     async def shutdown(self, copies: ProjectCopies) -> None:
         for command_id in list(self._jobs):
@@ -268,6 +275,7 @@ class HomeShell:
         status: Literal["finished", "stopped"],
     ) -> BackgroundStatus:
         _ = self._jobs.pop(command_id, None)
+        _ = self._reading.pop(command_id, None)
         for _mount, copy in job.held:
             copy.jobs.discard(job.name)
         async with job.session.lock:

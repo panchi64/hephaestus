@@ -42,7 +42,7 @@ persists its working directory between calls, so a relative path is judged as re
 the root — an assumption that is load-bearing for every command cleared here, and that
 only the shell runner can keep: it adopts the directory a command left the
 shell in **only while that is still under the root**
-(``services/sandbox/shell_runner.py``). Let
+(``services/sandbox/host_shell.py``). Let
 the tracked directory out of the worktree and every containment answer below is measured
 against a directory the command is no longer in.
 
