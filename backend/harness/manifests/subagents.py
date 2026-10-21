@@ -23,7 +23,7 @@ from harness.manifests._subagent_wake import SubagentWake
 from harness.manifests._subagents import ConversationSubagents
 from routes.subagents import router as subagents_router
 from services.subagent_store import SubagentStore
-from services.subagents import SubagentLauncher
+from services.subagents import SubagentLauncher, SubtreeStopper
 from tools.report import report_toolset
 
 
@@ -46,7 +46,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         state={"subagent_records": records, "subagent_wake": wake},
         # Registered under the abstract type so `tools/subagents.py` can resolve it
         # without importing this wiring layer, which sits above `tools/`.
-        capabilities=((launcher, SubagentLauncher),),
+        capabilities=((launcher, SubagentLauncher), (launcher, SubtreeStopper)),
         # Carries a finished sub-agent's report back to the thread that launched it.
         run_terminal=(wake.settled,),
     )

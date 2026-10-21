@@ -20,12 +20,14 @@ from dataclasses import dataclass
 
 from core.exceptions import NotFoundError
 from core.fork import MergeReport
+from core.text import truncate_middle
 from harness.manifest import HarnessContext
 from harness.manifests._inbox_dispatch import WAKE_CHAIN_LIMIT, WAKE_KIND, InboxDispatcher
 from models.subagent import SubagentRecord
 from runs import Run, RunRegistry, RunStatus
 from runs.events import MessageSource
 from runs.lanes import CHAT_TURN_KINDS, is_attended
+from runs.run import StopCause
 from services.conversations import ConversationStore
 from services.home.paths import Place
 from services.home.table import child_worktree_name
@@ -40,7 +42,27 @@ from services.workspace import split_workspace_key
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["NO_REPORT", "WAKE_CHAIN_LIMIT", "WAKE_KIND", "SubagentWake", "report_text"]
+__all__ = [
+    "NO_REPORT",
+    "OPERATOR_STOPPED",
+    "RESPAWN_HINT",
+    "WAKE_CHAIN_LIMIT",
+    "WAKE_KIND",
+    "SubagentWake",
+    "report_text",
+    "stopped_phrase",
+]
+
+#: How many stop causes are remembered, by agent thread, for a later refusal to name.
+_STOPS_CACHED = 256
+
+#: What a parent is told about an agent the operator stopped.
+OPERATOR_STOPPED = (
+    "The operator stopped this agent. Don't relaunch it or redo its task unless the operator asks."
+)
+
+#: What a parent is told about an agent it stopped itself.
+RESPAWN_HINT = "Spawn a new agent if the work still needs doing."
 
 #: How many changed files a parked sub-agent's note names before counting the rest.
 _FILES_LISTED = 20
@@ -57,6 +79,7 @@ class _Outcome:
     status: str
     summary: str | None
     error: str | None
+    cause: StopCause | None = None
 
 
 class SubagentWake:
@@ -73,6 +96,18 @@ class SubagentWake:
         # Reports filed by runs still going, by run id. In memory like the runs themselves,
         # which a restart ends anyway.
         self._filed: OrderedDict[str, FiledReport] = OrderedDict()
+        self._stops: OrderedDict[str, StopCause] = OrderedDict()
+
+    def note_stop(self, conversation_id: str, cause: StopCause) -> None:
+        """Remember who stopped the agent in this thread, for a refusal to name."""
+        self._stops[conversation_id] = cause
+        self._stops.move_to_end(conversation_id)
+        while len(self._stops) > _STOPS_CACHED:
+            _ = self._stops.popitem(last=False)
+
+    def stop_cause(self, conversation_id: str) -> StopCause | None:
+        """Who stopped the agent in this thread, when this process saw it happen."""
+        return self._stops.get(conversation_id)
 
     def file(self, run_id: str, report: FiledReport) -> None:
         """Hold a spawned agent's report until its run ends. A second one replaces it."""
@@ -117,6 +152,8 @@ class SubagentWake:
             return  # an ordinary thread, not one of ours
         outcome = await self._outcome(run, row.child_conversation_id)
         summary = outcome.summary
+        if outcome.status == "cancelled" and outcome.cause is not None:
+            self.note_stop(row.child_conversation_id, outcome.cause)
         parked = await self._park(row)
         try:
             await self._records.settle(
@@ -150,6 +187,8 @@ class SubagentWake:
                 parked,
                 callsign=row.callsign,
                 agent_class=row.agent_class,
+                cause=outcome.cause,
+                preview_chars=self._ctx.settings.tool_output_spill_chars,
             ),
             sender=handle,
         )
@@ -173,7 +212,9 @@ class SubagentWake:
                 return _Outcome("done", answer or "(it answered with nothing)", None)
             return _Outcome("failed", answer, NO_REPORT)
         reason = run.error or run.detail or run.status.value
-        return _Outcome(status_of(run), answer, f"it did not finish: {reason}")
+        return _Outcome(
+            status_of(run), answer, f"it did not finish: {reason}", cause=run.stop_cause
+        )
 
     async def _latest_answer(self, conversation_id: str) -> str | None:
         try:
@@ -241,7 +282,44 @@ class SubagentWake:
 def status_of(run: Run) -> str:
     if run.status is RunStatus.done:
         return "done"
-    return "cancelled" if run.status is RunStatus.cancelled else "failed"
+    if run.status is RunStatus.cancelled:
+        return "cancelled"
+    # A run a limit ended is unfinished work the parent can continue, not a failure.
+    return "blocked" if run.status is RunStatus.blocked and run.stop_cause else "failed"
+
+
+def stopped_phrase(cause: StopCause | None) -> str:
+    """How a stopped agent is described: who stopped it, when that is known."""
+    match cause:
+        case StopCause.operator:
+            return "stopped by the operator"
+        case StopCause.parent:
+            return "stopped by its parent"
+        case _:
+            return "stopped"
+
+
+_LIMIT_LABELS = {StopCause.time_limit: "time limit", StopCause.turn_limit: "turn limit"}
+
+
+def _status_label(status: str, cause: StopCause | None) -> str:
+    if status == "cancelled" and cause in (StopCause.operator, StopCause.parent):
+        return f"cancelled ({stopped_phrase(cause)})"
+    limit = _LIMIT_LABELS.get(cause) if cause is not None else None
+    if status == "blocked" and limit is not None:
+        return f"blocked ({limit})"
+    return status
+
+
+def _preview(summary: str, handle: str, limit: int) -> str:
+    """A report over ``limit`` characters as its head and tail, with where to read it all."""
+    head, tail, elided = truncate_middle(summary, limit)
+    if not elided:
+        return summary
+    return (
+        f"{head}\n[… {elided} characters omitted …]\n{tail}\n\n"
+        + f"This report is long: read the full report with `agents_read {handle}`."
+    )
 
 
 def _joined(summary: str, parked: str | None) -> str:
@@ -261,8 +339,16 @@ def parked_note(handle: str, path: str, branch: str, changed: MergeReport) -> st
     )
 
 
-def _recovery(status: str, handle: str) -> list[str]:
+def _recovery(status: str, handle: str, cause: StopCause | None = None) -> list[str]:
     """What the parent can do next, for a report that did not end in finished work."""
+    if status == "cancelled" and cause is StopCause.operator:
+        return [OPERATOR_STOPPED]
+    if status == "blocked" and cause is StopCause.turn_limit:
+        return [
+            "its work is partial: it ran out of turns before finishing",
+            f"continue it with `agents_message` to `{handle}`; it picks up where it stopped",
+            f"or `agents_stop` `{handle}` and take the work back",
+        ]
     if status == "blocked":
         return [
             f"answer it with `agents_message` to `{handle}`; it picks up where it stopped",
@@ -286,6 +372,8 @@ def report_text(
     *,
     callsign: str = "",
     agent_class: str = "",
+    cause: StopCause | None = None,
+    preview_chars: int | None = None,
 ) -> str:
     """A sub-agent's hand-back, as the launching model reads it: who, how it ended, what
     went wrong, its report, where its work is, and what to do next.
@@ -298,14 +386,14 @@ def report_text(
     extras = [name for name in (designation(callsign, agent_class),) if name]
     if spec_name != handle:
         extras.append(spec_name)
-    parts = [report_heading(handle, extras, status)]
+    parts = [report_heading(handle, extras, _status_label(status, cause))]
     if error:
         parts.append(f"error: {error}")
     if summary:
-        parts.append(summary)
+        parts.append(summary if preview_chars is None else _preview(summary, handle, preview_chars))
     if parked:
         parts.append(parked)
-    hints = _recovery(status, handle)
+    hints = _recovery(status, handle, cause)
     if hints:
         parts.append("\n".join(f"  help: {hint}" for hint in hints))
     return "\n\n".join(parts)

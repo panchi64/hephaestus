@@ -46,7 +46,7 @@ from pydantic import BaseModel
 from routes import deps
 from routes.conversations import TaskOut
 from routes.deps import OPERATOR_ID
-from services.subagents import SubagentLauncher, SubagentView
+from services.subagents import SubagentLauncher, SubagentView, SubtreeStopper
 from services.subagents.callsigns import class_display
 from services.subagents.report import ReportStructure, report_prose, report_structure
 from services.task_list import tasks_payload
@@ -170,6 +170,32 @@ async def list_subagents(conversation_id: str, request: Request) -> SubagentList
             for view, rows, is_hidden in zip(views, tasks, hidden, strict=True)
         ]
     )
+
+
+class StoppedAgents(BaseModel):
+    #: The handles whose runs were stopped, children and everything below them.
+    stopped: list[str]
+
+
+@router.post("/{conversation_id}/agents/stop", response_model=StoppedAgents)
+async def stop_agents(conversation_id: str, request: Request) -> StoppedAgents:
+    """Stop every live agent below a thread that has no run of its own to cancel.
+
+    The Stop button on a running thread stops its agents through ``POST /runs/{id}/cancel``;
+    this is the same stop for an idle one. The reports the agents file go to the held
+    inbox, so nothing wakes the thread.
+    """
+    stopper = deps.capabilities(request).get_optional(SubtreeStopper)
+    if stopper is None:
+        raise HTTPException(status_code=404, detail="sub-agents are not available")
+    if not await deps.store(request).exists(conversation_id, OPERATOR_ID):
+        raise HTTPException(status_code=404, detail="conversation not found")
+    inbox = deps.registry(request).inbox(conversation_id, OPERATOR_ID)
+    mark = inbox.stop()
+    stopped = await stopper.stop_below(OPERATOR_ID, conversation_id)
+    if not stopped:
+        inbox.undo_stop(mark)
+    return StoppedAgents(stopped=stopped)
 
 
 class OpenedThread(BaseModel):

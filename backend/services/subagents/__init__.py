@@ -21,6 +21,7 @@ from services.subagents.launcher import (
     SubagentUnavailableError,
     SubagentView,
 )
+from services.subagents.stopper import SubtreeStopper
 
 __all__ = [
     "PARENT_ADDRESS",
@@ -34,4 +35,5 @@ __all__ = [
     "SubagentParent",
     "SubagentUnavailableError",
     "SubagentView",
+    "SubtreeStopper",
 ]

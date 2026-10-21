@@ -521,9 +521,32 @@ class TestAwaitingReports:
 
 
 class TestTheCap:
-    async def test_there_is_no_limit_until_the_operator_sets_one(
+    async def test_eight_run_at_once_until_the_operator_sets_a_cap(
         self, monkeypatch: pytest.MonkeyPatch
     ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="done")
+            parent = f"p-{uuid4().hex}"
+            # The startup pass closes out run-less live rows, so it must have run before
+            # these are recorded.
+            _ = await records_of(app).reconcile_stranded()
+            for _ in range(8):
+                _ = await _record_child(records_of(app), parent, f"c-{uuid4().hex}")
+
+            with pytest.raises(SubagentUnavailableError) as refused:
+                _ = await launcher_of(app).launch(
+                    "operator",
+                    EXPLORER,
+                    "look further",
+                    handle="one-more",
+                    parent=SubagentParent(conversation_id=parent),
+                )
+
+            assert "8 agents are already working" in str(refused.value)
+            assert "Wait for a running agent's report" in str(refused.value)
+            assert "do not retry" in str(refused.value)
+
+    async def test_the_default_cap_leaves_room_to_split_work(self, monkeypatch: pytest.MonkeyPatch):
         async with client_app() as (_client, app):
             patch_model_resolution(monkeypatch, output_text="done")
             started = [
@@ -533,8 +556,6 @@ class TestTheCap:
                 for n in range(4)
             ]
 
-            # The default the operator gets without choosing anything. A cap picked in
-            # advance, before anyone knows what the work splits into, would mostly be wrong.
             assert len({s.subagent_id for s in started}) == 4
             for one in started:
                 await settle_run(app, one.run_id)

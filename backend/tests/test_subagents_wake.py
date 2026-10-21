@@ -36,9 +36,10 @@ from routes.chat import compose_turn
 from routes.deps import app_state
 from runs import QueuedMessage, Run, RunStatus, RunStream
 from runs.events import MessageSource
+from runs.run import StopCause
 from services.agents import ToolAccess
 from services.subagent_store import SubagentStore
-from services.subagents import FiledReport, ReportStatus
+from services.subagents import FiledReport, ReportStatus, SubagentLauncher
 from tests._helpers import client_app, patch_model_resolution, settle
 from tests._json import json_body, s
 from tools import RunDeps, build_agent_toolsets
@@ -608,3 +609,112 @@ def _validator_ctx(kind: str, *, reports: bool) -> RunContext[RunDeps]:
     run = Run(id="r", kind=kind, owner_id="operator", stream=RunStream())
     deps = RunDeps(run=run, owner_id="operator", reports_to_parent=reports)
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+
+
+class TestWhoStoppedIt:
+    @pytest.mark.parametrize(
+        ("status", "cause", "heading"),
+        [
+            ("cancelled", StopCause.operator, "cancelled (stopped by the operator)"),
+            ("cancelled", StopCause.parent, "cancelled (stopped by its parent)"),
+            ("blocked", StopCause.time_limit, "blocked (time limit)"),
+            ("blocked", StopCause.turn_limit, "blocked (turn limit)"),
+        ],
+    )
+    def test_the_heading_names_the_cause(self, status: str, cause: StopCause, heading: str):
+        text = report_text(status, "migrate", "worker", "so far", None, None, cause=cause)
+
+        assert text.startswith(f"`migrate` (worker): {heading}.")
+
+    def test_an_operator_stop_tells_the_parent_not_to_redo_the_work(self):
+        text = report_text(
+            "cancelled", "migrate", "worker", None, None, None, cause=StopCause.operator
+        )
+
+        assert "Don't relaunch it or redo its task unless the operator asks." in text
+
+    def test_a_parents_own_stop_adds_no_such_instruction(self):
+        text = report_text(
+            "cancelled", "migrate", "worker", None, None, None, cause=StopCause.parent
+        )
+
+        assert "operator asks" not in text
+
+    def test_a_turn_limit_says_the_work_is_partial_and_can_be_continued(self):
+        text = report_text(
+            "blocked", "migrate", "worker", "half", None, None, cause=StopCause.turn_limit
+        )
+
+        assert "its work is partial" in text
+        assert "continue it with `agents_message` to `migrate`" in text
+
+    @pytest.mark.parametrize(
+        ("status", "cause", "heading"),
+        [
+            (RunStatus.cancelled, StopCause.operator, "cancelled (stopped by the operator)"),
+            (RunStatus.cancelled, StopCause.parent, "cancelled (stopped by its parent)"),
+            (RunStatus.blocked, StopCause.time_limit, "blocked (time limit)"),
+            (RunStatus.blocked, StopCause.turn_limit, "blocked (turn limit)"),
+        ],
+    )
+    async def test_a_run_ending_carries_its_cause_into_the_report(
+        self, monkeypatch: pytest.MonkeyPatch, status: RunStatus, cause: StopCause, heading: str
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            subagent_id, conversation_id = await _spawned(app)
+            composed = _woken(monkeypatch)
+            run = _ended(conversation_id, status)
+            run.stop_cause = cause
+
+            await _wake(app).settled(run, False)
+
+            assert f"): {heading}." in _prompt(composed[0])
+            row = await _records(app).get(subagent_id, "operator")
+            assert row is not None
+            assert row.status == status.value
+            await _drain(app)
+
+
+class TestLargeReports:
+    async def test_a_report_over_the_limit_is_previewed_and_read_in_full_on_request(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            _, conversation_id = await _spawned(app)
+            composed = _woken(monkeypatch)
+            limit = app_state(app).settings.tool_output_spill_chars
+            full = "A" * limit + "THE-MIDDLE" + "B" * limit
+            run = _ended(conversation_id)
+
+            _wake(app).file(run.id, FiledReport(status="done", text=full))
+            await _wake(app).settled(run, False)
+
+            prompt = _prompt(composed[0])
+            assert "THE-MIDDLE" not in prompt
+            assert len(prompt) < limit + 1_000
+            assert "characters omitted" in prompt
+            assert "read the full report with `agents_read migrate-schema`" in prompt
+            launcher = app_state(app).capabilities.get(SubagentLauncher)
+            view = await launcher.read("operator", "parent-1", "migrate-schema")
+            assert view.summary is not None
+            assert view.summary.startswith(full)
+            await _drain(app)
+
+    async def test_a_report_within_the_limit_is_delivered_whole(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async with client_app() as (_client, app):
+            patch_model_resolution(monkeypatch, output_text="ok")
+            _, conversation_id = await _spawned(app)
+            composed = _woken(monkeypatch)
+            run = _ended(conversation_id)
+
+            _wake(app).file(run.id, FiledReport(status="done", text="short and complete"))
+            await _wake(app).settled(run, False)
+
+            prompt = _prompt(composed[0])
+            assert "short and complete" in prompt
+            assert "agents_read" not in prompt
+            await _drain(app)

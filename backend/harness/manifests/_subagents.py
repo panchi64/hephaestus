@@ -36,6 +36,7 @@ from prompts.voice import CLASSES
 from routes.chat import compose_turn, resolve_turn_models
 from routes.chat.thread_composer import ThreadComposer
 from runs import RunRegistry, RunStatus
+from runs.run import StopCause
 from services.agents import (
     AgentCatalog,
     AgentDefinition,
@@ -83,13 +84,16 @@ from services.uploads import UploadStore
 from services.workspace import DELEGATION_SEP, split_workspace_key
 from tools import InstructionProvider, RunDeps
 
-from ._subagent_wake import SubagentWake
+from ._subagent_wake import OPERATOR_STOPPED, RESPAWN_HINT, SubagentWake, stopped_phrase
 
 logger = logging.getLogger(__name__)
 
 #: The run kind a spawned agent's first turn is submitted under: foreground for the model,
 #: background for the operator (``runs/lanes.py``).
 SUBAGENT_KIND = "linked"
+
+#: How many agents a tree runs at once when the operator has set no cap.
+DEFAULT_MAX_CONCURRENT = 8
 
 #: How much of a task is kept as the conversation's name.
 _TITLE_MAX_CHARS = 80
@@ -427,17 +431,15 @@ class ConversationSubagents(SubagentLauncher):
     async def _check_capacity(self, owner_id: str, root: str) -> None:
         """Refuse a launch that would put this tree over the operator's cap. An agent parked
         on an approval still counts: what it waits for is a person, not a slot."""
-        limit = await get_subagent_limit(self._settings, owner_id)
-        if limit is None:
-            return
+        limit = await get_subagent_limit(self._settings, owner_id) or DEFAULT_MAX_CONCURRENT
         running = len(await self._records.live(owner_id, root_conversation_id=root))
         if running < limit:
             return
         raise SubagentUnavailableError(
             f"{running} agents are already working in this tree, which is the most allowed "
-            + "at once. Do not spawn another yet and do not retry this — you will be told as "
-            + "each one finishes. Carry on with whatever does not depend on them, or end "
-            + "your turn."
+            + "at once. Wait for a running agent's report before spawning another, and do "
+            + "not retry this: each report reaches you as it finishes. Carry on with "
+            + "whatever does not depend on them, or end your turn."
         )
 
     async def _cut_worktree(
@@ -537,9 +539,10 @@ class ConversationSubagents(SubagentLauncher):
             owner_id, found.conversation_id, text, source="agent", sender=sender
         )
         if not delivered:
+            cause = self._wake.stop_cause(found.conversation_id)
             raise SubagentUnavailableError(
-                f"`{found.label}` was stopped, so nothing will read this. Spawn a new agent "
-                + "if the work still needs doing."
+                f"`{found.label}` was {stopped_phrase(cause)}, so nothing will read this. "
+                + (OPERATOR_STOPPED if cause is StopCause.operator else RESPAWN_HINT)
             )
         return found.label
 
@@ -576,14 +579,33 @@ class ConversationSubagents(SubagentLauncher):
                 + "not yours to stop. Message it, or its parent, instead."
             )
         rows = [row, *await self._records.descendants(row.child_conversation_id, owner_id)]
+        return await self._stop_rows(owner_id, rows, StopCause.parent)
+
+    async def stop_below(self, owner_id: str, conversation_id: str) -> list[str]:
+        """Stop every live agent below a thread, for the operator (:class:`SubtreeStopper`)."""
+        rows = [
+            row
+            for row in await self._records.descendants(conversation_id, owner_id)
+            if row.status in LIVE_STATUSES
+        ]
+        return await self._stop_rows(owner_id, rows, StopCause.operator)
+
+    async def _stop_rows(
+        self, owner_id: str, rows: list[SubagentRecord], cause: StopCause
+    ) -> list[str]:
         # Marked stopped before any run is cancelled, so the reports the cancellations
         # produce do not wake an agent that is itself being stopped.
         for each in rows:
             await self._records.settle(each.id, status="cancelled")
+            self._wake.note_stop(each.child_conversation_id, cause)
         stopped: list[str] = []
         for each in rows:
             run = self._runs.active_run_for(each.child_conversation_id, owner_id)
-            if run is not None and not run.is_terminal and await self._runs.cancel(run.id):
+            if run is None or run.is_terminal:
+                continue
+            if run.stop_cause is None:
+                run.stop_cause = cause
+            if await self._runs.cancel(run.id):
                 stopped.append(each.handle or each.spec_name)
         return stopped
 
