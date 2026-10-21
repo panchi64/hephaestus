@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import time
 from pathlib import Path
 from typing import cast
 
@@ -222,6 +223,24 @@ async def test_a_workspace_reaches_only_its_allowlist(
     assert reply.startswith(b"HTTP/1.1 403")
     assert DENIED_MARKER.encode() in reply and b"evil.example" in reply
     assert dialled == []
+
+
+async def test_a_refused_tunnel_is_remembered_for_its_workspace(tmp_path: Path):
+    _ = (tmp_path / ALLOW_FILE).write_text("pypi.org\n")
+    gateway = EgressGateway()
+    credentials = gateway.grant(tmp_path)
+    before = time.monotonic()
+
+    reply = await _serve_once(
+        gateway,
+        WORKSPACE,
+        b"CONNECT evil.example:443 HTTP/1.1\r\n" + _basic(credentials) + b"\r\n",
+    )
+
+    assert reply.startswith(b"HTTP/1.1 403")
+    assert gateway.latest_denial(credentials, before) == "evil.example"
+    assert gateway.latest_denial(credentials, time.monotonic() + 1) is None
+    assert gateway.latest_denial("workspace:unknown", before) is None
 
 
 @pytest.mark.parametrize(

@@ -67,7 +67,7 @@ class _CannedSession:
     ) -> None:
         self._result: SandboxResult | None = result
         self._error: Exception | None = error
-        self.workspace: Path = workspace or Path(tempfile.mkdtemp())
+        self.workspace: Path = workspace or Path(tempfile.gettempdir()) / "unused-canned-workspace"
 
     def ensure_workspace(self) -> Path:
         return self.workspace

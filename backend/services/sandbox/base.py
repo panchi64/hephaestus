@@ -118,6 +118,8 @@ class SandboxResult:
     stdout: str
     stderr: str
     timed_out: bool = False
+    #: What the agent should know about bringing its changes back, such as a VM restart.
+    notes: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
