@@ -7,10 +7,11 @@ the code-mode toolset returns it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from pathlib import Path
 from typing import cast
 
@@ -30,12 +31,28 @@ from runs import Run, RunStream
 from services.sandbox import SandboxSessionManager
 from tools import RunDeps
 from tools.code_mode_marks import RUN_CODE
-from tools.files import files_toolset
+from tools.files import READ_PAGE_CHARS, files_toolset
 
 LIMIT = 1000
 BIG = "".join(f"line {i:04d}\n" for i in range(400))
 SOURCE = "https://example.test/page"
-PERSONAL = ("mail", "calendar", "memory", "vault", "corpus", "platform")
+PERSONAL = (
+    "mail",
+    "calendar",
+    "memory",
+    "vault",
+    "corpus",
+    "platform",
+    "agents",
+    "browse",
+    "external",
+)
+
+
+@dataclass
+class _Opaque:
+    text: str
+    scale: InitVar[int]
 
 
 @dataclass
@@ -67,13 +84,16 @@ class _Session:
 
 
 class _Manager:
-    def __init__(self, root: Path, *, fail: bool = False) -> None:
+    def __init__(self, root: Path, *, fail: bool = False, hang: bool = False) -> None:
         self._root: Path = root
         self._fail: bool = fail
+        self._hang: bool = hang
         self.sessions: dict[str, _Session] = {}
 
     async def acquire(self, key: str, *, holder: object = None) -> _Session:
         del holder
+        if self._hang:
+            _ = await asyncio.Event().wait()
         return self.sessions.setdefault(key, _Session(self._root / key, fail=self._fail))
 
 
@@ -118,6 +138,33 @@ def _categories() -> dict[str, AbstractToolset[RunDeps]]:
     def returned() -> ToolReturn[str]:
         return ToolReturn(return_value=BIG, content="a side note", metadata={"k": 1})
 
+    @x.tool_plain(metadata={"sensitivity": "read"})
+    def fences_small() -> str:
+        return "\n".join(wrap_untrusted(f"snippet {i}", source=SOURCE) for i in range(1000))
+
+    @x.tool_plain(metadata={"sensitivity": "read"})
+    def fences_large() -> str:
+        return "\n".join(wrap_untrusted(BIG, source=SOURCE) for _ in range(200))
+
+    @x.tool_plain(metadata={"sensitivity": "read"})
+    def many() -> list[str]:
+        return [f"short entry number {i}" for i in range(500)]
+
+    @x.tool_plain(metadata={"sensitivity": "read"})
+    def opaque() -> _Opaque:
+        return _Opaque(text=BIG, scale=1)
+
+    @x.tool_plain(metadata={"sensitivity": "read"})
+    def deep() -> list[object]:
+        nested: object = "deep leaf"
+        for _ in range(30):
+            nested = [nested]
+        return [nested, BIG, "small"]
+
+    @x.tool_plain(metadata={"sensitivity": "read"})
+    def wide() -> dict[str, str]:
+        return {"t": "漢" * 15000}
+
     categories: dict[str, AbstractToolset[RunDeps]] = {"x": x, "files": files_toolset()}
     for category in PERSONAL:
         personal: FunctionToolset[RunDeps] = FunctionToolset()
@@ -158,9 +205,11 @@ async def _run_tool(
     project_id: str | None = None,
     workspace_key: str = "",
     fail: bool = False,
+    hang: bool = False,
+    disabled: frozenset[str] | None = None,
 ) -> tuple[list[ModelMessage], Path]:
     caps = caps or ServiceContainer()
-    caps.add(_Manager(tmp_path, fail=fail), as_type=SandboxSessionManager)
+    caps.add(_Manager(tmp_path, fail=fail, hang=hang), as_type=SandboxSessionManager)
     agent = build_agent(_model(first, args), categories=_categories())
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     deps = RunDeps(
@@ -171,6 +220,7 @@ async def _run_tool(
         conversation_id="c1",
         project_id=project_id,
         workspace_key=workspace_key,
+        disabled_tools=disabled or frozenset(),
     )
     async with agent.iter("go", deps=deps) as agent_run:
         await stream_agent_run(agent_run, run)
@@ -225,21 +275,39 @@ async def test_a_structured_result_keeps_its_shape_and_spills_the_big_leaf(tmp_p
     assert len(saved.read_text().splitlines()) == 400
 
 
-async def test_an_untrusted_leaf_is_rewrapped_with_its_source_and_never_half_fenced(
-    tmp_path: Path,
-):
+def _one_fence(text: str) -> bool:
+    return (
+        text.count("Content inside <untrusted") == 1
+        and text.count("\n<untrusted id=") == 1
+        and text.count("</untrusted id=") == 1
+    )
+
+
+async def test_an_untrusted_leaf_is_saved_unfenced_and_previewed_in_one_fence(tmp_path: Path):
     messages, workspace = await _run_tool(tmp_path, "x_page")
     content = cast(Mapping[str, object], _content(messages, "x_page"))
     assert content["n"] == 1
     body = str(content["body"])
-    lines = body.splitlines()
-    assert lines[0].startswith("Content inside <untrusted")
-    assert lines[1].startswith('<untrusted id="') and f'source="{SOURCE}"' in lines[1]
-    close = next(i for i, line in enumerate(lines) if line.startswith('</untrusted id="'))
-    assert "tool-output/" in "\n".join(lines[close + 1 :])
-    assert body.count('<untrusted id="') == 2 and body.count('</untrusted id="') == 1
+    assert _one_fence(body)
+    assert body.index("tool-output/") > body.index("</untrusted id=")
     [saved] = _saved(workspace)
-    assert saved.read_text().count("\n<untrusted id=") == 1
+    assert saved.name.endswith(".untrusted.txt")
+    assert saved.read_text() == BIG
+
+
+@pytest.mark.parametrize("args", [{}, {"offset": 100}, {"offset": 390, "limit": 5}, {"limit": 3}])
+async def test_any_page_of_an_untrusted_spill_comes_back_fenced_and_bounded(
+    tmp_path: Path, args: dict[str, object]
+):
+    page = await _read_back(tmp_path, "x_page", read_args=args)
+    assert _one_fence(page) and "saved tool output" in page
+    assert len(page) <= READ_PAGE_CHARS + 1000
+
+
+async def test_a_page_of_a_huge_spill_is_bounded(tmp_path: Path):
+    page = await _read_back(tmp_path, "x_fences_large", read_args={"limit": 100_000})
+    assert _one_fence(page)
+    assert len(page) <= READ_PAGE_CHARS + 1000
 
 
 async def test_a_plain_leaf_is_never_wrapped(tmp_path: Path):
@@ -248,24 +316,86 @@ async def test_a_plain_leaf_is_never_wrapped(tmp_path: Path):
     assert "untrusted" not in str(content["stdout"])
 
 
-async def test_trusted_text_beside_a_fenced_excerpt_stays_trusted(tmp_path: Path):
-    messages, _ = await _run_tool(tmp_path, "x_mixed")
+async def test_trusted_text_in_a_fenced_leaf_is_wrapped_too(tmp_path: Path):
+    messages, workspace = await _run_tool(tmp_path, "x_mixed")
     text = str(_content(messages, "x_mixed"))
-    assert text.startswith("TRUSTED HEADER\n")
-    fence_open = text.index('<untrusted id="')
-    fence_close = text.index('</untrusted id="')
-    assert "TRUSTED FOOTER" in text[fence_close:]
-    assert "TRUSTED HEADER" not in text[fence_open:fence_close]
-    assert "line 0000" in text[fence_open:fence_close]
+    assert _one_fence(text)
+    assert "TRUSTED HEADER" in text[text.index("\n<untrusted id=") : text.index("</untrusted id=")]
+    assert "TRUSTED FOOTER" in _saved(workspace)[0].read_text()
 
 
-async def test_a_citable_result_keeps_its_type_and_citations(tmp_path: Path):
+async def test_a_citable_result_is_left_whole_so_its_citations_stay_true(tmp_path: Path):
     messages, workspace = await _run_tool(tmp_path, "x_cited")
     found = _content(messages, "x_cited")
     assert isinstance(found, _Found) and isinstance(found, Citable)
     assert found.citations()[0].url == SOURCE
-    assert "tool-output/" in found.text
+    assert found.text == BIG
+    assert _saved(workspace) == []
+
+
+@pytest.mark.parametrize("tool", ["x_fences_small", "x_fences_large"])
+async def test_a_preview_of_many_fences_is_bounded(tmp_path: Path, tool: str):
+    messages, workspace = await _run_tool(tmp_path, tool)
+    text = str(_content(messages, tool))
+    assert _one_fence(text)
+    assert len(text) <= 1000 + 700
+    [saved] = _saved(workspace)
+    assert saved.name.endswith(".untrusted.txt") and "<untrusted" not in saved.read_text()
+
+
+async def test_many_small_leaves_become_one_whole_result_preview(tmp_path: Path):
+    messages, workspace = await _run_tool(tmp_path, "x_many")
+    text = str(_content(messages, "x_many"))
+    assert isinstance(_content(messages, "x_many"), str) and len(text) <= 1000 + 700
+    [saved] = _saved(workspace)
+    assert json.loads(saved.read_text())[499] == "short entry number 499"
+
+
+async def test_a_value_that_cannot_be_rebuilt_is_spilled_whole(tmp_path: Path):
+    messages, workspace = await _run_tool(tmp_path, "x_opaque")
+    text = str(_content(messages, "x_opaque"))
+    assert isinstance(_content(messages, "x_opaque"), str) and "tool-output/" in text
+    assert json.loads(_saved(workspace)[0].read_text())["text"] == BIG
+
+
+async def test_a_leaf_below_the_depth_cutoff_is_left_alone_and_the_rest_still_spills(
+    tmp_path: Path,
+):
+    messages, workspace = await _run_tool(tmp_path, "x_deep")
+    nested, big, small = cast(list[object], _content(messages, "x_deep"))
+    assert "tool-output/" in str(big) and small == "small"
+    while isinstance(nested, list):
+        nested = cast(list[object], nested)[0]
+    assert nested == "deep leaf"
     assert _saved(workspace)[0].read_text() == BIG
+
+
+async def test_size_is_counted_in_characters_not_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    settings = Settings()
+    monkeypatch.setattr("tools.spill.get_settings", lambda: settings)
+    messages, workspace = await _run_tool(tmp_path, "x_wide")
+    assert cast(Mapping[str, str], _content(messages, "x_wide"))["t"] == "漢" * 15000
+    assert _saved(workspace) == []
+
+
+async def test_a_blocked_workspace_gives_a_preview_without_a_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr("tools.spill._SAVE_TIMEOUT_S", 0.1)
+    messages, _ = await _run_tool(tmp_path, "x_big", hang=True)
+    text = str(_content(messages, "x_big"))
+    assert "could not be saved" in text and len(text) < len(BIG)
+
+
+async def test_an_agent_without_file_tools_gets_a_preview_without_a_path(tmp_path: Path):
+    messages, workspace = await _run_tool(
+        tmp_path, "x_big", disabled=frozenset({"files_read_file"})
+    )
+    text = str(_content(messages, "x_big"))
+    assert "/home/agent" not in text and "line 0399" in text and len(text) < len(BIG)
+    assert _saved(workspace) == []
 
 
 async def test_a_tool_return_keeps_its_content_and_metadata(tmp_path: Path):
@@ -343,6 +473,7 @@ async def _read_back(
     tool: str = "x_big",
     caps: ServiceContainer | None = None,
     project_id: str | None = None,
+    read_args: dict[str, object] | None = None,
 ) -> str:
     messages, _ = await _run_tool(tmp_path, tool, caps=caps, project_id=project_id)
     found = re.search(r"/home/agent/scratch/\S+?\.txt", str(_content(messages, tool)))
@@ -358,7 +489,7 @@ async def _read_back(
             yield {
                 0: DeltaToolCall(
                     name="files_read_file",
-                    json_args=json.dumps({"path": path, "limit": 400}),
+                    json_args=json.dumps({"path": path, "limit": 400, **(read_args or {})}),
                     tool_call_id="r1",
                 )
             }
