@@ -857,6 +857,17 @@ describe("a parked approval's cautions and replay", () => {
     );
   });
 
+  test("a guard the backend copied into the explanation is not printed twice", () => {
+    const h = harness(turn());
+    h.fold(
+      asked("mail_send", { guard: "sends mail", explanation: "sends mail" }),
+    );
+    const block = blocks(h.messages, "approval")?.[0];
+    expect(
+      block?.kind === "approval" && block.approval.explanation,
+    ).toBeUndefined();
+  });
+
   test("and on the terminal, where the shell asks", () => {
     const h = harness(turn());
     h.fold(asked("shell_run_command", { guard: "g", unconfined: null }));
