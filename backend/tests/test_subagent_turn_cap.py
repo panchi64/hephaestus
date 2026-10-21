@@ -263,7 +263,12 @@ async def test_a_wake_files_under_the_senders_turn_or_else_the_launching_one(
 
         # One sent by a running turn files under that turn.
         _ = await launcher_of(app).message(
-            OWNER, parent, "editor", "and again", ledger_prompt_message_id="T2"
+            OWNER,
+            parent,
+            "editor",
+            "and again",
+            ledger_prompt_message_id="T2",
+            ledger_thread=parent,
         )
         await _quiet(app)
         assert len(await _filed(app, tmp_path, parent, "T2")) == 1
@@ -310,6 +315,46 @@ async def test_a_grandchild_spawned_while_the_root_is_idle_files_under_the_first
         )
 
         assert len(await _filed(app, tmp_path, parent, "T1")) == 2
+
+
+async def test_a_message_from_an_own_workspace_agent_does_not_file_in_another_threads_ledger(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_model(monkeypatch)
+    async with client_app() as (_client, app):
+        swap_tool_catalog(app, {"work": _toolset(tmp_path)})
+        parent, parent_run, release = await _parent(app)
+        shared = SubagentParent(
+            conversation_id=parent, run_id=parent_run.id, ledger_prompt_message_id="T1"
+        )
+        _ = await _spawn(app, shared, "editor")
+        loner_def = await app_state(app).agent_store.create(
+            OWNER,
+            {"name": "loner", "description": "alone", "max_requests": 1, "workspace": "own"},
+            published=True,
+        )
+        loner = await launcher_of(app).launch(OWNER, loner_def, TASK, handle="loner", parent=shared)
+        await settle_run(app, loner.run_id)
+        loner_run = app_state(app).runs.get(loner.run_id)
+        assert loner_run is not None and loner_run.prompt_message_id
+        release.set()
+        await _quiet(app)
+        before = await _filed(app, tmp_path, parent, "T1")
+
+        # The loner files in its own thread's ledger, so its prompt means nothing in the
+        # root's: the editor's wake files under the launching turn.
+        _ = await launcher_of(app).message(
+            OWNER,
+            loner.conversation_id,
+            "editor",
+            "go on",
+            ledger_prompt_message_id=loner_run.prompt_message_id,
+            ledger_thread=loner.conversation_id,
+        )
+        await _quiet(app)
+
+        assert len(await _filed(app, tmp_path, parent, "T1")) == len(before) + 1
+        assert await _filed(app, tmp_path, parent, loner_run.prompt_message_id) == set()
 
 
 async def test_an_own_workspace_child_files_under_its_own_prompt(

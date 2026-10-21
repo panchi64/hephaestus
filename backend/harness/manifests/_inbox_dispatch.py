@@ -29,6 +29,7 @@ from agent.injected import injected_text
 from agent.recompose import ParkedFacts, Recomposed, register_recompose
 from agent.summarize import resolve_auto_compact_policy
 from harness.manifest import DormantCategory, HarnessContext
+from models.subagent import SubagentRecord
 from routes.chat import (
     ConversationBusyError,
     WallClockOverride,
@@ -47,6 +48,7 @@ from services.registry import ModelRegistry
 from services.settings_store import SettingsStore, get_context_thresholds
 from services.subagent_store import SubagentStore
 from services.uploads import UploadStore
+from services.workspace import split_workspace_key
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,9 @@ WAKE_CHAIN_LIMIT = 25
 
 #: How many thread→root mappings are remembered.
 _ROOTS_CACHED = 512
+
+#: How many message-to-ledger-prompt notes are remembered.
+_LEDGER_NOTES_CACHED = 512
 
 #: The longest :meth:`InboxDispatcher.settle` waits on each thing it waits for.
 SETTLE_TIMEOUT_S = 3.0
@@ -82,9 +87,9 @@ class InboxDispatcher:
         # the tree. In memory on purpose: a rail against a runaway loop, not a fact.
         self._chain: OrderedDict[str, int] = OrderedDict()
         self._roots: OrderedDict[str, str] = OrderedDict()
-        # The launching-turn prompt a delivered message was sent under, by message id. A
+        # The (ledger thread, prompt) a delivered message was sent under, by message id. A
         # restart drops it and the wake falls back to the prompt stored on the agent's row.
-        self._message_ledger: OrderedDict[str, str] = OrderedDict()
+        self._message_ledger: OrderedDict[str, tuple[str, str]] = OrderedDict()
         # Threads of each tree left waiting at the ceiling, by root.
         self._stalled: dict[str, set[tuple[str, str]]] = {}
         self._kicks: set[asyncio.Task[None]] = set()
@@ -154,13 +159,23 @@ class InboxDispatcher:
         while len(self._roots) > _ROOTS_CACHED:
             _ = self._roots.popitem(last=False)
 
-    def note_ledger_prompt(self, message_id: str, prompt: str | None) -> None:
-        """Remember which turn's prompt a message's sender was running under."""
-        if prompt is None:
+    def note_ledger_prompt(self, message_id: str, prompt: str | None, thread: str | None) -> None:
+        """Remember which turn's prompt a message's sender was running under, and the
+        thread whose ledger that prompt belongs to."""
+        if prompt is None or thread is None:
             return
-        self._message_ledger[message_id] = prompt
-        while len(self._message_ledger) > _ROOTS_CACHED:
+        self._message_ledger[message_id] = (thread, prompt)
+        while len(self._message_ledger) > _LEDGER_NOTES_CACHED:
             _ = self._message_ledger.popitem(last=False)
+
+    def _wake_prompt(self, message_id: str, row: SubagentRecord) -> str | None:
+        """The prompt a wake of this agent files its changes under: the sender's, when the
+        sender files in the ledger this agent does, else the one stored on its row."""
+        owner, _ = split_workspace_key(row.workspace_key or "")
+        noted = self._message_ledger.get(message_id)
+        if noted is not None and noted[0] == (owner or row.child_conversation_id):
+            return noted[1]
+        return row.ledger_prompt_message_id
 
     async def root_of(self, conversation_id: str) -> str:
         cached = self._roots.get(conversation_id)
@@ -336,13 +351,10 @@ class InboxDispatcher:
             auto_compact=await resolve_auto_compact_policy(self._settings, owner_id),
             ephemeral=row is not None,
             max_requests=applied.agent.max_requests,
-            # Edits belong to the turn that sent the message, else to the one that launched
-            # the agent.
-            ledger_prompt_message_id=(
-                self._message_ledger.get(lead.id, row.ledger_prompt_message_id)
-                if row is not None
-                else None
-            ),
+            # Edits belong to the turn that sent the message when it files in the same
+            # thread's ledger as this agent, else to the one that launched the agent. A wake
+            # that took several messages files under its lead message's prompt.
+            ledger_prompt_message_id=(self._wake_prompt(lead.id, row) if row is not None else None),
             **timeouts,
         )
         self._runs.inbox(conversation_id, owner_id).take(lead)

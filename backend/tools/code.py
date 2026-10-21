@@ -40,7 +40,7 @@ from services.sandbox import (
     resolve_confinement,
     run_on_host,
 )
-from services.sandbox.refusals import denied_host, host_refusal, is_egress_denied
+from services.sandbox.refusals import host_refusal, is_egress_denied, vm_refusal
 
 from .deps import RunDeps
 from .emit import RunEventEmitted
@@ -136,7 +136,7 @@ def _failure_hint(
     return f"It exited with a non-zero status ({exit_code}) and produced no output."
 
 
-def _exec_result(
+def exec_result(
     result: SandboxResult, settings: Settings, *, sandboxed: bool, delegated: bool = False
 ) -> dict[str, object]:
     """Shape an execution result for the model: an explicit success flag, stdout and
@@ -167,9 +167,16 @@ def _exec_result(
             sandboxed=sandboxed,
             delegated=delegated,
         )
-        host = denied_host(f"{result.stdout}\n{result.stderr}") if sandboxed else None
-        if host is not None:
-            payload["denied_host"] = host
+        refusal = (
+            vm_refusal(network=True, ok=False, stdout=result.stdout, stderr=result.stderr)
+            if sandboxed
+            else None
+        )
+        if refusal is not None and refusal.denied_host is not None:
+            payload["denied_host"] = refusal.denied_host
+            payload["fence_note"] = refusal.note
+            payload["fenced"] = True
+            payload["reach"] = "network"
     return payload
 
 
@@ -320,7 +327,7 @@ def code_toolset() -> FunctionToolset[RunDeps]:
                 hints=[exc.hint] if exc.hint else [],
             )
             return {"ok": False, "error": error}
-        return _exec_result(result, settings, sandboxed=True, delegated=ctx.deps.delegated_approved)
+        return exec_result(result, settings, sandboxed=True, delegated=ctx.deps.delegated_approved)
 
     async def _only_where_there_is_someone_to_ask(
         ctx: RunContext[RunDeps], tool_def: ToolDefinition
@@ -429,10 +436,11 @@ def code_toolset() -> FunctionToolset[RunDeps]:
             )
         except HostExecutionError as exc:
             return {"ok": False, "error": f"The host command could not be launched: {exc}"}
-        payload = _exec_result(result, settings, sandboxed=False)
+        payload = exec_result(result, settings, sandboxed=False)
         # State the fence plainly: the operator approved the command, and whether it ran
         # fenced changes what that approval actually permitted.
         payload["fenced"] = confinement.active
+        payload["reach"] = "host"
         if not confinement.active:
             payload["unfenced_reason"] = f"the host fence is not applied: {confinement.reason}"
         refusal = host_refusal(fence_active=confinement.active, ok=result.ok, stderr=result.stderr)

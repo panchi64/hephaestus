@@ -45,6 +45,7 @@ from services.sandbox import (
     SandboxSessionManager,
     SandboxSpec,
 )
+from services.vm import DENIED_MARKER
 from tools import RunDeps, build_agent_toolsets
 from tools import code as code_module
 from tools.code import code_toolset
@@ -578,8 +579,30 @@ async def test_long_stdout_is_spilled_to_a_pageable_file(
     assert max(len(line) for line in saved.read_text().splitlines()) == 4
 
 
+def test_a_refused_host_in_the_vm_carries_what_the_allow_button_needs():
+    result = SandboxResult(
+        exit_code=1, stdout="", stderr=f"curl: (56) {DENIED_MARKER} evil.example.com"
+    )
+
+    payload = code_module.exec_result(result, Settings(), sandboxed=True)
+
+    assert payload["denied_host"] == "evil.example.com"
+    assert payload["fenced"] is True
+    assert payload["reach"] == "network"
+    assert "code_request_egress" in str(payload["fence_note"])
+
+
+def test_an_ordinary_failure_in_the_vm_carries_no_refusal_fields():
+    result = SandboxResult(exit_code=1, stdout="", stderr="boom")
+
+    payload = code_module.exec_result(result, Settings(), sandboxed=True)
+
+    assert "denied_host" not in payload
+    assert "fence_note" not in payload
+
+
 async def test_host_command_output_is_returned_whole():
-    # run_host_command shares `_exec_result`, so it gets the same untrimmed output.
+    # run_host_command shares `exec_result`, so it gets the same untrimmed output.
     reg = RunRegistry()
     orch = build_chat_orchestrator(
         "change the host",

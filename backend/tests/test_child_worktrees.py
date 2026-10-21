@@ -78,6 +78,7 @@ class _Launcher(SubagentLauncher):
         text: str,
         *,
         ledger_prompt_message_id: str | None = None,
+        ledger_thread: str | None = None,
     ) -> str:
         raise NotImplementedError
 

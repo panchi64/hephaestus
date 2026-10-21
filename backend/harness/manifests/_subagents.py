@@ -21,6 +21,7 @@ import asyncio
 import logging
 import secrets
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import override
@@ -142,7 +143,7 @@ class ConversationSubagents(SubagentLauncher):
         self._reserved: set[tuple[str, str, str]] = set()
         self._reserve_lock: asyncio.Lock = asyncio.Lock()
         #: When each thread was last stopped, by monotonic clock, for launches in flight.
-        self._stop_marks: dict[str, float] = {}
+        self._stop_marks: OrderedDict[str, tuple[float, StopCause]] = OrderedDict()
         self._composer: ThreadComposer = ThreadComposer(
             agents=self._agents,
             model_registry=self._models,
@@ -354,11 +355,12 @@ class ConversationSubagents(SubagentLauncher):
             base_ref=base_ref,
             ledger_prompt_message_id=parent.ledger_prompt_message_id,
         )
-        if thread and self._stopped_since(thread, began):
+        stopped_by = self._stopped_since(thread, began) if thread else None
+        if stopped_by is not None:
             # Its parent was stopped while this was being composed; the sweep missed it.
             row = await self._records.by_child(conversation_id)
             if row is not None:
-                _ = await self._stop_rows(owner_id, [row], StopCause.operator)
+                _ = await self._stop_rows(owner_id, [row], stopped_by)
         return LaunchedSubagent(
             subagent_id=created.run_id,
             conversation_id=conversation_id,
@@ -551,6 +553,7 @@ class ConversationSubagents(SubagentLauncher):
         text: str,
         *,
         ledger_prompt_message_id: str | None = None,
+        ledger_thread: str | None = None,
     ) -> str:
         text = text.strip()
         if not text:
@@ -565,6 +568,7 @@ class ConversationSubagents(SubagentLauncher):
             source="agent",
             sender=sender,
             ledger_prompt_message_id=ledger_prompt_message_id,
+            ledger_thread=ledger_thread,
         )
         if not delivered:
             cause = self._wake.stop_cause(found.conversation_id)
@@ -614,24 +618,33 @@ class ConversationSubagents(SubagentLauncher):
 
     async def stop_below(self, owner_id: str, conversation_id: str) -> list[str]:
         """Stop every live agent below a thread, for the operator (:class:`SubtreeStopper`)."""
-        self._mark_stop(conversation_id)
+        self._mark_stop(conversation_id, StopCause.operator)
+        below = await self._records.descendants(conversation_id, owner_id)
         rows = [
             row
-            for row in await self._records.descendants(conversation_id, owner_id)
+            for row in below
             if row.status in LIVE_STATUSES
             or self._runs.active_run_for(row.child_conversation_id, owner_id) is not None
         ]
+        # An agent that already finished is not stopped, so a report from below it would
+        # wake it; its inbox waits for the operator instead.
+        stopping = {row.id for row in rows}
+        for row in below:
+            if row.id not in stopping:
+                _ = self._runs.inbox(row.child_conversation_id, owner_id).stop()
         return await self._stop_rows(owner_id, rows, StopCause.operator)
 
-    def _mark_stop(self, conversation_id: str) -> None:
-        self._stop_marks[conversation_id] = time.monotonic()
+    def _mark_stop(self, conversation_id: str, cause: StopCause) -> None:
+        self._stop_marks[conversation_id] = (time.monotonic(), cause)
+        self._stop_marks.move_to_end(conversation_id)
         while len(self._stop_marks) > _STOP_MARKS_KEPT:
-            del self._stop_marks[next(iter(self._stop_marks))]
+            _ = self._stop_marks.popitem(last=False)
 
-    def _stopped_since(self, conversation_id: str, since: float) -> bool:
-        """Whether a stop of this thread began after ``since``, which a launch still in
-        flight at the time would have missed."""
-        return self._stop_marks.get(conversation_id, 0.0) >= since
+    def _stopped_since(self, conversation_id: str, since: float) -> StopCause | None:
+        """Who stopped this thread after ``since``, which a launch still in flight at the
+        time would have missed."""
+        marked = self._stop_marks.get(conversation_id)
+        return marked[1] if marked is not None and marked[0] >= since else None
 
     async def _stop_rows(
         self, owner_id: str, rows: list[SubagentRecord], cause: StopCause
@@ -639,7 +652,7 @@ class ConversationSubagents(SubagentLauncher):
         # Marked stopped before any run is cancelled, so the reports the cancellations
         # produce do not wake an agent that is itself being stopped.
         for each in rows:
-            self._mark_stop(each.child_conversation_id)
+            self._mark_stop(each.child_conversation_id, cause)
             await self._records.settle(each.id, status="cancelled")
             self._wake.note_stop(each.child_conversation_id, cause)
         stopped: list[str] = []
