@@ -32,6 +32,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         """Once the key is in, put back what a previous process left queued and start the
         turns it was waiting for."""
         _ = await ctx.vault.unlocked_event.wait()
+        _ = await runs.parks_restored.wait()
         try:
             loaded = await journal.restore_into(runs)
         except Exception:

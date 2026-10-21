@@ -8,6 +8,7 @@ FastAPI ``Depends`` later).
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -79,6 +80,8 @@ if TYPE_CHECKING:
 
 # Single operator: every record is attributed to this owner until a second human
 # exists (the ownership seam). One constant so routes don't each redefine it.
+logger = logging.getLogger(__name__)
+
 OPERATOR_ID = "operator"
 
 
@@ -277,6 +280,25 @@ def prompt_context_providers(request: Source) -> tuple[PromptContextProvider, ..
 
 
 CONVERSATION_BUSY_DETAIL = "A response is already in progress in this conversation"
+
+
+#: How long a request that changes a thread waits for the stored parks to be put back.
+RESTORE_WAIT_S = 10.0
+
+
+async def after_restore(request: Request) -> None:
+    """Hold a request that changes an existing thread until the stored parks are back. A
+    turn finished or a leaf moved first would change where the parked turn is written, or
+    occupy the thread so the park has to be dropped. After the cap it goes ahead, since a
+    restore stuck on the vault must not freeze the app."""
+    try:
+        _ = await asyncio.wait_for(registry(request).parks_restored.wait(), RESTORE_WAIT_S)
+    except TimeoutError:
+        logger.warning(
+            "routes: stored parks not restored after %.0fs; proceeding with %s",
+            RESTORE_WAIT_S,
+            request.url.path,
+        )
 
 
 def claim_conversation(request: Request, conversation_id: str) -> None:

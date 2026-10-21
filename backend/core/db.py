@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from collections.abc import Callable, Generator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -75,6 +76,11 @@ BUSY_TIMEOUT_MS = 5000
 # already is: they are `session.get` + mutate, or an `add` of a row built outside.
 LOCK_RETRIES = 3
 _LOCK_RETRY_DELAY_S = 0.25
+
+
+_BLOCKING_ATTEMPTS = 3
+_BLOCKING_BUSY_MS = 250
+_BLOCKING_RETRY_DELAY_S = 0.05
 
 
 def _is_locked(exc: OperationalError) -> bool:
@@ -338,3 +344,31 @@ def read_session(engine: Engine) -> Generator[Session]:
         if lock is not None:
             _ = stack.enter_context(lock)
         yield stack.enter_context(Session(engine, expire_on_commit=False))
+
+
+def read_blocking[T](engine: Engine, work: Callable[[Session], T]) -> T:
+    """Run a read on the calling thread, for the rare synchronous path that cannot await.
+    It blocks the loop, so it waits on a locked database for at most about a second
+    (:data:`_BLOCKING_ATTEMPTS` tries at :data:`_BLOCKING_BUSY_MS` each) and then raises."""
+
+    def capped(session: Session) -> T:
+        connection = session.connection()
+        sqlite = connection.dialect.name == "sqlite"
+        previous = connection.exec_driver_sql("PRAGMA busy_timeout").scalar() if sqlite else None
+        if sqlite:
+            _ = connection.exec_driver_sql(f"PRAGMA busy_timeout={_BLOCKING_BUSY_MS}")
+        try:
+            return work(session)
+        finally:
+            if sqlite:
+                _ = connection.exec_driver_sql(f"PRAGMA busy_timeout={previous}")
+
+    for attempt in range(_BLOCKING_ATTEMPTS):
+        try:
+            with read_session(engine) as session:
+                return capped(session)
+        except OperationalError as exc:
+            if attempt == _BLOCKING_ATTEMPTS - 1 or not _is_locked(exc):
+                raise
+            time.sleep(_BLOCKING_RETRY_DELAY_S * (attempt + 1))
+    raise AssertionError("unreachable")  # pragma: no cover

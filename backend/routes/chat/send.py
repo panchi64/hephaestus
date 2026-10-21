@@ -31,6 +31,8 @@ from services.turn_stamps import still_named
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+_after_restore = deps.after_restore
+
 
 async def _validate_attachments(request: Request, attachment_ids: list[str]) -> None:
     """Every attached id must name an upload the operator owns — reject foreign/unknown
@@ -146,6 +148,7 @@ async def create_chat(body: ChatCreate, request: Request) -> ChatCreated | ChatQ
         # an unknown id must not silently spawn orphan messages.
         if not await store.exists(body.conversation_id, OPERATOR_ID):
             raise HTTPException(status_code=404, detail="conversation not found")
+        await _after_restore(request)
         binding = stored = await store.binding(body.conversation_id)
         if body.agent is not None:
             binding = replace(binding, agent_name=agent_name)
@@ -248,6 +251,7 @@ async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
     store = deps.store(request)
     if not await store.exists(body.conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
+    await _after_restore(request)
     # Claim before the model resolve and the leaf-moving `regenerate_point` call —
     # both are real `await`s a second near-simultaneous regenerate/edit could
     # otherwise slip through during: neither request has registered a run yet at
@@ -301,6 +305,7 @@ async def edit(body: EditCreate, request: Request) -> ChatCreated:
     store = deps.store(request)
     if not await store.exists(body.conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
+    await _after_restore(request)
     # Same claim as regenerate — before the model resolve and before the
     # leaf-moving `edit_point` call.
     deps.claim_conversation(request, body.conversation_id)

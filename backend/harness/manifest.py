@@ -12,6 +12,7 @@ central list.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -109,6 +110,9 @@ class HarnessContext:
     # The app itself, for a feature that composes a turn on the operator's behalf the way a
     # request would (the inbox dispatcher). None where a test builds a context by hand.
     app: FastAPI | None = None
+    # Set once every manifest has built and its run-terminal hooks are registered, for a
+    # startup pass that ends runs and needs every feature to hear of it.
+    built: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass(frozen=True)

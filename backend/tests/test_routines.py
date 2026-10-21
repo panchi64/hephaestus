@@ -262,6 +262,21 @@ async def test_rewriting_an_approved_routine_asks_unless_it_only_narrows(store: 
     assert changed["ok"] and (await store.get(OWNER, routine.id)).approved
 
 
+async def test_a_routine_deleted_by_a_run_names_that_run_to_the_delete_hook(store: RoutineStore):
+    routine = await store.create(
+        OWNER, _values(schedule=parse_schedule("every 1h", "UTC")), approved=False
+    )
+    seen: list[tuple[str, str | None]] = []
+
+    async def hook(routine_id: str, by_run: str | None) -> None:
+        seen.append((routine_id, by_run))
+
+    store.before_delete(hook)
+    _ = await _call(_ctx(store, _Scheduler()), "delete", {"routine_id": routine.id})
+
+    assert seen == [(routine.id, "run-1")]
+
+
 async def test_running_an_approved_routine_fires_it(store: RoutineStore):
     routine = await store.create(OWNER, _values(), approved=True)
     scheduler = _Scheduler()

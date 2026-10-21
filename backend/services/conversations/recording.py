@@ -17,7 +17,6 @@ from .core import StoreCore
 from .paths import active_path_model
 from .projection import MESSAGE, install_persisted_attachments, project
 from .rows import PersistJob, Row
-from .tree import Tree
 
 
 class RecordingMixin(StoreCore):
@@ -37,7 +36,9 @@ class RecordingMixin(StoreCore):
         returning the ids of the nodes it created (empty when it wrote nothing).
 
         Only projects and serializes here (no vault) — the drainer encrypts just
-        before the write, on the lock-aware side of the queue. New messages branch
+        before the write, on the lock-aware side of the queue. An evicted thread is
+        reloaded first, which blocks on the read and raises
+        :class:`ConversationUnavailableError` when the rows cannot be opened. New messages branch
         automatically when a prior regenerate/edit moved the active leaf back.
         ``prompt_id`` says the turn's user request is **already in the tree** — written by
         :meth:`record_prompt` as the turn began — so ``new_messages`` is only what followed
@@ -60,16 +61,13 @@ class RecordingMixin(StoreCore):
         so the readout can total a cold thread's time the way it totals its tokens."""
         if not new_messages:
             if prompt_id is not None and blocked_reason:
-                self._block_node(conversation_id, prompt_id, blocked_reason)
+                self.stamp_block(conversation_id, prompt_id, blocked_reason)
             return []
         tree = self.cache_get(conversation_id)
         if tree is None:
-            # Nothing cached: either a brand-new conversation (`create_conversation`
-            # seeds an empty tree, so normally this doesn't fire) or one whose id no
-            # longer exists — a delete that landed while this turn was still running.
-            # An empty tree is right for the first case and a resurrected ghost in the
-            # second, so `_persist_messages` re-checks the row before writing.
-            tree = self._cache_put(conversation_id, Tree())
+            # Evicted, or deleted while this turn was still running (an empty tree then,
+            # which `_persist_messages` re-checks the row before writing).
+            tree = self.hydrate_blocking(conversation_id)
         added = tree.append_chain(new_messages)
         # A turn blocked before it produced a response (a time/cancel bound tripping in
         # the pre-model setup window) has no response node to carry the marker — so the
@@ -79,7 +77,7 @@ class RecordingMixin(StoreCore):
             isinstance(n.message, ModelResponse) for n in added
         )
         if blocked_on_request and prompt_id is not None:
-            self._block_node(conversation_id, prompt_id, blocked_reason or "")
+            self.stamp_block(conversation_id, prompt_id, blocked_reason or "")
             blocked_on_request = False
             blocked_reason = None
         rows: list[Row] = []
@@ -202,7 +200,7 @@ class RecordingMixin(StoreCore):
         """The active leaf — on a regenerate, the request about to be re-answered."""
         return (await self.tree(conversation_id)).active_leaf_id
 
-    def _block_node(self, conversation_id: str, node_id: str, reason: str) -> None:
+    def stamp_block(self, conversation_id: str, node_id: str, reason: str) -> None:
         """Stamp a stop marker on a node that is already recorded, durably.
 
         The prompt of a turn that stopped before producing anything is the only place its
@@ -210,7 +208,9 @@ class RecordingMixin(StoreCore):
         rewrites the node and queues the matching row update. A node that already carries
         a marker keeps it — the first stop is the one that explains the turn."""
         tree = self._cache.get(conversation_id)
-        node = tree.nodes.get(node_id) if tree is not None else None
+        if tree is None:
+            tree = self.hydrate_blocking(conversation_id)
+        node = tree.nodes.get(node_id)
         if node is None or node.blocked_reason is not None:
             return
         node.blocked_reason = reason

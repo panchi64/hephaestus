@@ -47,7 +47,7 @@ from ._json import json_body, s
 from .test_approval_routes import danger_categories, install_sensitive_tool
 
 
-async def _stored(app: FastAPI) -> list[ParkedTurnRecord]:
+async def stored_parks(app: FastAPI) -> list[ParkedTurnRecord]:
     def work(session: Session) -> list[ParkedTurnRecord]:
         return list(session.exec(select(ParkedTurnRecord)))
 
@@ -60,18 +60,18 @@ async def _first(events: AsyncIterator[Event]) -> Event:
     raise AssertionError("the stream ended without an event")
 
 
-async def _await_row(app: FastAPI, run_id: str, *, present: bool = True) -> None:
+async def await_row(app: FastAPI, run_id: str, *, present: bool = True) -> None:
     for _ in range(300):
-        if any(row.run_id == run_id for row in await _stored(app)) == present:
+        if any(row.run_id == run_id for row in await stored_parks(app)) == present:
             return
         await asyncio.sleep(0.01)
     raise AssertionError(f"row for {run_id} never {'appeared' if present else 'went'}")
 
 
-async def _park_chat(client: httpx.AsyncClient, app: FastAPI) -> tuple[str, str]:
+async def park_chat(client: httpx.AsyncClient, app: FastAPI) -> tuple[str, str]:
     run_id = s(json_body(await client.post("/chat", json={"prompt": "delete it"}))["run_id"])
     run = await await_parked(app, run_id)
-    await _await_row(app, run_id)
+    await await_row(app, run_id)
     return run_id, parked_turn(run).requests.approvals[0].tool_call_id
 
 
@@ -81,7 +81,7 @@ async def test_a_clean_restart_restores_a_parked_chat_run_and_approving_finishes
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
         swap_tool_catalog(app, danger_categories())
-        run_id, call_id = await _park_chat(client, app)
+        run_id, call_id = await park_chat(client, app)
         before = app_state(app).runs.get(run_id)
         assert before is not None
         last_seq = before.stream.last_seq
@@ -109,7 +109,7 @@ async def test_a_clean_restart_restores_a_parked_chat_run_and_approving_finishes
         assert "tool.completed" in types
         assert types[-1] == "run.ended"
         assert restored.status is RunStatus.done
-        await _await_row(app, run_id, present=False)
+        await await_row(app, run_id, present=False)
 
 
 async def test_a_crash_leaves_the_park_to_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -122,7 +122,7 @@ async def test_a_crash_leaves_the_park_to_restore(tmp_path: Path, monkeypatch: p
         crash.setattr(RunRegistry, "shutdown", no_shutdown)
         async with client_app(home=tmp_path) as (client, app):
             swap_tool_catalog(app, danger_categories())
-            run_id, call_id = await _park_chat(client, app)
+            run_id, call_id = await park_chat(client, app)
 
     async with client_app(home=tmp_path) as (client, app):
         swap_tool_catalog(app, danger_categories())
@@ -142,7 +142,7 @@ async def test_a_reconnect_with_an_old_last_event_id_receives_the_approval(
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
         swap_tool_catalog(app, danger_categories())
-        run_id, call_id = await _park_chat(client, app)
+        run_id, call_id = await park_chat(client, app)
         old = app_state(app).runs.get(run_id)
         assert old is not None
         approval_seq = next(
@@ -174,7 +174,7 @@ async def test_a_missing_model_blocks_the_restored_run_and_denies_its_calls(
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
         swap_tool_catalog(app, danger_categories())
-        run_id, call_id = await _park_chat(client, app)
+        run_id, call_id = await park_chat(client, app)
 
     async def gone(_self: ModelRegistry, _role: str, **_kwargs: object):
         raise NotFoundError("endpoint", "gone")
@@ -194,7 +194,7 @@ async def test_a_missing_model_blocks_the_restored_run_and_denies_its_calls(
         types = [e["type"] for e in await collect_sse_events(client, run_id)]
         assert "tool.completed" not in types
         assert types[-1] == "run.ended"
-        await _await_row(app, run_id, present=False)
+        await await_row(app, run_id, present=False)
 
 
 async def test_a_parked_subagent_restores_and_finishes_after_approval(
@@ -208,7 +208,7 @@ async def test_a_parked_subagent_restores_and_finishes_after_approval(
         assert launcher is not None
         started = await launcher.launch("operator", worker, "delete it", handle="deleter")
         run = await await_parked(app, started.run_id)
-        await _await_row(app, started.run_id)
+        await await_row(app, started.run_id)
         call_id = parked_turn(run).requests.approvals[0].tool_call_id
         assert run.kind == "linked"
 
@@ -231,9 +231,9 @@ async def test_cancelling_a_parked_run_deletes_its_row(
     install_sensitive_tool(monkeypatch)
     async with client_app(home=tmp_path) as (client, app):
         swap_tool_catalog(app, danger_categories())
-        run_id, _ = await _park_chat(client, app)
+        run_id, _ = await park_chat(client, app)
         assert (await client.post(f"/runs/{run_id}/cancel")).status_code == 202
-        await _await_row(app, run_id, present=False)
+        await await_row(app, run_id, present=False)
 
 
 class _Recording(ParkedJournal):
@@ -242,8 +242,9 @@ class _Recording(ParkedJournal):
         self.forgotten: list[str] = []
 
     @override
-    def record(self, run: Run) -> None:
+    def record(self, run: Run) -> bool:
         self.recorded.append(run.id)
+        return True
 
     @override
     def forget(self, run_id: str) -> None:
@@ -365,7 +366,7 @@ def test_a_park_round_trips_through_its_json():
         endpoint=Endpoint("e1", "local", 2),
     )
 
-    back, endpoint = decode_park(encode_park(parked, run))
+    back, endpoint = decode_park(encode_park(parked, run), kind="chat")
 
     assert back.agent is None and back.titled and back.conversation_id == "conv"
     assert back.message_history == parked.message_history

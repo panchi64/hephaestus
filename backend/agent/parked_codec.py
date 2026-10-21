@@ -37,7 +37,12 @@ class StoredEndpoint(BaseModel):
     capacity: int | None = None
 
 
+PAYLOAD_VERSION = 1
+
+
 class ParkPayload(BaseModel):
+    version: int
+    kind: str
     # The history and the pending calls are written by their own pydantic-ai adapters, so
     # they travel as the JSON text those produce rather than as a second schema of ours.
     history: str
@@ -77,6 +82,8 @@ def encode_park(parked: ParkedTurn, run: Run) -> str:
             )
     endpoint = run.endpoint
     return ParkPayload(
+        version=PAYLOAD_VERSION,
+        kind=run.kind,
         history=ModelMessagesTypeAdapter.dump_json(parked.message_history).decode(),
         requests=_REQUESTS.dump_json(parked.requests).decode(),
         binding=_BINDING.dump_json(parked.binding).decode(),
@@ -100,9 +107,14 @@ def encode_park(parked: ParkedTurn, run: Run) -> str:
     ).model_dump_json()
 
 
-def decode_park(payload: str) -> tuple[ParkedTurn, Endpoint | None]:
-    """The park, without an agent, and the endpoint its run leased."""
+def decode_park(payload: str, *, kind: str) -> tuple[ParkedTurn, Endpoint | None]:
+    """The park, without an agent, and the endpoint its run leased. Raises when the payload
+    is another version, or sealed for a run of a kind other than ``kind``."""
     stored = ParkPayload.model_validate_json(payload)
+    if stored.version != PAYLOAD_VERSION:
+        raise ValueError(f"park payload version {stored.version} is not {PAYLOAD_VERSION}")
+    if stored.kind != kind:
+        raise ValueError(f"park sealed for a {stored.kind} run, stored as {kind}")
     settled: dict[str, ToolApproved | ToolDenied] = {}
     for each in stored.settled:
         if each.kind == "denied":

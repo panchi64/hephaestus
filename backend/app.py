@@ -495,6 +495,7 @@ async def _wire(app: FastAPI, settings: Settings, lifecycle: LifecycleRegistry) 
             run_terminal.add_sync(sync_hook)
         for hook in runtime.run_terminal:
             run_terminal.add(hook)
+    ctx.built.set()
 
     # Registered last so it stops first (reverse registration order): live runs write
     # through the stores and the sandbox brought up above, so they have to be cancelled

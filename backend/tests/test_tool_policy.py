@@ -49,6 +49,7 @@ from tools.catalog import tool_catalog
 from ._helpers import (
     client_app,
     full_tool_categories,
+    parked_turn,
     patch_model_resolution,
     register_stub_provider,
     stub_resolution,
@@ -370,7 +371,7 @@ def _force_offline(monkeypatch: pytest.MonkeyPatch, app: FastAPI, *names: str) -
     )
 
 
-def _spy_disabled_tools[**P, R](
+def spy_disabled_tools[**P, R](
     real: Callable[P, R], captured: dict[str, frozenset[str]]
 ) -> Callable[P, R]:
     """``real``, recording the ``disabled_tools`` keyword each call is composed with."""
@@ -413,9 +414,7 @@ async def test_chat_turn_composes_with_the_operator_set(monkeypatch: pytest.Monk
         _force_offline(monkeypatch, app, "web_search")
 
         captured: dict[str, frozenset[str]] = {}
-        monkeypatch.setattr(
-            chat_routes, "compose_turn", _spy_disabled_tools(compose_turn, captured)
-        )
+        monkeypatch.setattr(chat_routes, "compose_turn", spy_disabled_tools(compose_turn, captured))
         patch_model_resolution(monkeypatch)
         _ = await client.post("/chat", json={"prompt": "hi"})
         unconfigured = await _unconfigured(app)
@@ -442,7 +441,7 @@ async def test_unattended_task_turn_composes_with_the_operator_set_and_the_model
 
         captured: dict[str, frozenset[str]] = {}
         monkeypatch.setattr(
-            tasks_manifest, "compose_turn", _spy_disabled_tools(compose_turn, captured)
+            tasks_manifest, "compose_turn", spy_disabled_tools(compose_turn, captured)
         )
         created = await create_task(client)
         fired = await client.post(f"/tasks/{created['id']}/run_now")
@@ -505,6 +504,9 @@ async def test_resume_applies_the_operator_set_and_the_offline_set(
         swap_tool_catalog(app, _danger_categories())
         run_id = s(json_body(await client.post("/chat", json={"prompt": "delete it"}))["run_id"])
         run = await _await_parked(app, run_id)
+        compaction = parked_turn(run).compaction
+        assert compaction is not None
+        turn_start_withheld = compaction.deps.disabled_tools
 
         # Switched off after the turn parked: the resume must pick up the current policy,
         # not whatever was in force when the run started.
@@ -515,7 +517,7 @@ async def test_resume_applies_the_operator_set_and_the_offline_set(
         monkeypatch.setattr(
             runs_routes,
             "build_resume_orchestrator",
-            _spy_disabled_tools(build_resume_orchestrator, captured),
+            spy_disabled_tools(build_resume_orchestrator, captured),
         )
 
         call_id = parked_call_id(run)
@@ -526,7 +528,7 @@ async def test_resume_applies_the_operator_set_and_the_offline_set(
         assert resp.status_code == 202
         unconfigured = await _unconfigured(app)
 
-    assert captured["disabled"] - unconfigured == {
-        "danger_safe_thing",
-        "web_search",
-    }
+    # The policy's set, plus whatever the park's own turn withheld when it began.
+    assert captured["disabled"] - unconfigured == {"danger_safe_thing", "web_search"} | (
+        turn_start_withheld - unconfigured
+    )

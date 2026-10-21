@@ -11,8 +11,10 @@ transition — the same dispatch everything else observes a run's outcome throug
 from __future__ import annotations
 
 import asyncio
+import logging
+from uuid import uuid4
 
-from agent.recompose import ParkedFacts, Recomposed, register_recompose
+from agent.recompose import ParkedFacts, Recomposed, RecomposeError, register_recompose
 from agent.summarize import resolve_auto_compact_policy
 from core.api_scopes import ScopeClaim
 from core.exceptions import NotFoundError
@@ -38,7 +40,12 @@ from services.offline import OfflineModeService
 from services.projects import ProjectStore, WorktreeManager
 from services.registry import ModelRegistry
 from services.routines import RoutineStore, ScheduleNaturalLanguage
-from services.scheduler import ScheduledTaskView, SchedulerService, TaskRunResult
+from services.scheduler import (
+    ScheduledTaskView,
+    SchedulerService,
+    TaskRunResult,
+    TaskRunSuspended,
+)
 from services.settings_store import (
     SettingsStore,
     get_context_thresholds,
@@ -46,6 +53,8 @@ from services.settings_store import (
 from services.uploads import UploadStore
 from tools.routines import GATED_TOOLS as ROUTINES_GATED
 from tools.routines import routines_toolset
+
+logger = logging.getLogger(__name__)
 
 # A scheduled task's outcome summary is a short factual line, not a transcript —
 # just enough for the operator to judge at a glance whether to open the conversation.
@@ -61,9 +70,6 @@ _TASK_OUTCOME_BY_RUN_STATUS = {
     RunStatus.error: TaskOutcome.ERROR.value,
     RunStatus.blocked: TaskOutcome.BLOCKED.value,
     RunStatus.cancelled: TaskOutcome.CANCELLED.value,
-    # Still parked when the process stopped: the run carries on if the operator approves it
-    # after the restart, but this fire is over.
-    RunStatus.awaiting_input: TaskOutcome.CANCELLED.value,
 }
 
 
@@ -94,7 +100,14 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         worktrees=services.get_optional(WorktreeManager),
     )
 
+    async def _routine_gone(run_id: str) -> str | None:
+        if await scheduler.records_run(run_id):
+            return None
+        return "the routine this run belonged to no longer exists"
+
     async def _recompose(facts: ParkedFacts) -> Recomposed:
+        if (gone := await _routine_gone(facts.run.id)) is not None:
+            raise RecomposeError(gone)
         return await composer.recompose(facts, kind=TASK_KIND, depth=0)
 
     register_recompose(runs, TASK_KIND, _recompose)
@@ -106,12 +119,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     # the same way anything else observes a run's outcome — no polling loop.
     run_waiters: dict[str, asyncio.Future[Run]] = {}
 
-    def _resolve_waiter(run: Run) -> None:
-        waiter = run_waiters.pop(run.id, None)
-        if waiter is not None and not waiter.done():
-            waiter.set_result(run)
-
-    async def _task_run_summary(run: Run, conversation_id: str) -> str | None:
+    async def _task_run_summary(run: Run, conversation_id: str | None) -> str | None:
         """A short, plain factual line about how the run settled — no extra model
         call. An error/blocked/cancelled run already carries its own operator-legible
         reason; a `done` run's summary is the start of its final answer."""
@@ -121,9 +129,7 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             return run.detail
         if run.status is RunStatus.cancelled:
             return run.detail or "cancelled"
-        if run.status is RunStatus.awaiting_input:
-            return "waiting for approval when the app stopped"
-        if run.status is RunStatus.done:
+        if run.status is RunStatus.done and conversation_id is not None:
             turns = await conversations.messages_view(conversation_id)
             for turn in reversed(turns):
                 if turn.role == "assistant" and turn.content:
@@ -168,6 +174,19 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         last = wrap_untrusted(previous.summary, source="the routine's previous run")
         return f"{view.prompt}\n\nHow the previous run ended ({stamp}, {previous.outcome}):\n{last}"
 
+    async def _notify_outcome(
+        view: ScheduledTaskView, conversation_id: str | None, summary: str | None
+    ) -> None:
+        if view.output == TaskOutput.NOTIFICATION.value:
+            _ = await notifications.notify(
+                view.owner_id,
+                "task_outcome",
+                view.title,
+                body=summary,
+                conversation_id=conversation_id,
+                task_id=view.id,
+            )
+
     async def _task_executor(view: ScheduledTaskView) -> TaskRunResult:
         """A routine's fire: a turn in a new thread, run by the routine's agent through
         the same composition an interactive turn uses (`compose_turn`)."""
@@ -186,45 +205,57 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         auto_compact = await resolve_auto_compact_policy(settings_store, view.owner_id)
         prompt = await _with_last_run(view)
         waiter: asyncio.Future[Run] = asyncio.get_running_loop().create_future()
-        created = compose_turn(
-            prompt=prompt,
-            conversation_id=conversation_id,
-            models=models,
-            capabilities=ctx.capabilities,
-            categories=ctx.tool_categories,
-            dormant=DormantCategory.summaries(ctx.dormant_categories),
-            instruction_providers=thread.instruction_providers,
-            prompt_context_providers=ctx.prompt_context_providers,
-            registry=runs,
-            store=conversations,
-            uploads=services.get(UploadStore),
-            disabled_tools=disabled,
-            binding=applied.binding,
-            context_thresholds=thresholds,
-            auto_compact=auto_compact,
-            owner_id=view.owner_id,
-            # Routines take the interactive lane (`runs/lanes.py`): they run on schedule.
-            kind=TASK_KIND,
-            **timeouts,
-        )
+        run_id = uuid4().hex
+        # Linked before the run exists, so a restored run always finds its row and a failed
+        # link starts nothing.
+        if view.task_run_id is not None:
+            await scheduler.link_task_run(
+                view.task_run_id, run_id=run_id, conversation_id=conversation_id
+            )
+        try:
+            created = compose_turn(
+                run_id=run_id,
+                prompt=prompt,
+                conversation_id=conversation_id,
+                models=models,
+                capabilities=ctx.capabilities,
+                categories=ctx.tool_categories,
+                dormant=DormantCategory.summaries(ctx.dormant_categories),
+                instruction_providers=thread.instruction_providers,
+                prompt_context_providers=ctx.prompt_context_providers,
+                registry=runs,
+                store=conversations,
+                uploads=services.get(UploadStore),
+                disabled_tools=disabled,
+                binding=applied.binding,
+                context_thresholds=thresholds,
+                auto_compact=auto_compact,
+                owner_id=view.owner_id,
+                # A routine's run takes the `routine` lane (`runs/lanes.py`).
+                kind=TASK_KIND,
+                **timeouts,
+            )
+        except Exception:
+            if view.task_run_id is not None:
+                try:
+                    await scheduler.link_task_run(
+                        view.task_run_id, run_id=None, conversation_id=conversation_id
+                    )
+                except Exception:
+                    logger.exception("tasks: could not unlink TaskRun %s", view.task_run_id)
+            raise
         # Registered before the first await below, so the run cannot reach terminal first.
         run_waiters[created.run_id] = waiter
         # Waits for a terminal outcome: a fire parked for approval stays open until the
-        # operator decides. Shutdown leaves a parked run for the next process, so this
-        # wait ends with the scheduler's own stop.
+        # operator decides. Shutdown releases the wait while the run is still parked; the
+        # `TaskRun` stays open for whoever settles the restored run.
         run = await waiter
+        if run.is_parked:
+            raise TaskRunSuspended
 
         outcome = _TASK_OUTCOME_BY_RUN_STATUS.get(run.status, TaskOutcome.ERROR.value)
         summary = await _task_run_summary(run, conversation_id)
-        if view.output == TaskOutput.NOTIFICATION.value:
-            _ = await notifications.notify(
-                view.owner_id,
-                "task_outcome",
-                view.title,
-                body=summary,
-                conversation_id=conversation_id,
-                task_id=view.id,
-            )
+        await _notify_outcome(view, conversation_id, summary)
         return TaskRunResult(
             outcome=outcome,
             run_id=run.id,
@@ -258,8 +289,8 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
     def _release_parked_fires() -> None:
         """A fire still parked at shutdown is kept for the next process, so the executor
-        waiting on it is let go to close its `TaskRun` instead of holding the scheduler's
-        stop for the whole drain."""
+        waiting on it is let go, leaving its `TaskRun` open, instead of holding the
+        scheduler's stop for the whole drain."""
         for run_id, waiter in list(run_waiters.items()):
             run = runs.get(run_id)
             if run is not None and run.is_parked and not waiter.done():
@@ -267,6 +298,60 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
 
     # Registered after the scheduler, so it runs before the scheduler's stop.
     ctx.lifecycle.on_stop("task-parked-fires", _release_parked_fires)
+
+    settling: set[asyncio.Task[None]] = set()
+
+    async def _settle_restored(run: Run) -> None:
+        """A routine run restored after a restart has no executor waiting on it, so its
+        end finalizes the `TaskRun` linked to it here."""
+        try:
+            outcome = _TASK_OUTCOME_BY_RUN_STATUS.get(run.status, TaskOutcome.ERROR.value)
+            summary = await _task_run_summary(run, run.conversation_id)
+            view = await scheduler.settle_restored(run.id, outcome=outcome, summary=summary)
+            if view is not None:
+                await _notify_outcome(view, run.conversation_id, summary)
+        except Exception:
+            logger.exception("tasks: could not settle the TaskRun of restored run %s", run.id)
+
+    def _resolve_waiter(run: Run) -> None:
+        waiter = run_waiters.pop(run.id, None)
+        if waiter is not None:
+            if not waiter.done():
+                waiter.set_result(run)
+        elif run.kind == TASK_KIND:
+            settle = asyncio.create_task(_settle_restored(run), name=f"task-settle:{run.id}")
+            settling.add(settle)
+            settle.add_done_callback(settling.discard)
+
+    async def _drain_settling() -> None:
+        _ = await asyncio.gather(*list(settling), return_exceptions=True)
+
+    ctx.lifecycle.on_stop("task-settling", _drain_settling)
+
+    async def _restore_problem(run: Run) -> str | None:
+        return await _routine_gone(run.id)
+
+    runs.set_restore_check(TASK_KIND, _restore_problem)
+
+    async def _cancel_runs_of(routine_id: str, by_run: str | None) -> None:
+        for run_id in await scheduler.open_run_ids(routine_id):
+            if run_id != by_run:
+                _ = await runs.cancel(run_id)
+
+    routines.before_delete(_cancel_runs_of)
+
+    async def _close_stranded() -> None:
+        _ = await ctx.vault.unlocked_event.wait()
+        _ = await runs.parks_restored.wait()
+        try:
+            closed = await scheduler.close_stranded(lambda run_id: runs.get(run_id) is not None)
+        except Exception:
+            logger.exception("tasks: could not close the stranded TaskRun rows")
+            return
+        if closed:
+            logger.info("tasks: closed %d TaskRun row(s) the last process left open", closed)
+
+    _ = ctx.lifecycle.track("task-stranded-runs", _close_stranded())
 
     async def _resolve_model():
         resolved = await registry.resolve_background(owner_id=OPERATOR_ID)

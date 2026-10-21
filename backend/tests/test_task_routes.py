@@ -64,7 +64,7 @@ async def create_task(
     return json_body(resp)
 
 
-def _items(resp: httpx.Response) -> list[JsonValue]:
+def response_items(resp: httpx.Response) -> list[JsonValue]:
     return arr(json_body(resp)["items"])
 
 
@@ -73,7 +73,7 @@ async def await_task_run_finalized(
 ) -> dict[str, JsonValue]:
     loop_budget = int(timeout / 0.01)
     for _ in range(loop_budget):
-        items = _items(await client.get(f"/tasks/{task_id}/runs"))
+        items = response_items(await client.get(f"/tasks/{task_id}/runs"))
         row = next((obj(r) for r in items if obj(r)["id"] == task_run_id), None)
         if row is not None and row["finishedAt"] is not None:
             return row
@@ -118,7 +118,7 @@ async def test_create_list_patch_delete_round_trip():
         assert created["webhookUrl"] is None
         assert created["nextRunAt"] is not None  # computed at creation
 
-        listed = _items(await client.get("/tasks"))
+        listed = response_items(await client.get("/tasks"))
         assert [obj(t)["id"] for t in listed] == [task_id]
 
         patched = await client.patch(f"/tasks/{task_id}", json={"title": "Evening digest"})
@@ -127,7 +127,7 @@ async def test_create_list_patch_delete_round_trip():
         assert json_body(patched)["prompt"] == "do the thing"  # unedited fields untouched
 
         assert (await client.delete(f"/tasks/{task_id}")).status_code == 204
-        assert _items(await client.get("/tasks")) == []
+        assert response_items(await client.get("/tasks")) == []
         assert (await client.patch(f"/tasks/{task_id}", json={"title": "x"})).status_code == 404
         assert (await client.delete(f"/tasks/{task_id}")).status_code == 404
 
@@ -234,7 +234,7 @@ async def test_run_now_creates_conversation_run_and_seeds_grants(monkeypatch: py
         assert not any(g.decisive for g in granted)
 
         # The task's own bookkeeping reflects the fire too.
-        refreshed = obj(_items(await client.get("/tasks"))[0])
+        refreshed = obj(response_items(await client.get("/tasks"))[0])
         assert refreshed["lastRunAt"] is not None
 
 
@@ -300,7 +300,7 @@ async def _wait_finished(
     client: httpx.AsyncClient, task_id: str, task_run_id: str
 ) -> dict[str, JsonValue]:
     while True:
-        items = _items(await client.get(f"/tasks/{task_id}/runs"))
+        items = response_items(await client.get(f"/tasks/{task_id}/runs"))
         row = next((obj(r) for r in items if obj(r)["id"] == task_run_id), None)
         if row is not None and row["finishedAt"] is not None:
             return row
@@ -480,7 +480,7 @@ async def test_webhook_does_not_fire_once_the_task_is_disabled(monkeypatch: pyte
 
         assert (await client.post(f"/tasks/hooks/{token}")).status_code == 202
         await asyncio.sleep(0.05)
-        assert _items(await client.get(f"/tasks/{task_id}/runs")) == []
+        assert response_items(await client.get(f"/tasks/{task_id}/runs")) == []
 
 
 async def test_a_webhook_token_cannot_fire_another_owners_task(monkeypatch: pytest.MonkeyPatch):
@@ -555,7 +555,7 @@ async def test_hooks_route_is_auth_exempt_but_rest_of_tasks_is_not():
 # --- AE-3.5: a task run hitting an out-of-scope sensitive tool parks + notifies ------
 
 
-def _install_sensitive_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+def install_sensitive_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     """Mirrors `test_approval_routes.py`'s own helper: a TestModel that always calls
     one approval-required tool, so a task's unattended run parks exactly like an
     interactive one when the action falls outside its pre-authorization. Pair with
@@ -570,7 +570,7 @@ def _install_sensitive_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ModelRegistry, "resolve_detailed", fake_resolve_detailed)
 
 
-async def _await_parked_task_run(app: FastAPI, *, timeout: float = 2.0) -> Run:
+async def await_parked_task_run(app: FastAPI, *, timeout: float = 2.0) -> Run:
     loop_budget = int(timeout / 0.01)
     for _ in range(loop_budget):
         waiters = app_state(app).task_run_waiters
@@ -586,7 +586,7 @@ async def _await_parked_task_run(app: FastAPI, *, timeout: float = 2.0) -> Run:
 async def test_task_run_hitting_sensitive_tool_outside_grants_parks_and_notifies(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    _install_sensitive_tool(monkeypatch)
+    install_sensitive_tool(monkeypatch)
     async with client_app() as (client, app):
         swap_tool_catalog(app, danger_categories())
         created = await create_task(client, pre_authorized=[])  # no standing grant
@@ -595,7 +595,7 @@ async def test_task_run_hitting_sensitive_tool_outside_grants_parks_and_notifies
         run_now = await client.post(f"/tasks/{task_id}/run_now")
         task_run_id = s(json_body(run_now)["taskRunId"])
 
-        run = await _await_parked_task_run(app)
+        run = await await_parked_task_run(app)
         assert run.conversation_id is not None
 
         # The park notifies exactly like an interactive run's would.
@@ -604,7 +604,7 @@ async def test_task_run_hitting_sensitive_tool_outside_grants_parks_and_notifies
         assert any(n.conversation_id == run.conversation_id for n in approval_notifs)
 
         # The TaskRun is still unfinished while parked — not silently marked done.
-        pending = _items(await client.get(f"/tasks/{task_id}/runs"))
+        pending = response_items(await client.get(f"/tasks/{task_id}/runs"))
         assert next(obj(r) for r in pending if obj(r)["id"] == task_run_id)["finishedAt"] is None
 
         # Approving from the (notification-driven) approval route resumes the run —

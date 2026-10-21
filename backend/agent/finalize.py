@@ -18,7 +18,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from pydantic_ai import ModelMessage
+from pydantic_ai import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 
 from runs import Run, RunStatus
 from services.conversations import ConversationStore
@@ -119,7 +126,58 @@ def persist_parked_cancel(run: Run, *, store: ConversationStore | None) -> None:
     if not isinstance(parked, ParkedTurn):
         return
     detail = run.detail if run.status is RunStatus.blocked and run.detail else CANCELLED_DETAIL
-    flush_recorder(run, store)(parked.message_history, detail, parked_context(parked))
+    history = [*parked.message_history, *_denied_returns(parked, detail)]
+    flush_recorder(run, store)(history, detail, parked_context(parked))
+
+
+def stamp_parked_block(run: Run, *, store: ConversationStore | None) -> None:
+    """Leave the reason a parked run was blocked on its prompt, without writing its turn.
+    For a run whose thread already has another run extending it."""
+    parked = run.parked_payload
+    if store is None or not isinstance(parked, ParkedTurn) or not run.detail:
+        return
+    if parked.conversation_id is not None and parked.prompt_message_id is not None:
+        store.stamp_block(parked.conversation_id, parked.prompt_message_id, run.detail)
+
+
+def _denied_returns(parked: ParkedTurn, reason: str) -> list[ModelMessage]:
+    """A request answering every call of the turn's last response that has no return with a
+    denial, so the stored history has no tool call without one."""
+    history = parked.message_history
+    last = next(
+        (i for i in reversed(range(len(history))) if isinstance(history[i], ModelResponse)), None
+    )
+    if last is None:
+        return []
+    answered = {
+        part.tool_call_id
+        for message in history[last + 1 :]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart | RetryPromptPart)
+    }
+    response = history[last]
+    assert isinstance(response, ModelResponse)
+    calls = [
+        part
+        for part in response.parts
+        if isinstance(part, ToolCallPart) and part.tool_call_id not in answered
+    ]
+    if not calls:
+        return []
+    return [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content=reason,
+                    tool_call_id=call.tool_call_id,
+                    outcome="denied",
+                )
+                for call in calls
+            ]
+        )
+    ]
 
 
 def parked_context(parked: ParkedTurn, turn_start: TurnStart | None = None) -> PersistContext:

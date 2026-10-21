@@ -682,6 +682,7 @@ async def delete_conversation(
     A worktree thread with unmerged commits is refused (409) unless ``discardBranch=true``:
     destroying a branch must be as deliberate as merging one.
     """
+    await deps.after_restore(request)
     try:
         _ = await deps.conversation_teardown(request).delete(
             OPERATOR_ID, conversation_id, discard_branch=discard_branch
@@ -702,6 +703,7 @@ async def delete_message(
     store = deps.store(request)
     teardown = deps.conversation_teardown(request)
     summary = await _require_owned(request, conversation_id)
+    await deps.after_restore(request)
     # Claimed before the orphan lookup's awaits, so a /chat submission can't register a run
     # between the lookup and the tree mutation. The purge and detail below don't move the
     # leaf, so the claim is released before them.
@@ -724,6 +726,7 @@ async def switch_version(
     return the resulting thread."""
     store = deps.store(request)
     summary = await _require_owned(request, conversation_id)
+    await deps.after_restore(request)
     # Moves the active leaf — must not race an in-flight turn built from the leaf
     # this would move away from (or another in-flight claim on this conversation).
     deps.claim_conversation(request, conversation_id)
@@ -752,6 +755,7 @@ async def rewind(conversation_id: str, message_id: str, request: Request) -> Con
     message branches from it (the later turns stay reachable as a sibling version)."""
     store = deps.store(request)
     summary = await _require_owned(request, conversation_id)
+    await deps.after_restore(request)
     # Moves the active leaf — see switch_version's guard note above.
     deps.claim_conversation(request, conversation_id)
     try:
@@ -774,6 +778,7 @@ async def fork(conversation_id: str, message_id: str, request: Request) -> Conve
     would produce a fork of a history that never existed.
     """
     _ = await _require_owned(request, conversation_id)
+    await deps.after_restore(request)
     store = deps.store(request)
     deps.claim_conversation(request, conversation_id)
     try:
@@ -1076,6 +1081,7 @@ async def compact_conversation_now(
     if await store.get_summary(conversation_id, OPERATOR_ID) is None:
         raise HTTPException(status_code=404, detail="conversation not found")
     pick = body or RetitleRequest()
+    await deps.after_restore(request)
 
     async def orchestrator(run: Run) -> None:
         await _run_manual_fold(run, request, pick)
