@@ -21,7 +21,40 @@ WORKTREE = "<working tree>"
 
 GLOB_CHARS = frozenset("*?[")
 
-_BRACKET = re.compile(r"\[[^\]]*\]")
+
+def _without_brackets(text: str) -> str | None:
+    """``text`` with its bracket expressions removed, following the shell's rules, or
+    None when one cannot be accounted for.
+
+    An expression is `[`, an optional `!` or `^`, a `]` that is a literal when first, then
+    members up to the next `]`, where `[:class:]`, `[=x=]` and `[.x.]` are single members.
+    """
+    kept: list[str] = []
+    index = 0
+    while index < len(text):
+        if text[index] != "[":
+            kept.append(text[index])
+            index += 1
+            continue
+        index += 1
+        if index < len(text) and text[index] in "!^":
+            index += 1
+        if index < len(text) and text[index] == "]":
+            index += 1
+        while True:
+            if index >= len(text):
+                return None
+            if text[index] == "]":
+                index += 1
+                break
+            if text[index] == "[" and index + 1 < len(text) and text[index + 1] in ":=.":
+                close = text.find(text[index + 1] + "]", index + 2)
+                if close == -1:
+                    return None
+                index = close + 2
+            else:
+                index += 1
+    return "".join(kept)
 
 
 def names_whole_folder(segment: str) -> bool:
@@ -30,12 +63,12 @@ def names_whole_folder(segment: str) -> bool:
     It is unless it holds a literal anchor: something other than the metacharacters once
     a leading dot is set aside. `*`, `.*`, `?*`, `[a-z]*` and `.[!.]*` reach everything;
     `*.log`, `test_*` and `foo*` reach only some of it. A segment with no metacharacter
-    is a name, not a pattern.
+    is a name, not a pattern. A bracket the segment does not close reaches everything.
     """
     if not GLOB_CHARS & set(segment):
         return False
-    rest = segment[1:] if segment.startswith(".") else segment
-    return not re.sub(r"[*?]", "", _BRACKET.sub("", rest))
+    rest = _without_brackets(segment[1:] if segment.startswith(".") else segment)
+    return rest is None or not re.sub(r"[*?]", "", rest)
 
 
 REMOVERS = frozenset({"rm", "rmdir", "unlink", "shred", "srm"})
