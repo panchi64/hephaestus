@@ -56,6 +56,12 @@ def _is_turn_start(path: list[Node], index: int) -> bool:
     return isinstance(previous.message, ModelResponse) or previous.compacted
 
 
+def turn_start_index(path: list[Node], index: int) -> int | None:
+    """The path index of the operator turn that ``path[index]`` belongs to, or None when
+    nothing at or before it opens one."""
+    return max((j for j in range(index + 1) if _is_turn_start(path, j)), default=None)
+
+
 def checkpoint_split(path: list[Node]) -> tuple[int, int]:
     """``(checkpoint, through)`` — the path index of the newest compaction checkpoint and
     the index of the last node its summary covers. ``(-1, -1)`` when the path holds no

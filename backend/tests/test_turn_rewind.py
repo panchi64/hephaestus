@@ -8,7 +8,16 @@ from pathlib import Path
 import httpx
 import pytest
 from fastapi import FastAPI
-from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from sqlalchemy.exc import OperationalError
+from sqlmodel import Session
 
 from core.container import ServiceContainer
 from core.db import init_db, make_engine
@@ -127,7 +136,7 @@ async def test_a_file_too_large_to_keep_is_reported_unrestorable(tmp_path: Path)
     assert (root / "big.bin").read_text() == "small\n"
 
 
-async def test_a_sub_agents_edit_is_rewound_with_its_parents_turn(tmp_path: Path):
+async def test_the_ledger_rewinds_a_tagged_childs_edit_with_its_parents_turn(tmp_path: Path):
     root = _project(tmp_path)
     store = await _store(tmp_path)
     parent = ChangeLog(store, owner_id=OWNER, conversation_id="c1", prompt_message_id="t1")
@@ -255,7 +264,7 @@ async def test_the_rewind_routes_preview_then_confirm(
         conv, _user, assistant = await _conversation_with_a_turn(client, app, root)
 
         preview = json_body(
-            await client.get(f"/conversations/{conv}/changes/rewind?message_id={assistant}")
+            await client.get(f"/conversations/{conv}/changes/rewind?messageId={assistant}")
         )
         assert [obj(f)["path"] for f in arr(preview["restore"])] == ["app.py"]
         assert preview["delete"] == [] and preview["conflicts"] == []
@@ -286,7 +295,7 @@ async def test_regenerate_with_a_token_rewinds_before_the_leaf_moves(
     async with client_app() as (client, app):
         conv, _user, assistant = await _conversation_with_a_turn(client, app, root)
         preview = json_body(
-            await client.get(f"/conversations/{conv}/changes/rewind?message_id={assistant}")
+            await client.get(f"/conversations/{conv}/changes/rewind?messageId={assistant}")
         )
 
         bad = await client.post(
@@ -339,3 +348,125 @@ async def test_the_turn_prompts_run_from_the_named_turn_to_the_leaf(tmp_path: Pa
     assert await store.turn_prompt_ids(conv, prompts[1]) == prompts[1:]
     assert await store.turn_prompt_ids(conv, ids[3]) == prompts[1:]
     assert await store.turn_prompt_ids(conv, "missing") is None
+
+
+async def test_a_mid_run_aside_belongs_to_the_turn_it_interrupted(tmp_path: Path):
+    store, _ = await fresh_store(tmp_path)
+    conv = await store.create_conversation(OWNER)
+    ids = store.record(
+        conv,
+        [
+            ModelRequest(parts=[UserPromptPart("go")]),
+            ModelResponse(parts=[ToolCallPart("t", {}, tool_call_id="c1")]),
+            ModelRequest(parts=[ToolReturnPart("t", "r", tool_call_id="c1")]),
+            ModelRequest(parts=[UserPromptPart("aside")]),
+            ModelResponse(parts=[TextPart("done")]),
+        ],
+    )
+    request, aside = ids[0], ids[3]
+
+    assert await store.turn_prompt_ids(conv, ids[4]) == [request, aside]
+    assert await store.turn_prompt_ids(conv, aside) == [request, aside]
+
+
+@pytest.mark.parametrize("order", [(None, "t1"), ("t1", None)])
+async def test_a_none_row_and_a_tagged_row_for_one_file_revert_together(
+    tmp_path: Path, order: tuple[str | None, str | None]
+):
+    root = _project(tmp_path)
+    store = await _store(tmp_path)
+    await _turn(store, root, order[0], {"app.py": "one\n"})
+    await _turn(store, root, order[1], {"app.py": "two\n"})
+
+    [view] = await store.list(OWNER, "c1")
+    assert view.status == "modified"
+    report = await store.revert(OWNER, "c1", {"p1": root})
+
+    assert report.reverted == ["app.py"]
+    assert (root / "app.py").read_text() == "zero\n"
+
+
+async def test_a_legacy_row_then_tagged_turns_rewind_to_after_the_legacy_one(tmp_path: Path):
+    root = _project(tmp_path)
+    store = await _store(tmp_path)
+    await _turn(store, root, None, {"app.py": "legacy\n"})
+    await _turn(store, root, "t1", {"app.py": "one\n"})
+    await _turn(store, root, "t2", {"app.py": "two\n"})
+
+    _ = await _rewind(store, root, ["t1", "t2"])
+    assert (root / "app.py").read_text() == "legacy\n"
+    # What the rewind put back no longer counts, so the rest of the ledger still reverts.
+    _ = await store.revert(OWNER, "c1", {"p1": root})
+    assert (root / "app.py").read_text() == "zero\n"
+
+
+async def test_the_rewind_survives_a_lost_database_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    root = _project(tmp_path)
+    store = await _store(tmp_path)
+    await _turn(store, root, "t1", {"app.py": "one\n"})
+    plan = await store.rewind_plan(OWNER, "c1", ["t1"], {"p1": root})
+
+    real = Session.commit
+    calls = 0
+
+    def commit(self: Session) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OperationalError("COMMIT", {}, Exception("database is locked"))
+        real(self)
+
+    monkeypatch.setattr(Session, "commit", commit)
+    done = await store.rewind_files(OWNER, "c1", ["t1"], {"p1": root}, plan.preview_token)
+
+    assert [f.path for f in done.restore] == ["app.py"]
+    assert (root / "app.py").read_text() == "zero\n"
+    assert [v.reverted for v in await store.list(OWNER, "c1")] == [True]
+
+
+async def test_a_file_that_cannot_be_written_is_reported_and_the_rest_go_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    root = _project(tmp_path)
+    _ = (root / "bad.py").write_text("bad zero\n")
+    store = await _store(tmp_path)
+    await _turn(store, root, "t1", {"app.py": "one\n", "bad.py": "bad one\n"})
+    plan = await store.rewind_plan(OWNER, "c1", ["t1"], {"p1": root})
+    real = Path.write_bytes
+
+    def write_bytes(self: Path, data: bytes) -> int:
+        if self.name == "bad.py":
+            raise OSError("read-only")
+        return real(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", write_bytes)
+    done = await store.rewind_files(OWNER, "c1", ["t1"], {"p1": root}, plan.preview_token)
+
+    assert [f.path for f in done.restore] == ["app.py"]
+    assert [(f.path, f.reason) for f in done.failed] == [("bad.py", "read-only")]
+    assert (root / "app.py").read_text() == "zero\n"
+    assert {v.path: v.reverted for v in await store.list(OWNER, "c1")} == {
+        "app.py": True,
+        "bad.py": False,
+    }
+
+
+async def test_a_busy_thread_refuses_a_revert_and_a_rewind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    patch_model_resolution(monkeypatch)
+    root = _project(tmp_path)
+    async with client_app() as (client, app):
+        conv, _user, assistant = await _conversation_with_a_turn(client, app, root)
+        app_state(app).runs.claim(conv, OWNER)
+
+        revert = await client.post(f"/conversations/{conv}/changes/revert", json={})
+        rewind = await client.post(
+            f"/conversations/{conv}/changes/rewind",
+            json={"messageId": assistant, "previewToken": "x"},
+        )
+
+        assert (revert.status_code, rewind.status_code) == (409, 409)
+        assert (root / "app.py").read_text() == "changed\n"

@@ -5,7 +5,7 @@ from __future__ import annotations
 from models._fields import new_id
 
 from .core import StoreCore
-from .paths import active_path_model, is_user_prompt, opens_turn
+from .paths import active_path_model, is_user_prompt, opens_turn, turn_start_index
 from .projection import MESSAGE, project
 from .rows import PersistJob, Row
 from .tree import Node, Tree
@@ -224,16 +224,16 @@ class NavigationMixin(StoreCore):
         """The operator prompts on the active path from the turn holding ``message_id``
         through the leaf, oldest first; None when the node isn't on the active path.
 
-        A regenerate's request and its answer are one turn, so either id names it. A
-        mid-run aside is a prompt of its own, harmless to include: no file change is
-        filed under it."""
+        A request, its tool exchanges and its answer are one turn, so any of their ids names
+        it. A mid-run aside is a prompt of its own and is included: a regenerate of the
+        answer after it files its changes under the aside."""
         path = (await self.tree(conversation_id)).active_path()
         ids = [node.id for node in path]
         if message_id not in ids:
             return None
-        start = ids.index(message_id)
-        while start > 0 and not opens_turn(path[start]):
-            start -= 1
+        start = turn_start_index(path, ids.index(message_id))
+        if start is None:
+            return []
         return [node.id for node in path[start:] if opens_turn(node)]
 
     async def delete_message(self, conversation_id: str, message_id: str) -> bool:

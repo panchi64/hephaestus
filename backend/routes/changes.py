@@ -4,7 +4,7 @@
   works in a worktree (whose branch ``/worktrees/{id}`` reviews and merges).
 - ``GET /conversations/{id}/changes/{change_id}/diff`` — one file, before against now.
 - ``POST /conversations/{id}/changes/revert`` — put files back, every one or those named.
-- ``GET /conversations/{id}/changes/rewind?message_id=`` — a dry run of putting every file
+- ``GET /conversations/{id}/changes/rewind?messageId=`` — a dry run of putting every file
   back to before the turn holding that message and the turns after it.
 - ``POST /conversations/{id}/changes/rewind`` — do it, once the preview token still matches.
 
@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import difflib
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from core.exceptions import NotFoundError
 from routes import deps
@@ -98,7 +99,9 @@ class RewindOut(CamelModel):
     conflicts: list[RewindConflictOut]
     #: Files whose original was too large to keep.
     unrestorable: list[RewindFileOut]
-    #: Names the plan and each file's current content; the confirming call returns it.
+    #: Files a confirmed rewind could not write; always empty in a preview.
+    failed: list[RewindConflictOut]
+    #: Names the planned files and what each holds now; the confirming call returns it.
     preview_token: str
 
 
@@ -169,9 +172,13 @@ async def revert_changes(request: Request, conversation_id: str, body: RevertIn)
     if not await deps.store(request).exists(conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
     ids = None if body.ids is None else set(body.ids)
-    report = await _changes(request).revert(
-        OPERATOR_ID, conversation_id, await _roots(request), ids
-    )
+    deps.claim_conversation(request, conversation_id)
+    try:
+        report = await _changes(request).revert(
+            OPERATOR_ID, conversation_id, await _roots(request), ids
+        )
+    finally:
+        deps.release_conversation(request, conversation_id)
     return RevertOut(
         reverted=report.reverted,
         skipped=[SkippedOut(path=path, reason=reason) for path, reason in report.skipped],
@@ -205,6 +212,10 @@ def _rewind_out(plan: RewindPlan) -> RewindOut:
             for c in plan.conflicts
         ],
         unrestorable=files(plan.unrestorable),
+        failed=[
+            RewindConflictOut(project_id=c.project_id, path=c.path, reason=c.reason)
+            for c in plan.failed
+        ],
         preview_token=plan.preview_token,
     )
 
@@ -229,7 +240,11 @@ async def rewind_files(
 
 
 @router.get("/{conversation_id}/changes/rewind", response_model=RewindOut)
-async def preview_rewind(request: Request, conversation_id: str, message_id: str) -> RewindOut:
+async def preview_rewind(
+    request: Request,
+    conversation_id: str,
+    message_id: Annotated[str, Query(alias="messageId")],
+) -> RewindOut:
     """What rewinding the files to before this message's turn would do. Writes nothing."""
     if not await deps.store(request).exists(conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
@@ -242,8 +257,13 @@ async def preview_rewind(request: Request, conversation_id: str, message_id: str
 
 @router.post("/{conversation_id}/changes/rewind", response_model=RewindOut)
 async def confirm_rewind(request: Request, conversation_id: str, body: RewindIn) -> RewindOut:
-    """Put the files back as previewed. 409 when a file or the conversation changed since."""
+    """Put the files back as previewed. 409 when a planned file changed since the preview,
+    or the conversation has a turn running."""
     if not await deps.store(request).exists(conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
-    plan = await rewind_files(request, conversation_id, body.message_id, body.preview_token)
+    deps.claim_conversation(request, conversation_id)
+    try:
+        plan = await rewind_files(request, conversation_id, body.message_id, body.preview_token)
+    finally:
+        deps.release_conversation(request, conversation_id)
     return _rewind_out(plan)

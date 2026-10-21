@@ -40,7 +40,7 @@ MAX_KEPT_BYTES = 4 * 1024 * 1024
 type ChangeStatus = Literal["added", "modified", "deleted"]
 type _FileKey = tuple[str, str]
 #: A file a rewind writes: where, what (None deletes), and the rows that then count as put back.
-type _Action = tuple[Path, bytes | None, list[ThreadChange]]
+type _Action = tuple[ThreadChangeFile, Path, bytes | None, list[str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,8 +84,10 @@ class RewindPlan:
     conflicts: list[RewindConflict] = field(default_factory=list)
     #: Files whose original was too large to keep.
     unrestorable: list[ThreadChangeFile] = field(default_factory=list)
-    #: Names the plan together with each file's current content; a change to any of them
-    #: since the preview makes the token stale.
+    #: Files a rewind could not write; empty in a preview.
+    failed: list[RewindConflict] = field(default_factory=list)
+    #: Names the planned files and what each holds on disk now; a change to any of them
+    #: since the preview makes the token stale. It does not cover which turns were named.
     preview_token: str = ""
 
 
@@ -125,14 +127,19 @@ def _sha_now(root: Path, rel: str) -> str | None:
     return _sha(target.read_bytes())
 
 
-def _order(row: ThreadChange) -> tuple[bool, datetime, str]:
-    """Chronological, rows from before turns were tracked first."""
-    return (row.prompt_message_id is not None, row.created_at, row.id)
+def _order(row: ThreadChange) -> tuple[datetime, str]:
+    """Chronological by when the row's turn first changed the file."""
+    return (row.created_at, row.id)
 
 
 def _live(rows: list[ThreadChange]) -> list[ThreadChange]:
     """The rows still to be put back; a file the operator put back shows its history."""
     return [row for row in rows if row.reverted_at is None] or rows
+
+
+def _latest(rows: list[ThreadChange]) -> ThreadChange:
+    """The row that last touched the file, whose ``current_sha`` is what it holds."""
+    return max(rows, key=lambda row: row.updated_at)
 
 
 class ThreadChanges:
@@ -222,7 +229,7 @@ class ThreadChanges:
             views: list[ChangeView] = []
             for (project_id, rel), rows in self._files(session, owner_id, conversation_id).items():
                 live = _live(rows)
-                first, last = live[0], live[-1]
+                first, last = live[0], _latest(live)
                 status = _status(first, last)
                 if status is None:
                     continue
@@ -274,7 +281,7 @@ class ThreadChanges:
                 live = [row for row in rows if row.reverted_at is None]
                 if not live or (ids is not None and not any(row.id in ids for row in live)):
                     continue
-                reason = self._put_back(live[0], live[-1], roots.get(project_id), rel)
+                reason = self._put_back(live[0], _latest(live), roots.get(project_id), rel)
                 if reason is None:
                     for row in live:
                         row.reverted_at = datetime.now(UTC)
@@ -310,25 +317,51 @@ class ThreadChanges:
         preview_token: str,
     ) -> RewindPlan:
         """Carry out the plan :meth:`rewind_plan` previewed and return what it did. Raises
-        :class:`StaleRewindError` when the files or the turns no longer match the token."""
+        :class:`StaleRewindError` when the planned files, or what they hold on disk, no
+        longer match the token.
 
-        def work(session: Session) -> RewindPlan:
+        The files are written between two sessions rather than inside one, because a
+        session that loses the database lock is run again whole and would then plan
+        against files already restored. A file that cannot be written is reported in
+        ``failed`` and the rest go on."""
+
+        def plan_work(session: Session) -> tuple[RewindPlan, list[_Action]]:
             plan, actions = self._plan(session, owner_id, conversation_id, prompt_ids, roots)
             if plan.preview_token != preview_token:
                 raise StaleRewindError("the files changed since the rewind was previewed")
-            now = datetime.now(UTC)
-            for target, original, rows in actions:
-                if original is None:
-                    target.unlink(missing_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    _ = target.write_bytes(original)
-                for row in rows:
-                    row.reverted_at = now
-                    session.add(row)
-            return plan
+            return plan, actions
 
-        return await in_session(self._engine, work)
+        plan, actions = await in_session(self._engine, plan_work)
+
+        def write() -> list[_Action]:
+            done: list[_Action] = []
+            for action in actions:
+                file, target, original, _ = action
+                try:
+                    if original is None:
+                        target.unlink(missing_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        _ = target.write_bytes(original)
+                except OSError as exc:
+                    plan.failed.append(RewindConflict(file.project_id, file.path, str(exc)))
+                    (plan.delete if original is None else plan.restore).remove(file)
+                else:
+                    done.append(action)
+            return done
+
+        written = await asyncio.to_thread(write)
+        ids = {row_id for _, _, _, row_ids in written for row_id in row_ids}
+
+        def mark_work(session: Session) -> None:
+            now = datetime.now(UTC)
+            for row in session.exec(select(ThreadChange).where(col(ThreadChange.id).in_(ids))):
+                row.reverted_at = now
+                session.add(row)
+
+        if ids:
+            await in_session(self._engine, mark_work)
+        return plan
 
     async def delete_for_conversation(self, owner_id: str, conversation_id: str) -> None:
         def work(session: Session) -> None:
@@ -360,7 +393,7 @@ class ThreadChanges:
             ]
             if not chosen:
                 continue
-            first, last = chosen[0], chosen[-1]
+            first, last = chosen[0], _latest(chosen)
             file = ThreadChangeFile(project_id=project_id, path=rel)
             root = roots.get(project_id)
             target = None if root is None else _target(root, rel)
@@ -400,7 +433,7 @@ class ThreadChanges:
                     first.original_sha,
                 ]
             )
-            actions.append((target, original, chosen))
+            actions.append((file, target, original, [row.id for row in chosen]))
         entries.sort(key=lambda entry: [part or "" for part in entry])
         plan.preview_token = _sha(json.dumps(entries).encode())
         return plan, actions
