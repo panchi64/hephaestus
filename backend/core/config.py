@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -130,7 +130,7 @@ class Settings(BaseSettings):
 
     # A tool result longer than this many characters is saved to the thread's scratch and
     # the model gets a head-and-tail preview with the path (`tools/spill.py`).
-    tool_output_spill_chars: int = 40_000
+    tool_output_spill_chars: int = Field(default=40_000, ge=1000)
 
     # How long a sub-agent's turn may run before the substrate ends it. The one place a wall
     # clock is on by default, because nobody is sitting in front of it: the inactivity

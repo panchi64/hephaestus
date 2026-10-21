@@ -74,9 +74,10 @@ from services.tool_sensitivity import (
     declared_sensitivity,
 )
 from tools import RunDeps
+from tools.code_mode_marks import RUN_CODE, script_call_of
 from tools.describe import NARRATION_ARG, NARRATION_PROPERTY, add_property, drop_properties
 from tools.recover import describe_failure
-from tools.spill import RUN_CODE, script_call_of, spill_large
+from tools.spill import spill_large
 
 from .emit import NestedToolFinished, NestedToolStarted
 from .gating import settle_deferred

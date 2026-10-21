@@ -115,7 +115,6 @@ class RecoveringToolset(WrapperToolset[RunDeps]):
         try:
             async with ctx.deps.run.keepalive(), deadline:
                 result = cast(object, await self.wrapped.call_tool(name, tool_args, ctx, tool))
-                return await spill_large(ctx, name, result)
         except _PASS_THROUGH:
             raise
         except Exception as exc:
@@ -131,6 +130,7 @@ class RecoveringToolset(WrapperToolset[RunDeps]):
             else:
                 logger.exception("tool %s raised", name)
             raise ToolFailed(describe_failure(name, exc)) from exc
+        return await spill_large(ctx, name, result)
 
 
 @dataclass

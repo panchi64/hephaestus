@@ -35,6 +35,9 @@ from .store import SecretValue
 
 CALL_TIMEOUT_S = 120.0
 INSTALL_TIMEOUT_S = 900.0
+#: A memory bound on one result, which a script's call receives whole. The context is
+#: protected by spilling (`tools/spill.py`), not by this.
+RESULT_MAX_CHARS = 2_000_000
 _LOG_TAIL_CHARS = 2000
 _INSTALL_HOSTS = ("pypi.org", "files.pythonhosted.org")
 _CA_PATH = "/usr/local/share/ca-certificates/hephaestus-egress.crt"
@@ -138,7 +141,10 @@ class PluginRuntime:
             return CallResult(False, f"{tool.name} exited with status {result.exit_code}", log)
         if not reply.get("ok"):
             return CallResult(False, str(reply.get("error", "the tool failed")), log)
-        return CallResult(True, json.dumps(reply.get("result"), ensure_ascii=False), log)
+        output = json.dumps(reply.get("result"), ensure_ascii=False)
+        if len(output) > RESULT_MAX_CHARS:
+            output = output[:RESULT_MAX_CHARS] + " … [cut: the result was too long]"
+        return CallResult(True, output, log)
 
     async def _install(self, manifest: PluginManifest, files: Bundle) -> str:
         digest = hashlib.sha256(encode_bundle(files)).hexdigest()[:24]

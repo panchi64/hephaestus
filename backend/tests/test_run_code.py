@@ -44,7 +44,7 @@ from runs import Run, RunStream, ToolCompleted, ToolFailed, ToolProgress, ToolSt
 from services.conversation_view import ToolView, project_tree
 from services.permissions import PermissionLevel, blocked_message
 from tools import RunDeps, build_agent_toolsets, core_categories
-from tools.spill import RUN_CODE
+from tools.code_mode_marks import RUN_CODE
 
 from ._json import s
 
