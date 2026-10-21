@@ -43,8 +43,10 @@ from pydantic_ai import (
     ToolApproved,
     ToolDenied,
 )
+from pydantic_ai.models import Model
+from pydantic_ai.models.fallback import FallbackModel
 
-from runs import ApprovalRequired, QuestionAsked, Run
+from runs import ApprovalRequired, EventBody, QuestionAsked, Run
 from services.answers import questions_of
 from services.conversations import ConversationBinding, ConversationStore
 from services.notification_view import NotificationView
@@ -83,7 +85,8 @@ class ParkedTurn:
     """The continuation of a run parked awaiting approval. Opaque to the
     substrate; held on ``run.parked_payload`` and consumed by the approve route."""
 
-    agent: TurnAgent
+    #: None on a park restored after a restart, until its kind's recompose hook rebuilds it.
+    agent: TurnAgent | None
     message_history: list[ModelMessage]
     requests: DeferredToolRequests
     announced: set[str] = field(default_factory=set)
@@ -137,6 +140,62 @@ class ParkedTurn:
     # default would hand it its own conversation's workspace instead of the one it parked
     # in — a different filesystem, and for a delegated child an empty one.
     workspace_key: str = ""
+    # The endpoint and model the parked agent held, so a restart can ask the registry for
+    # the same one. The model is the chain head's name; None when it can't be read off.
+    endpoint_id: str | None = None
+    model: str | None = None
+    # Whether the turn was to name its thread. `title` holds model clients a restart can't
+    # carry, so a restored park keeps this and has `title` rebuilt by its recompose hook.
+    titled: bool = False
+
+
+def primary_model_name(agent: TurnAgent) -> str | None:
+    """The model name at the head of the agent's fallback chain."""
+    model = agent.model
+    if isinstance(model, FallbackModel):
+        model = model.models[0]
+    return model.model_name if isinstance(model, Model) else None
+
+
+def announcements(
+    requests: DeferredToolRequests, settled: Mapping[str, ToolApproved | ToolDenied]
+) -> tuple[list[EventBody], set[str], bool]:
+    """The events that put a park's open questions in front of the operator, the names of
+    the tools awaiting approval, and whether any question was asked.
+
+    Only the calls still awaiting the operator are announced; the ones a grant or the
+    thread's level already settled ride silently on the parked payload. Nothing settles a
+    question ahead of the operator, so every one is announced."""
+    events: list[EventBody] = []
+    pending_names: set[str] = set()
+    for call in requests.approvals:
+        if call.tool_call_id in settled:
+            continue
+        pending_names.add(call.tool_name)
+        args = call.args_as_dict()
+        # A plain-language explanation comes from an `explanation` argument (the
+        # host-execution path requires one) or, for a tool that writes its own from
+        # stored state, from the `ApprovalRequired` metadata.
+        explanation = args.get("explanation")
+        if not isinstance(explanation, str):
+            explanation = requests.metadata.get(call.tool_call_id, {}).get("explanation")
+        events.append(
+            ApprovalRequired(
+                tool_call_id=call.tool_call_id,
+                name=call.tool_name,
+                args=args,
+                summary=summarize_call(call.tool_name, args),
+                explanation=explanation if isinstance(explanation, str) else None,
+            )
+        )
+    for call in requests.calls:
+        events.append(
+            QuestionAsked(
+                tool_call_id=call.tool_call_id,
+                questions=questions_of(call.args_as_dict()),
+            )
+        )
+    return events, pending_names, bool(requests.calls)
 
 
 #: How much of one argument, and of the whole line, survives into the summary.
@@ -197,43 +256,10 @@ async def park_for_input(
     compaction: CompactionContext | None = None,
     workspace_key: str = "",
 ) -> None:
-    # Only the calls still awaiting the operator are announced; the ones a grant or the
-    # thread's level already settled ride silently on the parked payload and merge into
-    # the resume.
     settled = settled or {}
-    pending_names: set[str] = set()
-    for call in requests.approvals:
-        if call.tool_call_id in settled:
-            continue
-        pending_names.add(call.tool_name)
-        args = call.args_as_dict()
-        # A plain-language explanation comes from an `explanation` argument (the
-        # host-execution path requires one) or, for a tool that writes its own from
-        # stored state, from the `ApprovalRequired` metadata.
-        explanation = args.get("explanation")
-        if not isinstance(explanation, str):
-            explanation = requests.metadata.get(call.tool_call_id, {}).get("explanation")
-        _ = run.emit(
-            ApprovalRequired(
-                tool_call_id=call.tool_call_id,
-                name=call.tool_name,
-                args=args,
-                summary=summarize_call(call.tool_name, args),
-                explanation=explanation if isinstance(explanation, str) else None,
-            )
-        )
-    # The other pile: calls deferred for a *value* rather than a permission. Nothing
-    # settles these ahead of the operator — there is no grant, no level and no reviewer
-    # that can answer a question in their place — so every one of them is announced.
-    asked = False
-    for call in requests.calls:
-        asked = True
-        _ = run.emit(
-            QuestionAsked(
-                tool_call_id=call.tool_call_id,
-                questions=questions_of(call.args_as_dict()),
-            )
-        )
+    events, pending_names, asked = announcements(requests, settled)
+    for event in events:
+        _ = run.emit(event)
     # Fire the ALWAYS-notify policy *before* `run.park(...)` makes the parked status
     # externally visible — not after. This is the one await this function does before
     # parking, and it must land first: `RunRegistry.cancel`'s parked branch assumes
@@ -277,5 +303,7 @@ async def park_for_input(
             vision=vision,
             compaction=compaction,
             workspace_key=workspace_key,
+            endpoint_id=run.endpoint.id if run.endpoint is not None else None,
+            model=primary_model_name(agent),
         )
     )

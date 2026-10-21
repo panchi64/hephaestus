@@ -268,7 +268,10 @@ def full_tool_categories() -> dict[str, AbstractToolset[RunDeps]]:
 
 @asynccontextmanager
 async def client_app(
-    *, auth_enabled: bool = False, passphrase: str | None = "test-passphrase"
+    *,
+    auth_enabled: bool = False,
+    passphrase: str | None = "test-passphrase",
+    home: Path | None = None,
 ) -> AsyncGenerator[tuple[httpx.AsyncClient, FastAPI]]:
     """A booted app + async client, backed by a throwaway in-memory DB.
 
@@ -276,15 +279,19 @@ async def client_app(
     the real ``data/`` dir. By default auth is off and a passphrase unlocks the
     vault at boot, so feature endpoints are reachable without a token; the auth
     tests pass ``auth_enabled=True, passphrase=None`` to exercise setup/login.
+
+    ``home`` swaps the throwaway for a directory the caller owns, with a file database
+    in it, so a second app booted on the same ``home`` is the first one restarted.
     """
     with tempfile.TemporaryDirectory() as tmp:
+        root = home if home is not None else Path(tmp)
         settings = Settings(
-            db_url="sqlite:///:memory:",
-            data_dir=Path(tmp),
+            db_url="sqlite:///:memory:" if home is None else f"sqlite:///{root / 'app.db'}",
+            data_dir=root,
             # Coding-mode worktrees live *outside* `data_dir` by design (the host-command
             # fence denies reads of the whole data directory), so they need their own
             # redirect here or a test cuts real git worktrees into the operator's home.
-            worktrees_dir=Path(tmp) / "worktrees",
+            worktrees_dir=root / "worktrees",
             auth_enabled=auth_enabled,
             unlock_passphrase=passphrase,
             # No VM side effects in tests, regardless of the host: the managed

@@ -232,6 +232,7 @@ async def test_parked_turn_keeps_parallel_tool_calls_on_resume():
     run = await _park_a_run(reg)
     parked = parked_turn(run)
 
+    assert parked.agent is not None
     settings = parked.agent.model_settings
     assert isinstance(settings, dict)
     assert settings.get("parallel_tool_calls") is True

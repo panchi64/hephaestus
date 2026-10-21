@@ -8,8 +8,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from fastapi import HTTPException
 from pydantic_ai import AbstractToolset
 
+from agent.engine import recompose_turn
+from agent.recompose import ParkedFacts, Recomposed, RecomposeError
 from agent.summarize import AutoCompactPolicy, resolve_auto_compact_policy
 from core.container import ServiceContainer
 from routes import deps
@@ -212,6 +215,36 @@ async def submit_turn(
             scope.agent.wall_clock_timeout_s,
             await get_wall_clock_timeout(deps.settings_store(request), OPERATOR_ID),
         ),
+    )
+
+
+async def recompose_chat(source: deps.Source, facts: ParkedFacts) -> Recomposed:
+    """The agent and compaction context a parked chat turn resumes with after a restart,
+    composed from the same :class:`TurnScope` a fresh turn on the thread would be, on the
+    endpoint and model the parked agent held."""
+    conversation_id = facts.conversation_id
+    if conversation_id is None:
+        raise RecomposeError("this run had no conversation to resume in")
+    try:
+        models = await thread_models(source, conversation_id, facts.endpoint_id, facts.model)
+    except HTTPException as exc:
+        raise RecomposeError(str(exc.detail)) from exc
+    scope = await turn_scope(source, conversation_id, vision=models.vision)
+    return await recompose_turn(
+        facts,
+        model=models.main,
+        categories=scope.categories,
+        dormant=scope.dormant,
+        instruction_providers=scope.instruction_providers,
+        capabilities=scope.capabilities,
+        store=deps.store(source),
+        disabled_tools=scope.disabled_tools,
+        auto_compact=await _resolve_auto_compact(source, conversation_id),
+        context_window=models.context_window,
+        context_thresholds=await get_context_thresholds(deps.settings_store(source), OPERATOR_ID),
+        title_model=models.utility,
+        title_settings=models.utility_settings,
+        endpoint=models.endpoint,
     )
 
 

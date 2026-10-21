@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 
+from agent.recompose import ParkedFacts, Recomposed, register_recompose
 from agent.summarize import resolve_auto_compact_policy
 from core.api_scopes import ScopeClaim
 from core.exceptions import NotFoundError
@@ -25,11 +26,11 @@ from harness.manifest import (
 )
 from models.task import TaskOutcome, TaskOutput
 from routes import tasks as tasks_routes
-from routes.chat import WallClockOverride, compose_turn, resolve_turn_models
+from routes.chat import WallClockOverride, compose_turn
+from routes.chat.thread_composer import ThreadComposer
 from routes.deps import OPERATOR_ID
 from runs import Run, RunRegistry, RunStatus
 from services.agents import AgentCatalog
-from services.agents.thread import DELEGATION_TOOLS, may_delegate, resolve_thread_agent
 from services.approval_grants import ONCE_ONLY_TOOLS, ApprovalGrantStore
 from services.conversations import ConversationStore
 from services.notifications import NotificationService
@@ -42,7 +43,6 @@ from services.settings_store import (
     SettingsStore,
     get_context_thresholds,
 )
-from services.tool_policy import effective_disabled_tools
 from services.uploads import UploadStore
 from tools.routines import GATED_TOOLS as ROUTINES_GATED
 from tools.routines import routines_toolset
@@ -51,14 +51,19 @@ from tools.routines import routines_toolset
 # just enough for the operator to judge at a glance whether to open the conversation.
 _TASK_SUMMARY_MAX_CHARS = 280
 
+#: The kind a routine's run is submitted under (``runs/lanes.py``).
+TASK_KIND = "task"
+
 # `TaskRun.outcome` from the Run status it settled at — the three failure-shaped
-# statuses map onto the matching `TaskOutcome` verbatim; `cancelled` covers both an
-# operator-cancelled run and one still parked (never approved/denied) at shutdown.
+# statuses map onto the matching `TaskOutcome` verbatim.
 _TASK_OUTCOME_BY_RUN_STATUS = {
     RunStatus.done: TaskOutcome.OK.value,
     RunStatus.error: TaskOutcome.ERROR.value,
     RunStatus.blocked: TaskOutcome.BLOCKED.value,
     RunStatus.cancelled: TaskOutcome.CANCELLED.value,
+    # Still parked when the process stopped: the run carries on if the operator approves it
+    # after the restart, but this fire is over.
+    RunStatus.awaiting_input: TaskOutcome.CANCELLED.value,
 }
 
 
@@ -73,6 +78,26 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
     offline = services.get(OfflineModeService)
     agents = services.get(AgentCatalog)
     routines = RoutineStore(ctx.engine, ctx.vault, agents)
+    composer = ThreadComposer(
+        agents=agents,
+        model_registry=registry,
+        conversations=conversations,
+        settings_store=settings_store,
+        offline=offline,
+        settings=ctx.settings,
+        capabilities=ctx.capabilities,
+        categories=ctx.tool_categories,
+        dormant=DormantCategory.summaries(ctx.dormant_categories),
+        instruction_providers=ctx.instruction_providers,
+        availability=ctx.category_availability,
+        projects=services.get_optional(ProjectStore),
+        worktrees=services.get_optional(WorktreeManager),
+    )
+
+    async def _recompose(facts: ParkedFacts) -> Recomposed:
+        return await composer.recompose(facts, kind=TASK_KIND, depth=0)
+
+    register_recompose(runs, TASK_KIND, _recompose)
 
     # Keyed by run id — the executor awaits one of these futures to learn when its
     # Run reaches a genuinely terminal state, which may be long after an approval
@@ -96,6 +121,8 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             return run.detail
         if run.status is RunStatus.cancelled:
             return run.detail or "cancelled"
+        if run.status is RunStatus.awaiting_input:
+            return "waiting for approval when the app stopped"
         if run.status is RunStatus.done:
             turns = await conversations.messages_view(conversation_id)
             for turn in reversed(turns):
@@ -145,30 +172,13 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         """A routine's fire: a turn in a new thread, run by the routine's agent through
         the same composition an interactive turn uses (`compose_turn`)."""
         conversation_id = await _open_thread(view)
-        applied = await resolve_thread_agent(
-            agents,
-            view.owner_id,
-            await conversations.binding(conversation_id),
-            conversation_id,
-            projects=services.get_optional(ProjectStore),
-            worktrees=services.get_optional(WorktreeManager),
+        thread = await composer.resolve(view.owner_id, conversation_id)
+        applied, models = thread.applied, thread.models
+        # Nobody is watching, so tools that stop and wait for someone are withheld, and so
+        # are features never set up.
+        disabled = await composer.disabled(
+            view.owner_id, kind=TASK_KIND, vision=models.vision, applied=applied, depth=0
         )
-        models = await resolve_turn_models(
-            registry, applied.agent.endpoint_id, applied.agent.model, owner_id=view.owner_id
-        )
-        disabled = await effective_disabled_tools(
-            settings_store,
-            offline,
-            view.owner_id,
-            vision=models[4],
-            # Nobody is watching, so tools that stop and wait for someone are withheld,
-            # and so are features never set up.
-            kind="task",
-            availability=ctx.category_availability,
-            caps=ctx.capabilities,
-        )
-        if not may_delegate(applied.agent, 0, ctx.settings.agent_max_depth):
-            disabled |= DELEGATION_TOOLS
         thresholds = await get_context_thresholds(settings_store, view.owner_id)
         timeouts: WallClockOverride = {}
         if applied.agent.wall_clock_timeout_s is not None:
@@ -183,24 +193,25 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
             capabilities=ctx.capabilities,
             categories=ctx.tool_categories,
             dormant=DormantCategory.summaries(ctx.dormant_categories),
-            instruction_providers=(*ctx.instruction_providers, *applied.instructions),
+            instruction_providers=thread.instruction_providers,
             prompt_context_providers=ctx.prompt_context_providers,
             registry=runs,
             store=conversations,
             uploads=services.get(UploadStore),
-            disabled_tools=disabled | applied.withheld,
+            disabled_tools=disabled,
             binding=applied.binding,
             context_thresholds=thresholds,
             auto_compact=auto_compact,
             owner_id=view.owner_id,
             # Routines take the interactive lane (`runs/lanes.py`): they run on schedule.
-            kind="task",
+            kind=TASK_KIND,
             **timeouts,
         )
         # Registered before the first await below, so the run cannot reach terminal first.
         run_waiters[created.run_id] = waiter
         # Waits for a terminal outcome: a fire parked for approval stays open until the
-        # operator decides, and shutdown cancels live runs, which resolves this.
+        # operator decides. Shutdown leaves a parked run for the next process, so this
+        # wait ends with the scheduler's own stop.
         run = await waiter
 
         outcome = _TASK_OUTCOME_BY_RUN_STATUS.get(run.status, TaskOutcome.ERROR.value)
@@ -244,6 +255,18 @@ async def _build(ctx: HarnessContext) -> FeatureRuntime:
         notify=_task_notify,
     )
     await ctx.lifecycle.start("scheduler", start=scheduler.start, stop=scheduler.stop)
+
+    def _release_parked_fires() -> None:
+        """A fire still parked at shutdown is kept for the next process, so the executor
+        waiting on it is let go to close its `TaskRun` instead of holding the scheduler's
+        stop for the whole drain."""
+        for run_id, waiter in list(run_waiters.items()):
+            run = runs.get(run_id)
+            if run is not None and run.is_parked and not waiter.done():
+                waiter.set_result(run)
+
+    # Registered after the scheduler, so it runs before the scheduler's stop.
+    ctx.lifecycle.on_stop("task-parked-fires", _release_parked_fires)
 
     async def _resolve_model():
         resolved = await registry.resolve_background(owner_id=OPERATOR_ID)
