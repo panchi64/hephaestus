@@ -25,6 +25,40 @@ _CONFIG_READS = frozenset(
 _CONFIG_UNSETS = frozenset({"--unset", "--unset-all", "--remove-section"})
 _CONFIG_WRITES = _CONFIG_UNSETS | {"--add", "--replace-all", "--edit", "-e", "--rename-section"}
 _CONFIG_VERBS = frozenset({"set", "unset", "get", "list"})
+#: The options that take the next word as their value (`git config -h`, git 2.54).
+_CONFIG_VALUE_FLAGS = frozenset(
+    {"--file", "-f", "--blob", "--default", "--type", "-t", "--value", "--comment", "--url"}
+)
+_KNOWN_LONG = _CONFIG_VALUE_FLAGS | {
+    "--global",
+    "--system",
+    "--local",
+    "--worktree",
+    "--all",
+    "--regexp",
+    "--fixed-value",
+    "--includes",
+    "--no-includes",
+    "--null",
+    "--name-only",
+    "--show-names",
+    "--show-scope",
+    "--bool",
+    "--int",
+    "--bool-or-int",
+    "--path",
+    "--expiry-date",
+    "--no-type",
+    "--add",
+    "--replace-all",
+    "--unset",
+    "--unset-all",
+    "--remove-section",
+    "--rename-section",
+    "--edit",
+    "--get-colorbool",
+}
+_KNOWN_SHORT = frozenset("ftzelnh")
 #: Configuration keys whose value git runs as a command or loads as more configuration.
 _EXECUTING_KEYS = (
     "core.hookspath",
@@ -110,6 +144,35 @@ class ConfigWrite:
     scope: Literal["global", "system", "file", "local"]
     removes: bool
     file: str | None = None
+    #: Set when the call could not be read with confidence (an option this does not know,
+    #: or an executing key among its operands), so it is treated as setting one.
+    unreadable: bool = False
+
+
+def _unknown_option(rest: list[str]) -> bool:
+    """Whether ``rest`` holds an option this parser does not know, so which of its words
+    is the key cannot be told."""
+    for word in rest:
+        if word == "--":
+            return False
+        if not is_flag(word):
+            continue
+        name = word.split("=", 1)[0]
+        if name.startswith("--"):
+            if name not in _KNOWN_LONG:
+                return True
+        elif any(letter not in _KNOWN_SHORT for letter in name[1:]):
+            return True
+    return False
+
+
+def _hides_executing_key(found: list[str]) -> bool:
+    """Whether any operand of a write is an executing key, wherever it sits, so that a
+    mistake about which operand is the key cannot hide one."""
+    lowered = [word.lower() for word in found]
+    return any(
+        any(fnmatch.fnmatchcase(word, pattern) for pattern in _EXECUTING_KEYS) for word in lowered
+    ) or any(executes_code(key, value) for key, value in zip(lowered, found[1:], strict=False))
 
 
 def config_write(one: ShellCommand) -> ConfigWrite | None:
@@ -119,23 +182,26 @@ def config_write(one: ShellCommand) -> ConfigWrite | None:
     sub, rest = git_subcommand(one.arguments)
     if sub != "config" or any(word in _CONFIG_READS for word in rest):
         return None
-    found = operands(rest, frozenset({"--file", "-f", "--blob", "--default", "--type"}))
+    found = operands(rest, _CONFIG_VALUE_FLAGS)
     verb = found[0] if found and found[0] in _CONFIG_VERBS else None
     if verb in ("get", "list"):
         return None
     if verb is not None:
         found = found[1:]
+    removes = verb == "unset" or any(word in _CONFIG_UNSETS for word in rest)
+    unreadable = _unknown_option(rest) or (
+        not removes and len(found) >= 2 and _hides_executing_key(found)
+    )
     writes = verb is not None or any(word in _CONFIG_WRITES for word in rest)
-    if len(found) < 2 and not writes:
+    if len(found) < 2 and not writes and not unreadable:
         return None
     key = found[0].lower() if found else None
     value = found[1] if len(found) > 1 else None
-    removes = verb == "unset" or any(word in _CONFIG_UNSETS for word in rest)
     files = option_values(tuple(rest), "f", ("--file",))
     if files:
-        return ConfigWrite(key, value, "file", removes, files[0])
+        return ConfigWrite(key, value, "file", removes, files[0], unreadable)
     if "--global" in rest:
-        return ConfigWrite(key, value, "global", removes)
+        return ConfigWrite(key, value, "global", removes, None, unreadable)
     if "--system" in rest:
-        return ConfigWrite(key, value, "system", removes)
-    return ConfigWrite(key, value, "local", removes)
+        return ConfigWrite(key, value, "system", removes, None, unreadable)
+    return ConfigWrite(key, value, "local", removes, None, unreadable)

@@ -305,6 +305,8 @@ def _known_tail(target: str) -> bool:
 
 
 def _config_reason(change: ConfigWrite, places: Places, host: bool) -> str | None:
+    if change.unreadable:
+        return "This command is a git config call that may set a key that makes git run code."
     if change.removes and is_executing_key(change.key):
         return None
     if executes_code(change.key, change.value):
