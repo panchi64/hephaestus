@@ -3,6 +3,7 @@ token, and the edit / regenerate routes that rewind first."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import httpx
@@ -27,8 +28,9 @@ from routes.deps import app_state
 from runs import Run
 from runs.stream import RunStream
 from services.home.backend import Mount
-from services.home.changes import ChangeLog, RewindPlan, ThreadChanges
+from services.home.changes import ChangeLog, ThreadChanges
 from services.home.paths import Place
+from services.home.rewind import Rewinder, RewindPlan
 from tools.deps import RunDeps
 from tools.home import change_log
 
@@ -69,8 +71,9 @@ async def _rewind(
     store: ThreadChanges, root: Path, turns: list[str], conv: str = "c1"
 ) -> tuple[RewindPlan, RewindPlan]:
     roots = {"p1": root}
-    plan = await store.rewind_plan(OWNER, conv, turns, roots)
-    done = await store.rewind_files(OWNER, conv, turns, roots, plan.preview_token)
+    rewinder = Rewinder(store)
+    plan = await rewinder.plan(OWNER, conv, turns, roots)
+    done = await rewinder.apply(OWNER, conv, turns, roots, plan.preview_token)
     return plan, done
 
 
@@ -177,9 +180,9 @@ async def test_a_spawned_agents_deps_file_changes_under_the_launching_turn(tmp_p
     _ = (tmp_path / "a.txt").write_text("a")
     await log.after(mount, ["a.txt"])
 
-    plan = await store.rewind_plan(OWNER, "parent", ["parent-prompt"], {"p1": tmp_path})
+    plan = await Rewinder(store).plan(OWNER, "parent", ["parent-prompt"], {"p1": tmp_path})
     assert [f.path for f in plan.delete] == ["a.txt"]
-    unfiled = await store.rewind_plan(OWNER, "parent", ["child-prompt"], {"p1": tmp_path})
+    unfiled = await Rewinder(store).plan(OWNER, "parent", ["child-prompt"], {"p1": tmp_path})
     assert unfiled.delete == []
 
 
@@ -199,7 +202,7 @@ async def test_the_dry_run_writes_nothing(tmp_path: Path):
     store = await _store(tmp_path)
     await _turn(store, root, "t1", {"app.py": "one\n"})
 
-    plan = await store.rewind_plan(OWNER, "c1", ["t1"], {"p1": root})
+    plan = await Rewinder(store).plan(OWNER, "c1", ["t1"], {"p1": root})
 
     assert [f.path for f in plan.restore] == ["app.py"]
     assert (root / "app.py").read_text() == "one\n"
@@ -210,11 +213,11 @@ async def test_a_stale_token_is_refused(tmp_path: Path):
     root = _project(tmp_path)
     store = await _store(tmp_path)
     await _turn(store, root, "t1", {"app.py": "one\n"})
-    plan = await store.rewind_plan(OWNER, "c1", ["t1"], {"p1": root})
+    plan = await Rewinder(store).plan(OWNER, "c1", ["t1"], {"p1": root})
     _ = (root / "app.py").write_text("by hand\n")
 
     with pytest.raises(StaleRewindError):
-        _ = await store.rewind_files(OWNER, "c1", ["t1"], {"p1": root}, plan.preview_token)
+        _ = await Rewinder(store).apply(OWNER, "c1", ["t1"], {"p1": root}, plan.preview_token)
     assert (root / "app.py").read_text() == "by hand\n"
 
 
@@ -321,6 +324,39 @@ async def test_regenerate_with_a_token_rewinds_before_the_leaf_moves(
         assert (root / "app.py").read_text() == "zero\n"
 
 
+async def test_a_regenerate_whose_restore_could_not_write_still_runs_and_tells_the_operator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    patch_model_resolution(monkeypatch)
+    root = _project(tmp_path)
+    async with client_app() as (client, app):
+        conv, _user, assistant = await _conversation_with_a_turn(client, app, root)
+        preview = json_body(
+            await client.get(f"/conversations/{conv}/changes/rewind?messageId={assistant}")
+        )
+        real = Path.write_bytes
+
+        def write_bytes(self: Path, data: bytes) -> int:
+            if self.name == "app.py":
+                raise OSError("read-only")
+            return real(self, data)
+
+        monkeypatch.setattr(Path, "write_bytes", write_bytes)
+        regenerated = await client.post(
+            "/chat/regenerate",
+            json={
+                "conversation_id": conv,
+                "message_id": assistant,
+                "restore_files": {"preview_token": preview["previewToken"]},
+            },
+        )
+
+        assert regenerated.status_code == 202
+        items, _ = await app_state(app).notifications.list_notifications(OWNER)
+        [notice] = [n for n in items if n.conversation_id == conv]
+        assert notice.kind == "system" and "app.py" in (notice.body or "")
+
+
 async def test_edit_without_a_token_leaves_the_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
@@ -406,7 +442,7 @@ async def test_the_rewind_survives_a_lost_database_lock(
     root = _project(tmp_path)
     store = await _store(tmp_path)
     await _turn(store, root, "t1", {"app.py": "one\n"})
-    plan = await store.rewind_plan(OWNER, "c1", ["t1"], {"p1": root})
+    plan = await Rewinder(store).plan(OWNER, "c1", ["t1"], {"p1": root})
 
     real = Session.commit
     calls = 0
@@ -419,7 +455,7 @@ async def test_the_rewind_survives_a_lost_database_lock(
         real(self)
 
     monkeypatch.setattr(Session, "commit", commit)
-    done = await store.rewind_files(OWNER, "c1", ["t1"], {"p1": root}, plan.preview_token)
+    done = await Rewinder(store).apply(OWNER, "c1", ["t1"], {"p1": root}, plan.preview_token)
 
     assert [f.path for f in done.restore] == ["app.py"]
     assert (root / "app.py").read_text() == "zero\n"
@@ -427,13 +463,13 @@ async def test_the_rewind_survives_a_lost_database_lock(
 
 
 async def test_a_file_that_cannot_be_written_is_reported_and_the_rest_go_on(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ):
     root = _project(tmp_path)
     _ = (root / "bad.py").write_text("bad zero\n")
     store = await _store(tmp_path)
     await _turn(store, root, "t1", {"app.py": "one\n", "bad.py": "bad one\n"})
-    plan = await store.rewind_plan(OWNER, "c1", ["t1"], {"p1": root})
+    plan = await Rewinder(store).plan(OWNER, "c1", ["t1"], {"p1": root})
     real = Path.write_bytes
 
     def write_bytes(self: Path, data: bytes) -> int:
@@ -442,10 +478,13 @@ async def test_a_file_that_cannot_be_written_is_reported_and_the_rest_go_on(
         return real(self, data)
 
     monkeypatch.setattr(Path, "write_bytes", write_bytes)
-    done = await store.rewind_files(OWNER, "c1", ["t1"], {"p1": root}, plan.preview_token)
+    caplog.set_level(logging.WARNING)
+    done = await Rewinder(store).apply(OWNER, "c1", ["t1"], {"p1": root}, plan.preview_token)
 
     assert [f.path for f in done.restore] == ["app.py"]
     assert [(f.path, f.reason) for f in done.failed] == [("bad.py", "read-only")]
+    [warning] = [r.getMessage() for r in caplog.records if "could not write" in r.getMessage()]
+    assert "c1" in warning and "bad.py" in warning
     assert (root / "app.py").read_text() == "zero\n"
     assert {v.path: v.reverted for v in await store.list(OWNER, "c1")} == {
         "app.py": True,

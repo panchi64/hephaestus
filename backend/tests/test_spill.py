@@ -173,6 +173,12 @@ def _categories() -> dict[str, AbstractToolset[RunDeps]]:
         def read() -> str:
             return BIG
 
+        if category == "external":
+
+            @personal.tool_plain(metadata={"sensitivity": "read"})
+            def page() -> str:
+                return wrap_untrusted(BIG, source=SOURCE)
+
         categories[category] = personal
     return categories
 
@@ -414,11 +420,27 @@ async def test_a_tool_return_keeps_its_content_and_metadata(tmp_path: Path):
     assert "a side note" in side
 
 
-@pytest.mark.parametrize("category", PERSONAL)
+@pytest.mark.parametrize("category", [c for c in PERSONAL if c != "external"])
 async def test_personal_categories_are_not_spilled(tmp_path: Path, category: str):
     messages, workspace = await _run_tool(tmp_path, f"{category}_read")
     assert _content(messages, f"{category}_read") == BIG
     assert _saved(workspace) == []
+
+
+async def test_an_oversized_external_result_is_cut_and_never_written_to_scratch(tmp_path: Path):
+    messages, workspace = await _run_tool(tmp_path, "external_read")
+    text = str(_content(messages, "external_read"))
+    assert "line 0000" in text and "line 0399" in text and "line 0200" not in text
+    assert "characters omitted" in text and "may hold personal data" in text
+    assert len(text) < len(BIG)
+    assert not (workspace / "tool-output").exists()
+
+
+async def test_an_oversized_untrusted_external_result_stays_fenced_when_cut(tmp_path: Path):
+    messages, workspace = await _run_tool(tmp_path, "external_page")
+    text = str(_content(messages, "external_page"))
+    assert _one_fence(text) and "characters omitted" in text
+    assert not (workspace / "tool-output").exists()
 
 
 async def test_a_file_read_is_not_spilled(tmp_path: Path):

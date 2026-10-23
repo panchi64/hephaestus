@@ -7,11 +7,13 @@ first; the launch is identical (``submit_turn``).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 
 from fastapi import APIRouter, HTTPException, Request
 
 from core.exceptions import NotFoundError
+from models.notification import NotificationKind
 from routes import deps
 from routes.changes import rewind_files
 from routes.chat.schemas import (
@@ -28,9 +30,32 @@ from services.agents import DEFAULT_AGENT
 from services.conversations import ConversationBinding, ConversationStore
 from services.turn_stamps import still_named
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _after_restore = deps.after_restore
+
+
+async def _rewind_reporting(
+    request: Request, conversation_id: str, message_id: str, preview_token: str
+) -> None:
+    """Rewind the files before a regenerate or edit. A file that could not be written does
+    not stop the turn; the operator is told which."""
+    plan = await rewind_files(request, conversation_id, message_id, preview_token)
+    if not plan.failed:
+        return
+    paths = ", ".join(failure.path for failure in plan.failed)
+    try:
+        _ = await deps.notifications(request).notify(
+            OPERATOR_ID,
+            NotificationKind.SYSTEM,
+            "Some files could not be put back",
+            body=f"The rewind could not write: {paths}",
+            conversation_id=conversation_id,
+        )
+    except Exception:
+        logger.exception("chat: failed to report a partial rewind")
 
 
 async def _validate_attachments(request: Request, attachment_ids: list[str]) -> None:
@@ -239,7 +264,7 @@ async def regenerate(body: RegenerateCreate, request: Request) -> ChatCreated:
         models = await thread_models(request, body.conversation_id, body.endpoint_id, body.model)
         if body.restore_files is not None:
             # Planned against the leaf as it is now; `regenerate_point` moves it.
-            _ = await rewind_files(
+            await _rewind_reporting(
                 request, body.conversation_id, body.message_id, body.restore_files.preview_token
             )
         if not await store.regenerate_point(body.conversation_id, body.message_id):
@@ -285,7 +310,7 @@ async def edit(body: EditCreate, request: Request) -> ChatCreated:
         stamped = await store.turn_stamps(body.conversation_id, body.message_id)
         stamps = still_named(stamped, body.prompt)
         if body.restore_files is not None:
-            _ = await rewind_files(
+            await _rewind_reporting(
                 request, body.conversation_id, body.message_id, body.restore_files.preview_token
             )
         if not await store.edit_point(body.conversation_id, body.message_id):

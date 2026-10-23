@@ -23,7 +23,8 @@ from core.exceptions import NotFoundError
 from routes import deps
 from routes.camel import CamelModel
 from routes.deps import OPERATOR_ID
-from services.home.changes import ChangeStatus, RewindPlan, ThreadChangeFile, ThreadChanges
+from services.home.changes import ChangeStatus, ThreadChangeFile, ThreadChanges
+from services.home.rewind import Rewinder, RewindPlan
 from services.sandbox.base import SandboxError, contained_path
 
 router = APIRouter(prefix="/conversations", tags=["projects"])
@@ -109,6 +110,10 @@ def _changes(request: Request) -> ThreadChanges:
     return deps.capabilities(request).get(ThreadChanges)
 
 
+def _rewinder(request: Request) -> Rewinder:
+    return Rewinder(_changes(request))
+
+
 async def _roots(request: Request) -> dict[str, Path]:
     return await deps.projects(request).workspace_roots(OPERATOR_ID)
 
@@ -172,6 +177,7 @@ async def revert_changes(request: Request, conversation_id: str, body: RevertIn)
     if not await deps.store(request).exists(conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
     ids = None if body.ids is None else set(body.ids)
+    await deps.after_restore(request)
     deps.claim_conversation(request, conversation_id)
     try:
         report = await _changes(request).revert(
@@ -234,7 +240,7 @@ async def rewind_files(
 ) -> RewindPlan:
     """Put the files back to before ``message_id``'s turn, if the preview still holds."""
     prompt_ids = await rewind_prompt_ids(request, conversation_id, message_id)
-    return await _changes(request).rewind_files(
+    return await _rewinder(request).apply(
         OPERATOR_ID, conversation_id, prompt_ids, await _roots(request), preview_token
     )
 
@@ -249,7 +255,7 @@ async def preview_rewind(
     if not await deps.store(request).exists(conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
     prompt_ids = await rewind_prompt_ids(request, conversation_id, message_id)
-    plan = await _changes(request).rewind_plan(
+    plan = await _rewinder(request).plan(
         OPERATOR_ID, conversation_id, prompt_ids, await _roots(request)
     )
     return _rewind_out(plan)
@@ -261,6 +267,7 @@ async def confirm_rewind(request: Request, conversation_id: str, body: RewindIn)
     or the conversation has a turn running."""
     if not await deps.store(request).exists(conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
+    await deps.after_restore(request)
     deps.claim_conversation(request, conversation_id)
     try:
         plan = await rewind_files(request, conversation_id, body.message_id, body.preview_token)
