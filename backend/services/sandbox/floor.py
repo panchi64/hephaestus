@@ -137,8 +137,10 @@ _ALWAYS_DENIED = (
     ".config/gcloud/application_default_credentials.json",
     ".netrc",
     ".docker/.token_seed",
-    "Library/Keychains",
 )
+# `~/Library/Keychains` stays readable: Security.framework clients open the keychain files
+# themselves, so denying them breaks `gh`, `git credential-osxkeychain` and `security`.
+# The files are ciphertext, and securityd releases each item only under its own ACL.
 
 _KUBE_USER_SECRETS = ("token", "client-key-data", "client-key", "password")
 _KUBE_PROVIDER_TOKENS = ("access-token", "id-token", "refresh-token", "token", "client-secret")
@@ -254,7 +256,7 @@ def _docker_tls_keys(home: Path) -> tuple[str, ...]:
 
 
 def credential_read_floor(home: Path) -> tuple[str, ...]:
-    """Secrets reach tools through helpers (ssh-agent, Keychain IPC, credential helpers),
+    """Secrets reach tools through helpers (ssh-agent, the Keychain, credential helpers),
     never as readable files: this denies key and token files, and each of ``gh``, docker
     and kube configs only while it holds a secret inline. Recomputed on every call."""
     return merged(

@@ -335,6 +335,23 @@ async def test_the_keychain_daemon_stays_reachable_inside_the_fence(tmp_path: Pa
     assert result.ok, result.stderr
 
 
+def test_the_keychain_folder_is_readable_for_the_shell_but_not_the_hatch(home: Path):
+    keychains = str(home / "Library/Keychains")
+    assert keychains not in credential_read_floor(home)
+    assert "~/Library/Keychains" in Settings().host_command_deny_read
+
+
+@darwin_only
+@pytest.mark.usefixtures("fenced")
+async def test_keychain_clients_can_open_the_keychain_files_inside_the_fence(
+    home: Path, tmp_path: Path
+):
+    (home / "Library/Keychains").mkdir(parents=True)
+    _ = (home / "Library/Keychains/login.keychain-db").write_text("CIPHERTEXT")
+    result = await _shell(_work(tmp_path)).run("cat ~/Library/Keychains/login.keychain-db")
+    assert result.ok, result.stderr
+
+
 @pytest.mark.usefixtures("fenced")
 async def test_the_fenced_shell_can_write_elsewhere_under_home_and_keep_its_cwd(
     home: Path, tmp_path: Path
