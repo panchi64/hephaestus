@@ -6,7 +6,11 @@ import { usePageTitle } from "~/app/usePageTitle";
 import { useFavicon } from "~/app/useFavicon";
 import { AppSplash } from "~/app/AppSplash";
 import { useSession } from "~/lib/stores/session";
-import { ambientLoad, ambientPulses } from "~/lib/stores/ambient";
+import {
+  ambientAurora,
+  ambientLoad,
+  ambientStrikes,
+} from "~/lib/stores/ambient";
 import "./app.css";
 
 /**
@@ -27,7 +31,11 @@ export default function App() {
         const session = useSession();
         return (
           <ThemeProvider>
-            <DitherField load={ambientLoad} pulses={ambientPulses} />
+            <DitherField
+              load={ambientLoad}
+              aurora={ambientAurora}
+              strikes={ambientStrikes}
+            />
             <Suspense
               fallback={
                 // A cold load before unlock keeps boot's label: nothing is waking yet.

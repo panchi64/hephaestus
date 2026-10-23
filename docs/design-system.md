@@ -4,7 +4,7 @@
 
 **Version 1.2** · Status: Foundation spec · Supersedes *Terminal-HUD 0.1*
 
-*1.1 adds the mission-control register: a console group, a caution & warning grid, a mission clock, the `plate` type step, and §11.1's ambient field — the dithered ground under every page.*
+*1.1 adds the mission-control register: a console group, a caution & warning grid, a mission clock, the `plate` type step, and §11.1's ambient field — a dithered planet behind every page.*
 
 *1.2 settles the chat surfaces on that register — **the square console**: ruled frames, bare contents, mono plates, square corners, no resting shadow. A soft-card register (rounded fills, sans labels, soft elevation) was weighed against it and rejected. It adds the **action tier** (§10.18), the one loud frame for anything the run is waiting on the operator for, and removes the LED edge light, the composer's ambient bloom and the ⌘K palette.*
 
@@ -501,7 +501,7 @@ The chat transcript is where the two registers are visible at once, and it is th
 
 ### Forbidden
 
-Bouncing, springs, overshoot, staggered cascades, eased *decorative* spinners, parallax, anything over 240ms, and any animation that runs while the operator is not looking at it. The ambient field's drift (§11.1) is the one exception to the last: it is stepped, stops on a hidden tab, and holds still under reduced motion.
+Bouncing, springs, overshoot, staggered cascades, eased *decorative* spinners, parallax, anything over 240ms, and any animation that runs while the operator is not looking at it. The ambient field's turning clouds (§11.1) are the one exception to the last: they are stepped, stop on a hidden tab, and hold still under reduced motion.
 
 **One stated exception to the 240ms ceiling: the answer's per-character reveal (320ms).** The ceiling governs anything the operator is *waiting on* — a control answering a click, an overlay opening — where a long duration reads as lag. Nothing waits on this one: it is paced to a stream that already takes seconds, and a character is legible well before it finishes settling. Under the ceiling the resolve is over before the eye reaches it. If a second case ever wants this exemption, it has to clear the same bar — nothing is waiting.
 
@@ -799,21 +799,22 @@ Keep:
 
 ### 11.1 The ambient field
 
-Everything above is texture the eye skips. The ground under every page is texture too, but it is the one texture that knows what the platform is doing.
+Everything above is texture the eye skips. The field behind every page is texture too, but it is the one texture that knows what the platform is doing.
 
-**What it is.** An ordered dither on a 2px cell (half the base unit): each cell lit or unlit against a 4×4 Bayer threshold, shaded on the GPU one canvas pixel per cell and scaled up hard (`DitherField`, its constants in `ui/theme/dither.ts`, the shader in `ui/theme/dither-shader.ts`). Without WebGL it draws nothing and the page keeps its plain ground. About a quarter to a third of the cells are lit at rest, and a lit cell is `--dither-on` (`#0d0d0d` on Ink, `#f4f4f4` on Paper), barely off the ground. Fine and dense at that contrast, it reads as a tone with a grain rather than as dots. You see it if you look for it.
+**What it is.** A gas giant seen from orbit, low in the bottom-right corner: a disc about 0.72 of the viewport's height in radius (0.9 of its width on a narrow screen), so roughly a quarter of it shows. It is ordered-dithered on a 2px cell (half the base unit), each cell lit or unlit against a 4×4 Bayer threshold, shaded on the GPU one canvas pixel per cell and scaled up hard (`DitherField`, its constants and geometry in `ui/theme/dither.ts`, the shader in `ui/theme/dither-shader.ts`). Its cloud deck is turbulent belts rolled around nine vortices, lit from the left, so the dither runs from dense on the bright belts to bare on the night side, with a thin haze beyond the lit limb. A lit cell is `--dither-on` (`#0d0d0d` on Ink, `#f4f4f4` on Paper), barely off the ground. Everywhere off the planet the page is its plain ground. Without WebGL it draws nothing.
 
-**Where it is.** Behind every page, the auth screens and the 404 included, mounted once at the app root under everything in flow. The rail is glass over it (`.heph-rail-glass`), so it reads through as a blur. Opaque objects occlude it on purpose: panels, console groups, instrument bands and the composer keep their `bg-surface`, so the field shows only in the gaps between them and never runs through a column of numbers. Dialogs, drawers, menus and toasts sit above it.
+**Where it is.** Behind every page, the auth screens and the 404 included, mounted once at the app root under everything in flow. The rail is glass over it (`.heph-rail-glass`), so it reads through as a blur. Opaque objects occlude it on purpose: panels, console groups, instrument bands and the composer keep their `bg-surface`, so the planet shows only in the gaps between them and never runs through a column of numbers. Dialogs, drawers, menus and toasts sit above it.
 
 **What it says.**
 
-- **Load.** The density steps up one notch per live thread, two for a thread waiting on the operator, up to five steps. It steps, it never fades: load is the machine's state (§8).
-- **Events.** An event leaves the grain alone: no cell turns on or off for it, and nothing moves. A broad, soft patch around where it happened (a gaussian of about 120px) leans its lit cells toward the event's accent, easing in over 0.6s and gone by 5s. A thread starting, finishing, failing or asking glows at its rail row (at the park dock for an ask on the open thread, at the rail's edge for a row folded or scrolled away). A reminder, a task outcome or a system notice glows at the bell.
-- **Hue.** At its centre and peak a glow leans `--dither-tint` of the way toward the accent (4% on Ink, 3% on Paper), falling smoothly to nothing with distance and age, so it has no edge. Near the ground that is a suggestion of hue and no more, which is what keeps it inside §5's rules: the field never carries a colour on its own, only the faint echo of one already said elsewhere.
+- **Load.** The clouds turn faster with each live top-level thread (two for one waiting on the operator), up to twice their resting speed at five. The speed is integrated frame by frame, so a change of load never jumps the clouds.
+- **Sub-agents.** Each live thread an agent spawned hangs one aurora curtain over the night-side limb near the pole, up to six: a faint band of vertical rays that shimmers slowly. Spawned threads count here and nowhere else.
+- **Events.** A top-level thread starting, finishing, failing or asking, and a reminder, task outcome or system notice, strikes lightning at a random spot on the visible night side: five flashes scattered a few dozen pixels apart over about a second, each flickering on 100ms beats and fading in 1.4s. Where on the planet carries no meaning.
+- **Hue.** A flash's lit cells take its event's accent, and the aurora's take `--accent-nominal`, each `--dither-tint` of the way from `--dither-on` (4% on Ink, 3% on Paper). Near the ground that is a suggestion of hue and no more, which keeps it inside §5's rules: the field never carries a colour on its own, only the faint echo of one already said elsewhere. The cloud deck is never tinted.
 
-**It drifts.** A slow low-frequency weather moves the density while the tab is visible: the one stated exception to §8's "nothing runs while the operator is not looking". It redraws in hard steps (the machine register): every 250ms for the drift alone, every 100ms while a glow is alive. It stops when the tab is hidden, and under reduced motion holds a still frame with no drift and no glows, changing only when load steps.
+**It turns.** The clouds rotate slowly while the tab is visible (a full turn takes about half an hour at rest): the one stated exception to §8's "nothing runs while the operator is not looking". It redraws in hard steps (the machine register): every 250ms, every 100ms while lightning flashes. It stops when the tab is hidden, and under reduced motion holds a still frame with no lightning, changing only when the aurora does.
 
-**Nothing in it is an instrument, and nothing in it is a figure.** It is density and nothing else: no marks, no readouts, no shapes. Registration marks on a background read as the interface measuring something, and diegetic detail that *implies a readout* is a lie about what the product is doing. The same goes for anything mythic or pictorial — schematics, maps, veins, horizons: the background is a material, not an illustration.
+**One figure, and no instruments.** The planet is the field's only figure: no marks, readouts or labels on or around it. Registration marks on a background read as the interface measuring something, and diegetic detail that *implies a readout* is a lie about what the product is doing.
 
 ---
 

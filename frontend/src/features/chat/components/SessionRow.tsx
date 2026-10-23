@@ -33,7 +33,6 @@ export interface SessionRowProps {
   menuOpen?: boolean;
   /** The chevron folding the agent threads opened under this one. */
   fold?: RailRowProps["fold"];
-  source?: RailRowProps["source"];
 }
 
 /** A run state as what the row's glyph column says. Only the states worth marking
@@ -139,7 +138,6 @@ export function SessionRow(props: SessionRowProps): JSX.Element {
     <RailRow
       state={rowState()}
       selected={props.selected}
-      source={props.source}
       unread={props.unread && !props.selected}
       title={title}
       readout={readout()}

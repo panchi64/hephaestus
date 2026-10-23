@@ -226,7 +226,7 @@ export function ParkDock(props: {
   ];
 
   return (
-    <div class="heph-glass flex flex-col" data-ambient-source="park">
+    <div class="heph-glass flex flex-col">
       <ActionFrame
         tone={asking() ? "question" : "approval"}
         title={title()}

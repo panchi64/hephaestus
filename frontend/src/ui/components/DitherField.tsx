@@ -8,30 +8,35 @@ import {
 import { useMediaQuery } from "~/lib/useMediaQuery";
 import { accentOverrides } from "../theme/accent-overrides";
 import {
+  AURORA_MAX,
   CELL,
-  MAX_PULSES,
-  PULSE_TONES,
-  livePulses,
+  MAX_STRIKES,
+  STRIKE_TONES,
+  advancePhase,
+  liveStrikes,
   mixRgb,
-  type Pulse,
-  type PulseTone,
+  planetDisc,
   type Rgb,
+  type Strike,
+  type StrikeTone,
 } from "../theme/dither";
 import { FRAGMENT_SHADER, VERTEX_SHADER } from "../theme/dither-shader";
 import { useTheme } from "../theme/useTheme";
 
 export interface DitherFieldProps {
-  /** Live runs, with waiting-on-the-operator counted double. */
+  /** Live runs, with waiting-on-the-operator counted double. Turns the clouds faster. */
   load: Accessor<number>;
-  pulses: Accessor<readonly Pulse[]>;
+  /** Live sub-agents: one aurora curtain each. */
+  aurora: Accessor<number>;
+  strikes: Accessor<readonly Strike[]>;
 }
 
 /** Stepped redraws, in the machine register: the field never eases between frames.
- *  The drift is slow enough for a quarter second; a fading glow wants ten a second. */
-const DRIFT_FRAME_MS = 250;
-const GLOW_FRAME_MS = 100;
+ *  The clouds are slow enough for a quarter second; lightning flickers on tenths. */
+const CLOUD_FRAME_MS = 250;
+const STRIKE_FRAME_MS = 100;
 
-const TONE_VAR: Record<Exclude<PulseTone, "neutral">, string> = {
+const TONE_VAR: Record<Exclude<StrikeTone, "neutral">, string> = {
   info: "--accent-info",
   nominal: "--accent-nominal",
   warn: "--accent-warn",
@@ -51,9 +56,11 @@ function toRgb(probe: CanvasRenderingContext2D, color: string): Rgb {
 interface Gl {
   gl: WebGLRenderingContext;
   size: WebGLUniformLocation | null;
+  disc: WebGLUniformLocation | null;
   time: WebGLUniformLocation | null;
-  load: WebGLUniformLocation | null;
-  pulses: WebGLUniformLocation | null;
+  phase: WebGLUniformLocation | null;
+  aurora: WebGLUniformLocation | null;
+  strikes: WebGLUniformLocation | null;
   palette: WebGLUniformLocation | null;
   ground: WebGLUniformLocation | null;
 }
@@ -104,19 +111,22 @@ function setup(canvas: HTMLCanvasElement): Gl | null {
   return {
     gl,
     size: at("uSize"),
+    disc: at("uDisc"),
     time: at("uTime"),
-    load: at("uLoad"),
-    pulses: at("uPulses"),
+    phase: at("uPhase"),
+    aurora: at("uAurora"),
+    strikes: at("uStrikes"),
     palette: at("uPalette"),
     ground: at("uGround"),
   };
 }
 
 /**
- * The ambient field behind every page (§11.1): ordered dither on 2px cells, shaded on
- * the GPU one canvas pixel per cell and scaled up hard. Opaque objects occlude it;
- * dialogs sit over it. It stops drawing while the tab is hidden, holds a still frame
- * with no glows under reduced motion, and draws nothing where WebGL is unavailable.
+ * The ambient field behind every page (§11.1): a gas giant in the bottom-right corner,
+ * ordered-dithered on 2px cells, shaded on the GPU one canvas pixel per cell and scaled
+ * up hard. Opaque objects occlude it; dialogs sit over it. It stops drawing while the
+ * tab is hidden, holds a still frame with no lightning under reduced motion, and draws
+ * nothing where WebGL is unavailable.
  *
  * Decorative, so `aria-hidden` and `pointer-events: none`.
  */
@@ -126,23 +136,30 @@ export function DitherField(props: DitherFieldProps): JSX.Element {
   const theme = useTheme();
 
   let gl: Gl | null = null;
-  const slots = new Float32Array(MAX_PULSES * 4);
+  const slots = new Float32Array(MAX_STRIKES * 4);
+  let phase = 0;
+  let last = performance.now();
 
-  /** Draws one frame and says whether a glow is still alive. */
+  /** Draws one frame and says whether a strike is still flashing. */
   const draw = (): boolean => {
     if (!gl) return false;
     const now = performance.now();
     const still = reduced();
-    const live = still ? [] : livePulses(props.pulses(), now);
+    if (!still) phase = advancePhase(phase, now - last, props.load());
+    last = now;
+    const live = still ? [] : liveStrikes(props.strikes(), now);
     slots.fill(-1);
-    live.forEach((p, i) => {
-      slots.set([p.x, p.y, now - p.at, PULSE_TONES.indexOf(p.tone)], i * 4);
+    live.forEach((s, i) => {
+      slots.set([s.x, s.y, now - s.at, STRIKE_TONES.indexOf(s.tone)], i * 4);
     });
+    const disc = planetDisc(window.innerWidth, window.innerHeight);
     const g = gl.gl;
     g.uniform2f(gl.size, canvas.width, canvas.height);
+    g.uniform3f(gl.disc, disc.cx, disc.cy, disc.r);
     g.uniform1f(gl.time, still ? 0 : now / 1000);
-    g.uniform1f(gl.load, props.load());
-    g.uniform4fv(gl.pulses, slots);
+    g.uniform1f(gl.phase, phase);
+    g.uniform1f(gl.aurora, Math.min(props.aurora(), AURORA_MAX));
+    g.uniform4fv(gl.strikes, slots);
     g.drawArrays(g.TRIANGLES, 0, 3);
     return live.length > 0;
   };
@@ -165,7 +182,7 @@ export function DitherField(props: DitherFieldProps): JSX.Element {
     const token = (name: string) => cs.getPropertyValue(name).trim();
     const on = toRgb(probe, token("--dither-on"));
     const tint = (Number.parseFloat(token("--dither-tint")) || 0) / 100;
-    const palette = PULSE_TONES.flatMap((tone) =>
+    const palette = STRIKE_TONES.flatMap((tone) =>
       tone === "neutral"
         ? on
         : mixRgb(on, toRgb(probe, token(TONE_VAR[tone])), tint),
@@ -188,9 +205,9 @@ export function DitherField(props: DitherFieldProps): JSX.Element {
   };
   const running = (): boolean => !!gl && !document.hidden && !reduced();
   const tick = (): void => {
-    const glowing = draw();
+    const flashing = draw();
     timer = running()
-      ? setTimeout(tick, glowing ? GLOW_FRAME_MS : DRIFT_FRAME_MS)
+      ? setTimeout(tick, flashing ? STRIKE_FRAME_MS : CLOUD_FRAME_MS)
       : undefined;
   };
   const sync = (): void => {
@@ -236,16 +253,16 @@ export function DitherField(props: DitherFieldProps): JSX.Element {
     void reduced();
     sync();
   });
-  // A new glow starts now, not at the end of a quarter-second drift frame.
+  // A new strike flashes now, not at the end of a quarter-second cloud frame.
   createEffect(() => {
-    void props.pulses();
+    void props.strikes();
     if (timer === undefined) return;
     stop();
     tick();
   });
-  // A still field still owes the operator a load step.
+  // A still field still owes the operator its aurora.
   createEffect(() => {
-    void props.load();
+    void props.aurora();
     if (reduced()) draw();
   });
 

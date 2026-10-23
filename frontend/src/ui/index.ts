@@ -103,7 +103,13 @@ export {
 } from "./components/ConsoleGroup";
 export { MetClock, type MetClockProps } from "./components/MetClock";
 export { DitherField, type DitherFieldProps } from "./components/DitherField";
-export { CELL, GLOW_LIFE_MS, type Pulse, type PulseTone } from "./theme/dither";
+export {
+  AURORA_MAX,
+  STRIKE_LIFE_MS,
+  strikePoint,
+  type Strike,
+  type StrikeTone,
+} from "./theme/dither";
 export { Tile, type TileProps } from "./components/Tile";
 export { Chip, type ChipProps } from "./components/Chip";
 export {
