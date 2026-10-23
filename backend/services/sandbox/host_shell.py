@@ -36,7 +36,7 @@ from pydantic_ai_harness._output import truncate_tail
 from core.config import get_settings
 
 from .base import HostExecutionError
-from .command_check import check_command
+from .command_check import refuse_unrunnable
 from .fence import fence_command, shell_confinement
 from .process import filtered_env, run_on_host, spawn_in_session, terminate_tree
 from .shell_result import BackgroundStatus, ProgressHook, ShellResult
@@ -128,7 +128,7 @@ class HostShell:
         ``on_progress``, where given, is handed each new piece of output as the command
         runs. A command killed on its timeout carries no exit code and keeps its output.
         """
-        check_command(command)
+        refuse_unrunnable(command)
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
         wrapped, cwd_file = self._with_cwd_capture(command)
         started = time.monotonic()
@@ -164,7 +164,7 @@ class HostShell:
     @_recoverable
     async def start(self, command: str) -> str:
         """Start ``command`` in the background, and return its id."""
-        check_command(command)
+        refuse_unrunnable(command)
         command_id = uuid.uuid4().hex[:12]
         out, err = stream_files(command_id)
         try:

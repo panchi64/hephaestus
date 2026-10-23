@@ -34,7 +34,14 @@ from services.projects.worktree import WorktreeBusyError
 from .briefing import with_brief
 from .deps import RunDeps
 from .home import change_log, lease, may_lease, resolve_run_home
-from .read_ledger import BINARY, hash_reported, ledger_of, thread_of, unread_message
+from .read_ledger import (
+    BINARY,
+    hash_reported,
+    ledger_of,
+    seed_from_history,
+    thread_of,
+    unread_message,
+)
 from .rebound import ReboundToolset
 from .run_home import home_of
 from .spill import is_untrusted_spill
@@ -96,6 +103,8 @@ class _HomeFiles(ReboundToolset):
         home = await home_of(ctx.deps)
         tool_args = _in_home_terms(name, tool_args, home)
         path = tool_args.get("path")
+        if name in _FILE_WRITES and home is not None:
+            _seed_ledger(ctx, home)
         refusal, pinned = check_read(ctx.deps, name, tool_args, home)
         if refusal is not None:
             return refusal
@@ -124,6 +133,25 @@ class _HomeFiles(ReboundToolset):
         if name == "read_file" and mount.place == SCRATCH and is_untrusted_spill(rel):
             return wrap_untrusted(str(result), source="saved tool output")
         return await with_brief(ctx, home, [mount.place], result)
+
+
+def _seed_ledger(ctx: RunContext[RunDeps], home: RunHome) -> None:
+    """Refill the ledger from the run's history, which a parked turn restored after a
+    restart still carries."""
+    ledger = ledger_of(ctx.deps.caps)
+    if ledger is None or not ctx.messages:
+        return
+
+    def host_path(tool: str, args: dict[str, object]) -> str | None:
+        if tool not in _FILE_WRITES and tool != "read_file":
+            return None
+        try:
+            located = home.locate(str(_in_home_terms(tool, args, home).get("path")))
+        except ModelRetry:
+            return None
+        return str(located[0].root / located[1]) if located is not None else None
+
+    seed_from_history(ledger, thread_of(ctx.deps), ctx.messages, host_path)
 
 
 def check_read(

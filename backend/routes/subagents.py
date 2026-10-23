@@ -164,6 +164,7 @@ async def stop_agents(conversation_id: str, request: Request) -> StoppedAgents:
         raise HTTPException(status_code=404, detail="sub-agents are not available")
     if not await deps.store(request).exists(conversation_id, OPERATOR_ID):
         raise HTTPException(status_code=404, detail="conversation not found")
+    await deps.after_restore(request)
     registry = deps.registry(request)
     if registry.active_run_for(conversation_id, OPERATOR_ID) is not None:
         raise HTTPException(

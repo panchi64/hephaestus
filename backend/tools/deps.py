@@ -73,8 +73,6 @@ class RunDeps:
     # Where a spawned agent's file changes are filed in the launcher's ledger. A run in its
     # own thread files under its own `run.prompt_message_id` (`tools/home.py`).
     ledger_prompt_message_id: str | None = None
-    # The most model requests this run's turn may make; None is unbounded.
-    max_requests: int | None = None
     # "plan", "manual", "edit", "auto" or "yolo". Read by the toolset stack, which marks
     # every tool reaching past the level's write scope as needing approval before the
     # engine runs it (`services/permissions`).
