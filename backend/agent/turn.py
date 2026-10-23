@@ -105,7 +105,6 @@ def turn_deps(
     workspace_key: str = "",
     turn_start: TurnStart | None = None,
     review_budget: ReviewBudget | None = None,
-    max_requests: int | None = None,
     ledger_prompt_message_id: str | None = None,
 ) -> RunDeps:
     """The ``RunDeps`` a turn runs its agent with.
@@ -140,7 +139,6 @@ def turn_deps(
         # review budget (`agent/code_mode.py`).
         turn_start=turn_start,
         review_budget=review_budget,
-        max_requests=max_requests,
         ledger_prompt_message_id=ledger_prompt_message_id,
     )
 
@@ -254,7 +252,6 @@ async def drive_turn(
         workspace_key=workspace_key,
         turn_start=turn_start,
         review_budget=review_budget,
-        max_requests=max_requests,
         ledger_prompt_message_id=ledger_prompt_message_id,
     )
     deps.reported = reported

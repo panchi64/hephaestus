@@ -7,6 +7,13 @@ from typing import cast
 
 import pytest
 from pydantic_ai import ApprovalRequired, ModelRetry, RunContext
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -20,7 +27,7 @@ from services.sandbox import SandboxSessionManager
 from services.settings_store import SettingsStore
 from tools import RunDeps, build_agent_toolsets, harness_events_capability
 from tools.files import files_toolset, unread_refusal
-from tools.read_ledger import ReadLedger, hash_reported
+from tools.read_ledger import ReadLedger, hash_reported, seed_from_history
 
 _TOOLSET = build_agent_toolsets({"files": files_toolset()})[0]
 README = "~/projects/api/README.md"
@@ -71,11 +78,13 @@ async def _call(
     *,
     conversation: str = "conv-1",
     approved: bool = True,
+    messages: list[ModelMessage] | None = None,
 ) -> str:
     run = Run(id="t", kind="chat", owner_id="operator", stream=RunStream())
     deps = RunDeps(run=run, owner_id="operator", caps=caps, conversation_id=conversation)
     ctx = RunContext(
         deps=deps,
+        messages=messages or [],
         model=TestModel(),
         usage=RunUsage(),
         _event_stream_buffer=[],
@@ -269,3 +278,50 @@ async def test_the_unread_refusal_is_available_before_anyone_is_asked(tmp_path: 
 )
 def test_the_hash_is_read_only_off_a_success(tool: str, result: str, expected: str | None):
     assert hash_reported(tool, result) == expected
+
+
+def _read_history(path: str, result: str) -> list[ModelMessage]:
+    return [
+        ModelResponse(parts=[ToolCallPart("files_read_file", {"path": path}, tool_call_id="r1")]),
+        ModelRequest(parts=[ToolReturnPart("files_read_file", result, tool_call_id="r1")]),
+    ]
+
+
+async def test_an_edit_resumed_after_a_restart_is_seeded_from_the_parked_history(tmp_path: Path):
+    caps, root = await _project(tmp_path)
+    read = await _call(caps, "read_file", {"path": README}, conversation="before")
+    history = _read_history(README, read)
+
+    unseeded = await _call(caps, "edit_file", _edit(), conversation="after")
+    assert "before changing it." in unseeded
+
+    done = await _call(caps, "edit_file", _edit(), conversation="after", messages=history)
+    assert done.startswith("Edited")
+    assert (root / "README.md").read_text() == "the API\n"
+
+
+async def test_seeding_pins_the_history_hash_so_a_moved_file_still_conflicts(tmp_path: Path):
+    caps, root = await _project(tmp_path)
+    read = await _call(caps, "read_file", {"path": README}, conversation="before")
+    history = _read_history(README, read)
+    _ = (root / "README.md").write_text("changed by hand\n")
+
+    with pytest.raises(ModelRetry, match="Conflict"):
+        _ = await _call(
+            caps,
+            "edit_file",
+            {**_edit(), "old_text": "changed"},
+            conversation="after",
+            messages=history,
+        )
+    assert (root / "README.md").read_text() == "changed by hand\n"
+
+
+def test_seeding_never_overwrites_a_newer_record():
+    ledger = ReadLedger()
+    ledger.record("c", "/a", "bbbbbbbbbbbb")
+    stale = _read_history("a", "[a | 1 lines | hash:aaaaaaaaaaaa]\nx")
+    seed_from_history(ledger, "c", stale, lambda tool, args: "/a")
+    assert ledger.get("c", "/a") == "bbbbbbbbbbbb"
+    seed_from_history(ledger, "c", stale, lambda tool, args: "/b")
+    assert ledger.get("c", "/b") == "aaaaaaaaaaaa"

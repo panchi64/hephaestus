@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import ModelRetry
 from services.vm.host import JobHost
 from services.vm.platform import JobState
 
-from .command_check import check_command
+from .command_check import refuse_unrunnable
 from .limits import PROGRESS_MAX_CHARS
 from .shell_result import ProgressHook
 
@@ -54,7 +54,7 @@ async def follow_job(
 def refuse(command: str) -> None:
     """The shell's own refusals, as something the model can act on."""
     try:
-        check_command(command)
+        refuse_unrunnable(command)
     except PermissionError as exc:
         raise ModelRetry(str(exc)) from exc
 

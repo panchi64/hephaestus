@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
+from collections.abc import Callable, Sequence
+
+from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart
 
 from core.container import ServiceContainer
 from core.diagnostics import render_tool_error
@@ -67,6 +70,34 @@ def unread_message(path: str) -> str:
         f"Read {path} before changing it.",
         hints=["read it with files_read_file in this conversation, then retry"],
     )
+
+
+def seed_from_history(
+    ledger: ReadLedger,
+    conversation: str,
+    messages: Sequence[ModelMessage],
+    host_path: Callable[[str, dict[str, object]], str | None],
+) -> None:
+    """Record what the file tool results in ``messages`` reported, for a path the ledger has
+    no record of. A restart empties the ledger while a parked turn's history still holds the
+    reads; a newer record is never overwritten. ``host_path`` maps a call's tool name and
+    arguments to the ledger's key for the file."""
+    calls: dict[str, tuple[str, dict[str, object]]] = {}
+    latest: dict[str, str] = {}
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolCallPart):
+                calls[part.tool_call_id] = (part.tool_name, part.args_as_dict())
+            elif isinstance(part, ToolReturnPart) and part.tool_call_id in calls:
+                tool, args = calls[part.tool_call_id]
+                bare = tool.removeprefix("files_")
+                fresh = hash_reported(bare, part.content)
+                key = host_path(bare, args) if fresh is not None else None
+                if fresh is not None and key is not None:
+                    latest[key] = fresh
+    for key, fresh in latest.items():
+        if ledger.get(conversation, key) is None:
+            ledger.record(conversation, key, fresh)
 
 
 def hash_reported(tool: str, result: object) -> str | None:

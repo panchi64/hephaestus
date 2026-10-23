@@ -23,7 +23,7 @@ _INTERACTIVE = re.compile(
 )
 
 
-def check_command(command: str) -> None:
+def refuse_unrunnable(command: str) -> None:
     """Refuse what this shell will not run at all, before anything is spawned. Best-effort,
     and not the boundary: a determined agent walks around a name check with an interpreter.
     The boundary is the permission layer in front of it."""
