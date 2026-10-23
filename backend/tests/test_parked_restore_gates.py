@@ -78,6 +78,10 @@ _REQUESTS: dict[str, Request] = {
     ),
     "fork": lambda c, cid, mid: c.post(f"/conversations/{cid}/messages/{mid}/fork"),
     "compact": lambda c, cid, _mid: c.post(f"/conversations/{cid}/compact"),
+    "revert_files": lambda c, cid, _mid: c.post(f"/conversations/{cid}/changes/revert", json={}),
+    "rewind_files": lambda c, cid, mid: c.post(
+        f"/conversations/{cid}/changes/rewind", json={"messageId": mid, "previewToken": "x"}
+    ),
     "delete_conversation": lambda c, cid, _mid: c.delete(f"/conversations/{cid}"),
     "regenerate": lambda c, cid, mid: c.post(
         "/chat/regenerate", json={"conversation_id": cid, "message_id": mid}

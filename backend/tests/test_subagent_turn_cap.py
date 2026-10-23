@@ -27,6 +27,7 @@ from services.agents import AgentDefinition
 from services.home.backend import Mount
 from services.home.changes import ThreadChanges
 from services.home.paths import Place
+from services.home.rewind import Rewinder
 from services.registry import ModelRegistry
 from services.subagents import SubagentParent
 from tools import RunDeps
@@ -192,7 +193,7 @@ async def _filed(app: FastAPI, root: Path, thread: str, prompt: str) -> set[str]
     """The files a rewind of ``prompt`` in ``thread`` would delete."""
     changes = app_state(app).capabilities.get_optional(ThreadChanges)
     assert changes is not None
-    plan = await changes.rewind_plan(OWNER, thread, [prompt], {"p1": root})
+    plan = await Rewinder(changes).plan(OWNER, thread, [prompt], {"p1": root})
     return {f.path for f in plan.delete}
 
 

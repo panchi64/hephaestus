@@ -26,7 +26,7 @@ from pydantic_core import to_json
 
 from core.citations import Citable
 from core.config import get_settings
-from core.text import truncate_middle
+from core.text import elide_middle
 from core.untrusted import PREAMBLE_LINE, wrap_untrusted
 from services.home.paths import SCRATCH
 from services.sandbox import SandboxSessionManager
@@ -47,10 +47,14 @@ READ_BACK_TOOL = "files_read_file"
 #: Results the model already reads in pieces.
 _NEVER_SPILLED = frozenset({READ_BACK_TOOL})
 
-#: Categories whose results are personal or come from the operator's own sessions. Scratch
-#: is plaintext, so they stay in the context under their own caps.
+#: Categories whose results may carry personal data. Scratch is plaintext, so they are never
+#: saved to it; they stay in the context under their own caps, and ``external`` is cut.
 _PERSONAL = frozenset(
     {"mail", "calendar", "memory", "vault", "corpus", "platform", "agents", "browse", "external"}
+)
+_EXTERNAL = "external"
+_NOT_SAVED_NOTE = (
+    "[The middle was left out. The full result was not saved because it may hold personal data.]"
 )
 
 _PREVIEW_CHARS = 8_000
@@ -191,15 +195,8 @@ def _size(value: object, leaves: Sequence[str]) -> int:
         return len(_json(value))
 
 
-def _cut(text: str, budget: int) -> str:
-    head, tail, elided = truncate_middle(text, budget)
-    if not elided:
-        return text
-    return f"{head}\n[… {elided:,} characters omitted …]\n{tail}"
-
-
 def _preview(text: str, *, budget: int, untrusted: bool, note: str) -> str:
-    shown = _cut(text, budget)
+    shown = elide_middle(text, budget)
     if untrusted:
         shown = wrap_untrusted(shown)
     preview = f"{shown}\n{note}"
@@ -233,10 +230,12 @@ async def _save(deps: RunDeps, relpath: str, text: str) -> bool:
 
 
 async def _spilled(
-    ctx: RunContext[RunDeps], text: str, *, budget: int, untrusted: bool, stem: str
+    ctx: RunContext[RunDeps], text: str, *, budget: int, untrusted: bool, stem: str, save: bool
 ) -> str:
-    """The preview standing in for ``text``, which is saved first when the agent can read
-    the file back. Untrusted text is saved without its fence, in a file marked for it."""
+    """The preview standing in for ``text``, which is saved first when ``save`` and the agent
+    can read the file back. Untrusted text is saved without its fence, in a file marked for it."""
+    if not save:
+        return _preview(text, budget=budget, untrusted=untrusted, note=_NOT_SAVED_NOTE)
     if not _can_read_back(ctx.deps):
         return _preview(text, budget=budget, untrusted=untrusted, note="[The middle was left out.]")
     suffix = UNTRUSTED_SUFFIX if untrusted else ".txt"
@@ -271,8 +270,14 @@ def _script_proved_impersonal(result: ToolReturn[object]) -> bool:
 
 
 async def _spill(ctx: RunContext[RunDeps], name: str, result: object) -> object:
-    if name in _NEVER_SPILLED or _category(name) in _PERSONAL or script_call_of(ctx) is not None:
+    category = _category(name)
+    if (
+        name in _NEVER_SPILLED
+        or (category in _PERSONAL and category != _EXTERNAL)
+        or script_call_of(ctx) is not None
+    ):
         return result
+    save = category not in _PERSONAL
     wrapped = _tool_return(result)
     if wrapped is not None and name == RUN_CODE and not _script_proved_impersonal(wrapped):
         return result
@@ -298,7 +303,9 @@ async def _spill(ctx: RunContext[RunDeps], name: str, result: object) -> object:
         # Trusted text in a leaf that holds a fence is wrapped too, which fails safe.
         untrusted = _is_fenced(leaf)
         text = _MARKUP.sub("", leaf) if untrusted else leaf
-        swaps[index] = await _spilled(ctx, text, budget=budget, untrusted=untrusted, stem=stem)
+        swaps[index] = await _spilled(
+            ctx, text, budget=budget, untrusted=untrusted, stem=stem, save=save
+        )
         size -= len(leaf) - len(swaps[index])
     if swaps:
         try:
@@ -314,7 +321,7 @@ async def _spill(ctx: RunContext[RunDeps], name: str, result: object) -> object:
         return result
     text = _json(value, indent=2)
     untrusted = any(_is_fenced(leaf) for leaf in leaves) or "<untrusted" in text
-    whole = await _spilled(ctx, text, budget=budget, untrusted=untrusted, stem=stem)
+    whole = await _spilled(ctx, text, budget=budget, untrusted=untrusted, stem=stem, save=save)
     return replace(wrapped, return_value=whole) if wrapped is not None else whole
 
 

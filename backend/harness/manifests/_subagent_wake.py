@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from core.exceptions import NotFoundError
 from core.fork import MergeReport
-from core.text import truncate_middle
+from core.text import elide_middle
 from harness.manifest import HarnessContext
 from harness.manifests._inbox_dispatch import WAKE_CHAIN_LIMIT, WAKE_KIND, InboxDispatcher
 from models.subagent import SubagentRecord
@@ -323,11 +323,11 @@ def _status_label(status: str, cause: StopCause | None) -> str:
 
 def _preview(summary: str, handle: str, limit: int) -> str:
     """A report over ``limit`` characters as its head and tail, with where to read it all."""
-    head, tail, elided = truncate_middle(summary, limit)
-    if not elided:
+    shown = elide_middle(summary, limit)
+    if shown == summary:
         return summary
     return (
-        f"{head}\n[… {elided} characters omitted …]\n{tail}\n\n"
+        f"{shown}\n\n"
         + f"This report is long: read the full report with `agents_read {handle}`, "
         + "passing each page's `next_start` as `start` for the next."
     )
